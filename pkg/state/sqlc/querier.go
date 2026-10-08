@@ -1201,7 +1201,9 @@ type Querier interface {
 	// 20261004234807528); rows superseded before it fall back to created_at.
 	// A live 0% deployment that served before (a release demoted by `traffic
 	// promote` or `traffic set`) is a rollback target; one that never served
-	// (a dark deploy) needs a retention pin.
+	// (a dark deploy) needs a retention pin. A canary candidate aborted before it
+	// ever completed served only its canary steps and failed them, so it is never
+	// an implicit target (H5-62).
 	LatestRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LatestRetainedRollbackDeploymentParams) (pgtype.UUID, error)
 	LatestSupersededDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestSupersededDeploymentRow, error)
 	LayerArtifactHasReferences(ctx context.Context, db DBTX, storageKey string) (pgtype.Bool, error)
