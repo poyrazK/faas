@@ -89,10 +89,7 @@ func ValidateOperationWorkflowReconciliation(input OperationWorkflowReconciliati
 	return nil
 }
 func ParseOperationWorkflowReconciliation(data []byte) (*OperationWorkflowReconciliation, error) {
-	var header struct {
-		Kind string `json:"kind"`
-	}
-	if json.Unmarshal(data, &header) != nil || header.Kind != OperationWorkflowReconciliationKind {
+	if !operationMilestoneHasKind(data, OperationWorkflowReconciliationKind) {
 		return nil, nil
 	}
 	var payload OperationWorkflowReconciliationPayload

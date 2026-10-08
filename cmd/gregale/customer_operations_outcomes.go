@@ -12,7 +12,7 @@ import (
 )
 
 func cmdCustomerOperationOutcomes(args []string, summary bool) int {
-	fs := flag.NewFlagSet("customer-operations outcomes", flag.ContinueOnError)
+	fs := newFlagSet("customer-operations outcomes", flag.ContinueOnError)
 	var app, group string
 	var self bool
 	var opts api.OperationWorkflowOutcomeOptions

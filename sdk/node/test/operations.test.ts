@@ -98,7 +98,7 @@ test('workflow transition outbox links same-transaction milestone evidence', asy
     query: async (sql: string, values?: unknown[]) => {
       statements.push({sql, values});
       if (sql.startsWith('INSERT INTO public.gregale_customer_operation_workflow_state_counters')) return {rows: [{revision: 1}]};
-      if (sql.includes('SELECT last_state FROM public.gregale_customer_operation_workflow_state_counters')) return {rows: [{last_state: null}]};
+      if (sql.includes('SELECT last_state,last_blockers,last_blockers_revision')) return {rows: [{last_state: null}]};
       if (sql.startsWith('UPDATE public.gregale_customer_operation_workflow_state_counters SET last_state')) return {rows: [{revision: 1}]};
       return {rows: []};
     },

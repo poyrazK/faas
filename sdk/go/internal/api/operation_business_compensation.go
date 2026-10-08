@@ -57,10 +57,7 @@ func ValidateOperationBusinessCompensation(input OperationBusinessCompensation) 
 	return nil
 }
 func ParseOperationBusinessCompensation(data []byte) (*OperationBusinessCompensation, error) {
-	var header struct {
-		Kind string `json:"kind"`
-	}
-	if json.Unmarshal(data, &header) != nil || header.Kind != OperationBusinessCompensationKind {
+	if !operationMilestoneHasKind(data, OperationBusinessCompensationKind) {
 		return nil, nil
 	}
 	var payload OperationBusinessCompensationPayload

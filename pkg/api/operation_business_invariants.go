@@ -42,10 +42,7 @@ func CanonicalOperationBusinessInvariant(input OperationBusinessInvariant) (Oper
 	return input, nil
 }
 func ParseOperationBusinessInvariant(data []byte) (*OperationBusinessInvariant, error) {
-	var header struct {
-		Kind string `json:"kind"`
-	}
-	if json.Unmarshal(data, &header) != nil || header.Kind != OperationBusinessInvariantKind {
+	if !operationMilestoneHasKind(data, OperationBusinessInvariantKind) {
 		return nil, nil
 	}
 	var payload OperationBusinessInvariantPayload

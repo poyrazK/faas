@@ -20,7 +20,7 @@ func cmdCustomerOperationAttentionSummary(args []string) int {
 	return cmdCustomerOperationAttentionMode(args, true)
 }
 func cmdCustomerOperationAttentionMode(args []string, summary bool) int {
-	fs := flag.NewFlagSet("customer-operations attention", flag.ContinueOnError)
+	fs := newFlagSet("customer-operations attention", flag.ContinueOnError)
 	var app string
 	var self bool
 	var opts api.OperationWorkflowAttentionOptions

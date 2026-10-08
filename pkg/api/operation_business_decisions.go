@@ -45,10 +45,7 @@ func ValidateOperationBusinessDecision(d OperationBusinessDecision) error {
 // ParseOperationBusinessDecision recognizes only the versioned envelope. Ordinary
 // milestone payloads remain unchanged. Recognized malformed evidence is rejected.
 func ParseOperationBusinessDecision(data []byte) (*OperationBusinessDecision, error) {
-	var header struct {
-		Kind string `json:"kind"`
-	}
-	if json.Unmarshal(data, &header) != nil || header.Kind != OperationBusinessDecisionKind {
+	if !operationMilestoneHasKind(data, OperationBusinessDecisionKind) {
 		return nil, nil
 	}
 	var payload OperationBusinessDecisionPayload
@@ -61,4 +58,13 @@ func ParseOperationBusinessDecision(data []byte) (*OperationBusinessDecision, er
 		return nil, err
 	}
 	return &payload.Decision, nil
+}
+
+// operationMilestoneHasKind recognizes typed envelopes while allowing ordinary
+// milestone payloads, including scalar and array values, to use their own schema.
+func operationMilestoneHasKind(data []byte, kind string) bool {
+	var header struct {
+		Kind string `json:"kind"`
+	}
+	return json.Unmarshal(data, &header) == nil && header.Kind == kind
 }

@@ -355,8 +355,8 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 			}
 			seenNames[step.Name], seenPositions[step.Position], seenBindings[binding] = true, true, true
 			result[step.Operation] = append(result[step.Operation], api.OperationWorkflowSpec{
-				Workflow: workflow.Name, Title: workflow.Title, Version: workflow.Version, States: states, TerminalStates: terminalStates, StateStaleAfterSeconds: stateStaleAfter,
-				Transitions: transitionTargets[step.Operation], TransitionsDeclared: len(workflow.Transitions) > 0 && len(transitionTargets[step.Operation]) == 0, Step: step.Name, Label: step.Label,
+				Workflow: workflow.Name, Title: workflow.Title, Version: version, States: states, TerminalStates: terminalStates, StateStaleAfterSeconds: stateStaleAfter,
+				Transitions: transitionTargets[step.Operation], TransitionsDeclared: len(workflow.Transitions) > 0, Step: step.Name, Label: step.Label,
 				AllowReconciliation: step.Reconciliation, Milestone: step.Milestone, InstanceIDFrom: step.InstanceIDFrom, Position: step.Position,
 			})
 		}

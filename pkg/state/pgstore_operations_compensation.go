@@ -14,7 +14,7 @@ import (
 func validateCompensationSourceTx(ctx context.Context, tx pgx.Tx, op Operation, report api.OperationMilestoneRequest) error {
 	compensation, err := api.ParseOperationBusinessCompensation(report.Payload)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	if compensation == nil {
 		return nil
