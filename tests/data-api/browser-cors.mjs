@@ -25,18 +25,24 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
   const requests = []
   const capture = req => requests.push({ path: req.url, method: req.method, origin: req.headers.origin, cookie: req.headers.cookie, authorization: Boolean(req.headers.authorization) })
   gateway.on('request', capture)
-  const child = spawn(process.env.DATA_API_CHROMIUM_BIN, ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run', '--disable-background-networking', '--disk-cache-size=1', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' })
-  let socket, spawnError
+  const child = spawn(process.env.DATA_API_CHROMIUM_BIN, ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run', '--disable-background-networking', '--disk-cache-size=1', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] })
+  let socket, spawnError, starting = true, startupStderr = ''
+  child.stderr.on('data', chunk => { if (starting && startupStderr.length < 16384) startupStderr += chunk.toString().slice(0, 16384 - startupStderr.length) })
   const pending = new Map()
   child.on('error', error => { spawnError = error })
   try {
     let port
-    for (let i = 0; i < 100; i++) {
+    const deadline = Date.now() + 30000
+    while (Date.now() < deadline) {
+      if (spawnError || child.exitCode !== null || child.signalCode !== null) break
       try { port = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]; break } catch {}
       await new Promise(resolve => setTimeout(resolve, 50))
     }
     assert.equal(spawnError, undefined, 'chromium_failed_to_start')
-    assert.ok(port, 'chromium_not_ready')
+    // Startup precedes navigation and token injection, so these bounded logs
+    // cannot contain application credentials or authenticated page requests.
+    starting = false
+    assert.ok(port, `chromium_not_ready (exit=${child.exitCode}, signal=${child.signalCode}): ${startupStderr}`)
     const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
     const page = targets.find(target => target.type === 'page')
     socket = new WebSocket(page.webSocketDebuggerUrl)

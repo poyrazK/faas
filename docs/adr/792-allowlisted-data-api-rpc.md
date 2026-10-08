@@ -1,4 +1,4 @@
-# ADR-687: Allowlisted Data API functions
+# ADR-792: Allowlisted Data API functions
 
 - **Status:** accepted
 - **Date:** 2026-10-08

@@ -31,6 +31,7 @@ node "$starter_dir/tools/install-sdk.mjs" "$starter_dir/$package_file"
 npm test --prefix "$starter_dir"
 node --test tests/data-api/install-sdk.test.mjs
 node --test tests/data-api/artifacts.test.mjs
+node --test tests/data-api/browser-cors.test.mjs
 node --test tests/data-api/staging/canary.test.mjs
 if [[ "${1:-}" == "--integration" ]]; then
   DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" node --test tests/data-api/integration.test.mjs tests/data-api/starter.test.mjs
