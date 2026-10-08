@@ -561,19 +561,8 @@ func TestResolveDeployShape_NestedMarkerHint(t *testing.T) {
 	}
 }
 
-// TestResolveDeployShape_NestedMarkerHint_JSON pins the §3.3 --json contract
-// from ADR-086: when a customer runs `gregale deploy --json` on a cwd with
-// nested markers, printErr must (a) NOT include the hint in the JSON
-// envelope (the envelope is the wire error), and (b) emit the hint as a
-// separate human-readable line so a customer running
-// `gregale deploy --json 2>&1 | less` still sees the next-step guidance.
-//
-// Implementation note: the JSON envelope path uses writeJSONProblem, which
-// writes to os.Stderr directly (not via the osStderr swap). This is
-// pre-existing behaviour — see json_flag.go:writeJSONProblem — and a
-// property this test deliberately does NOT regress. We pin only the
-// shape-resolution error chain (typed NestedMarkerHintError) + the
-// stderr hint line via the swap, which is the load-bearing contract.
+// TestResolveDeployShape_NestedMarkerHint_JSON pins a single stderr Problem
+// with the workspace recovery hint, so JSON consumers can decode the stream.
 func TestResolveDeployShape_NestedMarkerHint_JSON(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "apps/web/package.json", "{}")
@@ -596,14 +585,8 @@ func TestResolveDeployShape_NestedMarkerHint_JSON(t *testing.T) {
 		t.Errorf("hint missing 'gregale scan --path .'; got %q", hintErr.Hint)
 	}
 
-	// Drive printErr under --json and confirm the hint lands on the
-	// swappable stderr (the PrintWarn side of printErr's typed-error
-	// branch). The JSON envelope itself is exercised by
-	// json_flag_test.go; we only assert the hint split here.
-	var stderr bytes.Buffer
-	oldErr := osStderr
-	osStderr = &stderr
-	defer func() { osStderr = oldErr }()
+	stderr, restoreErr := captureStderr(t)
+	defer restoreErr()
 
 	prevJSON := jsonOutput
 	jsonOutput = true
@@ -613,8 +596,9 @@ func TestResolveDeployShape_NestedMarkerHint_JSON(t *testing.T) {
 	if code == 0 {
 		t.Errorf("printErr returned 0; expected non-zero exit code on shape error")
 	}
-	if !strings.Contains(stderr.String(), "gregale scan --path .") {
-		t.Errorf("stderr missing hint under --json; got %q", stderr.String())
+	problem := assertOneProblem(t, stderr.String())
+	if !strings.Contains(problem.Hint, "gregale scan --path .") {
+		t.Errorf("Problem missing workspace hint: %+v", problem)
 	}
 }
 

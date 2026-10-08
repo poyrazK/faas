@@ -282,34 +282,53 @@ func cmdOrgsActivity(args []string) int {
 	kindPrefix := fs.String("kind-prefix", "", "filter by namespaced activity prefix")
 	actorType := fs.String("actor-type", "", "filter by user, api_key, github, system, or operator")
 	appID := fs.String("app-id", "", "filter by application UUID")
+	fs.StringVar(before, "cursor", "", "alias for --before")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	limit := fs.Int("limit", 50, "max rows (1..100)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || *slug == "" || *limit < 1 || *limit > 100 || !validOrgActivityActor(*actorType) {
-		PrintUsage(os.Stderr, "usage: gregale orgs activity --org <slug> [--before <cursor>] [--kind-prefix <prefix>] [--actor-type <type>] [--app-id <uuid>] [--limit N]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale orgs activity --org <slug> [--cursor <cursor>] [--all] [--kind-prefix <prefix>] [--actor-type <type>] [--app-id <uuid>] [--limit N]", "orgs")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	page, err := client.ListOrgActivity(context.Background(), *slug, *before, *kindPrefix, *actorType, *appID, *limit)
+	var page api.ListOrgActivityResponse
+	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.OrgActivityResponse, string, error) {
+		current, err := client.ListOrgActivity(ctx, *slug, cursor, *kindPrefix, *actorType, *appID, *limit)
+		return current.Items, current.NextBefore, err
+	})
+	page.Items, page.NextBefore = items, next
 	if err != nil {
 		return printErr("Could not list organization activity", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(page))
+		return jsonOut(writeJSON(struct {
+			api.ListOrgActivityResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{page, next}))
 	}
 	if len(page.Items) == 0 {
 		PrintProgress(osStdout, "(no activity)")
-		return 0
 	}
 	for _, item := range page.Items {
 		_, _ = fmt.Fprintf(osStdout, "%s  %s\n", activityDisplayTime(item.OccurredAt), item.Summary)
 	}
 	if page.NextBefore != "" {
-		PrintProgress(osStdout, "More activity: rerun with --before %s", page.NextBefore)
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale orgs activity --org '%s' --cursor '%s' --limit %d", strings.ReplaceAll(*slug, "'", "'\"'\"'"), strings.ReplaceAll(page.NextBefore, "'", "'\"'\"'"), *limit)
+		if *kindPrefix != "" {
+			_, _ = fmt.Fprintf(osStdout, " --kind-prefix '%s'", strings.ReplaceAll(*kindPrefix, "'", "'\"'\"'"))
+		}
+		if *actorType != "" {
+			_, _ = fmt.Fprintf(osStdout, " --actor-type '%s'", strings.ReplaceAll(*actorType, "'", "'\"'\"'"))
+		}
+		if *appID != "" {
+			_, _ = fmt.Fprintf(osStdout, " --app-id '%s'", strings.ReplaceAll(*appID, "'", "'\"'\"'"))
+		}
+		_, _ = fmt.Fprintln(osStdout)
 	}
 	return 0
 }
@@ -342,6 +361,9 @@ func cmdOrgsRm(args []string) int {
 		return 1
 	}
 	slug := fs.Arg(0)
+	if code := requireAutomationConfirmation(*quiet, "-q"); code != 0 {
+		return code
+	}
 	if !*quiet {
 		fmt.Fprintf(os.Stderr,
 			"This will soft-delete the org %q (apps + members retained; restore via dashboard).\n"+

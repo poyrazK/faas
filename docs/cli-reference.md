@@ -2,6 +2,8 @@
 
 Generated from the CLI's command manifest by `gregale man --markdown`. Do not edit by hand.
 
+Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
+
 | Command | What it does |
 |---|---|
 | [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
@@ -68,6 +70,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`link`](#link) | Link this checkout to a Gregale project |
 | [`logout`](#logout) | Revoke the managed CLI session and remove the stored token |
 | [`unlink`](#unlink) | Remove the linked project from this checkout |
+| [`profile`](#profile) | Manage named API connections and isolated credentials |
 | [`context`](#context) | Show the linked project and default app context |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
 | [`logs`](#logs) | Query runtime logs and HTTP request events |
@@ -663,11 +666,13 @@ Export account data (GDPR)
 
 Schedule account deletion
 
-`gregale account delete [-q]`
+`gregale account delete [-q] [--quiet] [--yes]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `-q` | skip the confirmation prompt |  |
+| `--quiet` | confirm account deletion without prompting |  |
+| `--yes` | confirm account deletion without prompting |  |
 
 ### account restore
 
@@ -1746,7 +1751,7 @@ List subscriptions reconciled from the app manifest
 
 Inspect event deliveries, replays, and pre-invocation fanout failures
 
-`gregale events deliveries [--event-source <SOURCE>] [--event-id <ID>] [--state <STATE>] [--before <CURSOR>] [--fanout-before <CURSOR>] [--limit <N>] <app>`
+`gregale events deliveries [--event-source <SOURCE>] [--event-id <ID>] [--state <STATE>] [--before <CURSOR>] [--fanout-before <CURSOR>] [--limit <N>] [--all] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1755,20 +1760,23 @@ Inspect event deliveries, replays, and pre-invocation fanout failures
 | `--state <STATE>` | filter by delivery state; failed includes recipient fanout failures |  |
 | `--before <CURSOR>` | pagination cursor |  |
 | `--fanout-before <CURSOR>` | pre-invocation failure pagination cursor |  |
-| `--limit <N>` | max deliveries (1..200) |  |
+| `--limit <N>` | page size per stream (1..200, default 20) |  |
+| `--all` | walk both streams with independent cursors |  |
 
 ### events fanout-history
 
 Inspect immutable routing outcomes and replay history for one event
 
-`gregale events fanout-history --event-source <SOURCE> --event-id <ID> [--subscription-id <ID>] [--before <CURSOR>] [--limit <N>] <app>`
+`gregale events fanout-history --event-source <SOURCE> --event-id <ID> [--subscription-id <ID>] [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--limit <N>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--event-source <SOURCE>` | published event source | required |
 | `--event-id <ID>` | published event id | required |
 | `--subscription-id <ID>` | narrow history to one recipient |  |
-| `--before <CURSOR>` | pagination cursor |  |
+| `--before <CURSOR>` | alias for --cursor |  |
+| `--cursor <CURSOR>` | opaque continuation cursor |  |
+| `--all` | walk every page using --limit and --cursor |  |
 | `--limit <N>` | max history rows (1..200) |  |
 
 ### events replay
@@ -1835,11 +1843,13 @@ Reliably deliver an event to a registered webhook
 
 List your apps
 
-`gregale apps [<subcommand>] [--quiet|-q]`
+`gregale apps [<subcommand>] [--dry-run] [--quiet|-q] [--yes]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--dry-run` | preview app deletion without changing resources |  |
 | `--quiet|-q` | delete one app without prompting |  |
+| `--yes` | confirm app deletion without prompting |  |
 
 Examples:
 
@@ -2676,15 +2686,16 @@ Show the current status of one build
 
 List builds and discover build IDs
 
-`gregale build list [--app <SLUG>] [--status <STATUS>] [--limit <N>] [--before <CURSOR>] [--all]`
+`gregale build list [--app <SLUG>] [--status <STATUS>] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | filter to one app |  |
 | `--status <STATUS>` | filter by lifecycle status | one of `queued` · `running` · `succeeded` · `failed` · `cancelled` |
 | `--limit <N>` | page size (1..200) |  |
-| `--before <CURSOR>` | pagination cursor |  |
-| `--all` | walk every page |  |
+| `--before <CURSOR>` | alias for --cursor |  |
+| `--cursor <CURSOR>` | opaque cursor from a prior page |  |
+| `--all` | walk every page using --limit and --cursor |  |
 
 ### build provenance
 
@@ -2975,11 +2986,13 @@ Show execution history
 
 Inspect scheduled occurrence decisions
 
-`gregale crons occurrences [--before <ID>] [--limit <N>] <id>`
+`gregale crons occurrences [--before <ID>] [--cursor <ID>] [--all] [--limit <N>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--before <ID>` | occurrence id cursor from the previous page |  |
+| `--before <ID>` | alias for --cursor |  |
+| `--cursor <ID>` | opaque continuation cursor |  |
+| `--all` | walk every page using --limit and --cursor |  |
 | `--limit <N>` | max occurrence decisions (1..200) |  |
 
 ### crons cancel
@@ -3055,11 +3068,12 @@ Update one trigger
 
 Delete one trigger
 
-`gregale triggers delete [--quiet] <id>`
+`gregale triggers delete [--quiet] [--yes] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--quiet` | skip the typed confirmation (for scripts) |  |
+| `--yes` | confirm trigger deletion without prompting |  |
 
 ### triggers pause
 
@@ -3172,6 +3186,14 @@ Manage jobs (run-to-completion workloads)
 
 List jobs in this account
 
+`gregale jobs list [--limit <N>] [--offset <N>] [--all]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..200, default 50) |  |
+| `--offset <N>` | starting offset (&gt;= 0) |  |
+| `--all` | walk every page using --limit and --offset |  |
+
 ### jobs add
 
 Create a new job
@@ -3250,17 +3272,25 @@ Dispatch a new run (fan-out N tasks)
 
 List runs for one job
 
-`gregale jobs runs <name>`
+`gregale jobs runs [--limit <N>] [--offset <N>] [--all] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..200, default 50) |  |
+| `--offset <N>` | starting offset (&gt;= 0) |  |
+| `--all` | walk every page using --limit and --offset |  |
 
 ### jobs occurrences
 
 Inspect recurring schedule decisions
 
-`gregale jobs occurrences [--before <ID>] [--limit <N>] <name>`
+`gregale jobs occurrences [--before <ID>] [--cursor <ID>] [--all] [--limit <N>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--before <ID>` | occurrence id cursor from the previous page |  |
+| `--before <ID>` | alias for --cursor |  |
+| `--cursor <ID>` | opaque continuation cursor |  |
+| `--all` | walk every page using --limit and --cursor |  |
 | `--limit <N>` | max occurrence decisions (1..200) |  |
 
 ### jobs cancel
@@ -3716,13 +3746,15 @@ Schedule a deferred invocation
 
 List delayed tasks for an app
 
-`gregale delayed-task list --app <SLUG> [--limit <N>] [--before <ID>]`
+`gregale delayed-task list --app <SLUG> [--limit <N>] [--before <ID>] [--cursor <CURSOR>] [--all]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
 | `--limit <N>` | page size (1-200) |  |
-| `--before <ID>` | pagination cursor |  |
+| `--before <ID>` | alias for --cursor |  |
+| `--cursor <CURSOR>` | opaque continuation cursor |  |
+| `--all` | walk every page |  |
 
 ### delayed-task get
 
@@ -3747,13 +3779,14 @@ Cancel a delayed task
 
 List deployments or manage stable named URLs for immutable revisions
 
-`gregale deployments [<subcommand>] [--app <slug>] [--limit <N>] [--before <cursor>] [--all] [--wide]`
+`gregale deployments [<subcommand>] [--app <slug>] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--wide]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (app-scoped deployment history) |  |
 | `--limit <N>` | page size (1-200) |  |
-| `--before <cursor>` | pagination cursor (RFC3339Nano) |  |
+| `--before <CURSOR>` | alias for --cursor |  |
+| `--cursor <CURSOR>` | opaque cursor from a prior page |  |
 | `--all` | walk every page |  |
 | `--wide` | include annotation columns (by / pr / tag / reason) |  |
 
@@ -3957,7 +3990,13 @@ Change one pending deployment&#39;s queue priority
 
 Hide one deployment from the list
 
-`gregale deploys clear <id>`
+`gregale deploys clear [--app <SLUG>] [--dry-run] [--force] <id|vN>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug for revision resolution |  |
+| `--dry-run` | preview cleanup without changing resources |  |
+| `--force` | confirm cleanup without prompting |  |
 
 ### deploys clear-obsolete
 
@@ -3969,7 +4008,7 @@ Hide obsolete deployments older than a cutoff
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--older-than <D>` | cutoff age (default 168h) |  |
-| `--dry-run` | list what would be hidden |  |
+| `--dry-run` | preview age/status candidates without changing resources |  |
 | `--force` | skip the confirmation |  |
 
 ### deploys retry
@@ -6016,6 +6055,15 @@ Per-account invocation ledger (invocations list|get|wait &lt;id&gt;)
 
 List invocations
 
+`gregale invocations list [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1-100, default 50) |  |
+| `--cursor <CURSOR>` | opaque cursor from a prior page |  |
+| `--before <CURSOR>` | alias for --cursor |  |
+| `--all` | walk every page using --limit and --cursor |  |
+
 ### invocations get
 
 Show or recover one invocation
@@ -6983,6 +7031,52 @@ Remove the linked project from this checkout
 `gregale unlink`
 
 
+## profile
+
+Manage named API connections and isolated credentials
+
+`gregale profile [<subcommand>]`
+
+### profile add
+
+Add a connection without changing the active profile
+
+`gregale profile add <name> <api-url>`
+
+### profile list
+
+List connections and the active profile
+
+### profile check
+
+Verify the selected API connection and account identity
+
+`gregale profile check [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <DURATION>` | maximum request duration (default 10s) |  |
+
+Examples:
+
+```sh
+gregale profile check
+gregale --profile staging profile check --timeout 5s --json
+```
+
+### profile use
+
+Select the default connection
+
+`gregale profile use <name>`
+
+### profile remove
+
+Remove an inactive connection and its credentials
+
+`gregale profile remove <name>`
+
+
 ## context
 
 Show the linked project and default app context
@@ -7161,12 +7255,14 @@ Show one org
 
 Show the global infrastructure timeline
 
-`gregale orgs activity --org <SLUG> [--before <CURSOR>] [--kind-prefix <PREFIX>] [--actor-type <TYPE>] [--app-id <UUID>] [--limit <N>]`
+`gregale orgs activity --org <SLUG> [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--kind-prefix <PREFIX>] [--actor-type <TYPE>] [--app-id <UUID>] [--limit <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--org <SLUG>` | organization slug | required |
-| `--before <CURSOR>` | pagination cursor |  |
+| `--before <CURSOR>` | alias for --cursor |  |
+| `--cursor <CURSOR>` | opaque continuation cursor |  |
+| `--all` | walk every page |  |
 | `--kind-prefix <PREFIX>` | filter by activity kind prefix |  |
 | `--actor-type <TYPE>` | filter by actor category | one of `user` · `api_key` · `github` · `system` · `operator` |
 | `--app-id <UUID>` | filter by application UUID |  |
@@ -7491,13 +7587,27 @@ Show queue depth, scaling, bindings, and liveness
 
 Peek at the next wake
 
-`gregale queue peek <slug>`
+`gregale queue peek [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..100, default 50) |  |
+| `--cursor <CURSOR>` | opaque continuation cursor |  |
+| `--before <CURSOR>` | alias for --cursor |  |
+| `--all` | walk every page using --limit and --cursor |  |
 
 ### queue dead-letter
 
 Inspect the dead-letter queue
 
-`gregale queue dead-letter <slug>`
+`gregale queue dead-letter [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..100, default 50) |  |
+| `--cursor <CURSOR>` | opaque continuation cursor |  |
+| `--before <CURSOR>` | alias for --cursor |  |
+| `--all` | walk every page using --limit and --cursor |  |
 
 ### queue ack
 
@@ -7971,11 +8081,13 @@ Inspect the active graph and environment deployments
 
 List release graphs and their retention deadlines
 
-`gregale projects environments release-sets [--before <CURSOR>] [--limit <N>]`
+`gregale projects environments release-sets [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--limit <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--before <CURSOR>` | page cursor |  |
+| `--before <CURSOR>` | alias for --cursor |  |
+| `--cursor <CURSOR>` | opaque continuation cursor |  |
+| `--all` | walk every page |  |
 | `--limit <N>` | page size |  |
 
 #### projects environments releases
@@ -8011,7 +8123,16 @@ Qualify the source release and check promotion readiness for CI
 
 List environment promotions
 
-`gregale projects environments history`
+`gregale projects environments history [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--limit <N>] [--from <ENV>] [--status <STATUS>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <CURSOR>` | alias for --cursor |  |
+| `--cursor <CURSOR>` | opaque continuation cursor |  |
+| `--all` | walk every page |  |
+| `--limit <N>` | page size (1..100) |  |
+| `--from <ENV>` | source environment filter |  |
+| `--status <STATUS>` | running\|succeeded\|failed |  |
 
 #### projects environments config
 
@@ -9036,7 +9157,17 @@ Delete one webhook
 
 Show the delivery ledger
 
-`gregale webhooks deliveries <id>`
+`gregale webhooks deliveries --app <SLUG> [--status <STATUS>] [--limit <N>] [--page-size <N>] [--cursor <CURSOR>] [--page-token <CURSOR>] [--all] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--status <STATUS>` | filter delivery status | one of `pending` · `in_flight` · `succeeded` · `failed` · `dead` |
+| `--limit <N>` | page size (1..100, default 50) |  |
+| `--page-size <N>` | alias for --limit |  |
+| `--cursor <CURSOR>` | opaque continuation cursor |  |
+| `--page-token <CURSOR>` | alias for --cursor |  |
+| `--all` | walk every page using --limit and --cursor |  |
 
 ### webhooks retry
 

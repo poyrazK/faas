@@ -504,6 +504,8 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "delete", Short: "Schedule account deletion", Flags: []cliFlag{
 				{Name: "q", ShortName: "q", Short: "skip the confirmation prompt", Bool: true},
+				{Name: "quiet", Short: "confirm account deletion without prompting", Bool: true},
+				{Name: "yes", Short: "confirm account deletion without prompting", Bool: true},
 			}},
 			{Name: "restore", Short: "Cancel a pending deletion"},
 			{Name: "status", Short: "Show account status"},
@@ -906,13 +908,16 @@ var cliCommands = []cliCommand{
 				{Name: "state", Short: "filter by delivery state; failed includes recipient fanout failures", Value: "STATE"},
 				{Name: "before", Short: "pagination cursor", Value: "CURSOR"},
 				{Name: "fanout-before", Short: "pre-invocation failure pagination cursor", Value: "CURSOR"},
-				{Name: "limit", Short: "max deliveries (1..200)", Value: "N"},
+				{Name: "limit", Short: "page size per stream (1..200, default 20)", Value: "N"},
+				{Name: "all", Short: "walk both streams with independent cursors"},
 			}},
 			{Name: "fanout-history", Short: "Inspect immutable routing outcomes and replay history for one event", Positionals: []string{"<app>"}, Flags: []cliFlag{
 				{Name: "event-source", Short: "published event source", Req: true, Value: "SOURCE"},
 				{Name: "event-id", Short: "published event id", Req: true, Value: "ID"},
 				{Name: "subscription-id", Short: "narrow history to one recipient", Value: "ID"},
-				{Name: "before", Short: "pagination cursor", Value: "CURSOR"},
+				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
+				{Name: "cursor", Short: "opaque continuation cursor", Value: "CURSOR"},
+				{Name: "all", Short: "walk every page using --limit and --cursor"},
 				{Name: "limit", Short: "max history rows (1..200)", Value: "N"},
 			}},
 			{Name: "replay", Short: "Retry one terminal pre-invocation recipient failure using its event identity and subscription ID from events deliveries", Positionals: []string{"<app>"}, Flags: []cliFlag{
@@ -971,7 +976,7 @@ var cliCommands = []cliCommand{
 			appUDPListenerCLISubcommand(true),
 			{Name: "streaming-cap", Short: "Show app streaming classification", Positionals: []string{"<slug>"}},
 		},
-		Flags: []cliFlag{{Name: "quiet", ShortName: "q", Short: "delete one app without prompting"}},
+		Flags: []cliFlag{{Name: "dry-run", Short: "preview app deletion without changing resources", Bool: true}, {Name: "quiet", ShortName: "q", Short: "delete one app without prompting"}, {Name: "yes", Short: "confirm app deletion without prompting", Bool: true}},
 	},
 	{
 		Name:    appSlugFallback,
@@ -1160,8 +1165,9 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "filter to one app", Value: "SLUG"},
 				{Name: "status", Short: "filter by lifecycle status", Value: "STATUS", ClosedSet: []string{"queued", "running", "succeeded", "failed", "cancelled"}},
 				{Name: "limit", Short: "page size (1..200)", Value: "N"},
-				{Name: "before", Short: "pagination cursor", Value: "CURSOR"},
-				{Name: "all", Short: "walk every page"},
+				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
+				{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
+				{Name: "all", Short: "walk every page using --limit and --cursor"},
 			}},
 			{Name: "provenance", Short: "Show the build provenance attestation", Positionals: []string{"<id>"}},
 			{Name: "sbom", Short: "Show the build SBOM", Positionals: []string{"<id>"}},
@@ -1280,7 +1286,9 @@ var cliCommands = []cliCommand{
 				{Name: "run", Short: "show details and captured output for one command run", Value: "TASK-ID"},
 			}},
 			{Name: "occurrences", Short: "Inspect scheduled occurrence decisions", Positionals: []string{"<id>"}, Flags: []cliFlag{
-				{Name: "before", Short: "occurrence id cursor from the previous page", Value: "ID"},
+				{Name: "before", Short: "alias for --cursor", Value: "ID"},
+				{Name: "cursor", Short: "opaque continuation cursor", Value: "ID"},
+				{Name: "all", Short: "walk every page using --limit and --cursor"},
 				{Name: "limit", Short: "max occurrence decisions (1..200)", Value: "N"},
 			}},
 			{Name: "cancel", Short: "Request cancellation of one command-cron run", Positionals: []string{"<cron-id>", "<run-id>"}},
@@ -1323,6 +1331,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "delete", Short: "Delete one trigger", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "quiet", Short: "skip the typed confirmation (for scripts)"},
+				{Name: "yes", Short: "confirm trigger deletion without prompting", Bool: true},
 			}},
 			{Name: "pause", Short: "Disable one trigger", Positionals: []string{"<id>"}},
 			{Name: "resume", Short: "Enable one trigger", Positionals: []string{"<id>"}},
@@ -1369,7 +1378,11 @@ var cliCommands = []cliCommand{
 		DocSlug: "jobs",
 		Short:   "Manage jobs (run-to-completion workloads)",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List jobs in this account"},
+			{Name: "list", Short: "List jobs in this account", Flags: []cliFlag{
+				{Name: "limit", Short: "page size (1..200, default 50)", Value: "N"},
+				{Name: "offset", Short: "starting offset (>= 0)", Value: "N"},
+				{Name: "all", Short: "walk every page using --limit and --offset"},
+			}},
 			{Name: "add", Short: "Create a new job", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "image", Value: "REF", Short: "OCI image", Req: true},
 				{Name: "command", Value: "ARGV", Short: "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi)"},
@@ -1413,9 +1426,15 @@ var cliCommands = []cliCommand{
 				{Name: "fail-fast", Short: "cancel unstarted tasks after permanent failure"},
 				{Name: "failure-rules", Value: "JSON", Short: "override versioned exit-code and outcome retry rules for this run"},
 			}},
-			{Name: "runs", Short: "List runs for one job", Positionals: []string{"<name>"}},
+			{Name: "runs", Short: "List runs for one job", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "limit", Short: "page size (1..200, default 50)", Value: "N"},
+				{Name: "offset", Short: "starting offset (>= 0)", Value: "N"},
+				{Name: "all", Short: "walk every page using --limit and --offset"},
+			}},
 			{Name: "occurrences", Short: "Inspect recurring schedule decisions", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "before", Short: "occurrence id cursor from the previous page", Value: "ID"},
+				{Name: "before", Short: "alias for --cursor", Value: "ID"},
+				{Name: "cursor", Short: "opaque continuation cursor", Value: "ID"},
+				{Name: "all", Short: "walk every page using --limit and --cursor"},
 				{Name: "limit", Short: "max occurrence decisions (1..200)", Value: "N"},
 			}},
 			{Name: "cancel", Short: "Cancel a run", Positionals: []string{"<name>", "<run-id>"}},
@@ -1555,7 +1574,9 @@ var cliCommands = []cliCommand{
 			{Name: "list", Short: "List delayed tasks for an app", Flags: []cliFlag{
 				{Name: "app", Value: "SLUG", Short: "app slug", Req: true},
 				{Name: "limit", Value: "N", Short: "page size (1-200)"},
-				{Name: "before", Value: "ID", Short: "pagination cursor"},
+				{Name: "before", Value: "ID", Short: "alias for --cursor"},
+				{Name: "cursor", Value: "CURSOR", Short: "opaque continuation cursor"},
+				{Name: "all", Short: "walk every page"},
 			}},
 			{Name: "get", Short: "Show one delayed task", Positionals: []string{"<id>"}},
 			{Name: "info", Short: "Alias for get", Positionals: []string{"<id>"}},
@@ -1591,7 +1612,8 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "app", Short: "app slug (app-scoped deployment history)", Value: "slug"},
 			{Name: "limit", Short: "page size (1-200)", Value: "N"},
-			{Name: "before", Short: "pagination cursor (RFC3339Nano)", Value: "cursor"},
+			{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
+			{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 			{Name: "all", Short: "walk every page"},
 			{Name: "wide", Short: "include annotation columns (by / pr / tag / reason)"},
 		},
@@ -1662,8 +1684,8 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "cancel", Short: "Cancel one pending deployment", Positionals: []string{"<id>"}},
 			{Name: "reorder", Short: "Change one pending deployment's queue priority", Positionals: []string{"<id>"}},
-			{Name: "clear", Short: "Hide one deployment from the list", Positionals: []string{"<id>"}},
-			{Name: "clear-obsolete", Short: "Hide obsolete deployments older than a cutoff", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "older-than", Short: "cutoff age (default 168h)", Value: "D"}, {Name: "dry-run", Short: "list what would be hidden"}, {Name: "force", Short: "skip the confirmation"}}},
+			{Name: "clear", Short: "Hide one deployment from the list", Positionals: []string{"<id|vN>"}, Flags: []cliFlag{{Name: "app", Short: "app slug for revision resolution", Value: "SLUG"}, {Name: "dry-run", Short: "preview cleanup without changing resources", Bool: true}, {Name: "force", Short: "confirm cleanup without prompting", Bool: true}}},
+			{Name: "clear-obsolete", Short: "Hide obsolete deployments older than a cutoff", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "older-than", Short: "cutoff age (default 168h)", Value: "D"}, {Name: "dry-run", Short: "preview age/status candidates without changing resources"}, {Name: "force", Short: "skip the confirmation"}}},
 			// ADR-117 §Production-ready follow-on, C2 — per-stage
 			// retry. The verb is `retry` (NOT a `--retry` flag on
 			// show/status) because the action mutates state — a
@@ -2697,7 +2719,12 @@ var cliCommands = []cliCommand{
 		DocSlug: "invocations",
 		Short:   "Per-account invocation ledger (invocations list|get|wait <id>)",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List invocations"},
+			{Name: "list", Short: "List invocations", Flags: []cliFlag{
+				{Name: "limit", Short: "page size (1-100, default 50)", Value: "N"},
+				{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
+				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
+				{Name: "all", Short: "walk every page using --limit and --cursor"},
+			}},
 			{Name: "get", Short: "Show or recover one invocation", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "replay", Short: "re-issue failed unkeyed work"},
 				{Name: "replay-keyed", Short: "recover failed keyed work in its captured policy lane"},
@@ -2857,6 +2884,14 @@ var cliCommands = []cliCommand{
 		DocSlug: "link",
 		Short:   "Remove the linked project from this checkout",
 	},
+	{Name: "profile", DocSlug: "config", Short: "Manage named API connections and isolated credentials", Subcommands: []cliSub{
+		{Name: "add", Short: "Add a connection without changing the active profile", Positionals: []string{"<name>", "<api-url>"}},
+		{Name: "list", Short: "List connections and the active profile"},
+		{Name: "check", Short: "Verify the selected API connection and account identity", Examples: []string{"gregale profile check", "gregale --profile staging profile check --timeout 5s --json"}, Flags: []cliFlag{{Name: "timeout", Short: "maximum request duration (default 10s)", Value: "DURATION"}}},
+		{Name: "use", Short: "Select the default connection", Positionals: []string{"<name>"}},
+		{Name: "remove", Short: "Remove an inactive connection and its credentials", Positionals: []string{"<name>"}},
+	}},
+
 	{
 		Name:    "context",
 		DocSlug: "link",
@@ -2952,7 +2987,9 @@ var cliCommands = []cliCommand{
 			{Name: "info", Short: "Show one org", Positionals: []string{"<slug>"}},
 			{Name: "activity", Short: "Show the global infrastructure timeline", Flags: []cliFlag{
 				{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
-				{Name: "before", Short: "pagination cursor", Value: "CURSOR"},
+				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
+				{Name: "cursor", Value: "CURSOR", Short: "opaque continuation cursor"},
+				{Name: "all", Short: "walk every page"},
 				{Name: "kind-prefix", Short: "filter by activity kind prefix", Value: "PREFIX"},
 				{Name: "actor-type", Short: "filter by actor category", Value: "TYPE", ClosedSet: []string{"user", "api_key", "github", "system", "operator"}},
 				{Name: "app-id", Short: "filter by application UUID", Value: "UUID"},
@@ -3146,8 +3183,18 @@ var cliCommands = []cliCommand{
 			{Name: "receive", Short: "Wait for the next queue row the platform delivers", Positionals: []string{"<slug>"}},
 			{Name: "state", Short: "Show queue state", Positionals: []string{"<slug>"}},
 			{Name: statusLiteral, Short: "Show queue depth, scaling, bindings, and liveness", Positionals: []string{"<slug>"}},
-			{Name: "peek", Short: "Peek at the next wake", Positionals: []string{"<slug>"}},
-			{Name: "dead-letter", Short: "Inspect the dead-letter queue", Positionals: []string{"<slug>"}},
+			{Name: "peek", Short: "Peek at the next wake", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "limit", Short: "page size (1..100, default 50)", Value: "N"},
+				{Name: "cursor", Short: "opaque continuation cursor", Value: "CURSOR"},
+				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
+				{Name: "all", Short: "walk every page using --limit and --cursor"},
+			}},
+			{Name: "dead-letter", Short: "Inspect the dead-letter queue", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "limit", Short: "page size (1..100, default 50)", Value: "N"},
+				{Name: "cursor", Short: "opaque continuation cursor", Value: "CURSOR"},
+				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
+				{Name: "all", Short: "walk every page using --limit and --cursor"},
+			}},
 			{Name: "ack", Short: "Ack a wake", Positionals: []string{"<slug>", "<row-id>"}},
 			{Name: "setup", Short: "Configure a simple push workload with queue-depth scaling", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "queue-name", Short: "logical queue name", Value: "QUEUE"},
@@ -3382,7 +3429,7 @@ var cliCommands = []cliCommand{
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},
 				{Name: "inspect", Short: "Inspect the active graph and environment deployments"},
-				{Name: "release-sets", Short: "List release graphs and their retention deadlines", Flags: []cliFlag{{Name: "before", Value: "CURSOR", Short: "page cursor"}, {Name: "limit", Value: "N", Short: "page size"}}},
+				{Name: "release-sets", Short: "List release graphs and their retention deadlines", Flags: []cliFlag{{Name: "before", Value: "CURSOR", Short: "alias for --cursor"}, {Name: "cursor", Value: "CURSOR", Short: "opaque continuation cursor"}, {Name: "all", Short: "walk every page"}, {Name: "limit", Value: "N", Short: "page size"}}},
 				{Name: "releases", Aliases: []string{"release"}, Short: "List live workload deployments"},
 				{Name: "qualify", Short: "Run health and smoke GET probes against exact active release-set deployments", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{
 					{Name: "profile", Short: "YAML probe profile defining every release-set workload", Value: "FILE", Req: true},
@@ -3393,7 +3440,7 @@ var cliCommands = []cliCommand{
 					{Name: "profile", Short: "YAML probe profile defining every source workload", Value: "FILE", Req: true},
 					{Name: "sync-config", Short: "include non-secret source config in the promotion preview"},
 				}},
-				{Name: "history", Short: "List environment promotions"},
+				{Name: "history", Short: "List environment promotions", Flags: []cliFlag{{Name: "before", Value: "CURSOR", Short: "alias for --cursor"}, {Name: "cursor", Value: "CURSOR", Short: "opaque continuation cursor"}, {Name: "all", Short: "walk every page"}, {Name: "limit", Value: "N", Short: "page size (1..100)"}, {Name: "from", Value: "ENV", Short: "source environment filter"}, {Name: "status", Value: "STATUS", Short: "running|succeeded|failed"}}},
 				{Name: "config", Short: "Read or update environment configuration", Positionals: []string{"<project-slug>", "<environment-slug>"}, Subcommands: []cliSub{
 					{Name: "set", Short: "Update environment configuration with optimistic hash checking", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "file", Short: "JSON configuration file (choose --file or --stdin)", Value: "PATH"}, {Name: "stdin", Short: "read JSON configuration from stdin"}, {Name: "dry-run", Short: "preview the change without writing it"}, {Name: "if-hash", Short: "apply only if the current config hash matches", Value: "HASH"}, {Name: "yes", Short: "confirm the configuration update"}}},
 					{Name: "apply", Short: "Alias for config set", Positionals: []string{"<project-slug>", "<environment-slug>"}, Flags: []cliFlag{{Name: "file", Short: "JSON configuration file (choose --file or --stdin)", Value: "PATH"}, {Name: "stdin", Short: "read JSON configuration from stdin"}, {Name: "dry-run", Short: "preview the change without writing it"}, {Name: "if-hash", Short: "apply only if the current config hash matches", Value: "HASH"}, {Name: "yes", Short: "confirm the configuration update"}}},
@@ -3835,7 +3882,15 @@ var cliCommands = []cliCommand{
 			{Name: "info", Short: "Show one webhook", Positionals: []string{"<webhook-id>"}},
 			{Name: "update", Short: "Update one webhook", Positionals: []string{"<id>"}},
 			{Name: "rm", Short: "Delete one webhook", Positionals: []string{"<id>"}},
-			{Name: "deliveries", Short: "Show the delivery ledger", Positionals: []string{"<id>"}},
+			{Name: "deliveries", Short: "Show the delivery ledger", Positionals: []string{"<id>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
+				{Name: "status", Short: "filter delivery status", Value: "STATUS", ClosedSet: []string{"pending", "in_flight", "succeeded", "failed", "dead"}},
+				{Name: "limit", Short: "page size (1..100, default 50)", Value: "N"},
+				{Name: "page-size", Short: "alias for --limit", Value: "N"},
+				{Name: "cursor", Short: "opaque continuation cursor", Value: "CURSOR"},
+				{Name: "page-token", Short: "alias for --cursor", Value: "CURSOR"},
+				{Name: "all", Short: "walk every page using --limit and --cursor"},
+			}},
 			{Name: "retry", Short: "Retry a failed delivery", Positionals: []string{"<webhook-id>", "<delivery-id>"}},
 			{Name: "rotate-secret", Short: "Rotate the webhook signing secret", Positionals: []string{"<webhook-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},

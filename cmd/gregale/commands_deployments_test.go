@@ -125,8 +125,8 @@ func TestCmdDeployments_NextBeforeHint(t *testing.T) {
 	if code := cmdDeployments(nil); code != 0 {
 		t.Errorf("cmdDeployments next-before = %d, want 0", code)
 	}
-	if !strings.Contains(stdout.String(), "--before") {
-		t.Errorf("expected pagination hint mentioning --before\nfull: %s", stdout.String())
+	if !strings.Contains(stdout.String(), "--cursor") {
+		t.Errorf("expected pagination hint mentioning --cursor\nfull: %s", stdout.String())
 	}
 }
 

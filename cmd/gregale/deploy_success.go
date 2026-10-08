@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -356,7 +357,7 @@ func deploymentWaitResumeCommandWithRollout(deploymentID string, deadline time.D
 	if rollout {
 		rolloutFlag = " --rollout"
 	}
-	return fmt.Sprintf("gregale deployment wait %s%s --timeout %d", deploymentID, rolloutFlag, seconds)
+	return fmt.Sprintf("%s deployment wait %s%s --timeout %d", recoveryCLI(), recoveryArgument(deploymentID), rolloutFlag, seconds)
 }
 
 func warnDeploymentWaitTimeout(appSlug, deploymentID string, deadline time.Duration) {
@@ -392,28 +393,31 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
+	stage := "deployment"
 	final, ok := waitForDeploymentReceiptUntil(waitCtx, c, dep, deadline)
 	if ok && waitForRollout && final.Status == statusLive && !deploymentRolloutComplete(final) {
+		stage = "rollout"
 		final, ok = waitForDeploymentRollout(waitCtx, c, final)
 	}
 	if !ok {
 		resumeCommand := deploymentWaitResumeCommandWithRollout(dep.ID, deadline, waitForRollout)
-		if waitForRollout {
-			PrintWarn(osStderr, "safe deployment did not reach 100%% traffic before the wait deadline; server continues processing; resume with: %s", resumeCommand)
-		} else {
-			PrintWarn(osStderr, "deployment did not reach a terminal state before the wait deadline; server continues processing; resume with: %s", resumeCommand)
-		}
 		receiptDep := dep
 		if final.ID != "" {
 			receiptDep = final
 		}
 		receipt := newDeployReceipt(receiptDep, prov, appURL, sourceSHA256, simplePlans...)
-		receipt.TimedOut = true
+		receipt.Interrupted = errors.Is(ctx.Err(), context.Canceled)
+		receipt.TimedOut = !receipt.Interrupted
+		receipt.WaitStage = stage
 		receipt.ResumeCommand = resumeCommand
+		receipt.Recovery = newDeployRecovery(stage, appSlug, receiptDep.ID, "", deadline, waitForRollout)
 		if code := jsonOut(writeJSON(receipt)); code != 0 {
 			return code
 		}
-		return 3
+		if receipt.Interrupted {
+			return printDeploymentWaitRecovery(context.Canceled, receiptDep, appSlug, stage, deadline, waitForRollout, 130)
+		}
+		return printDeploymentWaitRecovery(context.DeadlineExceeded, receiptDep, appSlug, stage, deadline, waitForRollout, 3)
 	}
 	receipt := newDeployReceipt(final, prov, appURL, sourceSHA256, simplePlans...)
 	if final.Status == statusLive && darkDeploy && final.TrafficPercent == 0 {
@@ -424,6 +428,16 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 		if summary, summaryOK := deploymentWithReleaseSummary(ctx, c, appSlug, final.ID); summaryOK {
 			receipt.ReleaseSummary = newDeployReleaseSummary(summary, appSlug)
 		}
+	}
+	if final.Status != statusLive {
+		receipt.WaitStage = "deployment"
+	} else if waitForRollout && final.RolloutState == rolloutStateAborted {
+		receipt.WaitStage = "rollout"
+	}
+	if receipt.WaitStage != "" {
+		receipt.Recovery = newDeployRecovery(receipt.WaitStage, appSlug, final.ID, "", deadline, waitForRollout)
+		receipt.Recovery.ResumeCommand = ""
+		receipt.Recovery.Hint = "The deployment or rollout reached a failed terminal state. Inspect the deployment and its logs before submitting a corrected deployment."
 	}
 	if code := jsonOut(writeJSON(receipt)); code != 0 {
 		return code

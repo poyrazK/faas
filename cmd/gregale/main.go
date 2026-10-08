@@ -50,6 +50,8 @@ func topLevelUsage(showAdvanced bool) string {
 	b.WriteString("                         NDJSON; scalars emit indented JSON; errors print\n")
 	b.WriteString("                         RFC 7807 to stderr. Equivalent env: FAAS_JSON=1.\n")
 	b.WriteString("                         Interactive-only commands retain human prompts.\n")
+	b.WriteString("  --non-interactive      Disable prompts and browser launches (before the command).\n")
+	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
 	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
 	return b.String()
 }
@@ -107,6 +109,16 @@ func run(args []string) (status int) {
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
 	}()
+	previousAutomation := nonInteractive
+	defer func() { nonInteractive = previousAutomation }()
+	nonInteractive = false
+	var automationErr error
+	args, automationErr = extractAutomationFlag(args)
+	previousProfile := profileOverride
+	defer func() { profileOverride = previousProfile }()
+	profileOverride = ""
+	var profileErr error
+	args, profileErr = extractConnectionProfile(args)
 	invalidJSON := invalidJSONFlagValue(args)
 	// Issue #64 D1: every command accepts --json (top-level). Strip
 	// it before dispatch and set jsonOutput so per-command printers
@@ -115,6 +127,12 @@ func run(args []string) (status int) {
 	if invalidJSON != "" {
 		PrintUsage(os.Stderr, "invalid --json value "+invalidJSON+"; use true or false", "cli")
 		return 1
+	}
+	if automationErr != nil {
+		return printErr("Invalid automation option", automationErr)
+	}
+	if profileErr != nil {
+		return printErr("Invalid connection profile", profileErr)
 	}
 	jsonUsageHelp = hasHelpFlag(args)
 	invokedCommandPath = publicCommandPath(args)
@@ -131,7 +149,12 @@ func run(args []string) (status int) {
 			}
 		}
 	}
+	if err := validateSelectedProfile(); err != nil {
+		return printErr("Invalid connection profile", err)
+	}
 	switch args[0] {
+	case "profile":
+		return cmdProfile(args[1:])
 	case "version", "--version", "-v":
 		// `gregale version --help` prints usage + docs link; bare
 		// `gregale version foo` still prints the version string (POSIX
@@ -303,14 +326,14 @@ func run(args []string) (status int) {
 			return cmdAppsStreamingCap(args[2], args[3:])
 		}
 		// `gregale apps -q <slug>` is the delete path.
-		if len(args) > 1 && (args[1] == "-q" || args[1] == "--quiet") {
+		if len(args) > 1 && (strings.SplitN(args[1], "=", 2)[0] == "-q" || strings.SplitN(args[1], "=", 2)[0] == "--quiet" || strings.SplitN(args[1], "=", 2)[0] == "--yes" || strings.SplitN(args[1], "=", 2)[0] == "--dry-run") {
 			// Preserve the quiet flag for cmdAppsRm. Dropping it here
 			// made the documented `gregale apps -q <slug>` command
 			// unexpectedly enter the typed-confirmation path.
 			return cmdAppsRm(args[1:])
 		}
 		if len(args) > 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet <slug>]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
 			return 1
 		}
 		return cmdApps()
