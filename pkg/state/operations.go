@@ -40,6 +40,7 @@ type Operation struct {
 	CurrentInvocationID       string                  `json:"current_invocation_id"`
 	ExecutionAttempt          int                     `json:"execution_attempt"`
 	ExecutionCapabilityDigest string                  `json:"execution_capability_digest,omitempty"`
+	MilestoneCount            int                     `json:"milestone_count,omitempty"`
 	ReportCount               int                     `json:"report_count"`
 	RecoveryCount             int                     `json:"recovery_count"`
 	PlanLimits                api.OperationPlanLimits `json:"plan_limits"`

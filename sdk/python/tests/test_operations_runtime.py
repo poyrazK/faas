@@ -136,3 +136,43 @@ def test_problem_does_not_turn_delivery_into_business_failure():
                 assert error.value.code == "operation_state_conflict"
 
     asyncio.run(exercise())
+
+
+def test_runtime_milestone_uses_current_proof_and_saved_identity():
+    from datetime import datetime, timezone
+    from uuid import UUID
+
+    from faas_sdk.models.operation_milestone_request import OperationMilestoneRequest
+
+    async def exercise():
+        seen = []
+
+        def transport(request):
+            if request.url.host == "127.0.0.1":
+                return httpx.Response(200, json={"access_token": "fresh"})
+            seen.append(request)
+            body = json.loads(request.content)
+            return httpx.Response(
+                200, json={**body, "operation_id": OP, "created_at": "2026-10-07T12:05:00Z", "sequence": 3}
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+            runtime = GregaleOperations(
+                api_url="https://api.gregale.test", identity_endpoint="http://127.0.0.1/identity", client=client
+            )
+            with runtime.bind_request(headers()):
+                fact = await runtime.milestone(
+                    OperationMilestoneRequest(
+                        id=UUID(OP),
+                        name="paid",
+                        payload={"total": 1},
+                        occurred_at=datetime(2026, 10, 7, 12, tzinfo=timezone.utc),
+                    )
+                )
+            assert fact.id == UUID(OP)
+            assert str(seen[0].url).endswith("/milestones")
+            assert seen[0].headers["X-Gregale-Operation-Attempt"] == "2"
+            assert seen[0].headers["X-Gregale-Operation-Capability"] == "a" * 64
+            assert seen[0].headers["Authorization"] == "Bearer fresh"
+
+    asyncio.run(exercise())

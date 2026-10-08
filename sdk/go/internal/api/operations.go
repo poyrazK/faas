@@ -12,22 +12,26 @@ import (
 type OperationState string
 
 const (
-	OperationAccepted               OperationState = "accepted"
-	OperationRunning                OperationState = "running"
-	OperationSucceeded              OperationState = "succeeded"
-	OperationFailed                 OperationState = "failed"
-	OperationCancelled              OperationState = "cancelled"
-	OperationRequiresReconciliation OperationState = "requires_reconciliation"
-	OperationRecoveryReconcile                     = "reconcile_on_unknown"
-	OperationRecoverySafeRetry                     = "safe_retry"
-	OperationOwnerPlatformTenant                   = "platform_tenant"
-	OperationIDHeader                              = "X-Gregale-Customer-Operation-Id"
-	OperationAttemptHeader                         = "X-Gregale-Operation-Attempt"
-	OperationCapabilityHeader                      = "X-Gregale-Operation-Capability"
-	OperationExecutionKindHeader                   = "X-Gregale-Operation-Execution-Kind"
-	OperationExecutionIDHeader                     = "X-Gregale-Operation-Execution-Id"
-	OperationStepHeader                            = "X-Gregale-Operation-Step"
-	OperationStepAttemptHeader                     = "X-Gregale-Operation-Step-Attempt"
+	OperationAccepted                 OperationState = "accepted"
+	OperationRunning                  OperationState = "running"
+	OperationSucceeded                OperationState = "succeeded"
+	OperationFailed                   OperationState = "failed"
+	OperationCancelled                OperationState = "cancelled"
+	OperationRequiresReconciliation   OperationState = "requires_reconciliation"
+	OperationRecoveryReconcile                       = "reconcile_on_unknown"
+	OperationRecoverySafeRetry                       = "safe_retry"
+	OperationOwnerPlatformTenant                     = "platform_tenant"
+	OperationIDHeader                                = "X-Gregale-Customer-Operation-Id"
+	OperationAttemptHeader                           = "X-Gregale-Operation-Attempt"
+	OperationCapabilityHeader                        = "X-Gregale-Operation-Capability"
+	OperationExecutionKindHeader                     = "X-Gregale-Operation-Execution-Kind"
+	OperationExecutionIDHeader                       = "X-Gregale-Operation-Execution-Id"
+	OperationStepHeader                              = "X-Gregale-Operation-Step"
+	OperationStepAttemptHeader                       = "X-Gregale-Operation-Step-Attempt"
+	OperationTransactionVersionHeader                = "X-Gregale-Customer-Operation-Transaction-Version"
+	OperationResultMaxBytesHeader                    = "X-Gregale-Customer-Operation-Result-Max-Bytes"
+	OperationHTTPTransactionVersion                  = 1
+	OperationMilestoneVersionHeader                  = "X-Gregale-Customer-Operation-Milestone-Version"
 )
 
 func (s OperationState) Terminal() bool {
@@ -37,15 +41,19 @@ func (s OperationState) Terminal() bool {
 // OperationDefinitionSpec is a resolved immutable contract. Schema documents
 // are bundled with deployment; runtime validation never loads external URLs.
 type OperationDefinitionSpec struct {
-	Name                string          `json:"name" yaml:"name"`
-	Method              string          `json:"method" yaml:"method"`
-	Path                string          `json:"path" yaml:"path"`
-	Owner               string          `json:"owner" yaml:"owner"`
-	InputSchema         json.RawMessage `json:"input_schema"`
-	OutputSchema        json.RawMessage `json:"output_schema"`
-	ProgressStages      []string        `json:"progress_stages" yaml:"progress_stages"`
-	CompletionWebhookID string          `json:"completion_webhook_id,omitempty" yaml:"completion_webhook_id,omitempty"`
-	Recovery            string          `json:"recovery" yaml:"recovery"`
+	Milestones             map[string]json.RawMessage `json:"milestones,omitempty"`
+	WorkflowSteps          []OperationWorkflowSpec    `json:"workflow_steps,omitempty"`
+	Subject                *OperationSubjectSpec      `json:"subject,omitempty" yaml:"subject,omitempty"`
+	Name                   string                     `json:"name" yaml:"name"`
+	Method                 string                     `json:"method" yaml:"method"`
+	Path                   string                     `json:"path" yaml:"path"`
+	Owner                  string                     `json:"owner" yaml:"owner"`
+	InputSchema            json.RawMessage            `json:"input_schema"`
+	OutputSchema           json.RawMessage            `json:"output_schema"`
+	ProgressStages         []string                   `json:"progress_stages" yaml:"progress_stages"`
+	CompletionWebhookID    string                     `json:"completion_webhook_id,omitempty" yaml:"completion_webhook_id,omitempty"`
+	Recovery               string                     `json:"recovery" yaml:"recovery"`
+	HTTPTransactionVersion int                        `json:"http_transaction_version,omitempty" yaml:"http_transaction_version,omitempty"`
 }
 
 type OperationDefinitionResponse struct {
@@ -66,20 +74,24 @@ type OperationDefinitionsResponse struct {
 // Fetch schemas through the single-definition read to keep maximum-plan
 // collection responses within the existing SDK response bound.
 type OperationDefinitionSummary struct {
-	ID                  string    `json:"id"`
-	AppID               string    `json:"app_id"`
-	Scope               string    `json:"scope"`
-	Revision            string    `json:"revision"`
-	DeploymentID        string    `json:"deployment_id"`
-	ReleaseID           string    `json:"release_id,omitempty"`
-	Name                string    `json:"name"`
-	Method              string    `json:"method"`
-	Path                string    `json:"path"`
-	Owner               string    `json:"owner"`
-	ProgressStages      []string  `json:"progress_stages"`
-	CompletionWebhookID string    `json:"completion_webhook_id,omitempty"`
-	Recovery            string    `json:"recovery"`
-	CreatedAt           time.Time `json:"created_at"`
+	Milestones             []string                `json:"milestones,omitempty"`
+	WorkflowSteps          []OperationWorkflowSpec `json:"workflow_steps,omitempty"`
+	Subject                *OperationSubjectSpec   `json:"subject,omitempty"`
+	HTTPTransactionVersion int                     `json:"http_transaction_version,omitempty"`
+	ID                     string                  `json:"id"`
+	AppID                  string                  `json:"app_id"`
+	Scope                  string                  `json:"scope"`
+	Revision               string                  `json:"revision"`
+	DeploymentID           string                  `json:"deployment_id"`
+	ReleaseID              string                  `json:"release_id,omitempty"`
+	Name                   string                  `json:"name"`
+	Method                 string                  `json:"method"`
+	Path                   string                  `json:"path"`
+	Owner                  string                  `json:"owner"`
+	ProgressStages         []string                `json:"progress_stages"`
+	CompletionWebhookID    string                  `json:"completion_webhook_id,omitempty"`
+	Recovery               string                  `json:"recovery"`
+	CreatedAt              time.Time               `json:"created_at"`
 }
 
 // OperationTenantIdentity binds local submission receipts to the authenticated
@@ -132,6 +144,7 @@ type OperationDeliveryResponse struct {
 }
 
 type OperationResponse struct {
+	Subject               *OperationSubject         `json:"subject,omitempty"`
 	ID                    string                    `json:"id"`
 	Name                  string                    `json:"name"`
 	Generation            int                       `json:"generation"`
@@ -157,6 +170,7 @@ type OperationAcceptedResponse struct {
 // OperationSummary deliberately excludes input, result bytes, artifact locations,
 // delivery errors and execution authority. Fetch detail separately to reopen work.
 type OperationSummary struct {
+	Subject               *OperationSubject        `json:"subject,omitempty"`
 	PlatformTenantID      string                   `json:"platform_tenant_id,omitempty"` // Account operator listings only.
 	ID                    string                   `json:"id"`
 	Name                  string                   `json:"name"`
@@ -184,13 +198,15 @@ type OperationListResponse struct {
 
 // AppID and Scope are explicit selectors, never sources of customer authority.
 type OperationListOptions struct {
-	TenantID string // Optional account operator filter; ignored by tenant-self clients.
-	AppID    string
-	Scope    string
-	Name     string
-	State    OperationState
-	Limit    int
-	Cursor   string
+	SubjectType string
+	SubjectID   string
+	TenantID    string // Optional account operator filter; ignored by tenant-self clients.
+	AppID       string
+	Scope       string
+	Name        string
+	State       OperationState
+	Limit       int
+	Cursor      string
 }
 
 // OperationExecution summarizes a retained execution generation without payload,

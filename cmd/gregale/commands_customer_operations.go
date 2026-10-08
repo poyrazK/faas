@@ -30,6 +30,7 @@ type customerOperationsClient interface {
 }
 
 type customerOperationCommand struct {
+	subjectType, subjectID                                              string
 	verb, app, id, scope, tenant, name, state, cursor, artifact, output string
 	after                                                               int
 	limit                                                               int
@@ -40,8 +41,11 @@ type customerOperationCommand struct {
 
 func cmdCustomerOperations(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale customer-operations <doctor|definitions|validate|start|list|get|events|executions|watch|download|cancel|recover|delivery|delivery-attempts|retry-delivery>", "customer-operations")
+		PrintUsage(os.Stderr, "usage: gregale customer-operations <doctor|definitions|validate|start|list|get|milestones|events|executions|watch|download|cancel|recover|delivery|delivery-attempts|retry-delivery>", "customer-operations")
 		return 1
+	}
+	if args[0] == "milestones" {
+		return cmdCustomerOperationMilestones(args[1:])
 	}
 	if len(args) > 0 && (args[0] == "delivery" || args[0] == "delivery-attempts" || args[0] == "retry-delivery") {
 		return cmdCustomerOperationDelivery(args)
@@ -98,6 +102,8 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 	var evidenceFile, resultFile string
 	switch c.verb {
 	case "list":
+		fs.StringVar(&c.subjectType, "subject-type", "", "business reference type; requires --subject-id")
+		fs.StringVar(&c.subjectID, "subject-id", "", "exact business reference ID; requires --subject-type")
 		fs.StringVar(&c.scope, "scope", "", "explicit deployment environment")
 		fs.StringVar(&c.tenant, "tenant", "", "optional platform tenant UUID")
 		fs.StringVar(&c.name, "name", "", "operation definition name")
@@ -151,6 +157,11 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 		c.id = positionals[0]
 		if strings.TrimSpace(c.id) == "" {
 			return c, fmt.Errorf("operation ID must not be empty")
+		}
+	}
+	if c.verb == "list" && (c.subjectType != "" || c.subjectID != "") {
+		if err := api.ValidateOperationSubject(api.OperationSubject{Type: c.subjectType, ID: c.subjectID}); err != nil {
+			return c, err
 		}
 	}
 	if c.verb == "list" && api.ValidateScope(c.scope) != nil {
@@ -229,7 +240,7 @@ func loadCustomerOperationRecovery(req *api.OperationRecoveryRequest, evidenceFi
 func runCustomerOperationCommand(ctx context.Context, client customerOperationsClient, c customerOperationCommand, out io.Writer, asJSON bool) (int, error) {
 	switch c.verb {
 	case "list":
-		page, err := client.ListAccountOperations(ctx, c.app, api.OperationListOptions{Scope: c.scope, TenantID: c.tenant, Name: c.name, State: api.OperationState(c.state), Limit: c.limit, Cursor: c.cursor})
+		page, err := client.ListAccountOperations(ctx, c.app, api.OperationListOptions{SubjectType: c.subjectType, SubjectID: c.subjectID, Scope: c.scope, TenantID: c.tenant, Name: c.name, State: api.OperationState(c.state), Limit: c.limit, Cursor: c.cursor})
 		if err != nil {
 			return 0, err
 		}
@@ -237,7 +248,7 @@ func runCustomerOperationCommand(ctx context.Context, client customerOperationsC
 			return 0, json.NewEncoder(out).Encode(page)
 		}
 		for _, op := range page.Operations {
-			if _, err := fmt.Fprintf(out, "%s\ttenant=%s\t%s\twork=%s\tdelivery=%s\tgeneration=%d\n", op.ID, op.PlatformTenantID, op.Name, op.State, op.CompletionDelivery.State, op.Generation); err != nil {
+			if _, err := fmt.Fprintf(out, "%s\ttenant=%s\t%s\twork=%s\tdelivery=%s\tgeneration=%d%s\n", op.ID, op.PlatformTenantID, op.Name, op.State, op.CompletionDelivery.State, op.Generation, customerOperationSubjectLabel(op.Subject)); err != nil {
 				return 0, err
 			}
 		}
@@ -295,7 +306,7 @@ func renderCustomerOperation(out io.Writer, op api.OperationResponse, asJSON boo
 	if asJSON {
 		return json.NewEncoder(out).Encode(op)
 	}
-	_, err := fmt.Fprintf(out, "%s\twork=%s\tdelivery=%s\tdelivery_attempts=%d\tgeneration=%d\tsequence=%d", op.ID, op.State, op.CompletionDelivery.State, op.CompletionDelivery.Attempts, op.Generation, op.LatestSequence)
+	_, err := fmt.Fprintf(out, "%s\twork=%s\tdelivery=%s\tdelivery_attempts=%d\tgeneration=%d\tsequence=%d%s", op.ID, op.State, op.CompletionDelivery.State, op.CompletionDelivery.Attempts, op.Generation, op.LatestSequence, customerOperationSubjectLabel(op.Subject))
 	if err != nil {
 		return err
 	}
@@ -410,4 +421,11 @@ func downloadCustomerOperation(ctx context.Context, client customerOperationsCli
 		return receipt, fmt.Errorf("publish verified download (output must be new): %w", err)
 	}
 	return customerOperationDownloadReceipt{OperationID: op.ID, ArtifactID: artifact.ID, Path: path, SizeBytes: n, SHA256: digest}, nil
+}
+
+func customerOperationSubjectLabel(subject *api.OperationSubject) string {
+	if subject == nil {
+		return ""
+	}
+	return "\tsubject=" + subject.Type + ":" + subject.ID
 }

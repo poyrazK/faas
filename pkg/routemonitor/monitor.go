@@ -33,6 +33,39 @@ func Validate(req api.SetRouteMonitorRequest) error {
 	}
 	return routehealth.Validate(api.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: req.ExpectedRevision, Routes: selectors})
 }
+
+func ValidatePreviewRequest(req api.PreviewRouteMonitorRequest, currentRevision int64) error {
+	return Validate(api.SetRouteMonitorRequest{
+		CustomerGroupBy:  req.CustomerGroupBy,
+		Enabled:          true,
+		ExpectedRevision: &currentRevision,
+		Routes:           req.Routes,
+	})
+}
+
+func ValidatePreview(preview api.RouteMonitorPreview) error {
+	if !preview.PreviewOnly || preview.CurrentRevision < 0 || preview.Report.Revision != preview.CurrentRevision || !preview.Report.Enabled {
+		return errors.New("invalid route monitor preview metadata")
+	}
+	return ValidateReport(preview.Report)
+}
+
+func ValidatePreviewForRequest(preview api.RouteMonitorPreview, req api.PreviewRouteMonitorRequest) error {
+	if err := ValidatePreview(preview); err != nil {
+		return err
+	}
+	if preview.Report.CustomerGroupBy != req.CustomerGroupBy || len(preview.Report.Routes) != len(req.Routes) {
+		return errors.New("route monitor preview does not match the proposed budgets")
+	}
+	routes := make([]api.RouteMonitorRoute, len(preview.Report.Routes))
+	for i := range preview.Report.Routes {
+		routes[i] = preview.Report.Routes[i].Route
+	}
+	if !RoutesEqual(routes, req.Routes) {
+		return errors.New("route monitor preview does not match the proposed budgets")
+	}
+	return nil
+}
 func CloneRoutes(in []api.RouteMonitorRoute) []api.RouteMonitorRoute {
 	out := slices.Clone(in)
 	for i := range out {
