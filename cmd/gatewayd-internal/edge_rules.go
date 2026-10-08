@@ -81,6 +81,8 @@ type edgeRuleStore interface {
 type gatewaydEdgeRules struct {
 	loadMu           sync.Mutex
 	loads            map[edgeLoadKey]chan struct{}
+	loadFailedUntil  map[string]time.Time // guarded by loadMu
+	clock            func() time.Time     // nil = time.Now (tests inject)
 	fenceMu          sync.Mutex
 	fences           map[string]edgeRuleFence
 	store            edgeRuleStore
@@ -1250,6 +1252,7 @@ func compileJWTRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleJWTResolved
 			RequiredClaims:                 claimsCopy,
 			PlatformTenantExternalRefClaim: action.PlatformTenantExternalRefClaim,
 			MCP:                            action.MCP,
+			RequireExp:                     action.RequireExp,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

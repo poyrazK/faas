@@ -7493,6 +7493,7 @@ type EdgeRuleJWTAction struct {
 	RequiredClaims                 map[string]string      `json:"required_claims,omitempty"`
 	PlatformTenantExternalRefClaim string                 `json:"platform_tenant_external_ref_claim,omitempty"`
 	MCP                            *api.MCPResourcePolicy `json:"mcp,omitempty"`
+	RequireExp                     bool                   `json:"require_exp,omitempty"`
 }
 
 // EdgeRuleIPAction is a CIDR allow/deny evaluator. Allow empty =

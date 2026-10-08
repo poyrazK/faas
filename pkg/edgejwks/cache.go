@@ -23,6 +23,7 @@ package edgejwks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -40,7 +41,10 @@ import (
 type Cache interface {
 	// Get returns the cached jose.JSONWebKeySet for url, performing
 	// a network fetch on the first call per window (see
-	// MinRefreshInterval). Unknown kids do not bypass the window.
+	// MinRefreshInterval). An unknown kid may refresh early, at most once
+	// per UnknownKIDRefreshInterval. A failed refresh serves the previous
+	// set for one further interval of grace, then fails with
+	// ErrJWKSUnavailable.
 	// The bool indicates "this URL has been registered at least once" — false means the
 	// caller should call Register first (cmd-side
 	// MatchJWT does this lazily).
@@ -72,6 +76,23 @@ const MaxResponseBytes = 2 << 20
 // unknown IDs cannot trigger unbounded fetches inside the window.
 const DefaultMinRefreshInterval = 5 * time.Minute
 
+// UnknownKIDRefreshInterval is the minimum spacing of the early refresh an
+// unrecognised key ID triggers inside the freshness window. An IdP that
+// rotates in a new signing key is picked up within this bound instead of
+// after MinRefreshInterval, while a client minting random kids still costs
+// at most one fetch per interval per URL.
+const UnknownKIDRefreshInterval = 30 * time.Second
+
+// FetchFailureBackoff spaces fetch attempts after a failure, so requests
+// during an IdP outage fail (or use the grace keyset) immediately instead of
+// queueing one-by-one behind a fetch timeout each.
+const FetchFailureBackoff = 5 * time.Second
+
+// ErrJWKSUnavailable marks a keyset that could not be fetched and has no
+// usable cached copy. It is the IdP or network failing, not the token, so
+// the gateway answers 503 rather than 401.
+var ErrJWKSUnavailable = errors.New("edgejwks: jwks unavailable")
+
 // DefaultFetchTimeout caps a single JWKS HTTP fetch. Larger values
 // risk blocking the gateway hot path; smaller values risk transient
 // fetch failures during IdP outages.
@@ -101,9 +122,11 @@ type jwksCache struct {
 }
 
 type urlEntry struct {
-	gate      chan struct{}
-	set       *jose.JSONWebKeySet
-	lastFetch time.Time
+	gate        chan struct{}
+	set         *jose.JSONWebKeySet
+	lastFetch   time.Time
+	lastAttempt time.Time // last fetch start, success or not
+	lastFailure time.Time // zero after a successful fetch
 }
 
 // NewCache returns an empty cache. Callers (cmd/gatewayd-internal/edge_rules.go::MatchJWT)
@@ -145,8 +168,10 @@ func (c *jwksCache) Register(rawURL string) error {
 }
 
 // Get returns the cached keyset for url, fetching on the first call after
-// expiry. The refresh policy is independent of kid, which may be empty.
-func (c *jwksCache) Get(ctx context.Context, rawURL string, _ string) (*jose.JSONWebKeySet, bool, error) {
+// expiry. Expiry is independent of kid (which may be empty); a kid absent
+// from a fresh set additionally allows one early refresh per
+// UnknownKIDRefreshInterval so key rotations are picked up promptly.
+func (c *jwksCache) Get(ctx context.Context, rawURL string, kid string) (*jose.JSONWebKeySet, bool, error) {
 	c.mu.Lock()
 	entry, ok := c.byURL[rawURL]
 	c.mu.Unlock()
@@ -164,18 +189,48 @@ func (c *jwksCache) Get(ctx context.Context, rawURL string, _ string) (*jose.JSO
 	if err := ctx.Err(); err != nil {
 		return nil, true, err
 	}
-	if entry.set != nil && time.Since(entry.lastFetch) < c.refresh {
+	now := time.Now()
+	if entry.set != nil && now.Sub(entry.lastFetch) < c.refresh && !c.unknownKIDRefreshDue(entry, kid, now) {
 		return entry.set, true, nil
 	}
-	entry.set = nil // Fail closed if refreshing an expired keyset fails.
-
+	if !entry.lastFailure.IsZero() && now.Sub(entry.lastFailure) < FetchFailureBackoff {
+		return c.graceSet(entry, now, errors.New("fetch backing off after a recent failure"))
+	}
+	entry.lastAttempt = now
 	if err := entry.fetch(ctx, c.httpClient, c.fetchTO, rawURL); err != nil {
+		if ctx.Err() == nil {
+			entry.lastFailure = now
+		}
 		if c.onFetchErr != nil {
 			c.onFetchErr(rawURL, err)
 		}
-		return nil, true, err
+		return c.graceSet(entry, now, err)
 	}
+	entry.lastFailure = time.Time{}
 	return entry.set, true, nil
+}
+
+// unknownKIDRefreshDue reports whether a key ID absent from a still-fresh set
+// warrants an early refetch: the IdP may have rotated in a new signing key.
+// The spacing bound keeps random kids from turning into a fetch per request.
+func (c *jwksCache) unknownKIDRefreshDue(entry *urlEntry, kid string, now time.Time) bool {
+	if kid == "" || len(entry.set.Key(kid)) > 0 {
+		return false
+	}
+	return now.Sub(entry.lastAttempt) >= UnknownKIDRefreshInterval
+}
+
+// graceSet answers a failed or backed-off refresh. A set fetched within
+// MinRefreshInterval plus one further interval of grace is still served, so
+// a short IdP outage does not reject every token; past that bound the set is
+// dropped and the caller fails closed, so a key the IdP has removed is
+// trusted for at most two refresh intervals (ADR-091 D14).
+func (c *jwksCache) graceSet(entry *urlEntry, now time.Time, cause error) (*jose.JSONWebKeySet, bool, error) {
+	if entry.set != nil && now.Sub(entry.lastFetch) < 2*c.refresh {
+		return entry.set, true, nil
+	}
+	entry.set = nil
+	return nil, true, fmt.Errorf("%w: %w", ErrJWKSUnavailable, cause)
 }
 
 // fetch performs a single HTTP GET of the JWKS URL, parses into a

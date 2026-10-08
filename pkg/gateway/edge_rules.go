@@ -284,6 +284,8 @@ type EdgeRuleJWTResolved struct {
 	ExtractClaims []string
 	MCP           *api.MCPResourcePolicy
 	Unavailable   bool
+	// RequireExp rejects a verified token that carries no exp claim.
+	RequireExp bool
 }
 
 // EdgeRuleIPResolved is the kind=ip subset (ADR-091). PR 5 calls
@@ -508,6 +510,14 @@ func NewEdgeRuleCache(capacity int) *EdgeRuleCache {
 	return &EdgeRuleCache{now: time.Now, cap: capacity, ll: list.New(), byID: map[string]*list.Element{}}
 }
 
+// SetClock replaces the cache's time source. Tests outside this package use
+// it to age entries past their TTL; production keeps time.Now.
+func (c *EdgeRuleCache) SetClock(now func() time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = now
+}
+
 // GetHost returns a value-copy of every compiled rule slice for a current host.
 // Loaders use it to recheck the cache after joining an in-flight database read.
 func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
@@ -515,6 +525,26 @@ func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
 	if !ok {
 		return nil, false
 	}
+	return cloneHostEntry(entry), true
+}
+
+// GetLastKnownHost returns the host's most recent compiled rule set even when
+// its lifetime has lapsed. Loaders fall back to it when the database read
+// fails, so a deny rule (ip, geo, maintenance) keeps applying through a
+// Postgres outage instead of silently failing open once the entry expires.
+// Reset (any rule mutation) drops it, so a stale set can only outlive its
+// TTL while no newer policy has been written.
+func (c *EdgeRuleCache) GetLastKnownHost(host string) (*HostEntry, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	el, ok := c.byID[host]
+	if !ok {
+		return nil, false
+	}
+	return cloneHostEntry(el.Value.(*HostEntry)), true
+}
+
+func cloneHostEntry(entry *HostEntry) *HostEntry {
 	out := *entry
 	out.Route = slices.Clone(entry.Route)
 	out.Rewrite = slices.Clone(entry.Rewrite)
@@ -538,7 +568,7 @@ func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
 		out.Respond[i].Body = slices.Clone(entry.Respond[i].Body)
 	}
 	out.PathGlobErrs = slices.Clone(entry.PathGlobErrs)
-	return &out, true
+	return &out
 }
 
 // Get returns the cached `kind=route` slice for host and whether
@@ -919,7 +949,8 @@ func (c *EdgeRuleCache) getEntry(host string) (*HostEntry, bool) {
 	}
 	entry := el.Value.(*HostEntry)
 	if !entry.expiresAt.IsZero() && !c.now().Before(entry.expiresAt) {
-		c.removeElement(el)
+		// Expired entries stay resident (LRU-bounded) as the
+		// last-known-good set GetLastKnownHost serves on a failed reload.
 		return nil, false
 	}
 	c.ll.MoveToFront(el)
@@ -1098,6 +1129,11 @@ type EdgeRuleAuditor interface {
 type JWTVerifier interface {
 	Verify(ctx context.Context, rawToken string, rule *EdgeRuleJWTResolved) (claims *JWTClaims, err error)
 }
+
+// ErrJWTKeysUnavailable is returned (wrapped) by a JWTVerifier when the
+// rule's signing keys could not be fetched and no usable cached copy exists.
+// The token was never judged, so the gateway answers 503, not 401.
+var ErrJWTKeysUnavailable = errors.New("gateway: jwt signing keys unavailable")
 
 // JWTClaims is the parsed subset pkg/gateway cares about. Mirrors
 // pkg/edgejwks.Claims (same field set; pkg/gateway doesn't import

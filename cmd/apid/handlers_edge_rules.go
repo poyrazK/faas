@@ -595,6 +595,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				Algorithms: a.Algorithms, RequiredClaims: a.RequiredClaims,
 				PlatformTenantExternalRefClaim: a.PlatformTenantExternalRefClaim,
 				MCP:                            a.MCP,
+				RequireExp:                     a.RequireExp,
 			}
 		}
 	case state.EdgeRuleKindIP:

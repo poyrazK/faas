@@ -174,3 +174,74 @@ func TestEdgeLoadResetAndOtherHostsDoNotWaitForOldRead(t *testing.T) {
 		t.Fatalf("reads=%d, want old generation, other host, new generation", got)
 	}
 }
+
+// A deny rule must keep applying through a Postgres outage: once the cached
+// entry expires, a failed reload serves the last-known rules instead of
+// failing open, and retries are spaced by the backoff instead of hitting the
+// database on every per-kind lookup of every request.
+func TestEdgeLoadServesLastKnownRulesWhileStoreIsDown(t *testing.T) {
+	var down atomic.Bool
+	s := &concurrentEdgeStore{load: func(_ context.Context, host string, _ int32) ([]state.EdgeRule, error) {
+		if down.Load() {
+			return nil, errors.New("postgres unavailable")
+		}
+		return []state.EdgeRule{{
+			ID: "deny-office", AccountID: "acc", AppID: "app", MatchHost: host,
+			Enabled: true, Kind: state.EdgeRuleKindIP,
+			Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindIP, IP: &state.EdgeRuleIPAction{Deny: []string{"192.0.2.0/24"}}},
+		}}, nil
+	}}
+	g := newConcurrentEdgeMatcher(s)
+	now := time.Unix(1_000, 0)
+	clock := func() time.Time { return now }
+	g.clock = clock
+	g.cache.SetClock(clock)
+
+	if rule := g.MatchIP(t.Context(), "a.example.com", "/", "GET"); rule == nil {
+		t.Fatal("initial load did not compile the deny rule")
+	}
+	down.Store(true)
+	now = now.Add(time.Hour) // far past the cache TTL
+	before := s.calls.Load()
+	for range 20 {
+		if rule := g.MatchIP(t.Context(), "a.example.com", "/", "GET"); rule == nil || rule.ID != "deny-office" {
+			t.Fatalf("MatchIP during outage = %v; want the last-known deny rule", rule)
+		}
+		if rule := g.MatchMaintenance(t.Context(), "a.example.com", "/", "GET"); rule != nil {
+			t.Fatalf("MatchMaintenance = %v; want none (host has no maintenance rule)", rule)
+		}
+	}
+	if got := s.calls.Load() - before; got != 1 {
+		t.Fatalf("store reads during backoff = %d, want 1", got)
+	}
+
+	// After the backoff one request retries; recovery replaces the fallback.
+	down.Store(false)
+	now = now.Add(edgeRuleLoadRetryBackoff)
+	if rule := g.MatchIP(t.Context(), "a.example.com", "/", "GET"); rule == nil {
+		t.Fatal("recovered load lost the deny rule")
+	}
+	if got := s.calls.Load() - before; got != 2 {
+		t.Fatalf("store reads after backoff = %d, want 2", got)
+	}
+}
+
+// A host the gateway never loaded has no last-known set: the loader error
+// stands (each kind keeps its posture), but retries are still backed off.
+func TestEdgeLoadBacksOffColdHostFailures(t *testing.T) {
+	s := &concurrentEdgeStore{load: func(context.Context, string, int32) ([]state.EdgeRule, error) {
+		return nil, errors.New("postgres unavailable")
+	}}
+	g := newConcurrentEdgeMatcher(s)
+	now := time.Unix(1_000, 0)
+	g.clock = func() time.Time { return now }
+	for range 10 {
+		if rule := g.MatchJWT(t.Context(), "cold.example.com", "/", "GET"); rule == nil || !rule.Unavailable {
+			t.Fatalf("MatchJWT on a cold failing host = %v; want fail-closed Unavailable", rule)
+		}
+		g.MatchIP(t.Context(), "cold.example.com", "/", "GET")
+	}
+	if got := s.calls.Load(); got != 1 {
+		t.Fatalf("store reads = %d, want 1 inside the backoff window", got)
+	}
+}

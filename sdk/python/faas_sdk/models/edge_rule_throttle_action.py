@@ -72,7 +72,9 @@ class EdgeRuleThrottleAction:
     When `"jwt_claim"`, one bucket per value of the
     claim named by `jwt_claim_name`. When `"country"`, one
     bucket per ISO 3166-1 alpha-2 country resolved from the
-    gateway's trusted client IP. Each non-empty
+    gateway's trusted client IP. When `"ip"`, one bucket per
+    trusted client IP (IPv6 clients keyed by their /64).
+    Each non-empty
     value activates the bounded design: when the
     per-rule consumer set exceeds
     `max_keys_per_rule`, all over-cap callers collapse
