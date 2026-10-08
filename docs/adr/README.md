@@ -56,6 +56,9 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 731 | [Durable PostgreSQL lifecycle qualification](731-managed-postgres-durable-qualification.md) | accepted | Version-8 SQL restart, encrypted credential delivery, workload rotation and cleanup evidence |
+| 687 | [Object version listing and bound historical downloads](687-object-version-cli-and-bound-downloads.md) | accepted | Public immutable version identities, bounded listings and exact-version gateway read authority |
+| 688 | [Resumable CLI object uploads](688-resumable-cli-object-uploads.md) | accepted | Private fingerprint-bound multipart checkpoints and uncertain-completion recovery |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
@@ -68,6 +71,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 642 | [Restore-safe guest timers](642-restore-safe-guest-timers.md) | proposed | Guests boot with kvm-clock and the one-shot LAPIC timer because Firecracker 1.7 restores lost TSC-deadline interrupts; backing identity v2 refuses captures booted with the old profile |
 | 643 | [Park-to-admit for refused wakes](643-park-to-admit-refused-wakes.md) | proposed | A gateway wake refused for fleet capacity parks one idle, floor-respecting instance of another owned app and retries once, instead of answering 503 until the idle timeout |
 | 680 | [Restored processes reseed their userspace random generators before serving](680-restore-userspace-rng-reseed.md) | accepted | guest-init reseed barrier with Node (N-API RAND_poll addon) and Python preloads; fails closed to cold boot; GHSA-24j2-p895-mwc9 |
+| 790 | [meterd catches up closed minutes it did not roll](790-meterd-closed-minute-catch-up.md) | proposed | A sample tick re-rolls, from the billing ledger, closed minutes of the last 24 h never recorded compute-complete (≤15 per tick); idempotent through first-write-wins; H5-55 |
+| 791 | [The build wall-clock limit is 15 minutes](791-build-wall-clock-limit.md) | accepted | Records `BuildTimeoutSeconds = 900` (raised from the spec's 10 min in August without an ADR); end-to-end deploy time is not separately enforced; H5-71 |
 | 644 | [Verified MCP promotion and resource policy](644-mcp-verified-promotion-and-resource-policy.md) | accepted | Verify zero-traffic candidates, gate caller catalogs, and reuse gateway JWT resource authorization |
 | 678 | [Compose prebuilt image workloads](678-compose-prebuilt-image-workloads.md) | accepted | Deploy stateless image services through imaged with immutable resolution and existing project dependency policies |
 | 679 | [Image-published deployment trigger](679-image-published-deployment-trigger.md) | accepted | CI publishes an immutable image, then hands it to existing deployment admission with durable workload/scope/digest deduplication |
@@ -637,6 +642,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-615: Customer event storage admission](615-customer-event-storage-admission.md)
 - [ADR-616: Bounded event routing history](616-bounded-event-routing-history.md)
 - [ADR-617: Event consumer backlog inspection](617-event-consumer-backlog-inspection.md)
+
+- [ADR-638: Object version listing and bound historical downloads](638-object-version-cli-and-bound-downloads.md)
+
+- [ADR-639: Resumable CLI object uploads](639-resumable-cli-object-uploads.md)
 - [ADR-645: Subscription-scoped retained-event replay preview](645-subscription-retained-event-replay-preview.md)
 - [ADR-639: Durable subscription event backfill](639-durable-subscription-event-backfill.md)
 - [ADR-646: Unified backfill delivery inspection](646-unified-backfill-delivery-inspection.md)

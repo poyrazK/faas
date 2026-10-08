@@ -147,8 +147,8 @@ enabled. Other calls stay synchronous. The server returns the handle only
 after PostgreSQL can read the new row.
 
 Tasks are disabled by default. Enable them in `gregale-mcp.json` and bind a
-PostgreSQL URL whose database role can create and alter the namespaced task
-table, queue index, notification function, and update trigger. Keep a stable
+PostgreSQL URL whose database role can create and alter the task and owner-cursor
+tables, indexes, claim-order sequence, functions, and triggers. Keep a stable
 32-byte-or-longer secret in `MCP_TASK_OWNER_KEY`:
 
 ```json
@@ -521,9 +521,14 @@ deployments. Do not disable secret scanning to bypass that issue.
 Keep durable task records in the bound PostgreSQL database. The default combined
 process may pause when its app scales to zero; a dedicated worker deployment can
 scale on the task table's aggregate backlog through Gregale custom metrics.
+Workers rotate claims among active task-owner partitions in an app namespace,
+choosing each owner's oldest eligible task. The cursor is persisted in
+PostgreSQL, so worker restarts retain the rotation order and concurrent replicas
+skip a cursor that another claimant currently holds. Open-mode callers share one
+owner partition; this is caller-level fairness, not account-level scheduling.
 The gateway tool policy, redacted execution metrics and tool-contract rollout
-checks are available in this preview. Strict per-customer task scheduling
-fairness and customer-managed task-key rotation remain follow-on capabilities.
+checks are available in this preview. Customer-managed task-key rotation remains
+a follow-on capability.
 
 Protocol references: [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http),
 [Tasks extension](https://tasks.extensions.modelcontextprotocol.io/specification/2026-07-28/tasks)

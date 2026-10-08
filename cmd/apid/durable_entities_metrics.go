@@ -64,11 +64,11 @@ func newDurableEntityMetrics(registry *prometheus.Registry, prefix string) *dura
 		}
 	}
 	for _, operation := range []string{"invoke", "alarm", "maintenance"} {
-		for _, outcome := range []string{"success", "replay", "busy", "conflict", "stale", "uncertain", "invalid", "failed", "skipped", "limit", "pending"} {
+		for _, outcome := range []string{"success", "replay", "busy", "conflict", "stale", "uncertain", "invalid", "failed", "skipped", "limit", "pending", "backoff", "exhausted"} {
 			m.outcomes.WithLabelValues(operation, outcome)
 		}
 	}
-	for _, kind := range []string{"manifest", "snapshot", "receipt", "maintenance", "probe", "other"} {
+	for _, kind := range []string{"manifest", "snapshot", "receipt", "maintenance", "probe", "alarm_index", "other"} {
 		m.uploadedBytes.WithLabelValues(kind)
 	}
 	for _, outcome := range []string{"deleted", "retained", "failed"} {
@@ -103,6 +103,10 @@ func durableEntityOutcome(err error) string {
 		return "limit"
 	case errors.Is(err, durableentity.ErrInventoryPending):
 		return "pending"
+	case errors.Is(err, durableentity.ErrAlarmBackoff):
+		return "backoff"
+	case errors.Is(err, durableentity.ErrAlarmExhausted):
+		return "exhausted"
 	default:
 		return "failed"
 	}

@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 var (
@@ -457,6 +458,9 @@ type ObjectTaggingResult struct {
 type SignRequest api.ObjectSignRequest
 
 func (r SignRequest) Validate(maxBytes int64) error {
+	if r.VersionID != "" && (r.Method != http.MethodGet && r.Method != http.MethodHead || r.VersionID == "null" || !state.ValidObjectVersionID(r.VersionID)) {
+		return ErrInvalid
+	}
 	if r.Protection != nil && (r.Method != http.MethodPut || !r.Protection.Valid() || r.Protection.Empty()) || !ValidKey(r.Key) || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPut) || r.ExpiresIn < 0 || r.ExpiresIn > int64(api.MaxObjectSignedURLTTL/time.Second) || r.Encryption != nil && (!r.Encryption.Valid() || r.Encryption.Empty() || r.Method != http.MethodPut) {
 		return ErrInvalid
 	}

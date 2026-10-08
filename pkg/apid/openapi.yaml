@@ -2104,6 +2104,28 @@ paths:
     parameters:
       - { name: slug, in: path, required: true, description: App owning the logical bucket., schema: { type: string } }
       - { name: bucket, in: path, required: true, description: Logical bucket owning the selected version., schema: { type: string, format: uuid } }
+    get:
+      operationId: listObjectBucketVersions
+      summary: List retained object versions and delete markers
+      description: Requires storage read scope and a bucket read grant. Returns owned public version selectors, never native generations or physical placement. Both continuation markers belong to this bucket and exact key. Each provider page consumes the existing request safety budget.
+      tags: [storage]
+      parameters:
+        - { name: prefix, in: query, description: Restrict returned versions to matching logical keys., schema: { type: string, maxLength: 1024 } }
+        - { name: delimiter, in: query, description: Optional single Unicode character grouping matching keys., schema: { type: string, maxLength: 1 } }
+        - { name: limit, in: query, description: Maximum versions and common prefixes in this page., schema: { type: integer, minimum: 1, maximum: 1000, default: 1000 } }
+        - { name: key_marker, in: query, description: Exact continuation key returned by the previous page., schema: { type: string, maxLength: 1024 } }
+        - { name: version_id_marker, in: query, description: Public continuation version; requires its matching key_marker., schema: { type: string } }
+      responses:
+        '200':
+          description: A page of versions and common prefixes; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionList' }
+        default:
+          description: Invalid continuation, access denied, unsupported provider, stale accounting or exhausted safety budget
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
     delete:
       operationId: deleteObjectBucketVersion
       summary: Permanently delete an immutable object version or delete marker
@@ -37812,6 +37834,31 @@ components:
         key_id: { type: string, maxLength: 512, description: Owned arn:gregale:kms reference; required for KMS and forbidden for AES256. }
         bucket_key_enabled: { type: boolean }
         context: { type: string, maxLength: 10924 }
+    ObjectVersion:
+      type: object
+      additionalProperties: false
+      description: Logical object data and an owned public version selector; native provider identifiers remain private.
+      required: [key, version_id, is_latest, delete_marker, size_bytes, last_modified]
+      properties:
+        key: { type: string }
+        version_id: { type: string }
+        is_latest: { type: boolean }
+        delete_marker: { type: boolean }
+        size_bytes: { type: integer, format: int64, minimum: 0 }
+        etag: { type: string }
+        last_modified: { type: string, format: date-time }
+        storage_class: { type: string }
+    ObjectVersionList:
+      description: An owned public version page with paired continuation markers.
+      type: object
+      additionalProperties: false
+      required: [items, common_prefixes]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ObjectVersion' } }
+        common_prefixes: { type: array, items: { type: string } }
+        next_key_marker: { type: string }
+        next_version_id_marker: { type: string, description: Owned public version selector to resume with next_key_marker. }
+
     ObjectSignRequest:
       description: Exact object operation to authorize at the branded S3 gateway. PUT binds one durable receipt and supports an explicit owned encryption selection.
       type: object
@@ -37820,6 +37867,7 @@ components:
       properties:
         method: { type: string, enum: [GET, HEAD, PUT] }
         key: { type: string, minLength: 1, maxLength: 1024 }
+        version_id: { type: string, format: uuid, description: GET/HEAD only. Exact owned immutable public version UUID. Mutable null and native provider selectors are rejected. Omit for the current object. }
         expires_in: { type: integer, minimum: 0, maximum: 900, default: 300 }
         size_bytes: { type: integer, format: int64, minimum: 0, description: Required for PUT; forbidden for GET. }
         content_type: { type: string, maxLength: 255, description: PUT only. }

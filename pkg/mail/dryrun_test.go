@@ -3,6 +3,7 @@ package mail
 import (
 	"bytes"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -148,6 +149,30 @@ func TestWriteDryRunJSON_Shape(t *testing.T) {
 	for _, r := range roundTrip {
 		if r.Name == "" || r.Subject == "" || r.TextBody == "" || r.MessageID == "" {
 			t.Errorf("missing required field on %+v", r)
+		}
+	}
+}
+
+// productNameFaas matches "faas" used as a word, not inside a host or path
+// such as faas.example.test.
+var productNameFaas = regexp.MustCompile(`(?i)(^|[^\w./-])faas([^\w./-]|$)`)
+
+// production-us hunt #7 (H5-74): every lifecycle mail still said "Your faas
+// account" and signed "— onebox faas", the internal codename. Customers know
+// the product as Gregale.
+func TestRenderAllTemplates_UseProductName(t *testing.T) {
+	renders, err := RenderAllTemplates("https://faas.example.test/u", time.Now())
+	if err != nil {
+		t.Fatalf("RenderAllTemplates: %v", err)
+	}
+	for _, r := range renders {
+		for part, text := range map[string]string{"subject": r.Subject, "text": r.TextBody, "html": r.HTMLBody} {
+			if loc := productNameFaas.FindStringIndex(text); loc != nil {
+				t.Errorf("%s %s names the product %q, want Gregale", r.Name, part, text[max(0, loc[0]-20):min(len(text), loc[1]+20)])
+			}
+		}
+		if !strings.Contains(r.Subject+r.TextBody, "Gregale") {
+			t.Errorf("%s never names Gregale", r.Name)
 		}
 	}
 }

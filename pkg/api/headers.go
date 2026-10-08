@@ -205,6 +205,31 @@ func IsGuestIdentityHeader(name string) bool {
 	}
 }
 
+// outboundWebhookHeaders are the headers Gregale's own signed webhooks carry
+// (pkg/webhookout: alert rules and release webhooks). A receiver verifies the
+// HMAC with its own secret, so they assert nothing by themselves. The guest
+// boundary strips every other inbound x-faas-* header, which removed these
+// too: an alert receiver hosted on Gregale got the payload without
+// X-Faas-Alert-Signature and could not verify it (production-us hunt #7,
+// H5-64).
+var outboundWebhookHeaders = map[string]struct{}{
+	"x-faas-alert-signature":   {},
+	"x-faas-alert-id":          {},
+	"x-faas-alert-timestamp":   {},
+	"x-faas-alert-attempt":     {},
+	"x-faas-webhook-signature": {},
+	"x-faas-delivery-id":       {},
+	"x-faas-webhook-timestamp": {},
+	"x-faas-webhook-attempt":   {},
+}
+
+// IsOutboundWebhookHeader reports a header of a Gregale-signed outbound
+// webhook, which may reach a guest unchanged.
+func IsOutboundWebhookHeader(name string) bool {
+	_, ok := outboundWebhookHeaders[strings.ToLower(name)]
+	return ok
+}
+
 // Platform identity variables are injected by schedd into the workload's
 // process environment. They use a reserved namespace so guest-init can keep
 // them authoritative even when a customer image or secret uses the same key.

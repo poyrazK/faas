@@ -532,7 +532,7 @@ func passingLifecycleQualificationReport() LifecycleQualificationReport {
 	for _, name := range requiredLifecycleQualificationChecks {
 		checks = append(checks, QualificationCheck{Name: name, Passed: true})
 	}
-	return LifecycleQualificationReport{Checks: checks}
+	return LifecycleQualificationReport{Mode: DurableLifecycleMode, Checks: checks}
 }
 
 type restoreQualificationProvider struct {

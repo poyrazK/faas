@@ -266,7 +266,10 @@ func deploymentRolloutTerminal(dep api.DeploymentResponse) bool {
 
 // waitForDeploymentRollout polls the durable deployment row after readiness
 // has completed. It returns on full rollout, an aborted/terminal deployment,
-// or context cancellation.
+// or context cancellation. A step held for lack of request samples is
+// reported on stderr: on production-us `gregale deploy --safe` printed
+// nothing for 30 minutes until meterd aborted a scale-to-zero app's canary
+// that never received traffic (hunt #6, H5-60).
 func waitForDeploymentRollout(ctx context.Context, c *Client, dep api.DeploymentResponse) (api.DeploymentResponse, bool) {
 	if deploymentRolloutTerminal(dep) {
 		return deploymentWithReceipt(ctx, c, dep), true
@@ -275,6 +278,7 @@ func waitForDeploymentRollout(ctx context.Context, c *Client, dep api.Deployment
 		return dep, false
 	}
 	last := dep
+	var held rolloutHeldNotice
 	for {
 		got, err := c.GetDeployment(ctx, dep.ID)
 		if err == nil {
@@ -282,6 +286,7 @@ func waitForDeploymentRollout(ctx context.Context, c *Client, dep api.Deployment
 			if deploymentRolloutTerminal(got) {
 				return deploymentWithReceipt(ctx, c, got), true
 			}
+			held.maybeWarn(osStderr, got, time.Now())
 		}
 		timer := time.NewTimer(rolloutPollInterval)
 		select {

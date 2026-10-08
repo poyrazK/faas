@@ -601,9 +601,11 @@ const (
 	DefaultMultipartPartBytes           int64 = 64 << 20
 	MinMultipartPartBytes               int64 = 5 << 20
 	MaxMultipartParts                         = 10000
-	MaxObjectWriteETagBytes                   = 256
-	MaxActiveMultipartUploadsPerBucket        = 100
-	ObjectMultipartUploadTTL                  = 24 * time.Hour
+	// Local CLI checkpoints hold at most 10,000 part hashes and acknowledgments.
+	MaxObjectMultipartCheckpointBytes  = 4 << 20
+	MaxObjectWriteETagBytes            = 256
+	MaxActiveMultipartUploadsPerBucket = 100
+	ObjectMultipartUploadTTL           = 24 * time.Hour
 
 	// Admission bounds for brokered upload URLs. Expiry never drains active IO.
 	DefaultObjectSignedURLExpiresSeconds = 300
@@ -7937,6 +7939,16 @@ func BillableRAMMBWithSidecars(ramMB int, sidecarMBs []int) int {
 	return total
 }
 
+// MeterCatchUpWindow bounds how far back meterd's sampler re-rolls closed
+// minutes that were never recorded compute-complete, after a restart, a
+// failed tick or an outage (H5-55, ADR-790). Re-rolling a complete minute is
+// a no-op because usage_minutes keeps the first positive mb_seconds per
+// (instance, minute). MeterCatchUpMinutesPerTick bounds the extra work one
+// sample tick takes on, so a long backlog drains over several ticks instead
+// of starving the control plane.
+const MeterCatchUpWindow = 24 * time.Hour
+const MeterCatchUpMinutesPerTick = 15
+
 // IdleTimeoutBounds returns the [floor, ceiling] seconds a customer may configure
 // their idle timeout to for this plan (spec §4.3).
 func (l Limits) IdleTimeoutBounds() (floor, ceiling int) {
@@ -8251,9 +8263,21 @@ func (l Limits) RequestBudgetMaxDuration() time.Duration {
 // one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
 const FunctionInterpreterMaxWorkers = 4
 
-// Startup attestation runs before the scheduler opens its readiness boundary.
-const StartupAttestationWorkers = 2
-const StartupAttestationLayerTimeout = 15 * time.Second
+// The layer attestation warm verifies the owned live layers in the
+// background at schedd start and again every AttestationWarmInterval, so a
+// wake rarely hashes a layer itself. A layer that failed is retried after
+// AttestationWarmRetryBackoff. The per-layer deadline covers a GCS read plus
+// a SHA-256 of a multi-GB image on a busy compute node; at 15 s about half of
+// production-us's layers timed out after every restart (hunt #6, H5-56).
+const AttestationWarmWorkers = 2
+const AttestationWarmLayerTimeout = 2 * time.Minute
+const AttestationWarmInterval = time.Minute
+const AttestationWarmRetryBackoff = 5 * time.Minute
+
+// LayerVerifyTimeout bounds one shared layer verification. Concurrent
+// verifications of one layer share a single read and hash that outlives a
+// caller that gives up, so the next wake finds the layer verified.
+const LayerVerifyTimeout = 2 * time.Minute
 
 // NodeSizing is the per-host RAM/vCPU shape derived from the machine a
 // compute node actually runs on, rather than the single-box constants.
@@ -8929,6 +8953,11 @@ const (
 	DurableEntityAlarmReadTimeout        = 2 * time.Second
 	DurableEntityAlarmScanTimeout        = 20 * time.Second
 	DurableEntityAlarmPollInterval       = 5 * time.Second
+	MaxDurableEntityAlarmIndexBytes      = 4 << 10
+	DurableEntityAlarmIndexTimeout       = 2 * time.Second
+	MaxDurableEntityAlarmAttempts        = 5
+	DurableEntityAlarmRetryBase          = 30 * time.Second
+	DurableEntityAlarmRetryMax           = 5 * time.Minute
 )
 
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.

@@ -22967,6 +22967,7 @@ func (q *Queries) LatestInstanceReadinessBySource(ctx context.Context, db DBTX, 
 
 const latestRetainedRollbackDeployment = `-- name: LatestRetainedRollbackDeployment :one
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid
+AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
 AND ($2::text IS NULL OR d.scope=$2::text)
 AND ($3::uuid IS NULL OR d.id<>$3::uuid)
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
@@ -22986,7 +22987,9 @@ type LatestRetainedRollbackDeploymentParams struct {
 // 20261004234807528); rows superseded before it fall back to created_at.
 // A live 0% deployment that served before (a release demoted by `traffic
 // promote` or `traffic set`) is a rollback target; one that never served
-// (a dark deploy) needs a retention pin.
+// (a dark deploy) needs a retention pin. A canary candidate aborted before it
+// ever completed served only its canary steps and failed them, so it is never
+// an implicit target (H5-62).
 func (q *Queries) LatestRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LatestRetainedRollbackDeploymentParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, latestRetainedRollbackDeployment, arg.AppID, arg.Scope, arg.CurrentDeploymentID)
 	var id pgtype.UUID
@@ -29801,6 +29804,111 @@ func (q *Queries) ListRecentEventsForAccount(ctx context.Context, db DBTX, arg L
 	return items, nil
 }
 
+const listRequestTelemetryByAccountTrace = `-- name: ListRequestTelemetryByAccountTrace :many
+SELECT DISTINCT ON (app_id)
+       app_id, id, deployment_id, route, method, status, latency_ms, count,
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest
+FROM request_telemetry
+WHERE account_id = $1
+  AND trace_id = $2::text
+  AND received_at >= $3
+  AND received_at <  $4
+ORDER BY app_id, received_at DESC
+`
+
+type ListRequestTelemetryByAccountTraceParams struct {
+	AccountID     pgtype.UUID
+	TraceID       string
+	ReceivedFrom  pgtype.Timestamptz
+	ReceivedUntil pgtype.Timestamptz
+}
+
+type ListRequestTelemetryByAccountTraceRow struct {
+	AppID               pgtype.UUID
+	ID                  pgtype.UUID
+	DeploymentID        pgtype.UUID
+	Route               string
+	Method              string
+	Status              int32
+	LatencyMs           int32
+	Count               int32
+	ColdBoot            bool
+	TraceID             pgtype.Text
+	ReceivedAt          pgtype.Timestamptz
+	SpansSummary        []byte
+	WakeID              pgtype.Text
+	InstanceID          pgtype.Text
+	GuestDurationMs     int32
+	GuestRuntime        string
+	GuestOutcome        string
+	GuestErrorClass     string
+	ConsumerID          pgtype.UUID
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
+}
+
+// Account-wide `gregale trace` lookup: the newest retained row per app for
+// one public trace id, in a single read through request_telemetry_trace_idx.
+// The caller validates the id as 32 lowercase hex characters, so the row-UUID
+// alias GetRequestTelemetryByAppAndIdentifier also accepts can never match.
+func (q *Queries) ListRequestTelemetryByAccountTrace(ctx context.Context, db DBTX, arg ListRequestTelemetryByAccountTraceParams) ([]ListRequestTelemetryByAccountTraceRow, error) {
+	rows, err := db.Query(ctx, listRequestTelemetryByAccountTrace,
+		arg.AccountID,
+		arg.TraceID,
+		arg.ReceivedFrom,
+		arg.ReceivedUntil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRequestTelemetryByAccountTraceRow{}
+	for rows.Next() {
+		var i ListRequestTelemetryByAccountTraceRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.ID,
+			&i.DeploymentID,
+			&i.Route,
+			&i.Method,
+			&i.Status,
+			&i.LatencyMs,
+			&i.Count,
+			&i.ColdBoot,
+			&i.TraceID,
+			&i.ReceivedAt,
+			&i.SpansSummary,
+			&i.WakeID,
+			&i.InstanceID,
+			&i.GuestDurationMs,
+			&i.GuestRuntime,
+			&i.GuestOutcome,
+			&i.GuestErrorClass,
+			&i.ConsumerID,
+			&i.NodeID,
+			&i.Region,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
+			&i.ImageDigest,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRequestTelemetryByApp = `-- name: ListRequestTelemetryByApp :many
 SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, wake_id, instance_id,
@@ -34115,6 +34223,7 @@ func (q *Queries) LockPromotionFeatureFlagCustomer(ctx context.Context, db DBTX,
 
 const lockRetainedRollbackDeployment = `-- name: LockRetainedRollbackDeployment :one
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.scope=$2::text
+AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
 AND d.id<>$3::uuid
 AND d.environment_workload_runtime IS NULL
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (

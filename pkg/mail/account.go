@@ -42,10 +42,10 @@ func AccountDeletionPendingBody(email string, scheduledAt, restoreUntil time.Tim
 	email = safeRecipient(email)
 	scheduled := scheduledAt.UTC().Format("2006-01-02")
 	deadline := restoreUntil.UTC().Format("2006-01-02")
-	subject = fmt.Sprintf("Your faas account will be deleted on %s", deadline)
+	subject = fmt.Sprintf("Your Gregale account will be deleted on %s", deadline)
 	body = fmt.Sprintf(`Hi,
 
-You scheduled your faas account (%s) for deletion on %s.
+You scheduled your Gregale account (%s) for deletion on %s.
 
 If you change your mind, you can cancel the deletion any time before %s by running:
 
@@ -59,7 +59,7 @@ after that point.
 If this request was not made by you, change your password immediately
 and contact support@gregale.dev.
 
-— onebox faas
+— Gregale
 `, email, scheduled, deadline, deadline)
 	return
 }
@@ -74,10 +74,10 @@ and contact support@gregale.dev.
 // lets us identify the account without a separate lookup.
 func AccountDeletionCompleteBody(accountEmail string) (subject, body string) {
 	accountEmail = safeRecipient(accountEmail)
-	subject = "Your faas account has been deleted"
+	subject = "Your Gregale account has been deleted"
 	body = fmt.Sprintf(`Hi,
 
-The 30-day grace period for your faas account (%s) has ended and
+The 30-day grace period for your Gregale account (%s) has ended and
 every row tied to it — apps, deployments, builds, secrets, API keys,
 domains, crons, and usage history — has been permanently deleted from
 our database.
@@ -85,7 +85,7 @@ our database.
 If this was not your intent, contact support@gregale.dev within 24 hours
 and we'll work with you to recover what we can from our backups.
 
-— onebox faas
+— Gregale
 `, accountEmail)
 	return
 }
@@ -103,10 +103,10 @@ func AccountSuspendedBody(email string, at, deletionAt time.Time) (subject, body
 	email = safeRecipient(email)
 	atStr := at.UTC().Format("2006-01-02 15:04 UTC")
 	deadline := deletionAt.UTC().Format("2006-01-02")
-	subject = "Your faas apps have been suspended"
+	subject = "Your Gregale apps have been suspended"
 	body = fmt.Sprintf(`Hi,
 
-Your faas account (%s) has not received a successful payment for 7
+Your Gregale account (%s) has not received a successful payment for 7
 days. As of %s, every running instance tied to your account has been
 parked and new deploys are blocked.
 
@@ -122,7 +122,7 @@ scheduled for permanent deletion.
 
 If this charge is unexpected, contact support@gregale.dev.
 
-— onebox faas
+— Gregale
 `, email, atStr, deadline)
 	return
 }
@@ -139,10 +139,10 @@ func AccountDeletionForNonPaymentBody(email string, pastDueAt, deleteOn time.Tim
 	email = safeRecipient(email)
 	failed := pastDueAt.UTC().Format("2006-01-02")
 	deadline := deleteOn.UTC().Format("2006-01-02")
-	subject = fmt.Sprintf("Your faas account will be deleted on %s for non-payment", deadline)
+	subject = fmt.Sprintf("Your Gregale account will be deleted on %s for non-payment", deadline)
 	body = fmt.Sprintf(`Hi,
 
-We have not received payment for your faas account (%s) since the
+We have not received payment for your Gregale account (%s) since the
 charge that failed on %s, so the account is now scheduled for
 permanent deletion on %s.
 
@@ -160,7 +160,7 @@ after that point.
 
 If you believe this is a mistake, contact support@gregale.dev.
 
-— onebox faas
+— Gregale
 `, email, failed, deadline, deadline, deadline)
 	return
 }
@@ -179,10 +179,10 @@ func PaymentFailedBody(email string, pastDueAt time.Time) (subject, body string)
 	email = safeRecipient(email)
 	atStr := pastDueAt.UTC().Format("2006-01-02 15:04 UTC")
 	deadline := pastDueAt.UTC().Add(7 * 24 * time.Hour).Format("2006-01-02")
-	subject = "Your faas payment failed — action needed within 7 days"
+	subject = "Your Gregale payment failed — action needed within 7 days"
 	body = fmt.Sprintf(`Hi,
 
-The most recent charge to your faas account (%s) failed at %s.
+The most recent charge to your Gregale account (%s) failed at %s.
 
 Your apps are still serving and you can still query usage, but new
 deploys are blocked while the charge is unpaid. If we don't see a
@@ -201,7 +201,7 @@ apps on the next quota tick (within 60 s) and send you a confirmation email.
 
 If this charge is unexpected, contact support@gregale.dev.
 
-— onebox faas
+— Gregale
 `, email, atStr, deadline)
 	return
 }
@@ -216,10 +216,10 @@ If this charge is unexpected, contact support@gregale.dev.
 func AccountRestoredBody(email string, restoredAt time.Time) (subject, body string) {
 	email = safeRecipient(email)
 	atStr := restoredAt.UTC().Format("2006-01-02 15:04 UTC")
-	subject = "Your faas account is back in good standing"
+	subject = "Your Gregale account is back in good standing"
 	body = fmt.Sprintf(`Hi,
 
-Your billing provider confirmed a successful payment for your faas account
+Your billing provider confirmed a successful payment for your Gregale account
 (%s) at %s.
 Your account is now active again.
 
@@ -234,7 +234,7 @@ If you don't see your apps come back within a minute, run:
 If that doesn't show them resuming, contact support@gregale.dev and we'll
 sort it out.
 
-— onebox faas
+— Gregale
 `, email, atStr)
 	return
 }
@@ -247,11 +247,11 @@ sort it out.
 func SubscriptionEndedBody(email, fromPlan string, endedAt time.Time) (subject, body string) {
 	email = safeRecipient(email)
 	atStr := endedAt.UTC().Format("2006-01-02 15:04 UTC")
-	subject = "Your faas subscription has ended — you are now on the Free plan"
+	subject = "Your Gregale subscription has ended — you are now on the Free plan"
 	body = fmt.Sprintf(`Hi,
 
 Your billing provider confirmed at %s that the %s subscription for your
-faas account (%s) has ended. Your account is now on the Free plan.
+Gregale account (%s) has ended. Your account is now on the Free plan.
 
 What changes:
 
@@ -270,7 +270,7 @@ or open the billing page in the dashboard.
 
 If you did not expect this, contact support@gregale.dev.
 
-— onebox faas
+— Gregale
 `, atStr, fromPlan, email)
 	return
 }
@@ -289,10 +289,10 @@ If you did not expect this, contact support@gregale.dev.
 func QuotaWarningBody(email string, plan string, usedGB float64, quotaGB int, day time.Time) (subject, body string) {
 	email = safeRecipient(email)
 	dayStr := day.UTC().Format("2006-01-02")
-	subject = fmt.Sprintf("Your faas account is over its %s plan quota", plan)
+	subject = fmt.Sprintf("Your Gregale account is over its %s plan quota", plan)
 	body = fmt.Sprintf(`Hi,
 
-Your faas account (%s) crossed 100 %% of its %s plan quota on %s.
+Your Gregale account (%s) crossed 100 %% of its %s plan quota on %s.
 You're now accruing overage at the rates listed in the dashboard.
 
   Used:   %.2f GB-h
@@ -305,7 +305,7 @@ the running instances on your account.
 This is the only quota warning you'll get today; the next one arrives
 tomorrow if usage is still over the quota.
 
-— onebox faas
+— Gregale
 `, email, plan, dayStr, usedGB, quotaGB)
 	return
 }

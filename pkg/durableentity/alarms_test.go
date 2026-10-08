@@ -200,6 +200,7 @@ func TestAlarmHandlerFailureAndLostCommitAcknowledgement(t *testing.T) {
 	if err != nil || view.Version != 1 || view.AlarmAt == nil {
 		t.Fatal("failed handler consumed alarm", view, err)
 	}
+	f.clock.Add(int64(api.DurableEntityAlarmRetryBase))
 	f.manager.store = wrappedStore{ObjectStore: f.store, put: func(ctx context.Context, key string, body []byte, version string) (string, error) {
 		next, err := f.store.Put(ctx, key, body, version)
 		var value manifest

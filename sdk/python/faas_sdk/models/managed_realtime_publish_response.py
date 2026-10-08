@@ -13,10 +13,13 @@ T = TypeVar("T", bound="ManagedRealtimePublishResponse")
 
 @_attrs_define
 class ManagedRealtimePublishResponse:
-    """Per-recipient queue outcome for a channel publish; queue admission does not imply client receipt."""
+    """Per-recipient queue outcome for publishing to an endpoint-scoped channel. Queue admission does not imply client
+    receipt; retained publishes include their durable channel sequence.
+
+    """
 
     queued: int
-    """Number of live output queues or retained-resume wake-ups that accepted delivery work."""
+    """Number of live subscriber output queues or retained-resume wake-ups that accepted delivery work."""
     subscribers: int | Unset = UNSET
     """Live and resumable subscribers targeted across reachable nodes."""
     queue_full: int | Unset = UNSET

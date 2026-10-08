@@ -365,3 +365,52 @@ func TestPgGetRequestTelemetryByAppAndIdentifier(t *testing.T) {
 		t.Fatal("a trace id resolved under another app")
 	}
 }
+
+// TestPgListRequestTelemetryByAccountTrace returns the newest retained row per
+// app of the account for one trace id, in one read (production-us hunt #7:
+// the per-app lookup it replaces ran past apid's budget at 71 apps).
+func TestPgListRequestTelemetryByAccountTrace(t *testing.T) {
+	f := newTelemetryFixture(t)
+	second, err := f.s.CreateApp(f.ctx, state.App{
+		AccountID: uuid.UUID(f.account.Bytes).String(), Slug: "pg-trace-second", Type: state.AppTypeApp,
+		RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	other := newTelemetryFixture(t)
+	at := time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC)
+	trace := "4bf92f3577b34da6a3ce929d0e0e4736"
+	insert := func(fx telemetryFixture, app pgtype.UUID, route, traceID string, at time.Time) {
+		t.Helper()
+		if err := fx.s.InsertRequestTelemetry(fx.ctx, sqlc.InsertRequestTelemetryParams{
+			AccountID: fx.account, AppID: app, DeploymentID: fx.dep, Route: route, Method: "GET",
+			Status: 200, LatencyMs: 7, Count: 1, ReceivedAt: ts(at), TraceID: pgtype.Text{String: traceID, Valid: true},
+			Country: "__unknown__", UaFamily: "__unknown__", ReferrerHost: "__unknown__",
+			GuestRuntime: "__unknown__", GuestOutcome: "missing",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert(f, f.app, "/older", trace, at.Add(-time.Minute))
+	insert(f, f.app, "/newer", trace, at)
+	insert(f, f.app, "/other-trace", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", at)
+	insert(f, f.app, "/outside-window", trace, at.Add(-3*time.Hour))
+	insert(f, mustPgUUID(t, second.ID), "/second", trace, at.Add(-time.Second))
+	insert(other, other.app, "/other-account", trace, at)
+
+	rows, err := f.s.ListRequestTelemetryByAccountTrace(f.ctx, sqlc.ListRequestTelemetryByAccountTraceParams{
+		AccountID: f.account, TraceID: trace, ReceivedFrom: ts(at.Add(-time.Hour)), ReceivedUntil: ts(at.Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[pgtype.UUID]string{}
+	for _, row := range rows {
+		got[row.AppID] = row.Route
+	}
+	want := map[pgtype.UUID]string{f.app: "/newer", mustPgUUID(t, second.ID): "/second"}
+	if len(rows) != 2 || got[f.app] != want[f.app] || got[mustPgUUID(t, second.ID)] != "/second" {
+		t.Fatalf("rows by app = %v, want %v", got, want)
+	}
+}

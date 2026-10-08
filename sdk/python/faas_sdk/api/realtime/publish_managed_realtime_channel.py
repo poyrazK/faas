@@ -9,6 +9,9 @@ from ...client import AuthenticatedClient, Client
 from ...models.managed_realtime_message_request import ManagedRealtimeMessageRequest
 from ...models.managed_realtime_publish_response import ManagedRealtimePublishResponse
 from ...models.problem import Problem
+from ...models.publish_managed_realtime_channel_delivery import (
+    PublishManagedRealtimeChannelDelivery,
+)
 from ...types import UNSET, Response, Unset
 
 
@@ -18,12 +21,22 @@ def _get_kwargs(
     channel: str,
     *,
     body: ManagedRealtimeMessageRequest,
+    delivery: PublishManagedRealtimeChannelDelivery | Unset = "live",
     idempotency_key: str | Unset = UNSET,
-    delivery: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    params: dict[str, Any] = {}
+
+    json_delivery: str | Unset = UNSET
+    if not isinstance(delivery, Unset):
+        json_delivery = delivery
+
+    params["delivery"] = json_delivery
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -32,12 +45,10 @@ def _get_kwargs(
             id=quote(str(id), safe=""),
             channel=quote(str(channel), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["json"] = body.to_dict()
-
-    if not isinstance(delivery, Unset):
-        _kwargs["params"] = {"delivery": delivery}
 
     headers["Content-Type"] = "application/json"
 
@@ -112,19 +123,32 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ManagedRealtimeMessageRequest,
+    delivery: PublishManagedRealtimeChannelDelivery | Unset = "live",
     idempotency_key: str | Unset = UNSET,
-    delivery: str | Unset = UNSET,
 ) -> Response[ManagedRealtimePublishResponse | Problem]:
-    """Publish a live-only or retained message to channel subscribers.
+    """Publish a message to live or resumable channel subscribers.
+
+     delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is preview-
+    only and requires FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid; it accepts at most 4096 decoded
+    bytes and requires an Idempotency-Key. Retained delivery commits the message to the ordered channel
+    log before fan-out and returns its sequence. V2 subscribers read the committed log in sequence; a
+    best-effort wake reduces latency while bounded polling recovers missed wakes. The retained log
+    remains authoritative if live fan-out is incomplete. The resume protocol separately requires
+    FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on realtimed.
+    A supplied Idempotency-Key binds the publish to delivery mode, decoded payload and binary flag for
+    24 hours. Replays return the original response and do not retry recipients that missed a partial
+    publish. Reusing a key with a different mode or payload returns 409. An in-flight or uncertain
+    reservation also returns 409 and is not run again while the key is active. Queue admission does not
+    confirm client receipt.
 
     Args:
         slug (str):
         id (str):
         channel (str):
+        delivery (PublishManagedRealtimeChannelDelivery | Unset):  Default: 'live'.
+        idempotency_key (str | Unset):
         body (ManagedRealtimeMessageRequest): Binary-safe message payload encoded as standard
             base64.
-        idempotency_key (str | Unset): Stable key for retrying this publish; reuse it only with the same delivery mode, decoded payload, and binary flag.
-        delivery (str | Unset): Use "retained" to commit a sequenced message before fan-out; requires an Idempotency-Key.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,8 +163,8 @@ def sync_detailed(
         id=id,
         channel=channel,
         body=body,
-        idempotency_key=idempotency_key,
         delivery=delivery,
+        idempotency_key=idempotency_key,
     )
 
     response = client.get_httpx_client().request(
@@ -157,19 +181,32 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ManagedRealtimeMessageRequest,
+    delivery: PublishManagedRealtimeChannelDelivery | Unset = "live",
     idempotency_key: str | Unset = UNSET,
-    delivery: str | Unset = UNSET,
 ) -> ManagedRealtimePublishResponse | Problem | None:
-    """Publish a live-only or retained message to channel subscribers.
+    """Publish a message to live or resumable channel subscribers.
+
+     delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is preview-
+    only and requires FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid; it accepts at most 4096 decoded
+    bytes and requires an Idempotency-Key. Retained delivery commits the message to the ordered channel
+    log before fan-out and returns its sequence. V2 subscribers read the committed log in sequence; a
+    best-effort wake reduces latency while bounded polling recovers missed wakes. The retained log
+    remains authoritative if live fan-out is incomplete. The resume protocol separately requires
+    FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on realtimed.
+    A supplied Idempotency-Key binds the publish to delivery mode, decoded payload and binary flag for
+    24 hours. Replays return the original response and do not retry recipients that missed a partial
+    publish. Reusing a key with a different mode or payload returns 409. An in-flight or uncertain
+    reservation also returns 409 and is not run again while the key is active. Queue admission does not
+    confirm client receipt.
 
     Args:
         slug (str):
         id (str):
         channel (str):
+        delivery (PublishManagedRealtimeChannelDelivery | Unset):  Default: 'live'.
+        idempotency_key (str | Unset):
         body (ManagedRealtimeMessageRequest): Binary-safe message payload encoded as standard
             base64.
-        idempotency_key (str | Unset): Stable key for retrying this publish; reuse it only with the same delivery mode, decoded payload, and binary flag.
-        delivery (str | Unset): Use "retained" to commit a sequenced message before fan-out; requires an Idempotency-Key.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -185,8 +222,8 @@ def sync(
         channel=channel,
         client=client,
         body=body,
-        idempotency_key=idempotency_key,
         delivery=delivery,
+        idempotency_key=idempotency_key,
     ).parsed
 
 
@@ -197,19 +234,32 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ManagedRealtimeMessageRequest,
+    delivery: PublishManagedRealtimeChannelDelivery | Unset = "live",
     idempotency_key: str | Unset = UNSET,
-    delivery: str | Unset = UNSET,
 ) -> Response[ManagedRealtimePublishResponse | Problem]:
-    """Publish a live-only or retained message to channel subscribers.
+    """Publish a message to live or resumable channel subscribers.
+
+     delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is preview-
+    only and requires FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid; it accepts at most 4096 decoded
+    bytes and requires an Idempotency-Key. Retained delivery commits the message to the ordered channel
+    log before fan-out and returns its sequence. V2 subscribers read the committed log in sequence; a
+    best-effort wake reduces latency while bounded polling recovers missed wakes. The retained log
+    remains authoritative if live fan-out is incomplete. The resume protocol separately requires
+    FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on realtimed.
+    A supplied Idempotency-Key binds the publish to delivery mode, decoded payload and binary flag for
+    24 hours. Replays return the original response and do not retry recipients that missed a partial
+    publish. Reusing a key with a different mode or payload returns 409. An in-flight or uncertain
+    reservation also returns 409 and is not run again while the key is active. Queue admission does not
+    confirm client receipt.
 
     Args:
         slug (str):
         id (str):
         channel (str):
+        delivery (PublishManagedRealtimeChannelDelivery | Unset):  Default: 'live'.
+        idempotency_key (str | Unset):
         body (ManagedRealtimeMessageRequest): Binary-safe message payload encoded as standard
             base64.
-        idempotency_key (str | Unset): Stable key for retrying this publish; reuse it only with the same delivery mode, decoded payload, and binary flag.
-        delivery (str | Unset): Use "retained" to commit a sequenced message before fan-out; requires an Idempotency-Key.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -224,8 +274,8 @@ async def asyncio_detailed(
         id=id,
         channel=channel,
         body=body,
-        idempotency_key=idempotency_key,
         delivery=delivery,
+        idempotency_key=idempotency_key,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -240,19 +290,32 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ManagedRealtimeMessageRequest,
+    delivery: PublishManagedRealtimeChannelDelivery | Unset = "live",
     idempotency_key: str | Unset = UNSET,
-    delivery: str | Unset = UNSET,
 ) -> ManagedRealtimePublishResponse | Problem | None:
-    """Publish a live-only or retained message to channel subscribers.
+    """Publish a message to live or resumable channel subscribers.
+
+     delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is preview-
+    only and requires FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid; it accepts at most 4096 decoded
+    bytes and requires an Idempotency-Key. Retained delivery commits the message to the ordered channel
+    log before fan-out and returns its sequence. V2 subscribers read the committed log in sequence; a
+    best-effort wake reduces latency while bounded polling recovers missed wakes. The retained log
+    remains authoritative if live fan-out is incomplete. The resume protocol separately requires
+    FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on realtimed.
+    A supplied Idempotency-Key binds the publish to delivery mode, decoded payload and binary flag for
+    24 hours. Replays return the original response and do not retry recipients that missed a partial
+    publish. Reusing a key with a different mode or payload returns 409. An in-flight or uncertain
+    reservation also returns 409 and is not run again while the key is active. Queue admission does not
+    confirm client receipt.
 
     Args:
         slug (str):
         id (str):
         channel (str):
+        delivery (PublishManagedRealtimeChannelDelivery | Unset):  Default: 'live'.
+        idempotency_key (str | Unset):
         body (ManagedRealtimeMessageRequest): Binary-safe message payload encoded as standard
             base64.
-        idempotency_key (str | Unset): Stable key for retrying this publish; reuse it only with the same delivery mode, decoded payload, and binary flag.
-        delivery (str | Unset): Use "retained" to commit a sequenced message before fan-out; requires an Idempotency-Key.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -269,7 +332,7 @@ async def asyncio(
             channel=channel,
             client=client,
             body=body,
-            idempotency_key=idempotency_key,
             delivery=delivery,
+            idempotency_key=idempotency_key,
         )
     ).parsed
