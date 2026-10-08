@@ -161,7 +161,11 @@ latency or billing; the provider and deployed SDK acceptance remain separate.
 Use the existing exact-commit, dedicated-host runner and final leakcheck in
 [native e2e CI](../ops/e2e-native-ci.md).
 
-## Alarm delivery preview
+## Original alarm delivery preview
+
+The discovery and retry behavior below records the first alarm milestone; the
+indexed delivery milestone supersedes its full-scan delivery and unbounded retry
+policy.
 
 `FAAS_DURABLE_ENTITY_ALARMS_ENABLED=1` requires the invocation preview and
 private delimiter listing; startup fails closed without that capability or
@@ -200,6 +204,57 @@ receipt index as caller work. A due-time index, bounded retry/dead-letter policy
 plan quotas/billing and provider-backed operational qualification remain production
 work. Entity alarm authority and receipts stay in object storage; the existing
 SQL ledger records guest attempts only.
+
+## Indexed alarm delivery and bounded retries — 2026-10-08
+
+The opt-in alarm worker reads one bounded, lexically time-ordered index page and
+one independent rotating entity page per sweep (eight entries each). Committed
+snapshots remain alarm authority. Index publication after a successful state CAS
+is best effort and has a two-second bound; a failure cannot revoke the commit.
+The entity scan repairs missing hints, including pre-upgrade alarms and crashes
+between state/reservation publication and index upload. It can deliver recovered
+due work in the same sweep. Each scan retains its twenty-second budget. Native
+cursors are disposable, reset independently on errors, and are not SQL metadata.
+
+Immutable hints carry identity, version, original deadline, effective retry time
+and reservation count. Future hints end a pass before entity reads. Due candidates
+are restored from the manifest/snapshot and checked again under fenced ownership.
+Stale or corrupt hints can be pruned without touching entity state. Superseded
+future hints remain until their indexed due time; bucket lifecycle deletion stays
+disabled. Startup additionally requires flat LIST and private hint DELETE and
+verifies DELETE using only a unique probe. Native S3/GCS listing order is required.
+The index accelerates ready-work discovery, while reconciliation still costs a
+bounded ongoing scan. This preview promises neither deadline ordering nor latency.
+
+Before new alarm guest work, the entity manifest CAS durably reserves one attempt
+and the earliest next attempt time. Only an acknowledged reservation dispatches.
+Retry delays start at thirty seconds and double up to five minutes. Five reserved
+attempts exhaust an alarm for that committed state version. Busy ownership and
+obsolete observations do not reserve; rejected CAS does not advance the count.
+Accepted-but-unacknowledged reservations and process death consume the reservation,
+so this is a bounded attempt budget rather than a guarantee of five guest executions.
+A valid receipt is checked before retry gates, preserving final-ACK-loss replay.
+Admission remains rechecked before reservation. The existing execution ledger records
+guest intent only and does not govern retry authority.
+
+Manifest writes use schema 4 to fence older writers that would drop reservations.
+Readers accept schemas 1–4; stop all older entity callers and background workers
+before upgrading, and migrate storage before downgrading. Successful state commits
+clear old retry metadata and derive a fresh hint from the new alarm. Other manifest
+mutations preserve reservations. Snapshots, receipts, caps and guest protocol stay
+unchanged. Advisory hint storage is excluded from committed-state caps, but its
+upload volume and provider operations are observed by the existing bounded metrics.
+
+Exhaustion retains the original state/deadline and suppresses automatic dispatch.
+The final reserved attempt can still be in flight. The trusted harness's
+`-alarm-status` reads one exact entity scope without claiming it, reporting alarm
+identity, attempt count, retry time and exhaustion without payloads or raw errors.
+A deliberate business transition can clear or rearm it in a new version. Public
+inspection, automatic dead-letter replay, index compaction, plan quotas and billing
+remain separate milestones. All preview gates remain off by default. CI fixtures
+cover missing/corrupt hints, restart/backoff/exhaustion, uncertain reservations,
+receipt replay and native provider wire paths; dedicated-host/live-bucket, latency
+and cost qualification remain pending.
 
 ## Receipt journal and operator cleanup
 

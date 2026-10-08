@@ -255,6 +255,9 @@ func qualificationCleanup(t *testing.T, ctx context.Context, m *Manager, id ID) 
 
 func qualificationAlarm(t *testing.T, ctx context.Context, m *Manager, id ID) {
 	t.Helper()
+	if err := m.CheckAlarmDiscovery(ctx); err != nil {
+		t.Fatal("provider alarm index capabilities", err)
+	}
 	id.Key = "alarm"
 	at := time.Now().UTC().Add(-time.Second)
 	if _, err := m.Invoke(ctx, id, "caller", request("schedule"), func(ctx context.Context, view View) (Transition, error) {
@@ -266,7 +269,7 @@ func qualificationAlarm(t *testing.T, ctx context.Context, m *Manager, id ID) {
 	}
 	cursor := ""
 	for {
-		page, err := m.ScanDueAlarms(ctx, cursor)
+		page, err := m.ScanIndexedDueAlarms(ctx, cursor)
 		if err != nil || page.Failed != 0 {
 			t.Fatalf("provider alarm discovery = %+v %v", page, err)
 		}
