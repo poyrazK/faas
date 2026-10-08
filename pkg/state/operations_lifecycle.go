@@ -50,7 +50,8 @@ func operationExecutionHeaders(inv Invocation, op Operation, def OperationDefini
 	headers[api.OperationIDHeader] = op.ID
 	headers[api.OperationAttemptHeader] = strconv.Itoa(inv.Attempts)
 	headers[api.OperationCapabilityHeader] = capability
-	if headers[api.OperationReceiptVersionHeader] == "1" {
+	if def.Spec.TransactionReceipt == api.OperationTransactionPostgres {
+		headers[api.OperationReceiptVersionHeader] = "1"
 		// Bind the customer-owned receipt to immutable platform scope and pins.
 		// Generation, invocation and claim capability deliberately do not enter it.
 		binding, _ := json.Marshal([]string{op.AccountID, op.AppID, op.PlatformTenantID, op.Scope, op.DefinitionRevision, op.DeploymentID, op.ReleaseID})
