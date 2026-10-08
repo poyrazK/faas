@@ -102,7 +102,7 @@ func validateSelectedProfile() error {
 }
 func cmdProfile(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(osStderr, "usage: gregale profile <add|list|use|remove> ...", "config")
+		PrintUsage(osStderr, "usage: gregale profile <add|list|use|remove|check> ...", "config")
 		return 1
 	}
 	cfg, err := loadCLIConfig()
@@ -110,6 +110,8 @@ func cmdProfile(args []string) int {
 		return printErr("Could not read config", err)
 	}
 	switch args[0] {
+	case "check":
+		return cmdProfileCheck(args[1:])
 	case "list":
 		if len(args) != 1 {
 			return printErr("Invalid profile usage", errors.New("usage: gregale profile list"))
@@ -217,7 +219,7 @@ func effectiveConnectionContext() *connectionContext {
 		source = "flag:--profile"
 	}
 	entry, _ := configEntry(effectiveConfigEntries(cfg), configKeyAPIBase)
-	return &connectionContext{currentProfile(), source, apiBase(), entry.Source}
+	return &connectionContext{selectedProfile(cfg), source, entry.Value, entry.Source}
 }
 func renderConnectionContext() {
 	c := effectiveConnectionContext()

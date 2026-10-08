@@ -115,7 +115,7 @@ func renderBashHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  after_separator=0")
 	_, _ = fmt.Fprintln(w, "  for ((i=1; i<cword; i++)); do")
 	_, _ = fmt.Fprintln(w, "    word=\"${words[i]}\"")
-	_, _ = fmt.Fprintln(w, "    if [ $after_separator -eq 0 ] && [[ \"$word\" = --json || \"$word\" = -j || \"$word\" == --json=* ]]; then continue; fi")
+	_, _ = fmt.Fprintln(w, "    if [ $after_separator -eq 0 ] && [[ \"$word\" = --json || \"$word\" = -j || \"$word\" == --json=* || \"$word\" == --non-interactive || \"$word\" == --non-interactive=* ]]; then continue; fi")
 	_, _ = fmt.Fprintln(w, "    if [ ${#normalized_words[@]} -eq 1 ]; then")
 	_, _ = fmt.Fprintln(w, "      if [ \"$word\" = --profile ]; then")
 	_, _ = fmt.Fprintln(w, "        if [ $((i+1)) -ge $cword ]; then COMPREPLY=( $(compgen -W \"$(gregale completion profile-names 2>/dev/null)\" -- \"${words[cword]}\") ); return 0; fi")
@@ -541,7 +541,7 @@ func renderBashFooter(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  # Top-level: complete all known commands.")
 	_, _ = fmt.Fprintln(w, "  if [ $cword -eq 1 ]; then")
 	commands := customerCliCommands()
-	allCmds := make([]string, 0, len(commands))
+	allCmds := []string{"--non-interactive"}
 	for _, c := range commands {
 		allCmds = append(allCmds, c.Name)
 	}

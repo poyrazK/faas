@@ -2734,8 +2734,24 @@ func (c *Client) SubmitExclusiveJobOperation(ctx context.Context, name string, r
 // Server clamps limit to [1,200] and surfaces a 400 Problem on
 // garbage input. For a wider, cross-source view use ListInvocations.
 func (c *Client) ListJobRuns(ctx context.Context, name string) (ListJobRunsResponse, error) {
+	return c.ListJobRunsPage(ctx, name, 0, 0)
+}
+
+// ListJobRunsPage requests one offset page; zero limit uses the server default.
+func (c *Client) ListJobRunsPage(ctx context.Context, name string, limit, offset int) (ListJobRunsResponse, error) {
 	var out ListJobRunsResponse
-	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs", nil, &out)
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs"
+	if len(q) != 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // ListJobScheduleOccurrences returns the durable decision history for each

@@ -79,10 +79,12 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	jsonOutput = true
 
-	var stdout, stderr bytes.Buffer
-	oldOut, oldErr := osStdout, osStderr
-	osStdout, osStderr = &stdout, &stderr
-	defer func() { osStdout, osStderr = oldOut, oldErr }()
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = oldOut }()
+	stderr, restoreErr := captureStderr(t)
+	defer restoreErr()
 
 	started := time.Now()
 	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app", "--timeout", "1"}); code != 3 {
@@ -95,8 +97,9 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	if deploymentReads.Load() == 0 {
 		t.Fatal("default JSON deploy did not poll the deployment before timing out")
 	}
-	if !strings.Contains(stderr.String(), "wait deadline") {
-		t.Fatalf("stderr missing timeout explanation: %s", stderr.String())
+	problem := assertOneProblem(t, stderr.String())
+	if problem.Code != "transport_error" || !strings.Contains(problem.Detail, "timed out") || !strings.Contains(problem.Hint, "resume waiting") {
+		t.Fatalf("stderr missing timeout recovery: %+v", problem)
 	}
 	var receipt DeployReceipt
 	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {

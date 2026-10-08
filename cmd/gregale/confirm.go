@@ -16,6 +16,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -47,6 +48,10 @@ import (
 // Returns true → caller proceeds with the destructive action.
 // Returns false → caller MUST abort (typically `return 1`).
 func requireTyped(expected string) bool {
+	if nonInteractive {
+		printErr("Confirmation required", errors.New("use an explicit confirmation flag in non-interactive mode"))
+		return false
+	}
 	// production-us hunt #4: a script without --quiet sat on this prompt
 	// until its timeout, with nothing in its log saying why. Piped input
 	// still works; the hint names the bypass.
@@ -71,6 +76,7 @@ func requireTyped(expected string) bool {
 // endings). Returns the trimmed line and the scan error so the
 // caller can distinguish "EOF" from "garbled input".
 func readConfirmationLine(r io.Reader) (string, error) {
+	if nonInteractive { return "", errors.New("confirmation input is disabled by --non-interactive; supply the explicit confirmation flag") }
 	sc := bufio.NewScanner(r)
 	// Default ScanLines strips the trailing \n but keeps a trailing
 	// \r on \r\n inputs. Buffer cap is 64 KiB — a confirmation

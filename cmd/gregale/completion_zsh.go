@@ -88,7 +88,7 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  normalized_words=(\"${words[1]}\")")
 	_, _ = fmt.Fprintln(w, "  for ((i=2; i<CURRENT; i++)); do")
 	_, _ = fmt.Fprintln(w, "    word=\"${words[i]}\"")
-	_, _ = fmt.Fprintln(w, "    if [[ \"$word\" == --json || \"$word\" == -j || \"$word\" == --json=* ]]; then continue; fi")
+	_, _ = fmt.Fprintln(w, "    if [[ \"$word\" == --json || \"$word\" == -j || \"$word\" == --json=* || \"$word\" == --non-interactive || \"$word\" == --non-interactive=* ]]; then continue; fi")
 	_, _ = fmt.Fprintln(w, "    if [ ${#normalized_words[@]} -eq 1 ]; then")
 	_, _ = fmt.Fprintln(w, "      if [ \"$word\" = --profile ]; then")
 	_, _ = fmt.Fprintln(w, "        if [ $((i+1)) -ge $CURRENT ]; then local -a profile_names; profile_names=( ${(f)\"$(gregale completion profile-names 2>/dev/null)\"} ); compadd -- \"${profile_names[@]}\"; return 0; fi")
@@ -114,6 +114,7 @@ func renderZshHeader(w io.Writer) {
 
 	_, _ = fmt.Fprintln(w, "  local -a commands")
 	_, _ = fmt.Fprintln(w, "  commands=(")
+	_, _ = fmt.Fprintln(w, "    \"--non-interactive:Disable prompts and browser launches\"")
 	for _, c := range customerCliCommands() {
 		_, _ = fmt.Fprintf(w, "    \"%s:%s\"\n", c.Name, escapeZshDQ(c.Short))
 	}
