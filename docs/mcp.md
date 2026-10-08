@@ -164,9 +164,9 @@ tables, indexes, claim-order sequence, functions, and triggers. Keep a stable
 ```
 
 For local runs, set `MCP_TASK_NAMESPACE` when `FAAS_APP_ID` is absent. Keep the
-owner key unchanged until all tasks created with it expire; it derives both the
-per-caller owner hash and the AES-256-GCM payload key. The task table is scoped
-by app namespace, stores no bearer tokens or plain caller subjects, and deletes
+owner key stable for the namespace; it derives the per-caller owner hash and
+the legacy payload key. Use a separate versioned payload key ring for rotation.
+The task table is scoped by app namespace, stores no bearer tokens or plain caller subjects, and deletes
 expired rows. TTL is configurable from 60 seconds to 30 days. An explicit
 `MCP_TASK_NAMESPACE` overrides `FAAS_APP_ID`; set the same stable value in every
 app that shares the task database.
@@ -527,8 +527,8 @@ PostgreSQL, so worker restarts retain the rotation order and concurrent replicas
 skip a cursor that another claimant currently holds. Open-mode callers share one
 owner partition; this is caller-level fairness, not account-level scheduling.
 The gateway tool policy, redacted execution metrics and tool-contract rollout
-checks are available in this preview. Customer-managed task-key rotation remains
-a follow-on capability.
+checks are available in this preview. Versioned payload-key rotation is available
+in the starter; the ownership secret remains fixed for its namespace.
 
 Protocol references: [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http),
 [Tasks extension](https://tasks.extensions.modelcontextprotocol.io/specification/2026-07-28/tasks)
@@ -742,3 +742,43 @@ registration; allow for registry TTL and metric publication delays. Scale-to-zer
 status reports an unknown observer when that heartbeat is absent or stale.
 Telemetry contains aggregate counts and declared handler inventory, without Task
 arguments, results, bearer tokens, caller identities, or exception messages.
+
+
+### Task payload encryption key rotation
+
+Keep `MCP_TASK_OWNER_KEY` stable for the namespace. It identifies callers and
+supports legacy payloads; rotating payload encryption does not change ownership.
+The store persists an irreversible ownership fingerprint and immutable key-ID
+fingerprints, never the secrets themselves. Use a new namespace when intentionally
+changing caller identity. Existing legacy payloads are authenticated before first
+binding the ownership fingerprint.
+
+Set `tasks.encryption_keys_env` to a distinct secret environment variable, such
+as `MCP_TASK_PAYLOAD_KEYS`. Its value is JSON:
+
+```json
+{"activeKeyId":"2026_10","keys":{"2026_09":"<old secret>","2026_10":"<new secret>"}}
+```
+
+Each secret must contain at least 32 UTF-8 bytes; generate independent random
+secrets rather than using the example placeholders. IDs contain 1–64 ASCII
+letters, digits, underscores or hyphens. The ring supports at most 16 explicit
+keys. `legacy` is reserved for the original owner-derived payload key and is
+always available. Omit `encryption_keys_env` to retain legacy writes, or use
+`activeKeyId: "legacy"` with a populated ring while preparing a rollout.
+
+New encrypted fields carry an authenticated key ID. Reads select the matching
+key; completing or resuming an older Task can use the new active key without
+rewriting its arguments. Startup checks key usage across arguments, input state,
+results, and errors for every unexpired Task, including terminal Tasks, and
+rejects missing keys. Reusing a key ID with a different secret is rejected even
+when old Tasks have expired. Payloads remain bound to namespace, Task ID and field.
+
+Rotate in phases: upgrade all web and worker processes with the complete union
+of old and new keys first; then activate the new key. Retain old keys until every
+Task field using them has expired. Stop or reconfigure every writer still using
+the old active key before removing it from configuration. Startup validation is
+a snapshot and cannot prevent another already-running process with an obsolete
+configuration from writing afterward; all participating processes must follow
+the rollout order. This feature does not re-encrypt historical payloads or rotate
+the ownership secret. Observers remain read-only and require no encryption secrets.

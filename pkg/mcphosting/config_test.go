@@ -215,3 +215,14 @@ func TestTaskRetryPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestTaskEncryptionKeyEnvironment(t *testing.T) {
+	for _, name := range []string{"TASK_PAYLOAD_KEYS", "lowercase", "DATABASE_URL", "OWNER_KEY", "NAMESPACE"} {
+		enabled := true
+		config := TasksConfig{Enabled: &enabled, DatabaseURLEnv: "DATABASE_URL", OwnerKeyEnv: "OWNER_KEY", NamespaceEnv: "NAMESPACE", EncryptionKeysEnv: name}
+		err := config.validate()
+		if (err == nil) != (name == "TASK_PAYLOAD_KEYS") {
+			t.Errorf("encryption environment %q: %v", name, err)
+		}
+	}
+}

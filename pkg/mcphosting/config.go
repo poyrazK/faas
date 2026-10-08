@@ -54,6 +54,7 @@ type Config struct {
 type TasksConfig struct {
 	Enabled                *bool  `json:"enabled"`
 	DatabaseURLEnv         string `json:"database_url_env,omitempty"`
+	EncryptionKeysEnv      string `json:"encryption_keys_env,omitempty"`
 	OwnerKeyEnv            string `json:"owner_key_env,omitempty"`
 	NamespaceEnv           string `json:"namespace_env,omitempty"`
 	TTLSeconds             int    `json:"ttl_seconds,omitempty"`
@@ -264,6 +265,14 @@ func (c *TasksConfig) validate() error {
 	} {
 		if !taskEnvName.MatchString(field.value) {
 			return fmt.Errorf("tasks.%s must name an uppercase environment variable", field.name)
+		}
+	}
+	if c.EncryptionKeysEnv != "" {
+		if !taskEnvName.MatchString(c.EncryptionKeysEnv) {
+			return fmt.Errorf("tasks.encryption_keys_env must name an uppercase environment variable")
+		}
+		if c.EncryptionKeysEnv == c.DatabaseURLEnv || c.EncryptionKeysEnv == c.OwnerKeyEnv || c.EncryptionKeysEnv == c.NamespaceEnv {
+			return fmt.Errorf("tasks encryption keys must use a distinct environment variable")
 		}
 	}
 	if c.DatabaseURLEnv == c.OwnerKeyEnv || c.DatabaseURLEnv == c.NamespaceEnv || c.OwnerKeyEnv == c.NamespaceEnv {

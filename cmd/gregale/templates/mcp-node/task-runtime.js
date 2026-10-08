@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { parseMcpTaskEncryptionKeys } from './task-crypto.js';
 import { createPostgresMcpTaskStore, createMcpTaskQueueObserver } from './task-store.js';
 import { createMcpTaskRuntime, mcpTaskHandlers, validateMcpTaskRetryPolicy } from './tasks.js';
 import { resolveMcpTaskMetricsSettings, startMcpTaskMetricsPublisher } from './task-metrics.js';
@@ -36,6 +37,7 @@ export function resolveMcpTaskSettings(config, { env = process.env, role = 'comb
     role,
     databaseURL,
     ownerKey,
+    encryptionKeys: role !== 'observer' && settings.encryption_keys_env ? parseMcpTaskEncryptionKeys(env[envName(settings.encryption_keys_env)]) : undefined,
     namespace: namespace.trim(),
     ttlMs: (settings.ttl_seconds ?? 86400) * 1000,
     pollIntervalMs: settings.poll_interval_ms ?? 2000,
@@ -67,7 +69,7 @@ export async function startMcpTaskRuntime(config, {
   let taskRuntime;
   let metricsPublisher;
   try {
-    const store = role === 'observer' ? createObserver({ pool, namespace: settings.namespace, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner }) : createStore({ pool, namespace: settings.namespace, ownerKey: settings.ownerKey, ttlMs: settings.ttlMs, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner, maxOutstanding: settings.maxOutstanding, maxOutstandingPerOwner: settings.maxOutstandingPerOwner });
+    const store = role === 'observer' ? createObserver({ pool, namespace: settings.namespace, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner }) : createStore({ pool, namespace: settings.namespace, ownerKey: settings.ownerKey, encryptionKeys: settings.encryptionKeys, ttlMs: settings.ttlMs, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner, maxOutstanding: settings.maxOutstanding, maxOutstandingPerOwner: settings.maxOutstandingPerOwner });
     if (role === 'observer') await store.queueMetrics();
     else taskRuntime = createRuntime({
       store,

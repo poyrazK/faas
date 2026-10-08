@@ -847,3 +847,61 @@ test('runtime retries only explicit transient errors with bounded jitter and san
   assert.equal(permanentExecutions, 1, 'ordinary errors are never retried');
   assert.deepEqual((await get(store, permanent.task_id, 'bob')).error, { code: -32603, message: 'Task execution failed' });
 });
+
+
+test('payload rotation preserves ownership, input state and mixed-key results, and guards key removal', postgresOnly, async t => {
+  const { store, pool, namespace, ownerKey } = await harness(t);
+  const legacy = await create(store, 'alice');
+  const first = await store.claim(3, 60000);
+  await store.complete(first.task_id, first.lease_token, { legacy: true });
+  const a = 'a'.repeat(48), b = 'b'.repeat(48);
+  const options = { pool, namespace, ownerKey, ttlMs: 60000 };
+  const old = createPostgresMcpTaskStore({ ...options, encryptionKeys: { activeKeyId: 'a', keys: { a } } });
+  await old.initialize();
+  const task = await create(old, 'alice');
+  const running = await old.claim(3, 60000);
+  await old.requestInputs({ taskID: task.task_id, leaseToken: running.lease_token, requests: { approval: { method: 'elicitation/create', params: { mode: 'form', message: 'Approve?' } } } });
+  const rotated = createPostgresMcpTaskStore({ ...options, encryptionKeys: { activeKeyId: 'b', keys: { a, b } } });
+  await rotated.initialize();
+  assert.deepEqual((await get(rotated, legacy.task_id, 'alice')).result, { legacy: true });
+  assert.equal(await get(rotated, task.task_id, 'bob'), null);
+  await rotated.updateInputs({ taskID: task.task_id, authInfo: principal('alice'), authMode: 'external-oauth', inputResponses: { approval: { action: 'accept', content: {} } } });
+  const resumed = await rotated.claim(3, 60000);
+  assert.equal(resumed.task_id, task.task_id);
+  assert.deepEqual(resumed.arguments, { report: 'weekly' });
+  await rotated.complete(resumed.task_id, resumed.lease_token, { rotated: true });
+  assert.deepEqual((await get(rotated, task.task_id, 'alice')).result, { rotated: true });
+  const withoutOld = createPostgresMcpTaskStore({ ...options, encryptionKeys: { activeKeyId: 'b', keys: { b } } });
+  await assert.rejects(withoutOld.initialize(), /unavailable/);
+  await assert.rejects(createPostgresMcpTaskStore(options).initialize(), /unavailable/, 'falling back to legacy writes cannot omit live versioned keys');
+  await pool.query("UPDATE gregale_mcp_tasks SET expires_at = clock_timestamp() - interval '1 second' WHERE task_id = $1", [task.task_id]);
+  await withoutOld.initialize();
+  const changedSecret = createPostgresMcpTaskStore({ ...options, encryptionKeys: { activeKeyId: 'a', keys: { a: b } } });
+  await assert.rejects(changedSecret.initialize(), /must remain stable/);
+  await pool.query("UPDATE gregale_mcp_tasks SET expires_at = clock_timestamp() - interval '1 second' WHERE namespace = $1", [namespace]);
+  const changedOwner = createPostgresMcpTaskStore({ ...options, ownerKey: 'new-owner'.repeat(8), encryptionKeys: { activeKeyId: 'b', keys: { b } } });
+  await assert.rejects(changedOwner.initialize(), /must remain stable/);
+});
+
+test('worker inventory expires, respects namespace boundaries and distinguishes absent workers from unsupported handlers', postgresOnly, async t => {
+  const { store, pool, namespace } = await harness(t);
+  await create(store, 'alice');
+  const incompatible = randomUUID(), compatible = randomUUID();
+  await store.workerHeartbeat(incompatible, [{ name: 'build_report', version: '2' }]);
+  await pool.query("INSERT INTO gregale_mcp_task_workers VALUES ($1, $2::uuid, $3::jsonb, clock_timestamp(), clock_timestamp() + interval '90 seconds')", [`${namespace}-other`, randomUUID(), JSON.stringify([{ name: 'build_report', version: '1' }])]);
+  assert.equal((await store.queueMetrics()).activeWorkers, 1);
+  assert.equal((await store.queueMetrics()).unsupportedHandlerTasks, 1);
+  await store.workerHeartbeat(compatible, [{ name: 'build_report', version: '1' }]);
+  assert.equal((await store.queueMetrics()).activeWorkers, 2);
+  assert.equal((await store.queueMetrics()).unsupportedHandlerTasks, 0);
+  await pool.query("UPDATE gregale_mcp_task_workers SET expires_at = clock_timestamp() - interval '1 second' WHERE namespace = $1 AND worker_id = $2", [namespace, compatible]);
+  assert.equal((await store.queueMetrics()).unsupportedHandlerTasks, 1);
+  await store.workerStopped(incompatible);
+  const absent = await store.queueMetrics();
+  assert.equal(absent.activeWorkers, 0);
+  assert.equal(absent.unsupportedHandlerTasks, 0);
+  const runtime = createMcpTaskRuntime({ store, handlers: { build_report: { version: '1', async execute() { return {}; } } } });
+  await runtime.start();
+  try { assert.equal((await store.queueMetrics()).activeWorkers, 1); } finally { await runtime.stop(); }
+  assert.equal((await store.queueMetrics()).activeWorkers, 0, 'shutdown withdraws the worker registration');
+});

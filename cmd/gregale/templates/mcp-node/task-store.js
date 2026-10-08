@@ -1,6 +1,7 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
+import { createMcpTaskPayloadCipher } from './task-crypto.js';
 import defaults from './task-limits.json' with { type: 'json' };
 
 const TABLE = 'gregale_mcp_tasks';
@@ -171,23 +172,11 @@ function encodeJSON(value, limit, label) {
 }
 
 function encryptJSON(value, key, aad, limit, label) {
-  const plaintext = encodeJSON(value, limit, label);
-  const nonce = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, nonce);
-  cipher.setAAD(Buffer.from(aad));
-  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-  return Buffer.concat([Buffer.from([1]), nonce, cipher.getAuthTag(), ciphertext]);
+  return key.encrypt(encodeJSON(value, limit, label), aad);
 }
 
 function decryptJSON(value, key, aad) {
-  if (!Buffer.isBuffer(value) || value.length < 30 || value[0] !== 1) throw new Error('Invalid encrypted MCP task payload');
-  const nonce = value.subarray(1, 13);
-  const tag = value.subarray(13, 29);
-  const ciphertext = value.subarray(29);
-  const decipher = createDecipheriv('aes-256-gcm', key, nonce);
-  decipher.setAAD(Buffer.from(aad));
-  decipher.setAuthTag(tag);
-  return JSON.parse(Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8'));
+  return JSON.parse(key.decrypt(value, aad).toString('utf8'));
 }
 
 function decryptInputState(value, key, namespace, taskID) {
@@ -261,7 +250,7 @@ function principalFor(authInfo, authMode) {
   return JSON.stringify([resource, subject, clientId]);
 }
 
-export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, maxOutstanding = defaults.maxOutstanding, maxOutstandingPerOwner = defaults.maxOutstandingPerOwner, maxRunning = defaults.maxRunning, maxRunningPerOwner = defaults.maxRunningPerOwner }) {
+export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encryptionKeys, ttlMs, maxOutstanding = defaults.maxOutstanding, maxOutstandingPerOwner = defaults.maxOutstandingPerOwner, maxRunning = defaults.maxRunning, maxRunningPerOwner = defaults.maxRunningPerOwner }) {
   if (!pool || typeof pool.query !== 'function') throw new Error('MCP Tasks require a PostgreSQL connection pool');
   if (typeof namespace !== 'string' || !namespace || namespace.length > 255) throw new Error('MCP Tasks require a stable app namespace');
   if (typeof ownerKey !== 'string' || Buffer.byteLength(ownerKey) < 32) throw new Error('MCP task owner key must contain at least 32 bytes');
@@ -275,7 +264,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
 
   const masterKey = Buffer.from(ownerKey);
   const ownerKeyBytes = createHmac('sha256', masterKey).update('gregale-mcp-task-owner:v1').digest();
-  const payloadKey = createHmac('sha256', masterKey).update('gregale-mcp-task-payload:v1').digest();
+  const payloadKey = createMcpTaskPayloadCipher(ownerKey, encryptionKeys);
   const ownerHash = (authInfo, authMode) => createHmac('sha256', ownerKeyBytes).update(principalFor(authInfo, authMode)).digest();
   // PostgreSQL channels are shared across every connection to a database. Keep
   // notifications scoped to this app namespace and put only the task UUID in
@@ -410,6 +399,34 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
         `, [namespace]);
         await client.query(CREATE_TASK_NOTIFY_FUNCTION);
         await client.query(CREATE_TASK_NOTIFY_TRIGGER);
+        // Check key usage across every encrypted field still within TTL, and
+        // authenticate a sample per key. Legacy data proves the initial owner key.
+        const required = await client.query(`
+          SELECT DISTINCT ON (key_id) key_id, task_id::text, field, payload
+            FROM (
+              SELECT task.task_id, encrypted.field, encrypted.payload,
+                     CASE WHEN get_byte(encrypted.payload, 0) = 1 THEN 'legacy'
+                          WHEN get_byte(encrypted.payload, 0) = 2 THEN convert_from(substring(encrypted.payload FROM 3 FOR get_byte(encrypted.payload, 1)), 'UTF8')
+                          ELSE '@invalid' END AS key_id
+                FROM ${TABLE} AS task
+                CROSS JOIN LATERAL (VALUES ('arguments', task.arguments_encrypted), ('result', task.result_encrypted), ('error', task.error_encrypted), ('input-state', task.input_state_encrypted)) AS encrypted(field, payload)
+               WHERE namespace = $1 AND expires_at > clock_timestamp() AND encrypted.payload IS NOT NULL
+            ) AS encrypted
+           ORDER BY key_id, task_id, field
+        `, [namespace]);
+        for (const row of required.rows) payloadKey.decrypt(row.payload, taskAAD(namespace, row.task_id, row.field));
+        await client.query(`CREATE TABLE IF NOT EXISTS gregale_mcp_task_crypto_keys (
+          namespace text NOT NULL, key_id text NOT NULL, key_fingerprint bytea NOT NULL,
+          PRIMARY KEY (namespace, key_id)
+        )`);
+        for (const [id, fingerprint] of payloadKey.fingerprints) {
+          const registered = await client.query(`INSERT INTO gregale_mcp_task_crypto_keys (namespace, key_id, key_fingerprint)
+            VALUES ($1, $2, $3) ON CONFLICT (namespace, key_id)
+            DO UPDATE SET key_id = EXCLUDED.key_id
+            WHERE gregale_mcp_task_crypto_keys.key_fingerprint = EXCLUDED.key_fingerprint
+            RETURNING key_fingerprint`, [namespace, id, fingerprint]);
+          if (!registered.rows?.length) throw new Error('MCP task ownership secret and encryption key IDs must remain stable');
+        }
       });
     },
     async workerHeartbeat(workerID, handlers) {

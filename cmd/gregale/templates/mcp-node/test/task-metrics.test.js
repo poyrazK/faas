@@ -71,3 +71,15 @@ test('publisher reports API failures without stopping its caller', async () => {
   assert.equal(completed, 1);
   assert.equal(errors, 1);
 });
+
+
+test('only a successful observer reporting cycle publishes the observer heartbeat', async () => {
+  const metrics = { outstandingTasks: 0, oldestAgeSeconds: 0, runningTasks: 0, capacityWaitingTasks: 0, failedTasks: 0, retryWaitingTasks: 0, activeWorkers: 0, unsupportedHandlerTasks: 0 };
+  for (const success of [true, false]) {
+    const urls = [];
+    const publisher = startMcpTaskMetricsPublisher({ store: { async queueMetrics() { return metrics; } }, role: 'observer', appSlug: 'worker', token: 'secret', async fetchImpl(url) { urls.push(url); return { status: success ? 204 : 500 }; } });
+    await publisher.close();
+    assert.equal(urls.some(url => url.endsWith('mcp_tasks_observer_heartbeat')), success);
+    if (success) assert.ok(urls.at(-1).endsWith('mcp_tasks_observer_heartbeat'));
+  }
+});
