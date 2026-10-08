@@ -6968,8 +6968,7 @@ streamLoop:
 					streamErr = <-streamErrors
 				}
 				if waitCtx.Err() == nil && streamErr != nil && !errors.Is(streamErr, io.EOF) {
-					warnWaitStopped("stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
-					return 3
+					warnDeployStreamInterrupted(opts.quiet)
 				}
 				break streamLoop
 			}
@@ -7049,8 +7048,8 @@ streamLoop:
 				}
 				break streamLoop
 			case streamEventError:
-				warnWaitStopped("stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
-				return 3
+				warnDeployStreamInterrupted(opts.quiet)
+				break streamLoop
 			default:
 				// Unknown frame shape — print raw so the customer can see it.
 				if e.Data != "" {
@@ -7590,4 +7589,16 @@ func renderSecretScanWarnings(findings []secretscan.Finding, w io.Writer) {
 	}
 	PrintWarn(w, "%d secret line(s) skipped from the upload. Move to: gregale secrets set",
 		len(findings))
+}
+
+// warnDeployStreamInterrupted reports a build-log stream that dropped before
+// the deployment finished. production-us hunt #8: a 287 s Go image build sent
+// no log lines for minutes, the stream was cut, and the CLI exited 3 ("stream
+// closed; follow manually") although the deployment went live. The caller now
+// falls through to the build/deployment status poll, so the exit code is the
+// deployment's own outcome.
+func warnDeployStreamInterrupted(quiet bool) {
+	if !quiet {
+		PrintWarn(os.Stderr, "build log stream interrupted; following deployment status…")
+	}
 }
