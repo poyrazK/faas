@@ -275,7 +275,7 @@ func TestObjectWriteProtectionMigrationRoundTrip(t *testing.T) {
 	// Roll back newest first, then restore the complete stack after the test.
 	var restore []string
 	for _, name := range []string{
-		"20261008174000000_object_conditional_put_capabilities.sql",
+		"20261008214233280_object_conditional_put_capabilities.sql",
 		"20261007170933372_object_versioned_read_capabilities.sql",
 		"20261005175131410_object_event_write_protection.sql",
 	} {

@@ -33,7 +33,7 @@ func TestObjectConditionalURLMigrationRoundTrip(t *testing.T) {
 			t.Fatal("conditional authority validator", tc, valid, err)
 		}
 	}
-	data, err := migrations.FS.ReadFile("20261008174000000_object_conditional_put_capabilities.sql")
+	data, err := migrations.FS.ReadFile("20261008214233280_object_conditional_put_capabilities.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestObjectConditionalURLRollbackGuard(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM object_storage_s3_credentials WHERE url_request ? 'if_match' OR url_request ? 'if_none_match'`).Scan(&count); err != nil || count == 0 {
 		t.Fatal("missing persisted conditional authority", count, err)
 	}
-	data, err := migrations.FS.ReadFile("20261008174000000_object_conditional_put_capabilities.sql")
+	data, err := migrations.FS.ReadFile("20261008214233280_object_conditional_put_capabilities.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
