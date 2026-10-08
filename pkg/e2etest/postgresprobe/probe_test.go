@@ -51,6 +51,22 @@ func TestProbeRejectsMigrationSecretsInServingProcess(t *testing.T) {
 	}
 }
 
+func TestProbeMigrationDiagnosticsDoNotExposeCredentials(t *testing.T) {
+	private := "postgres://private-user:private-secret@127.0.0.1/database?sslmode=disable"
+	err := (Config{RunID: uuid.NewString(), MigrationURI: private, PostgresMajor: 16}).Migrate(t.Context())
+	if !errors.Is(err, ErrProbe) || DiagnosticStage(err.Error()) != "migration_credential_invalid" {
+		t.Fatalf("unexpected safe migration diagnostic: %v", err)
+	}
+	if strings.Contains(err.Error(), "private-") || strings.Contains(err.Error(), "postgres://") {
+		t.Fatal("migration diagnostic exposed credential material")
+	}
+	for _, output := range []string{private, ErrProbe.Error() + ": migration_connect " + private, ErrProbe.Error() + ": unknown"} {
+		if DiagnosticStage(output) != "unclassified" {
+			t.Fatal("accepted untrusted task output as a safe diagnostic")
+		}
+	}
+}
+
 func TestProbeSQLDataPrivilegesRotationAndFailure(t *testing.T) {
 	catalog := pgtest.OpenMigrated(t)
 	if catalog == nil {

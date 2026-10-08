@@ -211,6 +211,9 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), sourceDeployCtxTimeout())
 		defer cancel()
 		if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, deploymentID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
+			if release, taskErr := store.ReleaseAppTaskByDeployment(ctx, deploymentID); taskErr == nil {
+				t.Logf("SQL probe failure stage: %s", postgresprobe.DiagnosticStage(release.StderrTail))
+			}
 			t.Fatalf("SQL source deployment: %v", err)
 		}
 		release, err := store.ReleaseAppTaskByDeployment(ctx, deploymentID)

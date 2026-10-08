@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,25 @@ import (
 )
 
 var ErrProbe = errors.New("PostgreSQL acceptance probe failed")
+
+func probeFailure(stage string) error { return fmt.Errorf("%w: %s", ErrProbe, stage) }
+
+// DiagnosticStage accepts only fixed probe diagnostics. Raw task output and
+// database errors must never be copied into acceptance failure reports.
+func DiagnosticStage(output string) string {
+	text := strings.TrimSpace(output)
+	for _, stage := range []string{
+		"configuration_major", "configuration_command", "migration_configuration",
+		"migration_secret_missing", "migration_credential_invalid", "migration_sql_unavailable",
+		"migration_privileges", "migration_verification", "migration_connect",
+		"migration_ddl", "migration_seed", "migration_readback",
+	} {
+		if text == ErrProbe.Error()+": "+stage {
+			return stage
+		}
+	}
+	return "unclassified"
+}
 
 // Mode accepts only the fixture commands. The release adapter is installed at
 // /bin/sh, but deliberately cannot evaluate arbitrary shell source.
@@ -78,28 +98,40 @@ func (c Config) marker() string {
 // never resets the counter or replaces an existing marker.
 func (c Config) Migrate(ctx context.Context) error {
 	id, err := c.key()
-	if err != nil || c.MigrationURI == "" {
-		return ErrProbe
+	if err != nil {
+		return probeFailure("migration_configuration")
+	}
+	if c.MigrationURI == "" {
+		return probeFailure("migration_secret_missing")
 	}
 	if err := managedpostgres.VerifyCredentialSQL(ctx, c.MigrationURI, managedpostgres.CredentialMigration, c.PostgresMajor); err != nil {
-		return ErrProbe
+		switch {
+		case errors.Is(err, managedpostgres.ErrInvalid):
+			return probeFailure("migration_credential_invalid")
+		case errors.Is(err, managedpostgres.ErrUnavailable):
+			return probeFailure("migration_sql_unavailable")
+		case errors.Is(err, managedpostgres.ErrConflict):
+			return probeFailure("migration_privileges")
+		default:
+			return probeFailure("migration_verification")
+		}
 	}
 	conn, err := managedpostgres.ConnectCredentialSQL(ctx, c.MigrationURI)
 	if err != nil {
-		return ErrProbe
+		return probeFailure("migration_connect")
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
 	// Static fixture DDL, installed exclusively in the disposable customer DB.
 	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS public.gregale_durable_qualification_probe (id uuid PRIMARY KEY, marker text NOT NULL, counter bigint NOT NULL DEFAULT 0)`); err != nil {
-		return ErrProbe
+		return probeFailure("migration_ddl")
 	}
 	queries := probesql.New()
 	if err := queries.SeedQualificationMarker(ctx, conn, probesql.SeedQualificationMarkerParams{ID: id, Marker: c.marker()}); err != nil {
-		return ErrProbe
+		return probeFailure("migration_seed")
 	}
 	row, err := queries.ReadQualificationMarker(ctx, conn, id)
 	if err != nil || row.Marker != c.marker() {
-		return ErrProbe
+		return probeFailure("migration_readback")
 	}
 	return nil
 }

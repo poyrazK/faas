@@ -15,20 +15,20 @@ import (
 func main() {
 	major, err := strconv.Atoi(os.Getenv("POSTGRES_PROBE_MAJOR"))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, postgresprobe.ErrProbe)
+		fmt.Fprintln(os.Stderr, postgresprobe.ErrProbe.Error()+": configuration_major")
 		os.Exit(1)
 	}
 	config := postgresprobe.FromEnv(os.Getenv, major)
 	mode, err := postgresprobe.Mode(os.Args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, postgresprobe.ErrProbe)
+		fmt.Fprintln(os.Stderr, postgresprobe.ErrProbe.Error()+": configuration_command")
 		os.Exit(1)
 	}
 	if mode == "migrate" {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		if config.Migrate(ctx) != nil {
-			fmt.Fprintln(os.Stderr, postgresprobe.ErrProbe)
+		if err := config.Migrate(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		fmt.Println("PostgreSQL release migration verified")
