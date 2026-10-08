@@ -140,6 +140,13 @@
   4. The drive1 secrets scrub on fork restores.
   5. Access (separate ADR), then promotion to `preview`.
 - **Verification:**
+  - Metal, 2026-10-09, internal test node (n2-highmem-2, nested KVM,
+    Firecracker 1.7.0, kernel 6.1.134): `TestMetalQuarantineDataPlane`
+    (open and quarantined, including namespace → guest for vmmd's bridge)
+    and `TestForkMetal` (restore, quarantine chains only on the fork,
+    token routing with 404 on a wrong token, ordinary traffic never on the
+    fork, cancel and TTL destroy) all pass. Nested KVM is a functional
+    environment, not a CLAUDE.md acceptance host.
   - PR 1: migration CHECK and transition-trigger tests; MemStore and
     PgStore parity; API tests for the flag gate, plan gate, scopes, limits,
     IDOR and audit.
