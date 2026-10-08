@@ -505,6 +505,9 @@ type AppSpec struct {
 	// readiness policy. It is separate from HealthcheckPath/GRPC, which
 	// only gate startup admission.
 	ReadinessProbeJSON string
+	// LivenessProbeJSON carries the deployment's primary-app liveness_probe
+	// override (ADR-078). Empty keeps the plan defaults.
+	LivenessProbeJSON string
 	// Runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312"). vmmd stamps it on
 	// the live Instance so the framework_ready DGRAM receipt
@@ -1716,6 +1719,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		HealthcheckGrpcService:   a.HealthcheckGRPCService,
 		ImageHealthcheckRequired: a.ImageHealthcheckRequired,
 		ReadinessProbeJson:       a.ReadinessProbeJSON,
+		LivenessProbeJson:        a.LivenessProbeJSON,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). vmmd stamps it on the live Instance
 		// so the framework_ready DGRAM receipt path can label
