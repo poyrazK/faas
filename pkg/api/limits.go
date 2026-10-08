@@ -812,6 +812,11 @@ const (
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30
+	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
+	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
+	// using the normal developer build.
+	DevPatchMaxEntries       = 200
+	DevPatchMaxBytes   int64 = 8 << 20
 	// MaxDelayedTaskDelaySeconds bounds how far a one-shot invocation may be
 	// scheduled into the future. A one-year ceiling prevents effectively
 	// immortal pending rows while still covering annual workflows.
