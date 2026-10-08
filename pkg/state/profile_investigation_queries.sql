@@ -99,10 +99,7 @@ RETURNING (j.data || jsonb_build_object('status',j.status,'reason',j.reason,'att
 -- name: LockClaimedProfileDeploymentCheck :one
 SELECT (j.data || jsonb_build_object('status',j.status,'reason',j.reason,'attempts',j.attempts,'next_attempt_at',j.next_attempt_at))::jsonb AS receipt
 FROM profile_deployment_checks j WHERE j.deployment_id=sqlc.arg(deployment_id)::text::uuid AND j.app_id=sqlc.arg(app_id)::text::uuid AND j.account_id=sqlc.arg(account_id)::text::uuid
- AND j.status='running' AND j.lease_token=sqlc.arg(token)::text::uuid AND j.lease_until>sqlc.arg(observed_at)::timestamptz
- AND (j.data->>'mode'<>'gate' OR EXISTS (SELECT 1 FROM deployments d JOIN profile_deployment_policies p ON p.app_id=d.app_id
- WHERE d.id=j.deployment_id AND d.canary_step=j.canary_step AND d.canary_step_started_at=j.canary_step_started_at
- AND d.status='live' AND d.traffic_percent>0 AND d.rollout_state IN ('pending','rolling_out') AND p.enabled AND p.revision=j.policy_revision)) FOR UPDATE;
+ AND j.status='running' AND j.lease_token=sqlc.arg(token)::text::uuid AND j.lease_until>sqlc.arg(observed_at)::timestamptz FOR UPDATE;
 
 -- name: FinishProfileDeploymentCheck :exec
 UPDATE profile_deployment_checks SET status=sqlc.arg(status),reason=sqlc.arg(reason),next_attempt_at=sqlc.narg(next_attempt_at)::timestamptz,completed_at=sqlc.narg(completed_at)::timestamptz,
