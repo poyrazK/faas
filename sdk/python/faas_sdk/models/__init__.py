@@ -1021,6 +1021,10 @@ from .filter_criteria_op import FilterCriteriaOp
 from .finalize_managed_realtime_auth_response import FinalizeManagedRealtimeAuthResponse
 from .finalize_managed_realtime_auth_response_auth_mode import FinalizeManagedRealtimeAuthResponseAuthMode
 from .financial_allocation import FinancialAllocation
+from .financial_app_cost_allocation import FinancialAppCostAllocation
+from .financial_app_costs_response import FinancialAppCostsResponse
+from .financial_app_costs_response_currency import FinancialAppCostsResponseCurrency
+from .financial_app_meter_costs import FinancialAppMeterCosts
 from .financial_attribution import FinancialAttribution
 from .financial_budget_history_response import FinancialBudgetHistoryResponse
 from .financial_budget_list_response import FinancialBudgetListResponse
@@ -3733,6 +3737,10 @@ __all__ = (
     "FinalizeManagedRealtimeAuthResponse",
     "FinalizeManagedRealtimeAuthResponseAuthMode",
     "FinancialAllocation",
+    "FinancialAppCostAllocation",
+    "FinancialAppCostsResponse",
+    "FinancialAppCostsResponseCurrency",
+    "FinancialAppMeterCosts",
     "FinancialAttribution",
     "FinancialBudgetHistoryResponse",
     "FinancialBudgetListResponse",
