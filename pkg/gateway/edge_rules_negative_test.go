@@ -61,6 +61,34 @@ func TestEdgeRulePopulatedEntriesHaveBoundedFallbackExpiry(t *testing.T) {
 	}
 }
 
+// A rule mutation drops only the hosts its match_host patterns cover, so one
+// tenant's edit leaves every other tenant's compiled rules cached; an empty
+// pattern list (unknown scope) still resets everything.
+func TestEdgeRuleCacheInvalidateHostsIsScopedToPatterns(t *testing.T) {
+	c := NewEdgeRuleCache(10)
+	for _, host := range []string{"api.a.example", "www.a.example", "api.b.example"} {
+		c.Put(host, &HostEntry{})
+	}
+	generation := c.Generation()
+	c.InvalidateHosts([]string{"*.A.example"})
+	if _, hit := c.Get("api.a.example"); hit {
+		t.Fatal("wildcard-covered host survived")
+	}
+	if _, hit := c.Get("www.a.example"); hit {
+		t.Fatal("wildcard-covered host survived")
+	}
+	if _, hit := c.Get("api.b.example"); !hit {
+		t.Fatal("unrelated tenant host was flushed")
+	}
+	if c.Generation() == generation {
+		t.Fatal("scoped invalidation did not fence in-flight loads")
+	}
+	c.InvalidateHosts(nil)
+	if c.Len() != 0 {
+		t.Fatalf("unknown scope left %d entries, want wholesale reset", c.Len())
+	}
+}
+
 // An expired entry is no longer served as current, but stays available as the
 // last-known-good set for loaders whose reload fails; Reset still drops it.
 func TestEdgeRuleExpiredEntryRemainsLastKnownUntilReset(t *testing.T) {

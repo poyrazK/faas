@@ -865,6 +865,14 @@ func (g *gatewaydEdgeRules) Reset() {
 	g.cache.Reset()
 }
 
+// InvalidateHosts drops only the hosts a mutation's match_host patterns cover.
+func (g *gatewaydEdgeRules) InvalidateHosts(patterns []string) {
+	if g == nil || g.cache == nil {
+		return
+	}
+	g.cache.InvalidateHosts(patterns)
+}
+
 // warnPathGlobErrs logs every path-glob parse error the loader
 // returned, at WARN so an operator can diagnose a malformed glob.
 // Errors are not surfaced to the customer (they see a clean 404).
