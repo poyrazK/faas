@@ -1259,6 +1259,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.rotateObjectStorageComputeBinding))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/objects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageReadSurface...)(s.listBucketObjects))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/objects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.deleteBucketObject))))
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/objects/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageReadSurface...)(s.listBucketObjectVersions))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/objects/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.deleteBucketObjectVersion))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/objects/tags", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageReadSurface...)(s.objectBucketTags))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/objects/tags", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.objectBucketTags))))

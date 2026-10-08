@@ -140,6 +140,9 @@ func presignPublicRequest(ctx context.Context, endpoint, region, bucket, access,
 	if query == nil {
 		query = url.Values{}
 	}
+	if r.VersionID != "" {
+		query.Set("versionId", r.VersionID)
+	}
 	query.Set("X-Amz-Expires", strconv.FormatInt(r.ExpiresIn, 10))
 	u.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, r.Method, u.String(), nil)

@@ -49,7 +49,9 @@ guest-init runs a restore reseed barrier for Node and Python workloads.
 3. **Barrier on resume.** After the kernel reseed and clock step, and before
    the resume ACK that gates readiness, guest-init sends every registered
    process `reseed <32-byte nonce>` drawn from the reseeded kernel and waits
-   up to 250 ms for `ok`.
+   up to 2 s for `ok` (`RestoreReseedTimeout`; 250 ms originally, raised
+   after production-us showed a restored Node process faulting its heap back
+   in missed it on about 1 in 20 concurrent restores, hunt #6 H5-57).
    - **Node:** `RAND_poll()` through a 2.9 KB N-API addon, which reseeds
      OpenSSL's primary DRBG (OpenSSL 3 propagates it to every thread's child
      DRBG). Then it reseeds a xoshiro128** `Math.random` replacement with
@@ -59,7 +61,7 @@ guest-init runs a restore reseed barrier for Node and Python workloads.
      numpy's legacy global generator when numpy is loaded.
 4. **Fail closed.** A registered process that answers late, answers `err`, or
    cannot load the addon fails the barrier. guest-init NACKs the resume with
-   code 13, and vmmd cold-boots the instance (ADR-005), which is always safe.
+   code 15, and vmmd cold-boots the instance (ADR-005), which is always safe.
    A process that exited is dropped silently.
 5. **Opt-out.** `GREGALE_RESTORE_RESEED=off` in the app's env disables
    injection. The docs mark it unsafe for any app that generates secrets or

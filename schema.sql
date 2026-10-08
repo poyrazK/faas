@@ -7348,22 +7348,6 @@ END $_$;
 
 
 --
--- Name: valid_object_event_protected_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.valid_object_event_protected_url_request(r jsonb) RETURNS boolean
-    LANGUAGE plpgsql IMMUTABLE STRICT
-    AS $$
-BEGIN
- IF NOT coalesce(valid_object_protected_url_request(r-'protection'),false) THEN RETURN false; END IF;
- IF NOT r ? 'protection' THEN RETURN true; END IF;
- RETURN coalesce(r->>'method'='PUT' AND NOT r ? 'multipart' AND r->'protection'<>'{}' AND
-  valid_object_event_write_protection(jsonb_build_object('enabled',true,'captured_at','2026-01-01T00:00:00Z','requested',r->'protection')),false);
-EXCEPTION WHEN OTHERS THEN RETURN false;
-END $$;
-
-
---
 -- Name: valid_object_event_write_protection(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7399,6 +7383,23 @@ BEGIN
  END IF;
  IF r ? 'legal_hold' AND (jsonb_typeof(r->'legal_hold') IS DISTINCT FROM 'object' OR (r->'legal_hold')-ARRAY['status']<>'{}' OR coalesce(r->'legal_hold'->>'status','') NOT IN ('ON','OFF')) THEN RETURN false; END IF;
  RETURN true;
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END $_$;
+
+
+--
+-- Name: valid_object_versioned_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_versioned_url_request(r jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $_$
+BEGIN
+ IF r ? 'version_id' THEN
+  IF r->>'method' NOT IN ('GET','HEAD') OR jsonb_typeof(r->'version_id') IS DISTINCT FROM 'string' OR
+   r->>'version_id' !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN RETURN false; END IF;
+ END IF;
+ RETURN coalesce(valid_object_event_protected_url_request(r-'version_id'),false);
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END $_$;
 
@@ -7511,7 +7512,7 @@ CREATE TABLE public.object_storage_s3_credentials (
     url_api_key_id uuid,
     url_expires_at timestamp with time zone,
     url_receipt_id uuid,
-    CONSTRAINT object_s3_event_protected_url_request CHECK (((url_request IS NULL) OR public.valid_object_event_protected_url_request(url_request))),
+    CONSTRAINT object_s3_versioned_url_request CHECK (((url_request IS NULL) OR public.valid_object_versioned_url_request(url_request))),
     CONSTRAINT object_storage_s3_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGA[A-Z2-7]{16}$'::text)),
     CONSTRAINT object_storage_s3_credentials_check CHECK ((((status = 'active'::text) AND (revoked_at IS NULL)) OR ((status = 'revoked'::text) AND (revoked_at IS NOT NULL)))),
     CONSTRAINT object_storage_s3_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
@@ -10281,6 +10282,22 @@ BEGIN
                           'record_id',  NEW.id,
                           'item_id',    NEW.item_identifier)::text);
     RETURN NEW;
+END $$;
+
+
+--
+-- Name: valid_object_event_protected_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_event_protected_url_request(r jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+BEGIN
+ IF NOT coalesce(valid_object_protected_url_request(r-'protection'),false) THEN RETURN false; END IF;
+ IF NOT r ? 'protection' THEN RETURN true; END IF;
+ RETURN coalesce(r->>'method'='PUT' AND NOT r ? 'multipart' AND r->'protection'<>'{}' AND
+  valid_object_event_write_protection(jsonb_build_object('enabled',true,'captured_at','2026-01-01T00:00:00Z','requested',r->'protection')),false);
+EXCEPTION WHEN OTHERS THEN RETURN false;
 END $$;
 
 

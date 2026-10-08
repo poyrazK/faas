@@ -10,6 +10,10 @@ import type { ObjectWriteProtection } from './ObjectWriteProtection.js';
 export type ObjectSignRequest = {
   method: 'GET' | 'HEAD' | 'PUT';
   key: string;
+  /**
+   * GET/HEAD only. Exact owned immutable public version UUID. Mutable null and native provider selectors are rejected. Omit for the current object.
+   */
+  version_id?: string;
   expires_in?: number;
   /**
    * Required for PUT; forbidden for GET.

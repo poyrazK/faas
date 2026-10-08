@@ -268,14 +268,28 @@ func writeProtectionMigration(t *testing.T) (string, string) {
 }
 
 // adr: 619
+// adr: 687
 func TestObjectWriteProtectionMigrationRoundTrip(t *testing.T) {
 	_, pool, ctx := pgStoreWithPool(t)
-	latest, err := migrations.FS.ReadFile("20261005175131410_object_event_write_protection.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = pool.Exec(ctx, strings.SplitN(string(latest), "-- +goose Down", 2)[1]); err != nil {
-		t.Fatal(err)
+	// Each dependent validator replaces its predecessor's CHECK constraint.
+	// Roll back newest first, then restore the complete stack after the test.
+	var restore []string
+	for _, name := range []string{
+		"20261007170933372_object_versioned_read_capabilities.sql",
+		"20261005175131410_object_event_write_protection.sql",
+	} {
+		data, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts := strings.SplitN(string(data), "-- +goose Down", 2)
+		if len(parts) != 2 {
+			t.Fatal("missing dependent rollback", name)
+		}
+		if _, err := pool.Exec(ctx, parts[1]); err != nil {
+			t.Fatal("rollback dependent validator", name, err)
+		}
+		restore = append(restore, parts[0])
 	}
 	up, down := writeProtectionMigration(t)
 	if _, err := pool.Exec(ctx, down); err != nil {
@@ -302,5 +316,25 @@ func TestObjectWriteProtectionMigrationRoundTrip(t *testing.T) {
 		if err := pool.QueryRow(ctx, `SELECT `+validator+`($1::jsonb)`, invalid).Scan(&valid); err != nil || valid {
 			t.Fatal("malformed protection accepted during migration", step, valid, err)
 		}
+	}
+	for i := len(restore) - 1; i >= 0; i-- {
+		if _, err := pool.Exec(ctx, restore[i]); err != nil {
+			t.Fatal("restore dependent validator", err)
+		}
+	}
+	historical := `{"method":"GET","key":"protected","expires_in":60,"version_id":"00000000-0000-4000-8000-000000000001"}`
+	for _, request := range []string{part, protected, historical} {
+		var valid bool
+		if err := pool.QueryRow(ctx, `SELECT valid_object_versioned_url_request($1::jsonb)`, request).Scan(&valid); err != nil || !valid {
+			t.Fatal("restored validator lost request authority", request, valid, err)
+		}
+	}
+	var valid bool
+	if err := pool.QueryRow(ctx, `SELECT valid_object_versioned_url_request($1::jsonb)`, invalid).Scan(&valid); err != nil || valid {
+		t.Fatal("restored validator accepted malformed protection", valid, err)
+	}
+	var constraints int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE conrelid='object_storage_s3_credentials'::regclass AND conname='object_s3_versioned_url_request'`).Scan(&constraints); err != nil || constraints != 1 {
+		t.Fatal("version-bound authority constraint not restored", constraints, err)
 	}
 }

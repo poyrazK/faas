@@ -80,6 +80,39 @@ func (q *Queries) FinancialAdjustmentInsert(ctx context.Context, db DBTX, arg Fi
 	return err
 }
 
+const financialCompletedComputeMinutes = `-- name: FinancialCompletedComputeMinutes :many
+SELECT minute
+FROM financial_sampling_windows
+WHERE minute >= $1::timestamptz AND minute < $2::timestamptz
+  AND compute_complete
+ORDER BY minute
+`
+
+type FinancialCompletedComputeMinutesParams struct {
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+}
+
+func (q *Queries) FinancialCompletedComputeMinutes(ctx context.Context, db DBTX, arg FinancialCompletedComputeMinutesParams) ([]pgtype.Timestamptz, error) {
+	rows, err := db.Query(ctx, financialCompletedComputeMinutes, arg.PeriodStart, arg.PeriodEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.Timestamptz{}
+	for rows.Next() {
+		var minute pgtype.Timestamptz
+		if err := rows.Scan(&minute); err != nil {
+			return nil, err
+		}
+		items = append(items, minute)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const financialEvidenceAccountLock = `-- name: FinancialEvidenceAccountLock :exec
 SELECT pg_advisory_xact_lock(hashtextextended('financial-evidence:' || $1::uuid::text, 0))
 `

@@ -1,9 +1,8 @@
 # Object-storage durable entity prototype
 
-This development harness increments a named counter using a private S3 bucket.
-The platform preview supports S3 and native GCS. The trusted Go command below
-configures S3; GCS setup is described below. Native and live-provider qualification
-remain pending.
+This trusted operator harness increments a named counter using a private S3 or
+native GCS bucket. The operator command and live-provider qualification share
+provider selection. Native and live-provider qualification remain pending.
 It needs no SQL database or persistent local disk. Each invocation creates a new
 execution owner; repeating a request ID and the same delta replays the original
 result without incrementing again.
@@ -16,10 +15,10 @@ Neither is a generally available production feature.
 
 ## Run against a private test bucket
 
-Use an existing **dedicated private test bucket** with reliable conditional PUT
-and strong read-after-write consistency. Native S3 compatibility alone does not
-qualify a provider. Give the harness private GET/PUT permission, plus LIST for
-alarm qualification and LIST/DELETE for cleanup, and keep all
+Use an existing **dedicated private test bucket** with reliable conditional writes
+and strong read-after-write consistency. Provider compatibility alone does not
+qualify a provider. Give the harness private GET/PUT permission, plus LIST/DELETE for
+alarm qualification and cleanup, and keep all
 customer writes and bucket lifecycle deletion away from the entity prefix.
 
 Configure `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and, when needed,
@@ -27,6 +26,7 @@ Configure `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and, when needed,
 in source files or command arguments.
 
 ```bash
+export GREGALE_ENTITY_PROVIDER=s3
 export GREGALE_ENTITY_BUCKET=gregale-entities-test
 export GREGALE_ENTITY_ENDPOINT=https://s3.us-east-1.amazonaws.com
 export GREGALE_ENTITY_REGION=us-east-1
@@ -35,6 +35,10 @@ go run ./examples/durable-entities -entity customer:456 -request increment-001
 go run ./examples/durable-entities -entity customer:456 -request increment-001
 go run ./examples/durable-entities -entity customer:456 -request increment-002
 ```
+
+Omitting `GREGALE_ENTITY_PROVIDER` preserves the original S3 configuration.
+Only `s3` and `gcs` are accepted. The command opens an existing bucket; it does
+not create a bucket or load the platform's backend registry.
 
 On a fresh entity, these return:
 
@@ -66,11 +70,36 @@ Configure a GCS backend using the fields shown in
 backend, and set `FAAS_DURABLE_ENTITY_BUCKET` to an existing, dedicated private
 platform test bucket. The same app allowlist and invocation/alarm/maintenance
 opt-ins apply. Grant the platform identity object read/create/replace access;
-alarm discovery needs LIST, and cleanup needs LIST/DELETE. Keep customer access,
+alarm discovery and cleanup need LIST/DELETE. Keep customer access,
 automatic lifecycle deletion and public caching away from this bucket.
 
-The trusted Go counter command above still configures S3. For GCS, invoke the
-counter app through the platform API/SDK with the GCS backend selected.
+The trusted operator command also supports GCS. Configure Application Default
+Credentials through the normal operator environment (for example, an attached
+service account or `GOOGLE_APPLICATION_CREDENTIALS` managed outside this repo):
+
+```bash
+export GREGALE_ENTITY_PROVIDER=gcs
+export GREGALE_ENTITY_BUCKET=gregale-entities-gcs-test
+
+# Optional: use ADC to impersonate the platform's dedicated storage identity.
+# export GREGALE_ENTITY_GCS_IMPERSONATE_SERVICE_ACCOUNT=entities@PROJECT.iam.gserviceaccount.com
+
+go run ./examples/durable-entities -entity customer:456 -request increment-001
+go run ./examples/durable-entities -entity customer:456 -inventory
+go run ./examples/durable-entities -entity customer:456 -set-storage-limit 1048576
+go run ./examples/durable-entities -entity customer:456 -cleanup
+```
+
+The impersonation target needs bucket permissions, and the ADC source needs
+permission to impersonate it. GCS uses the native Google endpoint; the S3
+`GREGALE_ENTITY_ENDPOINT`, `GREGALE_ENTITY_REGION` and AWS credentials do not
+select its destination or identity. All operator modes work with either provider.
+Keep the complete account/app/environment/customer/namespace/key scope the same
+on each operation. For platform entities, supply the verified UUIDs through
+`-account`, `-app`, `-environment-id` and, when applicable, `-tenant-id`.
+The `GREGALE_ENTITY_*` settings configure this trusted harness only; the
+platform invocation preview still requires its `FAAS_*` backend identity,
+fingerprint, app allowlist and opt-ins described above.
 
 Content generations are the opaque compare-and-swap tokens. Create uses
 `ifGenerationMatch=0`; replacement uses the generation returned with the object
@@ -173,7 +202,7 @@ branches and the legacy archive. It retains new-generation uploads, manifests,
 unknown paths and probes. A delayed orphan upload can be removed on a later
 sweep. A reader racing reclamation can receive a retryable conflict.
 
-Manifest writes upgrade to schema 2; older binaries fail closed. Stop old entity
+Manifest writes upgrade to schema 4; older binaries fail closed. Stop old entity
 callers/alarm workers when upgrading. Downgrading after upgrade needs an explicit
 storage migration. Keep bucket lifecycle deletion disabled. Versioned buckets may
 retain historical versions/delete markers; this command deletes current keys and
@@ -260,8 +289,8 @@ With a cap they return 503 `durable_entity_inventory_pending` for new work until
 the logical proof completes; reads and original receipt replays remain available.
 The separately enabled maintenance worker alternates cleanup and inventory pages
 and gives legacy accounting priority. For manual migration rerun `-inventory`.
-Stop all old entity callers, alarm and maintenance workers before this schema-3
-upgrade; binaries supporting only manifest schemas 1/2 reject the new manifests.
+Stop all old entity callers, alarm and maintenance workers before this schema-4
+upgrade; binaries supporting only manifest schemas 1/2/3 reject the new manifests.
 A downgrade requires storage migration. Guest protocol version 1 is unchanged.
 
 ## Deploy the counter invocation preview
@@ -351,15 +380,23 @@ With the invocation preview configured, enable:
 export FAAS_DURABLE_ENTITY_ALARMS_ENABLED=1
 ```
 
-The private platform credentials also need bucket listing permission. Startup
-checks delimiter listing of the entity prefix. Apid scans eight entity directories
-per page and dispatches due alarms through the existing scheduler/guest invocation
-path. Each entity read has a two-second budget, each page a twenty-second budget,
-and each delivery the usual twenty-five-second ceiling. One alarm runs at a time
-per apid process, with five seconds between completed pages. A restart reconstructs
-due work from the bucket; no SQL alarm table or permanent entity VM is required.
-Snapshots do not enlarge listing pages, but every entity must be inspected, so
-this scan has no production deadline latency guarantee.
+The private platform credentials also need delimiter/flat LIST and DELETE for
+index hints. Startup checks listing and deletes only a unique platform probe.
+Apid reads up to eight time-ordered index entries per page, and independently
+reconciles eight entity directories to recover alarms saved before the upgrade
+or whose index publication failed. Each read has a two-second budget, each scan
+a twenty-second budget, and each delivery the usual twenty-five-second ceiling.
+One alarm runs at a time per apid process, with five seconds between sweeps.
+Cursors are disposable and restart independently after listing errors.
+
+Index entries under `gregale/durable-entities/v1/alarm-index/` contain private
+entity identity, state version, scheduled time and retry reservation number.
+They are advisory: the committed snapshot and fenced manifest remain authority.
+A missing/failed hint cannot undo a committed transition; reconciliation repairs
+it. Due stale hints are deleted after revalidation. Future entries stop an index
+pass without reading their entity state; superseded future hints remain until
+their indexed due time. Listing must be lexically ordered (native S3/GCS support
+this); discovery still has no production ordering or deadline latency guarantee.
 
 For the counter, send a payload such as
 `{"delta":1,"alarm_at":"2026-10-08T12:00:00Z"}` with a new request ID. Choose an
@@ -376,23 +413,52 @@ observed version and deadline under ownership. Cancelled/replaced observations
 do not reach the guest, and a preserved deadline is rediscovered in newer state.
 Handlers return state/result and either clear or rearm `alarm_at`; returning the
 same overdue deadline rearms it and can cause another delivery. Failed handlers
-leave the alarm due. Attempts can repeat, while only a successful fenced
+keep the original business deadline and retry metadata. Only a successful fenced
 publication commits the state, receipt and next deadline together.
 
 Suspended/deleted accounts, disabled/deleted apps, suspended customers and
 deleted/recreated environments cannot start new alarm work. Existing alarms stay
 in the bucket while held. Alarm receipts use the same immutable receipt index.
-Retry/dead-letter policy, a due-time index, plan quotas and provider-backed
-operational qualification are still required for production availability.
+Before guest execution, a manifest CAS reserves an attempt and its next retry
+time. Backoff is 30 seconds, one minute, two minutes, four minutes, then capped
+at five minutes. Five reservations exhaust that state version's alarm. A crash
+or lost reservation acknowledgement consumes an attempt if publication succeeded;
+busy ownership, stale observations and rejected reservation CAS do not. Admission
+holds before reservation consume no attempts. Successful receipt replay is checked
+before retry gates, including after a lost final commit acknowledgement.
+
+Exhaustion leaves state and the alarm deadline intact and stops automatic retries.
+The last reserved attempt may still be running when inspection reports exhaustion.
+Inspect one exact private entity scope with the trusted operator harness:
+
+```bash
+go run ./examples/durable-entities -alarm-status \
+  -account ACCOUNT_ID -app APP_ID -environment-id ENVIRONMENT_UUID \
+  -tenant-id CUSTOMER_UUID -namespace counters -entity customer:456
+```
+
+Omit `-tenant-id` only for an entity without customer scope. Output contains the
+alarm identity, reservation count, next retry time and `exhausted`, never business
+state or provider errors. Inspection does not acquire entity ownership. A deliberate
+ordinary transition can clear the alarm or rearm it in a new state version, resetting
+the budget. There is no automatic dead-letter replay or public inspection endpoint.
+Advisory hint bytes are outside the per-entity committed-state cap; the existing
+storage-operation and upload-volume metrics include them. Plan quotas, billing,
+index compaction and provider/native qualification remain production work.
 
 ## Qualify a live provider
 
-Use the private test bucket and credential configuration above, then opt in:
+Use either provider's private test bucket and credential configuration above,
+then opt in. For GCS, set `GREGALE_ENTITY_PROVIDER=gcs` and ADC; no S3 endpoint,
+region or AWS credentials are required:
 
 ```bash
 GREGALE_ENTITY_QUALIFY=1 go test -v -count=1 -timeout=3m \
-  ./pkg/durableentity -run '^TestLiveS3DurableEntityQualification$'
+  ./pkg/durableentity -run '^TestLiveDurableEntityQualification$'
 ```
+
+The original `TestLiveS3DurableEntityQualification` entry point remains available
+for S3 and skips when GCS is selected. Use an exact test name to run one harness.
 
 The test uses a new `gregale/entity-qualification/<UUID>/` prefix. It probes native
 conditional writes, restores across managers, submits concurrent calls, drops an
@@ -400,16 +466,22 @@ accepted commit acknowledgement at the platform boundary, rejects an obsolete
 owner, and kills a separate owner process before replaying its committed result
 through takeover. It also checks private delimiter discovery and committed alarm
 replay. It verifies committed/current-key inventory, an explicit cap and receipt
-replay at capacity. It reports parent-process GET/conditional PUT/LIST attempts and
-elapsed milliseconds; child requests add extra cost. Objects are retained so
-results can be inspected. The test does not access existing entities.
+replay at capacity. Its JSON report identifies the provider, target (`live_bucket`
+or `wire_fixture`), cleanup qualification, retained prefix, parent-process
+GET/conditional PUT/LIST/DELETE attempts and elapsed milliseconds; child requests
+add extra cost. Objects are retained so results can be inspected. The test does
+not access existing entities.
 Add `GREGALE_ENTITY_CLEANUP_QUALIFY=1` to explicitly qualify native flat listing,
 deletion and original receipt replay after collection within its isolated prefix.
 That opt-in removes unused objects; committed state/receipts and probes remain.
 
 This is provider-backed correctness evidence when run against the selected live
-bucket. The acknowledgement-loss and future-clock fencing cases use explicit
-fault injection; they do not simulate every network partition. Native deployed
+bucket. The CI S3 fixture runs the shared harness with `target:wire_fixture`;
+GCS SDK wire tests exercise native paginated inventory, caps, cleanup preserving
+original receipts and delimiter-based alarm discovery/delivery/replay. Neither
+fixture qualifies a live bucket. The acknowledgement-loss and future-clock
+fencing cases use explicit fault injection; they do not simulate every network
+partition. Native deployed
 counter acceptance, latency distributions, pricing, lifecycle protections and
 provider failure testing are still required before production availability.
 
@@ -481,5 +553,5 @@ between the final read and publication, renewal during execution, lost commit
 responses, uncommitted uploads, identity isolation, corrupt restoration and
 legacy migration, more than 1,024 receipts, bounded snapshots, replay after
 compaction, cleanup publication races and uncertain barriers/deletions.
-S3 wire tests use the existing AWS SDK/provider against a local
-conditional HTTP fixture; they do not qualify a live object-storage provider.
+S3 and GCS wire tests use the production provider SDKs against local
+conditional HTTP fixtures; they do not qualify a live object-storage provider.

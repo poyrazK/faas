@@ -16,12 +16,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/durableentity/providerconfig"
 )
 
 type qualificationStore struct {
 	ObjectStore
 	prefix  string
+	driver  string
 	reads   atomic.Int64
 	writes  atomic.Int64
 	lists   atomic.Int64
@@ -96,30 +97,30 @@ func (s *qualificationStore) ListEntityPrefixes(ctx context.Context, prefix, cur
 
 func liveQualificationStore(t *testing.T, prefix string) *qualificationStore {
 	t.Helper()
-	bucket, endpoint, region := os.Getenv("GREGALE_ENTITY_BUCKET"), os.Getenv("GREGALE_ENTITY_ENDPOINT"), os.Getenv("GREGALE_ENTITY_REGION")
-	if bucket == "" || endpoint == "" || region == "" {
-		t.Fatal("live qualification requires a dedicated private test bucket, endpoint and region")
-	}
-	provider, err := objectstorage.NewS3(objectstorage.BackendConfig{Endpoint: endpoint, S3Region: region, PathStyle: true, AccessKeyEnv: "AWS_ACCESS_KEY_ID", SecretKeyEnv: "AWS_SECRET_ACCESS_KEY", SessionTokenEnv: "AWS_SESSION_TOKEN"}, os.Getenv)
+	selection, err := providerconfig.Open(os.Getenv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	conditional, ok := provider.(objectstorage.ConditionalStateProvider)
-	if !ok {
-		t.Fatal(ErrUnsupported)
-	}
-	store, err := NewProviderStore(conditional, bucket)
+	store, err := NewProviderStore(selection.Provider, selection.Bucket)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &qualificationStore{ObjectStore: store, prefix: prefix}
+	return &qualificationStore{ObjectStore: store, prefix: prefix, driver: selection.Driver}
 }
 
-// TestLiveS3DurableEntityQualification is deliberately opt-in. It writes unique
+// TestLiveS3DurableEntityQualification preserves the original S3-only command.
+func TestLiveS3DurableEntityQualification(t *testing.T) {
+	if driver := os.Getenv("GREGALE_ENTITY_PROVIDER"); driver != "" && driver != "s3" {
+		t.Skip("the legacy S3 entry point requires S3; use TestLiveDurableEntityQualification")
+	}
+	TestLiveDurableEntityQualification(t)
+}
+
+// TestLiveDurableEntityQualification is deliberately opt-in. It writes unique
 // retained prefixes and never touches production entities. Cleanup requires a
 // separate explicit opt-in and deletes only unused objects in the unique prefix.
 // Run the same binary with a child marker to kill an actual owner process.
-func TestLiveS3DurableEntityQualification(t *testing.T) {
+func TestLiveDurableEntityQualification(t *testing.T) {
 	if os.Getenv("GREGALE_ENTITY_QUALIFY") != "1" {
 		t.Skip("set GREGALE_ENTITY_QUALIFY=1 with a dedicated private bucket")
 	}
@@ -127,6 +128,11 @@ func TestLiveS3DurableEntityQualification(t *testing.T) {
 		qualificationChild(t, prefix)
 		return
 	}
+	qualifyProvider(t, "live_bucket")
+}
+
+func qualifyProvider(t *testing.T, target string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	prefix := "gregale/entity-qualification/" + uuid.NewString() + "/"
@@ -166,6 +172,8 @@ func TestLiveS3DurableEntityQualification(t *testing.T) {
 		qualificationCleanup(t, ctx, restarted, id)
 	}
 	report, _ := json.Marshal(struct {
+		Provider     string `json:"provider"`
+		Target       string `json:"target"`
 		Prefix       string `json:"retained_prefix"`
 		Reads        int64  `json:"parent_get_attempts"`
 		Writes       int64  `json:"parent_conditional_put_attempts"`
@@ -173,7 +181,8 @@ func TestLiveS3DurableEntityQualification(t *testing.T) {
 		Deletes      int64  `json:"parent_delete_attempts"`
 		ElapsedMS    int64  `json:"elapsed_ms"`
 		ProcessCrash bool   `json:"owner_process_killed"`
-	}{prefix, store.reads.Load(), store.writes.Load(), store.lists.Load(), store.deletes.Load(), time.Since(started).Milliseconds(), true})
+		Cleanup      bool   `json:"cleanup_qualified"`
+	}{store.driver, target, prefix, store.reads.Load(), store.writes.Load(), store.lists.Load(), store.deletes.Load(), time.Since(started).Milliseconds(), true, os.Getenv("GREGALE_ENTITY_CLEANUP_QUALIFY") == "1"})
 	t.Log(string(report))
 }
 
@@ -246,6 +255,9 @@ func qualificationCleanup(t *testing.T, ctx context.Context, m *Manager, id ID) 
 
 func qualificationAlarm(t *testing.T, ctx context.Context, m *Manager, id ID) {
 	t.Helper()
+	if err := m.CheckAlarmDiscovery(ctx); err != nil {
+		t.Fatal("provider alarm index capabilities", err)
+	}
 	id.Key = "alarm"
 	at := time.Now().UTC().Add(-time.Second)
 	if _, err := m.Invoke(ctx, id, "caller", request("schedule"), func(ctx context.Context, view View) (Transition, error) {
@@ -257,7 +269,7 @@ func qualificationAlarm(t *testing.T, ctx context.Context, m *Manager, id ID) {
 	}
 	cursor := ""
 	for {
-		page, err := m.ScanDueAlarms(ctx, cursor)
+		page, err := m.ScanIndexedDueAlarms(ctx, cursor)
 		if err != nil || page.Failed != 0 {
 			t.Fatalf("provider alarm discovery = %+v %v", page, err)
 		}
@@ -302,6 +314,7 @@ func qualificationConcurrentCalls(t *testing.T, ctx context.Context, m *Manager,
 
 func TestS3QualificationHarnessAgainstLocalWireFixture(t *testing.T) {
 	upstream := newS3WireServer(t)
+	t.Setenv("GREGALE_ENTITY_PROVIDER", "s3")
 	t.Setenv("GREGALE_ENTITY_QUALIFY", "1")
 	t.Setenv("GREGALE_ENTITY_CLEANUP_QUALIFY", "1")
 	t.Setenv("GREGALE_ENTITY_QUALIFY_CHILD_PREFIX", "")
@@ -312,7 +325,7 @@ func TestS3QualificationHarnessAgainstLocalWireFixture(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "fixture-only")
 	t.Setenv("AWS_SESSION_TOKEN", "")
 	t.Setenv("DATABASE_URL", "postgres://unused@127.0.0.1:1/unused")
-	TestLiveS3DurableEntityQualification(t)
+	qualifyProvider(t, "wire_fixture")
 }
 
 func qualificationFence(t *testing.T, ctx context.Context, m *Manager, id ID) {
@@ -372,7 +385,7 @@ func qualificationProcessCrash(t *testing.T, ctx context.Context, m *Manager, pr
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := exec.CommandContext(ctx, binary, "-test.run=^TestLiveS3DurableEntityQualification$", "-test.v")
+	child := exec.CommandContext(ctx, binary, "-test.run=^TestLiveDurableEntityQualification$", "-test.v")
 	child.Env = append(os.Environ(), "GREGALE_ENTITY_QUALIFY_CHILD_PREFIX="+prefix)
 	stdout, err := child.StdoutPipe()
 	if err != nil {

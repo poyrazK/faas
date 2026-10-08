@@ -57,7 +57,7 @@ func (p *entityConfigProvider) ListObjects(ctx context.Context, _, prefix, curso
 }
 
 func (p *entityConfigProvider) DeleteObject(ctx context.Context, _, key string) error {
-	if !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/maintenance/") {
+	if !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/maintenance/") && !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/alarms/") {
 		return errors.New("configuration probe touched real state")
 	}
 	p.deletes++
@@ -67,43 +67,46 @@ func (p *entityConfigProvider) DeleteObject(ctx context.Context, _, key string) 
 	return p.DeleteEntityObject(ctx, key)
 }
 
-func TestDurableEntityMaintenanceStartupChecksDeleteOnlyWhenEnabled(t *testing.T) {
-	for _, enabled := range []bool{false, true} {
-		for _, failure := range []string{"none", "delete", "write"} {
-			t.Run(strings.Join([]string{boolLabel(enabled), failure}, "/"), func(t *testing.T) {
-				provider := &entityConfigProvider{entityTestBucket: &entityTestBucket{objects: map[string]entityTestObject{}}, denyDelete: failure == "delete", denyWrite: failure == "write"}
-				registry, err := objectstorage.NewRegistry(objectstorage.Config{DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "private"}, Backends: []objectstorage.BackendConfig{{ID: "private", Driver: "s3", Region: "us-east-1", Namespace: "entities", Endpoint: "https://private.example.test", S3Region: "us-east-1"}}}, func(string) string { return "" }, map[string]objectstorage.Factory{
-					"s3": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) {
-						return provider, nil
-					},
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				backend, err := registry.Default("us-east-1")
-				if err != nil {
-					t.Fatal(err)
-				}
-				config := map[string]string{"FAAS_DURABLE_ENTITIES_ENABLED": "1", "FAAS_DURABLE_ENTITY_BACKEND": "private", "FAAS_DURABLE_ENTITY_BACKEND_FINGERPRINT": backend.Fingerprint, "FAAS_DURABLE_ENTITY_BUCKET": "private-entities", "FAAS_DURABLE_ENTITY_APPS": uuid.NewString()}
-				if enabled {
-					config["FAAS_DURABLE_ENTITY_MAINTENANCE_ENABLED"] = "1"
-				}
-				s := &server{objectStorage: registry}
-				err = s.configureDurableEntities(t.Context(), func(key string) string { return config[key] })
-				if enabled && provider.denyDelete || provider.denyWrite {
-					if err == nil || strings.Contains(err.Error(), "private-provider-secret") || s.durableEntities != nil {
-						t.Fatal("failed probe leaked details or enabled the engine", err)
+func TestDurableEntityBackgroundWorkersCheckDeleteOnlyWhenEnabled(t *testing.T) {
+	for _, feature := range []string{"MAINTENANCE", "ALARMS"} {
+		for _, enabled := range []bool{false, true} {
+			for _, failure := range []string{"none", "delete", "write"} {
+				t.Run(strings.Join([]string{feature, boolLabel(enabled), failure}, "/"), func(t *testing.T) {
+					provider := &entityConfigProvider{entityTestBucket: &entityTestBucket{objects: map[string]entityTestObject{}}, denyDelete: failure == "delete", denyWrite: failure == "write"}
+					registry, err := objectstorage.NewRegistry(objectstorage.Config{DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "private"}, Backends: []objectstorage.BackendConfig{{ID: "private", Driver: "s3", Region: "us-east-1", Namespace: "entities", Endpoint: "https://private.example.test", S3Region: "us-east-1"}}}, func(string) string { return "" }, map[string]objectstorage.Factory{
+						"s3": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) {
+							return provider, nil
+						},
+					})
+					if err != nil {
+						t.Fatal(err)
 					}
-				} else if err != nil || s.durableEntities == nil || s.durableEntityMaintenanceEnabled != enabled {
-					t.Fatal("configuration gates failed", err)
-				}
-				expectedDeletes := boolInt(enabled && !provider.denyWrite)
-				if provider.deletes != expectedDeletes {
-					t.Fatal("base invocation required DELETE", provider.deletes)
-				}
-			})
+					backend, err := registry.Default("us-east-1")
+					if err != nil {
+						t.Fatal(err)
+					}
+					config := map[string]string{"FAAS_DURABLE_ENTITIES_ENABLED": "1", "FAAS_DURABLE_ENTITY_BACKEND": "private", "FAAS_DURABLE_ENTITY_BACKEND_FINGERPRINT": backend.Fingerprint, "FAAS_DURABLE_ENTITY_BUCKET": "private-entities", "FAAS_DURABLE_ENTITY_APPS": uuid.NewString()}
+					if enabled {
+						config["FAAS_DURABLE_ENTITY_"+feature+"_ENABLED"] = "1"
+					}
+					s := &server{objectStorage: registry}
+					err = s.configureDurableEntities(t.Context(), func(key string) string { return config[key] })
+					if enabled && provider.denyDelete || provider.denyWrite {
+						if err == nil || strings.Contains(err.Error(), "private-provider-secret") || s.durableEntities != nil {
+							t.Fatal("failed probe leaked details or enabled the engine", err)
+						}
+					} else if err != nil || s.durableEntities == nil || s.durableEntityMaintenanceEnabled != (enabled && feature == "MAINTENANCE") || s.durableEntityAlarmsEnabled != (enabled && feature == "ALARMS") {
+						t.Fatal("configuration gates failed", err)
+					}
+					expectedDeletes := boolInt(enabled && !provider.denyWrite)
+					if provider.deletes != expectedDeletes {
+						t.Fatal("base invocation required DELETE", provider.deletes)
+					}
+				})
+			}
 		}
 	}
+
 }
 
 func boolLabel(value bool) string {

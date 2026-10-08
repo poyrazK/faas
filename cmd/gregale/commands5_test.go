@@ -897,7 +897,7 @@ func TestCmdAppScale_RequiresLogin(t *testing.T) {
 
 // TestCmdAppScale_Min1_EchoesResidentCost (issue #65 D3) pins the
 // always-resident GB-h/mo echo after `gregale app <slug> scale --min 1`
-// on a Pro plan. Cost = (512+8) × 1 × 30 / 1024 ≈ 15.2 GB-h/mo.
+// on a Pro plan. Cost = (512+8) × 1 × 720 / 1024 ≈ 365.6 GB-h/mo.
 func TestCmdAppScale_Min1_EchoesResidentCost(t *testing.T) {
 	sink := &multiSink{
 		onAccount: func(string) (int, any) {
@@ -922,7 +922,7 @@ func TestCmdAppScale_Min1_EchoesResidentCost(t *testing.T) {
 	for _, want := range []string{
 		"✓ Updated",
 		"1 instance of 512 MB kept warm",
-		"~15.2 GB-h/mo",
+		"~365.6 GB-h/mo",
 		"1000 millicent/GB-h overage",
 	} {
 		if !strings.Contains(out, want) {

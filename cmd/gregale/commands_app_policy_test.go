@@ -292,7 +292,14 @@ func TestAppPolicyControlsHelpCompletionManAndReference(t *testing.T) {
 		"help": help.String(), "man": man.String(), "reference": reference.String(),
 	} {
 		for _, want := range wants {
-			if !strings.Contains(out, want) {
+			needle := want
+			if surface == "man" {
+				// The roff source escapes hyphens so the rendered manual
+				// displays the flag literally without treating them as
+				// break opportunities.
+				needle = manRoffFlagName(want)
+			}
+			if !strings.Contains(out, needle) {
 				t.Errorf("%s missing %s", surface, want)
 			}
 		}
