@@ -64,7 +64,11 @@
     path.
   - **Capturing on OOM or liveness failure.** By then the process is dead
     or the VM is being destroyed; there is nothing useful to capture.
-- **Verification:** state tests for the trigger rules (opt-in, in-flight,
+- **Verification:** `TestCrashSnapshotMetal` passed on 2026-10-09 on the
+  internal test node (nested KVM, Firecracker 1.7.0): a manual capture of
+  the running instance completed in place (the instance kept running and no
+  `snapshots` row carried the capture), and the capture opened as a fork
+  that a token-bearing request reached. Also: state tests for the trigger rules (opt-in, in-flight,
   cooldown) on MemStore and Postgres; coordinator tests for capture,
   failure and expiry; engine test that a capture resumes the serving
   instance and never creates a `snapshots` row; gateway test that a 5xx
