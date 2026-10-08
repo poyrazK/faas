@@ -24,9 +24,10 @@ import (
 
 type operationResultSynthDispatcher struct {
 	fakeSynthDispatcher
-	result     json.RawMessage
-	invocation state.Invocation
-	handoff    string
+	result              json.RawMessage
+	customerOperationID string
+	invocation          state.Invocation
+	handoff             string
 }
 
 func (d *operationResultSynthDispatcher) Invoke(ctx context.Context, _ string, inv state.Invocation) (state.Invocation, error) {
@@ -34,6 +35,7 @@ func (d *operationResultSynthDispatcher) Invoke(ctx context.Context, _ string, i
 	d.handoff = trafficrevocation.HandoffValue(ctx)
 	inv.Result = d.result
 	inv.State = state.InvocationDispatching
+	inv.OperationID = d.customerOperationID
 	return inv, nil
 }
 
@@ -161,5 +163,43 @@ func TestManagedOperationResultTransportPreservesByteBudget(t *testing.T) {
 	}
 	if !bytes.Equal(decoded.Result, result) {
 		t.Fatalf("result bytes changed: got=%d want=%d", len(decoded.Result), len(result))
+	}
+}
+
+// adr: 638
+func TestCustomerOperationResultTransportPreservesByteBudget(t *testing.T) {
+	pattern := "<>&\u2028\u2029"
+	budget := api.MaxExclusiveResultBytes - 2
+	result := json.RawMessage(`"` + strings.Repeat(pattern, budget/len(pattern)) + strings.Repeat("x", budget%len(pattern)) + `"`)
+	dispatcher := &operationResultSynthDispatcher{result: result, customerOperationID: "customer-operation"}
+	srv := NewSynthServer("", dispatcher, nil)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := internalsvc.Mint("schedd", 30*time.Second, nil, priv, internalsvc.KidFromPub(pub))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.internalSvcVerifier = &testInternalSvcVerifier{allowed: map[string]ed25519.PublicKey{"schedd": pub}}
+	body, err := json.Marshal(invocationDispatchRequest{InvocationID: "invocation", AppID: "app", Source: string(state.InvocationAsyncInvoke)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/invocations:dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	srv.handleInvocationDispatch(response, req)
+	var decoded struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d", response.Code)
+	}
+	if err := httpjson.Decode(response.Body, api.MaxExclusiveGatewayResponseBytes, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decoded.Result, result) {
+		t.Fatalf("customer result bytes changed: got=%d want=%d", len(decoded.Result), len(result))
 	}
 }

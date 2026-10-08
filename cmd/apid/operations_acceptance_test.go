@@ -420,6 +420,15 @@ func (d *operationsAcceptanceDispatcher) InvokeWithTargetStatus(ctx context.Cont
 	for k, v := range headers {
 		r.Header.Set(k, v)
 	}
+	// Match the trusted guest boundary: durable ownership supplies identity,
+	// and only the validated current execution proof survives header clearing.
+	proof := r.Header.Clone()
+	api.PlatformIdentity{AppID: inv.AppID, TenantID: inv.AccountID, PlatformTenantID: inv.PlatformTenantID, InstanceID: inv.InstanceID}.ApplyGuestHeaders(r.Header)
+	for _, name := range []string{api.OperationIDHeader, api.OperationAttemptHeader, api.OperationCapabilityHeader, api.OperationTransactionVersionHeader, api.OperationResultMaxBytesHeader, api.OperationMilestoneVersionHeader} {
+		if value := proof.Get(name); value != "" {
+			r.Header.Set(name, value)
+		}
+	}
 	r.Header.Set(api.InvocationIDHeader, inv.ID)
 	res, err := http.DefaultClient.Do(r)
 	if err != nil {

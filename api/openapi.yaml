@@ -7631,6 +7631,230 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/milestones:
+    get:
+      tags: [operations]
+      operationId: getAccountOperationMilestones
+      summary: Read retained business milestones for an account-owned Operation.
+      description: Requires account read scope and MFA. The app and Operation bind ownership; customer credentials cannot access this operator feed.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationMilestoneLimit'
+      - $ref: '#/components/parameters/OperationMilestoneCursor'
+      responses:
+        '200':
+          description: Account app Operation facts with retained page continuation.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationMilestonesResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/OperationGone'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/platform-tenant-self/customer-operations/{id}/milestones:
+    get:
+      tags: [operations]
+      operationId: getPlatformTenantSelfOperationMilestones
+      summary: Read this customer's retained Operation milestones.
+      description: Requires platform_tenant:operations:read. The authenticated customer must own the Operation. Retention follows business results, independently of generic event history.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationMilestoneLimit'
+      - $ref: '#/components/parameters/OperationMilestoneCursor'
+      responses:
+        '200':
+          description: Authenticated customer Operation facts and page continuation.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationMilestonesResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/OperationGone'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/operation-milestones:
+    get:
+      tags: [operations]
+      operationId: listAccountBusinessMilestones
+      summary: Read a business entity timeline across related Operations.
+      description: Requires account read scope and MFA. Explicit app/environment/reference selectors and optional customer selection remain within account ownership. Paired workflow and workflow-instance selectors narrow the feed to one run. Facts are ordered by first platform publication time, not inferred business causality.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - $ref: '#/components/parameters/OperationMilestoneSubjectType'
+      - $ref: '#/components/parameters/OperationMilestoneSubjectID'
+      - $ref: '#/components/parameters/OperationMilestoneWorkflow'
+      - $ref: '#/components/parameters/OperationMilestoneWorkflowInstanceID'
+      - $ref: '#/components/parameters/OperationMilestoneTenantID'
+      - $ref: '#/components/parameters/OperationMilestoneLimit'
+      - $ref: '#/components/parameters/OperationMilestoneCursor'
+      - $ref: '#/components/parameters/OperationWorkflowStateCursor'
+      - $ref: '#/components/parameters/OperationWorkflowStaleOnly'
+      responses:
+        '200':
+          description: Account environment business-reference milestone feed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationMilestonesResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/OperationGone'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/platform-tenant-self/customer-operation-milestones:
+    get:
+      tags: [operations]
+      operationId: listPlatformTenantSelfBusinessMilestones
+      summary: Read a business entity timeline for the authenticated customer.
+      description: Requires platform_tenant:operations:read. Identity comes only from credentials. The app, environment, and paired public reference select related retained work. Paired workflow and workflow-instance selectors narrow the feed to one run. Opaque pagination binds all selectors; other customers with the same entity ID remain isolated.
+      parameters:
+      - $ref: '#/components/parameters/OperationMilestoneAppID'
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - $ref: '#/components/parameters/OperationMilestoneSubjectType'
+      - $ref: '#/components/parameters/OperationMilestoneSubjectID'
+      - $ref: '#/components/parameters/OperationMilestoneWorkflow'
+      - $ref: '#/components/parameters/OperationMilestoneWorkflowInstanceID'
+      - $ref: '#/components/parameters/OperationMilestoneLimit'
+      - $ref: '#/components/parameters/OperationMilestoneCursor'
+      - $ref: '#/components/parameters/OperationWorkflowStateCursor'
+      - $ref: '#/components/parameters/OperationWorkflowStaleOnly'
+      responses:
+        '200':
+          description: Authenticated customer business-reference milestone feed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationMilestonesResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/OperationGone'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/operations/{id}/milestones:
+    post:
+      tags: [operations]
+      operationId: reportOperationMilestone
+      summary: Publish a committed public business milestone.
+      description: Requires a current workload assertion and invocation attempt/capability. Validates the pinned schema, then deduplicates by logical Operation and milestone ID across recovery. Identical retries return the original fact; changed identity content conflicts. Publication never changes business completion or delivery state.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXFaasInvocationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationMilestoneRequest'}
+      responses:
+        '200':
+          description: Committed business fact published or its original acknowledgement replayed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationMilestone'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/OperationConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/operations/{id}/milestones/validate:
+    post:
+      tags: [operations]
+      operationId: validateOperationMilestones
+      summary: Validate public milestones before the application transaction commits.
+      description: Requires the active workload and invocation claim. This bounded, read-only check validates pinned declarations, payload schemas, duplicate identity and remaining milestone capacity. Failure allows the SDK to roll back business writes; success does not publish or reserve capacity.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXFaasInvocationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationMilestoneValidationRequest'}
+      responses:
+        '200':
+          description: Submitted milestone contracts validated under the current execution claim.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationMilestoneValidationResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/OperationConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/operations/{id}/workflow-states:
+    post:
+      tags: [operations]
+      operationId: reportOperationWorkflowState
+      summary: Publish an app-reported business workflow state.
+      description: Requires the current workload and invocation claim. The state name must be declared by the pinned workflow definition. Revisions assigned inside the application transaction prevent late older publications from replacing a newer state.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXFaasInvocationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationWorkflowStateReport'}
+      responses:
+        '200':
+          description: State update accepted idempotently, even when a newer revision is already current.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowStateReportResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/OperationConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/operations/{id}/workflow-states/validate:
+    post:
+      tags: [operations]
+      operationId: validateOperationWorkflowStates
+      summary: Validate app-reported workflow states before transaction commit.
+      description: Requires the active workload and invocation claim. Validates the declared workflow/state vocabulary, business reference, instance ID and positive transaction-assigned revisions without publishing or reserving capacity.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXFaasInvocationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationWorkflowStateValidationRequest'}
+      responses:
+        '200':
+          description: All candidate state updates passed validation under the current execution claim.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowStateValidationResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/OperationConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/runtime/operations/{id}/progress:
     post:
       tags:
@@ -29790,6 +30014,14 @@ paths:
         description: Business state filter.
         required: false
         schema: {type: string, enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation]}
+      - name: subject_type
+        description: Business reference type for this account-owned app. Requires subject_id; supply both selectors together.
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+      - name: subject_id
+        description: Exact public entity identifier within the account app and environment. Requires subject_type. Maximum 256 UTF-8 bytes; ASCII controls are rejected.
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 256, pattern: '^[^\x00-\x1f\x7f]+$'}
       - in: query
         name: limit
         description: Number of account-owned operation summaries to include.
@@ -30353,6 +30585,14 @@ paths:
         description: Stable operation name across definition revisions.
         in: query
         schema: {type: string, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+      - name: subject_type
+        description: Exact business reference type. Requires subject_id; both must be supplied together.
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+      - name: subject_id
+        description: Exact business reference ID, within the authenticated owner/app/environment. Requires subject_type. Maximum 256 UTF-8 bytes; ASCII controls are rejected.
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 256, pattern: '^[^\x00-\x1f\x7f]+$'}
       - name: state
         description: Current business state filter, independent of delivery.
         in: query
@@ -30662,6 +30902,65 @@ components:
       schema:
         type: string
         pattern: ^[0-9a-f]{64}$
+    OperationMilestoneLimit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      description: Maximum retained public facts in a milestone page.
+    OperationMilestoneCursor:
+      name: cursor
+      in: query
+      schema: {type: string, minLength: 1, maxLength: 512}
+      description: Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+    OperationWorkflowStateCursor:
+      name: workflow_state_cursor
+      in: query
+      schema: {type: string, minLength: 1, maxLength: 512}
+      description: Independent continuation for retained state changes. Requires the paired workflow and workflow_instance_id selectors.
+    OperationWorkflowStaleOnly:
+      name: stale_only
+      in: query
+      schema: {type: boolean, default: false}
+      description: When true, return only current workflow states that have passed an app-declared state_stale_after threshold. Applies only to workflow_states; milestone facts and state history are unchanged.
+    OperationMilestoneScope:
+      name: scope
+      in: query
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
+      description: Explicit environment containing the related business Operations.
+    OperationMilestoneSubjectType:
+      name: subject_type
+      in: query
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+      description: Business reference type for a timeline spanning related Operations.
+    OperationMilestoneSubjectID:
+      name: subject_id
+      in: query
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 256, pattern: '^[^\x00-\x1f\x7f]+$'}
+      description: Exact public business identifier for this timeline; maximum 256 UTF-8 bytes.
+    OperationMilestoneWorkflow:
+      name: workflow
+      in: query
+      schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+      description: Optional workflow name. Supply with workflow_instance_id to read one workflow instance.
+    OperationMilestoneWorkflowInstanceID:
+      name: workflow_instance_id
+      in: query
+      schema: {type: string, minLength: 1, maxLength: 256, pattern: '^[^\x00-\x1f\x7f]+$'}
+      description: Optional app-provided workflow instance ID. Supply with workflow; the pair is bound into pagination.
+    OperationMilestoneAppID:
+      name: app_id
+      in: query
+      required: true
+      schema: {type: string, format: uuid}
+      description: App selected within the authenticated customer's milestone feed.
+    OperationMilestoneTenantID:
+      name: tenant_id
+      in: query
+      schema: {type: string, format: uuid}
+      description: Optional account-owned customer selector on an operator milestone timeline.
     OperationDeploymentId:
       name: deployment_id
       in: path
@@ -30997,6 +31296,221 @@ components:
         result:
           description: Required typed output for succeeded.
 
+    OperationMilestoneRequest:
+      type: object
+      additionalProperties: false
+      required: [id, name, payload, occurred_at]
+      description: Public application fact with a stable UUID reused across retries and recovery. Payloads are validated against the immutable definition; publication does not change business outcome.
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        payload:
+          description: Declared JSON payload, bounded to 8192 UTF-8 bytes before and after canonicalization. The application chooses customer-visible data.
+        occurred_at: {type: string, format: date-time, description: Application-recorded time. Normalized to UTC microsecond precision; independent of platform receipt time.}
+    OperationMilestoneValidationRequest:
+      type: object
+      additionalProperties: false
+      required: [milestones]
+      description: Bounded read-only precommit validation; does not reserve capacity, extend the claim, or publish facts. Maximum request size 65536 bytes.
+      properties:
+        milestones: {type: array, minItems: 1, maxItems: 64, items: {$ref: '#/components/schemas/OperationMilestoneRequest'}}
+    OperationMilestoneValidationResponse:
+      description: Confirmation that all candidate facts passed validation under the current execution claim.
+      type: object
+      additionalProperties: false
+      required: [valid]
+      properties:
+        valid: {type: boolean, description: True when the batch satisfies the current execution fence and immutable schemas.}
+    OperationMilestone:
+      type: object
+      additionalProperties: false
+      required: [id, operation_id, name, payload, occurred_at, created_at, sequence]
+      description: Retained public business fact. Deduplicated by Operation and milestone ID across execution generations, retained with the Operation, and attributed to its immutable business reference.
+      properties:
+        workflow_steps:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/OperationWorkflowStep'}
+          description: App-declared workflow labels matched to this retained milestone; only observed steps are included.
+        id: {type: string, format: uuid}
+        operation_id: {type: string, format: uuid}
+        platform_tenant_id: {type: string, format: uuid, description: Only account operator feeds include this customer identity.}
+        subject: {$ref: '#/components/schemas/OperationSubject'}
+        name: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        payload:
+          description: Retained, schema-validated public JSON fact. Read through the existing customer or account ownership boundary.
+        occurred_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time, description: First platform publication time; determines descending timeline order.}
+        sequence: {type: integer, minimum: 1, description: Corresponding Operation event sequence. The general event stream contains a notice; this ledger retains the payload.}
+    OperationWorkflowStep:
+      description: App-declared read-only workflow step represented by an observed milestone. New declarations select the instance ID from the validated public milestone payload using the pinned JSON Pointer.
+      type: object
+      additionalProperties: false
+      required: [workflow, title, step, label, milestone, position]
+      properties:
+        workflow: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+        title: {type: string, minLength: 1, maxLength: 128}
+        states:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+          description: App-declared business state vocabulary pinned with this workflow mapping.
+        terminal_states:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+          description: App-declared terminal states, which must be in states and cannot have outgoing transitions.
+        state_stale_after_seconds:
+          type: object
+          maxProperties: 32
+          propertyNames: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+          additionalProperties: {type: integer, minimum: 1, maximum: 315360000}
+          description: App-declared age thresholds in seconds for active states. Keys must be states and cannot be terminal states.
+        transitions:
+          type: array
+          maxItems: 128
+          items: {$ref: '#/components/schemas/OperationWorkflowTransition'}
+          description: App-declared allowed state edges pinned with this workflow mapping.
+        step: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+        label: {type: string, minLength: 1, maxLength: 128}
+        milestone: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        instance_id_from: {type: string, minLength: 1, maxLength: 2048, description: JSON Pointer to a stable workflow-run ID in this milestone's payload; omitted by older pinned definitions.}
+        instance_id: {type: string, minLength: 1, maxLength: 256, description: App-provided workflow-run ID selected from this observed milestone.}
+        position: {type: integer, minimum: 1, maximum: 32}
+    OperationWorkflowTransition:
+      description: Allowed state edge declared by a pinned application workflow definition.
+      type: object
+      additionalProperties: false
+      required: [from, to]
+      properties:
+        from: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+        to: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+    OperationMilestonesResponse:
+      description: Page of retained public milestone facts in the selected ownership and business-reference boundary.
+      type: object
+      required: [milestones]
+      properties:
+        milestones: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationMilestone'}}
+        workflow_states:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/OperationWorkflowState'}
+          description: Latest explicitly reported states for recent workflow instances under this business reference. With stale_only=true, this list contains only states past their app-declared age threshold. Milestone facts and state history are unaffected. This list is empty on Operation-specific feeds.
+        workflow_state_history:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/OperationWorkflowStateHistoryEntry'}
+          description: Retained app-reported changes for the exact workflow run when paired workflow selectors are supplied, ordered by app-assigned revision.
+        next_cursor: {type: string, description: Opaque continuation bound to the same account, customer, app, environment, reference or Operation, and feed role.}
+        next_workflow_state_cursor: {type: string, description: 'Independent continuation for workflow_state_history, bound to the same run and ownership filters.'}
+    OperationWorkflowStateReport:
+      type: object
+      additionalProperties: false
+      required: [id, workflow, instance_id, state, revision, occurred_at]
+      description: Idempotent app-reported state update already committed with the business write. Revision is assigned transactionally by the application SDK.
+      properties:
+        id: {type: string, format: uuid}
+        workflow: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+        instance_id: {type: string, minLength: 1, maxLength: 256, pattern: '^[^\\x00-\\x1f\\x7f]+$'}
+        from_state: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: Current app database state before the requested declared transition. Required when the pinned workflow declares transitions.}
+        state: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+        revision: {type: integer, format: int64, minimum: 1}
+        occurred_at: {type: string, format: date-time}
+    OperationWorkflowStateValidationRequest:
+      description: Batch of application-reported workflow updates to validate before their transaction commits.
+      type: object
+      additionalProperties: false
+      required: [workflow_states]
+      properties:
+        workflow_states: {type: array, minItems: 1, maxItems: 64, items: {$ref: '#/components/schemas/OperationWorkflowStateReport'}}
+    OperationWorkflowStateValidationResponse:
+      description: Validation outcome for an app-reported workflow-state batch.
+      type: object
+      additionalProperties: false
+      required: [valid]
+      properties:
+        valid: {type: boolean}
+    OperationWorkflowStateReportResponse:
+      description: Acknowledgement returned after the platform records an app-reported workflow-state update.
+      type: object
+      additionalProperties: false
+      required: [id, operation_id, workflow, instance_id, state, revision]
+      properties:
+        id: {type: string, format: uuid}
+        operation_id: {type: string, format: uuid}
+        workflow: {type: string}
+        instance_id: {type: string}
+        from_state: {type: string, description: Previous app state when a declared transition was reported.}
+        state: {type: string}
+        revision: {type: integer, format: int64, minimum: 1}
+    OperationWorkflowState:
+      description: Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
+      type: object
+      additionalProperties: false
+      required: [workflow, instance_id, state, terminal, stale, occurred_at, revision, updated_at]
+      properties:
+        workflow: {type: string}
+        instance_id: {type: string}
+        state: {type: string}
+        terminal: {type: boolean, description: True when the state is listed in terminal_states on the pinned workflow definition that reported it.}
+        stale: {type: boolean, description: True when the app-reported occurrence time plus the pinned state_stale_after threshold is at or before the read time.}
+        occurred_at: {type: string, format: date-time, description: App-reported time when the current state became true; used for stale-state age.}
+        stale_after_seconds: {type: integer, minimum: 1, maximum: 315360000, description: App-declared age threshold for the current state when one is configured.}
+        revision: {type: integer, format: int64, minimum: 1}
+        updated_at: {type: string, format: date-time}
+        platform_tenant_id: {type: string, format: uuid, description: Included only for account operator feeds.}
+    OperationWorkflowStateHistoryEntry:
+      type: object
+      additionalProperties: false
+      required: [id, operation_id, workflow, instance_id, state, revision, occurred_at, published_at]
+      description: One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
+      properties:
+        id: {type: string, format: uuid}
+        operation_id: {type: string, format: uuid}
+        workflow: {type: string}
+        instance_id: {type: string}
+        from_state: {type: string, description: App state immediately before this retained revision, when the transition was declared.}
+        state: {type: string}
+        revision: {type: integer, format: int64, minimum: 1}
+        occurred_at: {type: string, format: date-time}
+        published_at: {type: string, format: date-time}
+        platform_tenant_id: {type: string, format: uuid, description: Account-owner tenant identifier attached to this report in operator feeds.}
+    OperationSubjectSpec:
+      description: Optional public business reference extracted once from validated input on new admission. This metadata does not authorize access to the business entity.
+      type: object
+      additionalProperties: false
+      required: [type, id_from]
+      properties:
+        type:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9-]{0,63}$'
+        id_from:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          pattern: '^/([^~\x00-\x1f\x7f]|~[01])*$'
+          description: JSON Pointer into input. The selected value must be a nonempty string; array indices use canonical decimal notation. Maximum 2048 UTF-8 bytes; ASCII controls are rejected.
+    OperationSubject:
+      description: Immutable public business correlation metadata. Captured at admission and preserved through recovery and redeploy. Never an ownership or authorization claim.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9-]{0,63}$'
+        id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^[^\x00-\x1f\x7f]+$'
+          description: Opaque application identifier, compared exactly. Maximum 256 UTF-8 bytes; ASCII controls are rejected. Use a public stable ID appropriate for customer-visible history.
     OperationDefinitionSpec:
       description: >-
         Resolved immutable contract for one HTTP handler. Ownership comes from verified authentication,
@@ -31012,6 +31526,18 @@ components:
       - output_schema
       - progress_stages
       properties:
+        milestones:
+          type: object
+          maxProperties: 16
+          additionalProperties: {}
+          description: Declared public milestone names mapped to bundled JSON Schemas. Requires http_transaction_version 1. At most 16 names, with an aggregate 16384 schema bytes.
+        workflow_steps:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/OperationWorkflowStep'}
+          description: Materialized workflow step mappings included in this compact definition view.
+        subject:
+          $ref: '#/components/schemas/OperationSubjectSpec'
         name:
           type: string
           maxLength: 64
@@ -31047,6 +31573,13 @@ components:
           - reconcile_on_unknown
           - safe_retry
           default: reconcile_on_unknown
+        http_transaction_version:
+          description: >-
+            Opt into the internal customer Operation PostgreSQL receipt protocol.
+            Version 1 saves and replays the full JSON business result; it does not
+            negotiate managed operation envelopes or named effects.
+          type: integer
+          enum: [1]
     OperationDefinitionResponse:
       description: Definition identity, content revision and deployment pins.
       type: object
@@ -31097,6 +31630,22 @@ components:
       - progress_stages
       - created_at
       properties:
+        milestones:
+          type: array
+          maxItems: 16
+          items: {type: string, maxLength: 64}
+          description: Declared milestone names; schema documents are available on the full definition.
+        workflow_steps:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/OperationWorkflowStep'}
+          description: Resolved app-declared read-only workflow steps mapped to this definition's transaction-backed milestones.
+        subject:
+          $ref: '#/components/schemas/OperationSubjectSpec'
+        http_transaction_version:
+          type: integer
+          enum: [1]
+          description: Opt-in customer-owned HTTP transaction protocol. Absence means ordinary HTTP execution.
         id:
           type: string
           format: uuid
@@ -31379,6 +31928,8 @@ components:
       - updated_at
       - expires_at
       properties:
+        subject:
+          $ref: '#/components/schemas/OperationSubject'
         id:
           type: string
           format: uuid
@@ -31437,6 +31988,8 @@ components:
       - updated_at
       - expires_at
       properties:
+        subject:
+          $ref: '#/components/schemas/OperationSubject'
         platform_tenant_id:
           type: string
           format: uuid

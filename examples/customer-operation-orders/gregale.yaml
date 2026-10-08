@@ -1,0 +1,26 @@
+operations:
+  - name: fulfill-order
+    method: POST
+    path: /orders/fulfill
+    owner: platform_tenant
+    subject:
+      type: order
+      id_from: /order_id
+    input_schema: schemas/order-input.json
+    output_schema: schemas/order-output.json
+    progress_stages: [complete]
+    milestones:
+      order-fulfilled: schemas/order-fulfilled.json
+    http_transaction_version: 1
+    recovery: reconcile_on_unknown
+operation_workflows:
+  - name: order-fulfillment
+    title: Order fulfillment
+    states: [pending, fulfilled]
+    terminal_states: [fulfilled]
+    state_stale_after:
+      pending: 30m
+    transitions:
+      - {from: pending, to: fulfilled}
+    steps:
+      - {name: fulfilled, label: Order fulfilled, operation: fulfill-order, milestone: order-fulfilled, instance_id_from: /workflow_run_id, position: 1}

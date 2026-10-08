@@ -13,6 +13,12 @@ func (m *MemStore) forgetOperationLocked(id string) {
 		}
 	}
 	delete(data.operations, id)
+	delete(data.milestones, id)
+	for key := range data.workflowStateReports {
+		if strings.HasPrefix(key, id+"/") {
+			delete(data.workflowStateReports, key)
+		}
+	}
 	delete(data.events, id)
 	for key, lease := range data.streams {
 		if lease.OperationID == id {
@@ -56,6 +62,11 @@ func (m *MemStore) forgetOwnedOperationsLocked(account, app string) {
 	for key, receipt := range data.receipts {
 		if owned(receipt.AccountID, receipt.AppID) {
 			delete(data.receipts, key)
+		}
+	}
+	for key, record := range data.workflowStates {
+		if owned(record.AccountID, record.AppID) {
+			delete(data.workflowStates, key)
 		}
 	}
 }

@@ -706,6 +706,23 @@ when repeating a report. Workload metadata is fetched for every report, while
 the current invocation capability stays private to its request context.
 See [Operations](../../docs/operations.md) for ownership, retention and recovery.
 
+For an immutable definition with `http_transaction_version: 1`, explicitly
+install `customerOperationReceiptSchema` in the application PostgreSQL database.
+Call `operations.transaction({ headers, method, path, body }, pool, async tx => result)`
+after business authorization, using the original request target and body bytes.
+Send the returned `body` as JSON without re-encoding it. The business writes and
+result receipt commit together; later authorized executions return the saved
+bytes with `replayed: true` and skip the callback. The callback must use only the
+supplied transaction and must not commit, roll back, or perform external effects.
+Unknown COMMIT is surfaced as `OperationCommitUnknownError`; keep the original
+Operation identity for recovery. This customer protocol returns the complete
+business result and uses a separate receipt table from managed operations.
+The [handler integration](../../docs/operations.md#postgresql-http-handler-transactions)
+includes an example and retention requirements. The runnable
+[order-fulfillment example](../../examples/customer-operation-orders/README.md)
+adds source declarations, deployment packaging, explicit database setup, and
+progress after commit. Definition discovery exposes the pinned transaction version.
+
 Completion delivery inspection, attempt history, and immutable retry decisions
 are exposed through the Operations APIs (`getOperationDelivery`,
 `getOperationDeliveryAttempts`, `retryOperationDeliveryWithReceipt`; PascalCase
@@ -726,3 +743,11 @@ and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
 holds are supported. Event-hold changes and governance bypass are unsupported.
 See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
+
+Customer HTTP transactions can declare business milestone schemas in their source manifest. Install the current `customerOperationReceiptSchema`, then call `tx.milestone('order-fulfilled', {order_id, status: 'fulfilled'})` inside `GregaleOperations.transaction`. The SDK validates before commit and saves a durable outbox with the business write and result receipt. It publishes after commit; `OperationMilestonePublicationError.committed` identifies a pending publication that recovery of the same Operation can replay without repeating business work.
+
+To report the current state of a workflow instance, declare its accepted values under `operation_workflows[].states` and call `tx.workflowState('order-lifecycle', workflowRunID, 'completed')` in that same transaction. Optionally list terminal values under `operation_workflows[].terminal_states`; each must be a declared state and cannot have an outgoing transition. The workflow read API returns `terminal: true` for a reported state in that list and `false` otherwise. If the workflow declares `transitions`, call `tx.workflowTransition('order-lifecycle', workflowRunID, 'fulfillment-in-progress', 'completed')`; check the source value against the locked business row first. The SDK validates that the edge is declared and, when a prior state report exists, checks that `from_state` matches it before commit. A mismatch aborts the business transaction. The first report can establish history, so the application still checks the business row. The SDK allocates an increasing revision per workflow instance and stores the report in the app-side outbox. It publishes after commit, and recovery retries pending reports. A committed publication failure is reported as `OperationWorkflowStatePublicationError` with `committed = true`. Business-reference reads expose the newest revision and update time; a delayed older report cannot replace it. States are explicit application reports.
+
+Customer clients read `client.milestones(operationID, {limit, cursor})` and `client.businessMilestones({appID, scope, subjectType: 'order', subjectID: orderID})`. Add `workflow` and `workflowInstanceID` together to select one workflow run. That response includes its retained `workflow_state_history`; continue it with `workflowStateCursor`, separate from the milestone `cursor`. Business references preserve the existing customer boundary, and each cursor is bound to all filters. Milestone payloads must contain only schema-declared public JSON facts. See [the Operations guide](../../docs/operations.md) for limits and recovery semantics.
+
+Business-reference responses also include current workflow states where the application has reported one. Each entry has a workflow name, instance ID, state, terminal and stale classifications, the app-reported occurrence time, revision, and publication update time. Set `staleOnly: true` on `businessMilestones` to filter its current-state entries to runs beyond their app-declared `state_stale_after` threshold; milestone facts and state history remain unchanged.

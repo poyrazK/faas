@@ -87,3 +87,42 @@ func TestOperationSourceSchemaArchiveBoundary(t *testing.T) {
 		})
 	}
 }
+
+func TestOperationSourceSchemaArchiveBoundaryIntegratedBusinessWorkflows(t *testing.T) {
+	valid := []operationSchemaEntry{{"apps/export/input.json", `{"type":"object"}`, tar.TypeReg}, {"./apps/export/output.json", `true`, tar.TypeReg}}
+	cases := []struct {
+		name               string
+		extra              []operationSchemaEntry
+		removeOutput, fail bool
+	}{
+		{name: "selected manifest and unrelated app", extra: []operationSchemaEntry{{"other/input.json", strings.Repeat("x", api.MustLimitsFor(api.PlanPro).Operations.SchemaBytes+1), tar.TypeReg}}},
+		{name: "duplicate alias", extra: []operationSchemaEntry{{"./apps/export/input.json", `true`, tar.TypeReg}}, fail: true},
+		{name: "symlink", extra: []operationSchemaEntry{{"apps/export/output.json", "", tar.TypeSymlink}}, removeOutput: true, fail: true},
+		{name: "oversized", extra: []operationSchemaEntry{{"apps/export/output.json", strings.Repeat(" ", api.MustLimitsFor(api.PlanPro).Operations.SchemaBytes+1), tar.TypeReg}}, removeOutput: true, fail: true},
+		{name: "missing", removeOutput: true, fail: true},
+		{name: "invalid JSON schema", extra: []operationSchemaEntry{{"apps/export/output.json", "invalid", tar.TypeReg}}, removeOutput: true, fail: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := append([]operationSchemaEntry(nil), valid...)
+			if tc.removeOutput {
+				entries = entries[:1]
+			}
+			entries = append(entries, tc.extra...)
+			m := &gregalemanifest.Manifest{Operations: []gregalemanifest.Operation{
+				{HTTPTransactionVersion: 1, Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant, InputSchema: "input.json", OutputSchema: "output.json", ProgressStages: []string{"generating"}},
+				{App: "other", Name: "other", Method: "POST", Path: "/other", Owner: api.OperationOwnerPlatformTenant, InputSchema: "missing.json", OutputSchema: "also-missing.json", ProgressStages: []string{"generating"}},
+			}}
+			err := resolveSourceOperations(operationSchemaArchive(t, entries), "apps/export/gregale.yaml", "exports", api.PlanPro, m)
+			if (err != nil) != tc.fail {
+				t.Fatalf("error=%v, want failure %v", err, tc.fail)
+			}
+			if tc.fail && len(m.ResolvedOperations) != 0 {
+				t.Fatal("partially resolved bundle published")
+			}
+			if !tc.fail && (len(m.ResolvedOperations) != 1 || string(m.ResolvedOperations[0].OutputSchema) != "true" || m.ResolvedOperations[0].HTTPTransactionVersion != 1) {
+				t.Fatalf("selected bundle: %+v", m.ResolvedOperations)
+			}
+		})
+	}
+}

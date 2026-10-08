@@ -3681,7 +3681,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		OutcomeCode string          `json:"outcome_code"`
 	}
 	responseLimit := int64(gatewayInvocationResponseMaxBytes)
-	if inv.ExclusiveClaim != nil || inv.ManagedOperationID != "" {
+	if inv.ExclusiveClaim != nil || inv.ManagedOperationID != "" || state.InvocationHasOperation(inv) {
 		responseLimit = api.MaxExclusiveGatewayResponseBytes
 	}
 	if err := httpjson.Decode(resp.Body, responseLimit, &out); err != nil {

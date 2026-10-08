@@ -105,3 +105,59 @@ func TestPlatformIdentityEnvKeyIncludesImageDigest(t *testing.T) {
 		t.Fatal("flag context header is not reserved at the guest boundary")
 	}
 }
+
+func TestPlatformIdentityApplyGuestHeadersOverridesClaimsIntegratedBusinessWorkflows(t *testing.T) {
+	h := http.Header{}
+	h.Set(DeploymentIDHeader, "attacker-deployment")
+	h.Set("X-Faas-Instance", "attacker-instance")
+	h.Set("X-Faas-Unknown", "internal-only")
+	h.Set(TargetDeploymentHeader, "attacker-deployment")
+	h.Set(PlatformTenantIDHeader, "attacker-tenant")
+	h.Set(ManagedOperationResultVersionHeader, "attacker-version")
+	h.Set(OperationTransactionVersionHeader, "1")
+	h.Set(OperationMilestoneVersionHeader, "1")
+	h.Set(OperationResultMaxBytesHeader, "1048576")
+
+	PlatformIdentity{
+		RequestID:           "req-1",
+		AppID:               "app-1",
+		DeploymentID:        "dep-1",
+		TenantID:            "tenant-1",
+		InstanceID:          "instance-1",
+		NodeID:              "node-1",
+		Region:              "eu-west",
+		CommitSHA:           "abc123",
+		DeploymentTag:       "canary",
+		DeploymentCreatedAt: "2026-09-19T12:00:00Z",
+		ImageDigest:         "sha256:deadbeef",
+	}.ApplyGuestHeaders(h)
+	if got := h.Get(TargetDeploymentHeader); got != "" {
+		t.Fatalf("public override header survived gateway boundary: %q", got)
+	}
+
+	for name, want := range map[string]string{
+		RequestIDHeader:                     "req-1",
+		AppIDHeader:                         "app-1",
+		DeploymentIDHeader:                  "dep-1",
+		TenantIDHeader:                      "tenant-1",
+		PlatformTenantIDHeader:              "",
+		ManagedOperationResultVersionHeader: "",
+		OperationTransactionVersionHeader:   "",
+		OperationMilestoneVersionHeader:     "",
+		OperationResultMaxBytesHeader:       "",
+		InstanceIDHeader:                    "instance-1",
+		NodeIDHeader:                        "node-1",
+		RegionHeader:                        "eu-west",
+		CommitSHAHeader:                     "abc123",
+		DeploymentTagHeader:                 "canary",
+		DeploymentCreatedAtHeader:           "2026-09-19T12:00:00Z",
+		ImageDigestHeader:                   "sha256:deadbeef",
+		"X-Faas-App":                        "app-1",
+		"X-Faas-Instance":                   "instance-1",
+		"X-Faas-Node":                       "node-1",
+	} {
+		if got := h.Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}

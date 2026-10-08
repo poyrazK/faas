@@ -421,3 +421,78 @@ func TestCustomerOperationDeveloperParserAndTenantRoutes(t *testing.T) {
 		t.Fatal("tenant download mismatch", err)
 	}
 }
+
+func TestCustomerOperationLocalValidationUsesManifestCompilerIntegratedBusinessWorkflows(t *testing.T) {
+	for _, format := range []string{"yaml", "toml"} {
+		t.Run(format, func(t *testing.T) {
+			dir := t.TempDir()
+			schema := `{"type":"object","required":["count"],"properties":{"count":{"type":"integer","minimum":1}},"additionalProperties":false}`
+			for name, body := range map[string]string{"input.json": schema, "output.json": `{"type":"object"}`, "sample.json": `{"count":2}`} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			name := "gregale.yaml"
+			body := "operations:\n  - name: export\n    method: POST\n    path: /exports\n    owner: platform_tenant\n    input_schema: input.json\n    output_schema: output.json\n    progress_stages: [generating]\n    http_transaction_version: 1\n"
+			if format == "toml" {
+				name = "gregale.toml"
+				body = "[[operations]]\nname='export'\nmethod='POST'\npath='/exports'\nowner='platform_tenant'\ninput_schema='input.json'\noutput_schema='output.json'\nprogress_stages=['generating']\nhttp_transaction_version=1\n"
+			}
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			c := customerOperationDeveloperCommand{verb: "validate", app: "exports", dir: dir, plan: "pro", name: "export", input: filepath.Join(dir, "sample.json")}
+			r, err := validateCustomerOperationSource(c)
+			if err != nil || len(r.Definitions) != 1 || !r.Definitions[0].InputValidated || r.Definitions[0].Revision == "" || r.Definitions[0].Spec.HTTPTransactionVersion != 1 {
+				t.Fatalf("validation %+v %v", r, err)
+			}
+			for _, asJSON := range []bool{false, true} {
+				var output bytes.Buffer
+				if err := renderCustomerOperationValidation(&output, r, asJSON); err != nil {
+					t.Fatal(err)
+				}
+				want := "http_transaction_version=1"
+				if asJSON {
+					want = `"http_transaction_version":1`
+				}
+				if !strings.Contains(output.String(), want) {
+					t.Fatalf("validation hides negotiation: %s", output.String())
+				}
+			}
+			contract, err := operations.Compile(r.Definitions[0].Spec, api.MustLimitsFor(api.PlanPro).Operations)
+			if err != nil || contract.Revision != r.Definitions[0].Revision {
+				t.Fatal("validator revision differs from server")
+			}
+			if err := os.WriteFile(c.input, []byte(`{"count":0}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := validateCustomerOperationSource(c); err == nil {
+				t.Fatal("bad sample accepted")
+			}
+			c.input = ""
+			c.plan = "free"
+			if _, err := validateCustomerOperationSource(c); err == nil {
+				t.Fatal("free plan accepted")
+			}
+			c.plan = "invalid"
+			if _, err := validateCustomerOperationSource(c); err == nil {
+				t.Fatal("unknown plan accepted")
+			}
+			c.plan = "pro"
+			c.name = "missing"
+			if _, err := validateCustomerOperationSource(c); err == nil {
+				t.Fatal("unknown definition accepted")
+			}
+			c.name = "export"
+			if err := os.Remove(filepath.Join(dir, "input.json")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(dir, "output.json"), filepath.Join(dir, "input.json")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := validateCustomerOperationSource(c); err == nil {
+				t.Fatal("linked schema accepted")
+			}
+		})
+	}
+}

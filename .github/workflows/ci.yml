@@ -622,6 +622,8 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm run build
+      - name: install customer Operations example dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix examples/customer-operation-orders
       - name: unit tests (pg shard 1)
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit test debug metadata and serialize its backend; keep optimization.

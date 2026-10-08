@@ -18,6 +18,7 @@ func admitOperationDispatch(ctx context.Context, store any, stored, wire Invocat
 	}
 	reader, ok := store.(interface {
 		OperationByID(context.Context, string, string, string) (Operation, error)
+		OperationDefinitionByID(context.Context, string, string) (OperationDefinition, error)
 	})
 	if !ok {
 		return Invocation{}, ErrNotFound
@@ -50,5 +51,9 @@ func admitOperationDispatch(ctx context.Context, store any, stored, wire Invocat
 	if err := ValidateOperationExecutionAuthority(op, stored, authority, time.Now()); err != nil {
 		return Invocation{}, err
 	}
-	return operationExecutionHeaders(stored, op, capability), nil
+	def, err := reader.OperationDefinitionByID(ctx, op.AccountID, op.DefinitionID)
+	if err != nil {
+		return Invocation{}, err
+	}
+	return operationExecutionHeaders(stored, op, def, capability), nil
 }

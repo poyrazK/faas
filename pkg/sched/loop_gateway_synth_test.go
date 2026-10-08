@@ -43,6 +43,31 @@ func TestHTTPGatewaySynthNegotiatesManagedOperationResults(t *testing.T) {
 	}
 }
 
+// adr: 638
+func TestHTTPGatewaySynthCustomerOperationResultBudget(t *testing.T) {
+	result := `"` + strings.Repeat("x", api.MaxExclusiveResultBytes-2) + `"`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got struct {
+			Headers map[string]string `json:"headers"`
+			Version int               `json:"operation_result_version"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil || got.Version != 0 || got.Headers[api.OperationTransactionVersionHeader] != "1" || got.Headers[api.OperationMilestoneVersionHeader] != "1" {
+			t.Errorf("customer protocol crossed managed negotiation: %+v %v", got, err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"state":"dispatching","status_code":200,"result":` + result + `}`))
+	}))
+	defer srv.Close()
+	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL, mintInternalSvcToken: func(string) (string, error) { return "test-token", nil }}
+	inv := state.Invocation{ID: "invocation", OperationID: "customer-operation", AppID: "app", Source: state.InvocationAsyncInvoke,
+		Method: http.MethodPost, Path: "/orders", Headers: json.RawMessage(`{"X-Gregale-Customer-Operation-Transaction-Version":"1","X-Gregale-Customer-Operation-Milestone-Version":"1"}`)}
+	out, err := h.InvokeWithWake(t.Context(), inv.AppID, inv, WakeResult{InstanceID: "instance", NodeID: "node"})
+	if err != nil || string(out.Result) != result {
+		t.Fatalf("bounded customer result: bytes=%d err=%v", len(out.Result), err)
+	}
+}
+
 func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/invocations:dispatch" {

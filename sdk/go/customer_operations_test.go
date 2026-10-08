@@ -244,3 +244,49 @@ func TestOperationHistoryScopedWireContract(t *testing.T) {
 		t.Fatalf("history wire contract: %+v %v", page, err)
 	}
 }
+
+func TestOperationMilestoneFeedsPreserveOwnershipAndReference(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer refreshed" {
+			t.Error("milestone credential did not refresh")
+		}
+		if r.URL.Path == "/v1/platform-tenant-self/customer-operation-milestones" {
+			if r.URL.Query().Get("subject_id") != "ord/42&é" || r.URL.Query().Get("app_id") != "app" || r.URL.Query().Get("tenant_id") != "" {
+				t.Errorf("reference ownership/query: %s", r.URL)
+			}
+		} else if r.URL.Path != "/v1/platform-tenant-self/customer-operations/op/milestones" {
+			t.Errorf("unexpected route: %s", r.URL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"milestones":[]}`))
+	}))
+	defer server.Close()
+	client, err := faas.NewClient(server.URL, "original")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetToken("refreshed")
+	if _, err := client.ListPlatformTenantSelfBusinessMilestones(context.Background(), faas.OperationMilestoneListOptions{AppID: "app", Scope: "default", SubjectType: "order", SubjectID: "ord/42&é", TenantID: "untrusted-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetPlatformTenantSelfOperationMilestones(context.Background(), "op", faas.OperationMilestoneListOptions{TenantID: "untrusted-owner"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOperationHistoryScopedWireContractIntegratedBusinessWorkflows(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/platform-tenant-self/customer-operations" || q.Get("subject_type") != "order" || q.Get("subject_id") != "ord/42&é" || q.Get("app_id") != "app" || q.Get("scope") != "staging" || q.Get("name") != "export" || q.Get("state") != "succeeded" || q.Get("limit") != "2" || q.Get("cursor") != "opaque+/=" || r.Header.Get("Authorization") != "Bearer tenant-refreshed" {
+			t.Errorf("wrong history request: %s", r.URL)
+		}
+		writeOperationJSON(w, http.StatusOK, `{"operations":[{"id":"export","state":"succeeded","completion_delivery":{"state":"failed","attempts":2}}],"next_cursor":"next"}`)
+	}))
+	defer server.Close()
+	client := operationClient(t, server)
+	client.SetToken("tenant-refreshed")
+	page, err := client.ListPlatformTenantSelfOperations(context.Background(), faas.OperationListOptions{SubjectType: "order", SubjectID: "ord/42&é", AppID: "app", Scope: "staging", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque+/="})
+	if err != nil || len(page.Operations) != 1 || page.Operations[0].State != faas.OperationSucceeded || page.Operations[0].CompletionDelivery.State != "failed" || page.NextCursor != "next" {
+		t.Fatalf("history wire contract: %+v %v", page, err)
+	}
+}
