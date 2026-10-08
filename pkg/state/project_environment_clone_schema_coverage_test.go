@@ -97,6 +97,8 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"customer_operation_reports":                CloneSchemaOperational,
 		"customer_operation_stream_leases":          CloneSchemaOperational,
 		"customer_operation_workflow_guest_claims":  CloneSchemaOperational,
+		"customer_operation_workflow_state_reports": CloneSchemaOperational,
+		"customer_operation_workflow_states":        CloneSchemaOperational,
 		"queue_bindings":                            CloneSchemaConfiguration, "crons": CloneSchemaConfiguration, "jobs": CloneSchemaConfiguration,
 		"app_webhooks": CloneSchemaConfiguration, "outbound_integration_credentials": CloneSchemaConfiguration,
 		"app_work_policies": CloneSchemaConfiguration, "event_subscription_work_bindings": CloneSchemaConfiguration,
