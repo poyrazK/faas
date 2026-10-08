@@ -25,7 +25,9 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
   const requests = []
   const capture = req => requests.push({ path: req.url, method: req.method, origin: req.headers.origin, cookie: req.headers.cookie, authorization: Boolean(req.headers.authorization) })
   gateway.on('request', capture)
-  const child = spawn(process.env.DATA_API_CHROMIUM_BIN, ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run', '--disable-background-networking', '--disk-cache-size=1', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] })
+  const processGroup = process.platform !== 'win32'
+  const child = spawn(process.env.DATA_API_CHROMIUM_BIN, ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run', '--disable-background-networking', '--disk-cache-size=1', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { detached: processGroup, stdio: ['ignore', 'ignore', 'pipe'] })
+  const closed = new Promise(resolve => child.once('close', resolve))
   let socket, spawnError, starting = true, startupStderr = ''
   child.stderr.on('data', chunk => { if (starting && startupStderr.length < 16384) startupStderr += chunk.toString().slice(0, 16384 - startupStderr.length) })
   const pending = new Map()
@@ -111,8 +113,12 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
     gateway.off('request', capture)
     for (const item of pending.values()) clearTimeout(item.timer)
     socket?.close()
-    child.kill('SIGKILL')
-    if (!spawnError && child.exitCode === null && child.signalCode === null) await new Promise(resolve => child.once('exit', resolve))
-    await rm(profile, { recursive: true, force: true })
+    // Chromium's renderer and utility processes also write the profile. Stop
+    // the entire isolated group, then wait for inherited stderr to close.
+    if (processGroup && child.pid) {
+      try { process.kill(-child.pid, 'SIGKILL') } catch (error) { if (error.code !== 'ESRCH') throw error }
+    } else child.kill('SIGKILL')
+    await closed
+    await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   }
 }
