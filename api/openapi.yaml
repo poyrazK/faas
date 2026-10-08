@@ -12230,6 +12230,26 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/operational-summary:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppOperationalSummary
+      summary: Read current production monitoring and recovery progress.
+      description: "Requires app read access and completed MFA. Joins current default-scope production route evidence, metadata for the saved open incident, pending checked rollbacks across app scopes, and pending or failed restart handoffs. Reads do not wake workloads, change traffic, or declare incident recovery. Component availability and bounded-list truncation are explicit. Deployment smoke verification remains a separate launch-time result. Customer identities, request evidence, free-form rollback reasons and internal restart errors are omitted. No query parameters are accepted."
+      responses:
+        '200':
+          description: Independently observed operational facts; unavailable components remain explicit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppOperationalSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/route-monitor:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -33503,6 +33523,81 @@ components:
         requirements_sha256: { type: string }
         configuration_sha256: { type: string }
         report: { $ref: '#/components/schemas/RouteRequirementsReport' }
+    AppOperationalSummary:
+      type: object
+      description: Read-only current production route health, open incident metadata and pending recovery work, shared by inspect and the app dashboard.
+      required: [version, app_id, checked_at, monitoring, recovery, recommendations]
+      properties:
+        version: { type: integer, enum: [1] }
+        app_id: { type: string }
+        checked_at: { type: string, format: date-time }
+        monitoring: { $ref: '#/components/schemas/AppOperationalMonitoring' }
+        recovery: { $ref: '#/components/schemas/AppOperationalRecovery' }
+        recommendations:
+          type: array
+          items: { $ref: '#/components/schemas/AppOperationalRecommendation' }
+    AppOperationalMonitoring:
+      type: object
+      description: Recent default-scope route-monitor evaluation with observed-only coverage. Unknown or unavailable health is independent of deployment smoke verification.
+      required: [available, status, reason, coverage, incidents_available]
+      properties:
+        available: { type: boolean }
+        status: { type: string }
+        reason: { type: string }
+        coverage: { type: string }
+        deployment_id: { type: string }
+        checked_at: { type: string, format: date-time }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        incidents_available: { type: boolean }
+        incident: { $ref: '#/components/schemas/AppOperationalIncident' }
+    AppOperationalIncident:
+      type: object
+      description: Metadata for the app's open production-route incident. Reading this summary never closes the incident or includes saved request evidence.
+      required: [id, deployment_id, opened_at]
+      properties:
+        id: { type: string }
+        deployment_id: { type: string }
+        opened_at: { type: string, format: date-time }
+    AppOperationalRecovery:
+      type: object
+      description: Bounded app-scoped pending rollbacks and pending or failed restart handoffs. Availability and truncation are explicit; accepted work does not establish completed recovery.
+      required: [rollbacks_available, restarts_available, rollbacks_truncated, restarts_truncated, rollbacks, restarts]
+      properties:
+        rollbacks_available: { type: boolean }
+        restarts_available: { type: boolean }
+        rollbacks_truncated: { type: boolean }
+        restarts_truncated: { type: boolean }
+        rollbacks:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/AppOperationalRollback' }
+        restarts:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/RuntimeConfigRestartStatusResponse' }
+    AppOperationalRollback:
+      type: object
+      description: Pending checked rollback progress with stable codes and target selection; free-form reasons and blocker diagnostics are omitted.
+      required: [id, scope, status, target_deployment_id, current_deployment_id, updated_at]
+      properties:
+        id: { type: string }
+        scope: { type: string }
+        status: { type: string }
+        code: { type: string }
+        target_deployment_id: { type: string }
+        current_deployment_id: { type: string }
+        updated_at: { type: string, format: date-time }
+    AppOperationalRecommendation:
+      type: object
+      description: An actionable explanation of current operational evidence and an existing command or status endpoint for investigation.
+      required: [code, severity, message, next]
+      properties:
+        code: { type: string }
+        severity: { type: string, enum: [info, warning, error] }
+        message: { type: string }
+        next: { type: string }
+
     RouteMonitorRoute:
       type: object
       description: "Exact normalized production telemetry label with absolute budgets. Omitted max_5xx_rate_bps disables errors; zero is a selected zero-error budget. Zero or omitted max_p95_ms disables latency. At least one budget is required."
@@ -35014,6 +35109,43 @@ components:
         accrued: { $ref: '#/components/schemas/FinancialContractCosts' }
         forecast: { $ref: '#/components/schemas/FinancialForecast' }
         price_contracts: { type: array, items: { $ref: '#/components/schemas/FinancialPriceContract' } }
+    FinancialAppCostAllocation:
+      type: object
+      description: Workload share of a meter cost attributed to one application.
+      required: [attribution, unit, quantity, net_millicents]
+      properties:
+        attribution: { $ref: '#/components/schemas/FinancialAttribution' }
+        unit: { type: string }
+        quantity: { type: integer, format: int64 }
+        net_millicents: { type: integer, format: int64 }
+    FinancialAppMeterCosts:
+      type: object
+      description: Application-attributed meter costs with source coverage and workload allocations.
+      required: [meter, coverage, quantity, net_millicents, allocations]
+      properties:
+        meter: { type: string }
+        coverage: { $ref: '#/components/schemas/FinancialMeterCoverage' }
+        unit: { type: string }
+        quantity: { type: integer, format: int64 }
+        net_millicents: { type: integer, format: int64 }
+        allocations: { type: array, items: { $ref: '#/components/schemas/FinancialAppCostAllocation' } }
+    FinancialAppCostsResponse:
+      type: object
+      description: Retained usage costs directly attributed to one application; invoice and forecast amounts remain account scoped.
+      required: [app_id, app_slug, currency, period_start, period_end, as_of, known_usage_millicents, meters, scope, scope_description, bill_estimate_available, missing_bill_components]
+      properties:
+        app_id: { type: string }
+        app_slug: { type: string }
+        currency: { type: string, enum: [EUR] }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        known_usage_millicents: { type: integer, format: int64 }
+        meters: { type: array, items: { $ref: '#/components/schemas/FinancialAppMeterCosts' } }
+        scope: { type: string }
+        scope_description: { type: string }
+        bill_estimate_available: { type: boolean }
+        missing_bill_components: { type: array, items: { type: string } }
     FinancialCostsResponse:
       type: object
       description: Account usage costs for a UTC period; invoice facts remain separate.

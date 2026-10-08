@@ -985,9 +985,33 @@ var cliCommands = []cliCommand{
 		},
 		SubcommandsAfterPositionals: true,
 		Subcommands: []cliSub{
-			{Name: "scale", Short: "Set max_concurrency / resource profile / RAM / CPU", Flags: appScaleCLIFlags()},
+			{Name: "scale", Short: "Preview, save, apply or update app resource and runtime settings", Examples: []string{
+				"gregale app my-api scale --plan --ram 512 --out scale-change.json",
+				"gregale app my-api scale --apply scale-change.json --confirm",
+			}, Flags: append([]cliFlag{
+				{Name: "plan", Short: "show changes and supported plan effects without applying them"},
+				{Name: "out", Short: "write a reusable plan JSON to a new file (requires --plan)", Value: "PATH"},
+				{Name: "apply", Short: "apply a saved scale plan JSON file", Value: "PATH"},
+				{Name: "confirm", Short: "confirm applying the saved plan (requires --apply)"},
+			}, appScaleCLIFlags()...)},
+			{Name: "costs", Short: "Show this app's attributed usage costs and source coverage", Flags: []cliFlag{
+				{Name: "month", Short: "UTC usage month (defaults to current)", Value: "YYYY-MM"},
+				{Name: "json", Short: "Print the machine-readable app cost report"},
+			}, Examples: []string{"gregale app my-api costs", "gregale app my-api costs --month 2026-10 --json"}},
 			{Name: "rename", Short: "Rename an app"},
-			{Name: "restart", Short: "Park and wake from a fresh snapshot"},
+			{Name: "restart", Short: "Request a snapshot restart, or track a fresh runtime-configuration restart", Flags: []cliFlag{
+				{Name: "fresh", Short: "cold-boot replacements with current runtime configuration"},
+				{Name: "wait", Short: "wait for processing; requires --fresh"},
+				{Name: "timeout", Short: "client deadline (default 10m)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "status polling interval (default 2s)", Value: "DURATION"},
+				{Name: "json", Short: "print the accepted ID or last observed restart receipt"},
+			}, Subcommands: []cliSub{{Name: "status", Short: "Follow an accepted fresh restart without submitting another request", Flags: []cliFlag{
+				{Name: "wake-id", Short: "accepted fresh restart UUID", Value: "UUID", Req: true},
+				{Name: "wait", Short: "wait for processing completion, separately from application health"},
+				{Name: "timeout", Short: "client deadline (default 10m)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "status polling interval (default 2s)", Value: "DURATION"},
+				{Name: "json", Short: "print the last observed restart receipt"},
+			}}}},
 			{Name: subExec, Short: "Run a one-off command against the live deployment", Flags: []cliFlag{
 				{Name: "shell", Short: "interpret one command string through the app shell"},
 				{Name: "detach", Short: "return after the task is queued"},
@@ -2617,7 +2641,7 @@ var cliCommands = []cliCommand{
 		Name:        dispatchInspect,
 		DocSlug:     "inspect",
 		Short:       "Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context)",
-		Examples:    []string{"gregale inspect my-api", "gregale inspect my-api --upstreams"},
+		Examples:    []string{"gregale inspect my-api", "gregale inspect my-api --watch", "gregale inspect my-api --watch --interval 5s --timeout 10m --json", "gregale inspect my-api --upstreams"},
 		Positionals: []string{"[<slug>]"},
 		// Leaf-selectors are flags on this verb, not positional
 		// sub-verbs (issue #952 UX: `gregale inspect <slug>
@@ -2630,6 +2654,10 @@ var cliCommands = []cliCommand{
 			{Name: "upstreams", Short: "List data upstreams captured for this app"},
 			{Name: "scope", Short: "filter by scope (defaults to linked project environment; used with --upstreams)", Value: "scope"},
 			{Name: "errors", Short: "show the latest failed deployment's persisted error explanation"},
+			{Name: "watch", Short: "watch summary changes using read-only requests; incompatible with --upstreams and --errors"},
+			{Name: "interval", Short: "time between watch reads (default 5s; 1s..1h); requires --watch", Value: "DURATION"},
+			{Name: "timeout", Short: "watch duration (default 0: until Ctrl-C); requires --watch", Value: "DURATION"},
+			{Name: "json", Short: "print summary JSON, or JSON Lines events with --watch"},
 		},
 	},
 	{

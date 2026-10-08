@@ -188,7 +188,7 @@ func TestCmdInspectSummary_OptionalSignalsDegrade(t *testing.T) {
 		t.Fatalf("inspect degraded = %d, want 0 (stderr=%s)", code, readStderr())
 	}
 	body := stdout.String()
-	for _, want := range []string{"api:       unavailable", "data:      unavailable", "release:   unavailable", "unavailable: alerts, deployment, openapi, upstreams"} {
+	for _, want := range []string{"api:       unavailable", "data:      unavailable", "release:   unavailable", "unavailable: alerts, deployment, openapi, operational, upstreams"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("degraded summary missing %q; got:\n%s", want, body)
 		}
@@ -285,6 +285,11 @@ func newInspectSummaryServer(t *testing.T, failOptional bool) *httptest.Server {
 			return
 		}
 		switch r.URL.Path {
+		case "/v1/apps/" + inspectSlug + "/operational-summary":
+			writeInspectSummaryJSON(t, w, api.AppOperationalSummary{Version: 1, AppID: app.ID,
+				Monitoring:      api.AppOperationalMonitoring{Available: true, Status: "disabled", Reason: "disabled", Coverage: "observed_only", IncidentsAvailable: true},
+				Recovery:        api.AppOperationalRecovery{RollbacksAvailable: true, RestartsAvailable: true, Rollbacks: []api.AppOperationalRollback{}, Restarts: []api.RuntimeConfigRestartStatusResponse{}},
+				Recommendations: []api.AppOperationalRecommendation{}})
 		case "/v1/apps/" + inspectSlug + "/deployments":
 			writeInspectSummaryJSON(t, w, api.DeploymentListResponse{Items: []api.DeploymentResponse{dep}})
 		case "/v1/apps/" + inspectSlug + "/openapi":
