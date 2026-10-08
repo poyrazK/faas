@@ -12774,7 +12774,7 @@ CREATE TABLE public.customer_operation_events (
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT customer_operation_events_attempt_check CHECK ((attempt >= 0)),
     CONSTRAINT customer_operation_events_data_check CHECK ((jsonb_typeof(data) = 'object'::text)),
-    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'artifact_attached'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
+    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'workflow_progress'::text, 'artifact_attached'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
     CONSTRAINT customer_operation_events_sequence_check CHECK ((sequence > 0))
 );
 
@@ -15470,7 +15470,9 @@ CREATE TABLE public.idempotency_keys (
     account_id uuid NOT NULL,
     response_status integer NOT NULL,
     response_body bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    request_digest bytea,
+    CONSTRAINT idempotency_keys_request_digest_chk CHECK (((request_digest IS NULL) OR (octet_length(request_digest) = 32)))
 );
 
 
@@ -30393,6 +30395,13 @@ CREATE INDEX github_webhook_deliveries_dead_idx ON public.github_webhook_deliver
 --
 
 CREATE INDEX github_webhook_deliveries_due_idx ON public.github_webhook_deliveries USING btree (next_attempt_at, received_at) WHERE (status = ANY (ARRAY['pending'::text, 'processing'::text]));
+
+
+--
+-- Name: idempotency_keys_publish_receipts_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idempotency_keys_publish_receipts_created_at_idx ON public.idempotency_keys USING btree (created_at) WHERE (request_digest IS NOT NULL);
 
 
 --

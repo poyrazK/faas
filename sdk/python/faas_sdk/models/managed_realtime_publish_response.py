@@ -13,26 +13,49 @@ T = TypeVar("T", bound="ManagedRealtimePublishResponse")
 
 @_attrs_define
 class ManagedRealtimePublishResponse:
-    """Result of publishing a message to an endpoint-scoped channel."""
+    """Per-recipient queue outcome for publishing to an endpoint-scoped channel. Queue admission does not imply client
+    receipt; retained publishes include their durable channel sequence.
+
+    """
 
     queued: int
-    """Number of local owner queues that accepted the message."""
+    """Number of live subscriber output queues or retained-resume wake-ups that accepted delivery work."""
+    subscribers: int | Unset = UNSET
+    """Live and resumable subscribers targeted across reachable nodes."""
+    queue_full: int | Unset = UNSET
+    """Subscribers whose bounded output queues were full."""
+    failed: int | Unset = UNSET
+    """Target subscribers that could not be queued for another per-connection reason."""
     partial: bool | Unset = UNSET
-    """Whether one or more active realtime nodes did not accept the publish."""
+    """Whether a node or any target subscriber did not accept the publish."""
     nodes_queried: int | Unset = UNSET
     """Active realtime nodes that accepted the publish request."""
     nodes_unavailable: int | Unset = UNSET
     """Active realtime nodes that did not accept the publish request."""
+    sequence: int | Unset = UNSET
+    """Committed channel sequence; present when durable is true."""
+    durable: bool | Unset = UNSET
+    """Whether this publish was committed to retained channel history before fan-out."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         queued = self.queued
+
+        subscribers = self.subscribers
+
+        queue_full = self.queue_full
+
+        failed = self.failed
 
         partial = self.partial
 
         nodes_queried = self.nodes_queried
 
         nodes_unavailable = self.nodes_unavailable
+
+        sequence = self.sequence
+
+        durable = self.durable
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -41,12 +64,22 @@ class ManagedRealtimePublishResponse:
                 "queued": queued,
             }
         )
+        if subscribers is not UNSET:
+            field_dict["subscribers"] = subscribers
+        if queue_full is not UNSET:
+            field_dict["queue_full"] = queue_full
+        if failed is not UNSET:
+            field_dict["failed"] = failed
         if partial is not UNSET:
             field_dict["partial"] = partial
         if nodes_queried is not UNSET:
             field_dict["nodes_queried"] = nodes_queried
         if nodes_unavailable is not UNSET:
             field_dict["nodes_unavailable"] = nodes_unavailable
+        if sequence is not UNSET:
+            field_dict["sequence"] = sequence
+        if durable is not UNSET:
+            field_dict["durable"] = durable
 
         return field_dict
 
@@ -55,17 +88,32 @@ class ManagedRealtimePublishResponse:
         d = dict(src_dict)
         queued = d.pop("queued")
 
+        subscribers = d.pop("subscribers", UNSET)
+
+        queue_full = d.pop("queue_full", UNSET)
+
+        failed = d.pop("failed", UNSET)
+
         partial = d.pop("partial", UNSET)
 
         nodes_queried = d.pop("nodes_queried", UNSET)
 
         nodes_unavailable = d.pop("nodes_unavailable", UNSET)
 
+        sequence = d.pop("sequence", UNSET)
+
+        durable = d.pop("durable", UNSET)
+
         managed_realtime_publish_response = cls(
             queued=queued,
+            subscribers=subscribers,
+            queue_full=queue_full,
+            failed=failed,
             partial=partial,
             nodes_queried=nodes_queried,
             nodes_unavailable=nodes_unavailable,
+            sequence=sequence,
+            durable=durable,
         )
 
         managed_realtime_publish_response.additional_properties = d

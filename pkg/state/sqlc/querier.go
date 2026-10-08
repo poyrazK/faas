@@ -43,6 +43,8 @@ type Querier interface {
 	ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error)
 	AdmitTrafficRetry(ctx context.Context, db DBTX, arg AdmitTrafficRetryParams) (int64, error)
 	AdoptProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg AdoptProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
+	AdvanceCustomerOperationWorkflowAttempt(ctx context.Context, db DBTX, arg AdvanceCustomerOperationWorkflowAttemptParams) (int64, error)
+	AdvanceCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg AdvanceCustomerOperationWorkflowStepParams) (int64, error)
 	AdvanceEnvironmentGitOpsRuntimeBoundary(ctx context.Context, db DBTX, arg AdvanceEnvironmentGitOpsRuntimeBoundaryParams) (EnvironmentGitopsRuntimeEffect, error)
 	AdvanceEnvironmentWorkloadGraphPreparation(ctx context.Context, db DBTX, arg AdvanceEnvironmentWorkloadGraphPreparationParams) (EnvironmentWorkloadGraph, error)
 	AdvanceImagePreparation(ctx context.Context, db DBTX, arg AdvanceImagePreparationParams) (int64, error)
@@ -752,6 +754,7 @@ type Querier interface {
 	FinishProjectEnvironmentClonePostgresCopyTargetCleanup(ctx context.Context, db DBTX, arg FinishProjectEnvironmentClonePostgresCopyTargetCleanupParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
 	FinishProjectEnvironmentClonePostgresSnapshotCleanup(ctx context.Context, db DBTX, arg FinishProjectEnvironmentClonePostgresSnapshotCleanupParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ctx context.Context, db DBTX, arg FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanupParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
+	FirstCustomerOperationWorkflowEvent(ctx context.Context, db DBTX, arg FirstCustomerOperationWorkflowEventParams) (WorkflowEvent, error)
 	GetActiveManagedPostgresCutover(ctx context.Context, db DBTX, arg GetActiveManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	GetAlertRollback(ctx context.Context, db DBTX, arg GetAlertRollbackParams) ([]byte, error)
 	GetAppEgressCircuits(ctx context.Context, db DBTX, appID pgtype.UUID) (GetAppEgressCircuitsRow, error)
@@ -1346,6 +1349,8 @@ type Querier interface {
 	ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, arg ListCustomerAlertRulesByPresetParams) ([]AlertRule, error)
 	ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error)
 	ListCustomerOperationDefinitionsForDeployment(ctx context.Context, db DBTX, arg ListCustomerOperationDefinitionsForDeploymentParams) ([]ListCustomerOperationDefinitionsForDeploymentRow, error)
+	// The parent workflow run is locked before these snapshot and transition queries.
+	ListCustomerOperationWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowStep, error)
 	// schedd's wake-side read path (PR-B/C). Returns the
 	// N most recent probe samples for one (host, region)
 	// pair, time-windowed to the meterd sliding window
@@ -2875,6 +2880,7 @@ type Querier interface {
 	SetTrafficTenantSurfaceStatus(ctx context.Context, db DBTX, arg SetTrafficTenantSurfaceStatusParams) (int64, error)
 	SetUDPListenerEnabled(ctx context.Context, db DBTX, arg SetUDPListenerEnabledParams) (AppUdpListener, error)
 	SetWorkflowRunWakeFenced(ctx context.Context, db DBTX, arg SetWorkflowRunWakeFencedParams) (int64, error)
+	SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, arg SettleCustomerOperationWorkflowParams) (int64, error)
 	SkipPendingWorkflowStep(ctx context.Context, db DBTX, arg SkipPendingWorkflowStepParams) error
 	SkipWorkflowForEachRemaining(ctx context.Context, db DBTX, arg SkipWorkflowForEachRemainingParams) error
 	SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) ([]SnapshotLocalityNodesRow, error)
@@ -3118,6 +3124,9 @@ type Querier interface {
 	ValidateInvocationEnvironmentQueuePin(ctx context.Context, db DBTX, arg ValidateInvocationEnvironmentQueuePinParams) (bool, error)
 	ValidateInvocationWorkEnvironmentClaim(ctx context.Context, db DBTX, invocationID pgtype.UUID) (ValidateInvocationWorkEnvironmentClaimRow, error)
 	ValidateManagedPostgresSnapshotCreationIntent(ctx context.Context, db DBTX, arg ValidateManagedPostgresSnapshotCreationIntentParams) (pgtype.UUID, error)
+	// Preserve an arrival in the wait-registration/park window without releasing
+	// coordinator custody. Legacy running runs retain their existing wake policy.
+	WakeNativeWorkflowForReceivedEvent(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	WebhookAutomationLegacyReceiptExists(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	WorkAdmissionCancel(ctx context.Context, db DBTX, arg WorkAdmissionCancelParams) (int64, error)
 	WorkAdmissionCancelBroker(ctx context.Context, db DBTX, arg WorkAdmissionCancelBrokerParams) (int64, error)

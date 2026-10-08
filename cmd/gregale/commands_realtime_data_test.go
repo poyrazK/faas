@@ -62,9 +62,43 @@ func TestCmdRealtimePublishUsesChannelRouteAndReportsQueued(t *testing.T) {
 	}
 }
 
+func TestCmdRealtimePublishUsesChannelRouteAndReportsQueuedDocumentedStatus(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"queued":3,"subscribers":3}`, http.StatusOK)
+	oldOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = oldOut })
+
+	if code := cmdRealtimePublish([]string{"demo", "endpoint-1", "room-a", "--data", "hello"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out.String())
+	}
+	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/apps/demo/realtime/endpoints/endpoint-1/channels/room-a/publish" {
+		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+	}
+	if !strings.Contains(out.String(), "3 of 3 targeted connection(s)") {
+		t.Fatalf("queued count missing: %s", out.String())
+	}
+}
+
 func TestCmdRealtimePublishWarnsOnPartialFleet(t *testing.T) {
 	resetJSONOut(t)
 	_ = authedFakeAPI(t, `{"queued":2,"partial":true,"nodes_queried":1,"nodes_unavailable":1}`, http.StatusOK)
+	oldOut, oldErr := osStdout, osStderr
+	var out, errOut bytes.Buffer
+	osStdout, osStderr = &out, &errOut
+	t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
+	if code := cmdRealtimePublish([]string{"demo", "endpoint-1", "room-a", "--data", "hello"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "partial") || !strings.Contains(errOut.String(), "duplicates") {
+		t.Fatalf("partial warning missing: %s", errOut.String())
+	}
+}
+
+func TestCmdRealtimePublishWarnsOnPartialFleetDocumentedStatus(t *testing.T) {
+	resetJSONOut(t)
+	_ = authedFakeAPI(t, `{"queued":2,"subscribers":3,"partial":true,"nodes_queried":1,"nodes_unavailable":1}`, http.StatusOK)
 	oldOut, oldErr := osStdout, osStderr
 	var out, errOut bytes.Buffer
 	osStdout, osStderr = &out, &errOut

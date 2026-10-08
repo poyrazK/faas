@@ -788,6 +788,8 @@ from .domain_doctor_report import DomainDoctorReport
 from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
 from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
+from .durable_entity_invoke_request import DurableEntityInvokeRequest
+from .durable_entity_invoke_response import DurableEntityInvokeResponse
 from .edge_rule_async_action import EdgeRuleAsyncAction
 from .edge_rule_async_action_retry_policy import EdgeRuleAsyncActionRetryPolicy
 from .edge_rule_budget_action import EdgeRuleBudgetAction
@@ -2025,6 +2027,7 @@ from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
 from .publish_event_response import PublishEventResponse
+from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .put_app_env_request import PutAppEnvRequest
@@ -3505,6 +3508,8 @@ __all__ = (
     "DryRunAppOpenAPIBody",
     "DryRunAppOpenAPIBodyInfo",
     "DryRunAppOpenAPIBodyPaths",
+    "DurableEntityInvokeRequest",
+    "DurableEntityInvokeResponse",
     "EdgeRuleAsyncAction",
     "EdgeRuleAsyncActionRetryPolicy",
     "EdgeRuleBudgetAction",
@@ -4690,6 +4695,7 @@ __all__ = (
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishManagedRealtimeChannelDelivery",
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
     "PutAppEnvRequest",

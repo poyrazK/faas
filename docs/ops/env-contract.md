@@ -137,8 +137,18 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DOMAIN_DOCTOR_TTL_SECONDS` | apid | `runtime-config` |  |  | `` |  |
 | `FAAS_DPA_PATH` | apid | `unit` |  |  | `` |  |
 | `FAAS_DUNNING_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_DURABLE_ENTITIES_ENABLED` | apid | `default` |  | 0 | `` | ADR-712 operator invocation preview; explicit 1 requires an app allowlist and private conditional-state backend; off pending native and live-provider qualification |
+| `FAAS_DURABLE_ENTITY_ALARMS_ENABLED` | apid | `default` |  | 0 | `` | ADR-712 opt-in alarm delivery; requires the invocation preview and private delimiter listing |
+| `FAAS_DURABLE_ENTITY_APPS` | apid | `default` |  |  | `` | ADR-712 comma-separated app UUID allowlist; required only when the invocation preview is enabled |
+| `FAAS_DURABLE_ENTITY_BACKEND` | apid | `default` |  |  | `` | ADR-712 configured private conditional-state backend ID; required only when the invocation preview is enabled; currently S3 only |
+| `FAAS_DURABLE_ENTITY_BACKEND_FINGERPRINT` | apid | `default` |  |  | `` | ADR-712 immutable placement fingerprint for the selected backend; required only when the invocation preview is enabled |
+| `FAAS_DURABLE_ENTITY_BUCKET` | apid | `default` |  |  | `` | ADR-712 dedicated private platform bucket; required only when the invocation preview is enabled; never a customer-managed bucket |
+| `FAAS_DURABLE_ENTITY_MAINTENANCE_ENABLED` | apid | `default` |  | 0 | `` | ADR-712 opt-in checkpointed cleanup and inventory; requires the invocation preview and private listing/deletion |
+| `FAAS_DURABLE_ENTITY_MAX_RETAINED_BYTES` | apid | `default` |  |  | `int` | ADR-712 optional positive per-entity committed-byte cap; unset leaves new entities uncapped and preserves existing persisted caps; not a billing quota |
 | `FAAS_E2E_API_HOSTING_SMOKE` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_E2E_BIN_DIR` | shared | `dev-only` |  |  | `` | test-harness only; directory of pre-built daemon binaries shared across native e2e phases so each phase does not re-link them (the Go build cache does not cover the final link); must never be set on a production host |
+| `FAAS_E2E_ENTITY_ACCESS_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
+| `FAAS_E2E_ENTITY_SECRET_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
 | `FAAS_E2E_SERVICE_TCP` | shared | `dev-only` |  |  | `` | test-harness only; adds the gatewayd-internal private service TCP listener and service-address DNS (ADR-576) to the metal bridge config; must never be set on a production host |
 | `FAAS_E2E_VMMD_SOCKET` | shared | `dev-only` |  |  | `` | test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` |  |  | `` | must never be set on a production host |
@@ -271,7 +281,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MIGRATING_WATCHDOG_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_MIGRATING_WATCHDOG_TICK_LIMIT` | schedd | `default` |  |  | `` |  |
 | `FAAS_NODE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
-| `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, schedd, vmmd, shared | `dropin` |  |  | `` |  |
+| `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, realtimed, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` | meterd | `default` |  |  | `` |  |
 | `FAAS_OBJECT_STORAGE_CONFIG` | apid, gatewayd-public, s3-gatewayd, shared | `unit` |  |  | `` | gatewayd-public and s3-gatewayd read /etc/faas/object-storage.json; apid uses the same optional drop-in; s3_enabled runtime config separately defaults off |
@@ -363,6 +373,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_OUTBOUND_QUEUE` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_OUTBOUND_QUEUE_BYTES` | realtimed | `default` |  | 4194304 | `` | per-connection outbound payload budget, including a frame being written |
 | `FAAS_REALTIME_PONG_WAIT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_RESUME_PREVIEW_ENABLED` | realtimed | `default` |  | 0 | `` | operator-only v2 WebSocket resume preview; requires apid history reader and OIDC endpoint authentication |
 | `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED` | apid | `default` |  | 0 | `` | operator-only retained outbound history preview; off pending plan entitlements and fleet qualification |

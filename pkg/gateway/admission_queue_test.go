@@ -157,8 +157,21 @@ func TestWakeAdmissionQueueReportsPriorityPreemption(t *testing.T) {
 		_, _, _ = q.Do(context.Background(), "app-free", "free", WakeAdmissionPolicyForPlan(api.PlanFree), func(context.Context) error { return nil })
 	}()
 	waitForAdmissionQueueDepth(t, q, 1)
-	_, _, _ = q.Do(context.Background(), "app-scale", "scale", WakeAdmissionPolicyForPlan(api.PlanScale), func(context.Context) error { return nil })
+	scaleDone := make(chan error, 1)
+	go func() {
+		_, _, err := q.Do(context.Background(), "app-scale", "scale", WakeAdmissionPolicyForPlan(api.PlanScale), func(context.Context) error { return nil })
+		scaleDone <- err
+	}()
+	waitForAdmissionQueueDepth(t, q, 2)
 	close(release)
+	select {
+	case err := <-scaleDone:
+		if err != nil {
+			t.Fatalf("scale admission returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scale admission")
+	}
 	select {
 	case got := <-preempted:
 		if got.fromApp != "app-free" || got.toApp != "app-scale" {

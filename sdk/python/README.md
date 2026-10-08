@@ -43,6 +43,55 @@ async with client as client:
     response: Response[MyDataModel] = await get_my_data_model.asyncio_detailed(client=client)
 ```
 
+## Managed realtime publish retries
+
+Publish messages with the generated realtime operation and pass a stable
+`idempotency_key` when retrying one logical event. Reuse it only with the same
+delivery mode, decoded payload, and binary flag:
+
+```python
+import base64
+
+from faas_sdk.api.realtime.publish_managed_realtime_channel import sync_detailed
+from faas_sdk.models import ManagedRealtimeMessageRequest
+
+payload = b'{"job_id":"job-42","progress":100}'
+response = sync_detailed(
+    slug="my-app",
+    id="ENDPOINT_ID",
+    channel="jobs",
+    client=client,
+    body=ManagedRealtimeMessageRequest(
+        data_base64=base64.b64encode(payload).decode("ascii"),
+    ),
+    idempotency_key="job-event:job-42:complete",
+)
+```
+
+The server replays the original queue outcome for 24 hours. A replay of a
+partial publish does not retry subscribers that missed it; a different payload
+or delivery mode with the same key returns `409`. An in-flight or uncertain
+reservation also returns `409` while the key remains active.
+
+For resumable delivery, opt into `delivery="retained"`. This preview requires
+the apid retained-history and realtimed resume flags, a stable idempotency key,
+and a payload no larger than 4 KiB. The response contains the committed channel
+sequence; v2 clients replay from that cursor after reconnecting:
+
+```python
+retained = sync_detailed(
+    slug="my-app",
+    id="ENDPOINT_ID",
+    channel="jobs",
+    client=client,
+    body=ManagedRealtimeMessageRequest(
+        data_base64=base64.b64encode(payload).decode("ascii"),
+    ),
+    idempotency_key="job-event:job-42:complete:retained",
+    delivery="retained",
+)
+```
+
 By default, when you're calling an HTTPS API it will attempt to verify that SSL is working correctly. Using certificate verification is highly recommended most of the time, but sometimes you may need to authenticate to a server (especially an internal server) using a custom certificate bundle.
 
 ```python

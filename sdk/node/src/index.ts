@@ -42,6 +42,7 @@ export { OutboundService } from './generated/services/OutboundService.js';
 export { QueuesService } from './generated/services/QueuesService.js';
 export { TriggersService } from './generated/services/TriggersService.js';
 export { ProjectsService } from './generated/services/ProjectsService.js';
+export { RealtimeService } from './generated/services/RealtimeService.js';
 export { RunsService } from './generated/services/RunsService.js';
 export { SecretsService } from './generated/services/SecretsService.js';
 export { UsageService } from './generated/services/UsageService.js';
@@ -95,10 +96,16 @@ export {
 
 export {
   consumeRealtimeChannel,
+  consumeRealtimeChannels,
+  REALTIME_MAX_CHANNELS_PER_CONNECTION,
   REALTIME_RESUME_SUBPROTOCOL,
+  RealtimeConfigurationError,
   RealtimeProtocolError,
   RealtimeResyncRequiredError,
   type ConsumeRealtimeChannelOptions,
+  type ConsumeRealtimeChannelsOptions,
+  type RealtimeChannelConsumerOptions,
+  type RealtimeConnectionOptions,
   type RealtimeCursorStore,
   type RealtimeMessage,
   type RealtimeSocket,

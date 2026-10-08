@@ -324,6 +324,32 @@ func TestIsSyncInvokeRequest(t *testing.T) {
 	}
 }
 
+func TestIsSyncInvokeRequestDurableEntityRoutes(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		want   bool
+	}{
+		{http.MethodPost, "/v1/apps/demo/invoke", true},
+		{http.MethodPost, "/v1/apps/demo/entities/invoke", true},
+		{http.MethodGet, "/v1/apps/demo/entities/invoke", false},
+		{http.MethodPost, "/v1/apps//entities/invoke", false},
+		{http.MethodPost, "/v1/apps/demo/entities/invoke/extra", false},
+		{http.MethodPost, "/v1/apps/demo/invoke/async", false},
+		{http.MethodGet, "/v1/apps/demo/invoke", false},
+		{http.MethodPost, "/v1/apps//invoke", false},
+		{http.MethodPost, "/v1/apps/demo/invoked", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+"_"+tc.path, func(t *testing.T) {
+			r := httptest.NewRequest(tc.method, tc.path, nil)
+			if got := IsSyncInvokeRequest(r); got != tc.want {
+				t.Fatalf("IsSyncInvokeRequest(%s %s) = %v, want %v", tc.method, tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestMiddleware_EndToEndTimeoutEnforced is the ADR-093 §14
 // metal-acceptance smoke: a 100ms budget with a 1s slow
 // downstream fake must 504 in <200ms with a stable

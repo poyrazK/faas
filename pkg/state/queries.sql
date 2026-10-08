@@ -16137,6 +16137,39 @@ UPDATE customer_operation_workflow_claims SET lease_until=now() WHERE workflow_r
 -- name: GetCustomerOperationWorkflowStep :one
 SELECT * FROM workflow_steps WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text;
 
+-- The parent workflow run is locked before these snapshot and transition queries.
+-- name: ListCustomerOperationWorkflowSteps :many
+SELECT * FROM workflow_steps WHERE run_id=sqlc.arg(run_id)::uuid ORDER BY step_name;
+
+-- name: FirstCustomerOperationWorkflowEvent :one
+SELECT * FROM workflow_events WHERE run_id=sqlc.arg(run_id)::uuid AND event_name=sqlc.arg(event_name)::text
+ORDER BY received_at,id LIMIT 1;
+
+-- Preserve an arrival in the wait-registration/park window without releasing
+-- coordinator custody. Legacy running runs retain their existing wake policy.
+-- name: WakeNativeWorkflowForReceivedEvent :exec
+UPDATE workflow_runs SET status='pending',scheduled_for=now(),updated_at=now()
+WHERE id=sqlc.arg(run_id)::uuid AND (status='awaiting_event'
+ OR (operation_id IS NOT NULL AND status IN ('pending','running')));
+
+-- name: AdvanceCustomerOperationWorkflowStep :execrows
+UPDATE workflow_steps SET status=sqlc.arg(status)::text,output=sqlc.narg(output)::jsonb,error=sqlc.narg(error)::text,
+ started_at=sqlc.narg(started_at)::timestamptz,finished_at=sqlc.narg(finished_at)::timestamptz,
+ next_check_at=sqlc.narg(next_check_at)::timestamptz,next_retry_at=sqlc.narg(next_retry_at)::timestamptz
+WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text
+ AND status=sqlc.arg(prior_status)::text AND attempt=sqlc.arg(attempt)::integer;
+
+-- name: AdvanceCustomerOperationWorkflowAttempt :execrows
+UPDATE workflow_step_attempts SET status=sqlc.arg(status)::text,http_status=sqlc.narg(http_status)::integer,
+ error=sqlc.narg(error)::text,finished_at=sqlc.arg(finished_at)::timestamptz,next_attempt_at=sqlc.narg(next_attempt_at)::timestamptz
+WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text
+ AND attempt=sqlc.arg(attempt)::integer AND status='running';
+
+-- name: SettleCustomerOperationWorkflow :execrows
+UPDATE workflow_runs SET status=sqlc.arg(status)::text,output=sqlc.narg(output)::jsonb,last_error=sqlc.narg(last_error)::text,
+ finished_at=sqlc.arg(finished_at)::timestamptz,updated_at=sqlc.arg(finished_at)::timestamptz,lease_until=NULL
+WHERE id=sqlc.arg(run_id)::uuid AND operation_id=sqlc.arg(operation_id)::uuid AND status IN ('pending','running','awaiting_event');
+
 -- name: GetCustomerOperationWorkflowStepAttempt :one
 SELECT * FROM workflow_step_attempts WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text AND attempt=sqlc.arg(attempt)::integer;
 
