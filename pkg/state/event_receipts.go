@@ -18,7 +18,7 @@ const EventReceiptMaxRecipients = api.EventReceiptPageMax
 type EventReceiptCursor struct{ OutboxID, Position int64 }
 
 // EventReceiptStore reads one account/source/ID identity. Cursor positions
-// refer to immutable acceptance order, never mutable delivery timestamps.
+// refer to immutable acceptance order followed by append-only backfill positions.
 type EventReceiptStore interface {
 	EventReceipt(context.Context, string, string, string, EventReceiptCursor, int) (EventReceipt, error)
 }
@@ -33,6 +33,8 @@ type EventReceipt struct {
 	SnapshotCaptured, RecipientClaims              bool
 	RecipientCount                                 int
 	RoutingSummary                                 map[string]int
+	BackfillRecipientCount                         int
+	BackfillRoutingSummary                         map[string]int
 	Recipients                                     []EventReceiptRecipient
 	NextPosition                                   int64
 }
@@ -82,6 +84,7 @@ type EventReceiptCancellation struct {
 type EventReceiptRecipient struct {
 	Position                                       int64
 	SubscriptionID, AppID, AppSlug                 string
+	Origin, BackfillJobID                          string
 	WorkflowName, WorkflowRunID, WorkflowRunStatus string
 	Routing                                        EventReceiptRouting
 	Execution                                      *EventReceiptExecution
@@ -131,9 +134,13 @@ func (s *PgStore) EventReceipt(ctx context.Context, accountID, source, eventID s
 		AppID: meta.AppID, PlatformTenantID: meta.PlatformTenantID, ClientEventID: meta.ClientEventID,
 		SchemaVersion: meta.SchemaVersion, AcceptedAt: timeFromPgtype(meta.CreatedAt), RoutingSettledAt: timestamptzToTimePtr(meta.DeliveredAt),
 		SnapshotCaptured: meta.SnapshotCaptured, RecipientClaims: meta.RecipientClaims, RecipientCount: int(meta.RecipientCount),
-		Recipients: make([]EventReceiptRecipient, 0)}
+		BackfillRecipientCount: int(meta.BackfillRecipientCount),
+		Recipients:             make([]EventReceiptRecipient, 0)}
 	if err := json.Unmarshal(meta.RoutingSummary, &receipt.RoutingSummary); err != nil {
 		return EventReceipt{}, fmt.Errorf("decode receipt summary: %w", err)
+	}
+	if err := json.Unmarshal(meta.BackfillRoutingSummary, &receipt.BackfillRoutingSummary); err != nil {
+		return EventReceipt{}, fmt.Errorf("decode backfill receipt summary: %w", err)
 	}
 	receiptRetention(&receipt)
 	limit = receiptLimit(limit)
@@ -156,9 +163,10 @@ func (s *PgStore) EventReceipt(ctx context.Context, accountID, source, eventID s
 			return EventReceipt{}, fmt.Errorf("decode receipt progress: %w", err)
 		}
 		entry := EventReceiptRecipient{Position: row.SPosition, SubscriptionID: recipient.ID, AppID: recipient.AppID, AppSlug: row.AppSlug,
+			Origin: row.SOrigin, BackfillJobID: uuidString(row.BackfillJobID),
 			WorkflowName: row.WorkflowName, WorkflowRunID: row.WorkflowRunID, WorkflowRunStatus: row.WorkflowRunStatus, TargetAvailable: row.TargetAvailable,
 			Routing:               receiptRouting(progress, row.RoutingState, int(row.RoutingAttempts)),
-			RoutingReplayEligible: row.TargetAvailable && row.RoutingState == PublishedEventRecipientFailed && (meta.RecipientClaims || meta.State == "delivered")}
+			RoutingReplayEligible: row.TargetAvailable && row.RoutingReplayAvailable && row.RoutingState == PublishedEventRecipientFailed && (meta.RecipientClaims || meta.State == "delivered")}
 		setEventReceiptPendingAge(&entry.Routing, receipt.AcceptedAt)
 		entry.Routing.NextAttemptAt, entry.Routing.LeaseUntil = timestamptzToTimePtr(row.NextAttemptAt), timestamptzToTimePtr(row.LeaseUntil)
 		entry.Routing.ReplayCount, entry.Routing.LastReplayedAt = row.ReplayCount, timestamptzToTimePtr(row.LastReplayedAt)
@@ -331,7 +339,7 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 			receipt.NextPosition = receipt.Recipients[len(receipt.Recipients)-1].Position
 			continue
 		}
-		entry := EventReceiptRecipient{Position: position, SubscriptionID: recipient.ID, AppID: recipient.AppID,
+		entry := EventReceiptRecipient{Position: position, SubscriptionID: recipient.ID, AppID: recipient.AppID, Origin: "acceptance",
 			WorkflowName: func() string {
 				if len(recipient.Workflow) == 0 {
 					return ""

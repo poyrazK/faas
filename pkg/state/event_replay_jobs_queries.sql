@@ -37,8 +37,18 @@ SELECT EXISTS (SELECT 1 FROM event_replay_jobs
 -- name: EventReplayBackfillItems :many
 SELECT i.outbox_id, i.accepted_at, i.event_source, i.event_id, i.event_type,
        i.schema_version, i.state, i.attempts, i.failure_code, i.last_error,
-       i.retryable, i.updated_at
+       i.retryable, i.updated_at, j.subscription_id,
+       (o.id IS NOT NULL)::boolean AS receipt_available,
+       (o.id IS NOT NULL AND a.id IS NOT NULL AND (r.subscription_id IS NOT NULL OR EXISTS (
+           SELECT 1 FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) s(recipient)
+           WHERE s.recipient->>'id'=j.subscription_id::text AND s.recipient->>'app_id'=j.app_id::text
+       )))::boolean AS execution_history_available
 FROM event_replay_job_items i
+JOIN event_replay_jobs j ON j.id=i.job_id
+LEFT JOIN event_fanout_outbox o ON o.id=i.outbox_id AND o.account_id=j.account_id
+    AND o.source=i.event_source AND o.event_id=i.event_id AND o.created_at=i.accepted_at
+LEFT JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
+LEFT JOIN event_fanout_recipients r ON r.outbox_id=o.id AND r.subscription_id=j.subscription_id::text AND r.app_id=j.app_id
 WHERE i.job_id=sqlc.arg(job_id)::uuid
   AND (sqlc.arg(state)::text = '' OR i.state=sqlc.arg(state)::text)
   AND (i.accepted_at,i.outbox_id) > (sqlc.arg(after_at)::timestamptz,sqlc.arg(after_outbox_id)::bigint)
@@ -119,9 +129,12 @@ ON CONFLICT (job_id,outbox_id) DO NOTHING;
 
 -- name: EventReplayBackfillInsertRecipient :execrows
 INSERT INTO event_fanout_recipients
-    (outbox_id,subscription_id,app_id,recipient,state,total_attempts,available_at,backfill_job_id)
+    (outbox_id,subscription_id,app_id,recipient,state,total_attempts,available_at,backfill_job_id,receipt_position)
 VALUES (sqlc.arg(outbox_id)::bigint,sqlc.arg(subscription_id)::text,sqlc.arg(app_id)::uuid,
-        sqlc.arg(recipient)::jsonb,'pending',0,sqlc.arg(available_at)::timestamptz,sqlc.arg(job_id)::uuid)
+        sqlc.arg(recipient)::jsonb,'pending',0,sqlc.arg(available_at)::timestamptz,sqlc.arg(job_id)::uuid,
+        (SELECT greatest(jsonb_array_length(coalesce(o.recipient_snapshot,'[]'::jsonb)),
+                         coalesce((SELECT max(r.receipt_position) FROM event_fanout_recipients r WHERE r.outbox_id=o.id),0))+1
+         FROM event_fanout_outbox o WHERE o.id=sqlc.arg(outbox_id)::bigint))
 ON CONFLICT (outbox_id,subscription_id) DO NOTHING;
 
 -- name: EventReplayBackfillAdvance :exec
@@ -190,9 +203,24 @@ FROM event_replay_job_items i
 JOIN event_replay_jobs j ON j.id=i.job_id
 JOIN event_fanout_recipients r ON r.outbox_id=i.outbox_id AND r.subscription_id=j.subscription_id::text AND r.backfill_job_id=j.id
 JOIN event_fanout_outbox o ON o.id=i.outbox_id AND o.account_id=j.account_id
+JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
 WHERE i.job_id=sqlc.arg(job_id)::uuid AND j.account_id=sqlc.arg(account_id)::uuid
   AND i.state='failed' AND i.retryable AND r.state='failed'
+  AND (sqlc.arg(event_source)::text='' OR o.source=sqlc.arg(event_source)::text)
+  AND (sqlc.arg(event_id)::text='' OR o.event_id=sqlc.arg(event_id)::text)
+  AND (sqlc.arg(app_id)::text='' OR j.app_id::text=sqlc.arg(app_id)::text)
 ORDER BY i.accepted_at,i.outbox_id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventReplayBackfillRecipientJob :one
+-- Read provenance before taking the job lock, preserving job -> parent order.
+SELECT j.id FROM event_fanout_outbox o
+JOIN event_fanout_recipients r ON r.outbox_id=o.id
+JOIN event_replay_jobs j ON j.id=r.backfill_job_id AND j.account_id=o.account_id
+    AND j.app_id=r.app_id AND j.subscription_id::text=r.subscription_id
+JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.source=sqlc.arg(event_source)::text
+  AND o.event_id=sqlc.arg(event_id)::text AND r.app_id=sqlc.arg(app_id)::uuid
+  AND r.subscription_id=sqlc.arg(subscription_id)::text AND r.receipt_position IS NOT NULL;
 
 -- name: EventReplayBackfillResetItem :execrows
 UPDATE event_replay_job_items SET state='pending',failure_code='',last_error='',retryable=false,updated_at=clock_timestamp()

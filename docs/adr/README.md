@@ -70,7 +70,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 644 | [Verified MCP promotion and resource policy](644-mcp-verified-promotion-and-resource-policy.md) | accepted | Verify zero-traffic candidates, gate caller catalogs, and reuse gateway JWT resource authorization |
 | 678 | [Compose prebuilt image workloads](678-compose-prebuilt-image-workloads.md) | accepted | Deploy stateless image services through imaged with immutable resolution and existing project dependency policies |
 | 679 | [Image-published deployment trigger](679-image-published-deployment-trigger.md) | accepted | CI publishes an immutable image, then hands it to existing deployment admission with durable workload/scope/digest deduplication |
-| 680 | [Freeze Compose commands per image deployment](680-frozen-project-image-commands.md) | accepted | Capture Compose CMD in the deployment profile and preserve it through app edits, image processing, retries, and runtime port updates |
+| 686 | [Freeze Compose commands per image deployment](686-frozen-project-image-commands.md) | accepted | Capture Compose CMD in the deployment profile and preserve it through app edits, image processing, retries, and runtime port updates |
 | 681 | [Image deployment promotion ordering](681-image-deployment-promotion-ordering.md) | accepted | Atomically reject older same-scope image candidates at cutover and recheck recorded GitHub branches while preserving explicit rollback |
 | 682 | [Compose image healthchecks](682-compose-image-healthchecks.md) | accepted | Validate and freeze partial Compose healthcheck overrides for prebuilt image workloads, preserving artifact inheritance and existing guest execution |
 | 683 | [Fresh image healthchecks gate readiness](683-image-healthcheck-readiness.md) | implemented; native qualification pending | Require fresh command proof before serving boot, restore, warm resume, or migration |
@@ -637,3 +637,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-617: Event consumer backlog inspection](617-event-consumer-backlog-inspection.md)
 - [ADR-645: Subscription-scoped retained-event replay preview](645-subscription-retained-event-replay-preview.md)
 - [ADR-639: Durable subscription event backfill](639-durable-subscription-event-backfill.md)
+- [ADR-646: Unified backfill delivery inspection](646-unified-backfill-delivery-inspection.md)
+- [ADR-647: Independent event routing by default](647-independent-event-routing-default.md)
+- [ADR-648: Independent workflow event routing](648-independent-workflow-event-routing.md)

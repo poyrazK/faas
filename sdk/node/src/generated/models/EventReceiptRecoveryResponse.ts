@@ -10,7 +10,7 @@ export type EventReceiptRecoveryResponse = {
   retained_replay_count: number;
   latest_replay: EventReceiptExecutionResponse;
   /**
-   * Account-authenticated paginated replay history for this captured recipient.
+   * Account-authenticated paginated replay history for this recipient.
    */
   history_url: string;
 };

@@ -61,13 +61,12 @@ func (m *MemStore) admitEventRecipientLocked(claim PublishedEventRoutingClaim, p
 		return PublishedEventRoutingResult{}, ErrConflict
 	}
 	if p.matched {
-		app, ok := m.apps[p.recipient.AppID]
-		if !ok {
-			app, ok = m.apps[canonicalMemUUID(p.recipient.AppID)]
-		}
+		app, ok := m.eventSubscriptionAppLocked(p.recipient.AppID)
 		if !ok || app.Status == AppDeleted || !sameMemUUID(app.AccountID, p.recipient.AccountID) {
 			return eventAdmissionResult(p, PublishedEventRecipientProgress{}, false, false), admissionError(EventFanoutFailureCodeTargetUnavailable, false, ErrNotFound)
 		}
+		// Invocation helpers address the stored app row by its original spelling.
+		p.invocation.AppID = app.ID
 	}
 	previous := receipt.RecipientProgress[claim.SubscriptionID]
 	if routingAdmissionRecorded(previous) {
