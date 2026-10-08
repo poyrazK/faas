@@ -1011,6 +1011,45 @@ func (c *EdgeRuleCache) Reset() {
 	c.byID = map[string]*list.Element{}
 }
 
+// InvalidateHosts drops the cached entries (current and last-known) for every
+// host matched by one of the mutated rules' match_host patterns. A rule only
+// ever applies to hosts its pattern matches, so entries for other hosts cannot
+// have changed; dropping just these keeps one tenant's rule edit from
+// flushing every other tenant's compiled rules fleet-wide. An empty pattern
+// list means the scope is unknown and falls back to Reset. The generation
+// still advances so no read started before this call can repopulate a
+// dropped host with pre-mutation rules.
+func (c *EdgeRuleCache) InvalidateHosts(patterns []string) {
+	if len(patterns) == 0 {
+		c.Reset()
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.generation++
+	for host, el := range c.byID {
+		for _, pattern := range patterns {
+			if EdgeRuleHostPatternMatches(pattern, host) {
+				c.removeElement(el)
+				break
+			}
+		}
+	}
+}
+
+// EdgeRuleHostPatternMatches reports whether a rule's match_host pattern
+// ("*", "*.example.com", or an exact host) covers host, case-insensitively.
+// It mirrors the store's LIKE translation and the gateway's glob recheck.
+func EdgeRuleHostPatternMatches(pattern, host string) bool {
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	host = strings.ToLower(strings.TrimSpace(host))
+	if pattern == "" || host == "" {
+		return false
+	}
+	ok, err := path.Match(pattern, host)
+	return err == nil && ok
+}
+
 // Len returns the number of cached host entries.
 func (c *EdgeRuleCache) Len() int {
 	c.mu.Lock()

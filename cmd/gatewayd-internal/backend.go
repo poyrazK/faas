@@ -1430,15 +1430,19 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			}
 			return
 		}
-		inv.ResetEdgeRules()
-		// ADR-122 §Decision: drop the kind=cache store on
-		// the same notification. A new rule might apply to
-		// a path the store already populated under a
-		// deleted rule; a deleted rule might have populated
-		// entries that no rule now matches; a mutated rule
-		// might have changed max_age / stale_if_error. All
-		// three are covered by InvalidateAll.
-		inv.InvalidateResponseCacheAll()
+		// ADR-122 §Decision: the kind=cache store is dropped with the
+		// rule cache — a new rule might apply to a path the store already
+		// populated under a deleted rule, a deleted rule might have
+		// populated entries no rule now matches, a mutated rule might
+		// have changed max_age / stale_if_error. Both are scoped to the
+		// mutation's hosts and apps; an unparseable payload keeps the
+		// wholesale flush.
+		if parseErr != nil {
+			inv.ResetEdgeRules()
+			inv.InvalidateResponseCacheAll()
+		} else {
+			invalidateEdgeRuleScope(ctx, inv, payload.AppID, payload.MatchHosts)
+		}
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "apply" {
 			if converger, ok := inv.(interface {
 				EndEdgeRuleConvergence([]string, int64)
