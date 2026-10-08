@@ -574,6 +574,7 @@ func (c Config) NftCommands() [][]string {
 	// ever complete. Guest-INITIATED (ct state new) traffic still falls through
 	// to the denies, so lateral movement stays blocked.
 	add("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept")
+
 	// ADR-201 §3: reject NEW connections to an upstream whose circuit is
 	// open. Deliberately placed AFTER the established/related accept — an
 	// open circuit must refuse new connections, never tear down calls the
@@ -663,6 +664,15 @@ func (c Config) NftCommands() [][]string {
 	if rule := c.forwardConnlimitRule(nft); rule != nil {
 		cmds = append(cmds, rule)
 	}
+	// ADR-031 restricts guest-originated egress, not published ingress.
+	// Admit only TCP DNAT from the public peer onto the guest TAP, after
+	// the conntrack cap. Keep this rule even with an empty allowlist:
+	// a live policy update can switch the chain to drop without a wake.
+	// DNAT status preserves port retargeting without admitting direct
+	// access to unpublished guest ports or bypassing guest egress rules.
+	add("add", "rule", "ip", "faas", "forward", "iifname", c.VethPeer,
+		"oifname", c.Tap, "ip", "daddr", GuestIP, "meta", "l4proto", "tcp",
+		"ct", "status", "dnat", "accept")
 	cmds = append(cmds, c.serviceAddressRules(nft)...)
 	// Lateral-movement deny (spec §11 + ADR-023 + ADR-034) — the v4
 	// half of the shared DenySet. ADR-031 reorders this list so

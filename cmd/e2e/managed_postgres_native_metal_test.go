@@ -209,7 +209,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		source := buildTarGz(t, map[string]string{
 			"Dockerfile":       "FROM scratch\nCOPY --chmod=0755 postgres-probe /postgres-probe\nCOPY --chmod=0755 postgres-probe /bin/sh\nEXPOSE 8080\nCMD [\"/postgres-probe\"]\n",
 			"postgres-probe":   string(binary),
-			"gregale.yaml":     "release:\n  command: /postgres-probe migrate\n",
+			"gregale.yaml":     "hosting:\n  port: 8080\n  health: /healthz\nrelease:\n  command: /postgres-probe migrate\n",
 			"faas-build-token": runID,
 		})
 		body, status := postMultipartDeployment(t, h, key, slug, source, true, "")
