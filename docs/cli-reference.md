@@ -3517,7 +3517,7 @@ gregale workflows list --app billing --created-after 2026-10-01T00:00:00Z --crea
 
 Inspect recurring workflow schedules and preview their next fires
 
-`gregale workflows schedules --app <SLUG>`
+`gregale workflows schedules <preview> --app <SLUG>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3548,7 +3548,7 @@ gregale workflows schedules preview --app billing --workflow nightly --at 2027-0
 
 Inspect recurring workflow admission history
 
-`gregale workflows schedule-history --app <SLUG> [--platform-tenant-id <UUID>] [--cursor <UUID>] [--limit <N>]`
+`gregale workflows schedule-history <replay-preview|replay> --app <SLUG> [--platform-tenant-id <UUID>] [--cursor <UUID>] [--limit <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
