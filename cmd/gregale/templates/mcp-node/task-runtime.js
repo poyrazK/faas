@@ -1,6 +1,6 @@
 import pg from 'pg';
 import { createPostgresMcpTaskStore, createMcpTaskQueueObserver } from './task-store.js';
-import { createMcpTaskRuntime, mcpTaskHandlers } from './tasks.js';
+import { createMcpTaskRuntime, mcpTaskHandlers, validateMcpTaskRetryPolicy } from './tasks.js';
 import { resolveMcpTaskMetricsSettings, startMcpTaskMetricsPublisher } from './task-metrics.js';
 import defaults from './task-limits.json' with { type: 'json' };
 
@@ -40,6 +40,7 @@ export function resolveMcpTaskSettings(config, { env = process.env, role = 'comb
     ttlMs: (settings.ttl_seconds ?? 86400) * 1000,
     pollIntervalMs: settings.poll_interval_ms ?? 2000,
     workerConcurrency: settings.worker_concurrency ?? 1,
+    ...validateMcpTaskRetryPolicy({ maxAttempts: settings.max_attempts ?? 3, retryBaseDelayMs: settings.retry_base_delay_ms ?? 1000, retryMaxDelayMs: settings.retry_max_delay_ms ?? 60_000 }),
     maxRunning: settings.max_running || defaults.maxRunning,
     maxRunningPerOwner: settings.max_running_per_owner || defaults.maxRunningPerOwner,
     maxOutstanding: settings.max_outstanding || defaults.maxOutstanding,
@@ -73,6 +74,9 @@ export async function startMcpTaskRuntime(config, {
       handlers,
       pollIntervalMs: settings.pollIntervalMs,
       workerConcurrency: settings.workerConcurrency,
+      maxAttempts: settings.maxAttempts,
+      retryBaseDelayMs: settings.retryBaseDelayMs,
+      retryMaxDelayMs: settings.retryMaxDelayMs,
       workerEnabled: settings.role !== 'web',
       keepAlive: settings.role === 'worker',
       onError: () => console.error(JSON.stringify({ event: 'mcp_task_runtime_error' })),

@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from '../app.js';
 import { createPostgresMcpTaskStore } from '../task-store.js';
-import { createMcpTaskRuntime, MCP_TASKS_EXTENSION_ID, mcpTaskHandlers } from '../tasks.js';
+import { createMcpTaskRuntime, MCP_TASKS_EXTENSION_ID, mcpTaskHandlers, RetryableMcpTaskError, validateMcpTaskRetryPolicy } from '../tasks.js';
 
 function owner(authInfo, authMode) {
   if (authMode === 'open') return 'public';
@@ -382,12 +382,12 @@ test('queue metrics count only unexpired queued and running rows in the task nam
   let captured;
   const pool = { async query(sql, params) {
     captured = { sql, params };
-    return { rows: [{ outstanding_tasks: '4', oldest_age_seconds: '18.25', running_tasks: '2', capacity_waiting_tasks: '1' }] };
+    return { rows: [{ outstanding_tasks: '4', oldest_age_seconds: '18.25', running_tasks: '2', capacity_waiting_tasks: '1', failed_tasks: '2', retry_waiting_tasks: '1' }] };
   } };
   const store = createPostgresMcpTaskStore({ pool, namespace: 'mcp-worker-prod', ownerKey: 'x'.repeat(48), ttlMs: 60_000 });
-  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 4, oldestAgeSeconds: 18.25, runningTasks: 2, capacityWaitingTasks: 1 });
+  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 4, oldestAgeSeconds: 18.25, runningTasks: 2, capacityWaitingTasks: 1, failedTasks: 2, retryWaitingTasks: 1 });
   assert.deepEqual(captured.params, ['mcp-worker-prod', 16, 4]);
-  assert.match(captured.sql, /status IN \('queued', 'running'\)/);
+  assert.match(captured.sql, /status IN \('queued', 'running', 'failed'\)/);
   assert.match(captured.sql, /expires_at > instant.now/);
   assert.match(captured.sql, /MIN\(created_at\)/);
 });
@@ -584,4 +584,34 @@ test('MCP Tasks are advertised and the modern wire methods round-trip through th
   assert.equal(synchronous.result.resultType, 'complete', synchronous.text);
   assert.equal(synchronous.result.content[0].text, 'Report sync is ready after 1 steps.');
   assert.equal(store.rows.size, rowCount, 'clients without Tasks support do not create task records');
+});
+
+
+test('retry policy rejects invalid attempt and delay bounds', () => {
+  assert.deepEqual(validateMcpTaskRetryPolicy(), { maxAttempts: 3, retryBaseDelayMs: 1000, retryMaxDelayMs: 60000 });
+  for (const policy of [{ maxAttempts: 0 }, { maxAttempts: 11 }, { maxAttempts: 1.5 }, { retryBaseDelayMs: 99 }, { retryMaxDelayMs: 999 }, { retryMaxDelayMs: 86400001 }]) {
+    assert.throws(() => validateMcpTaskRetryPolicy(policy), /MCP task/);
+  }
+});
+
+test('runtime passes explicit retry classification and bounded jitter to the store', async () => {
+  const store = new MemoryTaskStore();
+  let observed;
+  const originalFail = store.fail.bind(store);
+  store.fail = async (id, token, error, options) => {
+    observed = { error, options };
+    return originalFail(id, token, error);
+  };
+  const runtime = createMcpTaskRuntime({ store, pollIntervalMs: 500, maxAttempts: 2, retryBaseDelayMs: 100, retryMaxDelayMs: 100, handlers: {
+    work: { version: '1', async execute() { throw new RetryableMcpTaskError('private secret'); } },
+  } });
+  await runtime.start();
+  try {
+    await runtime.create('work', {}, undefined, 'open');
+    await eventually(() => observed, 'retry options were not recorded');
+    assert.deepEqual(observed.error, { code: -32603, message: 'Task execution failed' });
+    assert.equal(observed.options.retryable, true);
+    assert.equal(observed.options.maxAttempts, 2);
+    assert.ok(observed.options.retryDelayMs >= 50 && observed.options.retryDelayMs <= 100);
+  } finally { await runtime.stop(); }
 });

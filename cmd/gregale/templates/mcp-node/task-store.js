@@ -31,6 +31,7 @@ const CREATE_SCHEMA = `
     expires_at timestamptz NOT NULL,
     attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
     resume_pending boolean NOT NULL DEFAULT false,
+    next_attempt_at timestamptz,
     lease_token uuid,
     lease_expires_at timestamptz,
     cancel_requested_at timestamptz,
@@ -43,7 +44,8 @@ const MIGRATE_SCHEMA = `
   ALTER TABLE ${TABLE}
     ADD COLUMN IF NOT EXISTS input_state_encrypted bytea,
     ADD COLUMN IF NOT EXISTS input_methods text[] NOT NULL DEFAULT '{}',
-    ADD COLUMN IF NOT EXISTS resume_pending boolean NOT NULL DEFAULT false;
+    ADD COLUMN IF NOT EXISTS resume_pending boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS next_attempt_at timestamptz;
   ALTER TABLE ${TABLE} DROP CONSTRAINT IF EXISTS ${TABLE}_status_check;
   ALTER TABLE ${TABLE} ADD CONSTRAINT ${TABLE}_status_check
     CHECK (status IN ('queued', 'running', 'input_required', 'completed', 'cancelled', 'failed'));
@@ -111,7 +113,7 @@ const CLAIMABLE_TASK_FILTER = `
     SELECT 1 FROM jsonb_to_recordset($5::jsonb) AS handler(name text, version text)
      WHERE handler.name = task.tool_name AND handler.version = task.handler_version
   ))
-  AND (task.status = 'queued' OR (task.status = 'running' AND task.lease_expires_at <= clock_timestamp()))`;
+  AND ((task.status = 'queued' AND (task.next_attempt_at IS NULL OR task.next_attempt_at <= clock_timestamp())) OR (task.status = 'running' AND task.lease_expires_at <= clock_timestamp()))`;
 
 // Claims serialize per namespace; this statement runs after acquiring the lock,
 // so its snapshot includes every preceding committed lease.
@@ -615,6 +617,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
              SET status = 'running',
                  attempt_count = task.attempt_count + CASE WHEN task.resume_pending THEN 0 ELSE 1 END,
                  resume_pending = false,
+                 next_attempt_at = NULL,
                  lease_token = $3::uuid,
                  lease_expires_at = clock_timestamp() + ($4::bigint * interval '1 millisecond'),
                  updated_at = clock_timestamp()
@@ -699,17 +702,25 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
       `, [namespace, taskID, leaseToken, encrypted]);
       return result.rows?.[0]?.status ?? null;
     },
-    async fail(taskID, leaseToken, error) {
+    async fail(taskID, leaseToken, error, { retryable = false, maxAttempts = 3, retryDelayMs = 1000 } = {}) {
+      if (typeof retryable !== 'boolean' || !Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 10 || !Number.isSafeInteger(retryDelayMs) || retryDelayMs < 1 || retryDelayMs > 86_400_000) throw new Error('Invalid MCP task retry policy');
       const encrypted = encryptJSON(error, payloadKey, taskAAD(namespace, taskID, 'error'), MAX_RESULT_BYTES, 'MCP task error');
       const result = await pool.query(`
+        WITH instant AS MATERIALIZED (SELECT clock_timestamp() AS now)
         UPDATE ${TABLE}
-           SET status = CASE WHEN cancel_requested_at IS NULL THEN 'failed' ELSE 'cancelled' END,
+           SET status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled'
+                             WHEN $5 AND attempt_count < $6 AND instant.now + ($7::bigint * interval '1 millisecond') < expires_at THEN 'queued'
+                             ELSE 'failed' END,
+               next_attempt_at = CASE WHEN cancel_requested_at IS NULL AND $5 AND attempt_count < $6 AND instant.now + ($7::bigint * interval '1 millisecond') < expires_at
+                                      THEN instant.now + ($7::bigint * interval '1 millisecond') ELSE NULL END,
                error_encrypted = CASE WHEN cancel_requested_at IS NULL THEN $4::bytea ELSE NULL END,
-               result_encrypted = NULL, updated_at = clock_timestamp(),
-               lease_token = NULL, lease_expires_at = NULL
+               result_encrypted = NULL, updated_at = instant.now,
+               resume_pending = false, lease_token = NULL, lease_expires_at = NULL
+          FROM instant
          WHERE namespace = $1 AND task_id = $2::uuid AND lease_token = $3::uuid AND status = 'running'
+           AND lease_expires_at > clock_timestamp() AND expires_at > clock_timestamp()
          RETURNING status
-      `, [namespace, taskID, leaseToken, encrypted]);
+      `, [namespace, taskID, leaseToken, encrypted, retryable, maxAttempts, retryDelayMs]);
       return result.rows?.[0]?.status ?? null;
     },
     async finishCancelled(taskID, leaseToken) {
@@ -764,23 +775,26 @@ export function createMcpTaskQueueObserver({ pool, namespace, maxRunning = defau
   async function queueMetrics() {
     const result = await pool.query(`
       WITH instant AS MATERIALIZED (SELECT clock_timestamp() AS now),
-      pending AS MATERIALIZED (
-        SELECT task.*, status = 'running' AND lease_expires_at > instant.now AS live
+      retained AS MATERIALIZED (
+        SELECT task.owner_hash, task.status, task.created_at, task.next_attempt_at, instant.now,
+               status = 'running' AND lease_expires_at > instant.now AS live
           FROM ${TABLE} AS task CROSS JOIN instant
-         WHERE namespace = $1 AND expires_at > instant.now AND status IN ('queued', 'running')
-      ), owners AS (
+         WHERE namespace = $1 AND expires_at > instant.now AND status IN ('queued', 'running', 'failed')
+      ), pending AS MATERIALIZED (SELECT * FROM retained WHERE status <> 'failed'), owners AS (
         SELECT owner_hash, COUNT(*) FILTER (WHERE live) AS running FROM pending GROUP BY owner_hash
       ), totals AS (SELECT COUNT(*) FILTER (WHERE live) AS running FROM pending)
       SELECT COUNT(*)::text AS outstanding_tasks,
              COALESCE(GREATEST(EXTRACT(EPOCH FROM ((SELECT now FROM instant) - MIN(created_at))), 0), 0)::text AS oldest_age_seconds,
              COUNT(*) FILTER (WHERE live)::text AS running_tasks,
-             COUNT(*) FILTER (WHERE NOT live AND (totals.running >= $2 OR owners.running >= $3))::text AS capacity_waiting_tasks
+             COUNT(*) FILTER (WHERE NOT live AND (next_attempt_at IS NULL OR next_attempt_at <= now) AND (totals.running >= $2 OR owners.running >= $3))::text AS capacity_waiting_tasks,
+             (SELECT COUNT(*) FROM retained WHERE status = 'failed')::text AS failed_tasks,
+             COUNT(*) FILTER (WHERE status = 'queued' AND next_attempt_at > now)::text AS retry_waiting_tasks
         FROM pending JOIN owners USING (owner_hash) CROSS JOIN totals
     `, [namespace, maxRunning, maxRunningPerOwner]);
     const row = result.rows?.[0];
     if (!row) throw new Error('Could not read MCP task queue metrics');
-    const metrics = { outstandingTasks: Number(row.outstanding_tasks), oldestAgeSeconds: Number(row.oldest_age_seconds), runningTasks: Number(row.running_tasks), capacityWaitingTasks: Number(row.capacity_waiting_tasks) };
-    if (!['outstandingTasks', 'runningTasks', 'capacityWaitingTasks'].every(key => Number.isSafeInteger(metrics[key]) && metrics[key] >= 0) || !Number.isFinite(metrics.oldestAgeSeconds) || metrics.oldestAgeSeconds < 0) throw new Error('MCP task queue metrics returned invalid values');
+    const metrics = { outstandingTasks: Number(row.outstanding_tasks), oldestAgeSeconds: Number(row.oldest_age_seconds), runningTasks: Number(row.running_tasks), capacityWaitingTasks: Number(row.capacity_waiting_tasks), failedTasks: Number(row.failed_tasks), retryWaitingTasks: Number(row.retry_waiting_tasks) };
+    if (!['outstandingTasks', 'runningTasks', 'capacityWaitingTasks', 'failedTasks', 'retryWaitingTasks'].every(key => Number.isSafeInteger(metrics[key]) && metrics[key] >= 0) || !Number.isFinite(metrics.oldestAgeSeconds) || metrics.oldestAgeSeconds < 0) throw new Error('MCP task queue metrics returned invalid values');
     return metrics;
   }
   return { queueMetrics };

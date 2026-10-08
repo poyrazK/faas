@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 import { createPostgresMcpTaskStore } from '../task-store.js';
-import { createMcpTaskRuntime } from '../tasks.js';
+import { createMcpTaskRuntime, RetryableMcpTaskError } from '../tasks.js';
 
 const databaseURL = process.env.MCP_TASKS_TEST_DATABASE_URL;
 const postgresOnly = { skip: databaseURL ? false : 'set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests' };
@@ -746,7 +746,7 @@ test('running limits are atomic across replicas and recover from completion and 
 test('owner saturation leaves capacity for other owners and cancellation releases it', postgresOnly, async t => {
   const { pool, namespace, ownerKey } = await harness(t);
   const store = createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs: 60_000, maxRunning: 3, maxRunningPerOwner: 1 });
-  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 0, oldestAgeSeconds: 0, runningTasks: 0, capacityWaitingTasks: 0 });
+  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 0, oldestAgeSeconds: 0, runningTasks: 0, capacityWaitingTasks: 0, failedTasks: 0, retryWaitingTasks: 0 });
   await create(store, 'alice');
   await create(store, 'alice');
   const alice = await store.claim(3, 60_000);
@@ -785,4 +785,65 @@ test('heartbeat renewal waits for the capacity lock and rechecks lease expiratio
     lock.release();
     await renewal;
   }
+});
+
+
+test('PostgreSQL persists retry delays, releases capacity and bounds retries by attempts and TTL', postgresOnly, async t => {
+  const { store, pool, namespace, ownerKey } = await harness(t);
+  const record = await create(store, 'alice');
+  const lease = await store.claim(3, 60_000);
+  assert.equal(await store.fail(lease.task_id, lease.lease_token, { message: 'sanitized' }, { retryable: true, maxAttempts: 2, retryDelayMs: 30_000 }), 'queued');
+  const restarted = createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs: 60_000 });
+  await restarted.initialize();
+  assert.equal(await restarted.claim(3, 60_000), null, 'persisted retry delay survives store initialization');
+  const metrics = await store.queueMetrics();
+  assert.equal(metrics.runningTasks, 0);
+  assert.equal(metrics.retryWaitingTasks, 1);
+  assert.equal(metrics.failedTasks, 0);
+  assert.equal(await store.fail(lease.task_id, lease.lease_token, {}, { retryable: true }), null, 'old lease cannot change retry state');
+  await pool.query("UPDATE gregale_mcp_tasks SET next_attempt_at = clock_timestamp() - interval '1 second' WHERE namespace = $1", [namespace]);
+  const retry = await store.claim(3, 60_000);
+  assert.equal(retry.task_id, record.task_id);
+  assert.equal(retry.attempt_count, 2);
+  assert.equal(await store.fail(retry.task_id, retry.lease_token, {}, { retryable: true, maxAttempts: 2 }), 'failed');
+  assert.equal((await store.queueMetrics()).failedTasks, 1);
+  await create(store, 'bob');
+  const short = await store.claim(3, 60_000);
+  await pool.query("UPDATE gregale_mcp_tasks SET expires_at = clock_timestamp() + interval '1 second' WHERE task_id = $1", [short.task_id]);
+  assert.equal(await store.fail(short.task_id, short.lease_token, {}, { retryable: true, retryDelayMs: 2000 }), 'failed', 'a retry cannot outlive TTL');
+  await create(store, 'charlie');
+  const cancelled = await store.claim(3, 60_000);
+  await store.requestCancel({ taskID: cancelled.task_id, authInfo: principal('charlie'), authMode: 'external-oauth' });
+  assert.equal(await store.fail(cancelled.task_id, cancelled.lease_token, {}, { retryable: true }), 'cancelled');
+  await create(store, 'expired-owner');
+  const expired = await store.claim(3, 60_000);
+  await pool.query("UPDATE gregale_mcp_tasks SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE task_id = $1", [expired.task_id]);
+  assert.equal(await store.fail(expired.task_id, expired.lease_token, {}, { retryable: true }), null, 'expired leases cannot schedule retries');
+});
+
+test('runtime retries only explicit transient errors with bounded jitter and sanitized errors', postgresOnly, async t => {
+  const { store, pool, namespace } = await harness(t);
+  let executions = 0;
+  let permanentExecutions = 0;
+  const runtime = createMcpTaskRuntime({ store, pollIntervalMs: 500, maxAttempts: 2, retryBaseDelayMs: 100, retryMaxDelayMs: 100, handlers: {
+    build_report: { version: '1', async execute(args) {
+      if (args.permanent) { permanentExecutions++; throw new Error('private permanent error'); }
+      if (++executions === 1) throw new RetryableMcpTaskError('private provider detail');
+      return { ok: true };
+    } },
+  } });
+  await runtime.start();
+  t.after(() => runtime.stop());
+  const record = await create(store, 'alice');
+  await eventually(async () => (await get(store, record.task_id, 'alice'))?.status === 'completed', 'retry did not complete');
+  assert.equal(executions, 2);
+  assert.equal((await get(store, record.task_id, 'alice')).attempt_count, 2);
+  const data = await pool.query('SELECT error_encrypted, next_attempt_at FROM gregale_mcp_tasks WHERE namespace = $1', [namespace]);
+  assert.equal(data.rows[0].error_encrypted, null);
+  assert.equal(data.rows[0].next_attempt_at, null);
+  const permanent = await create(store, 'bob', { permanent: true });
+  await eventually(async () => (await get(store, permanent.task_id, 'bob'))?.status === 'failed', 'permanent failure was not recorded');
+  await delay(600);
+  assert.equal(permanentExecutions, 1, 'ordinary errors are never retried');
+  assert.deepEqual((await get(store, permanent.task_id, 'bob')).error, { code: -32603, message: 'Task execution failed' });
 });

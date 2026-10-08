@@ -200,3 +200,18 @@ func TestTaskRunningLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestTaskRetryPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		attempts, base, maximum int
+		valid                   bool
+	}{
+		{0, 0, 0, true}, {1, 100, 100, true}, {10, 1000, 60000, true}, {-1, 0, 0, false}, {11, 0, 0, false}, {3, 99, 1000, false}, {3, 1000, 500, false}, {3, 100, 86400001, false},
+	} {
+		enabled := true
+		config := TasksConfig{Enabled: &enabled, DatabaseURLEnv: "DATABASE_URL", OwnerKeyEnv: "OWNER_KEY", NamespaceEnv: "NAMESPACE", MaxAttempts: tc.attempts, RetryBaseDelayMS: tc.base, RetryMaxDelayMS: tc.maximum}
+		if err := config.validate(); (err == nil) != tc.valid {
+			t.Errorf("retry policy %+v: %v", tc, err)
+		}
+	}
+}

@@ -1,11 +1,24 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { createHash } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 import * as z from 'zod/v4';
 
 export const MCP_TASKS_EXTENSION_ID = 'io.modelcontextprotocol/tasks';
 const LEASE_MS = 30_000;
 const HEARTBEAT_MS = 5_000;
-const MAX_ATTEMPTS = 3;
+// Only this explicit handler error opts into retries. Messages are never persisted.
+export class RetryableMcpTaskError extends Error {
+  constructor(message = 'Transient task failure', options) {
+    super(message, options);
+    this.name = 'RetryableMcpTaskError';
+  }
+}
+
+export function validateMcpTaskRetryPolicy({ maxAttempts = 3, retryBaseDelayMs = 1000, retryMaxDelayMs = 60_000 } = {}) {
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 10) throw new Error('MCP task max attempts must be between 1 and 10');
+  if (!Number.isSafeInteger(retryBaseDelayMs) || retryBaseDelayMs < 100 || retryBaseDelayMs > 86_400_000) throw new Error('MCP task retry base delay must be between 100 and 86400000 milliseconds');
+  if (!Number.isSafeInteger(retryMaxDelayMs) || retryMaxDelayMs < retryBaseDelayMs || retryMaxDelayMs > 86_400_000) throw new Error('MCP task retry maximum delay must be between the base delay and 86400000 milliseconds');
+  return { maxAttempts, retryBaseDelayMs, retryMaxDelayMs };
+}
 const MAX_TASK_SUBSCRIPTIONS = 64;
 const MAX_TASK_SUBSCRIPTION_IDS = 64;
 const MAX_WATCHED_TASKS = 512;
@@ -64,12 +77,14 @@ function inputMethodsFor(clientCapabilities) {
   return methods;
 }
 
-export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, workerConcurrency = 1, workerEnabled = true, keepAlive = false, onError = () => {} }) {
+export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, workerConcurrency = 1, maxAttempts = 3, retryBaseDelayMs = 1000, retryMaxDelayMs = 60_000, workerEnabled = true, keepAlive = false, onError = () => {} }) {
   if (!store || typeof store.initialize !== 'function' || typeof store.claim !== 'function') throw new Error('MCP Tasks require a durable task store');
   if (!handlers || typeof handlers !== 'object' || Array.isArray(handlers)) throw new Error('MCP Tasks require a handler registry');
   if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 500 || pollIntervalMs > 30_000) throw new Error('MCP task polling must be between 500 and 30000 milliseconds');
   if (!Number.isSafeInteger(workerConcurrency) || workerConcurrency < 1 || workerConcurrency > 16) throw new Error('MCP task worker concurrency must be between 1 and 16');
   if (typeof workerEnabled !== 'boolean' || typeof keepAlive !== 'boolean') throw new Error('MCP task worker options must be boolean');
+
+  validateMcpTaskRetryPolicy({ maxAttempts, retryBaseDelayMs, retryMaxDelayMs });
 
   const supportedHandlers = [];
   const executionHandlers = new Map();
@@ -280,7 +295,9 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
       if (error === TASK_INPUT_REQUIRED) return;
       if (abortReason === 'cancelled') await store.finishCancelled(task.task_id, task.lease_token);
       else if (abortReason !== 'lease_lost') {
-        await store.fail(task.task_id, task.lease_token, { code: -32603, message: 'Task execution failed' });
+        const ceiling = Math.min(retryMaxDelayMs, retryBaseDelayMs * 2 ** Math.max(0, task.attempt_count - 1));
+        const retryDelayMs = randomInt(Math.ceil(ceiling / 2), ceiling + 1);
+        await store.fail(task.task_id, task.lease_token, { code: -32603, message: 'Task execution failed' }, { retryable: error instanceof RetryableMcpTaskError, maxAttempts, retryDelayMs });
       }
     } finally {
       clearInterval(heartbeat);
@@ -297,7 +314,7 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
         await store.cleanupExpired();
       }
       while (!closed && active.size < workerConcurrency) {
-        const task = await store.claim(MAX_ATTEMPTS, LEASE_MS, supportedHandlers);
+        const task = await store.claim(maxAttempts, LEASE_MS, supportedHandlers);
         if (!task) break;
         let work;
         work = runTask(task).catch(reportError).finally(() => {

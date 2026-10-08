@@ -662,3 +662,42 @@ running Tasks blocked by namespace or owner capacity, regardless of handler
 availability or retry eligibility. A capacity limit can explain backlog even
 when more replicas would not help. Both gauges use the configured observer limits
 and contain no customer identifiers.
+
+
+### Task retry policy and failure metrics
+
+Handler errors remain terminal by default. Opt into retries only for failures
+that are safe to repeat:
+
+```js
+import { RetryableMcpTaskError } from './tasks.js';
+// Inside a Task handler, after classifying a transient provider failure:
+throw new RetryableMcpTaskError('Provider temporarily unavailable');
+```
+
+Configure `tasks.max_attempts` (default 3, range 1–10, including the initial
+execution), `tasks.retry_base_delay_ms` (default 1000), and
+`tasks.retry_max_delay_ms` (default 60000). Delay bounds must be integer
+milliseconds between 100 and 86400000, and the maximum must be at least the
+base. Each retry waits a random delay between half and all of
+`min(maximum, base * 2^(attempt - 1))`. PostgreSQL persists the due time; retries
+survive restarts, retain the same Task ID and encrypted arguments, and release
+running capacity during the wait. Delayed retries still count against outstanding
+admission limits. Cancellation wins over retry scheduling. Exhausted attempts or
+a delay that would reach the Task TTL produce a terminal failure. Retries never
+extend TTL. Input pauses do not consume another execution attempt.
+
+Keep retry settings consistent across every worker in a namespace. Upgrade all
+workers before enabling retryable handler errors, since older workers do not
+respect delayed retry scheduling. Handlers still need idempotent external side
+effects keyed by Task ID; retry classification does not provide exactly-once
+execution. Worker crashes continue to recover via lease expiration. Stored and
+client-visible execution errors use a generic message, without handler exception
+messages or provider details.
+
+`mcp_tasks_retry_waiting` counts queued Tasks whose persisted retry time is still
+in the future. `mcp_tasks_failed` counts terminal failed Tasks retained within
+TTL; it is a current gauge, not a cumulative failure counter or rate. Expired
+Tasks are excluded. Delayed retries are excluded from
+`mcp_tasks_capacity_waiting`, but remain in `mcp_tasks_outstanding`. Interpret
+these together when diagnosing backlog and autoscaling.

@@ -2,6 +2,8 @@ const DEFAULT_API_URL = 'https://api.gregale.dev';
 const METRIC_NAMES = Object.freeze({
   outstanding: 'mcp_tasks_outstanding',
   running: 'mcp_tasks_running',
+  failed: 'mcp_tasks_failed',
+  retryWaiting: 'mcp_tasks_retry_waiting',
   capacityWaiting: 'mcp_tasks_capacity_waiting',
   oldestAge: 'mcp_tasks_oldest_age_seconds',
 });
@@ -54,13 +56,15 @@ export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = D
     publishing = (async () => {
       const metrics = await store.queueMetrics();
       if (!metrics || !Number.isSafeInteger(metrics.outstandingTasks) || metrics.outstandingTasks < 0 ||
-          !['runningTasks', 'capacityWaitingTasks'].every(key => Number.isSafeInteger(metrics[key]) && metrics[key] >= 0) ||
+          !['runningTasks', 'capacityWaitingTasks', 'failedTasks', 'retryWaitingTasks'].every(key => Number.isSafeInteger(metrics[key]) && metrics[key] >= 0) ||
           !Number.isFinite(metrics.oldestAgeSeconds) || metrics.oldestAgeSeconds < 0) {
         throw new Error('MCP task queue metrics returned invalid values');
       }
       await Promise.all([
         push(METRIC_NAMES.outstanding, metrics.outstandingTasks),
         push(METRIC_NAMES.running, metrics.runningTasks),
+        push(METRIC_NAMES.failed, metrics.failedTasks),
+        push(METRIC_NAMES.retryWaiting, metrics.retryWaitingTasks),
         push(METRIC_NAMES.capacityWaiting, metrics.capacityWaitingTasks),
         push(METRIC_NAMES.oldestAge, Math.min(metrics.oldestAgeSeconds, 1_000_000_000_000)),
       ]);
