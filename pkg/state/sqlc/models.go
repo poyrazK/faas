@@ -2123,6 +2123,27 @@ type DevBridgeWebhookReplay struct {
 	CompletedAt    pgtype.Timestamptz
 }
 
+type DevSourceManifest struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	SourceRoot   string
+	Manifest     []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+type DevSourcePatch struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	BaseDeploymentID pgtype.UUID
+	Generation       int64
+	ImageDir         string
+	Archive          []byte
+	Deleted          []byte
+	Digest           string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+}
+
 type DeveloperSyncHistory struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID

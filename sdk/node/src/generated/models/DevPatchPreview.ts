@@ -10,7 +10,7 @@ export type DevPatchPreview = {
   /**
    * Why the sync could not use a live patch. Absent when eligible.
    */
-  reason?: 'not_railpack' | 'plan_unreadable' | 'no_source_layer' | 'build_command' | 'source_not_deployed' | 'no_live_build' | 'full_snapshot' | 'rebuild_input_changed' | 'unsupported_entry' | 'patch_too_large' | 'unsupported_source_map';
+  reason?: 'not_railpack' | 'plan_unreadable' | 'no_source_layer' | 'build_command' | 'source_not_deployed' | 'no_live_build' | 'no_base_manifest' | 'full_snapshot' | 'rebuild_input_changed' | 'unsupported_entry' | 'patch_too_large' | 'unsupported_source_map';
   /**
    * Files added
    */

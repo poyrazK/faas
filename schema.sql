@@ -15379,6 +15379,45 @@ CREATE TABLE public.dev_bridge_webhook_replays (
 
 
 --
+-- Name: dev_source_manifests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dev_source_manifests (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source_root text DEFAULT ''::text NOT NULL,
+    manifest jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT dev_source_manifests_manifest_check CHECK (((jsonb_typeof(manifest) = 'object'::text) AND (octet_length((manifest)::text) <= 4194304))),
+    CONSTRAINT dev_source_manifests_source_root_check CHECK ((octet_length(source_root) <= 512))
+);
+
+
+--
+-- Name: dev_source_patches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dev_source_patches (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    base_deployment_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    image_dir text NOT NULL,
+    archive bytea NOT NULL,
+    deleted jsonb DEFAULT '[]'::jsonb NOT NULL,
+    digest text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT dev_source_patches_archive_check CHECK ((octet_length(archive) <= 16777216)),
+    CONSTRAINT dev_source_patches_check CHECK ((expires_at > created_at)),
+    CONSTRAINT dev_source_patches_deleted_check CHECK ((jsonb_typeof(deleted) = 'array'::text)),
+    CONSTRAINT dev_source_patches_digest_check CHECK ((digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT dev_source_patches_generation_check CHECK ((generation > 0)),
+    CONSTRAINT dev_source_patches_image_dir_check CHECK ((image_dir = '/app'::text))
+);
+
+
+--
 -- Name: developer_sync_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -26754,6 +26793,30 @@ ALTER TABLE ONLY public.dev_bridge_webhook_replays
 
 
 --
+-- Name: dev_source_manifests dev_source_manifests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_manifests
+    ADD CONSTRAINT dev_source_manifests_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: dev_source_patches dev_source_patches_base_deployment_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_patches
+    ADD CONSTRAINT dev_source_patches_base_deployment_id_generation_key UNIQUE (base_deployment_id, generation);
+
+
+--
+-- Name: dev_source_patches dev_source_patches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_patches
+    ADD CONSTRAINT dev_source_patches_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: developer_sync_history developer_sync_history_app_id_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -32962,6 +33025,20 @@ CREATE INDEX deployments_snapshot_backoff_idx ON public.deployments USING btree 
 --
 
 CREATE INDEX dev_bridge_sessions_account_expiry ON public.dev_bridge_sessions USING btree (account_id, expires_at);
+
+
+--
+-- Name: dev_source_manifests_app_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX dev_source_manifests_app_created_idx ON public.dev_source_manifests USING btree (app_id, created_at DESC);
+
+
+--
+-- Name: dev_source_patches_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX dev_source_patches_app_idx ON public.dev_source_patches USING btree (app_id);
 
 
 --
@@ -42969,6 +43046,38 @@ ALTER TABLE ONLY public.dev_bridge_webhook_replays
 
 ALTER TABLE ONLY public.dev_bridge_webhook_replays
     ADD CONSTRAINT dev_bridge_webhook_replays_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.dev_bridge_sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_source_manifests dev_source_manifests_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_manifests
+    ADD CONSTRAINT dev_source_manifests_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_source_manifests dev_source_manifests_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_manifests
+    ADD CONSTRAINT dev_source_manifests_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_source_patches dev_source_patches_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_patches
+    ADD CONSTRAINT dev_source_patches_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_source_patches dev_source_patches_base_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_source_patches
+    ADD CONSTRAINT dev_source_patches_base_deployment_id_fkey FOREIGN KEY (base_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

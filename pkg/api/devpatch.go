@@ -21,6 +21,7 @@ const (
 	DevPatchReasonBuildCommand       = "build_command"
 	DevPatchReasonSourceNotDeployed  = "source_not_deployed"
 	DevPatchReasonNoLiveBuild        = "no_live_build"
+	DevPatchReasonNoBaseManifest     = "no_base_manifest"
 	DevPatchReasonFullSnapshot       = "full_snapshot"
 	DevPatchReasonRebuildInput       = "rebuild_input_changed"
 	DevPatchReasonUnsupportedEntry   = "unsupported_entry"

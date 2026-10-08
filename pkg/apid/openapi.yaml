@@ -46714,7 +46714,7 @@ components:
         eligible: { type: boolean }
         reason:
           type: string
-          enum: [not_railpack, plan_unreadable, no_source_layer, build_command, source_not_deployed, no_live_build, full_snapshot, rebuild_input_changed, unsupported_entry, patch_too_large, unsupported_source_map]
+          enum: [not_railpack, plan_unreadable, no_source_layer, build_command, source_not_deployed, no_live_build, no_base_manifest, full_snapshot, rebuild_input_changed, unsupported_entry, patch_too_large, unsupported_source_map]
           description: Why the sync could not use a live patch. Absent when eligible.
         changed_paths: { type: integer, minimum: 0, description: Files added, modified or deleted inside the build's source root. }
         patch_bytes: { type: integer, format: int64, minimum: 0, description: Total size of the added or modified files. }

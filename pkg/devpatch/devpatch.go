@@ -205,6 +205,45 @@ type Change struct {
 	Size    int64
 }
 
+// Entry is one source archive entry: its tar typeflag, mode, size, and the
+// content digest for regular files.
+type Entry struct {
+	Type   byte
+	Mode   int64
+	Size   int64
+	Digest string
+}
+
+// Diff lists what changed from base to current, sorted by path, so a patch is
+// always complete relative to the base build no matter how many syncs
+// happened in between.
+func Diff(base, current map[string]Entry) []Change {
+	changes := make([]Change, 0)
+	for name, entry := range current {
+		if previous, ok := base[name]; ok && previous == entry {
+			continue
+		}
+		changes = append(changes, Change{
+			Path:    name,
+			Regular: entry.Type == tarTypeReg,
+			Dir:     entry.Type == tarTypeDir,
+			Size:    entry.Size,
+		})
+	}
+	for name, entry := range base {
+		if _, ok := current[name]; !ok && entry.Type != tarTypeDir {
+			changes = append(changes, Change{Path: name, Deleted: true})
+		}
+	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].Path < changes[j].Path })
+	return changes
+}
+
+const (
+	tarTypeReg = '0'
+	tarTypeDir = '5'
+)
+
 // Evaluate reports whether changes could be applied as a live patch to a
 // deployment built with sourceMap. sourceRoot is the archive-relative
 // directory the build used ("" for the archive root); changes outside it do
@@ -222,7 +261,7 @@ func Evaluate(sourceMap *api.DevPatchSourceMap, sourceRoot string, changes []Cha
 	root := strings.Trim(path.Clean("/"+sourceRoot), "/")
 	var preview api.DevPatchPreview
 	for _, change := range changes {
-		rel, inside := relativeTo(root, change.Path)
+		rel, inside := Relative(root, change.Path)
 		if !inside {
 			continue
 		}
@@ -245,7 +284,9 @@ func Evaluate(sourceMap *api.DevPatchSourceMap, sourceRoot string, changes []Cha
 	return preview
 }
 
-func relativeTo(root, name string) (string, bool) {
+// Relative returns name relative to the archive-relative root directory and
+// whether it lies inside it ("" root means the whole archive).
+func Relative(root, name string) (string, bool) {
 	name = strings.Trim(path.Clean("/"+name), "/")
 	if root == "" {
 		return name, true

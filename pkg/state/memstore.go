@@ -365,8 +365,13 @@ type MemStore struct {
 	// ON CONFLICT (build_id) DO UPDATE so a redelivered build
 	// overwrites the same row instead of doubling.
 	buildProvenance map[string]BuildProvenance
-	domains         map[string]CustomDomain
-	defaultDomains  map[string]string
+	// ADR-740 developer live patches; allocated on first use.
+	devSourceManifests   map[string]DevSourceManifest
+	devSourceManifestSeq int64
+	devSourcePatches     []DevSourcePatch
+	devSourcePatchSeq    int64
+	domains              map[string]CustomDomain
+	defaultDomains       map[string]string
 	// customDomainTLSHosts mirrors custom_domain_tls_hosts (ADR-520),
 	// keyed by host. Lazily initialised by AdmitCustomDomainTLSHost.
 	customDomainTLSHosts map[string]customDomainTLSHost

@@ -3,6 +3,7 @@ from typing import Literal
 DevPatchPreviewReason = Literal[
     "build_command",
     "full_snapshot",
+    "no_base_manifest",
     "no_live_build",
     "no_source_layer",
     "not_railpack",
@@ -17,6 +18,7 @@ DevPatchPreviewReason = Literal[
 DEV_PATCH_PREVIEW_REASON_VALUES: set[DevPatchPreviewReason] = {
     "build_command",
     "full_snapshot",
+    "no_base_manifest",
     "no_live_build",
     "no_source_layer",
     "not_railpack",
