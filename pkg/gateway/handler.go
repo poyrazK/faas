@@ -6034,17 +6034,15 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	// Issue #561 / ADR-091 PR 5 — kind=jwt + kind=ip gates run
-	// AFTER rewrite/headers (so a rewritten path is the one being
-	// auth'd / IP-filtered) and BEFORE require_authn / public_auth
-	// (so a JWT-failed or IP-denied request never reaches the
-	// per-deployment auth chain — saves the bearer lookup on
-	// already-rejected traffic). Each helper writes the deny
-	// response + audit + metric on its own; caller MUST `return`.
-	if h.applyEdgeRuleJWT(w, r, app) {
-		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
-		return
-	}
+	// Issue #561 / ADR-091 PR 5 — the network-level gates (ingress
+	// allowlist, internal_only, kind=ip, kind=geo) run first, then kind=jwt,
+	// all AFTER rewrite/headers (so a rewritten path is the one being
+	// filtered / auth'd) and BEFORE require_authn / public_auth. ADR-091 D4
+	// makes kind=ip the cheap deny before auth: a request from a denied
+	// address or country must not cost a token parse, a JWKS fetch, or a
+	// JWT audit row first. Each helper writes the deny response + audit +
+	// metric on its own; caller MUST `return`.
+	//
 	// ADR-118: per-app ingress IP allowlist runs BEFORE applyEdgeRuleIP
 	// (kind=ip) so an IP-blocked request short-circuits all edge-rule
 	// work and never wakes a Firecracker microVM — same invariant as
@@ -6088,6 +6086,10 @@ haveApp:
 	// fail-open on lookup failure (see applyEdgeRuleGeo for the
 	// metric + audit + slog path).
 	if h.applyEdgeRuleGeo(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	if h.applyEdgeRuleJWT(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}

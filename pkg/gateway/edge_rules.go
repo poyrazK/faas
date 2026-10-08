@@ -1549,7 +1549,7 @@ func PickFirstValidateMatch(rules []EdgeRuleValidateResolved, path, method strin
 			continue
 		}
 		if r.PathGlob != "" {
-			ok, _ := pathGlobMatch(r.PathGlob, path)
+			ok, _ := protectivePathMatch(r.PathGlob, path)
 			if !ok {
 				continue
 			}
@@ -1615,22 +1615,32 @@ func pickFirstMatch(rules []EdgeRuleResolved, path, method string, requestHeader
 	return nil
 }
 
-// protectivePathMatch is pathGlobMatch for gates that deny (kind=jwt, ip,
-// geo): the rule applies when the raw path OR its dot-segment/duplicate-
-// slash normalized form matches. Frameworks that normalize before routing
-// would otherwise serve /public/../admin/x or //admin/x as /admin/x while
-// the gate compared the raw string and let it through unchecked. Matching
-// both forms only ever adds protection.
+// protectivePathMatch is pathGlobMatch for gates that deny or constrain
+// (kind=jwt, ip, geo, limit, throttle, validate, maintenance): the rule
+// applies when the raw path, its dot-segment/duplicate-slash normalized
+// form, or either compared case-insensitively matches. Frameworks that
+// normalize before routing would otherwise serve /public/../admin/x or
+// //admin/x as /admin/x, and case-insensitive routers (Express, ASP.NET,
+// many Windows-hosted stacks) serve /ADMIN/x as /admin/x, while the gate
+// compared the raw string and let the request through unchecked. Every
+// extra form only ever adds protection; non-protective kinds (headers,
+// cors, cache, redirect, ...) keep exact matching so they never widen.
 func protectivePathMatch(glob, p string) (bool, error) {
 	ok, err := pathGlobMatch(glob, p)
 	if ok || err != nil {
 		return ok, err
 	}
 	cleaned := path.Clean("/" + strings.ReplaceAll(p, "\\", "/"))
-	if cleaned == p {
-		return false, nil
+	if cleaned != p {
+		if ok, _ := pathGlobMatch(glob, cleaned); ok {
+			return true, nil
+		}
 	}
-	return pathGlobMatch(glob, cleaned)
+	foldedGlob := strings.ToLower(glob)
+	if folded := strings.ToLower(cleaned); folded != cleaned || foldedGlob != glob {
+		return pathGlobMatch(foldedGlob, folded)
+	}
+	return false, nil
 }
 
 // pathGlobMatch is a tiny adapter over stdlib path.Match that

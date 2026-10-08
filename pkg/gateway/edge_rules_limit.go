@@ -82,7 +82,7 @@ func PickFirstLimitMatch(rules []EdgeRuleLimitResolved, requestPath, method stri
 			continue
 		}
 		if r.PathGlob != "" {
-			ok, _ := pathGlobMatch(r.PathGlob, requestPath)
+			ok, _ := protectivePathMatch(r.PathGlob, requestPath)
 			if !ok {
 				continue
 			}
