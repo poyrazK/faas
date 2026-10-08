@@ -20,10 +20,10 @@
 //     deployment IDs —
 //     equivalent to an
 //     unauthenticated `ls` against the API. The cache MUST NOT expose secrets; it
-//     only stores slugs, IDs, and names. Cache filenames use a SHA-256
-//     fingerprint of the API base and bearer credential so separate account
-//     contexts cannot read each other's suggestions; the credential is not
-//     stored in the filename or cache contents.
+//     only stores slugs, IDs, and names. Cache filenames use an HMAC-SHA-256
+//     fingerprint keyed by the bearer credential and scoped to the API base,
+//     so separate account contexts cannot read each other's suggestions; the
+//     credential is not stored in the filename or cache contents.
 //   - Atomic writes: tmp file in the same directory, then os.Rename.
 //     Mirrors LocalStorageBackend.Put (storage-tmp-sibling-of-final,
 //     cmd/e2e log). A crash mid-write leaves either the previous
@@ -57,6 +57,7 @@
 package api
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -147,12 +148,13 @@ func NewCompletionCache() *CompletionCache {
 }
 
 // NewCompletionCacheForCredential returns a cache isolated to one API base
-// and bearer credential. Only a SHA-256 fingerprint is used in the filename;
-// the credential itself is never written to the cache or its path.
+// and bearer credential. Only an HMAC-SHA-256 fingerprint is used in the
+// filename; the credential itself is never written to the cache or its path.
 func NewCompletionCacheForCredential(baseURL, token string) *CompletionCache {
-	identity := sha256.Sum256([]byte(baseURL + "\x00" + token))
+	identity := hmac.New(sha256.New, []byte(token))
+	_, _ = identity.Write([]byte("gregale-completion-cache-v1\x00" + baseURL))
 	return &CompletionCache{
-		namespace: hex.EncodeToString(identity[:]),
+		namespace: hex.EncodeToString(identity.Sum(nil)),
 		now:       time.Now,
 		ttl:       completionCacheTTL,
 	}
