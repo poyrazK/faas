@@ -1,4 +1,4 @@
-# ADR-717: Event ordering backlog diagnostics
+# ADR-796: Event ordering backlog diagnostics
 
 - **Status:** accepted
 - **Date:** 2026-10-08

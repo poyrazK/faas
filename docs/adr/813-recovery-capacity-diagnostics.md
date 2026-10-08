@@ -1,4 +1,4 @@
-# ADR-734: Recovery capacity diagnostics
+# ADR-813: Recovery capacity diagnostics
 
 Date: 2026-10-08
 Status: Accepted

@@ -1,4 +1,4 @@
-# ADR-721: Consumer routing retry policies
+# ADR-800: Consumer routing retry policies
 
 - **Status:** accepted
 - **Date:** 2026-10-08

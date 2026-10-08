@@ -1,4 +1,4 @@
-# ADR-713: Workflow and backfill event backlog discovery
+# ADR-792: Workflow and backfill event backlog discovery
 
 - **Status:** accepted
 - **Date:** 2026-10-08

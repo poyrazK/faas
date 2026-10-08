@@ -1,4 +1,4 @@
-# ADR-727: Paced event execution recovery
+# ADR-806: Paced event execution recovery
 
 - **Status:** accepted
 - **Date:** 2026-10-08

@@ -1,4 +1,4 @@
-# ADR-732: Recovery health and alerts
+# ADR-811: Recovery health and alerts
 
 Date: 2026-10-08
 Status: Accepted

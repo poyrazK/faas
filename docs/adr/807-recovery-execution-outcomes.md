@@ -1,4 +1,4 @@
-# ADR-728: Recovery execution outcomes
+# ADR-807: Recovery execution outcomes
 
 - **Status:** accepted
 - **Date:** 2026-10-08

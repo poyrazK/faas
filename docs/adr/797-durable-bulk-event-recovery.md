@@ -1,4 +1,4 @@
-# ADR-718: Durable bulk event recovery
+# ADR-797: Durable bulk event recovery
 
 - **Status:** accepted
 - **Date:** 2026-10-08

@@ -1,4 +1,4 @@
-# ADR-720: Consumer routing health and alerts
+# ADR-799: Consumer routing health and alerts
 
 - **Status:** accepted
 - **Date:** 2026-10-08

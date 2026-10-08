@@ -1,4 +1,4 @@
-# ADR-735: Read-only recovery preflight
+# ADR-814: Read-only recovery preflight
 
 Date: 2026-10-08
 Status: Accepted

@@ -1,4 +1,4 @@
-# ADR-726: Consumer execution health and alerts
+# ADR-805: Consumer execution health and alerts
 
 - **Status:** accepted
 - **Date:** 2026-10-08

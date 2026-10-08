@@ -1,4 +1,4 @@
-# ADR-723: Consumer delivery age limits
+# ADR-802: Consumer delivery age limits
 
 - **Status:** accepted
 - **Date:** 2026-10-08

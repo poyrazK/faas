@@ -1,4 +1,4 @@
-# ADR-715 · Durable workflow event backfill
+# ADR-794 · Durable workflow event backfill
 
 - **Status:** accepted
 - **Date:** 2026-10-08

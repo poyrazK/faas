@@ -1,4 +1,4 @@
-# ADR-714 · Workflow event replay preview
+# ADR-793 · Workflow event replay preview
 
 - **Status:** accepted
 - **Date:** 2026-10-08

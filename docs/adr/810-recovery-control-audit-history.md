@@ -1,4 +1,4 @@
-# ADR-731: Recovery control audit history
+# ADR-810: Recovery control audit history
 
 Date: 2026-10-08
 Status: Accepted

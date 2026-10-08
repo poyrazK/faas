@@ -1,4 +1,4 @@
-# ADR-724: Application subscription schema version selection
+# ADR-803: Application subscription schema version selection
 
 - **Status:** accepted
 - **Date:** 2026-10-08

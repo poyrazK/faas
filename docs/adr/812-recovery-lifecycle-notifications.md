@@ -1,4 +1,4 @@
-# ADR-733: Durable recovery lifecycle notifications
+# ADR-812: Durable recovery lifecycle notifications
 
 Date: 2026-10-08
 Status: Accepted

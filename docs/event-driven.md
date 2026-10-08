@@ -1084,7 +1084,7 @@ current workflow definition for events where the workflow was not captured;
 those are reported as `not_captured`, while legacy envelopes without recipient
 snapshots are `unknown`. Counts are page-local, `history_complete` remains
 false, and continuation is not a frozen export. See
-[ADR-714](adr/714-workflow-event-replay-preview.md) for the contract.
+[ADR-793](adr/793-workflow-event-replay-preview.md) for the contract.
 
 To start a currently eligible app workflow for retained events whose immutable
 recipient snapshot excluded it, create a durable workflow backfill:
@@ -1106,7 +1106,7 @@ deduplicates future jobs even after run retention removes the linked run.
 completion. Retryable quota and temporary target failures can be retried with
 `gregale events backfill-retry JOB_UUID --yes`. The 30-day range, active-job
 quotas, retained-history coverage and pruning protection follow subscription
-backfills. See [ADR-715](adr/715-durable-workflow-event-backfill.md).
+backfills. See [ADR-794](adr/794-durable-workflow-event-backfill.md).
 
 To create actual independent deliveries for eligible historical events, start
 a durable backfill for the same ordinary subscription:
@@ -2008,7 +2008,7 @@ identity, capacity admission, and successful sibling outcomes are preserved.
 A routing pause does not block this explicit execution recovery. Cancelling a
 job stops remaining admissions; already queued handlers continue. `queued` and
 job `completed` do not imply handler success. Consumers still need idempotent
-business effects. See [ADR-727](adr/727-paced-event-execution-recovery.md).
+business effects. See [ADR-806](adr/806-paced-event-execution-recovery.md).
 
 
 ### Inspecting handler results after recovery
@@ -2047,7 +2047,7 @@ running handlers, or eight successes and two dead letters. Cancelling a job
 stops remaining admissions while already admitted handlers continue and remain
 observable. Handler success does not guarantee exactly-once business effects.
 The API and Go/Node/Python SDKs return these fields through the existing job and
-item endpoints. See [ADR-728](adr/728-recovery-execution-outcomes.md).
+item endpoints. See [ADR-807](adr/807-recovery-execution-outcomes.md).
 
 
 ### Pause, resume, or slow a recovery job
@@ -2085,7 +2085,7 @@ control state on an active job is safe. To abandon a paused job, use
 API and SDK clients use `POST /v1/event-recoveries/{jobID}/pause`, `POST
 /v1/event-recoveries/{jobID}/resume`, and `PUT
 /v1/event-recoveries/{jobID}/rate` with `{ "rate_per_second": 2 }`. Writes require
-deploy-write/admin scope and MFA. See [ADR-729](adr/729-recovery-job-controls.md).
+deploy-write/admin scope and MFA. See [ADR-808](adr/808-recovery-job-controls.md).
 
 Discover paused jobs and recent recovery runs without retaining their IDs:
 
@@ -2108,7 +2108,7 @@ and MFA. SDK clients provide Go `ListEventRecoveries`, Node
 `faas_sdk.api.events.list_event_recoveries`. Pages include `jobs` and, when more jobs exist,
 `next_cursor`. State changes and retention remain live between pages; stored
 active states can remain visible until the worker processes expiry. See
-[ADR-730](adr/730-recovery-job-discovery.md).
+[ADR-809](adr/809-recovery-job-discovery.md).
 
 Recovery control history identifies the authenticated account or API key that
 created or changed a job. Add an optional reason to write controls:
@@ -2144,7 +2144,7 @@ Reasons must be valid UTF-8, at most 512 bytes and contain no control characters
 They are stored in history, not the frozen recovery selection. Go retains the
 existing body-free control methods and adds `PauseEventRecoveryWithReason`,
 `ResumeEventRecoveryWithReason`, and `CancelEventRecoveryWithReason`.
-See [ADR-731](adr/731-recovery-control-audit-history.md).
+See [ADR-810](adr/810-recovery-control-audit-history.md).
 
 Inspect active recovery progress and expiry risk:
 
@@ -2185,7 +2185,7 @@ does not aggregate history. Rules use supported 5m/15m/1h/6h/24h windows, omit
 `event_subscription_id`, and permit webhook notifications only. Existing cooldown
 and recovery notifications apply. Read failures produce a degraded observation,
 not a healthy zero. No rules or notifications are created automatically.
-See [ADR-732](adr/732-recovery-health-and-alerts.md).
+See [ADR-811](adr/811-recovery-health-and-alerts.md).
 
 Receive terminal recovery notifications through app webhooks:
 
@@ -2228,7 +2228,7 @@ another receiver's notification delivery.
 Go exposes `EventRecoveryFinishedWebhookPayload`; Node and Python SDKs generate
 the corresponding payload model and updated webhook filter enums. No new
 recovery-specific subscription commands are needed. See
-[ADR-733](adr/733-recovery-lifecycle-notifications.md) and
+[ADR-812](adr/812-recovery-lifecycle-notifications.md) and
 [receiver verification](webhook-receiver-verification.md).
 
 Recovery health now includes capacity diagnostics for execution recovery:
@@ -2263,7 +2263,7 @@ the prolonged count. Use an app-scoped webhook rule with `gt` zero, no subscript
 selector, and a supported 5m/15m/1h/6h/24h window. Existing cooldown and recovery
 behavior apply; read failures degrade the observation rather than produce a
 healthy zero. Scheduler stalls and expiry risks remain separate metrics. See
-[ADR-734](adr/734-recovery-capacity-diagnostics.md).
+[ADR-813](adr/813-recovery-capacity-diagnostics.md).
 
 Assess a frozen recovery job before resuming it:
 
@@ -2298,4 +2298,4 @@ scope and MFA. SDK clients expose Go `GetEventRecoveryPreflight`, Node
 `EventsService.getEventRecoveryPreflight`, and Python
 `faas_sdk.api.events.get_event_recovery_preflight`. No progress, pacing, audit,
 expiry or notification state changes during the read. See
-[ADR-735](adr/735-recovery-preflight.md).
+[ADR-814](adr/814-recovery-preflight.md).

@@ -1,4 +1,4 @@
-# ADR-729: Recovery job pause, resume, and rate controls
+# ADR-808: Recovery job pause, resume, and rate controls
 
 - **Status:** accepted
 - **Date:** 2026-10-08

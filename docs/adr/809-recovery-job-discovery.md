@@ -1,4 +1,4 @@
-# ADR-730: Recovery job discovery
+# ADR-809: Recovery job discovery
 
 Date: 2026-10-08
 Status: Accepted

@@ -1,4 +1,4 @@
-# ADR-725: Read-only event schema rollout preview
+# ADR-804: Read-only event schema rollout preview
 
 - **Status:** accepted
 - **Date:** 2026-10-08

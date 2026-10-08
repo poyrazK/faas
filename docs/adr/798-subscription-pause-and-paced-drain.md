@@ -1,4 +1,4 @@
-# ADR-719: Subscription pause and paced drain
+# ADR-798: Subscription pause and paced drain
 
 - **Status:** accepted
 - **Date:** 2026-10-08

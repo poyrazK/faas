@@ -1,4 +1,4 @@
-# ADR-722: Consumer routing circuit breakers
+# ADR-801: Consumer routing circuit breakers
 
 - **Status:** accepted
 - **Date:** 2026-10-08

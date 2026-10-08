@@ -1,4 +1,4 @@
-# ADR-716: Opt-in keyed event delivery ordering
+# ADR-795: Opt-in keyed event delivery ordering
 
 - **Status:** accepted
 - **Date:** 2026-10-08

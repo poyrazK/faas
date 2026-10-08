@@ -8972,7 +8972,7 @@ const (
 	DataAPIMaxTypes           = 20000
 )
 
-// Bulk recovery bounds failed routing selection and durable job work (ADR-718).
+// Bulk recovery bounds failed routing selection and durable job work (ADR-797).
 const (
 	EventRecoveryRecipientsMax       = 10000
 	EventRecoveryPreviewLimit        = 100
@@ -8992,7 +8992,7 @@ const (
 	EventRecoveryRequestTimeout      = 5 * time.Second
 )
 
-// Subscription delivery controls pace routing admission (ADR-719).
+// Subscription delivery controls pace routing admission (ADR-798).
 const (
 	EventSubscriptionDrainRateDefault  = 10
 	EventSubscriptionDrainRateMax      = 100
