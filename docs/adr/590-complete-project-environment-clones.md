@@ -8551,3 +8551,35 @@ a qualified native driver, not provider qualification: no built-in R2/OVH driver
 or public worker wiring is enabled. Credential/binding publication, retirement
 and complete stage publication remain outstanding. Live provider tests remain
 deferred at the user's request.
+
+### Verified object credential issuance inputs
+
+Private object credential planning now reads the complete original binding
+catalogue under the capturing worker lease, original release/retention proofs,
+and locked copy, verification and target journals. Every frozen object bucket
+must have a completed authenticated copy and verified comparison. The projection
+binds each original app, source scope and binding-definition digest to its
+original bucket definition, private target identity, copy receipt and verification
+plan/receipt digests. It does not reread current source credentials or decrypt
+source secrets, and any failed authentication returns an empty result.
+
+The canonical input roster preserves standalone credentials, labels, permissions,
+managed app ownership/prefixes and platform API-key access grants. Managed slots
+retain all six original secret key names in the target stage scope; standalone
+credentials acquire no app secret slots. Missing, extra or duplicate buckets,
+reused target ownership, source/target identity reuse, cross-app credential
+ownership, duplicate credential IDs and colliding managed key slots fail closed.
+Physical ownership is scoped by backend and placement fingerprint. Sorting app
+and bucket edges makes input digests stable across worker handoff without
+mutating the frozen catalogue. The existing 16 MiB checkpoint metadata bound also
+limits this projection.
+
+Unit tests cover complete managed/standalone/grant rosters, stable ordering and
+copy isolation, incomplete proof matrices, source hash/scope/ownership changes,
+physical aliases and backend namespaces. Database tests cover verification
+prerequisites, exact frozen definitions, unchanged inputs across handoff, stale
+workers, expired retention and changed target privacy. These inputs grant no
+native issuance or publication authority. Durable fresh credential reservation,
+qualified issuance/revocation, sealed target values, atomic binding publication,
+retirement and final stage publication remain outstanding. Provider qualification
+and live R2/OVH tests remain deferred; public full-stage cloning stays gated.
