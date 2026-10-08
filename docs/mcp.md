@@ -782,3 +782,37 @@ a snapshot and cannot prevent another already-running process with an obsolete
 configuration from writing afterward; all participating processes must follow
 the rollout order. This feature does not re-encrypt historical payloads or rotate
 the ownership secret. Observers remain read-only and require no encryption secrets.
+
+### Hosting readiness gate
+
+The protocol doctor remains available as `gregale mcp doctor --url <endpoint>`.
+For durable Task hosting, run:
+
+```sh
+gregale --json mcp doctor --hosting --app <worker-app> --preflight-path <generated-starter>
+```
+
+The hosting doctor uses server-reported metric freshness, verifies the scaling
+policy and requires an observer heartbeat for scale-to-zero. Missing or stale
+signals are `unknown`, and unknown or failed checks return exit code 1. Capacity
+waiting, retry delays and retained failures are operational diagnostics rather
+than automatic deployment failures.
+
+`--preflight-path` executes `node task-doctor.js` in the specified starter with
+the current environment. Install the starter dependencies first and provide its
+actual deployment bindings, including `MCP_TASK_NAMESPACE`. The standalone
+`npm run doctor:tasks` prints a JSON report and returns the same exit-code
+convention. It checks an already initialized database without creating schema,
+claiming Tasks, or exposing payloads or secrets. Initialize the schema through
+normal runtime startup before running this gate. It verifies runtime DML and
+sequence privileges, not privileges to perform future schema migrations.
+
+Without local preflight, database/key readiness stays unknown and the command
+fails the gate. The CLI cannot confirm that local bindings match the remote
+app: supply the deployment environment for the selected worker. Run preflight
+on every writer during rotation; one successful process cannot prove that
+other replicas use the same keys or have stopped writing with retired keys.
+Handler coverage describes currently eligible queued work, not every future
+handler invocation. Zero live workers leaves compatibility unknown, including
+an intentionally idle scale-to-zero deployment. A recent observer heartbeat
+is evidence of a successful publication, not a guarantee of future uptime.

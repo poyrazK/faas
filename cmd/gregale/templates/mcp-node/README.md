@@ -435,3 +435,14 @@ a snapshot and cannot prevent another already-running process with an obsolete
 configuration from writing afterward; all participating processes must follow
 the rollout order. This feature does not re-encrypt historical payloads or rotate
 the ownership secret. Observers remain read-only and require no encryption secrets.
+
+### Read-only Task preflight
+
+After initializing the Task runtime, run `npm run doctor:tasks` with the worker's
+bindings and `MCP_TASK_NAMESPACE`. The JSON report checks schema, runtime DML
+permissions, retained encryption keys, live workers and eligible handler coverage.
+Exit code 1 means failed or unknown readiness. No schema changes or Task claims
+are made. Detailed database errors, keys and payloads are omitted. Repeat on every
+writer during key rotation; this report cannot establish fleet-wide consistency.
+For remote metrics and scale-to-zero checks, use `gregale mcp doctor --hosting
+--app <worker-app> --preflight-path <this-directory>` with the same environment.

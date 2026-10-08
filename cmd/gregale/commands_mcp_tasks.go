@@ -192,13 +192,21 @@ type mcpTasksStatusResult struct {
 }
 
 func cmdMCPTasksStatus(args []string) int {
+	return cmdMCPTasksReport(args, false)
+}
+
+func cmdMCPTasksReport(args []string, doctor bool) int {
 	fs := newFlagSet("mcp-tasks-status", flag.ContinueOnError)
+	preflightPath := fs.String("preflight-path", "", "generated starter directory whose Task doctor runs with local deployment bindings (hosting doctor only)")
 	appFlag := fs.String("app", "", "worker app slug (defaults to the linked project app)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
 		return printErr("Invalid MCP task status flags", errors.New("unexpected positional arguments"))
+	}
+	if !doctor && *preflightPath != "" {
+		return printErr("Invalid flags", errors.New("--preflight-path requires mcp doctor --hosting"))
 	}
 	slug, err := resolveAppFlagOrContext(*appFlag)
 	if err != nil {
@@ -263,6 +271,9 @@ func cmdMCPTasksStatus(args []string) int {
 		}
 	}
 	result.diagnose()
+	if doctor {
+		return printMCPHostingDoctor(result, *preflightPath)
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
 	}

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": { "node": ">=22" },
-  "scripts": { "start": "node server.js", "start:tasks-worker": "node tasks-worker.js", "start:tasks-observer": "node tasks-observer.js", "test": "node --test test/*.test.js", "test:postgres": "node --test test/tasks.postgres.test.js" },
+  "scripts": { "start": "node server.js", "start:tasks-worker": "node tasks-worker.js", "start:tasks-observer": "node tasks-observer.js", "test": "node --test test/*.test.js", "doctor:tasks": "node task-doctor.js", "test:postgres": "node --test test/tasks.postgres.test.js" },
   "dependencies": {
     "@modelcontextprotocol/express": "2.0.2",
     "@modelcontextprotocol/node": "2.1.1",

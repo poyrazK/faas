@@ -45,7 +45,16 @@ func cmdMCP(args []string) int {
 		return cmdMCPResourceWatch(args[1:])
 	case "complete":
 		return cmdMCPComplete(args[1:])
-	case "doctor", "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-cancel", "config":
+	case "doctor":
+		for i, arg := range args[1:] {
+			if arg == "--hosting" {
+				flags := append([]string{}, args[1:i+1]...)
+				flags = append(flags, args[i+2:]...)
+				return cmdMCPTasksReport(flags, true)
+			}
+		}
+		return cmdMCPRemote("doctor", args[1:])
+	case "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-cancel", "config":
 		return cmdMCPRemote(args[0], args[1:])
 	default:
 		return printErr("Unknown MCP command", fmt.Errorf("%q", args[0]))
