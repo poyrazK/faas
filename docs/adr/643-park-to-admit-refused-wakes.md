@@ -69,3 +69,19 @@
     ordering.
   - Production: repeat the 15-app burst after rollout. The `wake_pressure`
     counter rises and refused wakes fall.
+
+## Amendment — zero-traffic siblings (2026-10-08, hunt #6, H5-59)
+
+An admission refused at the app's own concurrency cap (any trigger) may park
+one idle instance of the same app whose live deployment receives 0% weighted
+traffic, then retries once. A rollout moves the previous deployment of a
+traffic split to 0%, but its warm instance kept a slot until its idle timeout
+(600 s on Scale). On production-us that instance and the serving one filled
+`max_concurrency` plus the ADR-199 rollout grant, every smoke wake of the new
+candidate was refused with 429, and the deploy failed as "verification
+unavailable". The requested deployment, deployments with traffic, deployments
+with their own floor, non-live deployments (rollout candidates), non-normal
+modes, and instances younger than `MinInstanceAge` or active within
+`PressureParkIdle` are never taken. Parking snapshots the instance, so an
+exact revision or preview request still restores it. The counter is
+`schedd_eviction_fired_total{reason="zero_traffic"}`.

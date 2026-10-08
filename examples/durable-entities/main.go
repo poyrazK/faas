@@ -1,5 +1,4 @@
-// A trusted development harness for ADR-712. Customer handlers will execute
-// inside Gregale workloads when runtime integration is implemented.
+// A trusted operator harness for ADR-712, separate from the guest counter app.
 package main
 
 import (
@@ -18,7 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
-	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/durableentity/providerconfig"
 )
 
 func main() {
@@ -43,12 +42,13 @@ func run(ctx context.Context, output io.Writer, args []string, getenv func(strin
 	cleanup := flags.Bool("cleanup", false, "collect one bounded page of unused objects; no counter transition")
 	cursor := flags.String("cleanup-cursor", "", "opaque cursor from the previous cleanup page")
 	inventory := flags.Bool("inventory", false, "measure one bounded page of committed and current-key storage; rerun until complete")
+	alarmStatus := flags.Bool("alarm-status", false, "inspect this entity's alarm retry reservations and exhaustion; no counter transition")
 	storageLimit := flags.String("set-storage-limit", "", "operator-only committed byte cap; 0 explicitly removes the cap")
 	delta := flags.Int64("delta", 1, "counter increment")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	mode, limit, err := harnessMode(*requestID, *cleanup, *inventory, *storageLimit, *cursor, flags.Args())
+	mode, limit, err := harnessMode(*requestID, *cleanup, *inventory, *alarmStatus, *storageLimit, *cursor, flags.Args())
 	if err != nil {
 		return err
 	}
@@ -62,7 +62,15 @@ func run(ctx context.Context, output io.Writer, args []string, getenv func(strin
 	if err != nil {
 		return err
 	}
-	claim, err := engine.Acquire(ctx, durableentity.ID{AccountID: *account, AppID: *app, EnvironmentID: *environment, TenantID: *tenant, Namespace: *namespace, Key: *entity}, uuid.NewString())
+	id := durableentity.ID{AccountID: *account, AppID: *app, EnvironmentID: *environment, TenantID: *tenant, Namespace: *namespace, Key: *entity}
+	if mode == "alarm-status" {
+		status, err := engine.InspectAlarm(ctx, id)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(status)
+	}
+	claim, err := engine.Acquire(ctx, id, uuid.NewString())
 	if err != nil {
 		return err
 	}
@@ -103,18 +111,18 @@ func run(ctx context.Context, output io.Writer, args []string, getenv func(strin
 	return releaseErr
 }
 
-func harnessMode(requestID string, cleanup, inventory bool, rawLimit, cursor string, args []string) (string, int64, error) {
+func harnessMode(requestID string, cleanup, inventory, alarmStatus bool, rawLimit, cursor string, args []string) (string, int64, error) {
 	mode, selected := "", 0
 	for _, candidate := range []struct {
 		name string
 		on   bool
-	}{{"invoke", requestID != ""}, {"cleanup", cleanup}, {"inventory", inventory}, {"limit", rawLimit != ""}} {
+	}{{"invoke", requestID != ""}, {"cleanup", cleanup}, {"inventory", inventory}, {"alarm-status", alarmStatus}, {"limit", rawLimit != ""}} {
 		if candidate.on {
 			mode, selected = candidate.name, selected+1
 		}
 	}
 	if len(args) != 0 || selected != 1 || cursor != "" && !cleanup {
-		return "", 0, errors.New("select one of -request, -cleanup, -inventory or -set-storage-limit; cursors require -cleanup")
+		return "", 0, errors.New("select one of -request, -cleanup, -inventory, -alarm-status or -set-storage-limit; cursors require -cleanup")
 	}
 	if mode != "limit" {
 		return mode, 0, nil
@@ -133,19 +141,11 @@ func releaseEntity(ctx context.Context, engine *durableentity.Manager, claim dur
 }
 
 func configuredStore(getenv func(string) string) (*durableentity.ProviderStore, error) {
-	bucket, endpoint, region := getenv("GREGALE_ENTITY_BUCKET"), getenv("GREGALE_ENTITY_ENDPOINT"), getenv("GREGALE_ENTITY_REGION")
-	if bucket == "" || endpoint == "" || region == "" {
-		return nil, errors.New("set GREGALE_ENTITY_BUCKET, GREGALE_ENTITY_ENDPOINT and GREGALE_ENTITY_REGION for a private test bucket")
-	}
-	provider, err := objectstorage.NewS3(objectstorage.BackendConfig{Endpoint: endpoint, S3Region: region, PathStyle: true, AccessKeyEnv: "AWS_ACCESS_KEY_ID", SecretKeyEnv: "AWS_SECRET_ACCESS_KEY", SessionTokenEnv: "AWS_SESSION_TOKEN"}, getenv)
+	selection, err := providerconfig.Open(getenv)
 	if err != nil {
 		return nil, err
 	}
-	conditional, ok := provider.(objectstorage.ConditionalStateProvider)
-	if !ok {
-		return nil, durableentity.ErrUnsupported
-	}
-	return durableentity.NewProviderStore(conditional, bucket)
+	return durableentity.NewProviderStore(selection.Provider, selection.Bucket)
 }
 
 func counter(delta int64) func(context.Context, durableentity.View) (durableentity.Transition, error) {

@@ -23,6 +23,17 @@ func TestProductionRouteMonitorAPIConfigurationScopeAndWorker(t *testing.T) {
 	}
 	budget := int64(100)
 	req := api.SetRouteMonitorRequest{Enabled: true, ExpectedRevision: &c.Revision, Routes: []api.RouteMonitorRoute{{Method: "POST", Path: "/checkout", Max5xxRateBPS: &budget, MaxP95MS: 300}}}
+	previewReq := api.PreviewRouteMonitorRequest{Routes: req.Routes}
+	rec = e.do(t, "POST", base+"/preview", previewReq, nil)
+	var preview api.RouteMonitorPreview
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &preview) != nil || routemonitor.ValidatePreviewForRequest(preview, previewReq) != nil || preview.CurrentRevision != 0 || preview.Report.Status != "unknown" {
+		t.Fatalf("preview %d %s", rec.Code, rec.Body)
+	}
+	rec = e.do(t, "GET", base, nil, nil)
+	var unchanged api.RouteMonitorConfig
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &unchanged) != nil || unchanged.Revision != 0 || unchanged.Enabled || len(unchanged.Routes) != 0 {
+		t.Fatalf("preview changed saved configuration: %d %s", rec.Code, rec.Body)
+	}
 	rec = e.do(t, "PUT", base, req, nil)
 	if rec.Code != 200 {
 		t.Fatalf("set %d %s", rec.Code, rec.Body)
@@ -56,6 +67,13 @@ func TestProductionRouteMonitorAPIConfigurationScopeAndWorker(t *testing.T) {
 	e.key = key
 	if rec := e.do(t, "GET", base, nil, nil); rec.Code != 200 {
 		t.Fatal("read scope rejected")
+	}
+	rec = e.do(t, "POST", base+"/preview", previewReq, nil)
+	if rec.Code != 200 {
+		t.Fatalf("read scope could not preview: %d %s", rec.Code, rec.Body)
+	}
+	if json.Unmarshal(rec.Body.Bytes(), &preview) != nil || preview.ConfigChangeResetsObservationAnchor {
+		t.Fatalf("identical proposal should preserve its saved anchor: %s", rec.Body)
 	}
 	if rec := e.do(t, "PUT", base, req, nil); rec.Code != 403 {
 		t.Fatal("read scope wrote intent")
@@ -91,6 +109,13 @@ func TestProductionRouteMonitorAPIMFAPlanAndStrictInput(t *testing.T) {
 			t.Fatalf("input accepted %d %s", rec.Code, rec.Body)
 		}
 	}
+	previewRequest := httptest.NewRequest("POST", path+"/preview", strings.NewReader(`{"routes":[{"method":"GET","path":"/","max_p95_ms":100,"typo":1}]}`))
+	previewRequest.Header.Set("Authorization", "Bearer "+pro.key)
+	previewRec := httptest.NewRecorder()
+	pro.s.handler().ServeHTTP(previewRec, previewRequest)
+	if previewRec.Code != 400 {
+		t.Fatalf("preview accepted unknown route-budget field: %d %s", previewRec.Code, previewRec.Body)
+	}
 	mfa := setupWithMFA(t, api.PlanPro, false, false)
 	mfa.generateEnrolledAccount(t)
 	pending := mfa.mfaIssueWithPending(t, true)
@@ -102,6 +127,13 @@ func TestProductionRouteMonitorAPIMFAPlanAndStrictInput(t *testing.T) {
 		if rec.Code != 403 {
 			t.Fatalf("MFA bypass %s %d", suffix, rec.Code)
 		}
+	}
+	previewRequest = httptest.NewRequest("POST", "/v1/apps/mfa-app/route-monitor/preview", strings.NewReader(`{"routes":[{"method":"GET","path":"/","max_p95_ms":100}]}`))
+	previewRequest.AddCookie(pending)
+	previewRec = httptest.NewRecorder()
+	mfa.h.ServeHTTP(previewRec, previewRequest)
+	if previewRec.Code != 403 {
+		t.Fatalf("MFA bypassed preview: %d", previewRec.Code)
 	}
 }
 func TestProductionRouteMonitorWebhookSubscription(t *testing.T) {

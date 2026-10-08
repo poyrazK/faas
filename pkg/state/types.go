@@ -3496,6 +3496,7 @@ const (
 	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
 	AppWebhookEventRouteMonitorViolated             AppWebhookEvent = "routes.monitor.violated"
+	AppWebhookEventRouteMonitorEscalated            AppWebhookEvent = "routes.monitor.escalated"
 	AppWebhookEventRouteMonitorRecovered            AppWebhookEvent = "routes.monitor.recovered"
 	AppWebhookEventRouteHealthAborted               AppWebhookEvent = "routes.health.aborted"
 	AppWebhookEventRouteHealthBlocked               AppWebhookEvent = "routes.health.blocked"
@@ -3541,6 +3542,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
 	AppWebhookEventRouteMonitorViolated,
+	AppWebhookEventRouteMonitorEscalated,
 	AppWebhookEventRouteMonitorRecovered,
 	AppWebhookEventRouteRequirementsChanged,
 	AppWebhookEventRouteRequirementsViolated,

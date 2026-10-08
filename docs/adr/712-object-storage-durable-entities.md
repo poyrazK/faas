@@ -2,7 +2,7 @@
 
 - **Status:** accepted for an internal prototype and opt-in invocation/alarm/maintenance/inventory preview; native runtime and provider qualification pending
 - **Date:** 2026-10-07
-- **Decision:** Implement a SQL-free entity state engine using immutable JSON snapshots, a receipt index and one conditionally updated manifest per account/app/environment/customer/namespace/key. Ownership, state publication and cleanup fencing share that manifest. Add a narrow conditional-object capability to the existing S3 provider, an opt-in authenticated invocation API, scheduled wake-ups, bounded cleanup with durable scan checkpoints, operational metrics and a runnable counter example.
+- **Decision:** Implement a SQL-free entity state engine using immutable JSON snapshots, a receipt index and one conditionally updated manifest per account/app/environment/customer/namespace/key. Ownership, state publication and cleanup fencing share that manifest. Add a narrow conditional-object capability to the existing S3 and native GCS providers, an opt-in authenticated invocation API, scheduled wake-ups, bounded cleanup with durable scan checkpoints, operational metrics and a runnable counter example.
 - **Why:** Applications need persistent logical state without allocating a permanent VM or customer disk. PostgreSQL-backed exclusive operations do not provide this object-storage durability contract, and artifact storage lacks compare-and-swap.
 - **Consequences:** An acknowledged transition has published its snapshot through a successful manifest compare-and-swap. Takeover changes the same manifest, fencing obsolete commits. Request receipts and results commit with state; uncertain responses are resolved by retrying the same request identity and payload. Entity state has no SQL dependency. Existing control-plane ownership, workload isolation and stateless deployment rules remain in force. This prototype is not a launched product capability.
 - **Rejected alternatives:** Unconditional snapshot overwrites permit lost updates. Separate lease and state objects leave a race between ownership checks and commit. Unrooted receipt objects falsely treat unsuccessful uploads as committed work. Age-based cleanup can race an in-flight publisher. Local-only state cannot survive compute loss. Adopting an actor runtime now would couple storage evaluation to execution-language changes.
@@ -28,10 +28,56 @@ and may not perform external effects. The first milestone bounded inline request
 receipts; the journal milestone below removes that count ceiling while preserving
 the original retry contract.
 
-This preview implements the conditional-state capability for S3 only. The native
-GCS provider does not yet implement it, so selecting GCS fails startup when the
-preview is enabled. GCS generation fencing and live-bucket qualification are
-follow-up work; ordinary GCS object storage support does not qualify entity state.
+The preview implements the conditional-state capability for S3 and native GCS.
+Both must pass the same startup probe. Native runtime and live-bucket
+qualification remain pending; ordinary object storage support does not qualify
+entity state.
+
+### Native GCS generations — 2026-10-08
+
+The existing OAuth/ADC client implements the private conditional-state
+capability directly through the native JSON API. A read returns the content and
+its generation from the same response. Generations are canonical positive
+decimal opaque version tokens; HTTP ETags and metagenerations are not used for
+state ownership.
+
+Create uses `ifGenerationMatch=0`; replace uses the observed content generation.
+Writes disable SDK retries and use a single non-resumable upload. The SDK checks
+the response checksum, and the adapter requires a new positive generation and
+the expected size before acknowledging success. Only HTTP 412 is a definite
+generation rejection; other failed dispatched uploads remain uncertain.
+Request-ID receipt replay resolves a lost response after successful publication.
+
+Reads enforce the caller's byte bound and reject unknown-sized, encoded or
+decompressed content and missing generations. Backend identity/fingerprint,
+the dedicated private bucket and all preview opt-ins remain mandatory. The
+existing GCS listing/deletion capabilities serve alarms, inventory and cleanup.
+
+SDK-backed wire conformance tests exercise restart restoration, exact original
+retry results after publication ACK loss, competing CAS writers,
+identical-content generation changes, stale in-flight owner fencing and
+fail-closed startup when a provider ignores generation conditions. These
+fixtures do not qualify a live GCS bucket, network partition behavior, native
+microVM execution or production latency/cost.
+
+### Shared provider tooling — 2026-10-08
+
+The trusted counter/maintenance command and opt-in live qualification harness
+select S3 or native GCS through one configuration helper. S3 remains the default
+for existing commands. GCS uses ADC and an optional impersonation target;
+legacy S3 endpoints and credential settings never configure the GCS client.
+The existing bucket is operator-selected; this tooling does not provision it,
+modify platform preview settings or bypass the invocation authorization rules.
+
+The shared live harness checks restart, uncertain publication replay, concurrency,
+stale-owner fencing, an actual killed-owner process, alarm discovery/replay,
+inventory and committed-byte caps. Cleanup requires a separate explicit opt-in
+and preserves original receipts. Reports identify the provider and distinguish
+live-bucket runs from the shared S3 wire-fixture check. Native GCS SDK wire tests
+also cover paginated inventory, caps, cleanup and alarm listing/delivery/replay.
+These fixtures provide CI evidence only; the dedicated-host and live-provider
+acceptance gates remain pending. See the runnable configurations and qualification
+commands in [the operator guide](../../examples/durable-entities/README.md).
 
 Alarm deadlines persist with state. The opt-in alarm milestone below adds
 discovery/delivery; owner-affinity routing, metering,
@@ -89,7 +135,7 @@ committed result into a reported failure and delays competitors until expiry.
 The Go SDK requires a stable request ID and preserves entity selectors across
 retries. The HTTP response cache does not wrap this route: every retry rechecks
 current authorization and resolves durable receipts in the bucket. An opt-in
-live S3 qualification test writes an isolated retained prefix, checks restart,
+live S3/GCS qualification test writes an isolated retained prefix, checks restart,
 concurrency, acknowledgement loss and fencing, and kills an actual owner process.
 Running this harness against a local S3 wire fixture verifies the harness only;
 live-provider and native microVM evidence remain release gates. Provider request
@@ -115,7 +161,11 @@ latency or billing; the provider and deployed SDK acceptance remain separate.
 Use the existing exact-commit, dedicated-host runner and final leakcheck in
 [native e2e CI](../ops/e2e-native-ci.md).
 
-## Alarm delivery preview
+## Original alarm delivery preview
+
+The discovery and retry behavior below records the first alarm milestone; the
+indexed delivery milestone supersedes its full-scan delivery and unbounded retry
+policy.
 
 `FAAS_DURABLE_ENTITY_ALARMS_ENABLED=1` requires the invocation preview and
 private delimiter listing; startup fails closed without that capability or
@@ -154,6 +204,57 @@ receipt index as caller work. A due-time index, bounded retry/dead-letter policy
 plan quotas/billing and provider-backed operational qualification remain production
 work. Entity alarm authority and receipts stay in object storage; the existing
 SQL ledger records guest attempts only.
+
+## Indexed alarm delivery and bounded retries — 2026-10-08
+
+The opt-in alarm worker reads one bounded, lexically time-ordered index page and
+one independent rotating entity page per sweep (eight entries each). Committed
+snapshots remain alarm authority. Index publication after a successful state CAS
+is best effort and has a two-second bound; a failure cannot revoke the commit.
+The entity scan repairs missing hints, including pre-upgrade alarms and crashes
+between state/reservation publication and index upload. It can deliver recovered
+due work in the same sweep. Each scan retains its twenty-second budget. Native
+cursors are disposable, reset independently on errors, and are not SQL metadata.
+
+Immutable hints carry identity, version, original deadline, effective retry time
+and reservation count. Future hints end a pass before entity reads. Due candidates
+are restored from the manifest/snapshot and checked again under fenced ownership.
+Stale or corrupt hints can be pruned without touching entity state. Superseded
+future hints remain until their indexed due time; bucket lifecycle deletion stays
+disabled. Startup additionally requires flat LIST and private hint DELETE and
+verifies DELETE using only a unique probe. Native S3/GCS listing order is required.
+The index accelerates ready-work discovery, while reconciliation still costs a
+bounded ongoing scan. This preview promises neither deadline ordering nor latency.
+
+Before new alarm guest work, the entity manifest CAS durably reserves one attempt
+and the earliest next attempt time. Only an acknowledged reservation dispatches.
+Retry delays start at thirty seconds and double up to five minutes. Five reserved
+attempts exhaust an alarm for that committed state version. Busy ownership and
+obsolete observations do not reserve; rejected CAS does not advance the count.
+Accepted-but-unacknowledged reservations and process death consume the reservation,
+so this is a bounded attempt budget rather than a guarantee of five guest executions.
+A valid receipt is checked before retry gates, preserving final-ACK-loss replay.
+Admission remains rechecked before reservation. The existing execution ledger records
+guest intent only and does not govern retry authority.
+
+Manifest writes use schema 4 to fence older writers that would drop reservations.
+Readers accept schemas 1–4; stop all older entity callers and background workers
+before upgrading, and migrate storage before downgrading. Successful state commits
+clear old retry metadata and derive a fresh hint from the new alarm. Other manifest
+mutations preserve reservations. Snapshots, receipts, caps and guest protocol stay
+unchanged. Advisory hint storage is excluded from committed-state caps, but its
+upload volume and provider operations are observed by the existing bounded metrics.
+
+Exhaustion retains the original state/deadline and suppresses automatic dispatch.
+The final reserved attempt can still be in flight. The trusted harness's
+`-alarm-status` reads one exact entity scope without claiming it, reporting alarm
+identity, attempt count, retry time and exhaustion without payloads or raw errors.
+A deliberate business transition can clear or rearm it in a new version. Public
+inspection, automatic dead-letter replay, index compaction, plan quotas and billing
+remain separate milestones. All preview gates remain off by default. CI fixtures
+cover missing/corrupt hints, restart/backoff/exhaustion, uncertain reservations,
+receipt replay and native provider wire paths; dedicated-host/live-bucket, latency
+and cost qualification remain pending.
 
 ## Receipt journal and operator cleanup
 

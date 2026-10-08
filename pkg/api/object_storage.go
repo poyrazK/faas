@@ -31,6 +31,7 @@ type ObjectBucketList struct {
 type ObjectSignRequest struct {
 	Method             string                 `json:"method"`
 	Key                string                 `json:"key"`
+	VersionID          string                 `json:"version_id,omitempty"`
 	ExpiresIn          int64                  `json:"expires_in,omitempty"`
 	SizeBytes          *int64                 `json:"size_bytes,omitempty"`
 	ContentType        string                 `json:"content_type,omitempty"`

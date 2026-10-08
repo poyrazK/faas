@@ -2640,10 +2640,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	evictedPriority.WithLabelValues("reserved", "eviction_ram")
 	evictionFiredTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_eviction_fired_total",
-		Help: "Count of successful instance evictions or parks, labelled by tenant_tier and reason. tenant_tier is one of {free,hobby,pro,scale,unknown}; reason is one of {idle,eviction_aggressive,ram_pressure,unknown}.",
+		Help: "Count of successful instance evictions or parks, labelled by tenant_tier and reason. tenant_tier is one of {free,hobby,pro,scale,unknown}; reason is one of {idle,eviction_aggressive,ram_pressure,wake_pressure,zero_traffic,unknown}.",
 	}, []string{"tenant_tier", "reason"})
 	for _, tier := range []string{"free", "hobby", "pro", "scale", "unknown"} {
-		for _, reason := range []string{"idle", "eviction_aggressive", "ram_pressure", "wake_pressure", "unknown"} {
+		for _, reason := range []string{"idle", "eviction_aggressive", "ram_pressure", "wake_pressure", "zero_traffic", "unknown"} {
 			evictionFiredTotal.WithLabelValues(tier, reason)
 		}
 	}
@@ -6454,7 +6454,7 @@ func (m *OpsMetrics) EvictionFired(tenantTier, reason string) prometheus.Counter
 		tenantTier = "unknown"
 	}
 	switch reason {
-	case "idle", "eviction_aggressive", "ram_pressure", "wake_pressure":
+	case "idle", "eviction_aggressive", "ram_pressure", "wake_pressure", "zero_traffic":
 	default:
 		reason = "unknown"
 	}

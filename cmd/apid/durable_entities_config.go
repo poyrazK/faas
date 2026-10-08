@@ -54,7 +54,7 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	alarms := getenv("FAAS_DURABLE_ENTITY_ALARMS_ENABLED") == "1"
 	if alarms {
 		if err := engine.CheckAlarmDiscovery(probeCtx); err != nil {
-			return errors.New("durable entity alarms require private delimiter listing")
+			return errors.New("durable entity alarms require private delimiter/flat listing and hint deletion")
 		}
 	}
 	maintenance := getenv("FAAS_DURABLE_ENTITY_MAINTENANCE_ENABLED") == "1"

@@ -162,7 +162,7 @@ func runCustomerOperationDefinitions(ctx context.Context, client customerOperati
 		return json.NewEncoder(out).Encode(page)
 	}
 	for _, d := range page.Definitions {
-		if _, err := fmt.Fprintf(out, "%s\t%s\trevision=%s\tdeployment=%s\tscope=%s\tcompletion=%s\n", d.ID, d.Name, d.Revision, d.DeploymentID, d.Scope, d.CompletionWebhookID); err != nil {
+		if _, err := fmt.Fprintf(out, "%s\t%s\trevision=%s\tdeployment=%s\tscope=%s\tcompletion=%s\thttp_transaction_version=%d\n", d.ID, d.Name, d.Revision, d.DeploymentID, d.Scope, d.CompletionWebhookID, d.HTTPTransactionVersion); err != nil {
 			return err
 		}
 	}

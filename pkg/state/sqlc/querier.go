@@ -693,6 +693,7 @@ type Querier interface {
 	FinancialBudgetRevisionList(ctx context.Context, db DBTX, arg FinancialBudgetRevisionListParams) ([]FinancialBudgetRevision, error)
 	FinancialBudgetScopeOwned(ctx context.Context, db DBTX, arg FinancialBudgetScopeOwnedParams) (bool, error)
 	FinancialBudgetUpdate(ctx context.Context, db DBTX, arg FinancialBudgetUpdateParams) (FinancialBudgetPolicy, error)
+	FinancialCompletedComputeMinutes(ctx context.Context, db DBTX, arg FinancialCompletedComputeMinutesParams) ([]pgtype.Timestamptz, error)
 	FinancialEvidenceAccountLock(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	FinancialEvidenceBySource(ctx context.Context, db DBTX, arg FinancialEvidenceBySourceParams) (FinancialUsageEvidence, error)
 	FinancialEvidenceCoverage(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
@@ -749,12 +750,14 @@ type Querier interface {
 	GetCustomerOperationDeliveryRetry(ctx context.Context, db DBTX, arg GetCustomerOperationDeliveryRetryParams) (GetCustomerOperationDeliveryRetryRow, error)
 	GetCustomerOperationDeliveryRow(ctx context.Context, db DBTX, arg GetCustomerOperationDeliveryRowParams) (GetCustomerOperationDeliveryRowRow, error)
 	GetCustomerOperationIdempotency(ctx context.Context, db DBTX, arg GetCustomerOperationIdempotencyParams) (GetCustomerOperationIdempotencyRow, error)
+	GetCustomerOperationMilestone(ctx context.Context, db DBTX, arg GetCustomerOperationMilestoneParams) (GetCustomerOperationMilestoneRow, error)
 	GetCustomerOperationRecovery(ctx context.Context, db DBTX, arg GetCustomerOperationRecoveryParams) (string, error)
 	GetCustomerOperationReport(ctx context.Context, db DBTX, arg GetCustomerOperationReportParams) (string, error)
 	GetCustomerOperationWorkflowCustody(ctx context.Context, db DBTX, runID pgtype.UUID) (CustomerOperationWorkflowClaim, error)
 	// One dispatch binding per native attempt; no upsert or replacement after a
 	// lost response. The parent run lock serializes binding and report mutations.
 	GetCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowGuestParams) (CustomerOperationWorkflowGuestClaim, error)
+	GetCustomerOperationWorkflowStateReport(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStateReportParams) (GetCustomerOperationWorkflowStateReportRow, error)
 	GetCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStepParams) (WorkflowStep, error)
 	GetCustomerOperationWorkflowStepAttempt(ctx context.Context, db DBTX, arg GetCustomerOperationWorkflowStepAttemptParams) (WorkflowStepAttempt, error)
 	// Single-row read for the dashboard's "edit upstream"
@@ -915,12 +918,14 @@ type Querier interface {
 	InsertCustomerOperationEvent(ctx context.Context, db DBTX, arg InsertCustomerOperationEventParams) error
 	InsertCustomerOperationExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationExecutionParams) error
 	InsertCustomerOperationJobExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationJobExecutionParams) (int64, error)
+	InsertCustomerOperationMilestone(ctx context.Context, db DBTX, arg InsertCustomerOperationMilestoneParams) error
 	InsertCustomerOperationRecovery(ctx context.Context, db DBTX, arg InsertCustomerOperationRecoveryParams) error
 	InsertCustomerOperationReport(ctx context.Context, db DBTX, arg InsertCustomerOperationReportParams) error
 	InsertCustomerOperationStream(ctx context.Context, db DBTX, arg InsertCustomerOperationStreamParams) error
 	InsertCustomerOperationWorkflowExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowExecutionParams) (int64, error)
 	InsertCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowGuestParams) error
 	InsertCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowRunParams) error
+	InsertCustomerOperationWorkflowStateReport(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowStateReportParams) error
 	InsertCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowStepParams) error
 	InsertCustomerOperationWorkflowStepAttempt(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowStepAttemptParams) error
 	// ---------------------------------------------------------------------------
@@ -1197,7 +1202,9 @@ type Querier interface {
 	// 20261004234807528); rows superseded before it fall back to created_at.
 	// A live 0% deployment that served before (a release demoted by `traffic
 	// promote` or `traffic set`) is a rollback target; one that never served
-	// (a dark deploy) needs a retention pin.
+	// (a dark deploy) needs a retention pin. A canary candidate aborted before it
+	// ever completed served only its canary steps and failed them, so it is never
+	// an implicit target (H5-62).
 	LatestRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LatestRetainedRollbackDeploymentParams) (pgtype.UUID, error)
 	LatestSupersededDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestSupersededDeploymentRow, error)
 	LayerArtifactHasReferences(ctx context.Context, db DBTX, storageKey string) (pgtype.Bool, error)
@@ -1205,9 +1212,16 @@ type Querier interface {
 	// /v1/keys listing. See ADR-034 rev2.
 	ListAPIKeys(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListAPIKeysRow, error)
 	ListAccountCustomerOperationExecutions(ctx context.Context, db DBTX, arg ListAccountCustomerOperationExecutionsParams) ([]ListAccountCustomerOperationExecutionsRow, error)
+	ListAccountCustomerOperationMilestones(ctx context.Context, db DBTX, arg ListAccountCustomerOperationMilestonesParams) ([][]byte, error)
+	ListAccountCustomerOperationMilestonesBySubject(ctx context.Context, db DBTX, arg ListAccountCustomerOperationMilestonesBySubjectParams) ([][]byte, error)
+	ListAccountCustomerOperationWorkflowStateHistory(ctx context.Context, db DBTX, arg ListAccountCustomerOperationWorkflowStateHistoryParams) ([][]byte, error)
+	ListAccountCustomerOperationWorkflowStatesBySubject(ctx context.Context, db DBTX, arg ListAccountCustomerOperationWorkflowStatesBySubjectParams) ([][]byte, error)
 	// The account/app creation index supports descending keyset paging across
 	// tenants. Only explicit public summary fields cross this operator boundary.
 	ListAccountCustomerOperations(ctx context.Context, db DBTX, arg ListAccountCustomerOperationsParams) ([][]byte, error)
+	// The account/app creation index supports descending keyset paging across
+	// tenants. Only explicit public summary fields cross this operator boundary.
+	ListAccountCustomerOperationsBySubject(ctx context.Context, db DBTX, arg ListAccountCustomerOperationsBySubjectParams) ([][]byte, error)
 	// Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
 	// `since` is an interval (e.g. '1 hour') clamped handler-side to the
 	// plan's DebugTelemetryRetentionDays cap. ORDER BY regression_factor
@@ -1477,9 +1491,16 @@ type Querier interface {
 	ListOutboundBindingProbeSnapshots(ctx context.Context, db DBTX, arg ListOutboundBindingProbeSnapshotsParams) ([]ListOutboundBindingProbeSnapshotsRow, error)
 	ListPendingAlertRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error)
 	ListPendingCheckedRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error)
+	ListPlatformTenantCustomerOperationMilestones(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationMilestonesParams) ([][]byte, error)
+	ListPlatformTenantCustomerOperationMilestonesBySubject(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationMilestonesBySubjectParams) ([][]byte, error)
+	ListPlatformTenantCustomerOperationWorkflowStateHistory(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationWorkflowStateHistoryParams) ([][]byte, error)
+	ListPlatformTenantCustomerOperationWorkflowStatesBySubject(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationWorkflowStatesBySubjectParams) ([][]byte, error)
 	// The tenant creation index supports descending keyset paging. Only public
 	// summary fields cross this boundary; source input/results/capabilities do not.
 	ListPlatformTenantCustomerOperations(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationsParams) ([][]byte, error)
+	// The tenant creation index supports descending keyset paging. Only public
+	// summary fields cross this boundary; source input/results/capabilities do not.
+	ListPlatformTenantCustomerOperationsBySubject(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationsBySubjectParams) ([][]byte, error)
 	ListProductionDeadLetterEvents(ctx context.Context, db DBTX, arg ListProductionDeadLetterEventsParams) ([]DeadLetterEvent, error)
 	// ADR-531: production queue pollers cannot own stage work.
 	ListProductionNamedQueueCandidates(ctx context.Context, db DBTX, arg ListProductionNamedQueueCandidatesParams) ([]string, error)
@@ -1504,6 +1525,11 @@ type Querier interface {
 	// per-account projections; the broader ?actor + ?subject filter
 	// shape lives on ListAllEventsPaged.
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
+	// Account-wide `gregale trace` lookup: the newest retained row per app for
+	// one public trace id, in a single read through request_telemetry_trace_idx.
+	// The caller validates the id as 32 lowercase hex characters, so the row-UUID
+	// alias GetRequestTelemetryByAppAndIdentifier also accepts can never match.
+	ListRequestTelemetryByAccountTrace(ctx context.Context, db DBTX, arg ListRequestTelemetryByAccountTraceParams) ([]ListRequestTelemetryByAccountTraceRow, error)
 	// Canonical read pattern: "give me the last N requests for this app".
 	// Backs GET /v1/apps/{slug}/debug/requests. Uses
 	// request_telemetry_app_received_idx. The (since, until) pair is
@@ -2917,6 +2943,7 @@ type Querier interface {
 	// ListEnabledTriggers uses (filter_criteria is part of the
 	// Trigger struct since commit 6 of issue #757 mega-PR).
 	UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerParams) (UpdateTriggerRow, error)
+	UpsertCustomerOperationWorkflowState(ctx context.Context, db DBTX, arg UpsertCustomerOperationWorkflowStateParams) error
 	// Accept only a routable target on this app. Using INSERT .. SELECT makes the
 	// ownership/status check atomic with writing the alias.
 	UpsertDeploymentAlias(ctx context.Context, db DBTX, arg UpsertDeploymentAliasParams) (UpsertDeploymentAliasRow, error)

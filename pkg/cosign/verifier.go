@@ -11,6 +11,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"golang.org/x/sync/singleflight"
 )
 
 // LocalVerifier is the production verifier: reads the artifact +
@@ -25,6 +26,7 @@ type LocalVerifier struct {
 	pub      *ecdsa.PublicKey
 	stor     storage.StorageBackend
 	verified sync.Map
+	inflight singleflight.Group
 }
 
 // NewLocalVerifier parses the SPKI PEM at path (mode ≤ 0o444
@@ -94,7 +96,26 @@ func (v *LocalVerifier) Verify(ctx context.Context, layerKey, sigKey string) err
 	if _, ok := v.verified.Load(cacheKey); ok {
 		return nil
 	}
+	// Concurrent callers for one layer share a single read and hash: the
+	// background attestation warm and the first wakes of an app after a
+	// schedd restart otherwise each stream the whole layer on an already
+	// busy node (hunt #6, H5-56). The shared verification is detached from
+	// the caller that started it, so a wake that gives up neither aborts it
+	// for the others nor wastes it; api.LayerVerifyTimeout bounds it.
+	result := v.inflight.DoChan(cacheKey, func() (any, error) {
+		verifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.LayerVerifyTimeout)
+		defer cancel()
+		return nil, v.verify(verifyCtx, layerKey, sigKey, cacheKey)
+	})
+	select {
+	case r := <-result:
+		return r.Err
+	case <-ctx.Done():
+		return fmt.Errorf("cosign: verify layer %q: %w", layerKey, ctx.Err())
+	}
+}
 
+func (v *LocalVerifier) verify(ctx context.Context, layerKey, sigKey, cacheKey string) error {
 	// Hash the layer (streamed — ext4s can be 1-2 GB).
 	h := sha256.New()
 	layerRC, err := v.stor.Get(ctx, layerKey)
