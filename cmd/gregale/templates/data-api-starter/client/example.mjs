@@ -8,9 +8,10 @@ if (!url || !subject || !token) {
   process.exitCode = 1
 } else {
   const notes = notesClient({ url, subject, accessToken: () => token })
-  const result = await notes.cursorPage({ size: 20 })
+  const signal = AbortSignal.timeout(5000)
+  const result = await notes.cursorPage({ size: 20 }).abortSignal(signal).retry(false)
   if (result.error) {
-    console.error('Could not read notes; check the application session and API configuration')
+    console.error(signal.aborted ? 'Read canceled or timed out' : result.status === 401 ? 'Renew the application session and try again' : 'Could not read notes; check the application session and API configuration')
     process.exitCode = 1
   } else {
     const last = result.data.at(-1)

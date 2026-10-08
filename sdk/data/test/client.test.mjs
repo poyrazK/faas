@@ -31,3 +31,27 @@ test('client validates URLs and never sends missing tokens', async () => {
   await assert.rejects(async () => await client.schema('api').from('notes').select().throwOnError(), /application access token/)
   assert.equal(sent, false)
 })
+
+test('abort signals stop pending client reads and network failures retain status zero', async t => {
+  const { createServer } = await import('node:http')
+  let opened
+  const opening = new Promise(resolve => { opened = resolve })
+  const server = createServer(() => opened())
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => { server.closeAllConnections(); server.close() })
+  const client = createDataClient({ url: `http://127.0.0.1:${server.address().port}`, accessToken: 'token' })
+  const controller = new AbortController()
+  const pending = Promise.resolve(client.schema('api').from('notes').select().abortSignal(controller.signal).retry(false))
+  await opening
+  controller.abort()
+  const canceled = await pending
+  assert.equal(canceled.status, 0)
+  assert.equal(canceled.data, null)
+  assert.match(canceled.error.message, /AbortError/)
+  const offline = createDataClient({ url: 'https://data.example', accessToken: 'token', fetch: async () => { throw new TypeError('fetch failed') } })
+  const failed = await offline.schema('api').from('notes').select().retry(false)
+  assert.equal(failed.status, 0)
+  assert.equal(failed.data, null)
+  assert.ok(failed.error)
+  await assert.rejects(Promise.resolve(offline.schema('api').from('notes').select().retry(false).throwOnError()), TypeError)
+})

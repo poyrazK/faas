@@ -1,3 +1,4 @@
+import { readCursorPageWithSession } from './session.js'
 import { notesClient } from './notes.js'
 
 // Compile-time assertions: weakened or mismatched generated types fail CI.
@@ -118,3 +119,12 @@ async function cursorContract(client: ReturnType<typeof notesClient>) {
   client.cursorPage({ after: { created_at: '2026-10-08T00:00:00Z', id: '1' } })
 }
 void cursorContract
+
+async function sessionContract(client: ReturnType<typeof notesClient>) {
+  const result = await readCursorPageWithSession({ client, signal: new AbortController().signal, renewSession: async () => {} })
+  if (result.data) {
+    const id: number | undefined = result.data[0]?.id
+    void id
+  }
+}
+void sessionContract

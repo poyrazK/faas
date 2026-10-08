@@ -41,3 +41,43 @@ test('cursor validation rejects malformed values before requesting and retains m
   }
   for (const size of [0, -1, NaN, Infinity, 1.5]) assert.throws(() => client.cursorPage({ size }), RangeError)
 })
+
+test('session renewal retries a read once with a newly resolved token', async () => {
+  const { readCursorPageWithSession } = await import('../dist/session.js')
+  let token = 'expired'
+  let renewed = 0
+  const tokens = []
+  const client = notesClient({ url: 'https://notes.example', subject: 'user', accessToken: () => token,
+    fetch: async (_, init) => {
+      tokens.push(init.headers.get('Authorization'))
+      return token === 'expired' ? new Response(JSON.stringify({ code: 'token_invalid' }), { status: 401 }) : new Response('[]', { status: 200 })
+    },
+  })
+  const result = await readCursorPageWithSession({ client, signal: new AbortController().signal, renewSession: async () => { renewed++; token = 'renewed' } })
+  assert.equal(result.error, null)
+  assert.equal(renewed, 1)
+  assert.deepEqual(tokens, ['Bearer expired', 'Bearer renewed'])
+  token = 'expired'
+  const rejected = await readCursorPageWithSession({ client, signal: new AbortController().signal, renewSession: async () => { renewed++ } })
+  assert.equal(rejected.status, 401)
+  assert.equal(renewed, 2, 'renewal_loop_detected')
+})
+
+test('renewal is skipped for non-auth errors and cancellation prevents a renewed read', async () => {
+  const { readCursorPageWithSession } = await import('../dist/session.js')
+  let status = 503
+  let renewals = 0
+  const controller = new AbortController()
+  const client = notesClient({ url: 'https://notes.example', subject: 'user', accessToken: 'token', fetch: async (_, init) => {
+    if (init.signal.aborted) throw new DOMException('Aborted', 'AbortError')
+    return new Response(JSON.stringify({ code: status === 401 ? 'token_invalid' : 'data_api_unavailable' }), { status })
+  } })
+  const renewSession = async signal => { renewals++; assert.equal(signal, controller.signal); controller.abort() }
+  const unavailable = await readCursorPageWithSession({ client, signal: controller.signal, renewSession })
+  assert.equal(unavailable.status, 503)
+  assert.equal(renewals, 0)
+  status = 401
+  const canceled = await readCursorPageWithSession({ client, signal: controller.signal, renewSession })
+  assert.equal(canceled.status, 0)
+  assert.equal(renewals, 1)
+})

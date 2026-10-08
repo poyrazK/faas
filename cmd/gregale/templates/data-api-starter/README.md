@@ -295,3 +295,40 @@ disabling sequential scans or imposing machine-specific timing thresholds.
 These are PostgreSQL query-plan checks, not an HTTP throughput benchmark or
 production latency guarantee. Exact counts still scan matching visible rows;
 deep offset pages still discard earlier rows. Use cursor pages for continuation.
+
+Pass `.abortSignal(signal)` to typed reads, for example
+`notes.cursorPage().abortSignal(AbortSignal.timeout(5000)).retry(false)`.
+The runnable example uses a five-second deadline. Default PostgREST client
+handling returns `{ data: null, error, status: 0 }` for an aborted read or a
+network failure; inspect `signal.aborted` to distinguish cancellation. With
+`.throwOnError()`, transport failures throw their original error and database
+errors throw `PostgrestError` with the server's code. The proxy returns HTTP 504
+with `query_timeout` for its upstream timeout, HTTP 503 with
+`data_api_unavailable` when the engine is unavailable, and HTTP 401 with
+`token_invalid` for invalid or expired sessions.
+
+Connect the starter's renewal helper to your identity provider:
+
+```ts
+const client = notesClient({
+  url, subject,
+  accessToken: () => identityProvider.getAccessToken(),
+})
+const result = await readCursorPageWithSession({
+  client,
+  signal: AbortSignal.timeout(5000),
+  renewSession: signal => identityProvider.renewSession({ signal }),
+})
+```
+
+Import `readCursorPageWithSession` from `./session.js`. It resolves the token
+again on each read and retries once after a 401. It disables the underlying
+client's automatic retries for those reads and never renews in a loop. A
+renewal callback receives the same abort signal; your identity provider should
+honor it. A renewal failure throws to the caller; handle it with a generic session error.
+The helper is for reads only. Do not automatically replay mutations after a
+network failure or cancellation: the database may already have committed.
+Client cancellation closes the proxy's upstream connection but does not
+promise database rollback or immediate SQL cancellation. Log status and stable
+codes rather than full error objects, SQL details, request headers or tokens;
+database errors can contain application row values.

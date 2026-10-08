@@ -74,3 +74,36 @@ test('proxy rejects unauthenticated requests and normalizes untrusted SQL roles'
   assert.equal((await fetch(base+'/rest/v1/rpc%2Funsafe',{headers:{Authorization:'Bearer valid'}})).status,404)
   assert.equal((await fetch(base+'/rest/v1/rpc/unsafe',{headers:{Authorization:'Bearer valid'}})).status,404)
 })
+
+test('proxy closes canceled upstream requests and sanitizes unavailable and timeout errors', { timeout: 25000 }, async t => {
+  const config = runtimeConfig({ DATABASE_URL: 'postgres://test:credential-sentinel@127.0.0.1/test?sslmode=disable', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
+  let opened, closed
+  const opening = new Promise(resolve => { opened = resolve })
+  const closing = new Promise(resolve => { closed = resolve })
+  const upstream = http.createServer((req, res) => { opened(); res.on('close', closed) })
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve))
+  const gateway = createServer(config, async () => ({ sub: 'user', exp: 9999999999 }), upstream.address().port)
+  await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
+  t.after(() => { gateway.closeAllConnections(); gateway.close(); upstream.closeAllConnections(); upstream.close() })
+  const url = `http://127.0.0.1:${gateway.address().port}/rest/v1/notes`
+  const headers = { Authorization: 'Bearer token-sentinel' }
+  const controller = new AbortController()
+  const canceled = fetch(url, { headers, signal: controller.signal })
+  const rejection = assert.rejects(canceled, error => error.name === 'AbortError')
+  await opening
+  controller.abort()
+  await rejection
+  await Promise.race([closing, new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('upstream_not_closed')), 2000); timer.unref() })])
+  const timeout = await fetch(url, { headers })
+  assert.equal(timeout.status, 504)
+  const timeoutBody = await timeout.text()
+  assert.equal(JSON.parse(timeoutBody).code, 'query_timeout')
+  assert.doesNotMatch(timeoutBody, /credential-sentinel|token-sentinel|postgres:/)
+  await new Promise(resolve => upstream.close(resolve))
+  const unavailable = await fetch(url, { headers })
+  assert.equal(unavailable.status, 503)
+  const body = await unavailable.text()
+  assert.equal(JSON.parse(body).code, 'data_api_unavailable')
+  assert.doesNotMatch(body, /credential-sentinel|token-sentinel|postgres:/)
+  assert.equal(unavailable.headers.get('Cache-Control'), 'no-store')
+})

@@ -126,6 +126,9 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
     await assert.rejects(restricted.query('SELECT * FROM gregale_migrations.applied'), error => error.code === '42501')
     await assert.rejects(restricted.query('ALTER TABLE api.notes ADD COLUMN forbidden integer'), error => error.code === '42501')
   } finally { await restricted.end() }
+  await owner.query(`CREATE VIEW api.slow_notes WITH (security_invoker=true) AS
+    SELECT id, body, pg_sleep(5)::text AS delay FROM api.notes WHERE body='slow-read-fixture';
+    GRANT SELECT ON api.slow_notes TO "${role}"`)
   const config = runtimeConfig({ DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
   const upstream = await port(), ready = await port()
   child = spawn(process.env.DATA_API_POSTGREST_BIN, [], { env: { ...process.env, ...config.postgrestEnv, PGRST_SERVER_PORT: String(upstream), PGRST_ADMIN_SERVER_PORT: String(ready) }, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -148,6 +151,42 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const { verifyAuthorization } = await import(pathToFileURL(join(root, 'client/test/authorization.mjs')))
   const { notesClient, noteCursor } = await import(pathToFileURL(join(root, 'client/dist/notes.js')))
   const client = notesClient({ url, subject: userA.subject, accessToken: userA.token })
+  const { readCursorPageWithSession } = await import(pathToFileURL(join(root, 'client/dist/session.js')))
+  const expired = await new SignJWT({ sub: userA.subject }).setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience('notes').setExpirationTime('0s').sign(privateKey)
+  let sessionToken = expired
+  const sessionClient = notesClient({ url, subject: userA.subject, accessToken: () => sessionToken })
+  const rejected = await sessionClient.cursorPage().retry(false)
+  assert.equal(rejected.status, 401)
+  assert.equal(rejected.error.code, 'token_invalid')
+  assert.equal(JSON.stringify(rejected.error).includes(expired), false, 'expired_token_leaked')
+  const renewed = await readCursorPageWithSession({ client: sessionClient, signal: new AbortController().signal, renewSession: async () => { sessionToken = userA.token } })
+  assert.equal(renewed.error, null)
+  const invalid = await client.db.from('notes').insert({ subject: userA.subject }).retry(false)
+  assert.equal(invalid.error.code, '23502')
+  for (const secret of [userA.token, userB.token, 'test-only']) assert.equal(JSON.stringify(invalid.error).includes(secret), false, 'database_error_leaked_credentials')
+  await assert.rejects(Promise.resolve(client.db.from('notes').insert({ subject: userB.subject, body: 'forbidden' }).retry(false).throwOnError()), error => error.code === '42501')
+  await owner.query("INSERT INTO api.notes (subject, body) VALUES ($1,'slow-read-fixture')", [userA.subject])
+  const controller = new AbortController()
+  const pending = Promise.resolve(client.db.from('slow_notes').select('*').abortSignal(controller.signal).retry(false))
+  let started = false
+  try {
+    for (let i = 0; i < 100; i++) {
+      const active = await admin.query("SELECT pid FROM pg_stat_activity WHERE datname=$1 AND usename=$2 AND state='active' AND query LIKE '%slow_notes%'", [database, role])
+      if (active.rowCount) { started = true; break }
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    assert.equal(started, true, 'slow_query_not_started')
+    controller.abort()
+    const canceled = await pending
+    assert.equal(canceled.status, 0)
+    assert.match(canceled.error.message, /AbortError/)
+  } finally {
+    controller.abort()
+    await pending
+    // Client abort is not a database rollback guarantee; clean this local fixture.
+    await admin.query("SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND usename=$2 AND state='active' AND query LIKE '%slow_notes%'", [database, role])
+    await owner.query("DELETE FROM api.notes WHERE body='slow-read-fixture'")
+  }
   // Large fixtures stay local; protected preview checks only create a few rows.
   await owner.query("INSERT INTO api.notes (subject, body) SELECT $1, 'page-limit-fixture' FROM generate_series(1, $2)", [userA.subject, limits.rows + 1])
   try {
