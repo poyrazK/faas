@@ -254,9 +254,9 @@ const (
 	OperationWorkflowDefaultAttempts    = 3
 	OperationWorkflowRetryShiftMax      = 8
 	OperationWorkflowRetryBackoffMax    = 5 * time.Minute
-	OperationWorkflowClaimsMaxPerRun   = 1<<31 - 1
-	OperationWorkflowStepAttemptsMax   = 1<<31 - 1
-	OperationWorkflowStepErrorMaxBytes = 4096
+	OperationWorkflowClaimsMaxPerRun    = 1<<31 - 1
+	OperationWorkflowStepAttemptsMax    = 1<<31 - 1
+	OperationWorkflowStepErrorMaxBytes  = 4096
 )
 
 // Operations protocol limits apply before customer schemas are evaluated.
