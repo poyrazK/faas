@@ -26046,6 +26046,60 @@ paths:
         '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/service-map:
+    get:
+      tags: [observability]
+      operationId: getServiceMap
+      summary: Account service map of caller → target app edges.
+      description: |
+        ADR-732 internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
+        otherwise 503 `service_map_unavailable`.
+
+        Built from the unsampled service-proxy edge series. Both the
+        caller and the target are constrained to the account's apps.
+        Edges are ranked by call volume and capped at 500
+        (`truncated: true`). Latency percentiles cover successful calls
+        only. Prometheus failure returns 200 with null `nodes`/`edges`
+        and `source: "degraded: <reason>"`, as `/v1/apps/metrics` does.
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d]
+            default: 1h
+          description: "Observation window. Default `1h`."
+      responses:
+        '200':
+          description: The service map.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceMapResponse' }
+              example:
+                range: "1h"
+                source: "prometheus"
+                as_of: "2026-10-08T13:00:00Z"
+                truncated: false
+                nodes:
+                  - { app_id: "0f8fad5b-d9cb-469f-a165-70867728950e", app_slug: "billing" }
+                  - { app_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7", app_slug: "public-api" }
+                edges:
+                  - caller_app_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+                    caller_app_slug: "public-api"
+                    target_app_id: "0f8fad5b-d9cb-469f-a165-70867728950e"
+                    target_app_slug: "billing"
+                    calls: 12040
+                    errors: 48
+                    error_rate_pct: 0.4
+                    latency_p50_ms: 11.2
+                    latency_p95_ms: 38.0
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/invocations/{id}:
     get:
       tags: [invocations]
@@ -53293,6 +53347,53 @@ components:
         next_before:
           type: [string, "null"]
           description: "Cursor in the form `<slug>|<key>`. Empty / null at the end."
+
+    ServiceMapResponse:
+      description: |
+        Account service map for `GET /v1/service-map` (ADR-732). `nodes` are
+        the apps on at least one returned edge, sorted by slug; `edges` are
+        sorted by `calls` descending. Degraded responses carry null `nodes`
+        and `edges`.
+      type: object
+      required: [range, source, as_of, nodes, edges, truncated]
+      properties:
+        range: { type: string }
+        source: { type: string, description: '"prometheus" or "degraded: <reason>".' }
+        as_of: { type: string, format: date-time }
+        truncated: { type: boolean }
+        nodes:
+          type: [array, "null"]
+          items: { $ref: '#/components/schemas/ServiceMapNode' }
+        edges:
+          type: [array, "null"]
+          items: { $ref: '#/components/schemas/ServiceMapEdge' }
+
+    ServiceMapNode:
+      description: One app that appears on at least one service map edge.
+      type: object
+      required: [app_id, app_slug]
+      properties:
+        app_id: { type: string }
+        app_slug: { type: string }
+
+    ServiceMapEdge:
+      description: |
+        Unsampled calls for one caller → target pair. `errors` are final 5xx
+        responses after proxy retries; identity and authorization failures
+        are excluded. Latency covers successful calls, including routing,
+        wake, and forwarding time.
+      type: object
+      required: [caller_app_id, caller_app_slug, target_app_id, target_app_slug, calls, errors, error_rate_pct, latency_p50_ms, latency_p95_ms]
+      properties:
+        caller_app_id: { type: string }
+        caller_app_slug: { type: string }
+        target_app_id: { type: string }
+        target_app_slug: { type: string }
+        calls: { type: integer, format: int64 }
+        errors: { type: integer, format: int64 }
+        error_rate_pct: { type: number }
+        latency_p50_ms: { type: number }
+        latency_p95_ms: { type: number }
 
     AppsMetricsResponse:
       description: |
