@@ -76,7 +76,9 @@ func requireTyped(expected string) bool {
 // endings). Returns the trimmed line and the scan error so the
 // caller can distinguish "EOF" from "garbled input".
 func readConfirmationLine(r io.Reader) (string, error) {
-	if nonInteractive { return "", errors.New("confirmation input is disabled by --non-interactive; supply the explicit confirmation flag") }
+	if nonInteractive {
+		return "", errors.New("confirmation input is disabled by --non-interactive; supply the explicit confirmation flag")
+	}
 	sc := bufio.NewScanner(r)
 	// Default ScanLines strips the trailing \n but keeps a trailing
 	// \r on \r\n inputs. Buffer cap is 64 KiB — a confirmation
