@@ -211,3 +211,20 @@ func TestDataAPIContractMissingBooleansAreRejected(t *testing.T) {
 		t.Fatal("accepted incomplete column metadata")
 	}
 }
+
+func TestDataAPIDiffRefusesSymlinkBaselineBeforeInspection(t *testing.T) {
+	resetJSONOut(t)
+	root := t.TempDir()
+	baseline := filepath.Join(root, "schema.json")
+	if err := os.WriteFile(baseline, dataAPIContractFixture(t, dataAPIDiffFixture()), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "linked-schema.json")
+	if err := os.Symlink(baseline, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	f := authedFakeAPI(t, `{}`, http.StatusCreated)
+	if code := cmdDataAPI([]string{"diff", "notes", "--baseline", link, "--check"}); code == 0 || f.sawMethod != "" {
+		t.Fatal("symlink baseline was inspected")
+	}
+}

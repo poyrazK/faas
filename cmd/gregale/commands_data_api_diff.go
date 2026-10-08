@@ -232,7 +232,7 @@ func cmdDataAPIDiff(args []string) int {
 		return 1
 	}
 	// Read and validate the baseline before starting any remote task.
-	file, err := os.Open(*baseline)
+	file, err := openCustomerFile(*baseline)
 	if err != nil {
 		return printErr("Could not read baseline", err)
 	}
