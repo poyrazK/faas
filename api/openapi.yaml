@@ -31257,6 +31257,7 @@ components:
         instance_id: {type: string, minLength: 1, maxLength: 256, description: App-provided workflow-run ID selected from this observed milestone.}
         position: {type: integer, minimum: 1, maximum: 32}
     OperationWorkflowTransition:
+      description: Allowed state edge declared by a pinned application workflow definition.
       type: object
       additionalProperties: false
       required: [from, to]
@@ -31295,18 +31296,21 @@ components:
         revision: {type: integer, format: int64, minimum: 1}
         occurred_at: {type: string, format: date-time}
     OperationWorkflowStateValidationRequest:
+      description: Batch of application-reported workflow updates to validate before their transaction commits.
       type: object
       additionalProperties: false
       required: [workflow_states]
       properties:
         workflow_states: {type: array, minItems: 1, maxItems: 64, items: {$ref: '#/components/schemas/OperationWorkflowStateReport'}}
     OperationWorkflowStateValidationResponse:
+      description: Validation outcome for an app-reported workflow-state batch.
       type: object
       additionalProperties: false
       required: [valid]
       properties:
         valid: {type: boolean}
     OperationWorkflowStateReportResponse:
+      description: Acknowledgement returned after the platform records an app-reported workflow-state update.
       type: object
       additionalProperties: false
       required: [id, operation_id, workflow, instance_id, state, revision]
@@ -31319,6 +31323,7 @@ components:
         state: {type: string}
         revision: {type: integer, format: int64, minimum: 1}
     OperationWorkflowState:
+      description: Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
       type: object
       additionalProperties: false
       required: [workflow, instance_id, state, terminal, stale, occurred_at, revision, updated_at]
@@ -31343,12 +31348,12 @@ components:
         operation_id: {type: string, format: uuid}
         workflow: {type: string}
         instance_id: {type: string}
-        from_state: {type: string, description: Previous app state when a declared transition was reported.}
+        from_state: {type: string, description: App state immediately before this retained revision, when the transition was declared.}
         state: {type: string}
         revision: {type: integer, format: int64, minimum: 1}
         occurred_at: {type: string, format: date-time}
         published_at: {type: string, format: date-time}
-        platform_tenant_id: {type: string, format: uuid, description: Included only for account operator feeds.}
+        platform_tenant_id: {type: string, format: uuid, description: Account-owner tenant identifier attached to this report in operator feeds.}
     OperationSubjectSpec:
       description: Optional public business reference extracted once from validated input on new admission. This metadata does not authorize access to the business entity.
       type: object
@@ -31407,7 +31412,7 @@ components:
           type: array
           maxItems: 32
           items: {$ref: '#/components/schemas/OperationWorkflowStep'}
-          description: Resolved app-declared read-only workflow steps mapped to this definition's transaction-backed milestones.
+          description: Materialized workflow step mappings included in this compact definition view.
         subject:
           $ref: '#/components/schemas/OperationSubjectSpec'
         name:
