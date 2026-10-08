@@ -59,8 +59,9 @@ func TestAppSavings_FreePlanReturns402(t *testing.T) {
 }
 
 // TestAppSavings_OneBilledHourInTwoDays pins the end-to-end arithmetic:
-// a 512 MB app (520 MB billable) that billed one hour in a 2-day window
-// saves the other 47 hours of always-on RAM, valued at €0.01/GB-h.
+// a 512 MB app (520 MB billable) that first billed at 12:00 on day one of
+// a 2-day window has a 36 h always-on baseline (from its first billed
+// hour) and saves the other 35 h, valued at €0.01/GB-h.
 func TestAppSavings_OneBilledHourInTwoDays(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	appID := mustSeedSizedApp(t, e, "my-api", 512, 0)
@@ -74,18 +75,21 @@ func TestAppSavings_OneBilledHourInTwoDays(t *testing.T) {
 	if out.Slug != "my-api" || out.BillableRAMMB != 520 || out.BaselineInstances != 1 {
 		t.Fatalf("shape = %+v, want my-api / 520 MB / 1 instance", out)
 	}
-	if want := int64(520 * 48 * 3600); out.AlwaysOnMBSeconds != want {
+	if want := int64(520 * 36 * 3600); out.AlwaysOnMBSeconds != want {
 		t.Errorf("always_on_mb_seconds = %d, want %d", out.AlwaysOnMBSeconds, want)
 	}
 	if out.ActualMBSeconds != 520*3600 {
 		t.Errorf("actual_mb_seconds = %d, want %d", out.ActualMBSeconds, 520*3600)
 	}
-	if want := int64(520 * 47 * 3600); out.SavedMBSeconds != want {
+	if want := int64(520 * 35 * 3600); out.SavedMBSeconds != want {
 		t.Errorf("saved_mb_seconds = %d, want %d", out.SavedMBSeconds, want)
 	}
-	// 520 MB × 47 h = 23.8671875 GB-h → 23,867 millicents (half up).
-	if out.SavedMillicents != 23_867 {
-		t.Errorf("saved_millicents = %d, want 23867", out.SavedMillicents)
+	// 520 MB × 35 h = 17.7734375 GB-h → 17,773 millicents (half up).
+	if out.SavedMillicents != 17_773 {
+		t.Errorf("saved_millicents = %d, want 17773", out.SavedMillicents)
+	}
+	if want := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC); !out.BaselineStart.Equal(want) {
+		t.Errorf("baseline_start = %v, want first billed hour %v", out.BaselineStart, want)
 	}
 	if out.PriceMillicentsPerGBHour != api.OverageMillicentsPerGBHour {
 		t.Errorf("price = %d, want overage rate %d", out.PriceMillicentsPerGBHour, api.OverageMillicentsPerGBHour)
@@ -123,6 +127,32 @@ func TestAppSavings_WindowClampedToRetention(t *testing.T) {
 	}
 	if out.BaselineInstances != 2 {
 		t.Errorf("baseline_instances = %d, want min_instances 2", out.BaselineInstances)
+	}
+}
+
+// TestAppSavings_MeasuresUpToNow pins the window end: today's usage is
+// counted (no midnight snap by default) and an until in the future never
+// credits always-on time that has not happened yet.
+func TestAppSavings_MeasuresUpToNow(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	appID := mustSeedSizedApp(t, e, "my-api", 512, 0)
+	now := time.Now().UTC()
+	if err := e.store.AppendUsage(t.Context(), e.acct.ID, appID, "instance-1", now.Truncate(time.Minute),
+		520*60, 1, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	future := now.AddDate(0, 0, 3).Format(time.RFC3339)
+	for _, path := range []string{"/v1/apps/my-api/savings", "/v1/apps/my-api/savings?until=" + future} {
+		out := decodeSavings(t, e, path)
+		if out.ActualMBSeconds != 520*60 {
+			t.Errorf("%s: actual_mb_seconds = %d, want today's %d", path, out.ActualMBSeconds, 520*60)
+		}
+		if out.PeriodEnd.After(time.Now().UTC()) || out.PeriodEnd.Before(now) {
+			t.Errorf("%s: period_end = %v, want now (%v)", path, out.PeriodEnd, now)
+		}
+		if limit := int64(520 * 3600); out.AlwaysOnMBSeconds > limit {
+			t.Errorf("%s: always_on_mb_seconds = %d, want at most one hour (%d)", path, out.AlwaysOnMBSeconds, limit)
+		}
 	}
 }
 

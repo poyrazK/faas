@@ -44,10 +44,17 @@ func (s *server) getAppSavings(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 
-	since, until, err := parseUsageWindow(r, time.Now().UTC())
+	now := time.Now().UTC()
+	since, until, err := parseUsageWindow(r, now)
 	if err != nil {
 		api.WriteProblem(w, err)
 		return
+	}
+	// Unlike the usage summary, measure up to now: the default
+	// midnight snap would hide today's usage, and an until in the
+	// future would credit always-on time that has not happened.
+	if r.URL.Query().Get("until") == "" || until.After(now) {
+		until = now
 	}
 	if minSince := until.AddDate(0, 0, -savingsMaxWindowDays); since.Before(minSince) {
 		since = minSince

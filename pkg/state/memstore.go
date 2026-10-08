@@ -18362,8 +18362,8 @@ func (m *MemStore) ListCreditLedgerForTest(accountID string) []CreditLedgerEntry
 
 // UsageByHour returns the per-app usage rows whose minute ∈ [start, end).
 // The Stripe pusher calls this hourly; MemStore synthesizes the per-hour
-// rollup from the per-minute rows on the fly — matches what PgStore would
-// do in SQL.
+// rollup from the per-minute rows on the fly — one row per (app, UTC hour)
+// with the hour in Month, matching PgStore's date_trunc('hour') group.
 func (m *MemStore) UsageByHour(_ context.Context, accountID string, start, end time.Time) ([]Usage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -18384,7 +18384,7 @@ func (m *MemStore) UsageByHour(_ context.Context, accountID string, start, end t
 		if u.Minute.Before(start) || !u.Minute.Before(end) {
 			continue
 		}
-		k := appHourKey{AccountID: u.AccountID, AppID: u.AppID}
+		k := appHourKey{AccountID: u.AccountID, AppID: u.AppID, Hour: u.Minute.UTC().Truncate(time.Hour)}
 		a := bucket[k]
 		a.AccountID = u.AccountID
 		a.AppID = u.AppID
@@ -18396,10 +18396,10 @@ func (m *MemStore) UsageByHour(_ context.Context, accountID string, start, end t
 		bucket[k] = a
 	}
 	out := make([]Usage, 0, len(bucket))
-	for _, a := range bucket {
+	for k, a := range bucket {
 		out = append(out, Usage{
 			AccountID: a.AccountID, AppID: a.AppID,
-			Month: start, MBSeconds: a.MBSeconds, Requests: a.Requests,
+			Month: k.Hour, MBSeconds: a.MBSeconds, Requests: a.Requests,
 			CPUUsec: a.CPUUsec, TXBytes: a.TXBytes, NetTxBytes: a.NetTxBytes,
 		})
 	}
@@ -19024,6 +19024,7 @@ func (m *MemStore) SetPaddleOverageClaimForTest(accountID string, windowStart ti
 type appHourKey struct {
 	AccountID string
 	AppID     string
+	Hour      time.Time
 }
 
 // recomputeMonthLocked rebuilds the (account, app, month) aggregate from
