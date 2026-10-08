@@ -1124,6 +1124,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
 		filepath.Join(root, "pkg", "api", "operations.go"),
 		filepath.Join(root, "pkg", "api", "operation_subject.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflows.go"),
 		filepath.Join(root, "pkg", "api", "operation_milestones.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
@@ -1176,6 +1177,16 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		}
 		dtos[schemaName] = fields
 	}
+
+	// The public workflow step schema represents the resolved projection that
+	// the Go API names OperationWorkflowSpec. Keep its fields under the wire
+	// schema name for both directions of parity checking.
+	workflowStepFields, ok := dtos["OperationWorkflowSpec"]
+	if !ok {
+		t.Fatalf("operation workflow spec DTO is missing")
+	}
+	delete(dtos, "OperationWorkflowSpec")
+	dtos["OperationWorkflowStep"] = workflowStepFields
 
 	// The Go API calls the nested outcome EventReplayBackfillItem, while the
 	// standalone OpenAPI schema uses the response-oriented name so SDKs can
