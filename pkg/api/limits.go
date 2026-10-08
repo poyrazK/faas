@@ -223,6 +223,13 @@ const NativeHostHelperCgroupEventsMaxBytes = 4096
 
 // Candidate discovery is separate from approval and approved-intent sweeps.
 // One bounded remote read completes inside a fenced durable poll lease.
+// TelemetryIngestDBConcurrency bounds how many gateway debug-telemetry
+// records (app errors, request telemetry) one apid writes at once. Those
+// writes share apid's database pool with the customer API; unbounded, one
+// app's error stream held every connection and secret updates failed at
+// their deadline (production-us hunt #5, H5-34).
+const TelemetryIngestDBConcurrency = 4
+
 const (
 	EnvironmentGitSourcePollLeaseDuration = 2 * time.Minute
 	EnvironmentGitSourcePollReadTimeout   = 45 * time.Second

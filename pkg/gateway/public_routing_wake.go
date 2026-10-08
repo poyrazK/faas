@@ -106,6 +106,7 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 }
 
 func (h *Handler) writePublicRoutingWakeError(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, wakeWaitExpired bool, err error) {
+	h.logFleetCapacityRefusal(app.ID, err)
 	showPage := acceptsWakePage(r)
 	if showPage && r.Context().Err() == nil && wakeWaitExpired && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 		h.noteWakePageServed(r.Context(), app.ID, app.AccountID, requestIDFrom(r), time.Now())

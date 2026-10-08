@@ -4139,7 +4139,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 	}
 	row := queryer.QueryRow(ctx, upd,
 		id,
-		p.RAMMB, p.SetIdleTimeout, intOrZero(p.IdleTimeoutS),
+		p.RAMMB, p.SetIdleTimeout, nullableInt(intOrZero(p.IdleTimeoutS)),
 		p.MaxConcurrency, nullAppStatus(p.Status),
 		p.Manifest != nil, manifestBytes,
 		p.SetMinInstances, intOrZero(p.MinInstances),

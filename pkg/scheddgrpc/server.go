@@ -348,6 +348,9 @@ type Server struct {
 	// hosts, but whose app a peer schedd owns, to that owner (issue #3359).
 	// nil keeps the pre-relay FailedPrecondition behaviour.
 	failureRelay ForeignFailureRelay
+	// owns is the engine's app-ownership rule for an owner-less schedd
+	// (WithAppOwnership). nil keeps the legacy single-box "own everything".
+	owns func(state.App) bool
 }
 
 // ForeignFailureRelay publishes an instance failure report for the schedd
@@ -401,6 +404,19 @@ func (s *Server) WithOwner(owner OwnerNodeID, resolver AppResolver) *Server {
 	return s
 }
 
+// WithAppOwnership makes an owner-less schedd refuse RPCs for apps it does
+// not own. The control-plane schedd of a multi-node fleet has no owner node,
+// so the guard used to admit any app; a wake that reached it for an app a
+// compute schedd owns was admitted outside that owner's ledger. owns is
+// Engine.OwnsApp, the rule its own background sweeps apply (H5-33).
+func (s *Server) WithAppOwnership(owns func(state.App) bool) *Server {
+	if s == nil {
+		return s
+	}
+	s.owns = owns
+	return s
+}
+
 // WithPeerNodeResolver enables handler-layer identity binding for RPCs that
 // carry a compute-node identity in their payload. The TLS handshake already
 // checks chain, SAN, EKU, and active-node membership; this resolver closes the
@@ -445,7 +461,7 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 	// stale direct dial hits this guard and returns 503 to the
 	// customer rather than silently waking the wrong fleet's
 	// instances.
-	if _, err := authorizeApp(ctx, s.owner, s.resolver, req.GetAppId()); err != nil {
+	if _, err := s.authorizeApp(ctx, req.GetAppId()); err != nil {
 		return nil, err
 	}
 	start := time.Now()
@@ -490,7 +506,7 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 //     so the gateway can treat it as a no-op.
 func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceRequest) (*scheddpb.AdmitInstanceResponse, error) {
 	const op = "AdmitInstance"
-	if _, err := authorizeApp(ctx, s.owner, s.resolver, req.GetAppId()); err != nil {
+	if _, err := s.authorizeApp(ctx, req.GetAppId()); err != nil {
 		return nil, err
 	}
 	start := time.Now()
@@ -583,7 +599,7 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 // legacy wire — this method is additive per ADR-016.
 func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest) (*scheddpb.EnsureWakeResponse, error) {
 	const op = "EnsureWake"
-	if _, err := authorizeApp(ctx, s.owner, s.resolver, req.GetAppId()); err != nil {
+	if _, err := s.authorizeApp(ctx, req.GetAppId()); err != nil {
 		return nil, err
 	}
 	start := time.Now()
@@ -676,7 +692,7 @@ func (s *Server) ReportActivity(ctx context.Context, req *scheddpb.ReportActivit
 	in := req.GetTouches()
 	touches := make([]state.InstanceTouch, 0, len(in))
 	for _, t := range in {
-		if _, err := authorizeInstance(ctx, s.owner, s.resolver, t.GetInstanceId()); err != nil {
+		if _, err := s.authorizeInstance(ctx, t.GetInstanceId()); err != nil {
 			// Drop silently: the legacy ReportActivity already
 			// tolerates dropped touches (a non-owner instance
 			// belongs to a different schedd that will receive
@@ -702,7 +718,7 @@ func (s *Server) ReportActivity(ctx context.Context, req *scheddpb.ReportActivit
 // Idempotent: parking an already-parked instance is a no-op + Ok=true.
 func (s *Server) ParkInstance(ctx context.Context, req *scheddpb.ParkInstanceRequest) (*scheddpb.ParkInstanceResponse, error) {
 	const op = "ParkInstance"
-	if _, err := authorizeInstance(ctx, s.owner, s.resolver, req.GetInstanceId()); err != nil {
+	if _, err := s.authorizeInstance(ctx, req.GetInstanceId()); err != nil {
 		return nil, err
 	}
 	ctx = withTraceIDSpan(ctx) // PR-#TBD / C6
@@ -782,7 +798,7 @@ func (s *Server) ForceColdBootNextWake(ctx context.Context, req *scheddpb.ForceC
 // it into 404 with code "instance_not_found".
 func (s *Server) ForceRestartInstance(ctx context.Context, req *scheddpb.ForceRestartInstanceRequest) (*scheddpb.ForceRestartInstanceResponse, error) {
 	const op = "ForceRestartInstance"
-	if _, err := authorizeInstance(ctx, s.owner, s.resolver, req.GetInstanceId()); err != nil {
+	if _, err := s.authorizeInstance(ctx, req.GetInstanceId()); err != nil {
 		return nil, err
 	}
 	ctx = withTraceIDSpan(ctx) // PR-#TBD / C6
@@ -877,7 +893,7 @@ func (s *Server) ForceRestartInstance(ctx context.Context, req *scheddpb.ForceRe
 func (s *Server) ReportLivenessFailed(ctx context.Context, req *scheddpb.LivenessFailedReport) (*scheddpb.LivenessFailedAck, error) {
 	const op = "ReportLivenessFailed"
 	ctx = sched.WithFailureReportSourceNode(ctx, req.GetSourceNodeId())
-	if _, err := authorizeInstance(ctx, s.owner, s.resolver, req.GetInstanceId()); err != nil {
+	if _, err := s.authorizeInstance(ctx, req.GetInstanceId()); err != nil {
 		relayed, relayErr := s.relayForeignFailure(ctx, err, sched.InstanceFailureReport{
 			InstanceID: req.GetInstanceId(), Kind: sched.InstanceFailureLiveness, SourceNodeID: req.GetSourceNodeId(), Reason: req.GetReason(),
 		})
@@ -935,7 +951,7 @@ func (s *Server) ReportLivenessFailed(ctx context.Context, req *scheddpb.Livenes
 func (s *Server) ReportWorkloadOOM(ctx context.Context, req *scheddpb.ReportWorkloadOOMRequest) (*scheddpb.ReportWorkloadOOMAck, error) {
 	const op = "ReportWorkloadOOM"
 	ctx = sched.WithFailureReportSourceNode(ctx, req.GetSourceNodeId())
-	if _, err := authorizeInstance(ctx, s.owner, s.resolver, req.GetInstanceId()); err != nil {
+	if _, err := s.authorizeInstance(ctx, req.GetInstanceId()); err != nil {
 		relayed, relayErr := s.relayForeignFailure(ctx, err, sched.InstanceFailureReport{
 			InstanceID: req.GetInstanceId(), Kind: sched.InstanceFailureWorkloadOOM, SourceNodeID: req.GetSourceNodeId(),
 			PeakMB: int(req.GetPeakMb()), PlanMB: int(req.GetPlanMb()),
@@ -1033,7 +1049,7 @@ func (s *Server) StreamAppLogs(req *scheddpb.StreamAppLogsRequest, stream schedd
 	// non-owner dial returns FailedPrecondition immediately so
 	// the apid SSE handler surfaces a clean 4xx rather than
 	// hanging on a closed stream.
-	if _, err := authorizeApp(stream.Context(), s.owner, s.resolver, req.GetAppId()); err != nil {
+	if _, err := s.authorizeApp(stream.Context(), req.GetAppId()); err != nil {
 		sendErr = err
 		return err
 	}

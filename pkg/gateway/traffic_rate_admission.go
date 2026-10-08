@@ -69,16 +69,19 @@ func (h *Handler) rejectTrafficRate(w http.ResponseWriter, r *http.Request, app 
 		return
 	}
 	w.Header().Set("Retry-After", "1")
+	var bucket rateLimitBucket
+	detail := "this app exceeded its request rate; slow down and retry"
 	if scope == "account" {
-		h.writeAccountRateLimitHeaders(w, app.AccountID, app.Plan)
+		bucket = h.writeAccountRateLimitHeaders(w, app.AccountID, app.Plan)
+		detail = "this account's apps together exceeded the plan's request rate; slow down and retry"
 		if h.metrics != nil {
 			h.metrics.ObserveAccountRateLimit(app.AccountID, string(app.Plan))
 		}
 	} else {
-		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
+		bucket = h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
 		if h.metrics != nil {
 			h.metrics.ObserveRateLimit(app.ID, string(app.Plan))
 		}
 	}
-	api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited", "Rate limit exceeded", "slow down and retry"))
+	writeRateLimited(w, bucket, detail)
 }
