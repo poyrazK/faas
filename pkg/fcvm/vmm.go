@@ -5731,7 +5731,7 @@ func (v *JailerVMM) unmountBindMounts(instance string) error {
 				if b.mount == nil || *current != *b.mount {
 					return errors.New("bind mount identity changed; retaining ownership")
 				}
-				if err := exec.Command("umount", b.mountpoint).Run(); err != nil {
+				if err := umountRetryBusy(b.mountpoint); err != nil {
 					return fmt.Errorf("unmount owned image: %w", err)
 				}
 				remaining, err := resourceMountAt(b.mountpoint)
