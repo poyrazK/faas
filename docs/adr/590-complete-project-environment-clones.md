@@ -8068,3 +8068,64 @@ quota, cleanup and schema-registry regressions pass, as do SQLC parity, encoding
 shell quoting and ADR numbering checks. These tests validate protocol and
 metadata ownership, not native driver qualification or live R2/OVH behavior.
 Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+## Fresh inactive checkpoint PostgreSQL credentials
+
+A separate private credential journal derives each binding from the frozen
+capture and exact original runtime-ready fork. It assigns a new generation-1
+binding and native identity, retains the captured app, target scope, environment
+key and access mode, and binds the original runtime/verification/isolation proof
+and dataset. Source credential material is never read, copied or accepted as an
+input. Reservation precedes encryption and any provider IO.
+
+The worker generates 256 bits of fresh entropy, encodes a password and seals an
+age envelope containing the immutable plan digest before claiming native work.
+The namespace, plan digest, original key ID and ciphertext digest are checked
+before dispatch. New centralized limits bound each encrypted envelope to 4 KiB
+and each account to 4,096 owned journals, including planned owners. Account
+locking serializes reservations; occupied ownership remains charged until an
+explicit future retirement protocol. This caps retained ciphertext at 16 MiB
+per account without relying on a provider retry to recover secret material.
+
+Only a known committing claim can prepare the named fresh inactive native
+identity with that original password. The adapter must prove exact original
+request, envelope, owner, dataset, access, identity and creation time, no
+source/inherited authority, private scope and unchanged original fork SQL scope.
+Independent observation must prove the identity remains disabled through the
+renewed worker lease. Providers unable to separate inactive credential ownership
+from the original closed SQL roster cannot qualify this seam. Preparation may
+not add SQL grants, enable logins/writers or publish app secrets.
+
+Lost sealing/claim/native/commit replies and handoff reuse the original encrypted
+material and observe original native intent without reissuing or repairing an
+identity. Key rotation can open the original envelope during overlap; an absent
+original key blocks dispatch before the claim, and never authorizes resealing.
+Requested/prepared observation recovery needs no plaintext or key access.
+Plaintext buffers are cleared after the synchronous native call, debug/JSON
+representations redact the secret, and provider errors that could echo credential
+input are replaced with a non-secret unavailable error.
+
+Runtime health, original data verification, SQL closure and capture retention
+are authenticated before dispatch and again after native IO. Changed scope,
+access, ownership, proof or current disabled state fails closed. A final-write
+failure leaves the original requested owner available for observation-only
+recovery. Prepared identities remain private journal entries; no managed binding,
+app-secret publication, source modification or operation-inventory change occurs.
+
+Native fork cleanup refuses any owned credential journal so uncertain or prepared
+identities cannot outlive a deleted dataset without explicit retirement evidence.
+Downgrade likewise refuses owned journals and retains original runtime authority
+through restrictive foreign keys. Activation, native credential retirement,
+sealed connection-value preparation and complete publication remain separate
+requirements. There is no built-in qualified native credential driver; live
+R2/OVH qualification remains deferred.
+
+Validation: the targeted credential, restore, isolation, verification and runtime
+coordinator suite passes against PostgreSQL, alongside state/schema tests,
+SQLC parity, encoding, shell-quoting and ADR-number checks; targeted lint
+reports zero issues. Credential cases
+cover both captured bindings sharing a database, lost replies and handoff,
+proof rejection, prerequisite loss after IO, key rotation and envelope tampering,
+late writes, migration ownership guards, account quota, cleanup blocking and
+plaintext redaction. Native observations use the protocol test driver; these
+checks do not establish live provider qualification.

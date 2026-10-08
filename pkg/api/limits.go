@@ -365,10 +365,15 @@ const (
 	PostgresCopyWorkerTasksMax               = 64
 	// Selected source databases per private checkpoint admission barrier.
 	// Oversize sets fail before provider or SQL IO; they are never truncated.
-	PostgresCheckpointDatabasesMax = 1024
-	PostgresCopyInventoryMaxBytes  = 4 << 20
-	PostgresCopyEnvelopeMaxBytes   = PostgresCopyInventoryMaxBytes + (16 << 10)
-	PostgresCopyCiphertextMaxBytes = PostgresCopyEnvelopeMaxBytes + (64 << 10)
+	// Private dormant stage credentials retain one bounded encrypted envelope
+	// per durable owner until explicit terminal retirement.
+	PostgresCheckpointCredentialsPerAccountMax     = 4096
+	PostgresCheckpointCredentialCiphertextMaxBytes = 4 << 10
+	PostgresCheckpointCredentialPasswordBytes      = 32
+	PostgresCheckpointDatabasesMax                 = 1024
+	PostgresCopyInventoryMaxBytes                  = 4 << 20
+	PostgresCopyEnvelopeMaxBytes                   = PostgresCopyInventoryMaxBytes + (16 << 10)
+	PostgresCopyCiphertextMaxBytes                 = PostgresCopyEnvelopeMaxBytes + (64 << 10)
 	// PostgresCopyReaderMaxOperations bounds a private reader's retained
 	// provider operation chain. Oversize chains cannot retire ownership.
 	PostgresCopyReaderMaxOperations = 128

@@ -1950,7 +1950,7 @@ WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state<>'de
         AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp())
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired')
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id
-        AND c.state<>'retired' AND (c.state<>'deleting' OR c.endpoint_id IS NULL)) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at
+        AND c.state<>'retired' AND (c.state<>'deleting' OR c.endpoint_id IS NULL)) AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials credential WHERE credential.operation_id=r.operation_id AND credential.source_database_id=r.source_database_id) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at
 `
 
 type BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanupParams struct {
@@ -2551,6 +2551,46 @@ func (q *Queries) ClaimCloneCheckpointObjectTarget(ctx context.Context, db DBTX,
 		&i.RequestedAt,
 		&i.ObservationSha256,
 		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointPostgresCredential = `-- name: ClaimCloneCheckpointPostgresCredential :one
+UPDATE project_environment_clone_checkpoint_postgres_credentials i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_binding_id=$2::uuid AND i.state='sealed'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_binding_id, i.source_database_id, i.account_id, i.target_binding_id, i.plan, i.state, i.ciphertext, i.key_id, i.ciphertext_sha256, i.requested_at, i.observation_sha256, i.prepared_at
+`
+
+type ClaimCloneCheckpointPostgresCredentialParams struct {
+	OperationID      pgtype.UUID
+	SourceBindingID  pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointPostgresCredential,
+		arg.OperationID,
+		arg.SourceBindingID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresCredential
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.TargetBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.PreparedAt,
 	)
 	return i, err
 }
@@ -6021,6 +6061,17 @@ type CountAppEnvironmentIntentInScopeParams struct {
 
 func (q *Queries) CountAppEnvironmentIntentInScope(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentInScopeParams) (int64, error) {
 	row := db.QueryRow(ctx, countAppEnvironmentIntentInScope, arg.AccountID, arg.AppID, arg.Scope)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countCloneCheckpointPostgresCredentials = `-- name: CountCloneCheckpointPostgresCredentials :one
+SELECT count(*) FROM project_environment_clone_checkpoint_postgres_credentials WHERE account_id=$1
+`
+
+func (q *Queries) CountCloneCheckpointPostgresCredentials(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countCloneCheckpointPostgresCredentials, accountID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -13034,6 +13085,35 @@ func (q *Queries) FinishCloneCheckpointObjectTargetBucket(ctx context.Context, d
 	return result.RowsAffected(), nil
 }
 
+const finishCloneCheckpointPostgresCredential = `-- name: FinishCloneCheckpointPostgresCredential :execrows
+UPDATE project_environment_clone_checkpoint_postgres_credentials i SET state='prepared',observation_sha256=$1::text,prepared_at=clock_timestamp()
+WHERE i.operation_id=$2::uuid AND i.source_binding_id=$3::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointPostgresCredentialParams struct {
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	SourceBindingID   pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresCredentialParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPostgresCredential,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.SourceBindingID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishCloneCheckpointPostgresIsolation = `-- name: FinishCloneCheckpointPostgresIsolation :execrows
 UPDATE project_environment_clone_checkpoint_postgres_isolation i SET state='adopted',observation_sha256=$1::text,
 adopted_database_id=$2::uuid,adopted_at=clock_timestamp()
@@ -16657,6 +16737,52 @@ func (q *Queries) InsertCloneCheckpointObjectTarget(ctx context.Context, db DBTX
 		&i.RequestedAt,
 		&i.ObservationSha256,
 		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPostgresCredential = `-- name: InsertCloneCheckpointPostgresCredential :one
+INSERT INTO project_environment_clone_checkpoint_postgres_credentials(operation_id,source_binding_id,source_database_id,account_id,target_binding_id,plan)
+SELECT o.id,$1::uuid,$2::uuid,o.account_id,$3::uuid,$4::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$5::uuid AND o.status='capturing' AND o.revision=$6::bigint
+AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_binding_id, source_database_id, account_id, target_binding_id, plan, state, ciphertext, key_id, ciphertext_sha256, requested_at, observation_sha256, prepared_at
+`
+
+type InsertCloneCheckpointPostgresCredentialParams struct {
+	SourceBindingID  pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	TargetBindingID  pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPostgresCredential,
+		arg.SourceBindingID,
+		arg.SourceDatabaseID,
+		arg.TargetBindingID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresCredential
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.TargetBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.PreparedAt,
 	)
 	return i, err
 }
@@ -46567,6 +46693,36 @@ func (q *Queries) ReadCloneCheckpointObjectTarget(ctx context.Context, db DBTX, 
 	return i, err
 }
 
+const readCloneCheckpointPostgresCredential = `-- name: ReadCloneCheckpointPostgresCredential :one
+SELECT operation_id, source_binding_id, source_database_id, account_id, target_binding_id, plan, state, ciphertext, key_id, ciphertext_sha256, requested_at, observation_sha256, prepared_at FROM project_environment_clone_checkpoint_postgres_credentials WHERE operation_id=$1 AND source_binding_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointPostgresCredentialParams struct {
+	OperationID     pgtype.UUID
+	SourceBindingID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPostgresCredential, arg.OperationID, arg.SourceBindingID)
+	var i ProjectEnvironmentCloneCheckpointPostgresCredential
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.TargetBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.PreparedAt,
+	)
+	return i, err
+}
+
 const readCloneCheckpointPostgresIsolation = `-- name: ReadCloneCheckpointPostgresIsolation :one
 SELECT operation_id, source_database_id, plan, state, requested_at, observation_sha256, adopted_database_id, adopted_at FROM project_environment_clone_checkpoint_postgres_isolation WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
 `
@@ -55907,7 +56063,7 @@ WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state='del
     AND o.id=r.operation_id AND o.status='compensating' AND o.revision=$3::bigint
     AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired')
-    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials credential WHERE credential.operation_id=r.operation_id AND credential.source_database_id=r.source_database_id) RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required
 `
 
 type RetireProjectEnvironmentCloneNativeForkDatabaseParams struct {
@@ -57978,6 +58134,52 @@ func (q *Queries) ScheduleWorkflowRunFenced(ctx context.Context, db DBTX, arg Sc
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const sealCloneCheckpointPostgresCredential = `-- name: SealCloneCheckpointPostgresCredential :one
+UPDATE project_environment_clone_checkpoint_postgres_credentials i SET state='sealed',ciphertext=$1::bytea,key_id=$2::text,ciphertext_sha256=$3::text
+WHERE i.operation_id=$4::uuid AND i.source_binding_id=$5::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$6::bigint AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_binding_id, i.source_database_id, i.account_id, i.target_binding_id, i.plan, i.state, i.ciphertext, i.key_id, i.ciphertext_sha256, i.requested_at, i.observation_sha256, i.prepared_at
+`
+
+type SealCloneCheckpointPostgresCredentialParams struct {
+	Ciphertext       []byte
+	KeyID            string
+	CiphertextSha256 string
+	OperationID      pgtype.UUID
+	SourceBindingID  pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) SealCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg SealCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error) {
+	row := db.QueryRow(ctx, sealCloneCheckpointPostgresCredential,
+		arg.Ciphertext,
+		arg.KeyID,
+		arg.CiphertextSha256,
+		arg.OperationID,
+		arg.SourceBindingID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresCredential
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.TargetBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.PreparedAt,
+	)
+	return i, err
 }
 
 const selectPendingFireNowRequestForNode = `-- name: SelectPendingFireNowRequestForNode :one

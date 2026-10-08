@@ -10737,7 +10737,7 @@ WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.
         AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp())
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired')
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id
-        AND c.state<>'retired' AND (c.state<>'deleting' OR c.endpoint_id IS NULL)) RETURNING r.*;
+        AND c.state<>'retired' AND (c.state<>'deleting' OR c.endpoint_id IS NULL)) AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials credential WHERE credential.operation_id=r.operation_id AND credential.source_database_id=r.source_database_id) RETURNING r.*;
 
 -- name: RecordProjectEnvironmentClonePostgresSnapshotRestoreCleanupIdentity :one
 UPDATE project_environment_clone_postgres_snapshot_restores r SET target_provider_resource_id=sqlc.arg(target_provider_resource_id)::text,
@@ -11031,7 +11031,7 @@ WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.
     AND o.id=r.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
     AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired')
-    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') RETURNING d.*;
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials credential WHERE credential.operation_id=r.operation_id AND credential.source_database_id=r.source_database_id) RETURNING d.*;
 
 
 -- name: ReadProjectEnvironmentClonePostgresCopyTarget :one
@@ -15078,3 +15078,33 @@ AND d.lease_token IS NULL AND d.lease_until IS NULL AND d.deleted_at IS NULL
 AND d.provider_resource_id=r.target_provider_resource_id AND d.backend_id=r.backend_id AND d.backend_fingerprint=r.backend_fingerprint
 AND o.id=i.operation_id AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
 AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp();
+
+-- name: ReadCloneCheckpointPostgresCredential :one
+SELECT * FROM project_environment_clone_checkpoint_postgres_credentials WHERE operation_id=$1 AND source_binding_id=$2 FOR UPDATE;
+
+-- name: CountCloneCheckpointPostgresCredentials :one
+SELECT count(*) FROM project_environment_clone_checkpoint_postgres_credentials WHERE account_id=$1;
+
+-- name: InsertCloneCheckpointPostgresCredential :one
+INSERT INTO project_environment_clone_checkpoint_postgres_credentials(operation_id,source_binding_id,source_database_id,account_id,target_binding_id,plan)
+SELECT o.id,sqlc.arg(source_binding_id)::uuid,sqlc.arg(source_database_id)::uuid,o.account_id,sqlc.arg(target_binding_id)::uuid,sqlc.arg(plan)::jsonb FROM project_environment_clone_operations o
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp() RETURNING *;
+
+-- name: SealCloneCheckpointPostgresCredential :one
+UPDATE project_environment_clone_checkpoint_postgres_credentials i SET state='sealed',ciphertext=sqlc.arg(ciphertext)::bytea,key_id=sqlc.arg(key_id)::text,ciphertext_sha256=sqlc.arg(ciphertext_sha256)::text
+WHERE i.operation_id=sqlc.arg(operation_id)::uuid AND i.source_binding_id=sqlc.arg(source_binding_id)::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()) RETURNING i.*;
+
+-- name: ClaimCloneCheckpointPostgresCredential :one
+UPDATE project_environment_clone_checkpoint_postgres_credentials i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=sqlc.arg(operation_id)::uuid AND i.source_binding_id=sqlc.arg(source_binding_id)::uuid AND i.state='sealed'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()) RETURNING i.*;
+
+-- name: FinishCloneCheckpointPostgresCredential :execrows
+UPDATE project_environment_clone_checkpoint_postgres_credentials i SET state='prepared',observation_sha256=sqlc.arg(observation_sha256)::text,prepared_at=clock_timestamp()
+WHERE i.operation_id=sqlc.arg(operation_id)::uuid AND i.source_binding_id=sqlc.arg(source_binding_id)::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp());

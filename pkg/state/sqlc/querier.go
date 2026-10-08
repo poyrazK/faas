@@ -150,6 +150,7 @@ type Querier interface {
 	CheckedRollbackTargetFacts(ctx context.Context, db DBTX, arg CheckedRollbackTargetFactsParams) ([]byte, error)
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
 	ClaimCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
+	ClaimCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error)
 	ClaimCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error)
 	ClaimCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresRuntimeParams) (ProjectEnvironmentCloneCheckpointPostgresRuntime, error)
 	ClaimCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error)
@@ -250,6 +251,7 @@ type Querier interface {
 	// References and plaintext variables share the app's environment-key quota.
 	CountAppEnvironmentIntent(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentParams) (int64, error)
 	CountAppEnvironmentIntentInScope(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentInScopeParams) (int64, error)
+	CountCloneCheckpointPostgresCredentials(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountCustomerOperationDefinitionNames(ctx context.Context, db DBTX, arg CountCustomerOperationDefinitionNamesParams) (int64, error)
 	CountCustomerOperationDeliveryRetries(ctx context.Context, db DBTX, operationID pgtype.UUID) (int64, error)
 	CountCustomerOperationStreams(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -672,6 +674,7 @@ type Querier interface {
 	FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg FindInvoiceIDsByProviderKeyParams) ([]pgtype.UUID, error)
 	FindManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg FindManagedPostgresLifecycleDatabaseParams) (ManagedPostgresDatabase, error)
 	FinishCloneCheckpointObjectTargetBucket(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectTargetBucketParams) (int64, error)
+	FinishCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresCredentialParams) (int64, error)
 	FinishCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresIsolationParams) (int64, error)
 	FinishCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresRuntimeParams) (int64, error)
 	FinishCloneCheckpointPostgresRuntimeDatabase(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresRuntimeDatabaseParams) (int64, error)
@@ -859,6 +862,7 @@ type Querier interface {
 	InsertAppErrorRequest(ctx context.Context, db DBTX, arg InsertAppErrorRequestParams) error
 	InsertCheckedRollback(ctx context.Context, db DBTX, arg InsertCheckedRollbackParams) error
 	InsertCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
+	InsertCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error)
 	InsertCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error)
 	InsertCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresRuntimeParams) (ProjectEnvironmentCloneCheckpointPostgresRuntime, error)
 	InsertCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error)
@@ -2187,6 +2191,7 @@ type Querier interface {
 	ReadCanaryRouteGateOwner(ctx context.Context, db DBTX, deploymentID string) (ReadCanaryRouteGateOwnerRow, error)
 	ReadCheckedRollback(ctx context.Context, db DBTX, arg ReadCheckedRollbackParams) ([]byte, error)
 	ReadCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
+	ReadCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error)
 	ReadCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error)
 	ReadCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresRuntimeParams) (ProjectEnvironmentCloneCheckpointPostgresRuntime, error)
 	ReadCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error)
@@ -2664,6 +2669,7 @@ type Querier interface {
 	SaveServiceRolloutHandoff(ctx context.Context, db DBTX, arg SaveServiceRolloutHandoffParams) error
 	SaveWebhookAutomationBinding(ctx context.Context, db DBTX, arg SaveWebhookAutomationBindingParams) (WorkflowWebhookBinding, error)
 	ScheduleWorkflowRunFenced(ctx context.Context, db DBTX, arg ScheduleWorkflowRunFencedParams) (int64, error)
+	SealCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg SealCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error)
 	// Hold placement stable while the caller changes the claimed request status.
 	SelectPendingFireNowRequestForNode(ctx context.Context, db DBTX, nodeID pgtype.Text) (SelectPendingFireNowRequestForNodeRow, error)
 	ServiceCapacityPlacement(ctx context.Context, db DBTX) ([]byte, error)
