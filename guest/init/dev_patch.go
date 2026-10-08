@@ -41,6 +41,9 @@ type devPatchIO struct {
 	apply   func(dir string, archive []byte, deleted []string) (devpatch.ApplyResult, error)
 	restart func() error
 	sleep   func(context.Context, time.Duration) bool
+	// ack reports the outcome of one generation to vmmd; errorCode is empty
+	// on success. It is best-effort and never blocks polling.
+	ack func(generation, applyMS int64, errorCode string)
 }
 
 // devPatchStopErrors end polling: delivery is off, the app is not a
@@ -83,18 +86,22 @@ func applyDevPatch(log *slog.Logger, io devPatchIO, patch *devPatchWire) {
 	sum := sha256.Sum256(patch.Archive)
 	if patch.ImageDir != api.DevPatchImageDir || hex.EncodeToString(sum[:]) != patch.Digest {
 		log.Warn("developer live patch rejected", "generation", patch.Generation, "reason", "invalid_patch")
+		io.ack(patch.Generation, 0, "invalid_patch")
 		return
 	}
 	started := time.Now()
 	result, err := io.apply(patch.ImageDir, patch.Archive, patch.Deleted)
 	if err != nil {
 		log.Warn("developer live patch failed", "generation", patch.Generation, "written", result.Written, "err", err)
+		io.ack(patch.Generation, time.Since(started).Milliseconds(), "apply_failed")
 		return
 	}
 	if err := io.restart(); err != nil {
 		log.Warn("developer live patch applied but restart failed", "generation", patch.Generation, "err", err)
+		io.ack(patch.Generation, time.Since(started).Milliseconds(), "restart_failed")
 		return
 	}
+	io.ack(patch.Generation, time.Since(started).Milliseconds(), "")
 	log.Info("developer live patch applied", "generation", patch.Generation,
 		"written", result.Written, "deleted", result.Deleted, "bytes", result.Bytes,
 		"apply_ms", time.Since(started).Milliseconds())

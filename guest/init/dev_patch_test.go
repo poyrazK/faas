@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"testing"
 	"time"
 
@@ -21,6 +23,7 @@ type devPatchScript struct {
 	restarts int
 	delays   []time.Duration
 	applyErr error
+	acks     []string
 }
 
 func (s *devPatchScript) io() devPatchIO {
@@ -44,6 +47,9 @@ func (s *devPatchScript) io() devPatchIO {
 		sleep: func(_ context.Context, d time.Duration) bool {
 			s.delays = append(s.delays, d)
 			return true
+		},
+		ack: func(generation, _ int64, code string) {
+			s.acks = append(s.acks, fmt.Sprintf("%d:%s", generation, code))
 		},
 	}
 }
@@ -69,6 +75,9 @@ func TestDevPatchLoopAppliesNewGenerationsAndRestarts(t *testing.T) {
 	if len(script.applied) != 2 || script.applied[0] != "/app:one" || script.applied[1] != "/app:three" || script.restarts != 2 {
 		t.Fatalf("applied = %v restarts = %d", script.applied, script.restarts)
 	}
+	if want := []string{"1:", "3:"}; !reflect.DeepEqual(script.acks, want) {
+		t.Fatalf("acks = %v, want %v", script.acks, want)
+	}
 }
 
 func TestDevPatchLoopStopsWhenDisabledOrUnsupported(t *testing.T) {
@@ -91,6 +100,9 @@ func TestDevPatchLoopRejectsTamperedPatches(t *testing.T) {
 	if len(script.applied) != 0 || script.restarts != 0 {
 		t.Fatalf("applied %v restarts %d, want tampered patches rejected", script.applied, script.restarts)
 	}
+	if want := []string{"1:invalid_patch", "2:invalid_patch"}; !reflect.DeepEqual(script.acks, want) {
+		t.Fatalf("acks = %v, want %v", script.acks, want)
+	}
 	if want := []int64{0, 1, 2}; !equalInt64(script.asked, want) {
 		t.Fatalf("generations asked = %v, want rejected generations skipped (%v)", script.asked, want)
 	}
@@ -101,6 +113,9 @@ func TestDevPatchLoopFailedApplyDoesNotRestart(t *testing.T) {
 	runDevPatchLoop(context.Background(), quietLog, script.io())
 	if len(script.applied) != 1 || script.restarts != 0 {
 		t.Fatalf("applied %v restarts %d, want no restart after a failed apply", script.applied, script.restarts)
+	}
+	if want := []string{"1:apply_failed"}; !reflect.DeepEqual(script.acks, want) {
+		t.Fatalf("acks = %v, want %v", script.acks, want)
 	}
 }
 

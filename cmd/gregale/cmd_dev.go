@@ -563,6 +563,15 @@ func cmdDev(args []string) int {
 				onQueued: func(dep api.DeploymentResponse) {
 					devTelemetry.setDeploymentID(dep.ID)
 					devTelemetry.setDevPatch(dep.DevPatch)
+					if dep.DevPatch != nil && dep.DevPatch.Generation > 0 {
+						go watchDevPatch(deployCtx, dep.DevPatch.Generation,
+							func(ctx context.Context, generation int64) (api.DevPatchStatusResponse, error) {
+								return client.GetDevPatchStatus(ctx, project, workspaceID, generation)
+							}, devPatchWatchInterval, devPatchWatchTimeout,
+							func(status api.DevPatchStatusResponse, observedAt time.Time) {
+								reportDevPatch(dep.ID, status, devTelemetry.patchDelivered(status, observedAt))
+							})
+					}
 					if queued != nil {
 						queued(dep.ID)
 					}
@@ -805,7 +814,7 @@ func cmdDevHistory(args []string) int {
 		if !item.WithinSLO {
 			mark = "slow"
 		}
-		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s\n", mark, item.CreatedAt.Local().Format("2006-01-02 15:04"), formatDevDuration(item.EditToLiveMS), item.DeploymentID)
+		_, _ = fmt.Fprintf(osStdout, "  %s %s  %s  %s%s\n", mark, item.CreatedAt.Local().Format("2006-01-02 15:04"), formatDevDuration(item.EditToLiveMS), item.DeploymentID, devHistoryPatchNote(item.Phases))
 	}
 	return 0
 }

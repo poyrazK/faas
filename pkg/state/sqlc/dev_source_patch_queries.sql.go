@@ -30,6 +30,40 @@ func (q *Queries) GetDevSourceManifest(ctx context.Context, db DBTX, deploymentI
 	return i, err
 }
 
+const getDevSourcePatchStatus = `-- name: GetDevSourcePatchStatus :one
+SELECT generation, created_at, applied_at, apply_ms, apply_error
+FROM dev_source_patches
+WHERE app_id = $1::uuid AND generation = $2::bigint
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetDevSourcePatchStatusParams struct {
+	AppID      pgtype.UUID
+	Generation int64
+}
+
+type GetDevSourcePatchStatusRow struct {
+	Generation int64
+	CreatedAt  pgtype.Timestamptz
+	AppliedAt  pgtype.Timestamptz
+	ApplyMs    pgtype.Int4
+	ApplyError pgtype.Text
+}
+
+func (q *Queries) GetDevSourcePatchStatus(ctx context.Context, db DBTX, arg GetDevSourcePatchStatusParams) (GetDevSourcePatchStatusRow, error) {
+	row := db.QueryRow(ctx, getDevSourcePatchStatus, arg.AppID, arg.Generation)
+	var i GetDevSourcePatchStatusRow
+	err := row.Scan(
+		&i.Generation,
+		&i.CreatedAt,
+		&i.AppliedAt,
+		&i.ApplyMs,
+		&i.ApplyError,
+	)
+	return i, err
+}
+
 const insertDevSourcePatch = `-- name: InsertDevSourcePatch :one
 INSERT INTO dev_source_patches (app_id, base_deployment_id, generation, image_dir, archive, deleted, digest, expires_at)
 SELECT $1::uuid, $2::uuid,
@@ -91,9 +125,22 @@ type LatestDevSourcePatchParams struct {
 	AfterGeneration  int64
 }
 
-func (q *Queries) LatestDevSourcePatch(ctx context.Context, db DBTX, arg LatestDevSourcePatchParams) (DevSourcePatch, error) {
+type LatestDevSourcePatchRow struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	BaseDeploymentID pgtype.UUID
+	Generation       int64
+	ImageDir         string
+	Archive          []byte
+	Deleted          []byte
+	Digest           string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+}
+
+func (q *Queries) LatestDevSourcePatch(ctx context.Context, db DBTX, arg LatestDevSourcePatchParams) (LatestDevSourcePatchRow, error) {
 	row := db.QueryRow(ctx, latestDevSourcePatch, arg.AppID, arg.BaseDeploymentID, arg.AfterGeneration)
-	var i DevSourcePatch
+	var i LatestDevSourcePatchRow
 	err := row.Scan(
 		&i.ID,
 		&i.AppID,
@@ -153,6 +200,39 @@ type PruneDevSourcePatchesParams struct {
 // live; expired patches are never served.
 func (q *Queries) PruneDevSourcePatches(ctx context.Context, db DBTX, arg PruneDevSourcePatchesParams) (int64, error) {
 	result, err := db.Exec(ctx, pruneDevSourcePatches, arg.AppID, arg.BaseDeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordDevSourcePatchApplied = `-- name: RecordDevSourcePatchApplied :execrows
+UPDATE dev_source_patches
+SET applied_at = now(), apply_ms = $1::int, apply_error = $2::text
+WHERE app_id = $3::uuid
+  AND base_deployment_id = $4::uuid
+  AND generation = $5::bigint
+  AND applied_at IS NULL
+`
+
+type RecordDevSourcePatchAppliedParams struct {
+	ApplyMs          int32
+	ApplyError       pgtype.Text
+	AppID            pgtype.UUID
+	BaseDeploymentID pgtype.UUID
+	Generation       int64
+}
+
+// The first acknowledgement wins; later instances applying the same
+// generation do not move the recorded time.
+func (q *Queries) RecordDevSourcePatchApplied(ctx context.Context, db DBTX, arg RecordDevSourcePatchAppliedParams) (int64, error) {
+	result, err := db.Exec(ctx, recordDevSourcePatchApplied,
+		arg.ApplyMs,
+		arg.ApplyError,
+		arg.AppID,
+		arg.BaseDeploymentID,
+		arg.Generation,
+	)
 	if err != nil {
 		return 0, err
 	}

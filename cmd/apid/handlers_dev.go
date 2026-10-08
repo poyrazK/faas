@@ -264,7 +264,7 @@ const (
 )
 
 var devSyncHistoryPhases = map[string]bool{
-	"sync": true, "cache": true, "build": true,
+	"sync": true, "patch": true, "cache": true, "build": true,
 	"boot": true, "ready": true, "route": true,
 }
 

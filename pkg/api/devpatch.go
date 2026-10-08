@@ -1,9 +1,16 @@
 package api
 
-// Developer live source patches (ADR-740). Phase 1 only measures: builds
-// record whether their source reached the image unchanged, and apid reports
-// whether each developer sync could have been applied as a live patch. No
-// patch is delivered to a running instance yet.
+// Developer live source patches (ADR-740). Builds record whether their source
+// reached the image unchanged, apid reports whether each developer sync can be
+// applied as a live patch and, when the operator enables delivery, publishes
+// it for vmmd to serve to the running developer instances.
+
+// DevPatchStatusResponse states.
+const (
+	DevPatchStatePending = "pending"
+	DevPatchStateApplied = "applied"
+	DevPatchStateFailed  = "failed"
+)
 
 // DevPatchSourceMapVersion is the current DevPatchSourceMap schema.
 const DevPatchSourceMapVersion = 1

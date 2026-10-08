@@ -96,6 +96,23 @@ func runDevSourcePatchStoreContract(t *testing.T, s devPatchStore, ctx context.C
 		t.Fatalf("patch after the newest generation = %v, want ErrNotFound", err)
 	}
 
+	// The first instance acknowledgement is kept; later ones are ignored.
+	if status, err := s.DevSourcePatchStatus(ctx, app.ID, 2); err != nil || status.AppliedAt != nil {
+		t.Fatalf("unacknowledged status = %+v, %v", status, err)
+	}
+	if err := s.RecordDevSourcePatchApplied(ctx, app.ID, live.ID, 2, 640, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordDevSourcePatchApplied(ctx, app.ID, live.ID, 2, 9999, "late_instance"); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := s.DevSourcePatchStatus(ctx, app.ID, 2); err != nil || status.AppliedAt == nil || status.ApplyMS != 640 || status.ApplyError != "" {
+		t.Fatalf("acknowledged status = %+v, %v; want the first acknowledgement", status, err)
+	}
+	if _, err := s.DevSourcePatchStatus(ctx, app.ID, 99); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("status of an unknown generation = %v, want ErrNotFound", err)
+	}
+
 	// A patch for a newer base deployment retires the old base's patches.
 	next := deploy(state.DeployLive)
 	if _, err := s.CreateDevSourcePatch(ctx, state.DevSourcePatch{AppID: app.ID, BaseDeploymentID: next.ID, ImageDir: "/app",

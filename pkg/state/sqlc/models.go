@@ -2142,6 +2142,9 @@ type DevSourcePatch struct {
 	Digest           string
 	CreatedAt        pgtype.Timestamptz
 	ExpiresAt        pgtype.Timestamptz
+	AppliedAt        pgtype.Timestamptz
+	ApplyMs          pgtype.Int4
+	ApplyError       pgtype.Text
 }
 
 type DeveloperSyncHistory struct {

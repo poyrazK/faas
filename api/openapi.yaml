@@ -10611,6 +10611,39 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/dev/sessions/{project}/patches/{generation}:
+    parameters:
+      - name: project
+        in: path
+        required: true
+        description: Stable local project label used to derive the developer URL.
+        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
+      - name: generation
+        in: path
+        required: true
+        description: Patch generation returned in the upload response's dev_patch.generation.
+        schema: { type: integer, format: int64, minimum: 1 }
+    get:
+      tags: [dev]
+      operationId: getDevPatchStatus
+      summary: Inspect delivery of a developer live patch.
+      description: Reports whether a published developer live patch (ADR-740) reached the running developer environment. The state is pending until an instance acknowledges it, then applied, or failed with a bounded error code. Never renews the developer lease.
+      parameters:
+        - name: workspace_id
+          in: query
+          required: false
+          description: Opaque local workspace identity returned by the CLI derivation.
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+      responses:
+        '200':
+          description: Live patch delivery state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevPatchStatusResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/dev/sessions/{project}:
     parameters:
       - name: project
@@ -46718,6 +46751,18 @@ components:
           description: Why the sync could not use a live patch. Absent when eligible.
         changed_paths: { type: integer, minimum: 0, description: Files added, modified or deleted inside the build's source root. }
         patch_bytes: { type: integer, format: int64, minimum: 0, description: Total size of the added or modified files. }
+        generation: { type: integer, format: int64, minimum: 1, description: Set when this sync published a live patch; poll getDevPatchStatus with it. }
+    DevPatchStatusResponse:
+      description: Delivery state of one developer live patch (ADR-740).
+      type: object
+      required: [generation, state, created_at]
+      properties:
+        generation: { type: integer, format: int64, minimum: 1 }
+        state: { type: string, enum: [pending, applied, failed] }
+        created_at: { type: string, format: date-time }
+        applied_at: { type: string, format: date-time, description: When the first instance acknowledged the patch. }
+        apply_ms: { type: integer, format: int64, minimum: 0, description: How long the instance took to write the patch and request the restart. }
+        error_code: { type: string, description: 'Bounded guest error code when state is failed, for example apply_failed or restart_failed.' }
     DevPostgresResponse:
       description: Safe receipt for the isolated developer database and its app binding. Credentials are injected into DATABASE_URL and never returned.
       type: object

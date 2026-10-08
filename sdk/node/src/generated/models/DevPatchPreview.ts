@@ -19,5 +19,9 @@ export type DevPatchPreview = {
    * Total size of the added or modified files.
    */
   patch_bytes: number;
+  /**
+   * Set when this sync published a live patch; poll getDevPatchStatus with it.
+   */
+  generation?: number;
 };
 

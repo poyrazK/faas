@@ -127,12 +127,16 @@ func (s *server) publishDevPatch(ctx context.Context, store state.DevSourcePatch
 	if plan.liveID == "" {
 		return errors.New("developer live patch has no base deployment")
 	}
-	_, err = store.CreateDevSourcePatch(ctx, state.DevSourcePatch{
+	created, err := store.CreateDevSourcePatch(ctx, state.DevSourcePatch{
 		AppID: app.ID, BaseDeploymentID: plan.liveID, ImageDir: api.DevPatchImageDir,
 		Archive: content, Deleted: plan.deleted, Digest: digest,
 		ExpiresAt: time.Now().UTC().Add(api.DevSourceCacheTTL),
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	plan.preview.Generation = created.Generation
+	return nil
 }
 
 func devPatchEntriesFromManifest(manifest sourcedelta.Manifest) map[string]devpatch.Entry {

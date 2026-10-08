@@ -39,6 +39,7 @@ type runtimeConfigRequest struct {
 	PreviousGeneration      string `json:"previous_generation,omitempty"`
 	// PatchGeneration is the last developer live patch applied (ADR-740).
 	PatchGeneration int64 `json:"patch_generation,omitempty"`
+	PatchApplyMS    int64 `json:"patch_apply_ms,omitempty"`
 }
 
 type runtimeConfigResponse struct {

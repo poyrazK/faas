@@ -43,6 +43,9 @@ type runtimeConfigRequest struct {
 	// PatchGeneration is the last developer live patch the guest applied
 	// (ADR-740); only valid on dev_patch requests.
 	PatchGeneration int64 `json:"patch_generation,omitempty"`
+	// PatchApplyMS is how long the guest took to apply a patch; only valid
+	// on dev_patch_ack requests.
+	PatchApplyMS int64 `json:"patch_apply_ms,omitempty"`
 }
 
 type runtimeConfigResponse struct {
@@ -100,13 +103,19 @@ func (r *runtimeConfigReceiver) handleGuestStream(instance string, conn net.Conn
 		return "protocol", errors.New("runtime config request has unsupported scope")
 	}
 	if req.Kind == runtimeDevPatchKind {
-		if req.Scope != "" || req.PatchGeneration < 0 || req.WorkloadName != "" || req.Revision != "" || req.Projection != "" || req.Signal != "" ||
+		if req.Scope != "" || req.PatchGeneration < 0 || req.PatchApplyMS != 0 || req.WorkloadName != "" || req.Revision != "" || req.Projection != "" || req.Signal != "" ||
 			req.ErrorCode != "" || req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" || req.Generation != "" || req.PreviousGeneration != "" {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 		}
 		return r.handleRuntimeDevPatch(instance, req, conn)
 	}
-	if req.PatchGeneration != 0 {
+	if req.Kind == runtimeDevPatchAckKind {
+		if !validRuntimeDevPatchAck(req) {
+			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
+		}
+		return r.handleRuntimeDevPatchAck(instance, req, conn)
+	}
+	if req.PatchGeneration != 0 || req.PatchApplyMS != 0 {
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 	}
 	if req.Kind == "secret_generation_start" || req.Kind == "secret_generation_retire" {

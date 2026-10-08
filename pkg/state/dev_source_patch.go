@@ -41,6 +41,20 @@ type DevSourcePatch struct {
 	Digest           string
 	CreatedAt        time.Time
 	ExpiresAt        time.Time
+	// AppliedAt, ApplyMS and ApplyError record the first instance
+	// acknowledgement (ADR-740 phase 3). AppliedAt is nil until then.
+	AppliedAt  *time.Time
+	ApplyMS    int64
+	ApplyError string
+}
+
+// DevSourcePatchStatus is the safe delivery view of one patch generation.
+type DevSourcePatchStatus struct {
+	Generation int64
+	CreatedAt  time.Time
+	AppliedAt  *time.Time
+	ApplyMS    int64
+	ApplyError string
 }
 
 // DevSourcePatchStore is implemented by PgStore and MemStore. apid records
@@ -56,4 +70,10 @@ type DevSourcePatchStore interface {
 	// LatestDevSourcePatch returns the newest unexpired patch with a
 	// generation above afterGeneration, or ErrNotFound.
 	LatestDevSourcePatch(ctx context.Context, appID, baseDeploymentID string, afterGeneration int64) (DevSourcePatch, error)
+	// RecordDevSourcePatchApplied stores the first acknowledgement of a
+	// generation; later acknowledgements are ignored.
+	RecordDevSourcePatchApplied(ctx context.Context, appID, baseDeploymentID string, generation, applyMS int64, applyError string) error
+	// DevSourcePatchStatus returns the app's newest patch with generation, or
+	// ErrNotFound.
+	DevSourcePatchStatus(ctx context.Context, appID string, generation int64) (DevSourcePatchStatus, error)
 }

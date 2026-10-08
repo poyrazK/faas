@@ -27,6 +27,8 @@ class DevPatchPreview:
     """Total size of the added or modified files."""
     reason: DevPatchPreviewReason | Unset = UNSET
     """Why the sync could not use a live patch. Absent when eligible."""
+    generation: int | Unset = UNSET
+    """Set when this sync published a live patch; poll getDevPatchStatus with it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +42,8 @@ class DevPatchPreview:
         if not isinstance(self.reason, Unset):
             reason = self.reason
 
+        generation = self.generation
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -51,6 +55,8 @@ class DevPatchPreview:
         )
         if reason is not UNSET:
             field_dict["reason"] = reason
+        if generation is not UNSET:
+            field_dict["generation"] = generation
 
         return field_dict
 
@@ -70,11 +76,14 @@ class DevPatchPreview:
         else:
             reason = check_dev_patch_preview_reason(_reason)
 
+        generation = d.pop("generation", UNSET)
+
         dev_patch_preview = cls(
             eligible=eligible,
             changed_paths=changed_paths,
             patch_bytes=patch_bytes,
             reason=reason,
+            generation=generation,
         )
 
         dev_patch_preview.additional_properties = d

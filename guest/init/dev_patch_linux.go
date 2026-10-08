@@ -22,7 +22,30 @@ func startDevPatchLoop(ctx context.Context, sup *Supervisor, log *slog.Logger) {
 		},
 		restart: sup.RequestRestart,
 		sleep:   sleepContext,
+		ack: func(generation, applyMS int64, errorCode string) {
+			if err := sendDevPatchAck(generation, applyMS, errorCode); err != nil {
+				log.Debug("developer live patch acknowledgement not delivered", "generation", generation, "err", err)
+			}
+		},
 	})
+}
+
+func sendDevPatchAck(generation, applyMS int64, errorCode string) error {
+	conn, err := dialRuntimeConfigHost()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(4 * time.Second))
+	body, err := json.Marshal(runtimeConfigRequest{Kind: "dev_patch_ack", PatchGeneration: generation, PatchApplyMS: applyMS, ErrorCode: errorCode})
+	if err != nil {
+		return err
+	}
+	if err := writeRuntimeConfigFrame(conn, body); err != nil {
+		return err
+	}
+	_, err = readRuntimeConfigFrame(conn)
+	return err
 }
 
 func sleepContext(ctx context.Context, d time.Duration) bool {

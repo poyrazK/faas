@@ -7,6 +7,7 @@ import type { CreateDevBridgeResponse } from '../models/CreateDevBridgeResponse.
 import type { DevBridgeActivity } from '../models/DevBridgeActivity.js';
 import type { DevBridgeSession } from '../models/DevBridgeSession.js';
 import type { DevBridgeWebhookReplay } from '../models/DevBridgeWebhookReplay.js';
+import type { DevPatchStatusResponse } from '../models/DevPatchStatusResponse.js';
 import type { DevSessionResponse } from '../models/DevSessionResponse.js';
 import type { DevSyncHistoryItem } from '../models/DevSyncHistoryItem.js';
 import type { DevSyncHistoryResponse } from '../models/DevSyncHistoryResponse.js';
@@ -206,6 +207,51 @@ export class DevService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Inspect delivery of a developer live patch.
+   * Reports whether a published developer live patch (ADR-740) reached the running developer environment. The state is pending until an instance acknowledges it, then applied, or failed with a bounded error code. Never renews the developer lease.
+   * @returns DevPatchStatusResponse Live patch delivery state.
+   * @throws ApiError
+   */
+  public static getDevPatchStatus({
+    project,
+    generation,
+    workspaceId,
+  }: {
+    /**
+     * Stable local project label used to derive the developer URL.
+     */
+    project: string,
+    /**
+     * Patch generation returned in the upload response's dev_patch.generation.
+     */
+    generation: number,
+    /**
+     * Opaque local workspace identity returned by the CLI derivation.
+     */
+    workspaceId?: string,
+  }): CancelablePromise<DevPatchStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dev/sessions/{project}/patches/{generation}',
+      path: {
+        'project': project,
+        'generation': generation,
+      },
+      query: {
+        'workspace_id': workspaceId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
       },
     });
   }

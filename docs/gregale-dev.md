@@ -218,6 +218,18 @@ it completes native acceptance. Until it is enabled, `dev_patch` is a
 measurement only and the normal developer build always runs; when enabled, the
 build still runs and replaces the patched environment once it is live.
 
+When a sync publishes a live patch, `dev_patch.generation` is set and the
+watcher follows its delivery while the build continues. As soon as the
+running environment applies it, the terminal prints
+`Live patch applied in 0.8s; the app is restarting with your edit while the full build continues.`
+The phase summary then includes `patch=0.8s` (edit-to-patch, measured on your
+machine), and `gregale dev history` shows `(live patch 0.8s)` beside the sync.
+A patch that fails to apply is reported with its reason, and the build still
+delivers the edit. With `--json`, the watcher emits a
+`{"event":"developer_patch",...}` NDJSON record with the generation, `state`
+(`applied` or `failed`), `edit_to_patch_ms`, and `apply_ms`; the
+`developer_sync` receipt includes the same `patch` phase.
+
 Failed syncs include a developer diagnostic in the same terminal. Deployment
 stage failures reuse the platform error code and explain the failing phase,
 the next action, and the deployment log command. The runtime stream also

@@ -160,3 +160,11 @@ Anything else falls back to today's build path with no behavior change.
      deployment's snapshot runs the unpatched source for up to one poll
      interval before re-applying the newest patch.
 3. CLI `patch` phase in the timing summary and `dev history`; docs.
+   *Implemented:* guest-init acknowledges every generation (`dev_patch_ack`
+   with apply time or a bounded error code); vmmd records the first
+   acknowledgement on the patch row; apid returns the published generation
+   in `dev_patch.generation` and serves
+   `GET /v1/dev/sessions/{project}/patches/{generation}`. The CLI follows it
+   while the build runs, measures edit-to-patch on its own clock (immune to
+   server clock skew), prints it, and records a `patch` phase in the receipt
+   and sync history.

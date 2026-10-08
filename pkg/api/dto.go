@@ -810,6 +810,21 @@ type DevPatchPreview struct {
 	Reason       string `json:"reason,omitempty"`
 	ChangedPaths int    `json:"changed_paths"`
 	PatchBytes   int64  `json:"patch_bytes"`
+	// Generation is set when this sync published a live patch; poll
+	// GET /v1/dev/sessions/{project}/patches/{generation} for delivery.
+	Generation int64 `json:"generation,omitempty"`
+}
+
+// DevPatchStatusResponse reports whether a published live patch reached the
+// running developer environment (ADR-740). State is pending until an instance
+// acknowledges it, then applied, or failed with ErrorCode.
+type DevPatchStatusResponse struct {
+	Generation int64      `json:"generation"`
+	State      string     `json:"state"`
+	CreatedAt  time.Time  `json:"created_at"`
+	AppliedAt  *time.Time `json:"applied_at,omitempty"`
+	ApplyMS    int64      `json:"apply_ms,omitempty"`
+	ErrorCode  string     `json:"error_code,omitempty"`
 }
 
 // DevPostgresRequest opts a developer session into an isolated managed

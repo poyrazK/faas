@@ -116,3 +116,39 @@ func copyDevSourceEntries(entries map[string]DevSourceEntry) map[string]DevSourc
 	}
 	return out
 }
+
+// RecordDevSourcePatchApplied mirrors PgStore.RecordDevSourcePatchApplied.
+func (m *MemStore) RecordDevSourcePatchApplied(_ context.Context, appID, baseDeploymentID string, generation, applyMS int64, applyError string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.devSourcePatches {
+		patch := &m.devSourcePatches[i]
+		if patch.AppID == appID && patch.BaseDeploymentID == baseDeploymentID && patch.Generation == generation && patch.AppliedAt == nil {
+			now := time.Now().UTC()
+			patch.AppliedAt, patch.ApplyMS, patch.ApplyError = &now, applyMS, applyError
+		}
+	}
+	return nil
+}
+
+// DevSourcePatchStatus mirrors PgStore.DevSourcePatchStatus.
+func (m *MemStore) DevSourcePatchStatus(_ context.Context, appID string, generation int64) (DevSourcePatchStatus, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var best *DevSourcePatch
+	for i := range m.devSourcePatches {
+		patch := &m.devSourcePatches[i]
+		if patch.AppID == appID && patch.Generation == generation && (best == nil || patch.CreatedAt.After(best.CreatedAt)) {
+			best = patch
+		}
+	}
+	if best == nil {
+		return DevSourcePatchStatus{}, ErrNotFound
+	}
+	status := DevSourcePatchStatus{Generation: best.Generation, CreatedAt: best.CreatedAt, ApplyMS: best.ApplyMS, ApplyError: best.ApplyError}
+	if best.AppliedAt != nil {
+		appliedAt := *best.AppliedAt
+		status.AppliedAt = &appliedAt
+	}
+	return status, nil
+}

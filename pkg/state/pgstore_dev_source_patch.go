@@ -138,3 +138,42 @@ func nonNilStrings(values []string) []string {
 	}
 	return values
 }
+
+func (s *PgStore) RecordDevSourcePatchApplied(ctx context.Context, appID, baseDeploymentID string, generation, applyMS int64, applyError string) error {
+	app, err := parsePgUUID(appID)
+	if err != nil {
+		return err
+	}
+	base, err := parsePgUUID(baseDeploymentID)
+	if err != nil {
+		return err
+	}
+	if _, err := sqlc.New().RecordDevSourcePatchApplied(ctx, s.pool, sqlc.RecordDevSourcePatchAppliedParams{
+		ApplyMs: int32(applyMS), ApplyError: pgtype.Text{String: applyError, Valid: applyError != ""},
+		AppID: app, BaseDeploymentID: base, Generation: generation,
+	}); err != nil {
+		return fmt.Errorf("state: record developer patch acknowledgement: %w", err)
+	}
+	return nil
+}
+
+func (s *PgStore) DevSourcePatchStatus(ctx context.Context, appID string, generation int64) (DevSourcePatchStatus, error) {
+	app, err := parsePgUUID(appID)
+	if err != nil {
+		return DevSourcePatchStatus{}, ErrNotFound
+	}
+	row, err := sqlc.New().GetDevSourcePatchStatus(ctx, s.pool, sqlc.GetDevSourcePatchStatusParams{AppID: app, Generation: generation})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DevSourcePatchStatus{}, ErrNotFound
+	}
+	if err != nil {
+		return DevSourcePatchStatus{}, fmt.Errorf("state: load developer patch status: %w", err)
+	}
+	status := DevSourcePatchStatus{Generation: row.Generation, CreatedAt: row.CreatedAt.Time.UTC(), ApplyError: row.ApplyError.String}
+	if row.AppliedAt.Valid {
+		appliedAt := row.AppliedAt.Time.UTC()
+		status.AppliedAt = &appliedAt
+		status.ApplyMS = int64(row.ApplyMs.Int32)
+	}
+	return status, nil
+}
