@@ -752,6 +752,9 @@ type Querier interface {
 	// X / Y / Z" badge.
 	GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErrorSampleParams) (GetAppErrorSampleRow, error)
 	GetAppFork(ctx context.Context, db DBTX, arg GetAppForkParams) (AppFork, error)
+	// The gateway's fork routing lookup: scoped by app (resolved from the
+	// request host), never by account.
+	GetAppForkForApp(ctx context.Context, db DBTX, arg GetAppForkForAppParams) (AppFork, error)
 	GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAppSecretRevocationParams) (GetAppSecretRevocationRow, error)
 	GetCustomerAppSecretForDeletion(ctx context.Context, db DBTX, arg GetCustomerAppSecretForDeletionParams) (GetCustomerAppSecretForDeletionRow, error)
 	GetCustomerOperation(ctx context.Context, db DBTX, arg GetCustomerOperationParams) ([]byte, error)

@@ -128,6 +128,10 @@ type Lease struct {
 	// lease still owns a unique slot, uid, cgroup, and vsock identity, but it
 	// deliberately has no tenant netns/veth/tap resources to tear down.
 	Networkless bool
+	// Quarantine marks a production fork (ADR-732). A restore scrubs the
+	// captured secrets files from the fork's private drive1 copy before the
+	// guest resumes.
+	Quarantine bool
 }
 
 // Allocator hands out unique Leases and recycles slots on release. Safe for

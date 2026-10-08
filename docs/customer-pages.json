@@ -35,6 +35,7 @@
     {"path": "exclusive-operations", "source": "docs/managed-exclusive-operations.md"},
     {"path": "executions", "source": "docs/executions.md"},
     {"path": "faas_openapi_spec", "source": "docs/faas_openapi_spec.md"},
+    {"path": "forks", "source": "docs/forks.md"},
     {"path": "functions", "source": "docs/functions.md"},
     {"path": "gdpr", "source": "docs/account.md"},
     {"path": "issues", "source": "docs/issues.md"},

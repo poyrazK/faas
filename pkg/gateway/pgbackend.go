@@ -335,6 +335,9 @@ type PGBackend struct {
 	// authenticated verification only. It must not populate the ordinary
 	// picker, whose weights represent customer-routable live deployments.
 	deploymentSmokeTargetLoader func(ctx context.Context, appID, deploymentID string) (Target, bool, error)
+	// forkTargetLoader resolves an ADR-732 fork request to its instance; it
+	// validates the token and fork state (ForkTargetFromState).
+	forkTargetLoader func(ctx context.Context, appID, forkID, token string) (Target, bool, error)
 	// liveTargetHydration coalesces cache-reconciliation reads for the same
 	// app. A gateway restart can receive a burst before the first request has
 	// populated the process-local picker; those requests must share one
@@ -533,6 +536,23 @@ func (b *PGBackend) WithDeploymentSmokeTargetLoader(fn func(context.Context, str
 		b.deploymentSmokeTargetLoader = fn
 	}
 	return b
+}
+
+// WithForkTargetLoader installs the ADR-732 fork routing lookup.
+func (b *PGBackend) WithForkTargetLoader(fn func(context.Context, string, string, string) (Target, bool, error)) *PGBackend {
+	if b != nil {
+		b.forkTargetLoader = fn
+	}
+	return b
+}
+
+// ResolveForkTarget routes a fork request. It always reads durable state:
+// forks are never cached in the serving picker.
+func (b *PGBackend) ResolveForkTarget(ctx context.Context, appID, forkID, token string) (Target, bool, error) {
+	if b == nil || b.forkTargetLoader == nil || appID == "" || forkID == "" || token == "" {
+		return Target{}, false, nil
+	}
+	return b.forkTargetLoader(ctx, appID, forkID, token)
 }
 
 // ResolveDeploymentSmokeTarget consults durable instance state without

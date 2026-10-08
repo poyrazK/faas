@@ -620,6 +620,7 @@ type AppFork struct {
 	FinishedAt        pgtype.Timestamptz
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
+	AccessTokenHash   []byte
 }
 
 type AppIssue struct {

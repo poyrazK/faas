@@ -2187,7 +2187,7 @@ WHERE account_id = $2::uuid
   AND app_id = $3::uuid
   AND id = $4::uuid
   AND status IN ('queued', 'restoring', 'running')
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
 `
 
 type CancelAppForkParams struct {
@@ -2229,6 +2229,7 @@ func (q *Queries) CancelAppFork(ctx context.Context, db DBTX, arg CancelAppForkP
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AccessTokenHash,
 	)
 	return i, err
 }
@@ -3472,7 +3473,7 @@ WHERE id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
 `
 
 type ClaimNextAppForkParams struct {
@@ -3507,6 +3508,7 @@ func (q *Queries) ClaimNextAppFork(ctx context.Context, db DBTX, arg ClaimNextAp
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AccessTokenHash,
 	)
 	return i, err
 }
@@ -12648,7 +12650,7 @@ SET status = CASE WHEN cancel_requested_at IS NULL THEN 'expired' ELSE 'cancelle
     updated_at = greatest(updated_at, $1::timestamptz)
 WHERE status = 'queued'
   AND (expires_at <= $1::timestamptz OR cancel_requested_at IS NOT NULL)
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
 `
 
 // Queued forks that reached expires_at, or were cancelled, before any
@@ -12683,6 +12685,7 @@ func (q *Queries) ExpireUnclaimedAppForks(ctx context.Context, db DBTX, now pgty
 			&i.FinishedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AccessTokenHash,
 		); err != nil {
 			return nil, err
 		}
@@ -13135,7 +13138,7 @@ WHERE id = $5::uuid
   AND lease_token = $6::uuid
   AND status IN ('restoring', 'running')
   AND $1::text IN ('expired', 'cancelled', 'failed')
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
 `
 
 type FinishAppForkParams struct {
@@ -13178,6 +13181,7 @@ func (q *Queries) FinishAppFork(ctx context.Context, db DBTX, arg FinishAppForkP
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AccessTokenHash,
 	)
 	return i, err
 }
@@ -14374,7 +14378,7 @@ func (q *Queries) GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErro
 }
 
 const getAppFork = `-- name: GetAppFork :one
-SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at FROM app_forks
+SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash FROM app_forks
 WHERE account_id = $1::uuid
   AND app_id = $2::uuid
   AND id = $3::uuid
@@ -14410,6 +14414,49 @@ func (q *Queries) GetAppFork(ctx context.Context, db DBTX, arg GetAppForkParams)
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AccessTokenHash,
+	)
+	return i, err
+}
+
+const getAppForkForApp = `-- name: GetAppForkForApp :one
+SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash FROM app_forks
+WHERE app_id = $1::uuid
+  AND id = $2::uuid
+`
+
+type GetAppForkForAppParams struct {
+	AppID  pgtype.UUID
+	ForkID pgtype.UUID
+}
+
+// The gateway's fork routing lookup: scoped by app (resolved from the
+// request host), never by account.
+func (q *Queries) GetAppForkForApp(ctx context.Context, db DBTX, arg GetAppForkForAppParams) (AppFork, error) {
+	row := db.QueryRow(ctx, getAppForkForApp, arg.AppID, arg.ForkID)
+	var i AppFork
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.TtlSeconds,
+		&i.ExpiresAt,
+		&i.SnapshotID,
+		&i.InstanceID,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AccessTokenHash,
 	)
 	return i, err
 }
@@ -16765,27 +16812,29 @@ func (q *Queries) InsertAppErrorRequest(ctx context.Context, db DBTX, arg Insert
 
 const insertAppFork = `-- name: InsertAppFork :one
 INSERT INTO app_forks (account_id, app_id, deployment_id, requested_by, ttl_seconds,
-                       expires_at, created_at, updated_at)
+                       expires_at, created_at, updated_at, access_token_hash)
 SELECT a.account_id, a.id, d.id, $1::text, $2::integer,
        $3::timestamptz + make_interval(secs => $2::integer),
-       $3::timestamptz, $3::timestamptz
+       $3::timestamptz, $3::timestamptz,
+       $4::bytea
 FROM apps a
 JOIN deployments d ON d.app_id = a.id
-WHERE a.id = $4::uuid
-  AND a.account_id = $5::uuid
+WHERE a.id = $5::uuid
+  AND a.account_id = $6::uuid
   AND a.status <> 'deleted'
-  AND d.id = $6::uuid
+  AND d.id = $7::uuid
   AND d.status = 'live'
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
 `
 
 type InsertAppForkParams struct {
-	RequestedBy  string
-	TtlSeconds   int32
-	CreatedAt    pgtype.Timestamptz
-	AppID        pgtype.UUID
-	AccountID    pgtype.UUID
-	DeploymentID pgtype.UUID
+	RequestedBy     string
+	TtlSeconds      int32
+	CreatedAt       pgtype.Timestamptz
+	AccessTokenHash []byte
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	DeploymentID    pgtype.UUID
 }
 
 func (q *Queries) InsertAppFork(ctx context.Context, db DBTX, arg InsertAppForkParams) (AppFork, error) {
@@ -16793,6 +16842,7 @@ func (q *Queries) InsertAppFork(ctx context.Context, db DBTX, arg InsertAppForkP
 		arg.RequestedBy,
 		arg.TtlSeconds,
 		arg.CreatedAt,
+		arg.AccessTokenHash,
 		arg.AppID,
 		arg.AccountID,
 		arg.DeploymentID,
@@ -16819,6 +16869,7 @@ func (q *Queries) InsertAppFork(ctx context.Context, db DBTX, arg InsertAppForkP
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AccessTokenHash,
 	)
 	return i, err
 }
@@ -24149,7 +24200,7 @@ func (q *Queries) ListAppErrorRequests(ctx context.Context, db DBTX, arg ListApp
 }
 
 const listAppForks = `-- name: ListAppForks :many
-SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at FROM app_forks
+SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash FROM app_forks
 WHERE account_id = $1::uuid
   AND app_id = $2::uuid
 ORDER BY created_at DESC, id DESC
@@ -24192,6 +24243,7 @@ func (q *Queries) ListAppForks(ctx context.Context, db DBTX, arg ListAppForksPar
 			&i.FinishedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AccessTokenHash,
 		); err != nil {
 			return nil, err
 		}
@@ -24204,7 +24256,7 @@ func (q *Queries) ListAppForks(ctx context.Context, db DBTX, arg ListAppForksPar
 }
 
 const listAppForksDueForTeardown = `-- name: ListAppForksDueForTeardown :many
-SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at FROM app_forks
+SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash FROM app_forks
 WHERE lease_owner = $1::text
   AND status IN ('restoring', 'running')
   AND (expires_at <= $2::timestamptz OR cancel_requested_at IS NOT NULL)
@@ -24249,6 +24301,7 @@ func (q *Queries) ListAppForksDueForTeardown(ctx context.Context, db DBTX, arg L
 			&i.FinishedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AccessTokenHash,
 		); err != nil {
 			return nil, err
 		}
@@ -34856,7 +34909,7 @@ SET status = 'running',
 WHERE id = $4::uuid
   AND lease_token = $5::uuid
   AND status = 'restoring'
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
 `
 
 type MarkAppForkRunningParams struct {
@@ -34897,6 +34950,7 @@ func (q *Queries) MarkAppForkRunning(ctx context.Context, db DBTX, arg MarkAppFo
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AccessTokenHash,
 	)
 	return i, err
 }
@@ -54240,7 +54294,7 @@ SET lease_expires_at = $1::timestamptz,
 WHERE id = $3::uuid
   AND lease_token = $4::uuid
   AND status IN ('restoring', 'running')
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
 `
 
 type RenewAppForkLeaseParams struct {
@@ -54279,6 +54333,7 @@ func (q *Queries) RenewAppForkLease(ctx context.Context, db DBTX, arg RenewAppFo
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AccessTokenHash,
 	)
 	return i, err
 }
@@ -60040,7 +60095,7 @@ WHERE id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
 `
 
 type TakeOverAbandonedAppForkParams struct {
@@ -60075,6 +60130,7 @@ func (q *Queries) TakeOverAbandonedAppFork(ctx context.Context, db DBTX, arg Tak
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AccessTokenHash,
 	)
 	return i, err
 }

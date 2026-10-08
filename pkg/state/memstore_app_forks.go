@@ -51,6 +51,10 @@ func (m *MemStore) CreateAppFork(_ context.Context, params CreateAppForkParams) 
 		RequestedBy: p.RequestedBy, Status: AppForkQueued, TTLSeconds: p.TTLSeconds,
 		ExpiresAt: p.CreatedAt.Add(time.Duration(p.TTLSeconds) * time.Second),
 		CreatedAt: p.CreatedAt, UpdatedAt: p.CreatedAt,
+		AccessTokenHash: append([]byte(nil), p.AccessTokenHash...),
+	}
+	if p.AccessTokenHash == nil {
+		fork.AccessTokenHash = nil
 	}
 	m.appForks[fork.ID] = fork
 	return fork, nil
@@ -61,6 +65,16 @@ func (m *MemStore) AppForkByID(_ context.Context, accountID, appID, forkID strin
 	defer m.mu.Unlock()
 	fork, ok := m.appForks[forkID]
 	if !ok || fork.AccountID != accountID || fork.AppID != appID {
+		return AppFork{}, ErrNotFound
+	}
+	return fork, nil
+}
+
+func (m *MemStore) AppForkForApp(_ context.Context, appID, forkID string) (AppFork, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	fork, ok := m.appForks[forkID]
+	if !ok || fork.AppID != appID {
 		return AppFork{}, ErrNotFound
 	}
 	return fork, nil

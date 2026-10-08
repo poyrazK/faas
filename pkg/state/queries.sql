@@ -15314,10 +15314,11 @@ WHERE account_id = sqlc.arg(account_id)::uuid
 
 -- name: InsertAppFork :one
 INSERT INTO app_forks (account_id, app_id, deployment_id, requested_by, ttl_seconds,
-                       expires_at, created_at, updated_at)
+                       expires_at, created_at, updated_at, access_token_hash)
 SELECT a.account_id, a.id, d.id, sqlc.arg(requested_by)::text, sqlc.arg(ttl_seconds)::integer,
        sqlc.arg(created_at)::timestamptz + make_interval(secs => sqlc.arg(ttl_seconds)::integer),
-       sqlc.arg(created_at)::timestamptz, sqlc.arg(created_at)::timestamptz
+       sqlc.arg(created_at)::timestamptz, sqlc.arg(created_at)::timestamptz,
+       sqlc.narg(access_token_hash)::bytea
 FROM apps a
 JOIN deployments d ON d.app_id = a.id
 WHERE a.id = sqlc.arg(app_id)::uuid
@@ -15331,6 +15332,13 @@ RETURNING *;
 SELECT * FROM app_forks
 WHERE account_id = sqlc.arg(account_id)::uuid
   AND app_id = sqlc.arg(app_id)::uuid
+  AND id = sqlc.arg(fork_id)::uuid;
+
+-- name: GetAppForkForApp :one
+-- The gateway's fork routing lookup: scoped by app (resolved from the
+-- request host), never by account.
+SELECT * FROM app_forks
+WHERE app_id = sqlc.arg(app_id)::uuid
   AND id = sqlc.arg(fork_id)::uuid;
 
 -- name: ListAppForks :many

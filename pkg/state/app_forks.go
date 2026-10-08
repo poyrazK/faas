@@ -55,6 +55,9 @@ type AppFork struct {
 	FinishedAt      *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	// AccessTokenHash is the SHA-256 of the fork's access token; the
+	// gateway compares it in constant time. Nil means unreachable.
+	AccessTokenHash []byte
 }
 
 // Database backstops for the fork TTL (app_forks_ttl_chk). Plan limits in
@@ -75,6 +78,8 @@ type CreateAppForkParams struct {
 	MaxPerApp     int
 	MaxPerAccount int
 	CreatedAt     time.Time
+	// AccessTokenHash is the SHA-256 of the access token apid minted.
+	AccessTokenHash []byte
 }
 
 var (
@@ -102,6 +107,9 @@ func (e *AppForkLimitError) Error() string {
 type AppForkStore interface {
 	CreateAppFork(ctx context.Context, params CreateAppForkParams) (AppFork, error)
 	AppForkByID(ctx context.Context, accountID, appID, forkID string) (AppFork, error)
+	// AppForkForApp is the gateway's lookup: scoped by the app the request
+	// host resolved to.
+	AppForkForApp(ctx context.Context, appID, forkID string) (AppFork, error)
 	ListAppForks(ctx context.Context, accountID, appID string, limit int) ([]AppFork, error)
 	// RequestAppForkCancellation cancels a queued fork, records the request
 	// on a restoring or running one, and returns a terminal fork unchanged.
@@ -121,6 +129,8 @@ func validateCreateAppFork(p CreateAppForkParams) (CreateAppForkParams, error) {
 		return p, fmt.Errorf("%w: active fork limits must be positive", ErrAppForkInvalid)
 	case p.CreatedAt.IsZero():
 		return p, fmt.Errorf("%w: created_at is required", ErrAppForkInvalid)
+	case p.AccessTokenHash != nil && len(p.AccessTokenHash) != 32:
+		return p, fmt.Errorf("%w: access token hash must be 32 bytes", ErrAppForkInvalid)
 	}
 	// Postgres stores microseconds; truncate so both stores agree on
 	// created_at and the expires_at CHECK holds exactly.

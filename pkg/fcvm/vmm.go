@@ -1832,6 +1832,14 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
+	if l.Quarantine {
+		// ADR-732: the capture's drive still holds the secrets files the
+		// original boot wrote. Remove them from this fork's private copy
+		// before resume so a later process start cannot reload them.
+		if err := v.scrubForkSecrets(ctx, stagingOwner, l.Instance); err != nil {
+			return fmt.Errorf("vmm: scrub fork secrets: %w", err)
+		}
+	}
 	tPreBootFiles := time.Now()
 
 	// Snapshot files are read-only inputs shared across the N instances a single

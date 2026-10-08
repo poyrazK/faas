@@ -5767,6 +5767,12 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	// ADR-732: a request addressed to a production fork never takes the
+	// serving path (no wake, no picker, no cache or edge rules).
+	if forkRequested(r) {
+		h.serveFork(w, r, app)
+		return
+	}
 	// Edge-rule matching from here on ignores rules another account
 	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
 	// could otherwise shadow this app's own gates.
