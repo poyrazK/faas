@@ -9,6 +9,15 @@ export function notesClient(options: {
 }) {
   const db = createDataClient<Database>(options).schema('api')
   return {
+    page: ({ offset = 0, size = 20, priority }: { offset?: number; size?: number; priority?: number } = {}) => {
+      if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(size) || size < 1 || size - 1 > Number.MAX_SAFE_INTEGER - offset) {
+        throw new RangeError('Pagination requires a nonnegative safe offset and a positive safe size')
+      }
+      const query = db.from('notes').select('id,body,priority,created_at', { count: 'exact' })
+        .order('created_at', { ascending: false }).order('id', { ascending: false })
+        .range(offset, offset + size - 1)
+      return priority === undefined ? query : query.eq('priority', priority)
+    },
     list: () => db.from('notes').select('id,body,priority,created_at').order('created_at', { ascending: false }).range(0, 19),
     listWithReplies: () => db.from('notes').select('id,body,comments(id,body),note_details(summary)').order('created_at', { ascending: false }).range(0, 19),
     listWithTags: () => db.from('notes').select('id,body,tags!note_tags(id,name)').order('id').range(0, 19),

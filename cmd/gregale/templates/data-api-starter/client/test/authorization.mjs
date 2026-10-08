@@ -130,6 +130,52 @@ async function verifyTags(owner, other, subject, otherSubject, id, body, ownedTa
   }
 }
 
+async function verifyPagination(first, second, userA, userB, owned) {
+  const marker = `pagination-${randomUUID()}`
+  const groups = []
+  for (const [client, user] of [[first, userA], [second, userB]]) {
+    const rows = []
+    for (let i = 0; i < 5; i++) {
+      const created = await client.create(marker, i % 2)
+      assert.equal(created.error, null, 'page_fixture_failed')
+      owned.push([client, created.data.id])
+      rows.push(created.data)
+    }
+    groups.push([client, user, rows])
+  }
+  for (const [client, user, rows] of groups) {
+    const expected = rows.map(row => row.id).reverse()
+    const ids = []
+    for (const offset of [0, 2, 4]) {
+      const page = await client.page({ offset, size: 2 }).eq('body', marker)
+      assert.equal(page.error, null, 'page_read_failed')
+      assert.equal(page.count, 5, 'count_leaked_other_user_rows')
+      assert.deepEqual(page.data.map(row => row.id), expected.slice(offset, offset + 2), 'page_order_mismatch')
+      ids.push(...page.data.map(row => row.id))
+    }
+    assert.deepEqual(ids, expected, 'page_gaps_or_duplicates')
+    const filtered = await client.page({ priority: 1 }).eq('body', marker)
+    assert.equal(filtered.error, null, 'filtered_page_failed')
+    assert.equal(filtered.count, 2, 'filtered_count_mismatch')
+    assert.ok(filtered.data.every(row => row.priority === 1))
+    const head = await client.db.from('notes').select('id', { count: 'exact', head: true }).eq('body', marker)
+    assert.equal(head.error, null, 'head_count_failed')
+    assert.equal(head.count, 5, 'head_count_leaked_rows')
+    assert.equal(head.data, null)
+    const hidden = await client.page().eq('body', marker).eq('subject', user.subject === userA.subject ? userB.subject : userA.subject)
+    assert.equal(hidden.error, null, 'hidden_page_failed')
+    assert.deepEqual(hidden.data, [])
+    assert.equal(hidden.count, 0, 'hidden_count_leaked_rows')
+    const exhausted = await client.page({ offset: 5, size: 2 }).eq('body', marker)
+    assert.equal(exhausted.error, null, 'exhausted_page_failed')
+    assert.deepEqual(exhausted.data, [])
+    assert.equal(exhausted.count, 5)
+    const beyond = await client.page({ offset: 6, size: 2 }).eq('body', marker)
+    assert.equal(beyond.status, 416, 'out_of_range_status_mismatch')
+    assert.equal(beyond.error?.code, 'PGRST103', 'out_of_range_error_mismatch')
+  }
+}
+
 export async function verifyAuthorization({ url, userA, userB }) {
   assert.ok(url && userA.subject && userB.subject && userA.token && userB.token, 'two_user_configuration_required')
   assert.notEqual(userA.subject, userB.subject, 'subjects_must_differ')
@@ -140,6 +186,7 @@ export async function verifyAuthorization({ url, userA, userB }) {
   const orphaned = []
   const ownedTags = []
   try {
+    await verifyPagination(first, second, userA, userB, owned)
     for (const [owner, other, subject, otherSubject] of [
       [first, second, userA.subject, userB.subject], [second, first, userB.subject, userA.subject],
     ]) {

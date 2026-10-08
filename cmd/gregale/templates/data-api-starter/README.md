@@ -236,3 +236,19 @@ junction, for example `tags!note_favorite_tags(id,name)`. Aliases can return bot
 paths in one projection. An unknown hint fails with `PGRST200`. These are runtime errors; the SDK
 does not validate junction hints at compile time. The two-user
 check verifies both paths, including their independent RLS policies.
+
+Pagination uses `notesClient.page({ offset: 0, size: 20, priority: 1 })`.
+Offsets are zero-based and ranges are inclusive internally. Rows are ordered by
+`created_at` descending, then `id` descending to break timestamp ties. The
+optional priority filter applies before pagination. `data` contains the page;
+`count` is the exact number of matching rows visible under the caller's RLS.
+A filtered query with no matches returns an empty array and count zero.
+An offset equal to the count returns an empty page with that count. An offset
+greater than the count returns `PGRST103` (HTTP 416); reset the
+offset if rows were deleted between requests. The server caps each response
+at 1,000 rows even when a larger page is requested; its exact count still covers
+all matching visible rows. Advance by the number of returned rows, and stop
+when offset plus returned length reaches count. Counts and separate page
+requests do not provide a shared snapshot: concurrent writes can shift offset
+pages. Exact counts may be expensive on large tables. The example prints the
+first page, total, and next offset without automatically fetching every row.

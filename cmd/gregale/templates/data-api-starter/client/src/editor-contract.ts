@@ -88,3 +88,18 @@ async function favoriteTagContract(client: ReturnType<typeof notesClient>) {
   }
 }
 void favoriteTagContract
+
+async function pageContract(client: ReturnType<typeof notesClient>) {
+  const result = await client.page({ offset: 2, size: 10, priority: 1 })
+  const count: number | null = result.count
+  if (result.data) for (const row of result.data) {
+    const priority: number = row.priority
+    // @ts-expect-error pagination retains its selected projection
+    const subject = row.subject
+    void [priority, subject]
+  }
+  // @ts-expect-error priority filters require integer column values
+  client.page({ priority: 'high' })
+  void count
+}
+void pageContract

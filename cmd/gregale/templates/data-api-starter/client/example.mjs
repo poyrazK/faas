@@ -8,11 +8,11 @@ if (!url || !subject || !token) {
   process.exitCode = 1
 } else {
   const notes = notesClient({ url, subject, accessToken: () => token })
-  const result = await notes.list()
+  const result = await notes.page({ offset: 0, size: 20 })
   if (result.error) {
     console.error('Could not read notes; check the application session and API configuration')
     process.exitCode = 1
   } else {
-    console.log(result.data)
+    console.log({ rows: result.data, total: result.count, nextOffset: result.data.length < result.count ? result.data.length : null })
   }
 }

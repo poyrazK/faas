@@ -23,3 +23,10 @@ test('typed notes use renewed application tokens and schema projections', async 
   assert.equal(requests[0].init.redirect, 'error')
   assert.equal(requests[0].init.credentials, 'omit')
 })
+
+test('invalid pagination bounds fail before a request', () => {
+  const client = notesClient({ url: 'https://notes.example', subject: 'user', accessToken: 'token', fetch: () => { throw new Error('unexpected request') } })
+  for (const options of [{ offset: -1 }, { size: 0 }, { size: 1.5 }, { offset: NaN }, { size: Infinity }, { offset: Number.MAX_SAFE_INTEGER, size: 2 }]) {
+    assert.throws(() => client.page(options), RangeError)
+  }
+})

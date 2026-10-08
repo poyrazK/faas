@@ -14,7 +14,7 @@ const runtime = process.env.DATA_API_RUNTIME_DIR ? pathToFileURL(process.env.DAT
 const runtimeRequire = createRequire(new URL('package.json', runtime))
 const pg = runtimeRequire('pg')
 const { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } = await import(pathToFileURL(runtimeRequire.resolve('jose')))
-const { runtimeConfig } = await import(new URL('config.mjs', runtime))
+const { runtimeConfig, limits } = await import(new URL('config.mjs', runtime))
 const { createServer, tokenVerifier } = await import(new URL('server.mjs', runtime))
 const { inspect, generate } = await import(new URL('types.mjs', runtime))
 
@@ -143,6 +143,30 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const userA = { subject: 'identity|alice', token: await sign('identity|alice') }
   const userB = { subject: 'identity|bob', token: await sign('identity|bob') }
   const { verifyAuthorization } = await import(pathToFileURL(join(root, 'client/test/authorization.mjs')))
+  const { notesClient } = await import(pathToFileURL(join(root, 'client/dist/notes.js')))
+  const client = notesClient({ url, subject: userA.subject, accessToken: userA.token })
+  // Large fixtures stay local; protected preview checks only create a few rows.
+  await owner.query("INSERT INTO api.notes (subject, body) SELECT $1, 'page-limit-fixture' FROM generate_series(1, $2)", [userA.subject, limits.rows + 1])
+  try {
+    const capped = await client.page({ size: limits.rows + 1 }).eq('body', 'page-limit-fixture')
+    assert.equal(capped.error, null)
+    assert.equal(capped.data.length, limits.rows, 'server_row_cap_not_enforced')
+    assert.equal(capped.count, limits.rows + 1, 'count_must_include_unreturned_visible_rows')
+    const tail = await client.page({ offset: limits.rows, size: 1 }).eq('body', 'page-limit-fixture')
+    assert.equal(tail.error, null)
+    assert.equal(tail.data.length, 1)
+    assert.ok(!capped.data.some(row => row.id === tail.data[0].id), 'row_cap_page_overlap')
+    const ranged = await fetch(url + '/rest/v1/notes?select=id&body=eq.page-limit-fixture&order=id.desc', { headers: { Authorization: `Bearer ${userA.token}`, 'Accept-Profile': 'api', Range: '2-4', 'Range-Unit': 'items', Prefer: 'count=exact' } })
+    assert.equal(ranged.status, 206)
+    assert.equal(ranged.headers.get('Content-Range'), `2-4/${limits.rows + 1}`)
+    assert.deepEqual((await ranged.json()).map(row => row.id), capped.data.slice(2, 5).map(row => row.id))
+    const hidden = await notesClient({ url, subject: userB.subject, accessToken: userB.token }).page().eq('body', 'page-limit-fixture')
+    assert.equal(hidden.error, null)
+    assert.equal(hidden.count, 0)
+    assert.deepEqual(hidden.data, [])
+  } finally {
+    await owner.query("DELETE FROM api.notes WHERE subject=$1 AND body='page-limit-fixture'", [userA.subject])
+  }
   await verifyAuthorization({ url, userA, userB })
   for (const table of ['notes', 'comments', 'note_details', 'tags', 'note_tags', 'note_favorite_tags']) assert.equal((await owner.query(`SELECT count(*)::integer AS count FROM api.${table}`)).rows[0].count, 0)
   await assert.rejects(verifyAuthorization({ url, userA, userB: userA }), /subjects_must_differ/)
@@ -151,7 +175,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   assert.equal((await publicRequest(await sign(userA.subject, 'wrong'))).status, 401)
   // Prove the shipped authorization check catches a policy regression.
   await owner.query('ALTER TABLE api.notes DISABLE ROW LEVEL SECURITY')
-  await assert.rejects(verifyAuthorization({ url, userA, userB }), /cross_subject_read_allowed/)
+  await assert.rejects(verifyAuthorization({ url, userA, userB }), /cross_subject_read_allowed|count_leaked_other_user_rows/)
   await owner.query('ALTER TABLE api.notes ENABLE ROW LEVEL SECURITY')
   assert.equal((await owner.query('SELECT count(*)::integer AS count FROM api.notes')).rows[0].count, 0)
   for (const table of ['tags', 'note_tags', 'note_favorite_tags']) {
