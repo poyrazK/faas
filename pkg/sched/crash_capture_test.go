@@ -100,6 +100,7 @@ func TestCrashCaptureCoordinator_ReadyAndFailed(t *testing.T) {
 		{"captured", nil, state.CrashCaptureReady, ""},
 		{"instance gone", ErrCrashInstanceGone, state.CrashCaptureFailed, "instance_gone"},
 		{"vmm error", errors.New("boom"), state.CrashCaptureFailed, "capture_failed"},
+		{"remote storage", ErrCrashStorageRemote, state.CrashCaptureFailed, "storage_unsupported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := state.NewMemStore()
@@ -140,12 +141,34 @@ func TestRestoreFork_FromACrashCapture(t *testing.T) {
 	if _, err := store.RequestAppForkCancellation(context.Background(), app.AccountID, app.ID, fork.ID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	for _, step := range []func(context.Context, string, time.Time) (state.CrashCapture, error){
+		func(ctx context.Context, id string, at time.Time) (state.CrashCapture, error) {
+			return store.MarkCrashCaptureEncrypted(ctx, id, []byte("sealed"), at)
+		},
+		store.FinishCrashCapturePurge,
+	} {
+		if _, err := step(context.Background(), capture.ID, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	pinned, err := store.CreateAppFork(context.Background(), state.CreateAppForkParams{
 		AccountID: app.AccountID, AppID: app.ID, CrashCaptureID: capture.ID, RequestedBy: "user:test",
 		TTLSeconds: 600, MaxPerApp: 1, MaxPerAccount: 2, CreatedAt: time.Now(),
 	})
 	if err != nil {
 		t.Fatalf("fork of capture: %v", err)
+	}
+	// Encrypted and purged before the fork (ADR-733): nothing to restore
+	// until imaged stages it.
+	if _, err := e.RestoreFork(context.Background(), pinned); !errors.Is(err, ErrForkNoCapture) {
+		t.Fatalf("RestoreFork of a sealed capture err = %v, want ErrForkNoCapture", err)
+	}
+	for _, step := range []func(context.Context, string, time.Time) (state.CrashCapture, error){
+		store.BeginCrashCaptureStage, store.FinishCrashCaptureStage,
+	} {
+		if _, err := step(context.Background(), capture.ID, time.Now()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := e.RestoreFork(context.Background(), pinned); err != nil {
 		t.Fatalf("RestoreFork: %v", err)

@@ -2196,8 +2196,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if strings.TrimSpace(os.Getenv("FAAS_CRASH_SNAPSHOTS")) == "1" {
 		// ADR-733: captures pause a serving instance, so one coordinator
-		// runs them one at a time.
-		go sched.NewCrashCaptureCoordinator(store, engine, 0, log).Run(ctx)
+		// runs them one at a time. imaged encrypts them at rest through
+		// the local storage backend; a remote backend refuses them.
+		var runtime sched.CrashCaptureRuntime = engine
+		if storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
+			runtime = sched.RefuseCrashCaptures(sched.ErrCrashStorageRemote)
+			log.Warn("schedd: crash snapshots refused on a remote storage backend", "backend", os.Getenv("FAAS_STORAGE_BACKEND"))
+		}
+		go sched.NewCrashCaptureCoordinator(store, runtime, 0, log).Run(ctx)
 		log.Info("schedd: crash snapshots enabled")
 	}
 

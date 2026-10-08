@@ -106,6 +106,10 @@ type Querier interface {
 	AuthorizeWorkflowOutbound(ctx context.Context, db DBTX, arg AuthorizeWorkflowOutboundParams) (bool, error)
 	AutomationManifest(ctx context.Context, db DBTX, appID pgtype.UUID) (AutomationManifestRow, error)
 	BeginClonePostgresWriteFenceAbandonment(ctx context.Context, db DBTX, arg BeginClonePostgresWriteFenceAbandonmentParams) (ProjectEnvironmentClonePostgresWriteFence, error)
+	// Fenced on there being no active fork, so a fork that could still restore
+	// the plaintext never loses it.
+	BeginCrashCapturePurge(ctx context.Context, db DBTX, arg BeginCrashCapturePurgeParams) (CrashCapture, error)
+	BeginCrashCaptureStage(ctx context.Context, db DBTX, arg BeginCrashCaptureStageParams) (CrashCapture, error)
 	BeginImagePreparation(ctx context.Context, db DBTX, arg BeginImagePreparationParams) (DeploymentImagePreparation, error)
 	// ADR-581: persist an irreversible accounting obligation before provider I/O.
 	BeginManagedPostgresAccounting(ctx context.Context, db DBTX, arg BeginManagedPostgresAccountingParams) (int64, error)
@@ -662,6 +666,7 @@ type Querier interface {
 	ExecutionWorkflowSummary(ctx context.Context, db DBTX, arg ExecutionWorkflowSummaryParams) (ExecutionWorkflowSummaryRow, error)
 	ExhaustEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg ExhaustEnvironmentQueueDeliveryInvocationParams) (int64, error)
 	ExistsManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg ExistsManagedPostgresLifecycleDatabaseParams) (bool, error)
+	// imaged, after deleting every object: the sealed key goes with them.
 	ExpireCrashCapture(ctx context.Context, db DBTX, arg ExpireCrashCaptureParams) (CrashCapture, error)
 	ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt pgtype.Timestamptz) (int64, error)
 	// Admission locks apps before deployments. A fresh READ COMMITTED snapshot
@@ -725,6 +730,8 @@ type Querier interface {
 	FindManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg FindManagedPostgresLifecycleDatabaseParams) (ManagedPostgresDatabase, error)
 	FinishAppFork(ctx context.Context, db DBTX, arg FinishAppForkParams) (AppFork, error)
 	FinishClonePostgresWriteFenceAbandonment(ctx context.Context, db DBTX, arg FinishClonePostgresWriteFenceAbandonmentParams) (ProjectEnvironmentClonePostgresWriteFence, error)
+	FinishCrashCapturePurge(ctx context.Context, db DBTX, arg FinishCrashCapturePurgeParams) (CrashCapture, error)
+	FinishCrashCaptureStage(ctx context.Context, db DBTX, arg FinishCrashCaptureStageParams) (CrashCapture, error)
 	FinishDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg FinishDevBridgeWebhookReplayParams) (int64, error)
 	FinishEnvironmentGitOpsRun(ctx context.Context, db DBTX, arg FinishEnvironmentGitOpsRunParams) (int64, error)
 	FinishEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg FinishEnvironmentGitSourcePollParams) (int64, error)
@@ -1355,6 +1362,9 @@ type Querier interface {
 	// steady-state workload; a 7-day retention sweep is a follow-on.
 	ListComputeNodeHeartbeats(ctx context.Context, db DBTX, arg ListComputeNodeHeartbeatsParams) ([]ListComputeNodeHeartbeatsRow, error)
 	ListCrashCaptures(ctx context.Context, db DBTX, arg ListCrashCapturesParams) ([]CrashCapture, error)
+	ListCrashCapturesToEncrypt(ctx context.Context, db DBTX, arg ListCrashCapturesToEncryptParams) ([]CrashCapture, error)
+	ListCrashCapturesToPurge(ctx context.Context, db DBTX, rowLimit int32) ([]CrashCapture, error)
+	ListCrashCapturesToStage(ctx context.Context, db DBTX, arg ListCrashCapturesToStageParams) ([]CrashCapture, error)
 	ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListCronsForAppRow, error)
 	ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, arg ListCustomerAlertRulesByPresetParams) ([]AlertRule, error)
 	ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error)
@@ -1498,6 +1508,11 @@ type Querier interface {
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
 	ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Deployment, error)
+	// ADR-733 encryption at rest. imaged owns plaintext_state, sealed_key and
+	// encrypted_at. A fork is active while queued, restoring or running; only
+	// an active fork keeps (or brings back) a plaintext copy.
+	// imaged's local orphan sweep keeps these deployments' capture directories.
+	ListLiveCrashCaptureDeploymentIDs(ctx context.Context, db DBTX) ([]pgtype.UUID, error)
 	ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, arg ListManagedPostgresAccountingCoverageParams) ([]ListManagedPostgresAccountingCoverageRow, error)
 	ListManagedPostgresCustomerDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresCutoverCredentials(ctx context.Context, db DBTX, id string) ([]ManagedPostgresCutoverCredential, error)
@@ -1797,6 +1812,9 @@ type Querier interface {
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)
 	MarkClaimedTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordRetryParams) (int64, error)
 	MarkClaimedTriggerRecordSucceeded(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordSucceededParams) (int64, error)
+	// The encrypted objects are written. The plaintext stays (staged) only when
+	// an active fork is pinned to the capture; otherwise it is purged next.
+	MarkCrashCaptureEncrypted(ctx context.Context, db DBTX, arg MarkCrashCaptureEncryptedParams) (CrashCapture, error)
 	MarkDeploymentLive(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDeploymentSuperseded(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDomainVerified(ctx context.Context, db DBTX, domain interface{}) error

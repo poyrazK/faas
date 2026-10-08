@@ -27,7 +27,8 @@ func crashCaptureFromSQLC(row sqlc.CrashCapture) CrashCapture {
 		MemBytes: memBytes, FailureCode: executionStringPtr(row.FailureCode), FailureMessage: executionStringPtr(row.FailureMessage),
 		RequestedAt: row.RequestedAt.Time.UTC(), CapturedAt: timestamptzToTimePtr(row.CapturedAt),
 		FinishedAt: timestamptzToTimePtr(row.FinishedAt), ExpiresAt: timestamptzToTimePtr(row.ExpiresAt),
-		UpdatedAt: row.UpdatedAt.Time.UTC(),
+		UpdatedAt: row.UpdatedAt.Time.UTC(), PlaintextState: CrashCapturePlaintext(row.PlaintextState),
+		SealedKey: row.SealedKey, EncryptedAt: timestamptzToTimePtr(row.EncryptedAt),
 	}
 }
 
@@ -160,4 +161,66 @@ func (s *PgStore) CrashCaptureByID(ctx context.Context, accountID, appID, id str
 func (s *PgStore) CrashCaptureForRestore(ctx context.Context, id string) (CrashCapture, error) {
 	row, err := sqlc.New().GetCrashCaptureByID(ctx, s.pool, mustPgUUID(id))
 	return crashCaptureRow(row, err, ErrNotFound)
+}
+
+func crashRowLimit(limit int) int32 {
+	return int32(clampAppForkListLimit(limit)) //nolint:gosec // clamped
+}
+
+func (s *PgStore) CrashCapturesToEncrypt(ctx context.Context, now time.Time, limit int) ([]CrashCapture, error) {
+	return crashCaptureRows(sqlc.New().ListCrashCapturesToEncrypt(ctx, s.pool, sqlc.ListCrashCapturesToEncryptParams{
+		Now: pgTime(now), RowLimit: crashRowLimit(limit),
+	}))
+}
+
+func (s *PgStore) MarkCrashCaptureEncrypted(ctx context.Context, id string, sealedKey []byte, now time.Time) (CrashCapture, error) {
+	if len(sealedKey) == 0 {
+		return CrashCapture{}, ErrNotFound
+	}
+	row, err := sqlc.New().MarkCrashCaptureEncrypted(ctx, s.pool, sqlc.MarkCrashCaptureEncryptedParams{
+		SealedKey: sealedKey, Now: pgTime(now), CaptureID: mustPgUUID(id),
+	})
+	return crashCaptureRow(row, err, ErrNotFound)
+}
+
+func (s *PgStore) CrashCapturesToPurge(ctx context.Context, limit int) ([]CrashCapture, error) {
+	return crashCaptureRows(sqlc.New().ListCrashCapturesToPurge(ctx, s.pool, crashRowLimit(limit)))
+}
+
+func (s *PgStore) BeginCrashCapturePurge(ctx context.Context, id string, now time.Time) (CrashCapture, error) {
+	row, err := sqlc.New().BeginCrashCapturePurge(ctx, s.pool, sqlc.BeginCrashCapturePurgeParams{Now: pgTime(now), CaptureID: mustPgUUID(id)})
+	return crashCaptureRow(row, err, ErrNotFound)
+}
+
+func (s *PgStore) FinishCrashCapturePurge(ctx context.Context, id string, now time.Time) (CrashCapture, error) {
+	row, err := sqlc.New().FinishCrashCapturePurge(ctx, s.pool, sqlc.FinishCrashCapturePurgeParams{Now: pgTime(now), CaptureID: mustPgUUID(id)})
+	return crashCaptureRow(row, err, ErrNotFound)
+}
+
+func (s *PgStore) CrashCapturesToStage(ctx context.Context, now time.Time, limit int) ([]CrashCapture, error) {
+	return crashCaptureRows(sqlc.New().ListCrashCapturesToStage(ctx, s.pool, sqlc.ListCrashCapturesToStageParams{
+		Now: pgTime(now), RowLimit: crashRowLimit(limit),
+	}))
+}
+
+func (s *PgStore) BeginCrashCaptureStage(ctx context.Context, id string, now time.Time) (CrashCapture, error) {
+	row, err := sqlc.New().BeginCrashCaptureStage(ctx, s.pool, sqlc.BeginCrashCaptureStageParams{Now: pgTime(now), CaptureID: mustPgUUID(id)})
+	return crashCaptureRow(row, err, ErrNotFound)
+}
+
+func (s *PgStore) FinishCrashCaptureStage(ctx context.Context, id string, now time.Time) (CrashCapture, error) {
+	row, err := sqlc.New().FinishCrashCaptureStage(ctx, s.pool, sqlc.FinishCrashCaptureStageParams{Now: pgTime(now), CaptureID: mustPgUUID(id)})
+	return crashCaptureRow(row, err, ErrNotFound)
+}
+
+func (s *PgStore) LiveCrashCaptureDeploymentIDs(ctx context.Context) ([]string, error) {
+	rows, err := sqlc.New().ListLiveCrashCaptureDeploymentIDs(ctx, s.pool)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]string, 0, len(rows))
+	for _, id := range rows {
+		out = append(out, pgUUIDString(id))
+	}
+	return out, nil
 }

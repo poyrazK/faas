@@ -15378,6 +15378,13 @@ WHERE id = (
     WHERE candidate.status = 'queued'
       AND candidate.cancel_requested_at IS NULL
       AND candidate.expires_at > sqlc.arg(now)::timestamptz
+      -- ADR-733: a fork pinned to an encrypted crash capture waits until
+      -- imaged has staged its plaintext. A capture that is no longer ready
+      -- is claimed so the restore fails fast.
+      AND (candidate.crash_capture_id IS NULL OR EXISTS (
+          SELECT 1 FROM crash_captures c
+          WHERE c.id = candidate.crash_capture_id
+            AND (c.status <> 'ready' OR c.plaintext_state IN ('present', 'staged'))))
     ORDER BY candidate.created_at, candidate.id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -15572,10 +15579,96 @@ ORDER BY expires_at, id
 LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: ExpireCrashCapture :one
+-- imaged, after deleting every object: the sealed key goes with them.
 UPDATE crash_captures
 SET status = 'expired', finished_at = sqlc.arg(now)::timestamptz,
+    sealed_key = NULL, plaintext_state = 'absent',
     updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
 WHERE id = sqlc.arg(capture_id)::uuid AND status = 'ready'
+RETURNING *;
+
+-- ADR-733 encryption at rest. imaged owns plaintext_state, sealed_key and
+-- encrypted_at. A fork is active while queued, restoring or running; only
+-- an active fork keeps (or brings back) a plaintext copy.
+
+-- name: ListLiveCrashCaptureDeploymentIDs :many
+-- imaged's local orphan sweep keeps these deployments' capture directories.
+SELECT DISTINCT deployment_id FROM crash_captures
+WHERE status IN ('capturing', 'ready');
+
+-- name: ListCrashCapturesToEncrypt :many
+SELECT * FROM crash_captures
+WHERE status = 'ready' AND plaintext_state = 'present'
+  AND expires_at > sqlc.arg(now)::timestamptz
+ORDER BY captured_at, id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: MarkCrashCaptureEncrypted :one
+-- The encrypted objects are written. The plaintext stays (staged) only when
+-- an active fork is pinned to the capture; otherwise it is purged next.
+UPDATE crash_captures c
+SET plaintext_state = CASE WHEN EXISTS (
+        SELECT 1 FROM app_forks f
+        WHERE f.crash_capture_id = c.id AND f.status IN ('queued', 'restoring', 'running')
+    ) THEN 'staged' ELSE 'purging' END,
+    sealed_key = sqlc.arg(sealed_key)::bytea,
+    encrypted_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(c.updated_at, sqlc.arg(now)::timestamptz)
+WHERE c.id = sqlc.arg(capture_id)::uuid AND c.status = 'ready' AND c.plaintext_state = 'present'
+RETURNING *;
+
+-- name: ListCrashCapturesToPurge :many
+SELECT * FROM crash_captures c
+WHERE c.status = 'ready'
+  AND (c.plaintext_state = 'purging'
+       OR (c.plaintext_state IN ('staging', 'staged') AND NOT EXISTS (
+           SELECT 1 FROM app_forks f
+           WHERE f.crash_capture_id = c.id AND f.status IN ('queued', 'restoring', 'running'))))
+ORDER BY c.captured_at, c.id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: BeginCrashCapturePurge :one
+-- Fenced on there being no active fork, so a fork that could still restore
+-- the plaintext never loses it.
+UPDATE crash_captures c
+SET plaintext_state = 'purging', updated_at = greatest(c.updated_at, sqlc.arg(now)::timestamptz)
+WHERE c.id = sqlc.arg(capture_id)::uuid AND c.status = 'ready'
+  AND c.plaintext_state IN ('staging', 'staged', 'purging')
+  AND NOT EXISTS (
+      SELECT 1 FROM app_forks f
+      WHERE f.crash_capture_id = c.id AND f.status IN ('queued', 'restoring', 'running'))
+RETURNING *;
+
+-- name: FinishCrashCapturePurge :one
+UPDATE crash_captures
+SET plaintext_state = 'absent', updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(capture_id)::uuid AND status = 'ready' AND plaintext_state = 'purging'
+RETURNING *;
+
+-- name: ListCrashCapturesToStage :many
+SELECT * FROM crash_captures c
+WHERE c.status = 'ready' AND c.plaintext_state IN ('absent', 'staging')
+  AND c.expires_at > sqlc.arg(now)::timestamptz
+  AND EXISTS (
+      SELECT 1 FROM app_forks f
+      WHERE f.crash_capture_id = c.id AND f.status IN ('queued', 'restoring', 'running'))
+ORDER BY c.captured_at, c.id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: BeginCrashCaptureStage :one
+UPDATE crash_captures c
+SET plaintext_state = 'staging', updated_at = greatest(c.updated_at, sqlc.arg(now)::timestamptz)
+WHERE c.id = sqlc.arg(capture_id)::uuid AND c.status = 'ready'
+  AND c.plaintext_state IN ('absent', 'staging')
+  AND EXISTS (
+      SELECT 1 FROM app_forks f
+      WHERE f.crash_capture_id = c.id AND f.status IN ('queued', 'restoring', 'running'))
+RETURNING *;
+
+-- name: FinishCrashCaptureStage :one
+UPDATE crash_captures
+SET plaintext_state = 'staged', updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(capture_id)::uuid AND status = 'ready' AND plaintext_state = 'staging'
 RETURNING *;
 
 -- name: ListCrashCaptures :many

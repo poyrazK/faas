@@ -11955,6 +11955,10 @@ CREATE TABLE public.crash_captures (
     finished_at timestamp with time zone,
     expires_at timestamp with time zone,
     updated_at timestamp with time zone NOT NULL,
+    plaintext_state text DEFAULT 'present'::text NOT NULL,
+    sealed_key bytea,
+    encrypted_at timestamp with time zone,
+    CONSTRAINT crash_captures_encryption_chk CHECK (((plaintext_state = ANY (ARRAY['present'::text, 'purging'::text, 'absent'::text, 'staging'::text, 'staged'::text])) AND ((encrypted_at IS NULL) OR (status = ANY (ARRAY['ready'::text, 'expired'::text]))) AND ((status = 'expired'::text) OR ((encrypted_at IS NULL) = (plaintext_state = 'present'::text))) AND ((status = 'expired'::text) OR ((encrypted_at IS NULL) = (sealed_key IS NULL))) AND ((status <> 'expired'::text) OR ((sealed_key IS NULL) AND (plaintext_state = 'absent'::text))) AND ((sealed_key IS NULL) OR ((octet_length(sealed_key) >= 1) AND (octet_length(sealed_key) <= 4096))))),
     CONSTRAINT crash_captures_failure_shape_chk CHECK ((((failure_code IS NULL) = (failure_message IS NULL)) AND ((status = 'failed'::text) = (failure_code IS NOT NULL)) AND ((failure_code IS NULL) OR ((octet_length(failure_code) >= 1) AND (octet_length(failure_code) <= 64))) AND ((failure_message IS NULL) OR (octet_length(failure_message) <= 4096)))),
     CONSTRAINT crash_captures_finished_chk CHECK (((status = ANY (ARRAY['failed'::text, 'expired'::text])) = (finished_at IS NOT NULL))),
     CONSTRAINT crash_captures_keys_chk CHECK ((((storage_key IS NULL) OR ((octet_length(storage_key) >= 1) AND (octet_length(storage_key) <= 1024))) AND ((vmstate_storage_key IS NULL) OR ((octet_length(vmstate_storage_key) >= 1) AND (octet_length(vmstate_storage_key) <= 1024))) AND ((fc_version IS NULL) OR ((octet_length(fc_version) >= 1) AND (octet_length(fc_version) <= 64))) AND ((mem_bytes IS NULL) OR (mem_bytes >= 0)))),
@@ -28136,6 +28140,13 @@ CREATE INDEX crash_captures_claim_idx ON public.crash_captures USING btree (requ
 --
 
 CREATE INDEX crash_captures_expiry_idx ON public.crash_captures USING btree (expires_at, id) WHERE (status = 'ready'::text);
+
+
+--
+-- Name: crash_captures_plaintext_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX crash_captures_plaintext_idx ON public.crash_captures USING btree (captured_at, id) WHERE ((status = 'ready'::text) AND (plaintext_state <> 'absent'::text));
 
 
 --

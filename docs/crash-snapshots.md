@@ -56,7 +56,12 @@ a capture needs a key with both `deploy:write` and `secrets:read`.
 - **It is a copy of production memory**, including your users' data that
   was in memory at the time. Turn crash snapshots on only for apps where
   that is acceptable.
-- **Captures are kept for 7 days** and then deleted.
+- **Captures are encrypted at rest.** Within seconds of a capture, Gregale
+  encrypts it with a key of its own and deletes the unencrypted copy. It is
+  decrypted only while a fork of it exists (a new fork waits a few seconds
+  for that), and the decrypted copy is deleted when the fork ends.
+- **Captures are kept for 7 days** and then deleted, together with their
+  key.
 - **The capture is taken right after the failing response**, not at the
   instant of the fault. State your code unwinds when it handles the error
   is gone by then.

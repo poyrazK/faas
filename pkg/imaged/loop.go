@@ -47,19 +47,22 @@ const (
 // Loop is the imaged M8 daemon loop. cmd/imaged constructs it after wiring
 // the Handler's collaborators (store, notifier, OCI puller, builder).
 type Loop struct {
-	handler            *Handler
-	store              state.Store
-	pool               *pgxpool.Pool
-	log                *slog.Logger
-	now                func() time.Time
-	lvUsedPct          func(ctx context.Context) (float64, error)
-	gcEvery            time.Duration // default 24h; tests shrink to ms
-	securityScanEvery  time.Duration // default 6h; tests shrink to ms
-	securityLeaseEvery time.Duration // default 1m; tests shrink to ms
-	detectFC           func(ctx context.Context) (string, error)
-	appsRoot           string
-	storageRoot        string
-	gcMu               sync.Mutex
+	handler *Handler
+	store   state.Store
+	// crashCaptureCryptoEvery overrides the ADR-733 crash capture
+	// encryption cadence in tests; zero uses crashCaptureCryptoEvery.
+	crashCaptureCryptoEvery time.Duration
+	pool                    *pgxpool.Pool
+	log                     *slog.Logger
+	now                     func() time.Time
+	lvUsedPct               func(ctx context.Context) (float64, error)
+	gcEvery                 time.Duration // default 24h; tests shrink to ms
+	securityScanEvery       time.Duration // default 6h; tests shrink to ms
+	securityLeaseEvery      time.Duration // default 1m; tests shrink to ms
+	detectFC                func(ctx context.Context) (string, error)
+	appsRoot                string
+	storageRoot             string
+	gcMu                    sync.Mutex
 
 	remoteDeleteBacklogCount     prometheus.Gauge
 	remoteDeleteBacklogOldestAge prometheus.Gauge
@@ -287,6 +290,10 @@ func (l *Loop) Run(ctx context.Context) error {
 	// reclaim anything because every restart resets the ticker. Run one sweep
 	// after recovery so cleanup makes progress on frequently updated nodes.
 	go l.runGCTick(ctx, l.now())
+	// ADR-733: crash capture encryption, staging, purge and expiry run on
+	// their own goroutine (they stream whole guest memory images) and
+	// expire on time regardless of disk pressure.
+	go l.runCrashCaptureCrypto(ctx)
 	go l.reconcileSecurityScans(ctx, l.now(), securityScanEvery)
 	go l.reconcileSecurityLeases(ctx, l.now(), securityScanEvery)
 	go l.reconcileSecuritySignatures(ctx, l.now())
@@ -514,9 +521,6 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 		}
 	}
 	l.removeLocalSnapshotOrphans(ctx, now)
-	// ADR-733: crash captures are evidence with a fixed retention, not
-	// cache; they expire on time regardless of disk pressure.
-	l.expireCrashCaptures(ctx, now)
 	if !pressure {
 		return
 	}
@@ -594,8 +598,15 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 		l.log.Warn("imaged: local snapshot orphan list", "err", err)
 		return
 	}
-	known := make(map[string]struct{}, len(knownIDs))
-	for _, deploymentID := range knownIDs {
+	// ADR-733 crash captures live under their deployment's directory and
+	// can outlive its snapshot rows.
+	captureIDs, err := l.store.LiveCrashCaptureDeploymentIDs(ctx)
+	if err != nil {
+		l.log.Warn("imaged: local snapshot orphan crash capture list", "err", err)
+		return
+	}
+	known := make(map[string]struct{}, len(knownIDs)+len(captureIDs))
+	for _, deploymentID := range append(knownIDs, captureIDs...) {
 		known[deploymentID] = struct{}{}
 	}
 	snapRoot := filepath.Join(filepath.Clean(l.storageRoot), "snap")

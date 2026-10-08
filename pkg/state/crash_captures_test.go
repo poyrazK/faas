@@ -165,3 +165,128 @@ func TestCrashCapture_StaleCapturesFail(t *testing.T) {
 		})
 	}
 }
+
+// readyCrashCapture drives a manual capture of a running instance to ready.
+func (f appForkFixture) readyCrashCapture(t *testing.T) state.CrashCapture {
+	t.Helper()
+	ctx := context.Background()
+	f.runningInstance(t, state.InstanceModeNormal)
+	requested, err := f.store.RequestManualCrashCapture(ctx, f.accountID, f.appID, crashCooldown, forkT0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ClaimNextCrashCapture(ctx, forkT0); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := f.store.CompleteCrashCapture(ctx, state.CompleteCrashCaptureParams{
+		ID: requested.ID, StorageKey: "snap/d/warm/captures/c/v2/mem", VMStateStorageKey: "snap/d/warm/captures/c/v2/vmstate",
+		FCVersion: "1.7.0", MemBytes: 1 << 20, CapturedAt: forkT0.Add(time.Second), ExpiresAt: forkT0.Add(time.Hour),
+	})
+	if err != nil || ready.PlaintextState != state.CrashPlaintextPresent || !ready.PlaintextReadable() {
+		t.Fatalf("complete = %+v, %v", ready, err)
+	}
+	return ready
+}
+
+// TestCrashCapture_EncryptionAtRest walks the ADR-733 plaintext lifecycle:
+// encrypt and purge, stage only for an active fork (which is not claimable
+// until staged), keep the plaintext while the fork is active, purge after,
+// and drop the sealed key at expiry.
+func TestCrashCapture_EncryptionAtRest(t *testing.T) {
+	for name, f := range appForkStores(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			ready := f.readyCrashCapture(t)
+			at := func(s int) time.Time { return forkT0.Add(time.Duration(s) * time.Second) }
+			if ids, err := f.store.LiveCrashCaptureDeploymentIDs(ctx); err != nil || len(ids) != 1 || ids[0] != f.liveDep {
+				t.Fatalf("live capture deployments = %v, %v", ids, err)
+			}
+			if due, err := f.store.CrashCapturesToEncrypt(ctx, at(2), 10); err != nil || len(due) != 1 {
+				t.Fatalf("to encrypt = %+v, %v", due, err)
+			}
+			enc, err := f.store.MarkCrashCaptureEncrypted(ctx, ready.ID, []byte("sealed"), at(3))
+			if err != nil || enc.PlaintextState != state.CrashPlaintextPurging || enc.EncryptedAt == nil || string(enc.SealedKey) != "sealed" {
+				t.Fatalf("encrypted = %+v, %v", enc, err)
+			}
+			if _, err := f.store.MarkCrashCaptureEncrypted(ctx, ready.ID, []byte("again"), at(3)); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("second encrypt err = %v, want ErrNotFound", err)
+			}
+			if due, err := f.store.CrashCapturesToPurge(ctx, 10); err != nil || len(due) != 1 {
+				t.Fatalf("to purge = %+v, %v", due, err)
+			}
+			if c, err := f.store.FinishCrashCapturePurge(ctx, ready.ID, at(4)); err != nil || c.PlaintextState != state.CrashPlaintextAbsent {
+				t.Fatalf("purged = %+v, %v", c, err)
+			}
+
+			p := f.params(at(5))
+			p.CrashCaptureID, p.DeploymentID = ready.ID, ""
+			fork, err := f.store.CreateAppFork(ctx, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.store.ClaimNextAppFork(ctx, "sched-a", at(6), time.Minute); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("claim of a fork on a sealed capture err = %v, want ErrNotFound", err)
+			}
+			if due, err := f.store.CrashCapturesToStage(ctx, at(6), 10); err != nil || len(due) != 1 {
+				t.Fatalf("to stage = %+v, %v", due, err)
+			}
+			if c, err := f.store.BeginCrashCaptureStage(ctx, ready.ID, at(7)); err != nil || c.PlaintextState != state.CrashPlaintextStaging {
+				t.Fatalf("staging = %+v, %v", c, err)
+			}
+			if _, err := f.store.ClaimNextAppFork(ctx, "sched-a", at(7), time.Minute); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("claim while staging err = %v, want ErrNotFound", err)
+			}
+			if c, err := f.store.FinishCrashCaptureStage(ctx, ready.ID, at(8)); err != nil || c.PlaintextState != state.CrashPlaintextStaged {
+				t.Fatalf("staged = %+v, %v", c, err)
+			}
+			claimed, err := f.store.ClaimNextAppFork(ctx, "sched-a", at(9), time.Minute)
+			if err != nil || claimed.ID != fork.ID {
+				t.Fatalf("claim of a staged fork = %+v, %v", claimed, err)
+			}
+			if _, err := f.store.BeginCrashCapturePurge(ctx, ready.ID, at(10)); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("purge under an active fork err = %v, want ErrNotFound", err)
+			}
+			if due, err := f.store.CrashCapturesToPurge(ctx, 10); err != nil || len(due) != 0 {
+				t.Fatalf("to purge under an active fork = %+v, %v", due, err)
+			}
+			if _, err := f.store.FinishAppFork(ctx, state.FinishAppForkParams{
+				ForkID: fork.ID, LeaseToken: *claimed.LeaseToken, Status: state.AppForkCancelled, FinishedAt: at(11),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if c, err := f.store.BeginCrashCapturePurge(ctx, ready.ID, at(12)); err != nil || c.PlaintextState != state.CrashPlaintextPurging {
+				t.Fatalf("purge after the fork = %+v, %v", c, err)
+			}
+			if _, err := f.store.FinishCrashCapturePurge(ctx, ready.ID, at(13)); err != nil {
+				t.Fatal(err)
+			}
+			expired, err := f.store.ExpireCrashCapture(ctx, ready.ID, forkT0.Add(2*time.Hour))
+			if err != nil || expired.SealedKey != nil || expired.PlaintextState != state.CrashPlaintextAbsent {
+				t.Fatalf("expired = %+v, %v", expired, err)
+			}
+			if ids, err := f.store.LiveCrashCaptureDeploymentIDs(ctx); err != nil || len(ids) != 0 {
+				t.Fatalf("live capture deployments after expiry = %v, %v", ids, err)
+			}
+		})
+	}
+}
+
+// TestCrashCapture_EncryptKeepsPlaintextForAnActiveFork: a capture
+// encrypted while a fork is pinned to it stays staged for that fork.
+func TestCrashCapture_EncryptKeepsPlaintextForAnActiveFork(t *testing.T) {
+	for name, f := range appForkStores(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			ready := f.readyCrashCapture(t)
+			p := f.params(forkT0.Add(2 * time.Second))
+			p.CrashCaptureID, p.DeploymentID = ready.ID, ""
+			if _, err := f.store.CreateAppFork(ctx, p); err != nil {
+				t.Fatal(err)
+			}
+			enc, err := f.store.MarkCrashCaptureEncrypted(ctx, ready.ID, []byte("sealed"), forkT0.Add(3*time.Second))
+			if err != nil || enc.PlaintextState != state.CrashPlaintextStaged {
+				t.Fatalf("encrypted under a fork = %+v, %v", enc, err)
+			}
+		})
+	}
+}

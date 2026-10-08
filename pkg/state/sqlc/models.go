@@ -1420,6 +1420,9 @@ type CrashCapture struct {
 	FinishedAt        pgtype.Timestamptz
 	ExpiresAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
+	PlaintextState    string
+	SealedKey         []byte
+	EncryptedAt       pgtype.Timestamptz
 }
 
 type CrashSnapshotSetting struct {
