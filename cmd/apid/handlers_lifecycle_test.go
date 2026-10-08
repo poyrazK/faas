@@ -247,6 +247,8 @@ func TestCreateAppDefaultsPreAuthRateLimitToObserve(t *testing.T) {
 		t.Fatalf("default config = %+v, err=%v; want Free-clamped observe %+v", stored.Manifest.PreAuthRateLimit, err, want)
 	}
 
+	// Free allows one app, so the opt-out case gets its own account.
+	e = setup(t, api.PlanPro)
 	off := &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitOff}
 	rec = e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "opted-out", PreAuthRateLimit: off}, nil)
 	if rec.Code != 201 {
