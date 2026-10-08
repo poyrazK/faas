@@ -974,11 +974,21 @@ func managedRealtimePrincipalSendResponseFromReceipt(receipt state.ManagedRealti
 			knownFailed++
 		}
 	}
-	response.Recipients = max(response.Recipients, knownRecipients)
-	response.Queued = max(response.Queued, knownQueued)
-	response.Unsupported = max(response.Unsupported, knownUnsupported)
-	response.QueueFull = max(response.QueueFull, knownQueueFull)
-	response.Failed = max(response.Failed, knownFailed)
+	if knownRecipients > response.Recipients {
+		response.Recipients = knownRecipients
+	}
+	if knownQueued > response.Queued {
+		response.Queued = knownQueued
+	}
+	if knownUnsupported > response.Unsupported {
+		response.Unsupported = knownUnsupported
+	}
+	if knownQueueFull > response.QueueFull {
+		response.QueueFull = knownQueueFull
+	}
+	if knownFailed > response.Failed {
+		response.Failed = knownFailed
+	}
 	response.Partial = response.Partial || response.TimedOut > 0 || response.Unsupported > 0 || response.QueueFull > 0 || response.Failed > 0 || response.NodesUnavailable > 0
 	if receipt.DispatchComplete && len(receipt.Deliveries) > 0 {
 		switch {

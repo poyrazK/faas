@@ -105,7 +105,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		defer func() { _ = reader.Close() }()
 		historyReader = reader
 		routeReporter = reader
-		fleetClient, _ = reader.(realtime.ManagedRealtimeFleetClient)
+		fleetClient = reader
 	}
 	manager := realtime.NewManager(realtime.Config{
 		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
