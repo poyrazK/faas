@@ -166,17 +166,44 @@ func (m *JobMetrics) Registry() *prometheus.Registry { return m.reg }
 // 1m ticker. Errors are logged Warn and the tick continues; a
 // persistent failure surfaces as a flood of WARN logs that an
 // operator can alert on.
+//
+// Like SampleAndRoll, a tick with the instance-billing ledger first catches
+// up the closed minutes after the newest one it rolled in full (H5-55).
 func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error) {
 	observedAt := s.now().UTC()
-	minute := MinuteKey(observedAt)
+	s.jobCaughtUp = s.jobCaughtUp[:0]
+	if _, ok := s.store.(instanceBillingSecondsStore); !ok {
+		return s.rollJobs(ctx, MinuteKey(observedAt), false)
+	}
+	newest := observedAt.Truncate(time.Minute).Add(-time.Minute)
+	var out []JobRolledRow
+	for _, minute := range catchUpMinutes(s.jobRolledThrough, newest) {
+		rows, err := s.rollJobs(ctx, minute, true)
+		out = append(out, rows...)
+		if err != nil {
+			return out, fmt.Errorf("meter: catch up job minute %s: %w", minute.Format(time.RFC3339), err)
+		}
+		s.jobRolledThrough = minute
+		s.jobCaughtUp = append(s.jobCaughtUp, minute)
+	}
+	rows, err := s.rollJobs(ctx, newest, true)
+	out = append(out, rows...)
+	if err != nil {
+		return out, err
+	}
+	s.jobRolledThrough = newest
+	return out, nil
+}
+
+// rollJobs rolls one minute of job usage; exactResidency reads the minute
+// from the instance-billing ledger.
+func (s *Sampler) rollJobs(ctx context.Context, minute time.Time, exactResidency bool) ([]JobRolledRow, error) {
 	var residency map[string]int64
 	var instances []state.JobBillingInstance
 	var err error
-	exactResidency := false
-	if exact, ok := s.store.(instanceBillingSecondsStore); ok {
-		exactResidency = true
-		windowEnd := observedAt.Truncate(time.Minute)
-		minute = windowEnd.Add(-time.Minute)
+	if exactResidency {
+		exact := s.store.(instanceBillingSecondsStore)
+		windowEnd := minute.Add(time.Minute)
 		residency, err = exact.InstanceBillingSeconds(ctx, minute, windowEnd)
 		if err != nil {
 			return nil, fmt.Errorf("meter: job billing residency: %w", err)

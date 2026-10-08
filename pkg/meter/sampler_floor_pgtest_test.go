@@ -88,8 +88,17 @@ func TestPgScheduledFloorClosedMinuteReplay(t *testing.T) {
 	sampler := NewSampler(store, nil, func() time.Time { return now })
 	for range 2 {
 		rows, err := sampler.SampleAndRoll(ctx)
-		if err != nil || len(rows) != 1 || rows[0].MBSeconds != 7920 || !rows[0].Minute.Equal(now.Add(-time.Minute)) {
-			t.Fatalf("partial closed-minute floor: %+v, %v", rows, err)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var newest []RolledRow
+		for _, row := range rows {
+			if !row.CatchUp {
+				newest = append(newest, row)
+			}
+		}
+		if len(newest) != 1 || newest[0].MBSeconds != 7920 || !newest[0].Minute.Equal(now.Add(-time.Minute)) {
+			t.Fatalf("partial closed-minute floor: %+v", rows)
 		}
 	}
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
@@ -99,8 +108,20 @@ func TestPgScheduledFloorClosedMinuteReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence, err := store.ListFinancialUsageEvidence(ctx, account.ID, start, end, 0, head, 100)
-	if err != nil || len(evidence) != 1 || evidence[0].Evidence.Quantity != 7920 {
-		t.Fatalf("floor replay changed financial quantity: %+v, %v", evidence, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first tick also caught up 09:00, the window's first full minute
+	// (H5-55). Each minute is evidenced exactly once despite the replay.
+	quantity := map[time.Time]int64{}
+	for _, e := range evidence {
+		if _, dup := quantity[e.Evidence.Start]; dup {
+			t.Fatalf("floor replay duplicated minute %s: %+v", e.Evidence.Start, evidence)
+		}
+		quantity[e.Evidence.Start] = e.Evidence.Quantity
+	}
+	if len(quantity) != 2 || quantity[now.Add(-time.Minute)] != 7920 || quantity[now.Add(-2*time.Minute)] != 15840 {
+		t.Fatalf("floor replay changed financial quantity: %+v", evidence)
 	}
 }
 
