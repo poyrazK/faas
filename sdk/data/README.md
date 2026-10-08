@@ -37,3 +37,9 @@ application JWT. Gregale permits POST RPC only; omit `get` and `head` options.
 Arguments, defaults and results are inferred from the database. Each call is
 one transaction. See the guide for opt-in comments, execution grants, supported
 signatures, RLS and fresh-restart requirements.
+
+For retry-safe note creation, the starter adds `create_note_with_tags_once`.
+Retain one UUID and the same payload for a logical operation, then explicitly
+replay with that key after an uncertain network outcome. Keys are user-scoped;
+changed payloads return 409. The guide describes execution grants, receipt
+retention, snapshot responses and deletion semantics.

@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { verifyRPC, verifyRPCPolicy } from './rpc.mjs'
 import { browserOrigins, verifyBrowserCORS } from './browser-cors.mjs'
+import { verifyIdempotency } from './idempotency.mjs'
 import { verifySchemaEvolution } from './schema-evolution.mjs'
 import { verifyQueryPlans } from './query-plans.mjs'
 import { command } from './staging/canary.mjs'
@@ -72,19 +73,20 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   // Exercise exactly the stable-owner migration session and restricted API role.
   await migrate(migrationURL.toString())
   await migrate(migrationURL.toString())
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 8)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 9)
   const firstSQL = join(root, 'migrations/sql/0001_notes.sql')
   const originalSQL = await readFile(firstSQL, 'utf8')
   await writeFile(firstSQL, originalSQL + '\n-- changed after deployment\n')
   try { await assert.rejects(migrate(migrationURL.toString()), /changed or removed/) }
   finally { await writeFile(firstSQL, originalSQL) }
-  const failedSQL = join(root, 'migrations/sql/0009_failure.sql')
+  const failedSQL = join(root, 'migrations/sql/0010_failure.sql')
   await writeFile(failedSQL, 'ALTER TABLE api.notes ADD COLUMN rolled_back text; SELECT 1/0;')
   try { await assert.rejects(migrate(migrationURL.toString())) }
   finally { await rm(failedSQL) }
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 8)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 9)
   assert.equal((await owner.query("SELECT count(*)::integer AS count FROM information_schema.columns WHERE table_schema='api' AND column_name='rolled_back'")).rows[0].count, 0)
   await owner.query(`GRANT EXECUTE ON FUNCTION api.create_note_with_tags(text, text[]) TO "${role}"`)
+  await owner.query(`GRANT EXECUTE ON FUNCTION api.create_note_with_tags_once(uuid, text, text[]) TO "${role}"`)
   await verifyRPCPolicy({ owner, inspect, loginURL: loginURL.toString(), role })
   const snapshot = await inspect(loginURL.toString(), ['api'])
   assert.deepEqual(snapshot.tables.find(table => table.name === 'comments').relationships[0].referencedColumns, ['subject', 'id'])
@@ -156,6 +158,18 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
     await new Promise(resolve => setTimeout(resolve, 50))
   }
   assert.equal(available, true, logs)
+  const refresh = async () => {
+    child.kill()
+    await once(child, 'exit')
+    child = spawn(process.env.DATA_API_POSTGREST_BIN, [], { env: { ...process.env, ...config.postgrestEnv, PGRST_SERVER_PORT: String(upstream), PGRST_ADMIN_SERVER_PORT: String(ready) }, stdio: ['ignore', 'pipe', 'pipe'] })
+    child.stdout.on('data', value => { logs += value }); child.stderr.on('data', value => { logs += value })
+    let healthy = false
+    for (let i = 0; i < 100; i++) {
+      if ((await fetch(url + '/healthz')).status === 200) { healthy = true; break }
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    assert.equal(healthy, true, 'schema_refresh_not_ready')
+  }
   const sign = (subject, audience = 'notes') => new SignJWT({ sub: subject, role: 'postgres' }).setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience(audience).setExpirationTime('5m').sign(privateKey)
   const userA = { subject: 'identity|alice', token: await sign('identity|alice') }
   const userB = { subject: 'identity|bob', token: await sign('identity|bob') }
@@ -164,6 +178,14 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const client = notesClient({ url, subject: userA.subject, accessToken: userA.token })
   const { readCursorPageWithSession } = await import(pathToFileURL(join(root, 'client/dist/session.js')))
   await verifyRPC({ owner, client, url, userA, userB })
+  // The RPC's explicit isolation must win over a stronger role default.
+  await admin.query(`ALTER ROLE "${role}" SET default_transaction_isolation = 'repeatable read'`)
+  await refresh()
+  try { await verifyIdempotency({ owner, client, url, userA, userB, makeClient: notesClient }) }
+  finally {
+    await admin.query(`ALTER ROLE "${role}" RESET default_transaction_isolation`)
+    await refresh()
+  }
   const expired = await new SignJWT({ sub: userA.subject }).setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience('notes').setExpirationTime('0s').sign(privateKey)
   if (origins) {
     const fixtures = await owner.query('INSERT INTO api.notes(subject, body) VALUES ($1, $3), ($2, $3) RETURNING id, subject', [userA.subject, userB.subject, 'browser-cors-fixture'])
@@ -257,17 +279,5 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   // is required, while the committed fixture remains untouched.
   await owner.query('ALTER TABLE api.notes ADD COLUMN description text')
   assert.notEqual(generate(await inspect(loginURL.toString(), ['api'])), types)
-  const refresh = async () => {
-    child.kill()
-    await once(child, 'exit')
-    child = spawn(process.env.DATA_API_POSTGREST_BIN, [], { env: { ...process.env, ...config.postgrestEnv, PGRST_SERVER_PORT: String(upstream), PGRST_ADMIN_SERVER_PORT: String(ready) }, stdio: ['ignore', 'pipe', 'pipe'] })
-    child.stdout.on('data', value => { logs += value }); child.stderr.on('data', value => { logs += value })
-    let healthy = false
-    for (let i = 0; i < 100; i++) {
-      if ((await fetch(url + '/healthz')).status === 200) { healthy = true; break }
-      await new Promise(resolve => setTimeout(resolve, 50))
-    }
-    assert.equal(healthy, true, 'schema_refresh_not_ready')
-  }
   await verifySchemaEvolution({ owner, client, refresh, inspect, generate, loginURL: loginURL.toString(), root, command })
 })

@@ -557,3 +557,63 @@ then regenerate types and check callers. Startup captures the gateway allowlist;
 exporting types or sending PostgREST SIGUSR1 alone does not replace it. Revoking
 SQL execution takes effect immediately; removing an annotation alone requires
 the fresh restart. Database changes are not undone by a failed app release.
+
+### Idempotent note creation
+
+Apply the append-only `0009_note_idempotency.sql` migration, grant the binding
+login execution on both functions, then fresh-restart the Data API and regenerate
+types:
+
+```sql
+GRANT EXECUTE ON FUNCTION api.create_note_with_tags(text, text[]) TO your_data_api_login;
+GRANT EXECUTE ON FUNCTION api.create_note_with_tags_once(uuid, text, text[]) TO your_data_api_login;
+```
+
+The existing `api` table grants apply to `api.note_create_receipts`. Its metadata
+appears in the generated schema, but RLS denies ordinary REST reads and writes.
+Receipt access requires the function's transaction-local scope and the verified
+JWT subject. The function restores that scope on success and failure. This guard
+protects the HTTP API; it does not restrict an owner-authored function or a SQL
+session that can explicitly set the same PostgreSQL parameter. Review functions
+before opting them in, as with other RPC calls.
+
+Choose one UUID **per logical operation**, retain it with the payload until the
+outcome is resolved, and reuse both after a timeout or lost response:
+
+```ts
+const key = crypto.randomUUID() // create once; retain this key for retries
+const payload = { body: 'Atomic note', tags: ['work', 'todo'] }
+const result = await notesClient(session).createWithTagsOnce(key, payload.body, payload.tags)
+// If the network outcome is uncertain, call again with this same key and payload.
+```
+
+The raw typed call is `db.rpc('create_note_with_tags_once', {
+ idempotency_key: key, note_body: payload.body, tag_names: payload.tags
+}).retry(false)`. Automatic mutation retries remain disabled; the caller decides
+when to replay. PostgreSQL validates UUIDs, and the starter wrapper rejects
+noncanonical UUID strings before sending a request.
+
+Concurrent calls with the same subject and key serialize, then return the
+original note snapshot without creating more rows. The same key with a changed
+body or tags returns HTTP 409, code `PT409`, message `idempotency_conflict`.
+Tag order matters; omitted tags and an empty array are equivalent. Keys are
+scoped to the authenticated subject and this operation, so another user can use
+the same UUID independently. Failed transactions save no receipt and leave the
+key available for a corrected attempt.
+
+The receipt and all note/tag writes commit together. Transaction-scoped
+advisory locks serialize requests; hash collisions cause extra waiting rather
+than incorrect matches because the subject/key primary key determines identity.
+PostgREST uses the function's explicit read-committed isolation setting, even
+when the role has a stronger default. Direct SQL callers must also use
+read-committed transactions. Existing query timeouts bound lock waits.
+
+Receipts preserve the original response even after the note is edited or
+deleted; a replay does not recreate a deleted note. They retain the original
+content and consume database storage. They have **no automatic expiry**. The
+migration owner must manage retention and include receipts in any deletion or
+privacy policy. Removing a receipt ends that key's duplicate-prevention window;
+do not purge receipts while retries are still possible. Breaking changes to
+note row types can make historical snapshots incompatible, so plan receipt
+migration or retirement together with schema changes. A fresh key always means
+a new operation; the original `createWithTags` remains non-idempotent.

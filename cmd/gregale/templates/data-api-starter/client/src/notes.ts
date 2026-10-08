@@ -29,6 +29,10 @@ export function notesClient(options: {
 }) {
   const db = createDataClient<Database>(options).schema('api')
   return {
+    createWithTagsOnce: (key: string, body: string, tags?: string[]) => {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new TypeError('A canonical UUID idempotency key is required')
+      return db.rpc('create_note_with_tags_once', { idempotency_key: key, note_body: body, ...(tags === undefined ? {} : { tag_names: tags }) }).retry(false)
+    },
     createWithTags: (body: string, tags?: string[]) => db.rpc('create_note_with_tags', { note_body: body, ...(tags === undefined ? {} : { tag_names: tags }) }).retry(false),
     cursorPage: ({ after, size = 20, priority }: { after?: NoteCursor; size?: number; priority?: number } = {}) => {
       if (!Number.isSafeInteger(size) || size < 1) throw new RangeError('Cursor page size must be a positive safe integer')

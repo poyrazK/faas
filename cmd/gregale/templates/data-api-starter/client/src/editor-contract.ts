@@ -175,3 +175,13 @@ async function rpcContract(client: ReturnType<typeof notesClient>) {
   client.db.rpc('advance_note_version', {})
 }
 void rpcContract
+
+async function idempotencyContract(client: ReturnType<typeof notesClient>) {
+  const result = await client.createWithTagsOnce(crypto.randomUUID(), 'retry safely', ['one'])
+  if (result.data) { const id: number = result.data[0].id; void id }
+  // @ts-expect-error idempotency key is required by the generated function
+  client.db.rpc('create_note_with_tags_once', { note_body: 'missing key' })
+  // @ts-expect-error UUID arguments are strings
+  client.db.rpc('create_note_with_tags_once', { idempotency_key: 1, note_body: 'wrong key type' })
+}
+void idempotencyContract

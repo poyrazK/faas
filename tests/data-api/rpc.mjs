@@ -64,7 +64,7 @@ export async function verifyRPCPolicy({ owner, inspect, loginURL, role }) {
   `)
   try {
     const functions = (await inspect(loginURL, ['api'])).functions
-    assert.deepEqual(functions.map(f => f.name), ['create_note_with_tags', 'rpc_empty', 'rpc_scalar'])
+    assert.deepEqual(functions.map(f => f.name), ['create_note_with_tags', 'create_note_with_tags_once', 'rpc_empty', 'rpc_scalar'])
     assert.deepEqual(functions.find(f => f.name === 'rpc_scalar').args, [{ name: 'value', type: 'string', optional: true }])
     assert.equal(functions.find(f => f.name === 'rpc_scalar').returns, 'string | null')
     assert.equal(functions.find(f => f.name === 'rpc_empty').returns, 'boolean | null')

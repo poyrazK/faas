@@ -92,3 +92,28 @@ test('invalid expected versions fail before requesting', async () => {
   const client = notesClient({ url: 'https://notes.example', subject: 'user', accessToken: 'token', fetch: () => { throw new Error('unexpected request') } })
   for (const version of [0, -1, 1.5, NaN, Infinity, 2147483648]) await assert.rejects(client.update(1, version, { body: 'edit' }), RangeError)
 })
+
+
+test('idempotent creation preserves the caller key and payload across token renewal without automatic retries', async () => {
+  const requests = []
+  let token = 'first'
+  const client = notesClient({ url: 'https://notes.example', subject: 'user', accessToken: () => token, fetch: async (url, init) => {
+    requests.push({ url: String(url), init })
+    return new Response('{"code":"query_timeout","message":"timeout"}', { status: 504, headers: { 'Content-Type': 'application/json' } })
+  } })
+  for (const key of ['', 'not-a-uuid', '00000000-0000-0000-0000-00000000000']) assert.throws(() => client.createWithTagsOnce(key, 'body'), TypeError)
+  assert.equal(requests.length, 0)
+  const key = '11111111-1111-4111-8111-111111111111'
+  await client.createWithTagsOnce(key, 'body', ['one'])
+  token = 'second'
+  await client.createWithTagsOnce(key, 'body', ['one'])
+  assert.equal(requests.length, 2)
+  assert.equal(requests[0].init.headers.get('Authorization'), 'Bearer first')
+  assert.equal(requests[1].init.headers.get('Authorization'), 'Bearer second')
+  for (const request of requests) {
+    assert.equal(request.init.method, 'POST')
+    assert.equal(new URL(request.url).pathname, '/rest/v1/rpc/create_note_with_tags_once')
+    assert.equal(new URL(request.url).search, '')
+    assert.deepEqual(JSON.parse(request.init.body), { idempotency_key: key, note_body: 'body', tag_names: ['one'] })
+  }
+})
