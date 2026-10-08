@@ -2100,7 +2100,15 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 	if p.AppID == "" || p.WakeID == "" {
 		return errors.New("sched: app_wake payload requires app_id and wake_id")
 	}
-	out, err := l.engine.EnsureWake(withRequestedWakeID(context.WithoutCancel(ctx), p.WakeID), p.AppID, TriggerAppWake)
+	wakeCtx := withRequestedWakeID(context.WithoutCancel(ctx), p.WakeID)
+	if handled, err := l.engine.WakeWorkerApp(wakeCtx, p.AppID); handled {
+		if err != nil {
+			return fmt.Errorf("sched: explicit app wake %s: %w", p.WakeID, err)
+		}
+		l.log.Info("sched: explicit worker app wake reconciled", "app", p.AppID, "wake_id", p.WakeID)
+		return nil
+	}
+	out, err := l.engine.EnsureWake(wakeCtx, p.AppID, TriggerAppWake)
 	if err != nil {
 		return fmt.Errorf("sched: explicit app wake %s: %w", p.WakeID, err)
 	}
