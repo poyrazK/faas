@@ -82,13 +82,13 @@ build. The private operator importer verifies a separately trusted signature,
 exact native metal coverage, published artifact binding/bytes and retained
 readback evidence before recording a receipt. It provides no customer apply or
 scheduling operation. See [ADR-739](adr/739-native-runtime-release-qualification.md),
-[ADR-740](adr/740-trusted-runtime-qualification-import.md) and the
+[ADR-793](adr/793-trusted-runtime-qualification-import.md) and the
 [native qualification runbook](ops/runtime-release-qualification.md).
 
 Qualification evidence bounds are 64 KiB per report/envelope/fixture JSON,
 64 MiB per captured log, 256 KiB per log event/line and 16 JSON nesting levels.
 The profile currently requires dedicated native Linux amd64 KVM. The private
-[guarded collector](adr/687-guarded-native-runtime-qualification-collector.md)
+[guarded collector](adr/791-guarded-native-runtime-qualification-collector.md)
 now stages exact committed source and published artifacts, captures native
 test/leakcheck evidence, restores the acceptance host, signs and imports only a
 successful retained bundle. It uses independent operator pins and a protected
@@ -109,7 +109,7 @@ and limits evidence to 15 minutes from cold-boot dispatch. Retries require new
 acceptance; restore and historical health evidence cannot supply it. This proves
 readiness at publication, before subsequent snapshot/hosting/rollout gates.
 It enables no customer apply. See
-[ADR-688](adr/688-runtime-upgrade-candidate-acceptance.md).
+[ADR-792](adr/792-runtime-upgrade-candidate-acceptance.md).
 
 The private apid state seam now provides atomic cutover enforcement. Inside
 one traffic transaction it rechecks the retained serving baseline, current

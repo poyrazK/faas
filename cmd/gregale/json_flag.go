@@ -228,8 +228,9 @@ func (w *jsonFlagErrorWriter) Write(p []byte) (int, error) {
 // args and sets jsonOutput. Honors FAAS_JSON first, then the persistent
 // non-secret config preference, unless --json=false is explicit on the
 // command line. Returns the args with the flag
-// stripped so downstream dispatch sees only its own flags. Idempotent
-// on a second call — safe if a subcommand happens to call it.
+// stripped so downstream dispatch sees only its own flags. If the flag is
+// repeated, the last explicit value wins. Idempotent on a second call — safe
+// if a subcommand happens to call it.
 //
 // Recognised boolean spellings (case-insensitive):
 //
@@ -244,23 +245,26 @@ func applyJSONFlag(args []string) []string {
 	if configured, ok := configuredJSONPreference(); ok {
 		jsonOutput = configured
 	}
+	filtered := make([]string, 0, len(args))
 	for i, a := range args {
 		if a == "--" {
+			filtered = append(filtered, args[i:]...)
 			break
 		}
 		switch {
 		case a == "--json" || a == "-j":
 			jsonOutput = true
-			return append(args[:i], args[i+1:]...)
 		case strings.HasPrefix(a, "--json="):
 			jsonOutput = jsonBoolTrue(a[len("--json="):])
-			return append(args[:i], args[i+1:]...)
+		default:
+			filtered = append(filtered, a)
 		}
 	}
-	return args
+	return filtered
 }
 
 func invalidJSONFlagValue(args []string) string {
+	invalid := ""
 	for _, arg := range args {
 		if arg == "--" {
 			break
@@ -271,12 +275,13 @@ func invalidJSONFlagValue(args []string) string {
 		value := strings.ToLower(strings.TrimPrefix(arg, "--json="))
 		switch value {
 		case "", requireSignedTrue, "yes", "on", "1", requireSignedFalse, "no", "off", "0":
-			return ""
 		default:
-			return value
+			if invalid == "" {
+				invalid = value
+			}
 		}
 	}
-	return ""
+	return invalid
 }
 
 // jsonBoolTrue maps a --json= suffix to a boolean. Falsy spellings

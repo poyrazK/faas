@@ -44,11 +44,95 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  return @()")
 	_, _ = fmt.Fprintln(w, "}")
 	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "function __gregaleCacheIds($kind) {")
+	_, _ = fmt.Fprintln(w, "  $path = gregale completion completion-cache-path 2>$null")
+	_, _ = fmt.Fprintln(w, "  if (-not $path -or -not (Test-Path $path)) { return @() }")
+	_, _ = fmt.Fprintln(w, "  try {")
+	_, _ = fmt.Fprintln(w, "    $json = Get-Content $path -Raw | ConvertFrom-Json")
+	_, _ = fmt.Fprintln(w, "    if ($json.$kind) { return @($json.$kind | ForEach-Object { $_.id }) }")
+	_, _ = fmt.Fprintln(w, "  } catch {}")
+	_, _ = fmt.Fprintln(w, "  return @()")
+	_, _ = fmt.Fprintln(w, "}")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "function __gregaleProjectEnvironmentSlugs($project) {")
+	_, _ = fmt.Fprintln(w, "  $path = gregale completion completion-cache-path 2>$null")
+	_, _ = fmt.Fprintln(w, "  if (-not $path -or -not (Test-Path $path)) { return @() }")
+	_, _ = fmt.Fprintln(w, "  try {")
+	_, _ = fmt.Fprintln(w, "    $json = Get-Content $path -Raw | ConvertFrom-Json")
+	_, _ = fmt.Fprintln(w, "    return @($json.project_environments | Where-Object { $_.project_slug -eq $project } | ForEach-Object { $_.slug })")
+	_, _ = fmt.Fprintln(w, "  } catch {}")
+	_, _ = fmt.Fprintln(w, "  return @()")
+	_, _ = fmt.Fprintln(w, "}")
+	_, _ = fmt.Fprintln(w)
+	renderPowerShellAppSlugPositionHelper(w)
+	_, _ = fmt.Fprintln(w)
+	renderPowerShellBuildIDPositionHelper(w)
+	_, _ = fmt.Fprintln(w)
+	renderPowerShellDeploymentIDPositionHelper(w)
+	_, _ = fmt.Fprintln(w)
+	renderPowerShellManifestPositionHelpers(w, projectCompletionCommand())
+	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Register-ArgumentCompleter -Native -CommandName 'gregale' -ScriptBlock {")
 	_, _ = fmt.Fprintln(w, "  param($wordToComplete, $commandAst, $cursorPosition)")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "  $tokens = $commandAst.ToString() -split '\\s+'")
 	_, _ = fmt.Fprintln(w, "  $previousToken = if ($tokens.Count -gt 1 -and $tokens[-1] -eq $wordToComplete) { $tokens[-2] } else { $tokens[-1] }")
+	_, _ = fmt.Fprintln(w, "  $contextTokens = @($tokens | Where-Object { $_ -ne '' })")
+	_, _ = fmt.Fprintln(w, "  if ($contextTokens.Count -gt 1 -and $contextTokens[-1] -eq $wordToComplete) { $contextTokens = @($contextTokens[0..($contextTokens.Count - 2)]) }")
+	_, _ = fmt.Fprintln(w, "  $normalizedContext = @(); if ($contextTokens.Count -gt 0) { $normalizedContext += $contextTokens[0] }")
+	_, _ = fmt.Fprintln(w, "  $afterSeparator = $false")
+	_, _ = fmt.Fprintln(w, "  foreach ($token in @($contextTokens | Select-Object -Skip 1)) {")
+	_, _ = fmt.Fprintln(w, "    if (-not $afterSeparator -and $token -match '^(--json|-j)(=.*)?$') { continue }")
+	_, _ = fmt.Fprintln(w, "    $normalizedContext += $token; if ($token -eq '--') { $afterSeparator = $true }")
+	_, _ = fmt.Fprintln(w, "  }")
+	_, _ = fmt.Fprintln(w, "  $appSlugPosition = __gregaleAppSlugPosition $normalizedContext")
+	_, _ = fmt.Fprintln(w, "  if ($appSlugPosition) {")
+	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleCacheSlugs 'apps') {")
+	_, _ = fmt.Fprintln(w, "      if ($s.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
+	_, _ = fmt.Fprintln(w, "    }")
+	_, _ = fmt.Fprintln(w, "    return")
+	_, _ = fmt.Fprintln(w, "  }")
+	_, _ = fmt.Fprintln(w, "  $buildIDPosition = __gregaleBuildIDPosition $normalizedContext")
+	_, _ = fmt.Fprintln(w, "  if ($buildIDPosition) {")
+	_, _ = fmt.Fprintln(w, "    foreach ($id in __gregaleCacheIds 'builds') {")
+	_, _ = fmt.Fprintln(w, "      if ($id.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new($id, $id, 'ParameterValue', $id) }")
+	_, _ = fmt.Fprintln(w, "    }")
+	_, _ = fmt.Fprintln(w, "    return")
+	_, _ = fmt.Fprintln(w, "  }")
+	_, _ = fmt.Fprintln(w, "  $deploymentIDPosition = __gregaleDeploymentIDPosition $normalizedContext")
+	_, _ = fmt.Fprintln(w, "  if ($deploymentIDPosition) {")
+	_, _ = fmt.Fprintln(w, "    foreach ($id in __gregaleCacheIds 'deployments') {")
+	_, _ = fmt.Fprintln(w, "      if ($id.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new($id, $id, 'ParameterValue', $id) }")
+	_, _ = fmt.Fprintln(w, "    }")
+	_, _ = fmt.Fprintln(w, "    return")
+	_, _ = fmt.Fprintln(w, "  }")
+	_, _ = fmt.Fprintln(w, "  $environmentProject = __gregaleEnvironmentProject $normalizedContext")
+	_, _ = fmt.Fprintln(w, "  $inlineEnvironmentValue = $wordToComplete -match '^--(from|to)='")
+	_, _ = fmt.Fprintln(w, "  if ($environmentProject -and (($normalizedContext.Count -gt 0 -and $normalizedContext[-1] -in @('--from', '--to')) -or $inlineEnvironmentValue)) {")
+	_, _ = fmt.Fprintln(w, "    $valueToComplete = if ($inlineEnvironmentValue) { $wordToComplete.Substring($wordToComplete.IndexOf('=') + 1) } else { $wordToComplete }")
+	_, _ = fmt.Fprintln(w, "    $valuePrefix = if ($inlineEnvironmentValue) { $wordToComplete.Substring(0, $wordToComplete.IndexOf('=') + 1) } else { '' }")
+	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleProjectEnvironmentSlugs $environmentProject) {")
+	_, _ = fmt.Fprintln(w, "      if ($s.StartsWith($valueToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new(\"$valuePrefix$s\", $s, 'ParameterValue', $s) }")
+	_, _ = fmt.Fprintln(w, "    }")
+	_, _ = fmt.Fprintln(w, "    return")
+	_, _ = fmt.Fprintln(w, "  }")
+	_, _ = fmt.Fprintln(w, "  $positionProject = __gregaleProjectEnvironmentPosition $normalizedContext")
+	_, _ = fmt.Fprintln(w, "  if ($positionProject) {")
+	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleProjectEnvironmentSlugs $positionProject) {")
+	_, _ = fmt.Fprintln(w, "      if ($s.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
+	_, _ = fmt.Fprintln(w, "    }")
+	_, _ = fmt.Fprintln(w, "    return")
+	_, _ = fmt.Fprintln(w, "  }")
+	_, _ = fmt.Fprintln(w, "  $projectPosition = __gregaleProjectArgumentPosition $normalizedContext")
+	_, _ = fmt.Fprintln(w, "  if ($projectPosition) {")
+	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleCacheSlugs 'projects') {")
+	_, _ = fmt.Fprintln(w, "      if ($s.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
+	_, _ = fmt.Fprintln(w, "    }")
+	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleProjectArgumentChoices $normalizedContext) {")
+	_, _ = fmt.Fprintln(w, "        if ($s.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new($s, $s, 'ParameterName', $s) }")
+	_, _ = fmt.Fprintln(w, "      }")
+	_, _ = fmt.Fprintln(w, "    return")
+	_, _ = fmt.Fprintln(w, "  }")
 	_, _ = fmt.Fprintln(w, "  if ($previousToken -eq '--app') {")
 	_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleCacheSlugs 'apps') {")
 	_, _ = fmt.Fprintln(w, "      if ($s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
@@ -71,63 +155,240 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w)
 }
 
+func powershellCompletionPathCondition(command cliCommand, path []string) string {
+	conditions := []string{fmt.Sprintf("$words[1] -eq %q", command.Name)}
+	for i, token := range path {
+		conditions = append(conditions, fmt.Sprintf("$words[%d] -eq %q", i+2, token))
+	}
+	return strings.Join(conditions, " -and ")
+}
+
+func renderPowerShellAppSlugPositionHelper(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "function __gregaleAppSlugPosition($words) {")
+	for _, position := range appSlugCompletionPositions() {
+		conditions := []string{fmt.Sprintf("$words[1] -eq %q", position.Command)}
+		for i, token := range position.Path {
+			conditions = append(conditions, fmt.Sprintf("$words[%d] -eq %q", position.PathOffsets[i]+1, token))
+		}
+		for _, offset := range position.RequiredPositionOffsets {
+			index := offset + 1
+			conditions = append(conditions, fmt.Sprintf("$words.Count -gt %d -and $words[%d] -ne ''", index, index))
+		}
+		contextCount := 1 + position.WordOffset
+		_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and %s) { return $true }\n", contextCount, strings.Join(conditions, " -and "))
+	}
+	_, _ = fmt.Fprintln(w, "  return $false")
+	_, _ = fmt.Fprintln(w, "}")
+}
+
+func renderPowerShellBuildIDPositionHelper(w io.Writer) {
+	command, _ := lookupCliCommand("build")
+	_, _ = fmt.Fprintln(w, "function __gregaleBuildIDPosition($words) {")
+	for _, position := range command.expandedCompletionPositions() {
+		if position.Role != cliCompletionBuildID {
+			continue
+		}
+		contextCount := 1 + len(position.Path) + position.Position
+		_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and %s) { return $true }\n",
+			contextCount, powershellCompletionPathCondition(command, position.Path))
+	}
+	_, _ = fmt.Fprintln(w, "  return $false")
+	_, _ = fmt.Fprintln(w, "}")
+}
+
+func renderPowerShellDeploymentIDPositionHelper(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "function __gregaleDeploymentIDPosition($words) {")
+	for _, command := range deploymentCompletionCommands() {
+		for _, position := range command.expandedCompletionPositions() {
+			if position.Role != cliCompletionDeploymentID {
+				continue
+			}
+			contextCount := 1 + len(position.Path) + position.Position
+			_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and %s) { return $true }\n",
+				contextCount, powershellCompletionPathCondition(command, position.Path))
+		}
+	}
+	_, _ = fmt.Fprintln(w, "  return $false")
+	_, _ = fmt.Fprintln(w, "}")
+}
+
+func renderPowerShellManifestPositionHelpers(w io.Writer, command cliCommand) {
+	_, _ = fmt.Fprintln(w, "function __gregaleEnvironmentProject($words) {")
+	for _, context := range projectCompletionContexts() {
+		projectIndex := 1 + len(context.Path) + context.Position
+		_, _ = fmt.Fprintf(w, "  if ($words.Count -gt %d -and %s) { return [string]$words[%d] }\n",
+			projectIndex, powershellCompletionPathCondition(command, context.Path), projectIndex)
+	}
+	_, _ = fmt.Fprintln(w, "  return ''")
+	_, _ = fmt.Fprintln(w, "}")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "function __gregaleProjectEnvironmentPosition($words) {")
+	for _, position := range command.expandedCompletionPositions() {
+		if position.Role != cliCompletionEnvironmentSlug {
+			continue
+		}
+		contextCount := 1 + len(position.Path) + position.Position
+		projectIndex := 1 + len(position.Path) + position.ProjectPosition
+		_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and $words.Count -gt %d -and %s) { return [string]$words[%d] }\n",
+			contextCount, projectIndex, powershellCompletionPathCondition(command, position.Path), projectIndex)
+	}
+	_, _ = fmt.Fprintln(w, "  return ''")
+	_, _ = fmt.Fprintln(w, "}")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "function __gregaleProjectArgumentPosition($words) {")
+	for _, position := range command.expandedCompletionPositions() {
+		if position.Role != cliCompletionProjectSlug {
+			continue
+		}
+		contextCount := 1 + len(position.Path) + position.Position
+		kind := "project"
+		if len(position.Choices) > 0 {
+			kind = "config-choice"
+		}
+		_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and %s) { return %q }\n",
+			contextCount, powershellCompletionPathCondition(command, position.Path), kind)
+	}
+	_, _ = fmt.Fprintln(w, "  return ''")
+	_, _ = fmt.Fprintln(w, "}")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "function __gregaleProjectArgumentChoices($words) {")
+	for _, position := range command.expandedCompletionPositions() {
+		if position.Role != cliCompletionProjectSlug || len(position.Choices) == 0 {
+			continue
+		}
+		contextCount := 1 + len(position.Path) + position.Position
+		_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and %s) { return @(%s) }\n",
+			contextCount, powershellCompletionPathCondition(command, position.Path), powershellStringArray(position.Choices))
+	}
+	_, _ = fmt.Fprintln(w, "  return @()")
+	_, _ = fmt.Fprintln(w, "}")
+}
+
 func renderPowershellCommand(w io.Writer, c cliCommand) {
 	_, _ = fmt.Fprintf(w, "  if ($tokens[1] -eq '%s') {\n", c.Name)
+	subcommandWord := c.completionSubcommandWord()
 	// Subcommand completion: always rendered when the command has
 	// any subcommands. The earlier `len(c.Positionals) == 0` gate
 	// suppressed subcommand completion for commands like `app` that
 	// have BOTH subcommands (scale/rename/security) AND a <slug>
 	// positional — inconsistent with bash/zsh/fish.
 	if len(c.Subcommands) > 0 {
-		_, _ = fmt.Fprintf(w, "    if ($tokens.Count -eq 2) {\n")
+		_, _ = fmt.Fprintf(w, "    if ($tokens.Count -eq %d) {\n", subcommandWord)
 		for _, s := range c.Subcommands {
-			_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
-				s.Name, s.Name, s.Name, escapePS(s.Short))
+			for _, spelling := range s.completionSpellings() {
+				_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
+					spelling, spelling, spelling, escapePS(s.Short))
+			}
+		}
+		for _, f := range c.Flags {
+			renderPowershellFlag(w, f)
 		}
 		_, _ = fmt.Fprintln(w, "      return")
 		_, _ = fmt.Fprintln(w, "    }")
 	}
 	for _, parent := range c.Subcommands {
+		if len(parent.Subcommands) == 0 && len(parent.Flags) > 0 {
+			flagCount := subcommandWord + 1
+			if parent.FlagsAfterPositionals {
+				flagCount += len(parent.Positionals)
+			}
+			_, _ = fmt.Fprintf(w, "    if ($tokens.Count -ge %d -and %s) {\n", flagCount, powershellCompletionSubcommandMatch(subcommandWord, parent))
+			for _, f := range parent.Flags {
+				renderPowershellFlag(w, f)
+			}
+			_, _ = fmt.Fprintln(w, "      return")
+			_, _ = fmt.Fprintln(w, "    }")
+		}
 		if len(parent.Subcommands) == 0 {
 			continue
 		}
-		_, _ = fmt.Fprintf(w, "    if ($tokens.Count -eq 3 -and $tokens[2] -eq '%s') {\n", parent.Name)
+		childWord := subcommandWord + 1
+		if parent.SubcommandsAfterPositionals {
+			childWord += len(parent.Positionals)
+		}
+		_, _ = fmt.Fprintf(w, "    if ($tokens.Count -eq %d -and %s) {\n", childWord, powershellCompletionSubcommandMatch(subcommandWord, parent))
 		for _, child := range parent.Subcommands {
-			_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
-				child.Name, child.Name, child.Name, escapePS(child.Short))
+			for _, spelling := range child.completionSpellings() {
+				_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
+					spelling, spelling, spelling, escapePS(child.Short))
+			}
 		}
 		_, _ = fmt.Fprintln(w, "      return")
 		_, _ = fmt.Fprintln(w, "    }")
 		for _, child := range parent.Subcommands {
-			_, _ = fmt.Fprintf(w, "    if ($tokens.Count -ge 4 -and $tokens[2] -eq '%s' -and $tokens[3] -eq '%s') {\n", parent.Name, child.Name)
+			leafFlagsCount := childWord + 1
+			if child.FlagsAfterPositionals {
+				leafFlagsCount += len(child.Positionals)
+			}
+			_, _ = fmt.Fprintf(w, "    if ($tokens.Count -ge %d -and %s -and %s) {\n", leafFlagsCount, powershellCompletionSubcommandMatch(subcommandWord, parent), powershellCompletionSubcommandMatch(childWord, child))
 			for _, f := range child.Flags {
-				_, _ = fmt.Fprintf(w, "      if ('--%s' -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new('--%s', '--%s', 'ParameterName', %q) }\n",
-					f.Name, f.Name, f.Name, escapePS(f.Short))
+				renderPowershellFlag(w, f)
 			}
 			_, _ = fmt.Fprintln(w, "      return")
 			_, _ = fmt.Fprintln(w, "    }")
 		}
 	}
-	// Top-level positional: closed-set (plan) or slug cache (app,
-	// invoke, metrics, slo, wake-timeline — driven by hasSlugFirst).
+	// Top-level closed-set positional (for example, `plan`). App slug
+	// positionals are emitted centrally from the manifest above.
 	if len(c.ClosedSet) > 0 {
 		for _, v := range c.ClosedSet {
 			_, _ = fmt.Fprintf(w, "    if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterValue', %q) }\n",
 				v, v, v, v)
 		}
-	} else if c.hasSlugFirst() {
-		_, _ = fmt.Fprintln(w, "    foreach ($s in __gregaleCacheSlugs 'apps') {")
-		_, _ = fmt.Fprintln(w, "      if ($s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new($s, $s, 'ParameterValue', $s) }")
-		_, _ = fmt.Fprintln(w, "    }")
 	}
 	// Flags.
 	for _, f := range c.Flags {
-		_, _ = fmt.Fprintf(w, "    if ('--%s' -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new('--%s', '%s', 'ParameterName', %q) }\n",
-			f.Name, f.Name, f.Name, escapePS(f.Short))
+		renderPowershellFlag(w, f)
 	}
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
 	_, _ = fmt.Fprintln(w)
+}
+
+func renderPowershellFlag(w io.Writer, f cliFlag) {
+	for _, spelling := range cliFlagSpellings(f) {
+		if len(f.ClosedSet) > 0 || cliFlagUsesEnvironmentValues(f) || cliFlagUsesFilePathValues(f) {
+			_, _ = fmt.Fprintf(w, "      if ($previousToken -eq %q -or $wordToComplete.StartsWith(%q, [System.StringComparison]::OrdinalIgnoreCase)) {\n", spelling, spelling+"=")
+			_, _ = fmt.Fprintln(w, "        $valuePrefix = ''")
+			_, _ = fmt.Fprintln(w, "        $valueToComplete = $wordToComplete")
+			_, _ = fmt.Fprintf(w, "        if ($wordToComplete.StartsWith(%q, [System.StringComparison]::OrdinalIgnoreCase)) {\n", spelling+"=")
+			_, _ = fmt.Fprintf(w, "          $valuePrefix = %q\n", spelling+"=")
+			_, _ = fmt.Fprintf(w, "          $valueToComplete = $wordToComplete.Substring(%d)\n", len(spelling)+1)
+			_, _ = fmt.Fprintln(w, "        }")
+			if len(f.ClosedSet) > 0 {
+				_, _ = fmt.Fprintf(w, "        foreach ($value in @(%s)) {\n", powershellStringArray(f.ClosedSet))
+				_, _ = fmt.Fprintln(w, "          if ($value.StartsWith($valueToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new(\"$valuePrefix$value\", $value, 'ParameterValue', $value) }")
+				_, _ = fmt.Fprintln(w, "        }")
+			}
+			if cliFlagUsesEnvironmentValues(f) {
+				_, _ = fmt.Fprintln(w, "        foreach ($value in __gregaleCacheSlugs 'environments') {")
+				_, _ = fmt.Fprintln(w, "          if ($value.StartsWith($valueToComplete, [System.StringComparison]::OrdinalIgnoreCase)) { [System.Management.Automation.CompletionResult]::new(\"$valuePrefix$value\", $value, 'ParameterValue', $value) }")
+				_, _ = fmt.Fprintln(w, "        }")
+			}
+			if cliFlagUsesFilePathValues(f) {
+				_, _ = fmt.Fprintln(w, "        foreach ($completion in [System.Management.Automation.CompletionCompleters]::CompleteFilename($valueToComplete)) {")
+				_, _ = fmt.Fprintln(w, "          $completionText = \"$valuePrefix$($completion.CompletionText)\"")
+				_, _ = fmt.Fprintln(w, "          [System.Management.Automation.CompletionResult]::new($completionText, $completion.ListItemText, $completion.ResultType, $completion.ToolTip)")
+				_, _ = fmt.Fprintln(w, "        }")
+			}
+			_, _ = fmt.Fprintln(w, "        return")
+			_, _ = fmt.Fprintln(w, "      }")
+		}
+		_, _ = fmt.Fprintf(w, "      if (%q -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%q, %q, 'ParameterName', %q) }\n",
+			spelling, spelling, spelling, escapePS(f.Short))
+	}
+}
+
+func powershellStringArray(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, "'"+escapePS(value)+"'")
+	}
+	return strings.Join(quoted, ", ")
+}
+
+func powershellCompletionSubcommandMatch(wordIndex int, sub cliSub) string {
+	return fmt.Sprintf("$tokens[%d] -in @(%s)", wordIndex, powershellStringArray(sub.completionSpellings()))
 }
 
 func renderPowershellFooter(w io.Writer) {

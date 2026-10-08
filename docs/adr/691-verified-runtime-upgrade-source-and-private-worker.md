@@ -71,7 +71,7 @@ progress with a lease-plus-backoff budget. Log no raw database error values.
 Normal startup never enables the worker; no service unit/deployment change is
 provided, and customer previews keep `execution_available=false`. Each operation
 still requires exact unrevoked native qualification and fresh candidate cold
-boot acceptance before activation through ADR-688/603.
+boot acceptance before activation through ADR-792/603.
 
 ## Consequences
 

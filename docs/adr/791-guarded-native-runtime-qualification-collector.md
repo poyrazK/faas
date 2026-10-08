@@ -1,10 +1,10 @@
-# ADR-687: Guarded native runtime qualification collector
+# ADR-791: Guarded native runtime qualification collector
 
 Status: accepted · 2026-10-06
 
 ## Context
 
-ADR-740 verifies signed exact-runtime native evidence but leaves production
+ADR-793 verifies signed exact-runtime native evidence but leaves production
 collection, exclusive host ownership, source staging and signing to a trusted
 operator. A hand-built report can lose command exits, use the wrong checkout
 or sign before resources have retired. We need one private runner which creates
@@ -69,7 +69,7 @@ the scheduler first and vmmd last, then repeat leakcheck to catch a drain race.
 Inactive services stay inactive. Run only
 `TestMetalRuntimeReleaseColdBootReady` through real `go tool test2json`, capturing
 stdout, stderr and actual process exit. Always run final leakcheck after the
-test has stopped, including failed/canceled attempts. Validate the ADR-740
+test has stopped, including failed/canceled attempts. Validate the ADR-793
 exact observation, log ordering and coverage. Recheck host/boot identity and
 pinned host assets, restore recorded services in reverse order, and remove
 owned staging before signing. Failed test, skip, cleanup, restore or recheck
@@ -85,7 +85,7 @@ record, so the operator must keep them stopped until recovery is complete.
 
 Evidence output must be a new private directory under a protected parent,
 outside source. Use exclusive files, retain raw logs/exits/build diagnostics,
-sync the signed report and directory, and only then call the ADR-740 importer.
+sync the signed report and directory, and only then call the ADR-793 importer.
 Import independently verifies published bytes/binding and retained readback
 before the ledger write. A failed import leaves the valid bundle available for
 retry with the private importer. Receipts remain immutable and revocable under
@@ -94,13 +94,13 @@ ADR-739. No migrations, customer state or traffic writes are added.
 Central policy in `pkg/api/limits.go`: 2 GiB per staged native asset, 512 MiB per
 source archive including headers/padding, 15-minute lock wait with 100 ms polling,
 10-minute source/tool/drain and build preparation budgets, 3-minute test budget,
-2-minute host-probe/cleanup budgets and 5-second command pipe wait delay. ADR-740 evidence bounds
+2-minute host-probe/cleanup budgets and 5-second command pipe wait delay. ADR-793 evidence bounds
 remain 64 KiB per JSON report/envelope/fixture, 64 MiB per captured stream,
 256 KiB per event/line and 16 JSON nesting levels.
 
 ## Consequences
 
-This extends ADR-740's collection boundary while reusing its trusted import
+This extends ADR-793's collection boundary while reusing its trusted import
 contract. It provides no customer apply or maintenance scheduler. Public
 previews keep `execution_available=false`; a qualification receipt gates
 preparation only. Fresh candidate acceptance, baseline checks and authoritative
