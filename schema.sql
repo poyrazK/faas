@@ -1961,11 +1961,14 @@ BEGIN
     SELECT coalesce(jsonb_agg(jsonb_build_object(
         'id', s.id, 'account_id', s.account_id, 'app_id', s.app_id,
         'source', s.source, 'type', s.type, 'filter', s.filter,
+        'routing_retry_policy', s.routing_retry_policy,
+        'schema_versions', s.schema_versions,
         'work_snapshot_captured', true,
         'work', CASE WHEN b.subscription_id IS NULL THEN NULL
             ELSE jsonb_build_object(
                 'policy_name', b.policy_name, 'key_selector', b.key_selector,
                 'fairness_selector', b.fairness_key_selector, 'action', b.action,
+                'ordered', b.ordered,
                 'policy', CASE WHEN p.name IS NULL THEN NULL
                     ELSE jsonb_build_object(
                         'revision', p.revision,
@@ -8042,19 +8045,27 @@ CREATE FUNCTION public.refresh_event_routing_backlog(p_outbox_id bigint, p_subsc
 WITH candidates AS MATERIALIZED (
     SELECT * FROM event_routing_backlog_source
     WHERE outbox_id=p_outbox_id AND (p_subscription_id IS NULL OR subscription_id=p_subscription_id)
-      AND routing_state IN ('pending','processing')
 ), inserted AS (
-    INSERT INTO event_routing_backlog SELECT * FROM candidates ORDER BY subscription_id
+    INSERT INTO event_routing_backlog
+        (outbox_id,subscription_id,account_id,app_id,accepted_at,routing_mode,routing_state,capacity_scope,
+         attempts,capacity_deferrals,next_attempt_at,lease_until,consumer_kind,origin,workflow_name)
+    SELECT outbox_id,subscription_id,account_id,app_id,accepted_at,routing_mode,routing_state,capacity_scope,
+           attempts,capacity_deferrals,next_attempt_at,lease_until,consumer_kind,origin,workflow_name
+    FROM candidates ORDER BY subscription_id
     ON CONFLICT (outbox_id,subscription_id) DO UPDATE SET
         account_id=excluded.account_id,app_id=excluded.app_id,accepted_at=excluded.accepted_at,
         routing_mode=excluded.routing_mode,routing_state=excluded.routing_state,capacity_scope=excluded.capacity_scope,
         attempts=excluded.attempts,capacity_deferrals=excluded.capacity_deferrals,
-        next_attempt_at=excluded.next_attempt_at,lease_until=excluded.lease_until
+        next_attempt_at=excluded.next_attempt_at,lease_until=excluded.lease_until,
+        consumer_kind=excluded.consumer_kind,origin=excluded.origin,workflow_name=excluded.workflow_name
     WHERE (event_routing_backlog.account_id,event_routing_backlog.app_id,event_routing_backlog.accepted_at,
            event_routing_backlog.routing_mode,event_routing_backlog.routing_state,event_routing_backlog.capacity_scope,
-           event_routing_backlog.attempts,event_routing_backlog.capacity_deferrals,event_routing_backlog.next_attempt_at,event_routing_backlog.lease_until)
+           event_routing_backlog.attempts,event_routing_backlog.capacity_deferrals,event_routing_backlog.next_attempt_at,
+           event_routing_backlog.lease_until,event_routing_backlog.consumer_kind,event_routing_backlog.origin,
+           event_routing_backlog.workflow_name)
        IS DISTINCT FROM (excluded.account_id,excluded.app_id,excluded.accepted_at,excluded.routing_mode,excluded.routing_state,
-                         excluded.capacity_scope,excluded.attempts,excluded.capacity_deferrals,excluded.next_attempt_at,excluded.lease_until)
+                         excluded.capacity_scope,excluded.attempts,excluded.capacity_deferrals,excluded.next_attempt_at,
+                         excluded.lease_until,excluded.consumer_kind,excluded.origin,excluded.workflow_name)
 )
 DELETE FROM event_routing_backlog b WHERE b.outbox_id=p_outbox_id
     AND (p_subscription_id IS NULL OR b.subscription_id=p_subscription_id)
@@ -9733,13 +9744,16 @@ CREATE TABLE public.alert_rules (
     org_id uuid,
     action text DEFAULT 'webhook'::text NOT NULL,
     post_deploy_rollback_window_seconds integer DEFAULT 0 NOT NULL,
+    event_subscription_id uuid,
+    CONSTRAINT alert_rules_event_consumer_chk CHECK ((metric IN ('event_pending_recipients','event_oldest_pending_seconds','event_retry_rate_per_second','event_terminal_failure_pct','event_routing_latency_p95_seconds','event_paused_seconds','event_drain_rate_per_second','event_execution_dead_letters','event_execution_dead_letter_rate_per_second','event_handler_failure_pct','event_completion_latency_p95_seconds') AND event_subscription_id IS NOT NULL AND app_id IS NOT NULL AND action='webhook' AND window_spec IN ('5m','15m','1h','6h','24h')) OR (NOT (metric IN ('event_pending_recipients','event_oldest_pending_seconds','event_retry_rate_per_second','event_terminal_failure_pct','event_routing_latency_p95_seconds','event_paused_seconds','event_drain_rate_per_second','event_execution_dead_letters','event_execution_dead_letter_rate_per_second','event_handler_failure_pct','event_completion_latency_p95_seconds')) AND event_subscription_id IS NULL)),
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
-    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text]))),
+    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text,'event_execution_dead_letters'::text,'event_execution_dead_letter_rate_per_second'::text,'event_handler_failure_pct'::text,'event_completion_latency_p95_seconds'::text,'event_recovery_stalled_jobs'::text,'event_recovery_expiring_jobs'::text,'event_recovery_capacity_wait_jobs'::text]))),
+    CONSTRAINT alert_rules_recovery_health_chk CHECK (metric NOT IN ('event_recovery_stalled_jobs','event_recovery_expiring_jobs','event_recovery_capacity_wait_jobs') OR (app_id IS NOT NULL AND event_subscription_id IS NULL AND action='webhook' AND window_spec IN ('5m','15m','1h','6h','24h'))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
@@ -10863,7 +10877,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text,'event_recovery.completed'::text,'event_recovery.cancelled'::text,'event_recovery.expired'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -13382,6 +13396,8 @@ CREATE TABLE public.event_delivery_slots (
 --
 
 CREATE TABLE public.event_fanout_attempt_history (
+    filter_reason text NOT NULL DEFAULT '' CHECK (filter_reason IN ('','schema_version_mismatch')),
+    retry_stop_reason text NOT NULL DEFAULT '' CHECK (retry_stop_reason IN ('','non_retryable','max_attempts','max_duration','delivery_expired')),
     id bigint NOT NULL,
     outbox_id bigint NOT NULL,
     app_id uuid NOT NULL,
@@ -13396,7 +13412,7 @@ CREATE TABLE public.event_fanout_attempt_history (
     capacity_scope text DEFAULT ''::text NOT NULL,
     capacity_deferrals bigint DEFAULT 0 NOT NULL,
     details_truncated boolean DEFAULT false NOT NULL,
-    history_bytes bigint GENERATED ALWAYS AS ((((((((128)::bigint + octet_length(subscription_id)) + octet_length(action)) + octet_length(state)) + octet_length(failure_code)) + octet_length(last_error)) + octet_length(capacity_scope))) STORED NOT NULL,
+    history_bytes bigint GENERATED ALWAYS AS (((((((((128)::bigint + octet_length(subscription_id)) + octet_length(action)) + octet_length(state)) + octet_length(failure_code)) + octet_length(last_error)) + octet_length(capacity_scope))) + octet_length(retry_stop_reason) + octet_length(filter_reason)) STORED NOT NULL,
     CONSTRAINT event_fanout_attempt_history_action_check CHECK ((action = ANY (ARRAY['fanout_attempt'::text, 'operator_replay'::text, 'backfill_attempt'::text]))),
     CONSTRAINT event_fanout_attempt_history_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT event_fanout_attempt_history_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
@@ -13507,6 +13523,18 @@ ALTER TABLE public.event_fanout_outbox ALTER COLUMN id ADD GENERATED ALWAYS AS I
 
 
 --
+-- Name: event_fanout_acceptance_order_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.event_fanout_acceptance_order_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
 -- Name: event_fanout_recipients; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13534,7 +13562,8 @@ CREATE TABLE public.event_fanout_recipients (
     CONSTRAINT event_fanout_recipients_generation_check CHECK ((generation > 0)),
     CONSTRAINT event_fanout_recipients_receipt_position_check CHECK ((receipt_position > 0)),
     CONSTRAINT event_fanout_recipients_recipient_check CHECK ((jsonb_typeof(recipient) = 'object'::text)),
-    CONSTRAINT event_fanout_recipients_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'filtered'::text, 'enqueued'::text, 'failed'::text])))
+    CONSTRAINT event_fanout_recipients_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'filtered'::text, 'enqueued'::text, 'failed'::text]))),
+    delivery_deadline_at timestamptz CHECK(delivery_deadline_at IS NULL OR isfinite(delivery_deadline_at))
 );
 
 CREATE TABLE public.event_replay_jobs (
@@ -13544,6 +13573,8 @@ CREATE TABLE public.event_replay_jobs (
     subscription_id uuid NOT NULL,
     subscription_revision text NOT NULL,
     recipient jsonb NOT NULL,
+    consumer_kind text DEFAULT 'application'::text NOT NULL,
+    workflow_name text DEFAULT ''::text NOT NULL,
     from_at timestamp with time zone NOT NULL,
     until_at timestamp with time zone NOT NULL,
     cutoff_at timestamp with time zone NOT NULL,
@@ -13564,6 +13595,8 @@ CREATE TABLE public.event_replay_jobs (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     completed_at timestamp with time zone,
     CONSTRAINT event_replay_jobs_pkey PRIMARY KEY (id),
+    CONSTRAINT event_replay_jobs_consumer_kind_check CHECK ((consumer_kind = ANY (ARRAY['application'::text, 'workflow'::text]))),
+    CONSTRAINT event_replay_jobs_target_check CHECK ((((consumer_kind = 'application'::text) AND (workflow_name = ''::text)) OR ((consumer_kind = 'workflow'::text) AND (char_length(workflow_name) >= 1) AND (char_length(workflow_name) <= 256) AND (jsonb_typeof(recipient -> 'workflow'::text) = 'object'::text)))),
     CONSTRAINT event_replay_jobs_subscription_revision_check CHECK ((length(subscription_revision) = 64)),
     CONSTRAINT event_replay_jobs_recipient_check CHECK ((jsonb_typeof(recipient) = 'object'::text)),
     CONSTRAINT event_replay_jobs_duplicate_policy_check CHECK ((duplicate_policy = 'skip_existing'::text)),
@@ -13617,9 +13650,14 @@ CREATE TABLE public.event_routing_backlog (
     capacity_deferrals integer NOT NULL,
     next_attempt_at timestamp with time zone,
     lease_until timestamp with time zone,
+    consumer_kind text DEFAULT 'application'::text NOT NULL,
+    origin text DEFAULT 'acceptance'::text NOT NULL,
+    workflow_name text DEFAULT ''::text NOT NULL,
     CONSTRAINT event_routing_backlog_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT event_routing_backlog_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
     CONSTRAINT event_routing_backlog_capacity_scope_check CHECK ((capacity_scope = ANY (ARRAY[''::text, 'consumer'::text, 'app'::text, 'account'::text]))),
+    CONSTRAINT event_routing_backlog_consumer_kind_check CHECK ((consumer_kind = ANY (ARRAY['application'::text, 'workflow'::text]))),
+    CONSTRAINT event_routing_backlog_origin_check CHECK ((origin = ANY (ARRAY['acceptance'::text, 'backfill'::text]))),
     CONSTRAINT event_routing_backlog_routing_mode_check CHECK ((routing_mode = ANY (ARRAY['event'::text, 'recipient'::text]))),
     CONSTRAINT event_routing_backlog_routing_state_check CHECK ((routing_state = ANY (ARRAY['pending'::text, 'processing'::text])))
 );
@@ -13636,7 +13674,7 @@ CREATE VIEW public.event_routing_backlog_source AS
     ((s.recipient ->> 'app_id'::text))::uuid AS app_id,
     o.created_at AS accepted_at,
         CASE
-            WHEN o.recipient_claims THEN 'recipient'::text
+            WHEN ((s.origin = 'backfill'::text) OR o.recipient_claims) THEN 'recipient'::text
             ELSE 'event'::text
         END AS routing_mode,
     effective.routing_state,
@@ -13645,18 +13683,18 @@ CREATE VIEW public.event_routing_backlog_source AS
             ELSE ''::text
         END AS capacity_scope,
         CASE
-            WHEN o.recipient_claims THEN COALESCE(r.total_attempts, ((p.progress ->> 'attempts'::text))::integer, 0)
+            WHEN ((s.origin = 'backfill'::text) OR o.recipient_claims) THEN COALESCE(r.total_attempts, ((p.progress ->> 'attempts'::text))::integer, 0)
             ELSE COALESCE(((p.progress ->> 'attempts'::text))::integer, 0)
         END AS attempts,
     GREATEST(COALESCE(((p.progress ->> 'capacity_deferrals'::text))::integer, 0),
         CASE
-            WHEN o.recipient_claims THEN COALESCE(r.capacity_deferrals, 0)
+            WHEN ((s.origin = 'backfill'::text) OR o.recipient_claims) THEN COALESCE(r.capacity_deferrals, 0)
             ELSE 0
         END) AS capacity_deferrals,
         CASE
             WHEN (effective.routing_state = 'pending'::text) THEN
             CASE
-                WHEN o.recipient_claims THEN COALESCE(r.available_at, ((p.progress ->> 'next_attempt_at'::text))::timestamp with time zone, o.available_at)
+                WHEN ((s.origin = 'backfill'::text) OR o.recipient_claims) THEN COALESCE(r.available_at, ((p.progress ->> 'next_attempt_at'::text))::timestamp with time zone, o.available_at)
                 ELSE COALESCE(((p.progress ->> 'next_attempt_at'::text))::timestamp with time zone,
                 CASE
                     WHEN (o.state = 'pending'::text) THEN o.available_at
@@ -13666,19 +13704,32 @@ CREATE VIEW public.event_routing_backlog_source AS
             ELSE NULL::timestamp with time zone
         END AS next_attempt_at,
         CASE
-            WHEN o.recipient_claims THEN r.lease_until
+            WHEN ((s.origin = 'backfill'::text) OR o.recipient_claims) THEN r.lease_until
             ELSE o.lease_until
-        END AS lease_until
+        END AS lease_until,
+    s.origin,
+        CASE
+            WHEN (((s.recipient -> 'workflow'::text) IS NOT NULL) AND ((s.recipient -> 'workflow'::text) <> 'null'::jsonb)) THEN 'workflow'::text
+            ELSE 'application'::text
+        END AS consumer_kind,
+    COALESCE(((s.recipient -> 'workflow'::text) ->> 'name'::text), ''::text) AS workflow_name
    FROM ((((public.event_fanout_outbox o
-     CROSS JOIN LATERAL jsonb_array_elements(o.recipient_snapshot) s(recipient))
+     CROSS JOIN LATERAL ( SELECT captured.recipient,
+            'acceptance'::text AS origin
+           FROM jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) captured(recipient)
+        UNION ALL
+         SELECT added.recipient,
+            'backfill'::text AS text
+           FROM public.event_fanout_recipients added
+          WHERE ((added.outbox_id = o.id) AND (added.receipt_position IS NOT NULL))) s)
      CROSS JOIN LATERAL ( SELECT COALESCE((o.recipient_progress -> (s.recipient ->> 'id'::text)), '{}'::jsonb) AS progress) p)
      LEFT JOIN public.event_fanout_recipients r ON (((r.outbox_id = o.id) AND (r.subscription_id = (s.recipient ->> 'id'::text)))))
      CROSS JOIN LATERAL ( SELECT
                 CASE
-                    WHEN o.recipient_claims THEN COALESCE(r.state, (p.progress ->> 'state'::text), 'pending'::text)
+                    WHEN ((s.origin = 'backfill'::text) OR o.recipient_claims) THEN COALESCE(r.state, (p.progress ->> 'state'::text), 'pending'::text)
                     ELSE COALESCE((p.progress ->> 'state'::text), 'pending'::text)
                 END AS routing_state) effective)
-  WHERE ((o.state = ANY (ARRAY['pending'::text, 'processing'::text])) AND (NULLIF((s.recipient ->> 'app_id'::text), ''::text) IS NOT NULL) AND (((s.recipient -> 'workflow'::text) IS NULL) OR ((s.recipient -> 'workflow'::text) = 'null'::jsonb)));
+  WHERE ((NULLIF((s.recipient ->> 'app_id'::text), ''::text) IS NOT NULL) AND (effective.routing_state = ANY (ARRAY['pending'::text, 'processing'::text])));
 
 
 --
@@ -13729,6 +13780,7 @@ CREATE TABLE public.event_subscription_work_bindings (
     key_selector text NOT NULL,
     action text DEFAULT 'invoke'::text NOT NULL,
     fairness_key_selector text DEFAULT ''::text NOT NULL,
+    ordered boolean DEFAULT false NOT NULL,
     CONSTRAINT event_subscription_work_bindings_action_check CHECK ((action = ANY (ARRAY['invoke'::text, 'cancel_pending'::text]))),
     CONSTRAINT event_subscription_work_bindings_key_selector_check CHECK (((length(key_selector) >= 1) AND (length(key_selector) <= 256)))
 );
@@ -13738,7 +13790,24 @@ CREATE TABLE public.event_subscription_work_bindings (
 -- Name: event_subscriptions; Type: TABLE; Schema: public; Owner: -
 --
 
+CREATE FUNCTION valid_event_routing_retry_policy(p jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+ SELECT CASE WHEN p IS NULL THEN true
+ WHEN jsonb_typeof(p)<>'object' OR NOT (p ?& ARRAY['max_attempts','max_retry_duration_ms','initial_backoff_ms','max_backoff_ms','jitter']) THEN false
+ WHEN jsonb_typeof(p->'max_attempts')<>'number' OR jsonb_typeof(p->'max_retry_duration_ms')<>'number' OR jsonb_typeof(p->'initial_backoff_ms')<>'number' OR jsonb_typeof(p->'max_backoff_ms')<>'number' OR jsonb_typeof(p->'jitter')<>'boolean' THEN false
+ WHEN p ? 'max_delivery_age_ms' AND jsonb_typeof(p->'max_delivery_age_ms')<>'number' THEN false
+ ELSE coalesce((p->>'max_delivery_age_ms')::numeric,0) BETWEEN 0 AND 2592000000 AND coalesce((p->>'max_delivery_age_ms')::numeric,0)%1=0
+ AND (p->>'max_attempts')::numeric BETWEEN 1 AND 100 AND (p->>'max_attempts')::numeric % 1=0
+ AND (p->>'max_retry_duration_ms')::numeric BETWEEN 0 AND 604800000 AND (p->>'max_retry_duration_ms')::numeric % 1=0
+ AND (p->>'initial_backoff_ms')::numeric BETWEEN 1 AND 3600000 AND (p->>'initial_backoff_ms')::numeric % 1=0
+ AND (p->>'max_backoff_ms')::numeric BETWEEN (p->>'initial_backoff_ms')::numeric AND 3600000 AND (p->>'max_backoff_ms')::numeric % 1=0 END;
+$$;
+
+CREATE FUNCTION valid_event_subscription_schema_versions(versions text[]) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+ SELECT cardinality(versions)<=16 AND NOT EXISTS (SELECT 1 FROM unnest(versions) v WHERE v IS NULL OR v !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') AND cardinality(versions)=(SELECT count(DISTINCT v) FROM unnest(versions) v);
+$$;
 CREATE TABLE public.event_subscriptions (
+    schema_versions text[] NOT NULL DEFAULT '{}' CHECK (valid_event_subscription_schema_versions(schema_versions)),
+    routing_retry_policy jsonb CHECK (valid_event_routing_retry_policy(routing_retry_policy)),
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     account_id uuid NOT NULL,
     app_id uuid NOT NULL,
@@ -28619,6 +28688,11 @@ CREATE INDEX event_fanout_outbox_pending_idx ON public.event_fanout_outbox USING
 
 CREATE INDEX event_fanout_outbox_retention_idx ON public.event_fanout_outbox USING btree (delivered_at, id) WHERE (state = 'delivered'::text);
 
+-- Name: event_fanout_order_unsettled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_order_unsettled_idx ON public.event_fanout_outbox USING btree (account_id, id) WHERE (state <> 'delivered'::text);
+
 
 --
 -- Name: event_fanout_recipients_due_idx; Type: INDEX; Schema: public; Owner: -
@@ -28640,7 +28714,7 @@ CREATE INDEX event_replay_jobs_running_idx ON public.event_replay_jobs USING btr
 CREATE INDEX event_replay_jobs_account_idx ON public.event_replay_jobs USING btree (account_id, created_at DESC, id DESC);
 
 -- Name: event_replay_jobs_active_target_idx; Type: INDEX; Schema: public; Owner: -
-CREATE UNIQUE INDEX event_replay_jobs_active_target_idx ON public.event_replay_jobs USING btree (account_id, subscription_id) WHERE (state = 'running'::text);
+CREATE UNIQUE INDEX event_replay_jobs_active_target_idx ON public.event_replay_jobs USING btree (account_id, app_id, consumer_kind, subscription_id) WHERE (state = 'running'::text);
 
 -- Name: event_replay_job_items_due_idx; Type: INDEX; Schema: public; Owner: -
 CREATE INDEX event_replay_job_items_due_idx ON public.event_replay_job_items USING btree (job_id, accepted_at, outbox_id) WHERE (state = 'pending'::text);
@@ -28680,6 +28754,13 @@ CREATE INDEX event_routing_backlog_consumer_age ON public.event_routing_backlog 
 
 
 --
+-- Name: event_routing_backlog_kind_origin_age; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_routing_backlog_kind_origin_age ON public.event_routing_backlog USING btree (account_id, consumer_kind, origin, accepted_at, outbox_id, subscription_id);
+
+
+--
 -- Name: event_schemas_source_type_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -28698,6 +28779,11 @@ CREATE INDEX event_subscriptions_account_idx ON public.event_subscriptions USING
 --
 
 CREATE INDEX event_subscriptions_enabled_idx ON public.event_subscriptions USING btree (app_id, source, type) WHERE enabled;
+
+-- Name: event_subscription_work_bindings_ordered_lane_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_subscription_work_bindings_ordered_lane_idx ON public.event_subscription_work_bindings USING btree (app_id, policy_name) WHERE ordered;
 
 
 --
@@ -42823,3 +42909,399 @@ END;
 $$;
 CREATE TRIGGER deployment_dependency_release_check BEFORE UPDATE OF status ON deployments
 FOR EACH ROW EXECUTE FUNCTION check_project_dependency_release();
+
+
+--
+-- Name: event_order_lane_lock_id(text, text, jsonb, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_order_lane_lock_id(lane_app_id text, lane_policy_name text, event_payload jsonb, key_selector text) RETURNS bigint
+    LANGUAGE sql IMMUTABLE STRICT
+    AS $$
+WITH selected AS (
+    SELECT event_payload #> string_to_array(key_selector, '.') AS value
+), canonical AS (
+    SELECT CASE jsonb_typeof(value)
+        WHEN 'string' THEN 's:' || (value #>> '{}')
+        WHEN 'number' THEN 'n:' || trim_scale((value #>> '{}')::numeric)::text
+        WHEN 'boolean' THEN 'b:' || (value #>> '{}')
+        ELSE NULL
+    END AS key
+    FROM selected
+)
+SELECT CASE WHEN key IS NULL OR key = 's:' THEN NULL
+    ELSE hashtextextended(jsonb_build_array(lane_app_id, lane_policy_name, key)::text, 0)
+    END
+FROM canonical;
+$$;
+
+
+--
+-- Name: event_order_lane_active(text, text, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_order_lane_active(lane_app_id text, lane_policy_name text, configured_ordered boolean) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+SELECT coalesce(configured_ordered, false) OR EXISTS (
+    SELECT 1 FROM event_subscription_work_bindings b
+    WHERE b.app_id = lane_app_id::uuid
+      AND b.policy_name = lane_policy_name
+      AND b.ordered
+);
+$$;
+
+
+--
+-- Name: capture_event_recipient_ordering_snapshot(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_event_recipient_ordering_snapshot() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    snapshot jsonb;
+    lane record;
+BEGIN
+    IF NEW.recipient_snapshot IS NULL OR jsonb_array_length(NEW.recipient_snapshot) = 0 THEN
+        RETURN NEW;
+    END IF;
+
+    FOR lane IN
+        SELECT DISTINCT event_order_lane_lock_id(
+            item.recipient->>'app_id', item.recipient->'work'->>'policy_name', NEW.payload,
+            item.recipient->'work'->>'key_selector') AS lock_id
+        FROM jsonb_array_elements(NEW.recipient_snapshot) item(recipient)
+        WHERE jsonb_typeof(item.recipient->'work') = 'object'
+          AND item.recipient->'work'->>'policy_name' <> ''
+          AND event_order_lane_active(item.recipient->>'app_id',
+              item.recipient->'work'->>'policy_name',
+              coalesce((item.recipient->'work'->>'ordered')::boolean, false))
+          AND event_order_lane_lock_id(
+            item.recipient->>'app_id', item.recipient->'work'->>'policy_name', NEW.payload,
+            item.recipient->'work'->>'key_selector') IS NOT NULL
+        ORDER BY lock_id
+    LOOP
+        PERFORM pg_advisory_xact_lock(lane.lock_id);
+    END LOOP;
+
+    SELECT coalesce(jsonb_agg(
+        CASE WHEN jsonb_typeof(item.recipient->'work') = 'object'
+                   AND event_order_lane_active(item.recipient->>'app_id',
+                       item.recipient->'work'->>'policy_name',
+                       coalesce((item.recipient->'work'->>'ordered')::boolean, false))
+                   AND event_order_lane_lock_id(item.recipient->>'app_id',
+                       item.recipient->'work'->>'policy_name', NEW.payload,
+                       item.recipient->'work'->>'key_selector') IS NOT NULL
+             THEN jsonb_set(item.recipient, '{work,routing_order}',
+                       to_jsonb(nextval('event_fanout_acceptance_order_seq')::bigint), true)
+             ELSE item.recipient
+        END ORDER BY item.position), '[]'::jsonb)
+    INTO snapshot
+    FROM jsonb_array_elements(NEW.recipient_snapshot) WITH ORDINALITY AS item(recipient, position);
+
+    UPDATE event_fanout_outbox SET recipient_snapshot = snapshot WHERE id = NEW.id;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: event_recipient_order_blocked(bigint, text, jsonb, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_recipient_order_blocked(target_outbox_id bigint, target_subscription_id text, target_recipient jsonb, include_same_receipt boolean) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+WITH current_event AS (
+    SELECT o.id, o.account_id, o.payload,
+        (SELECT item.position
+         FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb))
+              WITH ORDINALITY AS item(recipient, position)
+         WHERE item.recipient->>'id' = target_subscription_id
+         LIMIT 1) AS position,
+        (SELECT coalesce((item.recipient->'work'->>'routing_order')::bigint, o.id)
+         FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb))
+              WITH ORDINALITY AS item(recipient, position)
+         WHERE item.recipient->>'id' = target_subscription_id
+         LIMIT 1) AS routing_order
+    FROM event_fanout_outbox o
+    WHERE o.id = target_outbox_id
+)
+SELECT EXISTS (
+    SELECT 1
+    FROM current_event current
+    JOIN event_fanout_outbox prior ON prior.account_id = current.account_id
+    CROSS JOIN LATERAL jsonb_array_elements(coalesce(prior.recipient_snapshot, '[]'::jsonb))
+        WITH ORDINALITY AS item(recipient, position)
+    LEFT JOIN event_fanout_recipients routed
+      ON routed.outbox_id = prior.id AND routed.subscription_id = item.recipient->>'id'
+    WHERE ((prior.id <> current.id AND
+            (coalesce((item.recipient->'work'->>'routing_order')::bigint, prior.id) < current.routing_order OR
+             (item.recipient->'work'->>'routing_order' IS NULL AND
+              target_recipient->'work'->>'routing_order' IS NOT NULL AND prior.id < current.id))) OR
+           (include_same_receipt AND prior.id = current.id AND item.position < current.position))
+      AND prior.state <> 'delivered'
+      AND item.recipient->>'app_id' = target_recipient->>'app_id'
+      AND item.recipient->'work'->>'policy_name' = target_recipient->'work'->>'policy_name'
+      AND item.recipient->'work'->>'policy_name' <> ''
+      AND event_order_lane_lock_id(item.recipient->>'app_id',
+          item.recipient->'work'->>'policy_name', prior.payload,
+          item.recipient->'work'->>'key_selector') IS NOT NULL
+      AND event_order_lane_lock_id(target_recipient->>'app_id',
+          target_recipient->'work'->>'policy_name', current.payload,
+          target_recipient->'work'->>'key_selector') IS NOT NULL
+      AND (coalesce((item.recipient->'work'->>'ordered')::boolean, false) OR
+           item.recipient->'work'->>'routing_order' IS NOT NULL OR
+           coalesce((target_recipient->'work'->>'ordered')::boolean, false) OR
+           target_recipient->'work'->>'routing_order' IS NOT NULL)
+      AND prior.payload #> string_to_array(item.recipient->'work'->>'key_selector', '.')
+          IS NOT DISTINCT FROM
+          current.payload #> string_to_array(target_recipient->'work'->>'key_selector', '.')
+      AND coalesce(routed.state,
+          (prior.recipient_progress->(item.recipient->>'id'))->>'state', 'pending')
+          NOT IN ('enqueued', 'filtered', 'failed')
+);
+$$;
+
+
+CREATE TRIGGER event_fanout_ordering_snapshot AFTER INSERT ON public.event_fanout_outbox FOR EACH ROW EXECUTE FUNCTION public.capture_event_recipient_ordering_snapshot();
+
+CREATE OR REPLACE FUNCTION event_recipient_order_blocker(
+    target_outbox_id bigint,
+    target_subscription_id text,
+    target_recipient jsonb,
+    include_same_receipt boolean
+) RETURNS jsonb LANGUAGE sql STABLE AS $$
+WITH current_event AS (
+    SELECT o.id, o.account_id, o.payload,
+        (SELECT item.position
+         FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb))
+              WITH ORDINALITY AS item(recipient, position)
+         WHERE item.recipient->>'id' = target_subscription_id
+         LIMIT 1) AS position,
+        (SELECT coalesce((item.recipient->'work'->>'routing_order')::bigint, o.id)
+         FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb))
+              WITH ORDINALITY AS item(recipient, position)
+         WHERE item.recipient->>'id' = target_subscription_id
+         LIMIT 1) AS routing_order
+    FROM event_fanout_outbox o
+    WHERE o.id = target_outbox_id
+)
+SELECT (
+    SELECT jsonb_build_object(
+        'event_source', prior.source, 'event_id', prior.event_id,
+        'subscription_id', item.recipient->>'id', 'accepted_at', prior.created_at,
+        'state', coalesce(routed.state, prior.recipient_progress->(item.recipient->>'id')->>'state', 'pending'),
+        'next_attempt_at', CASE WHEN routed.state = 'pending' THEN routed.available_at
+          WHEN routed.state IS NULL AND coalesce(prior.recipient_progress->(item.recipient->>'id')->>'state','pending') = 'pending'
+          THEN coalesce((prior.recipient_progress->(item.recipient->>'id')->>'next_attempt_at')::timestamptz, prior.available_at) ELSE NULL END)
+    FROM current_event current
+    JOIN event_fanout_outbox prior ON prior.account_id = current.account_id
+    CROSS JOIN LATERAL jsonb_array_elements(coalesce(prior.recipient_snapshot, '[]'::jsonb))
+        WITH ORDINALITY AS item(recipient, position)
+    LEFT JOIN event_fanout_recipients routed
+      ON routed.outbox_id = prior.id AND routed.subscription_id = item.recipient->>'id'
+    WHERE ((prior.id <> current.id AND
+            (coalesce((item.recipient->'work'->>'routing_order')::bigint, prior.id) < current.routing_order OR
+             (item.recipient->'work'->>'routing_order' IS NULL AND
+              target_recipient->'work'->>'routing_order' IS NOT NULL AND prior.id < current.id))) OR
+           (include_same_receipt AND prior.id = current.id AND item.position < current.position))
+      AND prior.state <> 'delivered'
+      AND item.recipient->>'app_id' = target_recipient->>'app_id'
+      AND item.recipient->'work'->>'policy_name' = target_recipient->'work'->>'policy_name'
+      AND item.recipient->'work'->>'policy_name' <> ''
+      AND event_order_lane_lock_id(item.recipient->>'app_id',
+          item.recipient->'work'->>'policy_name', prior.payload,
+          item.recipient->'work'->>'key_selector') IS NOT NULL
+      AND event_order_lane_lock_id(target_recipient->>'app_id',
+          target_recipient->'work'->>'policy_name', current.payload,
+          target_recipient->'work'->>'key_selector') IS NOT NULL
+      AND (coalesce((item.recipient->'work'->>'ordered')::boolean, false) OR
+           item.recipient->'work'->>'routing_order' IS NOT NULL OR
+           coalesce((target_recipient->'work'->>'ordered')::boolean, false) OR
+           target_recipient->'work'->>'routing_order' IS NOT NULL)
+      AND prior.payload #> string_to_array(item.recipient->'work'->>'key_selector', '.')
+          IS NOT DISTINCT FROM
+          current.payload #> string_to_array(target_recipient->'work'->>'key_selector', '.')
+      AND coalesce(routed.state,
+          (prior.recipient_progress->(item.recipient->>'id'))->>'state', 'pending')
+          NOT IN ('enqueued', 'filtered', 'failed')
+    ORDER BY coalesce((item.recipient->'work'->>'routing_order')::bigint, prior.id), prior.id, item.position
+    LIMIT 1
+);
+$$;
+CREATE OR REPLACE FUNCTION event_recipient_order_blocked(target_outbox_id bigint, target_subscription_id text, target_recipient jsonb, include_same_receipt boolean)
+RETURNS boolean LANGUAGE sql STABLE AS $$
+SELECT event_recipient_order_blocker(target_outbox_id, target_subscription_id, target_recipient, include_same_receipt) IS NOT NULL;
+$$;
+CREATE OR REPLACE FUNCTION event_backlog_waiting_reason(routing_state text, capacity_scope text, routing_mode text, lease_until timestamptz, next_attempt_at timestamptz, consumer_kind text, blocker jsonb, observed_at timestamptz)
+RETURNS text LANGUAGE sql IMMUTABLE AS $$
+SELECT CASE
+ WHEN routing_state = 'processing' THEN 'routing_in_progress'
+ WHEN routing_mode = 'event' AND lease_until > observed_at THEN 'receipt_processing'
+ WHEN blocker IS NOT NULL THEN 'ordering_blocked'
+ WHEN routing_state = 'pending' AND capacity_scope <> '' THEN 'capacity_' || capacity_scope
+ WHEN next_attempt_at > observed_at THEN 'retry_backoff'
+ WHEN consumer_kind = 'workflow' THEN 'workflow_routing'
+ ELSE 'ready' END;
+$$;
+
+CREATE TABLE event_recovery_jobs (
+ capacity_scope text NOT NULL DEFAULT '' CHECK (capacity_scope IN ('','account','app','consumer','unknown')), capacity_wait_started_at timestamptz, capacity_wait_observed_at timestamptz,
+ CONSTRAINT event_recovery_capacity_wait_chk CHECK ((capacity_scope='' AND capacity_wait_started_at IS NULL AND capacity_wait_observed_at IS NULL) OR (wait_reason='capacity' AND capacity_scope<>'' AND capacity_wait_started_at IS NOT NULL AND capacity_wait_observed_at IS NOT NULL AND capacity_wait_observed_at>=capacity_wait_started_at)),
+ last_progress_at timestamptz,
+ wait_reason text NOT NULL DEFAULT '' CHECK (wait_reason IN ('','capacity','legacy_claim')),
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ selection jsonb NOT NULL CHECK (jsonb_typeof(selection)='object'),
+ rate_per_second integer NOT NULL CHECK (rate_per_second BETWEEN 1 AND 100),
+ window_started_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ window_count integer NOT NULL DEFAULT 0 CONSTRAINT event_recovery_jobs_window_budget_chk CHECK (window_count >= 0 AND window_count <= 100),
+ state text NOT NULL DEFAULT 'running' CONSTRAINT event_recovery_jobs_lifecycle_chk CHECK (state IN ('running','paused','completed','cancelled')),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ expires_at timestamptz NOT NULL,
+ completed_at timestamptz,
+ paused_at timestamptz,
+ CONSTRAINT event_recovery_jobs_completion_chk CHECK ((state IN ('running','paused')) = (completed_at IS NULL)),
+ CONSTRAINT event_recovery_jobs_pause_chk CHECK ((state='paused') = (paused_at IS NOT NULL)),
+ CHECK (expires_at > created_at)
+);
+CREATE INDEX event_recovery_jobs_due_idx ON event_recovery_jobs(next_attempt_at,id) WHERE state='running';
+CREATE INDEX event_recovery_jobs_account_idx ON event_recovery_jobs(account_id,state);
+CREATE INDEX event_recovery_jobs_app_created_idx ON event_recovery_jobs(account_id,app_id,created_at DESC,id DESC);
+CREATE INDEX event_recovery_jobs_expiry_idx ON event_recovery_jobs(expires_at,id) WHERE state IN ('running','paused');
+CREATE TABLE event_recovery_items (
+ job_id uuid NOT NULL REFERENCES event_recovery_jobs(id) ON DELETE CASCADE,
+ position bigint NOT NULL CHECK (position > 0),
+ outbox_id bigint NOT NULL,
+ subscription_id text NOT NULL CHECK (subscription_id <> ''),
+ event_source text NOT NULL,
+ event_id text NOT NULL,
+ event_type text NOT NULL,
+ failed_at timestamptz NOT NULL,
+ failure_code text NOT NULL,
+ retryable boolean NOT NULL,
+ expected_progress jsonb NOT NULL CHECK (jsonb_typeof(expected_progress)='object'),
+ state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','queued','skipped','cancelled')),
+ reason text NOT NULL DEFAULT '' CHECK (reason IN ('','changed','receipt_expired','target_unavailable','cancelled','expired')),
+ replay_invocation_id uuid,
+ replay_generation bigint,
+ replay_created_at timestamptz,
+ CONSTRAINT event_recovery_items_replay_identity_chk CHECK (
+  (replay_invocation_id IS NULL AND replay_generation IS NULL AND replay_created_at IS NULL)
+  OR (replay_invocation_id IS NOT NULL AND replay_generation IS NOT NULL AND replay_generation>=0 AND replay_created_at IS NOT NULL AND state='queued')
+ ),
+ PRIMARY KEY (job_id,position),
+ UNIQUE (job_id,outbox_id,subscription_id)
+);
+CREATE INDEX event_recovery_items_pending_idx ON event_recovery_items(job_id,position) WHERE state='pending';
+
+CREATE FUNCTION event_recovery_failure_identity(progress jsonb) RETURNS jsonb LANGUAGE sql IMMUTABLE STRICT AS $$
+SELECT jsonb_build_object('state',progress->'state','attempts',progress->'attempts',
+ 'updated_at',progress->'updated_at','failure_code',progress->'failure_code','retryable',progress->'retryable');
+$$;
+
+CREATE TABLE event_subscription_delivery_controls (
+ subscription_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ paused boolean NOT NULL DEFAULT false,
+ paused_at timestamptz,
+ rate_per_second integer NOT NULL DEFAULT 0 CHECK (rate_per_second BETWEEN 0 AND 100),
+ window_started_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ window_count integer NOT NULL DEFAULT 0 CHECK (window_count >= 0),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX event_subscription_delivery_controls_app_idx ON event_subscription_delivery_controls(app_id);
+
+CREATE FUNCTION valid_event_circuit_policy(p jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+ SELECT CASE WHEN p IS NULL OR jsonb_typeof(p)<>'object' OR NOT(p ?& ARRAY['failure_threshold_pct','min_samples','window_seconds','cooldown_seconds','probe_successes','recovery_max_rate_per_second','recovery_seconds']) THEN false
+ WHEN EXISTS(SELECT 1 FROM jsonb_each(p) e WHERE e.key IN ('failure_threshold_pct','min_samples','window_seconds','cooldown_seconds','probe_successes','recovery_max_rate_per_second','recovery_seconds') AND jsonb_typeof(e.value)<>'number') THEN false
+ ELSE (p->>'failure_threshold_pct')::numeric>0 AND (p->>'failure_threshold_pct')::numeric<=100
+ AND (p->>'min_samples')::numeric BETWEEN 1 AND 10000 AND (p->>'min_samples')::numeric%1=0
+ AND (p->>'window_seconds')::numeric BETWEEN 1 AND 3600 AND (p->>'window_seconds')::numeric%1=0
+ AND (p->>'cooldown_seconds')::numeric BETWEEN 1 AND 3600 AND (p->>'cooldown_seconds')::numeric%1=0
+ AND (p->>'probe_successes')::numeric BETWEEN 1 AND 20 AND (p->>'probe_successes')::numeric%1=0
+ AND (p->>'recovery_max_rate_per_second')::numeric BETWEEN 1 AND 100 AND (p->>'recovery_max_rate_per_second')::numeric%1=0
+ AND (p->>'recovery_seconds')::numeric BETWEEN 1 AND 3600 AND (p->>'recovery_seconds')::numeric%1=0 END;
+$$;
+CREATE TABLE event_subscription_circuit_breakers (
+ subscription_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ policy jsonb NOT NULL CHECK(valid_event_circuit_policy(policy)),
+ state_data jsonb NOT NULL CHECK(jsonb_typeof(state_data)='object' AND state_data ? 'state' AND state_data->>'state' IS NOT NULL AND state_data->>'state' IN ('closed','open','half_open','draining')),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX event_subscription_circuit_breakers_app_idx ON event_subscription_circuit_breakers(app_id);
+
+CREATE OR REPLACE FUNCTION event_subscription_delivery_waiting_reason(account uuid, app uuid, subscription text, observed_at timestamptz)
+RETURNS text LANGUAGE sql STABLE AS $$
+SELECT coalesce((SELECT CASE WHEN c.paused THEN 'subscription_paused'
+ WHEN b.state_data->>'state'='open' AND (b.state_data->>'cooldown_until')::timestamptz>observed_at THEN 'circuit_open'
+ WHEN b.state_data->>'state'='half_open' AND ((coalesce(b.state_data->>'probe_token','')<>'' AND (b.state_data->>'probe_until')::timestamptz>observed_at) OR (b.state_data->>'next_probe_at')::timestamptz>observed_at) THEN 'circuit_probe_wait'
+ WHEN b.state_data->>'state'='draining' AND (b.state_data->>'recovery_window')::timestamptz+interval '1 second'>observed_at
+ AND (b.state_data->>'recovery_count')::integer>=least((b.policy->>'recovery_max_rate_per_second')::integer,
+ power(2,least(7,greatest(0,floor(extract(epoch FROM observed_at-(b.state_data->>'changed_at')::timestamptz)/10))))::integer) THEN 'circuit_recovery_rate_limited'
+ WHEN c.rate_per_second>0 AND c.window_count>=c.rate_per_second AND c.window_started_at+interval '1 second'>observed_at THEN 'subscription_rate_limited' ELSE '' END
+ FROM event_subscription_delivery_controls c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id AND a.status<>'deleted'
+ LEFT JOIN event_subscription_circuit_breakers b ON b.subscription_id=c.subscription_id AND b.account_id=c.account_id AND b.app_id=c.app_id
+ WHERE c.account_id=account AND c.app_id=app AND c.subscription_id::text=subscription),'');
+$$;
+
+CREATE INDEX event_fanout_history_consumer_window_idx ON event_fanout_attempt_history(app_id,subscription_id,occurred_at);
+
+CREATE FUNCTION event_recipient_delivery_deadline(recipient jsonb, accepted_at timestamptz, progress jsonb)
+RETURNS timestamptz LANGUAGE sql STABLE AS $$
+ SELECT CASE WHEN recipient ? 'workflow' OR recipient ? 'object_notification'
+ OR coalesce((recipient->'work'->>'ordered')::boolean,false)
+ OR coalesce((progress->>'delivery_age_override')::boolean,false)
+ OR coalesce((recipient->>'delivery_age_override')::boolean,false)
+ OR coalesce((recipient->'routing_retry_policy'->>'max_delivery_age_ms')::bigint,0)=0 THEN NULL
+ ELSE accepted_at + ((recipient->'routing_retry_policy'->>'max_delivery_age_ms')::bigint * interval '1 millisecond') END;
+$$;
+CREATE INDEX event_recipient_delivery_deadline_idx ON public.event_fanout_recipients(delivery_deadline_at,outbox_id) WHERE state IN ('pending','processing') AND delivery_deadline_at IS NOT NULL;
+CREATE FUNCTION enforce_event_delivery_age_ordering() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE p jsonb;
+BEGIN
+ IF TG_TABLE_NAME='event_subscriptions' THEN
+  IF coalesce((NEW.routing_retry_policy->>'max_delivery_age_ms')::bigint,0)>0
+   AND EXISTS(SELECT 1 FROM event_subscription_work_bindings b WHERE b.subscription_id=NEW.id AND b.ordered) THEN
+   RAISE EXCEPTION 'ordered event delivery cannot configure max_delivery_age' USING ERRCODE='23514';
+  END IF;
+ ELSIF NEW.ordered THEN
+  SELECT routing_retry_policy INTO p FROM event_subscriptions WHERE id=NEW.subscription_id FOR UPDATE;
+  IF coalesce((p->>'max_delivery_age_ms')::bigint,0)>0 THEN
+   RAISE EXCEPTION 'ordered event delivery cannot configure max_delivery_age' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+CREATE TRIGGER event_delivery_age_subscription_ordering BEFORE UPDATE OF routing_retry_policy ON event_subscriptions FOR EACH ROW EXECUTE FUNCTION enforce_event_delivery_age_ordering();
+CREATE TRIGGER event_delivery_age_binding_ordering BEFORE INSERT OR UPDATE ON event_subscription_work_bindings FOR EACH ROW EXECUTE FUNCTION enforce_event_delivery_age_ordering();
+
+CREATE FUNCTION event_recipient_schema_version_mismatch(recipient jsonb, payload jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+ SELECT NOT recipient ? 'workflow' AND NOT recipient ? 'object_notification' AND jsonb_array_length(coalesce(recipient->'schema_versions','[]'::jsonb))>0 AND NOT (recipient->'schema_versions' ? coalesce(payload->>'schemaversion',''));
+$$;
+
+CREATE INDEX invocations_replay_parent_lookup_idx ON public.invocations (account_id,replayed_from_invocation_id,created_at DESC,id DESC) WHERE replayed_from_invocation_id IS NOT NULL;
+
+CREATE TABLE event_recovery_history (
+ id bigserial PRIMARY KEY,
+ job_id uuid NOT NULL REFERENCES event_recovery_jobs(id) ON DELETE CASCADE,
+ occurred_at timestamptz NOT NULL,
+ action text NOT NULL CHECK (action IN ('created','paused','resumed','rate_changed','cancelled','expired')),
+ actor_kind text NOT NULL CHECK (actor_kind IN ('account','api_key','internal','system')),
+ actor_id text NOT NULL CHECK (length(actor_id)>0 AND octet_length(actor_id)<=256),
+ reason text NOT NULL DEFAULT '' CHECK (octet_length(reason)<=512),
+ previous_state text NOT NULL CHECK (previous_state IN ('','running','paused','completed','cancelled')),
+ state text NOT NULL CHECK (state IN ('running','paused','completed','cancelled')),
+ previous_rate integer NOT NULL CHECK (previous_rate BETWEEN 0 AND 100),
+ rate integer NOT NULL CHECK (rate BETWEEN 1 AND 100)
+);
+CREATE INDEX event_recovery_history_job_idx ON event_recovery_history(job_id,id);

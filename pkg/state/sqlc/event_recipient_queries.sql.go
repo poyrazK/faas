@@ -190,7 +190,7 @@ func (q *Queries) EventHistoryDueRecipients(ctx context.Context, db DBTX, arg Ev
 }
 
 const eventHistoryList = `-- name: EventHistoryList :many
-SELECT h.id, h.outbox_id, h.app_id, h.subscription_id, h.action, h.state, h.attempts, h.failure_code, h.retryable, h.last_error, h.occurred_at, h.capacity_scope, h.capacity_deferrals, h.details_truncated, h.history_bytes,o.event_id,o.source AS event_source,o.event_type
+SELECT h.filter_reason, h.retry_stop_reason, h.id, h.outbox_id, h.app_id, h.subscription_id, h.action, h.state, h.attempts, h.failure_code, h.retryable, h.last_error, h.occurred_at, h.capacity_scope, h.capacity_deferrals, h.details_truncated, h.history_bytes,o.event_id,o.source AS event_source,o.event_type
 FROM event_fanout_attempt_history h JOIN event_fanout_outbox o ON o.id=h.outbox_id
 JOIN apps a ON a.id=h.app_id AND a.account_id=o.account_id
 WHERE h.app_id=$1::uuid AND ($2::text='' OR o.source=$2::text) AND ($3::text='' OR o.event_id=$3::text)
@@ -209,6 +209,8 @@ type EventHistoryListParams struct {
 }
 
 type EventHistoryListRow struct {
+	FilterReason      string
+	RetryStopReason   string
 	ID                int64
 	OutboxID          int64
 	AppID             pgtype.UUID
@@ -246,6 +248,8 @@ func (q *Queries) EventHistoryList(ctx context.Context, db DBTX, arg EventHistor
 	for rows.Next() {
 		var i EventHistoryListRow
 		if err := rows.Scan(
+			&i.FilterReason,
+			&i.RetryStopReason,
 			&i.ID,
 			&i.OutboxID,
 			&i.AppID,
@@ -486,13 +490,13 @@ func (q *Queries) EventHistorySummaries(ctx context.Context, db DBTX, arg EventH
 
 const eventRecipientAppendHistory = `-- name: EventRecipientAppendHistory :one
 INSERT INTO event_fanout_attempt_history
-    (outbox_id, app_id, subscription_id, action, state, attempts, failure_code, retryable, last_error, occurred_at,
+    (outbox_id, app_id, subscription_id, action, state, attempts, failure_code, retryable, last_error, occurred_at, retry_stop_reason, filter_reason,
      capacity_scope,capacity_deferrals,details_truncated)
 VALUES ($1::bigint, $2::uuid, $3::text,
         $4::text, $5::text, $6::integer,
         $7::text, $8::boolean, $9::text,
-        $10::timestamptz,$11::text,
-        $12::bigint,$13::boolean)
+        $10::timestamptz, $11::text,$12::text,$13::text,
+        $14::bigint,$15::boolean)
 RETURNING id
 `
 
@@ -507,6 +511,8 @@ type EventRecipientAppendHistoryParams struct {
 	Retryable         bool
 	LastError         string
 	OccurredAt        pgtype.Timestamptz
+	RetryStopReason   string
+	FilterReason      string
 	CapacityScope     string
 	CapacityDeferrals int64
 	DetailsTruncated  bool
@@ -524,6 +530,8 @@ func (q *Queries) EventRecipientAppendHistory(ctx context.Context, db DBTX, arg 
 		arg.Retryable,
 		arg.LastError,
 		arg.OccurredAt,
+		arg.RetryStopReason,
+		arg.FilterReason,
 		arg.CapacityScope,
 		arg.CapacityDeferrals,
 		arg.DetailsTruncated,
@@ -540,13 +548,15 @@ WITH candidate AS (
     JOIN event_fanout_outbox o ON o.id=r.outbox_id
     LEFT JOIN event_routing_fairness fa ON fa.account_id=o.account_id AND fa.subscription_id=''
     LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r.subscription_id
-    WHERE ((r.state = 'pending' AND r.available_at <= $1::timestamptz)
+    WHERE ((r.state = 'pending' AND (r.available_at <= $1::timestamptz OR r.delivery_deadline_at <= $1::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload)))
        OR (r.state = 'processing' AND r.lease_until <= $1::timestamptz))
       AND ($2::boolean OR NOT r.recipient ? 'workflow')
       AND (r.backfill_job_id IS NULL OR EXISTS (
           SELECT 1 FROM event_replay_jobs j JOIN event_replay_job_items i ON i.job_id=j.id
           WHERE j.id=r.backfill_job_id AND j.state='running' AND i.outbox_id=r.outbox_id
             AND i.state IN ('pending','processing')))
+      AND (r.delivery_deadline_at <= $1::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload) OR event_subscription_delivery_waiting_reason(o.account_id,r.app_id,r.subscription_id,$1::timestamptz)='')
+      AND (r.delivery_deadline_at <= $1::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload) OR NOT event_recipient_order_blocked(r.outbox_id, r.subscription_id, r.recipient, true))
     ORDER BY coalesce(fa.last_claimed_at,'epoch'::timestamptz),
       coalesce(fc.last_claimed_at,'epoch'::timestamptz), r.available_at, r.outbox_id, r.subscription_id
     FOR UPDATE OF r SKIP LOCKED LIMIT 1
@@ -557,7 +567,7 @@ WITH candidate AS (
         attempts = r.attempts + 1, total_attempts = r.total_attempts + 1
     FROM candidate c
     WHERE r.outbox_id = c.outbox_id AND r.subscription_id = c.subscription_id
-    RETURNING r.outbox_id, r.subscription_id, r.app_id, r.recipient, r.state, r.generation, r.attempts, r.total_attempts, r.available_at, r.claim_token, r.lease_until, r.capacity_deferrals, r.generation_capacity_deferrals, r.backfill_job_id, r.receipt_position
+    RETURNING r.outbox_id, r.subscription_id, r.app_id, r.recipient, r.state, r.generation, r.attempts, r.total_attempts, r.available_at, r.claim_token, r.lease_until, r.capacity_deferrals, r.generation_capacity_deferrals, r.backfill_job_id, r.receipt_position, r.delivery_deadline_at
 ), replay_item AS (
     UPDATE event_replay_job_items i SET state='processing', attempts=c.total_attempts, updated_at=clock_timestamp()
     FROM claimed c WHERE c.backfill_job_id=i.job_id AND c.outbox_id=i.outbox_id
@@ -574,7 +584,7 @@ WITH candidate AS (
 )
 SELECT c.outbox_id, c.recipient, c.claim_token, c.generation, c.attempts,
        c.capacity_deferrals,c.generation_capacity_deferrals,
-       c.total_attempts, c.available_at, c.lease_until, o.payload, c.backfill_job_id
+       c.total_attempts, c.available_at, c.lease_until, o.payload, o.created_at AS accepted_at, c.backfill_job_id, (o.recipient_progress->c.subscription_id)::jsonb AS previous_progress
 FROM claimed c JOIN event_fanout_outbox o ON o.id = c.outbox_id
 `
 
@@ -595,7 +605,9 @@ type EventRecipientClaimRow struct {
 	AvailableAt                 pgtype.Timestamptz
 	LeaseUntil                  pgtype.Timestamptz
 	Payload                     []byte
+	AcceptedAt                  pgtype.Timestamptz
 	BackfillJobID               pgtype.UUID
+	PreviousProgress            []byte
 }
 
 func (q *Queries) EventRecipientClaim(ctx context.Context, db DBTX, arg EventRecipientClaimParams) (EventRecipientClaimRow, error) {
@@ -613,23 +625,28 @@ func (q *Queries) EventRecipientClaim(ctx context.Context, db DBTX, arg EventRec
 		&i.AvailableAt,
 		&i.LeaseUntil,
 		&i.Payload,
+		&i.AcceptedAt,
 		&i.BackfillJobID,
+		&i.PreviousProgress,
 	)
 	return i, err
 }
 
 const eventRecipientFinish = `-- name: EventRecipientFinish :execrows
 UPDATE event_fanout_recipients
-SET state = $1::text, available_at = $2::timestamptz,
+SET attempts=attempts-CASE WHEN $1::boolean THEN 1 ELSE 0 END,
+    total_attempts=total_attempts-CASE WHEN $1::boolean THEN 1 ELSE 0 END,
+    state = $2::text, available_at = $3::timestamptz,
     claim_token = NULL, lease_until = NULL,
-    capacity_deferrals=capacity_deferrals+CASE WHEN $3::boolean THEN 1 ELSE 0 END,
-    generation_capacity_deferrals=generation_capacity_deferrals+CASE WHEN $3::boolean THEN 1 ELSE 0 END
-WHERE outbox_id = $4::bigint AND subscription_id = $5::text
-  AND state = 'processing' AND claim_token = $6::uuid
-  AND generation = $7::bigint AND lease_until > clock_timestamp()
+    capacity_deferrals=capacity_deferrals+CASE WHEN $4::boolean THEN 1 ELSE 0 END,
+    generation_capacity_deferrals=generation_capacity_deferrals+CASE WHEN $4::boolean THEN 1 ELSE 0 END
+WHERE outbox_id = $5::bigint AND subscription_id = $6::text
+  AND state = 'processing' AND claim_token = $7::uuid
+  AND generation = $8::bigint AND lease_until > clock_timestamp()
 `
 
 type EventRecipientFinishParams struct {
+	ControlDeferred  bool
 	State            string
 	AvailableAt      pgtype.Timestamptz
 	CapacityDeferred bool
@@ -641,6 +658,7 @@ type EventRecipientFinishParams struct {
 
 func (q *Queries) EventRecipientFinish(ctx context.Context, db DBTX, arg EventRecipientFinishParams) (int64, error) {
 	result, err := db.Exec(ctx, eventRecipientFinish,
+		arg.ControlDeferred,
 		arg.State,
 		arg.AvailableAt,
 		arg.CapacityDeferred,
@@ -678,10 +696,10 @@ func (q *Queries) EventRecipientInitializeReceipt(ctx context.Context, db DBTX, 
 
 const eventRecipientInsert = `-- name: EventRecipientInsert :exec
 INSERT INTO event_fanout_recipients
-    (outbox_id, subscription_id, app_id, recipient, state, attempts, total_attempts, capacity_deferrals, available_at)
+    (outbox_id, subscription_id, app_id, recipient, state, attempts, total_attempts, capacity_deferrals, available_at, delivery_deadline_at)
 VALUES ($1::bigint, $2::text, $3::uuid,
         $4::jsonb, $5::text, 0,
-        $6::integer, $7::integer, $8::timestamptz)
+        $6::integer, $7::integer, $8::timestamptz, (SELECT event_recipient_delivery_deadline($4::jsonb,o.created_at,o.recipient_progress->$2::text) FROM event_fanout_outbox o WHERE o.id=$1::bigint))
 ON CONFLICT (outbox_id, subscription_id) DO NOTHING
 `
 
@@ -725,19 +743,26 @@ func (q *Queries) EventRecipientLockReceipt(ctx context.Context, db DBTX, id int
 const eventRecipientReplay = `-- name: EventRecipientReplay :execrows
 UPDATE event_fanout_recipients
 SET state = 'pending', generation = generation + 1, attempts = 0, generation_capacity_deferrals=0,
-    available_at = $1::timestamptz, claim_token = NULL, lease_until = NULL
-WHERE outbox_id = $2::bigint AND subscription_id = $3::text
+ delivery_deadline_at=CASE WHEN $1::boolean THEN NULL ELSE event_recipient_delivery_deadline(recipient,(SELECT o.created_at FROM event_fanout_outbox o WHERE o.id=outbox_id),'{}'::jsonb) END,
+    available_at = $2::timestamptz, claim_token = NULL, lease_until = NULL
+WHERE outbox_id = $3::bigint AND subscription_id = $4::text
   AND state = 'failed'
 `
 
 type EventRecipientReplayParams struct {
+	AllowExpired   bool
 	NowAt          pgtype.Timestamptz
 	OutboxID       int64
 	SubscriptionID string
 }
 
 func (q *Queries) EventRecipientReplay(ctx context.Context, db DBTX, arg EventRecipientReplayParams) (int64, error) {
-	result, err := db.Exec(ctx, eventRecipientReplay, arg.NowAt, arg.OutboxID, arg.SubscriptionID)
+	result, err := db.Exec(ctx, eventRecipientReplay,
+		arg.AllowExpired,
+		arg.NowAt,
+		arg.OutboxID,
+		arg.SubscriptionID,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -754,6 +779,7 @@ WHERE o.account_id = $2::uuid AND r.recipient->>'app_id' = a.id::text
   AND (o.recipient_claims OR o.state IN ('delivered', 'pending'))
   AND (o.recipient_progress -> (r.recipient->>'id'))->>'state' = 'failed'
   AND coalesce(((o.recipient_progress -> (r.recipient->>'id'))->>'retryable')::boolean, false)
+ AND (event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb) IS NULL OR event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb)>clock_timestamp())
   AND (($3::text = '' AND $4::text = '') OR
        (o.source = $3::text AND o.event_id = $4::text))
 ORDER BY coalesce((o.recipient_progress -> (r.recipient->>'id')->>'updated_at')::timestamptz, o.created_at), o.id, r.recipient->>'id'
@@ -813,6 +839,7 @@ SELECT EXISTS (
     WHERE o.account_id = $1::uuid AND r.recipient->>'app_id' = $2::text
       AND (o.recipient_progress -> (r.recipient->>'id'))->>'state' = 'failed'
       AND coalesce(((o.recipient_progress -> (r.recipient->>'id'))->>'retryable')::boolean, false)
+ AND (event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb) IS NULL OR event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb)>clock_timestamp())
       AND (($3::text = '' AND $4::text = '') OR
            (o.source = $3::text AND o.event_id = $4::text))
 ) AS has_more
@@ -944,6 +971,12 @@ WITH candidate AS (
  ) cf ON true
  WHERE NOT o.recipient_claims AND ((o.state='pending' AND o.available_at<=$1::timestamptz)
    OR (o.state='processing' AND o.lease_until<=$1::timestamptz))
+   AND ($2::boolean OR NOT EXISTS (
+     SELECT 1 FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) item(recipient)
+     WHERE coalesce(o.recipient_progress->(item.recipient->>'id')->>'state','pending')
+         NOT IN ('enqueued','filtered','failed')
+       AND event_recipient_order_blocked(o.id,item.recipient->>'id',item.recipient,false)
+   ))
  ORDER BY coalesce(fa.last_claimed_at,'epoch'::timestamptz),
    coalesce(cf.last_claimed_at,fa.last_claimed_at,'epoch'::timestamptz),o.id
  FOR UPDATE OF o SKIP LOCKED LIMIT 1
@@ -965,6 +998,11 @@ WITH candidate AS (
 )
 SELECT c.id, c.account_id, c.source, c.event_id, c.event_type, c.schema_version, c.event_data, c.payload, c.state, c.attempts, c.available_at, c.lease_until, c.claim_token, c.last_error, c.created_at, c.delivered_at, c.recipient_snapshot, c.recipient_progress, c.recipient_claims, c.customer_storage_bytes FROM claimed c WHERE EXISTS (SELECT 1 FROM fairness f WHERE f.account_id=c.account_id)
 `
+
+type EventRoutingClaimReceiptParams struct {
+	NowAt                pgtype.Timestamptz
+	ForRecipientAdoption bool
+}
 
 type EventRoutingClaimReceiptRow struct {
 	ID                   int64
@@ -989,8 +1027,8 @@ type EventRoutingClaimReceiptRow struct {
 	CustomerStorageBytes int64
 }
 
-func (q *Queries) EventRoutingClaimReceipt(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRoutingClaimReceiptRow, error) {
-	row := db.QueryRow(ctx, eventRoutingClaimReceipt, nowAt)
+func (q *Queries) EventRoutingClaimReceipt(ctx context.Context, db DBTX, arg EventRoutingClaimReceiptParams) (EventRoutingClaimReceiptRow, error) {
+	row := db.QueryRow(ctx, eventRoutingClaimReceipt, arg.NowAt, arg.ForRecipientAdoption)
 	var i EventRoutingClaimReceiptRow
 	err := row.Scan(
 		&i.ID,
@@ -1140,7 +1178,7 @@ func (q *Queries) EventRoutingLockReceipt(ctx context.Context, db DBTX, id int64
 }
 
 const eventRoutingLockRecipient = `-- name: EventRoutingLockRecipient :one
-SELECT outbox_id, subscription_id, app_id, recipient, state, generation, attempts, total_attempts, available_at, claim_token, lease_until, capacity_deferrals, generation_capacity_deferrals, backfill_job_id, receipt_position FROM event_fanout_recipients
+SELECT outbox_id, subscription_id, app_id, recipient, state, generation, attempts, total_attempts, available_at, claim_token, lease_until, capacity_deferrals, generation_capacity_deferrals, backfill_job_id, receipt_position, delivery_deadline_at FROM event_fanout_recipients
 WHERE outbox_id=$1::bigint AND subscription_id=$2::text FOR UPDATE
 `
 
@@ -1168,6 +1206,7 @@ func (q *Queries) EventRoutingLockRecipient(ctx context.Context, db DBTX, arg Ev
 		&i.GenerationCapacityDeferrals,
 		&i.BackfillJobID,
 		&i.ReceiptPosition,
+		&i.DeliveryDeadlineAt,
 	)
 	return i, err
 }

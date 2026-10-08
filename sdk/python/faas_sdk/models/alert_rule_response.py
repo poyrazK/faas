@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -42,14 +43,18 @@ class AlertRuleResponse:
     """Literal "***" — the plaintext is never returned."""
     cooldown_minutes: int
     state: AlertRuleResponseState
-    """Evaluation state. degraded means the rule's own metric source is unavailable; unknown means the login-target
-    signal has fewer than 20 selected failures on every observed route in this window."""
+    """Evaluation state. degraded means the rule's own metric source is unavailable; unknown means insufficient
+    samples, compacted event history, or a paused event consumer."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
     action: AlertRuleResponseAction = "webhook"
     """What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll
     the rule's app back to its last live deployment. demote = pin the current canary step (no traffic advance).
-    promote = short-circuit the canary ladder to 100%. Pre-auth target metrics support webhook only."""
+    promote = short-circuit the canary ladder to 100%. Pre-auth target and event consumer metrics support webhook
+    only."""
+    event_subscription_id: UUID | Unset = UNSET
+    """Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to
+    24h are required."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires
     deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""
@@ -90,6 +95,10 @@ class AlertRuleResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        event_subscription_id: str | Unset = UNSET
+        if not isinstance(self.event_subscription_id, Unset):
+            event_subscription_id = str(self.event_subscription_id)
+
         post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
 
         failure_source: str | Unset = UNSET
@@ -125,6 +134,8 @@ class AlertRuleResponse:
                 "updated_at": updated_at,
             }
         )
+        if event_subscription_id is not UNSET:
+            field_dict["event_subscription_id"] = event_subscription_id
         if post_deploy_rollback_window_seconds is not UNSET:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if failure_source is not UNSET:
@@ -169,6 +180,13 @@ class AlertRuleResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        _event_subscription_id = d.pop("event_subscription_id", UNSET)
+        event_subscription_id: UUID | Unset
+        if isinstance(_event_subscription_id, Unset):
+            event_subscription_id = UNSET
+        else:
+            event_subscription_id = UUID(_event_subscription_id)
+
         post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
 
         _failure_source = d.pop("failure_source", UNSET)
@@ -208,6 +226,7 @@ class AlertRuleResponse:
             state=state,
             created_at=created_at,
             updated_at=updated_at,
+            event_subscription_id=event_subscription_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             failure_source=failure_source,
             last_fired_at=last_fired_at,

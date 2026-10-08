@@ -3,8 +3,10 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -18,6 +20,7 @@ type EventWorkBinding struct {
 	KeySelector      string
 	FairnessSelector string
 	Action           string
+	Ordered          bool
 }
 
 const (
@@ -33,35 +36,52 @@ type EventWorkBindingStore interface {
 type EventWorkBindingOptions struct {
 	Action           string
 	FairnessSelector string
+	Ordered          bool
 }
 
-func normalizeEventWorkOptions(options []EventWorkBindingOptions) (string, string, error) {
+func normalizeEventWorkOptions(options []EventWorkBindingOptions) (string, string, bool, error) {
 	if len(options) > 1 {
-		return "", "", ErrInvalidArgument
+		return "", "", false, ErrInvalidArgument
 	}
 	mode := EventWorkInvoke
 	if len(options) == 1 && options[0].Action != "" {
 		mode = options[0].Action
 	}
 	if mode != EventWorkInvoke && mode != EventWorkCancelPending {
-		return "", "", ErrInvalidArgument
+		return "", "", false, ErrInvalidArgument
 	}
 	var fairness string
+	var ordered bool
 	if len(options) == 1 {
 		fairness = options[0].FairnessSelector
+		ordered = options[0].Ordered
 		if fairness != "" {
 			if _, err := workpolicy.ParseSelector(fairness); err != nil {
-				return "", "", err
+				return "", "", false, err
 			}
 		}
 	}
-	return mode, fairness, nil
+	if ordered && mode != EventWorkInvoke {
+		return "", "", false, ErrInvalidArgument
+	}
+	return mode, fairness, ordered, nil
+}
+
+func validateOrderedEventWorkPolicy(policy workpolicy.Policy) error {
+	pending := policy.PendingUpdates
+	if pending == "" {
+		pending = workpolicy.PendingAll
+	}
+	if policy.MaxRunningPerKey != 1 || pending != workpolicy.PendingAll || policy.Debounce != 0 || policy.ExpiresAfter != 0 {
+		return fmt.Errorf("ordered event delivery requires max_running_per_key=1, pending_updates=all, debounce=0, and expires_after=0")
+	}
+	return nil
 }
 
 // Empty policyName removes a binding. The previous value is returned for
 // source-deployment compensation if a later manifest step fails.
 func (s *PgStore) SetEventWorkBinding(ctx context.Context, appID, subscriptionID, policyName, selector string, options ...EventWorkBindingOptions) (*EventWorkBinding, error) {
-	mode, fairness, err := normalizeEventWorkOptions(options)
+	mode, fairness, ordered, err := normalizeEventWorkOptions(options)
 	if err != nil {
 		return nil, err
 	}
@@ -76,6 +96,12 @@ func (s *PgStore) SetEventWorkBinding(ctx context.Context, appID, subscriptionID
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 and status <> 'deleted' for share`, appID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
 	if err := tx.QueryRow(ctx, `select 1 from event_subscriptions
 		where id = $1 and app_id = $2 for update`, subscriptionID, appID).Scan(&locked); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -83,11 +109,20 @@ func (s *PgStore) SetEventWorkBinding(ctx context.Context, appID, subscriptionID
 		}
 		return nil, err
 	}
+	if ordered {
+		encoded, err := sqlc.New().EventAgeSubscriptionPolicy(ctx, tx, sqlc.EventAgeSubscriptionPolicyParams{SubscriptionID: mustPgUUID(subscriptionID), AppID: mustPgUUID(appID)})
+		if err != nil {
+			return nil, err
+		}
+		if p := decodeEventRoutingRetryPolicy(encoded); p != nil && p.MaxDeliveryAgeMS > 0 {
+			return nil, ErrInvalidArgument
+		}
+	}
 	var current EventWorkBinding
-	err = tx.QueryRow(ctx, `select subscription_id, app_id, policy_name, key_selector, fairness_key_selector, action
+	err = tx.QueryRow(ctx, `select subscription_id, app_id, policy_name, key_selector, fairness_key_selector, action, ordered
 		from event_subscription_work_bindings where subscription_id = $1 and app_id = $2
 		for update`, subscriptionID, appID).Scan(&current.SubscriptionID, &current.AppID,
-		&current.PolicyName, &current.KeySelector, &current.FairnessSelector, &current.Action)
+		&current.PolicyName, &current.KeySelector, &current.FairnessSelector, &current.Action, &current.Ordered)
 	var previous *EventWorkBinding
 	if err == nil {
 		previous = &current
@@ -95,19 +130,39 @@ func (s *PgStore) SetEventWorkBinding(ctx context.Context, appID, subscriptionID
 		return nil, err
 	}
 	if policyName == "" {
+		if ordered {
+			return nil, ErrInvalidArgument
+		}
 		if _, err := tx.Exec(ctx, `delete from event_subscription_work_bindings
 			where subscription_id = $1 and app_id = $2`, subscriptionID, appID); err != nil {
 			return nil, err
 		}
 	} else {
+		if ordered {
+			var pending string
+			var maxRunningPerKey int
+			var debounceMS, expiresAfterMS int64
+			if err := tx.QueryRow(ctx, `select max_running_per_key, pending_updates, debounce_ms, expires_after_ms
+				from app_work_policies where app_id=$1 and name=$2 for share`, appID, policyName).
+				Scan(&maxRunningPerKey, &pending, &debounceMS, &expiresAfterMS); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return nil, ErrNotFound
+				}
+				return nil, err
+			}
+			if maxRunningPerKey != 1 || pending != string(workpolicy.PendingAll) || debounceMS != 0 || expiresAfterMS != 0 {
+				return nil, fmt.Errorf("%w: ordered event delivery requires max_running_per_key=1, pending_updates=all, debounce=0, and expires_after=0", ErrInvalidArgument)
+			}
+		}
 		tag, err := tx.Exec(ctx, `insert into event_subscription_work_bindings
-			(subscription_id, app_id, policy_name, key_selector, action, fairness_key_selector)
-			values ($1, $2, $3, $4, $5, $6)
+			(subscription_id, app_id, policy_name, key_selector, action, fairness_key_selector, ordered)
+			values ($1, $2, $3, $4, $5, $6, $7)
 			on conflict (subscription_id) do update set
 			policy_name = excluded.policy_name, key_selector = excluded.key_selector,
-			action = excluded.action, fairness_key_selector = excluded.fairness_key_selector
+			action = excluded.action, fairness_key_selector = excluded.fairness_key_selector,
+			ordered = excluded.ordered
 			where event_subscription_work_bindings.app_id = excluded.app_id`,
-			subscriptionID, appID, policyName, selector, mode, fairness)
+			subscriptionID, appID, policyName, selector, mode, fairness, ordered)
 		if err != nil {
 			return nil, mapErr(err)
 		}
@@ -126,7 +181,7 @@ func (s *PgStore) EventWorkBindingsByIDs(ctx context.Context, ids []string) (map
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := s.pool.Query(ctx, `select subscription_id, app_id, policy_name, key_selector, fairness_key_selector, action
+	rows, err := s.pool.Query(ctx, `select subscription_id, app_id, policy_name, key_selector, fairness_key_selector, action, ordered
 		from event_subscription_work_bindings where subscription_id = any($1::uuid[])`, ids)
 	if err != nil {
 		return nil, err
@@ -135,7 +190,7 @@ func (s *PgStore) EventWorkBindingsByIDs(ctx context.Context, ids []string) (map
 	for rows.Next() {
 		var binding EventWorkBinding
 		if err := rows.Scan(&binding.SubscriptionID, &binding.AppID,
-			&binding.PolicyName, &binding.KeySelector, &binding.FairnessSelector, &binding.Action); err != nil {
+			&binding.PolicyName, &binding.KeySelector, &binding.FairnessSelector, &binding.Action, &binding.Ordered); err != nil {
 			return nil, err
 		}
 		out[binding.SubscriptionID] = binding
@@ -144,7 +199,7 @@ func (s *PgStore) EventWorkBindingsByIDs(ctx context.Context, ids []string) (map
 }
 
 func (m *MemStore) SetEventWorkBinding(_ context.Context, appID, subscriptionID, policyName, selector string, options ...EventWorkBindingOptions) (*EventWorkBinding, error) {
-	mode, fairness, err := normalizeEventWorkOptions(options)
+	mode, fairness, ordered, err := normalizeEventWorkOptions(options)
 	if err != nil {
 		return nil, err
 	}
@@ -152,12 +207,17 @@ func (m *MemStore) SetEventWorkBinding(_ context.Context, appID, subscriptionID,
 		if _, err := workpolicy.ParseSelector(selector); err != nil {
 			return nil, err
 		}
+	} else if ordered {
+		return nil, ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var subscriptionFound bool
 	for _, subscription := range m.eventSubscriptions {
 		if subscription.ID == subscriptionID && sameMemUUID(subscription.AppID, appID) {
+			if ordered && subscription.RoutingRetryPolicy != nil && subscription.RoutingRetryPolicy.MaxDeliveryAgeMS > 0 {
+				return nil, ErrInvalidArgument
+			}
 			subscriptionFound = true
 			break
 		}
@@ -166,8 +226,14 @@ func (m *MemStore) SetEventWorkBinding(_ context.Context, appID, subscriptionID,
 		return nil, ErrNotFound
 	}
 	if policyName != "" {
-		if _, ok := m.workPolicies[memWorkPolicyKey(appID, policyName)]; !ok {
+		policy, ok := m.workPolicies[memWorkPolicyKey(appID, policyName)]
+		if !ok {
 			return nil, ErrNotFound
+		}
+		if ordered {
+			if err := validateOrderedEventWorkPolicy(policy.Policy); err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+			}
 		}
 	}
 	var previous *EventWorkBinding
@@ -181,7 +247,7 @@ func (m *MemStore) SetEventWorkBinding(_ context.Context, appID, subscriptionID,
 		m.eventWorkBindings[subscriptionID] = EventWorkBinding{
 			SubscriptionID: subscriptionID, AppID: canonicalMemUUID(appID),
 			PolicyName: policyName, KeySelector: selector,
-			FairnessSelector: fairness, Action: mode}
+			FairnessSelector: fairness, Action: mode, Ordered: ordered}
 	}
 	return previous, nil
 }

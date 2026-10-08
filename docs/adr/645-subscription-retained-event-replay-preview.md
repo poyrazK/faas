@@ -16,7 +16,9 @@ subscription ownership are checked inside the read transaction, independently
 of the cursor. Foreign, deleted or transferred targets return 404. Disabled
 subscriptions and subscriptions with work bindings return explicit 409 codes.
 Workflow starts and object notification declarations are separate target
-surfaces and are not accepted here.
+surfaces and are not accepted here. Workflow starts have their own read-only
+preview under ADR-714; this subscription endpoint remains scoped to one ordinary
+application subscription.
 
 Required `from` and `until` select a half-open range of **platform acceptance
 time**, not producer CloudEvents `time`. `cutoff_at` is the lesser of `until`

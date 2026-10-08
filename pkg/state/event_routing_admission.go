@@ -64,14 +64,17 @@ type eventAdmissionLookup interface {
 }
 
 type eventAdmissionPlan struct {
-	recipient  PublishedEventRecipient
-	invocation Invocation
-	matched    bool
-	prior      bool
-	policy     workpolicy.Policy
-	key        string
-	fairness   []string
-	cancel     bool
+	filterReason     eventcontract.MatchReason
+	deliveryDeadline time.Time
+	claim            PublishedEventRoutingClaim
+	recipient        PublishedEventRecipient
+	invocation       Invocation
+	matched          bool
+	prior            bool
+	policy           workpolicy.Policy
+	key              string
+	fairness         []string
+	cancel           bool
 }
 
 func routingRecipient(receipt *PublishedEventWork, claim PublishedEventRoutingClaim) (PublishedEventRecipient, error) {
@@ -113,7 +116,7 @@ func newEventAdmissionPlan(ctx context.Context, receipt *PublishedEventWork, cla
 	if err != nil {
 		return eventAdmissionPlan{}, err
 	}
-	p := eventAdmissionPlan{recipient: r}
+	p := eventAdmissionPlan{recipient: r, claim: claim, deliveryDeadline: EventDeliveryDeadline(r, receipt.CreatedAt, receipt.RecipientProgress[r.ID])}
 	var envelope eventcontract.Envelope
 	if err := json.Unmarshal(receipt.Payload, &envelope); err != nil {
 		return p, err
@@ -124,10 +127,11 @@ func newEventAdmissionPlan(ctx context.Context, receipt *PublishedEventWork, cla
 	if !sameMemUUID(envelope.AccountID, r.AccountID) {
 		return p, admissionError(EventFanoutFailureCodeTargetUnavailable, false, ErrNotFound)
 	}
-	p.matched, err = (eventcontract.Subscription{ID: r.ID, AccountID: r.AccountID, Source: r.Source, Type: r.Type, Filter: r.Filter}).Match(envelope)
+	p.filterReason, err = (eventcontract.Subscription{ID: r.ID, AccountID: r.AccountID, Source: r.Source, Type: r.Type, Filter: r.Filter, SchemaVersions: r.SchemaVersions}).ExplainMatch(envelope)
 	if err != nil {
 		return p, admissionError(EventFanoutFailureCodeInvalidSubscription, false, err)
 	}
+	p.matched = p.filterReason == eventcontract.MatchReasonWouldDeliver
 	payload, err := json.Marshal(envelope)
 	if err != nil {
 		return p, err
@@ -180,6 +184,9 @@ func prepareEventAdmission(ctx context.Context, store eventAdmissionLookup, rece
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return err
+	}
+	if !p.deliveryDeadline.IsZero() && !p.deliveryDeadline.After(time.Now().UTC()) {
+		return ErrEventDeliveryExpired
 	}
 	binding := p.recipient.Work
 	if !p.recipient.WorkSnapshotCaptured {
@@ -245,6 +252,9 @@ func eventAdmissionProgress(p eventAdmissionPlan, attempts int) PublishedEventRe
 	state := PublishedEventRecipientFiltered
 	if p.matched {
 		state = PublishedEventRecipientEnqueued
+	}
+	if p.filterReason == eventcontract.MatchReasonSchemaVersionMismatch {
+		return EventSchemaVersionFilteredProgress(PublishedEventRecipientProgress{}, max(0, attempts-1), time.Now().UTC())
 	}
 	return PublishedEventRecipientProgress{State: state, Attempts: attempts, UpdatedAt: time.Now().UTC()}
 }

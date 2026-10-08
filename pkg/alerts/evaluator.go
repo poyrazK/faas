@@ -372,7 +372,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateDegraded, now); err != nil {
 				e.log.Warn("alerts: set state degraded", "rule", rule.ID, "err", err)
 			}
-		case skipInsufficient:
+		case skipInsufficient, skipPaused:
 			stats.SkippedInsufficient++
 			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateUnknown, now); err != nil {
 				e.log.Warn("alerts: set state unknown", "rule", rule.ID, "err", err)
@@ -699,6 +699,7 @@ const (
 	skipDegraded     = "degraded"
 	skipInsufficient = "insufficient"
 	skipNoIdentity   = "no_identity"
+	skipPaused       = "consumer_paused"
 )
 
 // AlertOutcomeDelivered / AlertOutcomeFailed are the closed-vocab
@@ -720,6 +721,12 @@ const (
 // threshold verdict, skipReason is a fail-closed "we can't even
 // fetch" signal.
 func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	if api.IsEventRecoveryAlertMetric(string(rule.Metric)) {
+		return e.observeEventRecovery(ctx, rule)
+	}
+	if api.IsEventConsumerAlertMetric(string(rule.Metric)) {
+		return e.observeEventConsumer(ctx, rule)
+	}
 	switch rule.Metric {
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
@@ -1018,6 +1025,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths preAuthPaths) ([
 		"observed":   observed,
 		"window":     string(rule.WindowSpec),
 		"fired_at":   time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if rule.EventSubscriptionID != "" {
+		m["event_subscription_id"] = rule.EventSubscriptionID
 	}
 	if rule.FailureSource != "" {
 		m["failure_source"] = string(rule.FailureSource)

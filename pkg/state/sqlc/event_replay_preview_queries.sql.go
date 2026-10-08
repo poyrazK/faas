@@ -90,7 +90,7 @@ func (q *Queries) EventReplayPreviewEarliestRetained(ctx context.Context, db DBT
 }
 
 const eventReplayPreviewTarget = `-- name: EventReplayPreviewTarget :one
-SELECT s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, a.slug AS app_slug,
+SELECT s.schema_versions, s.routing_retry_policy, s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, a.slug AS app_slug,
        EXISTS (SELECT 1 FROM event_subscription_work_bindings b WHERE b.subscription_id=s.id) AS work_bound
 FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
 WHERE s.id=$1::uuid AND s.app_id=$2::uuid
@@ -104,23 +104,27 @@ type EventReplayPreviewTargetParams struct {
 }
 
 type EventReplayPreviewTargetRow struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
-	Source    string
-	Type      string
-	Filter    []byte
-	Enabled   bool
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
-	AppSlug   string
-	WorkBound bool
+	SchemaVersions     []string
+	RoutingRetryPolicy []byte
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Source             string
+	Type               string
+	Filter             []byte
+	Enabled            bool
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	AppSlug            string
+	WorkBound          bool
 }
 
 func (q *Queries) EventReplayPreviewTarget(ctx context.Context, db DBTX, arg EventReplayPreviewTargetParams) (EventReplayPreviewTargetRow, error) {
 	row := db.QueryRow(ctx, eventReplayPreviewTarget, arg.SubscriptionID, arg.AppID, arg.AccountID)
 	var i EventReplayPreviewTargetRow
 	err := row.Scan(
+		&i.SchemaVersions,
+		&i.RoutingRetryPolicy,
 		&i.ID,
 		&i.AccountID,
 		&i.AppID,
@@ -134,4 +138,126 @@ func (q *Queries) EventReplayPreviewTarget(ctx context.Context, db DBTX, arg Eve
 		&i.WorkBound,
 	)
 	return i, err
+}
+
+const workflowEventReplayPreviewApp = `-- name: WorkflowEventReplayPreviewApp :one
+SELECT id, slug FROM apps
+WHERE id=$1::uuid AND account_id=$2::uuid
+  AND status <> 'deleted'
+`
+
+type WorkflowEventReplayPreviewAppParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type WorkflowEventReplayPreviewAppRow struct {
+	ID   pgtype.UUID
+	Slug string
+}
+
+func (q *Queries) WorkflowEventReplayPreviewApp(ctx context.Context, db DBTX, arg WorkflowEventReplayPreviewAppParams) (WorkflowEventReplayPreviewAppRow, error) {
+	row := db.QueryRow(ctx, workflowEventReplayPreviewApp, arg.AppID, arg.AccountID)
+	var i WorkflowEventReplayPreviewAppRow
+	err := row.Scan(&i.ID, &i.Slug)
+	return i, err
+}
+
+const workflowEventReplayPreviewCandidates = `-- name: WorkflowEventReplayPreviewCandidates :many
+SELECT o.id, o.created_at, o.source, o.event_id, o.event_type,
+       coalesce(o.schema_version,'')::text AS schema_version, o.payload,
+       (o.recipient_snapshot IS NOT NULL)::boolean AS snapshot_captured,
+       target.recipient::jsonb AS recipient,
+       coalesce(r.state, o.recipient_progress -> (target.recipient->>'id') ->>'state', 'pending')::text AS routing_state,
+       (wer.outbox_id IS NOT NULL)::boolean AS admission_recorded,
+       coalesce(wer.run_id::text,'')::text AS workflow_run_id,
+       coalesce(wr.status,'')::text AS workflow_run_status
+FROM event_fanout_outbox o
+LEFT JOIN LATERAL (
+    SELECT captured.recipient
+    FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) captured(recipient)
+    WHERE captured.recipient->>'app_id'=$1::text
+      AND captured.recipient->'workflow'->>'name'=$2::text
+    ORDER BY captured.recipient->>'id'
+    LIMIT 1
+) target ON true
+LEFT JOIN event_fanout_recipients r
+  ON r.outbox_id=o.id AND r.subscription_id=target.recipient->>'id'
+LEFT JOIN workflow_event_receipts wer
+  ON wer.outbox_id=o.id AND wer.recipient_id::text=target.recipient->>'id'
+LEFT JOIN workflow_runs wr ON wr.id=wer.run_id
+WHERE o.account_id=$3::uuid
+  AND o.created_at >= $4::timestamptz AND o.created_at < $5::timestamptz
+  AND (o.created_at,o.id) > ($6::timestamptz,$7::bigint)
+ORDER BY o.created_at, o.id LIMIT $8::integer
+`
+
+type WorkflowEventReplayPreviewCandidatesParams struct {
+	AppID        string
+	WorkflowName string
+	AccountID    pgtype.UUID
+	FromAt       pgtype.Timestamptz
+	CutoffAt     pgtype.Timestamptz
+	AfterAt      pgtype.Timestamptz
+	AfterID      int64
+	PageLimit    int32
+}
+
+type WorkflowEventReplayPreviewCandidatesRow struct {
+	ID                int64
+	CreatedAt         pgtype.Timestamptz
+	Source            string
+	EventID           string
+	EventType         string
+	SchemaVersion     string
+	Payload           []byte
+	SnapshotCaptured  bool
+	Recipient         []byte
+	RoutingState      string
+	AdmissionRecorded bool
+	WorkflowRunID     string
+	WorkflowRunStatus string
+}
+
+func (q *Queries) WorkflowEventReplayPreviewCandidates(ctx context.Context, db DBTX, arg WorkflowEventReplayPreviewCandidatesParams) ([]WorkflowEventReplayPreviewCandidatesRow, error) {
+	rows, err := db.Query(ctx, workflowEventReplayPreviewCandidates,
+		arg.AppID,
+		arg.WorkflowName,
+		arg.AccountID,
+		arg.FromAt,
+		arg.CutoffAt,
+		arg.AfterAt,
+		arg.AfterID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowEventReplayPreviewCandidatesRow{}
+	for rows.Next() {
+		var i WorkflowEventReplayPreviewCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CreatedAt,
+			&i.Source,
+			&i.EventID,
+			&i.EventType,
+			&i.SchemaVersion,
+			&i.Payload,
+			&i.SnapshotCaptured,
+			&i.Recipient,
+			&i.RoutingState,
+			&i.AdmissionRecorded,
+			&i.WorkflowRunID,
+			&i.WorkflowRunStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

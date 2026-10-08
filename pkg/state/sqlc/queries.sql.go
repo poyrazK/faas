@@ -2259,7 +2259,7 @@ SELECT jsonb_build_object(
         FROM app_work_policies p WHERE p.app_id=a.id),'[]'::jsonb),
     'event_bindings',coalesce((SELECT jsonb_agg(jsonb_build_object(
         'subscription_id',b.subscription_id::text,'policy_name',b.policy_name,'key_selector',b.key_selector,
-        'fairness_selector',b.fairness_key_selector,'action',b.action) ORDER BY b.subscription_id)
+        'fairness_selector',b.fairness_key_selector,'action',b.action,'ordered',b.ordered) ORDER BY b.subscription_id)
         FROM event_subscription_work_bindings b WHERE b.app_id=a.id),'[]'::jsonb),
     'trigger_bindings',coalesce((SELECT jsonb_agg(jsonb_build_object(
         'trigger_id',b.trigger_id::text,'policy_name',b.policy_name,'key_selector',b.key_selector,
@@ -16507,12 +16507,12 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 }
 
 const insertCustomerAlertRule = `-- name: InsertCustomerAlertRule :one
-INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,
+INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
  action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
 VALUES($1,$2,$3,$4,$5,$6,
- $7,$8,$9,$10,$11,
- $12,$13,$14,$15)
-RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds
+ $7,$8,$9,$10,$11,$12,
+ $13,$14,$15,$16)
+RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id
 `
 
 type InsertCustomerAlertRuleParams struct {
@@ -16525,6 +16525,7 @@ type InsertCustomerAlertRuleParams struct {
 	Threshold                       float64
 	WindowSpec                      string
 	FailureSource                   pgtype.Text
+	EventSubscriptionID             pgtype.UUID
 	Action                          string
 	WebhookUrl                      string
 	WebhookSecretSealed             []byte
@@ -16544,6 +16545,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		arg.Threshold,
 		arg.WindowSpec,
 		arg.FailureSource,
+		arg.EventSubscriptionID,
 		arg.Action,
 		arg.WebhookUrl,
 		arg.WebhookSecretSealed,
@@ -16574,6 +16576,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		&i.OrgID,
 		&i.Action,
 		&i.PostDeployRollbackWindowSeconds,
+		&i.EventSubscriptionID,
 	)
 	return i, err
 }
@@ -23927,7 +23930,7 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 }
 
 const listCustomerAlertRulesByPreset = `-- name: ListCustomerAlertRulesByPreset :many
-SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
+SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=$3)
  ORDER BY r.created_at DESC LIMIT 2
 `
@@ -23969,6 +23972,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 			&i.OrgID,
 			&i.Action,
 			&i.PostDeployRollbackWindowSeconds,
+			&i.EventSubscriptionID,
 		); err != nil {
 			return nil, err
 		}
@@ -23981,7 +23985,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 }
 
 const listCustomerAlertRulesForAccount = `-- name: ListCustomerAlertRulesForAccount :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error) {
@@ -24015,6 +24019,7 @@ func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX,
 			&i.OrgID,
 			&i.Action,
 			&i.PostDeployRollbackWindowSeconds,
+			&i.EventSubscriptionID,
 		); err != nil {
 			return nil, err
 		}
@@ -25213,7 +25218,7 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 }
 
 const listEnabledCustomerAlertRules = `-- name: ListEnabledCustomerAlertRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds FROM alert_rules WHERE enabled=true ORDER BY account_id
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id FROM alert_rules WHERE enabled=true ORDER BY account_id
 `
 
 func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([]AlertRule, error) {
@@ -25247,6 +25252,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 			&i.OrgID,
 			&i.Action,
 			&i.PostDeployRollbackWindowSeconds,
+			&i.EventSubscriptionID,
 		); err != nil {
 			return nil, err
 		}
@@ -25259,8 +25265,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 }
 
 const listEnabledEventSubscriptionsForAccount = `-- name: ListEnabledEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled,
-       s.created_at, s.updated_at
+select s.schema_versions, s.routing_retry_policy, s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1 and s.enabled and a.status <> 'deleted'
@@ -25277,6 +25282,8 @@ func (q *Queries) ListEnabledEventSubscriptionsForAccount(ctx context.Context, d
 	for rows.Next() {
 		var i EventSubscription
 		if err := rows.Scan(
+			&i.SchemaVersions,
+			&i.RoutingRetryPolicy,
 			&i.ID,
 			&i.AccountID,
 			&i.AppID,
@@ -25580,8 +25587,7 @@ func (q *Queries) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.C
 
 const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
 
-select id, account_id, app_id, source, type, filter, enabled,
-       created_at, updated_at
+select schema_versions, routing_retry_policy, id, account_id, app_id, source, type, filter, enabled, created_at, updated_at
 from event_subscriptions
 where app_id = $1
 order by created_at asc, id asc
@@ -25600,6 +25606,8 @@ func (q *Queries) ListEventSubscriptionsForApp(ctx context.Context, db DBTX, app
 	for rows.Next() {
 		var i EventSubscription
 		if err := rows.Scan(
+			&i.SchemaVersions,
+			&i.RoutingRetryPolicy,
 			&i.ID,
 			&i.AccountID,
 			&i.AppID,
@@ -26888,8 +26896,7 @@ func (q *Queries) ListManagedPostgresUsageResources(ctx context.Context, db DBTX
 }
 
 const listMatchingEventSubscriptionsForAccount = `-- name: ListMatchingEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled,
-       s.created_at, s.updated_at
+select s.schema_versions, s.routing_retry_policy, s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1::uuid
@@ -26951,6 +26958,8 @@ func (q *Queries) ListMatchingEventSubscriptionsForAccount(ctx context.Context, 
 	for rows.Next() {
 		var i EventSubscription
 		if err := rows.Scan(
+			&i.SchemaVersions,
+			&i.RoutingRetryPolicy,
 			&i.ID,
 			&i.AccountID,
 			&i.AppID,
@@ -46170,7 +46179,7 @@ func (q *Queries) ReadClonePostgresWriteFence(ctx context.Context, db DBTX, arg 
 }
 
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds FROM alert_rules WHERE id=$1
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id FROM alert_rules WHERE id=$1
 `
 
 func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
@@ -46198,6 +46207,7 @@ func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.
 		&i.OrgID,
 		&i.Action,
 		&i.PostDeployRollbackWindowSeconds,
+		&i.EventSubscriptionID,
 	)
 	return i, err
 }
@@ -59147,7 +59157,7 @@ UPDATE alert_rules SET name=coalesce($1::text,name),enabled=coalesce($2::boolean
  webhook_secret_sealed=coalesce($9::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce($10::integer,cooldown_minutes),
  post_deploy_rollback_window_seconds=coalesce($11::integer,post_deploy_rollback_window_seconds),updated_at=now()
-WHERE id=$12 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds
+WHERE id=$12 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id
 `
 
 type UpdateCustomerAlertRuleParams struct {
@@ -59203,6 +59213,7 @@ func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg Upda
 		&i.OrgID,
 		&i.Action,
 		&i.PostDeployRollbackWindowSeconds,
+		&i.EventSubscriptionID,
 	)
 	return i, err
 }
@@ -59722,7 +59733,7 @@ on conflict (app_id, source, type, filter) do update
 set enabled = true,
     updated_at = now()
 returning id, account_id, app_id, source, type, filter, enabled,
-          created_at, updated_at, (xmax = 0) as inserted
+          created_at, updated_at, routing_retry_policy, schema_versions, (xmax = 0) as inserted
 `
 
 type UpsertEventSubscriptionParams struct {
@@ -59734,16 +59745,18 @@ type UpsertEventSubscriptionParams struct {
 }
 
 type UpsertEventSubscriptionRow struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
-	Source    string
-	Type      string
-	Filter    []byte
-	Enabled   bool
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
-	Inserted  bool
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Source             string
+	Type               string
+	Filter             []byte
+	Enabled            bool
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	RoutingRetryPolicy []byte
+	SchemaVersions     []string
+	Inserted           bool
 }
 
 // (xmax = 0) distinguishes a declaration first installed by this deploy from
@@ -59767,6 +59780,8 @@ func (q *Queries) UpsertEventSubscription(ctx context.Context, db DBTX, arg Upse
 		&i.Enabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RoutingRetryPolicy,
+		&i.SchemaVersions,
 		&i.Inserted,
 	)
 	return i, err

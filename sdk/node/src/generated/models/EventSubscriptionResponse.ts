@@ -2,10 +2,16 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EventRoutingRetryPolicy } from './EventRoutingRetryPolicy.js';
 /**
  * One manifest-declared event subscription reconciled for an app.
  */
 export type EventSubscriptionResponse = {
+  /**
+   * Exact case-sensitive schema versions. Empty or omitted accepts all versions; a nonempty selection excludes unversioned events. Selection is captured at publication or backfill creation.
+   */
+  schema_versions?: Array<string>;
+  routing_retry_policy?: EventRoutingRetryPolicy;
   id: string;
   app_id: string;
   /**
@@ -36,6 +42,10 @@ export type EventSubscriptionResponse = {
    * Action taken on a matching event.
    */
   work_action?: 'invoke' | 'cancel_pending';
+  /**
+   * Whether this subscription waits for earlier matching keyed deliveries before routing.
+   */
+  ordered?: boolean;
   enabled: boolean;
   created_at: string;
   updated_at: string;

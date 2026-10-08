@@ -48,6 +48,10 @@ class EventReplayPreviewResponse:
     already_captured_count: int
     """Matching events whose original snapshot contains this target."""
     matches: list[EventReplayPreviewMatch]
+    schema_version_mismatch_count: int | Unset = UNSET
+    """Candidates excluded by schema version selection."""
+    expired_count: int | Unset = UNSET
+    """Matching retained events exceeding the current subscription age limit."""
     next_after: str | Unset = UNSET
     """Continue even if this page has no matches; absent when no more currently retained candidates follow."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -86,6 +90,10 @@ class EventReplayPreviewResponse:
             matches_item = matches_item_data.to_dict()
             matches.append(matches_item)
 
+        schema_version_mismatch_count = self.schema_version_mismatch_count
+
+        expired_count = self.expired_count
+
         next_after = self.next_after
 
         field_dict: dict[str, Any] = {}
@@ -109,6 +117,10 @@ class EventReplayPreviewResponse:
                 "matches": matches,
             }
         )
+        if schema_version_mismatch_count is not UNSET:
+            field_dict["schema_version_mismatch_count"] = schema_version_mismatch_count
+        if expired_count is not UNSET:
+            field_dict["expired_count"] = expired_count
         if next_after is not UNSET:
             field_dict["next_after"] = next_after
 
@@ -156,6 +168,10 @@ class EventReplayPreviewResponse:
 
             matches.append(matches_item)
 
+        schema_version_mismatch_count = d.pop("schema_version_mismatch_count", UNSET)
+
+        expired_count = d.pop("expired_count", UNSET)
+
         next_after = d.pop("next_after", UNSET)
 
         event_replay_preview_response = cls(
@@ -174,6 +190,8 @@ class EventReplayPreviewResponse:
             pattern_mismatch_count=pattern_mismatch_count,
             already_captured_count=already_captured_count,
             matches=matches,
+            schema_version_mismatch_count=schema_version_mismatch_count,
+            expired_count=expired_count,
             next_after=next_after,
         )
 

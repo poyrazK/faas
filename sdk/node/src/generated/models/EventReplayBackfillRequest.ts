@@ -7,6 +7,10 @@
  */
 export type EventReplayBackfillRequest = {
   /**
+   * Explicitly override delivery age for this replay generation or historical backfill job. Preserves deterministic invocation identity and manual controls.
+   */
+  allow_expired?: boolean;
+  /**
    * Inclusive platform acceptance-time lower bound.
    */
   from: string;

@@ -3164,24 +3164,38 @@ type OperatorIntent struct {
 type AlertMetric string
 
 const (
-	AlertMetricErrorRate                 AlertMetric = "error_rate_pct"
-	AlertMetricLatencyP50                AlertMetric = "latency_p50_ms"
-	AlertMetricLatencyP95                AlertMetric = "latency_p95_ms"
-	AlertMetricLatencyP99                AlertMetric = "latency_p99_ms"
-	AlertMetricColdStartPct              AlertMetric = "cold_start_pct"
-	AlertMetricRequestCount              AlertMetric = "request_count"
-	AlertMetricFailedInvocs              AlertMetric = "failed_invocations"
-	AlertMetricAPIUp                     AlertMetric = "api_up"
-	AlertMetricAccountSpendEUR           AlertMetric = "account_spend_eur"
-	AlertMetricFailedDeployments         AlertMetric = "deployment_failed"
-	AlertMetricCertExpirySeconds         AlertMetric = "cert_expiry_seconds"
-	AlertMetricCertIssuanceFailed        AlertMetric = "cert_issuance_failed"
-	AlertMetricQueueDepth                AlertMetric = "queue_depth"
-	AlertMetricPreAuthTargetThreshold    AlertMetric = "pre_auth_target_threshold"
-	AlertMetricPreAuthTargetSignalGapPct AlertMetric = "pre_auth_target_signal_gap_pct"
-	AlertMetricNewErrorFingerprint       AlertMetric = "new_error_fingerprint"
-	AlertMetricColdWakeRatePct           AlertMetric = "cold_wake_rate_pct"
-	AlertMetricDailyCostCents            AlertMetric = "daily_cost_cents"
+	AlertMetricEventExecutionDeadLetters             AlertMetric = "event_execution_dead_letters"
+	AlertMetricEventExecutionDeadLetterRatePerSecond AlertMetric = "event_execution_dead_letter_rate_per_second"
+	AlertMetricEventHandlerFailurePct                AlertMetric = "event_handler_failure_pct"
+	AlertMetricEventCompletionLatencyP95Seconds      AlertMetric = "event_completion_latency_p95_seconds"
+	AlertMetricEventRecoveryCapacityWaitJobs         AlertMetric = "event_recovery_capacity_wait_jobs"
+	AlertMetricEventRecoveryStalledJobs              AlertMetric = "event_recovery_stalled_jobs"
+	AlertMetricEventRecoveryExpiringJobs             AlertMetric = "event_recovery_expiring_jobs"
+	AlertMetricEventPendingRecipients                AlertMetric = "event_pending_recipients"
+	AlertMetricEventOldestPendingSeconds             AlertMetric = "event_oldest_pending_seconds"
+	AlertMetricEventRetryRatePerSecond               AlertMetric = "event_retry_rate_per_second"
+	AlertMetricEventTerminalFailurePct               AlertMetric = "event_terminal_failure_pct"
+	AlertMetricEventRoutingLatencyP95Seconds         AlertMetric = "event_routing_latency_p95_seconds"
+	AlertMetricEventPausedSeconds                    AlertMetric = "event_paused_seconds"
+	AlertMetricEventDrainRatePerSecond               AlertMetric = "event_drain_rate_per_second"
+	AlertMetricErrorRate                             AlertMetric = "error_rate_pct"
+	AlertMetricLatencyP50                            AlertMetric = "latency_p50_ms"
+	AlertMetricLatencyP95                            AlertMetric = "latency_p95_ms"
+	AlertMetricLatencyP99                            AlertMetric = "latency_p99_ms"
+	AlertMetricColdStartPct                          AlertMetric = "cold_start_pct"
+	AlertMetricRequestCount                          AlertMetric = "request_count"
+	AlertMetricFailedInvocs                          AlertMetric = "failed_invocations"
+	AlertMetricAPIUp                                 AlertMetric = "api_up"
+	AlertMetricAccountSpendEUR                       AlertMetric = "account_spend_eur"
+	AlertMetricFailedDeployments                     AlertMetric = "deployment_failed"
+	AlertMetricCertExpirySeconds                     AlertMetric = "cert_expiry_seconds"
+	AlertMetricCertIssuanceFailed                    AlertMetric = "cert_issuance_failed"
+	AlertMetricQueueDepth                            AlertMetric = "queue_depth"
+	AlertMetricPreAuthTargetThreshold                AlertMetric = "pre_auth_target_threshold"
+	AlertMetricPreAuthTargetSignalGapPct             AlertMetric = "pre_auth_target_signal_gap_pct"
+	AlertMetricNewErrorFingerprint                   AlertMetric = "new_error_fingerprint"
+	AlertMetricColdWakeRatePct                       AlertMetric = "cold_wake_rate_pct"
+	AlertMetricDailyCostCents                        AlertMetric = "daily_cost_cents"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3362,6 +3376,7 @@ type UpdateAlertRuleParams struct {
 // never surfaced on a read — the apid response carries a masked
 // constant.
 type AlertRule struct {
+	EventSubscriptionID             string
 	PostDeployRollbackWindowSeconds int
 	ID                              string
 	AccountID                       string
@@ -3510,6 +3525,9 @@ const (
 	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
 	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
 	AppWebhookEventIssueImpactThresholdReached      AppWebhookEvent = "issue.impact_threshold_reached"
+	AppWebhookEventRecoveryCompleted                AppWebhookEvent = "event_recovery.completed"
+	AppWebhookEventRecoveryCancelled                AppWebhookEvent = "event_recovery.cancelled"
+	AppWebhookEventRecoveryExpired                  AppWebhookEvent = "event_recovery.expired"
 	AppWebhookEventWorkflowFinished                 AppWebhookEvent = "workflow.finished"
 )
 
@@ -3552,6 +3570,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
+	AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired,
 	AppWebhookEventWorkflowFinished,
 }
 

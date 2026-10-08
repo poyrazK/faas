@@ -9,6 +9,14 @@ import type { EventSubscriptionResponse } from './EventSubscriptionResponse.js';
  * Read-only current-subscription preview of one bounded retained-event page.
  */
 export type EventReplayPreviewResponse = {
+  /**
+   * Candidates excluded by schema version selection.
+   */
+  schema_version_mismatch_count?: number;
+  /**
+   * Matching retained events exceeding the current subscription age limit.
+   */
+  expired_count?: number;
   app_slug: string;
   subscription: EventSubscriptionResponse;
   /**

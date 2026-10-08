@@ -147,8 +147,19 @@ func (s *PgStore) ReplayKeyedInvocation(ctx context.Context, accountID, parentID
 		return Invocation{}, fmt.Errorf("begin keyed replay: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	inv, err := replayKeyedInvocationTx(ctx, tx, account.String(), id.String(), opts)
+	if err != nil {
+		return Invocation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Invocation{}, fmt.Errorf("commit keyed replay: %w", err)
+	}
+	return inv, nil
+}
+
+func replayKeyedInvocationTx(ctx context.Context, tx pgx.Tx, accountID, parentID string, opts KeyedInvocationReplayOptions) (Invocation, error) {
 	q := sqlc.New()
-	params := sqlc.KeyedReplayLaneIdentityParams{ID: mustPgUUID(id.String()), AccountID: mustPgUUID(account.String())}
+	params := sqlc.KeyedReplayLaneIdentityParams{ID: mustPgUUID(parentID), AccountID: mustPgUUID(accountID)}
 	identity, err := q.KeyedReplayLaneIdentity(ctx, tx, params)
 	if err != nil {
 		return Invocation{}, mapErr(err)
@@ -204,15 +215,15 @@ func (s *PgStore) ReplayKeyedInvocation(ctx context.Context, accountID, parentID
 	if err := q.KeyedReplayAdvanceLane(ctx, tx, sqlc.KeyedReplayAdvanceLaneParams(lane)); err != nil {
 		return Invocation{}, fmt.Errorf("advance keyed replay lane: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return Invocation{}, fmt.Errorf("commit keyed replay: %w", err)
-	}
 	return inv, nil
 }
 
 func (m *MemStore) ReplayKeyedInvocation(_ context.Context, accountID, parentID string, opts KeyedInvocationReplayOptions) (Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.replayKeyedInvocationLocked(accountID, parentID, opts)
+}
+func (m *MemStore) replayKeyedInvocationLocked(accountID, parentID string, opts KeyedInvocationReplayOptions) (Invocation, error) {
 	parent, ok := m.invocations[parentID]
 	if !ok || !sameMemUUID(parent.AccountID, accountID) || !sameMemUUID(m.apps[parent.AppID].AccountID, accountID) {
 		return Invocation{}, ErrNotFound

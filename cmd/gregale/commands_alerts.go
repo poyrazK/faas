@@ -121,6 +121,7 @@ func cmdAlertAdd(args []string) int {
 	fs := newFlagSet("alerts add", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "rule name (required, 3..120 chars)")
+	eventSubscription := fs.String("event-subscription-id", "", "subscription UUID for event consumer health alerts")
 	metric := fs.String("metric", "", "metric (closed set; one of error_rate_pct|latency_p50_ms|latency_p95_ms|latency_p99_ms|cold_start_pct|request_count|failed_invocations)")
 	comparison := fs.String("comparison", "", "comparison (gt|gte|lt|lte)")
 	threshold := fs.Float64("threshold", math.NaN(), "threshold value (must be finite)")
@@ -166,6 +167,7 @@ func cmdAlertAdd(args []string) int {
 		Comparison:                      *comparison,
 		Threshold:                       *threshold,
 		WindowSpec:                      *windowSpec,
+		EventSubscriptionID:             *eventSubscription,
 		FailureSource:                   *failureSource,
 		Action:                          ptrIfNonEmpty(*action),
 		WebhookURL:                      *webhookURL,
