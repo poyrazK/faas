@@ -354,4 +354,21 @@ func financialSamplingSuite(t *testing.T, store financialTestStore) {
 	if err := store.RecordFinancialSamplingWindow(t.Context(), start.Add(time.Second), true, true); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("unaligned sample accepted: %v", err)
 	}
+	// adr: 790 — meterd catches up exactly the minutes missing here.
+	completed, err := store.FinancialCompletedComputeMinutes(t.Context(), start, start.Add(4*time.Minute))
+	want := []time.Time{start, start.Add(2 * time.Minute), start.Add(3 * time.Minute)}
+	if err != nil || len(completed) != len(want) {
+		t.Fatalf("completed compute minutes = %v, %v; want %v", completed, err, want)
+	}
+	for i := range want {
+		if !completed[i].Equal(want[i]) {
+			t.Fatalf("completed compute minutes = %v; want %v in order", completed, want)
+		}
+	}
+	if tail, err := store.FinancialCompletedComputeMinutes(t.Context(), start.Add(3*time.Minute), start.Add(3*time.Minute)); err != nil || len(tail) != 0 {
+		t.Fatalf("empty window = %v, %v", tail, err)
+	}
+	if _, err := store.FinancialCompletedComputeMinutes(t.Context(), start.Add(time.Second), start.Add(time.Minute)); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("unaligned window accepted: %v", err)
+	}
 }

@@ -1084,6 +1084,21 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	return app, true
 }
 
+// PrepareRouteTarget gives a kind=route target the routing state Lookup
+// gives a host it resolves: production deployment weights and the cached App.
+func (b *PGBackend) PrepareRouteTarget(ctx context.Context, app App) bool {
+	if app.PinnedDeploymentID != "" || app.DynamicRoute || app.EnvironmentNotReady {
+		return true
+	}
+	if !b.prepareProductionWeights(ctx, app) {
+		return false
+	}
+	if _, cached := b.getApp(app.ID); !cached {
+		b.putApp(app)
+	}
+	return true
+}
+
 // prepareProductionWeights hydrates weights once before an ordinary route can
 // use targets learned from any scope. Exact deployment routes use their own
 // target sets and do not require production to exist.

@@ -41,10 +41,13 @@ type AlarmPage struct {
 	Failed     int
 }
 
-// CheckAlarmDiscovery verifies that startup can list the private entity prefix.
+// CheckAlarmDiscovery verifies entity and index listing, plus private hint
+// deletion. Invocation without alarm delivery still does not require DELETE.
 func (m *Manager) CheckAlarmDiscovery(ctx context.Context) error {
-	_, err := m.alarmPrefixes(ctx, "")
-	return err
+	if _, err := m.alarmPrefixes(ctx, ""); err != nil {
+		return err
+	}
+	return m.checkAlarmIndex(ctx)
 }
 
 func (m *Manager) alarmPrefixes(ctx context.Context, cursor string) (EntityPrefixPage, error) {
@@ -104,7 +107,11 @@ func (m *Manager) alarmAtPrefix(ctx context.Context, prefix string) (Alarm, bool
 	if err != nil {
 		return Alarm{}, false, err
 	}
+	m.publishAlarmHint(readCtx, value, state)
 	if state.AlarmAt == nil || m.now().Before(*state.AlarmAt) {
+		return Alarm{}, false, nil
+	}
+	if value.AlarmDelivery != nil && (value.AlarmDelivery.Attempts >= api.MaxDurableEntityAlarmAttempts || m.now().Before(value.AlarmDelivery.NextAttemptAt)) {
 		return Alarm{}, false, nil
 	}
 	return Alarm{Entity: state.ID, Version: state.Version, At: *state.AlarmAt}, true, nil
@@ -138,9 +145,12 @@ func (m *Manager) InvokeAlarm(ctx context.Context, alarm Alarm, owner string, ha
 		return Result{}, ErrInvalid
 	}
 	request := AlarmRequest(alarm)
-	return m.invoke(ctx, alarm.Entity, owner, request, func(ctx context.Context, view View) (Transition, error) {
+	return m.invoke(ctx, alarm.Entity, owner, request, func(ctx context.Context, claim Claim, view View) (Transition, error) {
 		if view.Version != alarm.Version || view.AlarmAt == nil || !view.AlarmAt.Equal(alarm.At) || m.now().Before(*view.AlarmAt) {
 			return Transition{}, ErrAlarmObsolete
+		}
+		if err := m.reserveAlarmAttempt(ctx, claim, alarm); err != nil {
+			return Transition{}, err
 		}
 		return handler(ctx, view)
 	})

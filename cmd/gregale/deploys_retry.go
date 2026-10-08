@@ -58,8 +58,7 @@ func cmdDeploysRetry(args []string) int {
 	ctx := context.Background()
 	depID := args[0]
 	if _, err := uuid.Parse(depID); err != nil {
-		printErr("invalid deployment id", fmt.Errorf("expected UUID: %w", err))
-		return 1
+		return printErr("invalid deployment id", fmt.Errorf("expected UUID: %w", err))
 	}
 
 	// Parse --from=<stage>. Default = "" (handler falls back to
@@ -73,17 +72,15 @@ func cmdDeploysRetry(args []string) int {
 		// Unknown flag — surface as a usage error rather than
 		// silently ignoring it (the gregale convention; matches
 		// cmdDeploysShow).
-		printErr(fmt.Sprintf("unknown flag: %s", a), errors.New("unknown flag"))
-		return 1
+		return printErr(fmt.Sprintf("unknown flag: %s", a), errors.New("unknown flag"))
 	}
 
 	// Validate the wire-supplied from_stage against the closed-6
 	// vocabulary BEFORE hitting the wire. The server re-validates
 	// (defence in depth); this is the faster-path UX.
 	if fromStage != "" && !state.IsStageName(state.StageName(fromStage)) {
-		printErr(fmt.Sprintf("from_stage %q is not one of: %v",
+		return printErr(fmt.Sprintf("from_stage %q is not one of: %s",
 			fromStage, stageNamesForCLI()), errors.New("invalid from_stage"))
-		return 1
 	}
 
 	// Auth + client. Mirrors cmdDeploysShow so the auth chain
@@ -100,13 +97,11 @@ func cmdDeploysRetry(args []string) int {
 	if fromStage == "" {
 		raw, err := client.GetDeploymentStages(ctx, depID)
 		if err != nil {
-			printErr(fmt.Sprintf("read source deployment stages: %v", err), err)
-			return 2
+			return printErr("read source deployment stages", err)
 		}
 		var ss state.StageState
 		if uerr := json.Unmarshal(raw, &ss); uerr != nil {
-			printErr(fmt.Sprintf("decode stage_state: %v", uerr), uerr)
-			return 2
+			return printErr("decode stage_state", uerr)
 		}
 		// Code-review finding #4: production sets state.Current=""
 		// on the failure path (MarkDeploymentStageFailed rolls the
@@ -126,8 +121,7 @@ func cmdDeploysRetry(args []string) int {
 			from = ss.Current
 		}
 		if from == "" {
-			printErr("source deployment has no current or failed stage; pass --from=<stage> explicitly", errors.New("no stage hint"))
-			return 1
+			return printErr("source deployment has no current or failed stage; pass --from=<stage> explicitly", errors.New("no stage hint"))
 		}
 		fromStage = string(from)
 	}
@@ -136,8 +130,7 @@ func cmdDeploysRetry(args []string) int {
 	// surface it so the customer can pipe to status/show.
 	resp, err := client.RetryDeploymentFromStage(ctx, depID, fromStage)
 	if err != nil {
-		printErr("retry deployment failed", err)
-		return 2
+		return printErr("retry deployment failed", err)
 	}
 	if jsonOutput {
 		if err := writeJSON(resp); err != nil {
@@ -166,16 +159,20 @@ func retryStartingStage(raw json.RawMessage, requested string) (string, string) 
 	return string(ss.Current), ss.RetryRestartReason
 }
 
-// stageNamesForCLI returns the closed-6 vocabulary formatted for
-// the user-facing error message. Mirrors pkg/state.AllStageNames
-// (the canonical list); the fmt.Sprint keeps the order stable so
-// the error string is byte-identical across runs (testable).
+// stageNamesForCLI returns the canonical closed-stage vocabulary for
+// the user-facing validation error.
 func stageNamesForCLI() string {
+	return strings.Join(stageNamesForCLIValues(), ", ")
+}
+
+// stageNamesForCLIValues feeds the manifest's flag-value completion and
+// reference metadata from the same canonical list used by the retry handler.
+func stageNamesForCLIValues() []string {
 	names := make([]string, 0, len(state.AllStageNames))
 	for _, n := range state.AllStageNames {
 		names = append(names, string(n))
 	}
-	return strings.Join(names, ", ")
+	return names
 }
 
 // _ silences the unused-import lint when this file is built

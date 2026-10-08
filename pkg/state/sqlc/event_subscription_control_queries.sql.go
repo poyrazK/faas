@@ -12,7 +12,7 @@ import (
 )
 
 const eventSubscriptionControlGet = `-- name: EventSubscriptionControlGet :one
-SELECT subscription_id, account_id, app_id, paused, paused_at, rate_per_second, window_started_at, window_count, updated_at FROM event_subscription_delivery_controls WHERE subscription_id=$1::uuid AND app_id=$2::uuid AND account_id=$3::uuid
+SELECT subscription_id, account_id, app_id, paused, rate_per_second, window_started_at, window_count, updated_at, paused_at FROM event_subscription_delivery_controls WHERE subscription_id=$1::uuid AND app_id=$2::uuid AND account_id=$3::uuid
 `
 
 type EventSubscriptionControlGetParams struct {
@@ -29,11 +29,11 @@ func (q *Queries) EventSubscriptionControlGet(ctx context.Context, db DBTX, arg 
 		&i.AccountID,
 		&i.AppID,
 		&i.Paused,
-		&i.PausedAt,
 		&i.RatePerSecond,
 		&i.WindowStartedAt,
 		&i.WindowCount,
 		&i.UpdatedAt,
+		&i.PausedAt,
 	)
 	return i, err
 }

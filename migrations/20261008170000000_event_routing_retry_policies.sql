@@ -20,6 +20,8 @@ DECLARE existing_type text;
 DECLARE existing_data jsonb;
 DECLARE existing_schema_version text;
 DECLARE recipients jsonb;
+DECLARE target_app uuid;
+DECLARE target_tenant uuid;
 BEGIN
     IF NEW.kind <> 'event.published' THEN
         RETURN NEW;
@@ -31,39 +33,51 @@ BEGIN
             USING ERRCODE = '23514';
     END IF;
 
-    SELECT coalesce(jsonb_agg(jsonb_build_object(
-        'id', s.id, 'account_id', s.account_id, 'app_id', s.app_id,
-        'source', s.source, 'type', s.type, 'filter', s.filter,
-        'routing_retry_policy', s.routing_retry_policy,
-        'work_snapshot_captured', true,
-        'work', CASE WHEN b.subscription_id IS NULL THEN NULL
-            ELSE jsonb_build_object(
-                'policy_name', b.policy_name, 'key_selector', b.key_selector,
-                'fairness_selector', b.fairness_key_selector, 'action', b.action,
-                'ordered', b.ordered,
-                'policy', CASE WHEN p.name IS NULL THEN NULL
-                    ELSE jsonb_build_object(
-                        'revision', p.revision,
-                        'max_running_per_key', p.max_running_per_key,
-                        'max_running_per_fairness_key', p.max_running_per_fairness_key,
-                        'pending_updates', p.pending_updates,
-                        'debounce_ms', p.debounce_ms,
-                        'expires_after_ms', p.expires_after_ms) END)
-            END)
-        ORDER BY s.created_at, s.id), '[]'::jsonb)
-    INTO recipients
-    FROM event_subscriptions s
-    JOIN apps a ON a.id = s.app_id AND a.account_id = s.account_id
-    LEFT JOIN event_subscription_work_bindings b
-      ON b.subscription_id = s.id AND b.app_id = s.app_id
-    LEFT JOIN app_work_policies p
-      ON p.app_id = b.app_id AND p.name = b.policy_name
-    WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
-      AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
-      AND event_fanout_pattern_matches(s.type, NEW.data->>'type');
+    IF NEW.data ? 'platformtenantid' THEN
+        BEGIN
+            target_app := (NEW.data->>'appid')::uuid;
+            target_tenant := (NEW.data->>'platformtenantid')::uuid;
+        EXCEPTION WHEN invalid_text_representation THEN
+            RAISE EXCEPTION 'tenant event identity must be UUIDs' USING ERRCODE = '23514';
+        END;
+        recipients := coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
+            FROM workflow_tenant_event_recipients(NEW.subject, target_app, target_tenant,
+                NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+    ELSE
+        SELECT coalesce(jsonb_agg(jsonb_build_object(
+            'id', s.id, 'account_id', s.account_id, 'app_id', s.app_id,
+            'source', s.source, 'type', s.type, 'filter', s.filter,
+            'routing_retry_policy', s.routing_retry_policy,
+            'work_snapshot_captured', true,
+            'work', CASE WHEN b.subscription_id IS NULL THEN NULL
+                ELSE jsonb_build_object(
+                    'policy_name', b.policy_name, 'key_selector', b.key_selector,
+                    'fairness_selector', b.fairness_key_selector, 'action', b.action,
+                    'ordered', b.ordered,
+                    'policy', CASE WHEN p.name IS NULL THEN NULL
+                        ELSE jsonb_build_object(
+                            'revision', p.revision,
+                            'max_running_per_key', p.max_running_per_key,
+                            'max_running_per_fairness_key', p.max_running_per_fairness_key,
+                            'pending_updates', p.pending_updates,
+                            'debounce_ms', p.debounce_ms,
+                            'expires_after_ms', p.expires_after_ms) END)
+                END)
+            ORDER BY s.created_at, s.id), '[]'::jsonb)
+        INTO recipients
+        FROM event_subscriptions s
+        JOIN apps a ON a.id = s.app_id AND a.account_id = s.account_id
+        LEFT JOIN event_subscription_work_bindings b
+          ON b.subscription_id = s.id AND b.app_id = s.app_id
+        LEFT JOIN app_work_policies p
+          ON p.app_id = b.app_id AND p.name = b.policy_name
+        WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
+          AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
+          AND event_fanout_pattern_matches(s.type, NEW.data->>'type');
 
-    recipients := recipients || coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
-        FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+        recipients := recipients || coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
+            FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+    END IF;
 
     INSERT INTO event_fanout_outbox
         (account_id, source, event_id, event_type, schema_version, event_data, payload, recipient_snapshot)
@@ -95,6 +109,8 @@ DECLARE existing_type text;
 DECLARE existing_data jsonb;
 DECLARE existing_schema_version text;
 DECLARE recipients jsonb;
+DECLARE target_app uuid;
+DECLARE target_tenant uuid;
 BEGIN
     IF NEW.kind <> 'event.published' THEN
         RETURN NEW;
@@ -106,38 +122,50 @@ BEGIN
             USING ERRCODE = '23514';
     END IF;
 
-    SELECT coalesce(jsonb_agg(jsonb_build_object(
-        'id', s.id, 'account_id', s.account_id, 'app_id', s.app_id,
-        'source', s.source, 'type', s.type, 'filter', s.filter,
-        'work_snapshot_captured', true,
-        'work', CASE WHEN b.subscription_id IS NULL THEN NULL
-            ELSE jsonb_build_object(
-                'policy_name', b.policy_name, 'key_selector', b.key_selector,
-                'fairness_selector', b.fairness_key_selector, 'action', b.action,
-                'ordered', b.ordered,
-                'policy', CASE WHEN p.name IS NULL THEN NULL
-                    ELSE jsonb_build_object(
-                        'revision', p.revision,
-                        'max_running_per_key', p.max_running_per_key,
-                        'max_running_per_fairness_key', p.max_running_per_fairness_key,
-                        'pending_updates', p.pending_updates,
-                        'debounce_ms', p.debounce_ms,
-                        'expires_after_ms', p.expires_after_ms) END)
-            END)
-        ORDER BY s.created_at, s.id), '[]'::jsonb)
-    INTO recipients
-    FROM event_subscriptions s
-    JOIN apps a ON a.id = s.app_id AND a.account_id = s.account_id
-    LEFT JOIN event_subscription_work_bindings b
-      ON b.subscription_id = s.id AND b.app_id = s.app_id
-    LEFT JOIN app_work_policies p
-      ON p.app_id = b.app_id AND p.name = b.policy_name
-    WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
-      AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
-      AND event_fanout_pattern_matches(s.type, NEW.data->>'type');
+    IF NEW.data ? 'platformtenantid' THEN
+        BEGIN
+            target_app := (NEW.data->>'appid')::uuid;
+            target_tenant := (NEW.data->>'platformtenantid')::uuid;
+        EXCEPTION WHEN invalid_text_representation THEN
+            RAISE EXCEPTION 'tenant event identity must be UUIDs' USING ERRCODE = '23514';
+        END;
+        recipients := coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
+            FROM workflow_tenant_event_recipients(NEW.subject, target_app, target_tenant,
+                NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+    ELSE
+        SELECT coalesce(jsonb_agg(jsonb_build_object(
+            'id', s.id, 'account_id', s.account_id, 'app_id', s.app_id,
+            'source', s.source, 'type', s.type, 'filter', s.filter,
+            'work_snapshot_captured', true,
+            'work', CASE WHEN b.subscription_id IS NULL THEN NULL
+                ELSE jsonb_build_object(
+                    'policy_name', b.policy_name, 'key_selector', b.key_selector,
+                    'fairness_selector', b.fairness_key_selector, 'action', b.action,
+                    'ordered', b.ordered,
+                    'policy', CASE WHEN p.name IS NULL THEN NULL
+                        ELSE jsonb_build_object(
+                            'revision', p.revision,
+                            'max_running_per_key', p.max_running_per_key,
+                            'max_running_per_fairness_key', p.max_running_per_fairness_key,
+                            'pending_updates', p.pending_updates,
+                            'debounce_ms', p.debounce_ms,
+                            'expires_after_ms', p.expires_after_ms) END)
+                END)
+            ORDER BY s.created_at, s.id), '[]'::jsonb)
+        INTO recipients
+        FROM event_subscriptions s
+        JOIN apps a ON a.id = s.app_id AND a.account_id = s.account_id
+        LEFT JOIN event_subscription_work_bindings b
+          ON b.subscription_id = s.id AND b.app_id = s.app_id
+        LEFT JOIN app_work_policies p
+          ON p.app_id = b.app_id AND p.name = b.policy_name
+        WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
+          AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
+          AND event_fanout_pattern_matches(s.type, NEW.data->>'type');
 
-    recipients := recipients || coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
-        FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+        recipients := recipients || coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
+            FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+    END IF;
 
     INSERT INTO event_fanout_outbox
         (account_id, source, event_id, event_type, schema_version, event_data, payload, recipient_snapshot)

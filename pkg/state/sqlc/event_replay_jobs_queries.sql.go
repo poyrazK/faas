@@ -792,7 +792,7 @@ func (q *Queries) EventReplayBackfillMaterializeSnapshot(ctx context.Context, db
 }
 
 const eventReplayBackfillNextJob = `-- name: EventReplayBackfillNextJob :one
-SELECT id, account_id, app_id, subscription_id, subscription_revision, recipient, consumer_kind, workflow_name, from_at, until_at, cutoff_at, earliest_retained_at, cursor_at, cursor_outbox_id, duplicate_policy, state, scan_complete, scanned_count, matched_count, filtered_count, skipped_captured_count, skipped_unknown_count, skipped_existing_count, skipped_unsettled_count, created_at, updated_at, completed_at FROM event_replay_jobs WHERE state='running' AND NOT scan_complete
+SELECT id, account_id, app_id, subscription_id, subscription_revision, recipient, from_at, until_at, cutoff_at, earliest_retained_at, cursor_at, cursor_outbox_id, duplicate_policy, state, scan_complete, scanned_count, matched_count, filtered_count, skipped_captured_count, skipped_unknown_count, skipped_existing_count, skipped_unsettled_count, created_at, updated_at, completed_at, consumer_kind, workflow_name FROM event_replay_jobs WHERE state='running' AND NOT scan_complete
   AND (SELECT count(*) FROM event_replay_job_items i
        WHERE i.job_id=event_replay_jobs.id AND i.state IN ('pending','processing')) < $1::bigint
 ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
@@ -808,8 +808,6 @@ func (q *Queries) EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFli
 		&i.SubscriptionID,
 		&i.SubscriptionRevision,
 		&i.Recipient,
-		&i.ConsumerKind,
-		&i.WorkflowName,
 		&i.FromAt,
 		&i.UntilAt,
 		&i.CutoffAt,
@@ -829,6 +827,8 @@ func (q *Queries) EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFli
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.ConsumerKind,
+		&i.WorkflowName,
 	)
 	return i, err
 }

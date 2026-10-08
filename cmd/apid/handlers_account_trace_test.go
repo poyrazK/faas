@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 
@@ -115,5 +116,46 @@ func TestAccountTraceLookupIncludesSafeHTTPLogEvents(t *testing.T) {
 	got := out.Logs[0]
 	if got.App != "trace-logs-app" || got.TraceID != traceID || got.Source != api.LogSourceHTTP || got.Status != 200 || got.Method != "GET" || got.ID == "" {
 		t.Fatalf("trace log = %+v", got)
+	}
+}
+
+// production-us hunt #7: the lookup read logs and telemetry once per app, so a
+// 71-app account ran past apid's request budget and every later app reported
+// "unavailable". Evidence is now read account-wide: logs from several apps
+// merge newest first, and a failed read is one account-level error rather
+// than one per app.
+func TestAccountTraceLookupReadsEvidenceAccountWide(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	now := time.Now().UTC()
+	for i, slug := range []string{"trace-a", "trace-b", "trace-quiet"} {
+		appID := mustSeedApp(t, e, slug)
+		if slug == "trace-quiet" {
+			continue
+		}
+		if _, err := e.store.InsertLogEvent(context.Background(), state.LogEvent{
+			OccurredAt: now.Add(-time.Duration(i+1) * time.Second), AccountID: e.acct.ID, AppID: appID,
+			Source: state.LogEventSourceHTTP, SourceEventID: "http:" + slug, RequestID: traceID, TraceID: traceID,
+			Route: "GET /", Method: "GET", Status: 200, Message: "GET / returned 200",
+		}); err != nil {
+			t.Fatalf("InsertLogEvent: %v", err)
+		}
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/account/traces/"+traceID, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var out api.AccountTraceLookupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Logs) != 2 || out.Logs[0].App != "trace-a" || out.Logs[1].App != "trace-b" {
+		t.Fatalf("logs = %+v, want trace-a then trace-b", out.Logs)
+	}
+	// MemStore has no request telemetry, so that read fails: once, for the account.
+	want := []api.AccountTraceLookupError{{Detail: "request telemetry unavailable"}}
+	if !out.Partial || !reflect.DeepEqual(out.Errors, want) {
+		t.Fatalf("partial=%v errors=%+v, want one account-level telemetry error", out.Partial, out.Errors)
 	}
 }

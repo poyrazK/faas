@@ -55,6 +55,7 @@ type routeLifecycleInventory struct {
 	Status                   string `json:"status"`
 	Reason                   string `json:"reason,omitempty"`
 	Source                   string `json:"source,omitempty"`
+	CaptureSource            string `json:"capture_source,omitempty"`
 	DocumentSHA256           string `json:"document_sha256,omitempty"`
 	CapturedAt               string `json:"captured_at,omitempty"`
 	ContractRoutes           int    `json:"contract_routes"`
@@ -262,7 +263,7 @@ func readRouteLifecycleInventory(ctx context.Context, client *api.Client, slug, 
 		return evidence, nil
 	}
 	evidence = routeLifecycleInventory{
-		Status: "available", Source: "captured_deployment_openapi",
+		Status: "available", Source: "captured_deployment_openapi", CaptureSource: document.Source,
 		DocumentSHA256: fmt.Sprintf("%x", openapidiff.SumSHA256(body)), CapturedAt: document.CapturedAt,
 	}
 	if len(spec.Paths) == 0 {

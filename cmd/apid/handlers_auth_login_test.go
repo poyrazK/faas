@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -1068,6 +1069,10 @@ func TestV1AuthLogin_TimingPadEqualisesTwoFailurePaths(t *testing.T) {
 		maxRatio   = 2.0
 	)
 	runOnce := func(path, body string) time.Duration {
+		// Each Argon2id verify allocates 64 MiB. Reclaim the previous
+		// sample before starting the clock so CI's GOGC=10 does not
+		// charge alternating collection cycles to only one failure path.
+		runtime.GC()
 		start := time.Now()
 		rec := v1AuthJSONRequest(t, h, path, body)
 		if rec.Code != http.StatusUnauthorized {
@@ -1132,8 +1137,8 @@ func TestV1AuthSignupMagicLink_UnboundEmail_CreatesAccountAndMailsToken(t *testi
 	if !strings.Contains(msgs[0].TextBody, "/auth/verify?token=") {
 		t.Errorf("mail body missing /auth/verify link: %q", msgs[0].TextBody)
 	}
-	if !strings.Contains(msgs[0].Subject, "faas") {
-		t.Errorf("mail subject = %q, missing faas marker", msgs[0].Subject)
+	if !strings.Contains(msgs[0].Subject, "Gregale") {
+		t.Errorf("mail subject = %q, missing Gregale marker", msgs[0].Subject)
 	}
 	// login_tokens has exactly one row for this account.
 	tokens := loginTokensForAccount(t, store, acct.ID)

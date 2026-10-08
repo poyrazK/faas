@@ -116,7 +116,7 @@ func (q *Queries) EventRetryFinishReceipt(ctx context.Context, db DBTX, arg Even
 }
 
 const eventRoutingRetryLockTarget = `-- name: EventRoutingRetryLockTarget :one
-SELECT s.schema_versions, s.routing_retry_policy, s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
+SELECT s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
 WHERE s.id=$1::uuid AND s.app_id=$2::uuid AND s.account_id=$3::uuid AND a.status<>'deleted'
 FOR UPDATE OF s FOR SHARE OF a
 `
@@ -131,8 +131,6 @@ func (q *Queries) EventRoutingRetryLockTarget(ctx context.Context, db DBTX, arg 
 	row := db.QueryRow(ctx, eventRoutingRetryLockTarget, arg.SubscriptionID, arg.AppID, arg.AccountID)
 	var i EventSubscription
 	err := row.Scan(
-		&i.SchemaVersions,
-		&i.RoutingRetryPolicy,
 		&i.ID,
 		&i.AccountID,
 		&i.AppID,
@@ -142,6 +140,8 @@ func (q *Queries) EventRoutingRetryLockTarget(ctx context.Context, db DBTX, arg 
 		&i.Enabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RoutingRetryPolicy,
+		&i.SchemaVersions,
 	)
 	return i, err
 }
@@ -162,7 +162,7 @@ func (q *Queries) EventRoutingRetrySet(ctx context.Context, db DBTX, arg EventRo
 }
 
 const eventRoutingRetryTarget = `-- name: EventRoutingRetryTarget :one
-SELECT s.schema_versions, s.routing_retry_policy, s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
+SELECT s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
 WHERE s.id=$1::uuid AND s.app_id=$2::uuid AND s.account_id=$3::uuid AND a.status<>'deleted'
 `
 
@@ -176,8 +176,6 @@ func (q *Queries) EventRoutingRetryTarget(ctx context.Context, db DBTX, arg Even
 	row := db.QueryRow(ctx, eventRoutingRetryTarget, arg.SubscriptionID, arg.AppID, arg.AccountID)
 	var i EventSubscription
 	err := row.Scan(
-		&i.SchemaVersions,
-		&i.RoutingRetryPolicy,
 		&i.ID,
 		&i.AccountID,
 		&i.AppID,
@@ -187,6 +185,8 @@ func (q *Queries) EventRoutingRetryTarget(ctx context.Context, db DBTX, arg Even
 		&i.Enabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RoutingRetryPolicy,
+		&i.SchemaVersions,
 	)
 	return i, err
 }

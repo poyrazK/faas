@@ -57,6 +57,9 @@ func validSnapshot(value manifest, state snapshot) bool {
 	if state.ID != value.ID || state.Version != value.Version || !json.Valid(state.Data) || !validAlarm(state.AlarmAt) {
 		return false
 	}
+	if value.AlarmDelivery != nil && (state.AlarmAt == nil || !state.AlarmAt.Equal(value.AlarmDelivery.At)) {
+		return false
+	}
 	if state.Schema == 1 {
 		return state.ReceiptRoot == nil && state.LegacyReceipts == nil && validReceipts(state.Receipts, state.Version)
 	}

@@ -1,8 +1,12 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 import defaults from './task-limits.json' with { type: 'json' };
 
 const TABLE = 'gregale_mcp_tasks';
+const FAIRNESS_TABLE = 'gregale_mcp_task_fairness';
+const FAIRNESS_SEQUENCE = 'gregale_mcp_task_claim_order_seq';
+const FAIRNESS_CLAIM_RETRIES = 16;
 const MAX_ARGUMENT_BYTES = 256 * 1024;
 const MAX_RESULT_BYTES = 1024 * 1024;
 const MAX_INPUT_STATE_BYTES = 256 * 1024;
@@ -57,6 +61,57 @@ const CREATE_ADMISSION_INDEX = `
   CREATE INDEX IF NOT EXISTS gregale_mcp_tasks_admission_idx
     ON ${TABLE} (namespace, owner_hash, expires_at)
     WHERE status IN ('queued', 'running', 'input_required')`;
+
+const CREATE_FAIRNESS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS ${FAIRNESS_TABLE} (
+    namespace text NOT NULL,
+    owner_hash bytea NOT NULL,
+    last_claimed_order bigint NOT NULL DEFAULT 0,
+    PRIMARY KEY (namespace, owner_hash)
+  )`;
+
+const CREATE_FAIRNESS_SEQUENCE = `CREATE SEQUENCE IF NOT EXISTS ${FAIRNESS_SEQUENCE} AS bigint`;
+
+const CREATE_FAIRNESS_INDEX = `
+  CREATE INDEX IF NOT EXISTS gregale_mcp_task_fairness_order_idx
+    ON ${FAIRNESS_TABLE} (namespace, last_claimed_order, owner_hash)`;
+
+const CREATE_TASK_FAIRNESS_FUNCTION = `
+  CREATE OR REPLACE FUNCTION gregale_mcp_task_seed_fairness() RETURNS trigger
+  LANGUAGE plpgsql AS $$
+  BEGIN
+    INSERT INTO ${FAIRNESS_TABLE} (namespace, owner_hash)
+    VALUES (NEW.namespace, NEW.owner_hash)
+    ON CONFLICT (namespace, owner_hash) DO NOTHING;
+    RETURN NEW;
+  END;
+  $$`;
+
+const CREATE_TASK_FAIRNESS_TRIGGER = `
+  DO $body$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_trigger
+       WHERE tgrelid = '${TABLE}'::regclass
+         AND tgname = 'gregale_mcp_tasks_fairness_seed'
+         AND NOT tgisinternal
+    ) THEN
+      CREATE TRIGGER gregale_mcp_tasks_fairness_seed
+        AFTER INSERT ON ${TABLE}
+        FOR EACH ROW EXECUTE FUNCTION gregale_mcp_task_seed_fairness();
+    END IF;
+  END;
+  $body$`;
+
+const CLAIMABLE_TASK_FILTER = `
+  task.namespace = $1
+  AND task.expires_at > clock_timestamp()
+  AND (task.attempt_count < $2 OR (task.status = 'queued' AND task.resume_pending AND task.attempt_count = $2))
+  AND ($5::jsonb IS NULL OR EXISTS (
+    SELECT 1 FROM jsonb_to_recordset($5::jsonb) AS handler(name text, version text)
+     WHERE handler.name = task.tool_name AND handler.version = task.handler_version
+  ))
+  AND (task.status = 'queued' OR (task.status = 'running' AND task.lease_expires_at <= clock_timestamp()))`;
 
 const CREATE_TASK_NOTIFY_FUNCTION = `
   CREATE OR REPLACE FUNCTION gregale_mcp_task_notify_change() RETURNS trigger
@@ -315,6 +370,22 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
         await client.query(MIGRATE_SCHEMA);
         await client.query(CREATE_QUEUE_INDEX);
         await client.query(CREATE_ADMISSION_INDEX);
+        await client.query(CREATE_FAIRNESS_SCHEMA);
+        await client.query(CREATE_FAIRNESS_SEQUENCE);
+        await client.query(CREATE_FAIRNESS_INDEX);
+        await client.query(CREATE_TASK_FAIRNESS_FUNCTION);
+        // Install the seed trigger before backfilling so an older app process
+        // cannot insert an owner between the backfill snapshot and trigger setup.
+        await client.query(CREATE_TASK_FAIRNESS_TRIGGER);
+        await client.query(`
+          INSERT INTO ${FAIRNESS_TABLE} (namespace, owner_hash)
+          SELECT namespace, owner_hash
+            FROM ${TABLE}
+           WHERE namespace = $1 AND expires_at > clock_timestamp()
+             AND status IN ('queued', 'running', 'input_required')
+           GROUP BY namespace, owner_hash
+          ON CONFLICT (namespace, owner_hash) DO NOTHING
+        `, [namespace]);
         await client.query(CREATE_TASK_NOTIFY_FUNCTION);
         await client.query(CREATE_TASK_NOTIFY_TRIGGER);
       });
@@ -497,38 +568,92 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
            AND lease_expires_at <= clock_timestamp() AND attempt_count >= $2
       `, [namespace, maxAttempts]);
       const leaseToken = randomUUID();
-      const result = await pool.query(`
-        WITH candidate AS (
-          SELECT namespace, task_id
-            FROM ${TABLE}
-           WHERE namespace = $1 AND expires_at > clock_timestamp()
-             AND (attempt_count < $2 OR (status = 'queued' AND resume_pending AND attempt_count = $2))
-             AND ($5::jsonb IS NULL OR EXISTS (
-               SELECT 1 FROM jsonb_to_recordset($5::jsonb) AS handler(name text, version text)
-                WHERE handler.name = tool_name AND handler.version = handler_version
-             ))
-               AND (status = 'queued' OR (status = 'running' AND lease_expires_at <= clock_timestamp()))
-           ORDER BY created_at, task_id
-           FOR UPDATE SKIP LOCKED
+      // The owner cursor lock and task lease update share one statement so
+      // replicas can rotate owners without adding transaction round trips.
+      let result;
+      for (let attempt = 0; attempt < FAIRNESS_CLAIM_RETRIES; attempt++) {
+        result = await pool.query(`
+        WITH chosen_owner AS MATERIALIZED (
+          SELECT fairness.namespace, fairness.owner_hash
+            FROM ${FAIRNESS_TABLE} AS fairness
+           WHERE fairness.namespace = $1
+             AND EXISTS (
+               SELECT 1 FROM ${TABLE} AS task
+                WHERE task.owner_hash = fairness.owner_hash
+                  AND ${CLAIMABLE_TASK_FILTER}
+             )
+           ORDER BY fairness.last_claimed_order, fairness.owner_hash
+           FOR UPDATE OF fairness SKIP LOCKED
            LIMIT 1
+        ),
+        candidate AS MATERIALIZED (
+          SELECT task.namespace, task.task_id
+            FROM ${TABLE} AS task
+            JOIN chosen_owner AS chosen USING (namespace, owner_hash)
+           WHERE ${CLAIMABLE_TASK_FILTER}
+           ORDER BY task.created_at, task.task_id
+           FOR UPDATE OF task SKIP LOCKED
+           LIMIT 1
+        ),
+        claimed AS (
+          UPDATE ${TABLE} AS task
+             SET status = 'running',
+                 attempt_count = task.attempt_count + CASE WHEN task.resume_pending THEN 0 ELSE 1 END,
+                 resume_pending = false,
+                 lease_token = $3::uuid,
+                 lease_expires_at = clock_timestamp() + ($4::bigint * interval '1 millisecond'),
+                 updated_at = clock_timestamp()
+            FROM candidate
+           WHERE task.namespace = candidate.namespace AND task.task_id = candidate.task_id
+          RETURNING task.namespace, task.task_id, task.owner_hash, task.tool_name, task.handler_version,
+                    task.status, task.created_at, task.updated_at, task.expires_at,
+                    task.attempt_count, task.lease_token::text AS lease_token,
+                    task.cancel_requested_at, task.arguments_encrypted,
+                    task.result_encrypted, task.error_encrypted,
+                    task.input_state_encrypted, task.input_methods
+        ),
+        advanced AS (
+          UPDATE ${FAIRNESS_TABLE} AS fairness
+             SET last_claimed_order = nextval('${FAIRNESS_SEQUENCE}')
+            FROM claimed
+           WHERE fairness.namespace = claimed.namespace
+             AND fairness.owner_hash = claimed.owner_hash
+          RETURNING fairness.namespace, fairness.owner_hash
         )
-        UPDATE ${TABLE} AS task
-           SET status = 'running',
-               attempt_count = task.attempt_count + CASE WHEN task.resume_pending THEN 0 ELSE 1 END,
-               resume_pending = false,
-               lease_token = $3::uuid,
-               lease_expires_at = clock_timestamp() + ($4::bigint * interval '1 millisecond'),
-               updated_at = clock_timestamp()
-          FROM candidate
-         WHERE task.namespace = candidate.namespace AND task.task_id = candidate.task_id
-         RETURNING task.task_id::text AS task_id, task.tool_name, task.handler_version,
-                   task.status, task.created_at, task.updated_at, task.expires_at,
-                   task.attempt_count, task.lease_token::text AS lease_token,
-                   task.cancel_requested_at, task.arguments_encrypted,
-                   task.result_encrypted, task.error_encrypted,
-                   task.input_state_encrypted, task.input_methods
-      `, [namespace, maxAttempts, leaseToken, leaseMs, supportedHandlers == null ? null : JSON.stringify(supportedHandlers)]);
-      return result.rows?.[0] ? rowTask(result.rows[0], payloadKey, namespace, true) : null;
+        SELECT claimed.task_id::text AS task_id, claimed.tool_name, claimed.handler_version,
+               claimed.status, claimed.created_at, claimed.updated_at, claimed.expires_at,
+               claimed.attempt_count, claimed.lease_token,
+               claimed.cancel_requested_at, claimed.arguments_encrypted,
+               claimed.result_encrypted, claimed.error_encrypted,
+               claimed.input_state_encrypted, claimed.input_methods, false AS busy
+          FROM claimed
+          JOIN advanced USING (namespace, owner_hash)
+        UNION ALL
+        SELECT NULL::text, NULL::text, NULL::text, NULL::text,
+               NULL::timestamptz, NULL::timestamptz, NULL::timestamptz,
+               NULL::integer, NULL::text, NULL::timestamptz,
+               NULL::bytea, NULL::bytea, NULL::bytea, NULL::bytea,
+               NULL::text[], true AS busy
+         WHERE NOT EXISTS (SELECT 1 FROM claimed)
+           AND EXISTS (
+             SELECT 1 FROM ${FAIRNESS_TABLE} AS fairness
+              WHERE fairness.namespace = $1
+                AND EXISTS (
+                  SELECT 1 FROM ${TABLE} AS task
+                   WHERE task.owner_hash = fairness.owner_hash
+                     AND ${CLAIMABLE_TASK_FILTER}
+                )
+           )
+        `, [namespace, maxAttempts, leaseToken, leaseMs, supportedHandlers == null ? null : JSON.stringify(supportedHandlers)]);
+        const row = result.rows?.[0];
+        if (!row?.busy || attempt === FAIRNESS_CLAIM_RETRIES - 1) break;
+        // An empty result with eligible work means every matching owner cursor
+        // is briefly locked by another claim. Retry promptly instead of making
+        // this worker wait for its normal queue-poll interval.
+        await delay(Math.min(2 ** attempt, 10));
+      }
+      const task = result.rows?.[0];
+      return task && !task.busy ? rowTask(task, payloadKey, namespace, true) : null;
     },
     async heartbeat(taskID, leaseToken, leaseMs) {
       const result = await pool.query(`
@@ -577,16 +702,32 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
       return result.rows?.[0]?.status ?? null;
     },
     async cleanupExpired(limit = 250) {
-      await pool.query(`
-        WITH expired AS (
-          SELECT namespace, task_id FROM ${TABLE}
-           WHERE namespace = $1 AND expires_at <= clock_timestamp()
-           ORDER BY expires_at LIMIT $2
-        )
-        DELETE FROM ${TABLE} AS task
-         USING expired
-         WHERE task.namespace = expired.namespace AND task.task_id = expired.task_id
-      `, [namespace, limit]);
+      await withTransaction(pool, async client => {
+        // Serialize pruning with admission so a just-created owner's cursor
+        // cannot be removed before its task row becomes visible.
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${TABLE}:admission:${namespace}`]);
+        await client.query(`
+          WITH expired AS (
+            SELECT namespace, task_id FROM ${TABLE}
+             WHERE namespace = $1 AND expires_at <= clock_timestamp()
+             ORDER BY expires_at LIMIT $2
+          )
+          DELETE FROM ${TABLE} AS task
+           USING expired
+           WHERE task.namespace = expired.namespace AND task.task_id = expired.task_id
+        `, [namespace, limit]);
+        await client.query(`
+          DELETE FROM ${FAIRNESS_TABLE} AS fairness
+           WHERE fairness.namespace = $1
+             AND NOT EXISTS (
+               SELECT 1 FROM ${TABLE} AS task
+                WHERE task.namespace = fairness.namespace
+                  AND task.owner_hash = fairness.owner_hash
+                  AND task.expires_at > clock_timestamp()
+                  AND task.status IN ('queued', 'running', 'input_required')
+             )
+        `, [namespace]);
+      });
     },
   };
 }

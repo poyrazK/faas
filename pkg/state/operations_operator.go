@@ -25,7 +25,12 @@ func (s *PgStore) ListAccountOperations(ctx context.Context, account string, opt
 		params.BeforeID, _ = operationUUID(cursor.ID)
 		params.BeforeCreatedAt = pgtype.Timestamptz{Time: cursor.CreatedAt, Valid: true}
 	}
-	raw, err := sqlc.New().ListAccountCustomerOperations(ctx, s.pool, params)
+	var raw [][]byte
+	if opts.SubjectType == "" {
+		raw, err = sqlc.New().ListAccountCustomerOperations(ctx, s.pool, params)
+	} else {
+		raw, err = sqlc.New().ListAccountCustomerOperationsBySubject(ctx, s.pool, sqlc.ListAccountCustomerOperationsBySubjectParams{AccountID: params.AccountID, TenantID: params.TenantID, AppID: params.AppID, Scope: params.Scope, OperationName: params.OperationName, OperationState: params.OperationState, Now: params.Now, BeforeCreatedAt: params.BeforeCreatedAt, BeforeID: params.BeforeID, PageLimit: params.PageLimit, SubjectType: opts.SubjectType, SubjectID: opts.SubjectID})
+	}
 	if err != nil {
 		return api.OperationListResponse{}, fmt.Errorf("state: list account operations: %w", mapErr(err))
 	}

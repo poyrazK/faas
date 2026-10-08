@@ -198,6 +198,21 @@ func (s *PgStore) RecordFinancialSamplingWindow(ctx context.Context, minute time
 	return nil
 }
 
+func (s *PgStore) FinancialCompletedComputeMinutes(ctx context.Context, start, end time.Time) ([]time.Time, error) {
+	if !validFinancialSamplingWindow(start, end) {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := sqlc.New().FinancialCompletedComputeMinutes(ctx, s.pool, sqlc.FinancialCompletedComputeMinutesParams{PeriodStart: financialTimestamp(start), PeriodEnd: financialTimestamp(end)})
+	if err != nil {
+		return nil, fmt.Errorf("financial completed compute minutes: %w", err)
+	}
+	out := make([]time.Time, 0, len(rows))
+	for _, minute := range rows {
+		out = append(out, minute.Time.UTC())
+	}
+	return out, nil
+}
+
 func (s *PgStore) FinancialSamplingCoverage(ctx context.Context, start, end time.Time) (FinancialSamplingCoverage, error) {
 	if !validFinancialSamplingWindow(start, end) {
 		return FinancialSamplingCoverage{}, ErrInvalidArgument

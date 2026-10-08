@@ -1431,6 +1431,7 @@ type Manifest struct {
 	// AsyncRoutes are manifest-owned async edge rules. A nil slice leaves
 	// existing managed routes unchanged; an explicit empty list clears them.
 	Operations         []Operation                   `yaml:"operations,omitempty"`
+	OperationWorkflows []OperationWorkflow           `yaml:"operation_workflows,omitempty" toml:"operation_workflows"`
 	ResolvedOperations []api.OperationDefinitionSpec `yaml:"-"`
 	AsyncRoutes        []AsyncRoute                  `yaml:"async_routes,omitempty"`
 	Companions         []CompanionSpec               `yaml:"companions,omitempty"`

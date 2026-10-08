@@ -5304,7 +5304,8 @@ type AccountTraceInvocation struct {
 	Traceparent string `json:"traceparent,omitempty"`
 }
 
-// AccountTraceLookupError is a non-fatal enrichment error for one app.
+// AccountTraceLookupError is a non-fatal enrichment error. App names the
+// app whose evidence failed; it is empty when an account-wide read failed.
 type AccountTraceLookupError struct {
 	App    string `json:"app"`
 	Detail string `json:"detail"`

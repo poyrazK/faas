@@ -2390,7 +2390,8 @@ func compareAndSetAppStatus(ctx context.Context, store state.Store, appID string
 // WithScope so resolveApp / loadAPIEnv read the same value.
 func (e *Engine) AdmitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
 	res, err := e.admitInstance(ctx, appID, deploymentID, scope, trigger)
-	if e.parkForCapacity(ctx, appID, trigger, err) {
+	if e.parkForCapacity(ctx, appID, trigger, err) ||
+		(err == nil && res.AtCapacity && e.parkZeroTrafficSibling(ctx, appID, deploymentID)) {
 		res, err = e.admitInstance(ctx, appID, deploymentID, scope, trigger)
 	}
 	return res, err

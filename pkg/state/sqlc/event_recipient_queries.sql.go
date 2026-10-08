@@ -190,7 +190,7 @@ func (q *Queries) EventHistoryDueRecipients(ctx context.Context, db DBTX, arg Ev
 }
 
 const eventHistoryList = `-- name: EventHistoryList :many
-SELECT h.filter_reason, h.retry_stop_reason, h.id, h.outbox_id, h.app_id, h.subscription_id, h.action, h.state, h.attempts, h.failure_code, h.retryable, h.last_error, h.occurred_at, h.capacity_scope, h.capacity_deferrals, h.details_truncated, h.history_bytes,o.event_id,o.source AS event_source,o.event_type
+SELECT h.id, h.outbox_id, h.app_id, h.subscription_id, h.action, h.state, h.attempts, h.failure_code, h.retryable, h.last_error, h.occurred_at, h.capacity_scope, h.capacity_deferrals, h.details_truncated, h.retry_stop_reason, h.filter_reason, h.history_bytes,o.event_id,o.source AS event_source,o.event_type
 FROM event_fanout_attempt_history h JOIN event_fanout_outbox o ON o.id=h.outbox_id
 JOIN apps a ON a.id=h.app_id AND a.account_id=o.account_id
 WHERE h.app_id=$1::uuid AND ($2::text='' OR o.source=$2::text) AND ($3::text='' OR o.event_id=$3::text)
@@ -209,8 +209,6 @@ type EventHistoryListParams struct {
 }
 
 type EventHistoryListRow struct {
-	FilterReason      string
-	RetryStopReason   string
 	ID                int64
 	OutboxID          int64
 	AppID             pgtype.UUID
@@ -225,6 +223,8 @@ type EventHistoryListRow struct {
 	CapacityScope     string
 	CapacityDeferrals int64
 	DetailsTruncated  bool
+	RetryStopReason   string
+	FilterReason      string
 	HistoryBytes      int64
 	EventID           string
 	EventSource       string
@@ -248,8 +248,6 @@ func (q *Queries) EventHistoryList(ctx context.Context, db DBTX, arg EventHistor
 	for rows.Next() {
 		var i EventHistoryListRow
 		if err := rows.Scan(
-			&i.FilterReason,
-			&i.RetryStopReason,
 			&i.ID,
 			&i.OutboxID,
 			&i.AppID,
@@ -264,6 +262,8 @@ func (q *Queries) EventHistoryList(ctx context.Context, db DBTX, arg EventHistor
 			&i.CapacityScope,
 			&i.CapacityDeferrals,
 			&i.DetailsTruncated,
+			&i.RetryStopReason,
+			&i.FilterReason,
 			&i.HistoryBytes,
 			&i.EventID,
 			&i.EventSource,

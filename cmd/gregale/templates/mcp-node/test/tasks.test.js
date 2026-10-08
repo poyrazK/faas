@@ -301,6 +301,8 @@ test('task failures do not expose exception text in persisted results', async ()
 test('PostgreSQL store encrypts task arguments and scopes records to the app and caller', async () => {
   const calls = [];
   const rows = new Map();
+  const fairness = new Map();
+  let claimOrder = 0;
   const pool = { async query(sql, params) {
     calls.push({ sql, params });
     if (sql.includes('COUNT(*)::int AS total')) return { rows: [{ total: rows.size, owned: [...rows.values()].filter(row => row.owner_hash.equals(params[1])).length }] };
@@ -314,15 +316,25 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
         lease_token: null, lease_expires_at: null, cancel_requested_at: null,
       };
       rows.set(row.task_id, row);
+      const ownerHash = row.owner_hash.toString('hex');
+      if (!fairness.has(ownerHash)) fairness.set(ownerHash, { owner_hash: row.owner_hash, last_claimed_order: 0 });
       return { rows: [row] };
     }
-    if (sql.includes('WITH candidate AS')) {
-      const row = [...rows.values()].find(task => task.status === 'queued');
+    if (sql.includes('WITH chosen_owner AS MATERIALIZED')) {
+      const readyOwners = new Map([...rows.values()]
+        .filter(task => task.status === 'queued')
+        .map(task => [task.owner_hash.toString('hex'), task.owner_hash]));
+      const cursor = [...readyOwners.entries()]
+        .map(([key, owner_hash]) => ({ ...fairness.get(key), owner_hash }))
+        .sort((left, right) => left.last_claimed_order - right.last_claimed_order || Buffer.compare(left.owner_hash, right.owner_hash))[0];
+      if (!cursor) return { rows: [] };
+      const row = [...rows.values()].find(task => task.status === 'queued' && task.owner_hash.equals(cursor.owner_hash));
       if (!row) return { rows: [] };
       row.status = 'running';
       row.attempt_count++;
       row.lease_token = params[2];
       row.lease_expires_at = new Date('2026-10-06T10:01:00Z');
+      cursor.last_claimed_order = ++claimOrder;
       return { rows: [row] };
     }
     if (sql.includes("SET status = CASE WHEN cancel_requested_at IS NULL THEN 'completed'")) {
@@ -349,10 +361,6 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
   assert.ok(!insert.params[5].includes(Buffer.from('private report input')));
   assert.equal(record.task_id, insert.params[1]);
   const aliceOwnerHash = Buffer.from(insert.params[2]);
-  await store.create({ toolName: 'build_report', handlerVersion: '1', args: { secret: 'private report input' }, authInfo: { ...authInfo, extra: { subject: 'bob' } }, authMode: 'external-oauth' });
-  const bobInsert = calls.filter(call => call.sql.includes('INSERT INTO gregale_mcp_tasks'))[1];
-  assert.ok(!aliceOwnerHash.equals(bobInsert.params[2]), 'different authenticated principals have different owner hashes');
-
   const claim = await store.claim(3, 30_000);
   assert.equal(claim.task_id, record.task_id);
   assert.deepEqual(claim.arguments, { secret: 'private report input' }, 'task arguments decrypt only after a worker claims the row');
@@ -361,6 +369,9 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
   const completion = calls.find(call => call.sql.includes("SET status = CASE WHEN cancel_requested_at IS NULL THEN 'completed'"));
   assert.ok(Buffer.isBuffer(completion.params[3]), 'task results are encrypted before storage');
   assert.ok(!completion.params[3].includes(Buffer.from('private report output')));
+  await store.create({ toolName: 'build_report', handlerVersion: '1', args: { secret: 'private report input' }, authInfo: { ...authInfo, extra: { subject: 'bob' } }, authMode: 'external-oauth' });
+  const bobInsert = calls.filter(call => call.sql.includes('INSERT INTO gregale_mcp_tasks'))[1];
+  assert.ok(!aliceOwnerHash.equals(bobInsert.params[2]), 'different authenticated principals have different owner hashes');
   const recovered = await store.get({ taskID: record.task_id, authInfo, authMode: 'external-oauth' });
   assert.deepEqual(recovered.result, result, 'task results decrypt for the same authenticated owner');
   assert.equal(await store.get({ taskID: record.task_id, authInfo: { ...authInfo, extra: { subject: 'bob' } }, authMode: 'external-oauth' }), null);

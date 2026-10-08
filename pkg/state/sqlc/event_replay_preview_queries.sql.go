@@ -90,7 +90,7 @@ func (q *Queries) EventReplayPreviewEarliestRetained(ctx context.Context, db DBT
 }
 
 const eventReplayPreviewTarget = `-- name: EventReplayPreviewTarget :one
-SELECT s.schema_versions, s.routing_retry_policy, s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, a.slug AS app_slug,
+SELECT s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, a.slug AS app_slug,
        EXISTS (SELECT 1 FROM event_subscription_work_bindings b WHERE b.subscription_id=s.id) AS work_bound
 FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
 WHERE s.id=$1::uuid AND s.app_id=$2::uuid
@@ -104,8 +104,6 @@ type EventReplayPreviewTargetParams struct {
 }
 
 type EventReplayPreviewTargetRow struct {
-	SchemaVersions     []string
-	RoutingRetryPolicy []byte
 	ID                 pgtype.UUID
 	AccountID          pgtype.UUID
 	AppID              pgtype.UUID
@@ -115,6 +113,8 @@ type EventReplayPreviewTargetRow struct {
 	Enabled            bool
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+	RoutingRetryPolicy []byte
+	SchemaVersions     []string
 	AppSlug            string
 	WorkBound          bool
 }
@@ -123,8 +123,6 @@ func (q *Queries) EventReplayPreviewTarget(ctx context.Context, db DBTX, arg Eve
 	row := db.QueryRow(ctx, eventReplayPreviewTarget, arg.SubscriptionID, arg.AppID, arg.AccountID)
 	var i EventReplayPreviewTargetRow
 	err := row.Scan(
-		&i.SchemaVersions,
-		&i.RoutingRetryPolicy,
 		&i.ID,
 		&i.AccountID,
 		&i.AppID,
@@ -134,6 +132,8 @@ func (q *Queries) EventReplayPreviewTarget(ctx context.Context, db DBTX, arg Eve
 		&i.Enabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RoutingRetryPolicy,
+		&i.SchemaVersions,
 		&i.AppSlug,
 		&i.WorkBound,
 	)

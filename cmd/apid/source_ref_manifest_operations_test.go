@@ -71,7 +71,7 @@ func TestOperationSourceSchemaArchiveBoundary(t *testing.T) {
 			}
 			entries = append(entries, tc.extra...)
 			m := &gregalemanifest.Manifest{Operations: []gregalemanifest.Operation{
-				{Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant, InputSchema: "input.json", OutputSchema: "output.json", ProgressStages: []string{"generating"}},
+				{HTTPTransactionVersion: 1, Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant, InputSchema: "input.json", OutputSchema: "output.json", ProgressStages: []string{"generating"}},
 				{App: "other", Name: "other", Method: "POST", Path: "/other", Owner: api.OperationOwnerPlatformTenant, InputSchema: "missing.json", OutputSchema: "also-missing.json", ProgressStages: []string{"generating"}},
 			}}
 			err := resolveSourceOperations(operationSchemaArchive(t, entries), "apps/export/gregale.yaml", "exports", api.PlanPro, m)
@@ -81,7 +81,7 @@ func TestOperationSourceSchemaArchiveBoundary(t *testing.T) {
 			if tc.fail && len(m.ResolvedOperations) != 0 {
 				t.Fatal("partially resolved bundle published")
 			}
-			if !tc.fail && (len(m.ResolvedOperations) != 1 || string(m.ResolvedOperations[0].OutputSchema) != "true") {
+			if !tc.fail && (len(m.ResolvedOperations) != 1 || string(m.ResolvedOperations[0].OutputSchema) != "true" || m.ResolvedOperations[0].HTTPTransactionVersion != 1) {
 				t.Fatalf("selected bundle: %+v", m.ResolvedOperations)
 			}
 		})

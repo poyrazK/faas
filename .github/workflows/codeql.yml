@@ -10,7 +10,15 @@ name: codeql
 on:
   push:
     branches: [main]
+  # Drafts and documentation-only pull requests skip analysis: neither can
+  # change the Go or workflow code CodeQL scans, and each run holds two hosted
+  # runners. `ready_for_review` analyses the PR once it leaves draft; pushes to
+  # main and the weekly schedule still scan everything.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   schedule:
     # Weekly Sunday 02:00 UTC. Off the workload peak. SARIF artefacts
     # appear under Security > Code scanning.
@@ -28,6 +36,7 @@ permissions:
 jobs:
   analyze:
     name: CodeQL ${{ matrix.language }}
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:

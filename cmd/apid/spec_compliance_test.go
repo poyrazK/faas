@@ -318,6 +318,9 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	// Version listing carries these fields as individual query parameters,
+	// documented on the GET route; it has no JSON request body.
+	"ObjectVersionListRequest":      true,
 	"EventReplayPreviewOptions":     true, // client-only query options; the wire parameters are declared on the route
 	"EventReplayBackfillItemsQuery": true, // client-only pagination/filter options; the wire parameters are declared on the route
 	// ADR-563 native adapter primitives. Customer per-version lock management
@@ -371,6 +374,7 @@ var dtoExclude = map[string]bool{
 	"ListPlatformTenantReconciliationReceiptsOptions": true, // client-only pagination query parameters, not a wire DTO
 	"ListPlatformTenantOffboardingReceiptsOptions":    true, // client-only pagination query parameters, not a wire DTO
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
+	"OperationMilestoneListOptions":                   true, // client-only milestone query selectors
 	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
 	"AutomationHealthOptions":                         true, // client-only query parameters for the documented automation health response
 	"WorkflowRunListOptions":                          true, // client-only history query parameters for the documented run list response
@@ -1024,6 +1028,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
+		filepath.Join(root, "pkg", "api", "object_versions.go"),
 		filepath.Join(root, "pkg", "api", "durable_entities.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption_capabilities.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption.go"),
@@ -1123,6 +1128,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "preflight.go"),
 		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
 		filepath.Join(root, "pkg", "api", "operations.go"),
+		filepath.Join(root, "pkg", "api", "operation_subject.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflows.go"),
+		filepath.Join(root, "pkg", "api", "operation_milestones.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
@@ -1174,6 +1182,16 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		}
 		dtos[schemaName] = fields
 	}
+
+	// The public workflow step schema represents the resolved projection that
+	// the Go API names OperationWorkflowSpec. Keep its fields under the wire
+	// schema name for both directions of parity checking.
+	workflowStepFields, ok := dtos["OperationWorkflowSpec"]
+	if !ok {
+		t.Fatalf("operation workflow spec DTO is missing")
+	}
+	delete(dtos, "OperationWorkflowSpec")
+	dtos["OperationWorkflowStep"] = workflowStepFields
 
 	// The Go API calls the nested outcome EventReplayBackfillItem, while the
 	// standalone OpenAPI schema uses the response-oriented name so SDKs can

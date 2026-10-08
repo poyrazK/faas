@@ -282,18 +282,31 @@ func TestCustomerOperationLocalValidationUsesManifestCompiler(t *testing.T) {
 				}
 			}
 			name := "gregale.yaml"
-			body := "operations:\n  - name: export\n    method: POST\n    path: /exports\n    owner: platform_tenant\n    input_schema: input.json\n    output_schema: output.json\n    progress_stages: [generating]\n"
+			body := "operations:\n  - name: export\n    method: POST\n    path: /exports\n    owner: platform_tenant\n    input_schema: input.json\n    output_schema: output.json\n    progress_stages: [generating]\n    http_transaction_version: 1\n"
 			if format == "toml" {
 				name = "gregale.toml"
-				body = "[[operations]]\nname='export'\nmethod='POST'\npath='/exports'\nowner='platform_tenant'\ninput_schema='input.json'\noutput_schema='output.json'\nprogress_stages=['generating']\n"
+				body = "[[operations]]\nname='export'\nmethod='POST'\npath='/exports'\nowner='platform_tenant'\ninput_schema='input.json'\noutput_schema='output.json'\nprogress_stages=['generating']\nhttp_transaction_version=1\n"
 			}
 			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); err != nil {
 				t.Fatal(err)
 			}
 			c := customerOperationDeveloperCommand{verb: "validate", app: "exports", dir: dir, plan: "pro", name: "export", input: filepath.Join(dir, "sample.json")}
 			r, err := validateCustomerOperationSource(c)
-			if err != nil || len(r.Definitions) != 1 || !r.Definitions[0].InputValidated || r.Definitions[0].Revision == "" {
+			if err != nil || len(r.Definitions) != 1 || !r.Definitions[0].InputValidated || r.Definitions[0].Revision == "" || r.Definitions[0].Spec.HTTPTransactionVersion != 1 {
 				t.Fatalf("validation %+v %v", r, err)
+			}
+			for _, asJSON := range []bool{false, true} {
+				var output bytes.Buffer
+				if err := renderCustomerOperationValidation(&output, r, asJSON); err != nil {
+					t.Fatal(err)
+				}
+				want := "http_transaction_version=1"
+				if asJSON {
+					want = `"http_transaction_version":1`
+				}
+				if !strings.Contains(output.String(), want) {
+					t.Fatalf("validation hides negotiation: %s", output.String())
+				}
 			}
 			contract, err := operations.Compile(r.Definitions[0].Spec, api.MustLimitsFor(api.PlanPro).Operations)
 			if err != nil || contract.Revision != r.Definitions[0].Revision {
