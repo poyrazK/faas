@@ -29,7 +29,6 @@ export async function fulfillOrder({runtime, pool, request}) {
         tx.workflowTransition('order-fulfillment', input.workflow_run_id, 'pending', 'fulfilled');
       }
       tx.milestone('order-fulfilled', {order_id: input.order_id, workflow_run_id: input.workflow_run_id, status: 'fulfilled'});
-      tx.workflowState('order-fulfillment', input.workflow_run_id, 'fulfilled');
       return {order_id: input.order_id, status: 'fulfilled'};
     });
     // Report the committed stage once per execution; recovery has a fresh reporting fence.
