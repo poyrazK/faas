@@ -297,7 +297,7 @@ func boot() error {
 	if err := startFrameworkReadyProxy(slog.Default(), lookupUID(manifest.EffectiveUser())); err != nil {
 		slog.Default().Warn("framework_ready proxy unavailable", "err", err)
 	}
-	// ADR-686: without the reseed server, Node and Python processes restored
+	// ADR-687: without the reseed server, Node and Python processes restored
 	// from a snapshot replay the captured random state. Env stamping injects
 	// no preload when this fails, so a failure is loud but not fatal.
 	if err := startRestoreReseedServer(slog.Default(), lookupUID(manifest.EffectiveUser())); err != nil {

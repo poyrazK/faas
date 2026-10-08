@@ -1680,7 +1680,7 @@ func handleFakeVsockHook(t *testing.T, c net.Conn, ack byte, onHook func(hostTim
 const ackOK = byte(0)
 
 // fakeGuestAckFrame models a current guest-init: an OK ack is followed by
-// the ADR-686 userspace reseed capability byte.
+// the ADR-687 userspace reseed capability byte.
 func fakeGuestAckFrame(ack byte) []byte {
 	if ack == ackOK {
 		return []byte{ack, resumeCapUserspaceReseed}
@@ -1689,7 +1689,7 @@ func fakeGuestAckFrame(ack byte) []byte {
 }
 
 // TestTriggerResumeHookRefusesGuestWithoutReseedBarrier: a guest-init that
-// predates ADR-686 acks OK and closes. Its processes may replay the
+// predates ADR-687 acks OK and closes. Its processes may replay the
 // snapshot's random state, so the restore must be refused (the manager then
 // cold-boots) and the resume must not be re-sent by the transport retry.
 func TestTriggerResumeHookRefusesGuestWithoutReseedBarrier(t *testing.T) {
@@ -1732,7 +1732,7 @@ func TestTriggerResumeHookRefusesGuestWithoutReseedBarrier(t *testing.T) {
 }
 
 // oneByteAckConn drops everything after the first byte of the final ack
-// frame, which is what a pre-ADR-686 guest-init writes.
+// frame, which is what a pre-ADR-687 guest-init writes.
 type oneByteAckConn struct {
 	net.Conn
 }

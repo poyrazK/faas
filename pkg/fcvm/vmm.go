@@ -2309,26 +2309,26 @@ const resumeHookMsgResume uint32 = 1
 const resumeHookAckAfterRestore byte = 13
 
 // resumeHookAckUserspaceReseed: a registered Node or Python process did not
-// confirm its userspace RNG reseed (ADR-686). Keep in sync with
+// confirm its userspace RNG reseed (ADR-687). Keep in sync with
 // guest/init/listen_resume_linux.go.
 const resumeHookAckUserspaceReseed byte = 15
 
 // resumeCapUserspaceReseed is the capability bit a guest-init running the
-// ADR-686 userspace reseed barrier sends right after its OK ack.
+// ADR-687 userspace reseed barrier sends right after its OK ack.
 const (
 	resumeCapUserspaceReseed = byte(0x01)
 	resumeCapabilityWait     = 100 * time.Millisecond
 )
 
 // ErrGuestLacksRestoreReseed means the restored guest-init did not advertise
-// the userspace reseed barrier (ADR-686): it predates the barrier, or its
+// the userspace reseed barrier (ADR-687): it predates the barrier, or its
 // barrier never started. Its Node and Python processes may replay the
 // snapshot's random state, so the restore is refused. The manager cold-boots
 // and schedd marks the snapshot stale, so the next park captures a snapshot
 // from the current guest-init. It deliberately does not wrap io.EOF: an old
 // guest closes right after its ack, and a transport retry would resend the
 // resume request.
-var ErrGuestLacksRestoreReseed = errors.New("vmm: restored guest-init lacks the userspace RNG reseed barrier (ADR-686)")
+var ErrGuestLacksRestoreReseed = errors.New("vmm: restored guest-init lacks the userspace RNG reseed barrier (ADR-687)")
 
 func readResumeCapabilities(conn net.Conn) error {
 	_ = conn.SetReadDeadline(time.Now().Add(resumeCapabilityWait))

@@ -372,11 +372,11 @@ RNG_ADDON_ZIG_VERSION := 0.16.0
 RNG_ADDON_FLAGS := -target x86_64-linux-gnu -shared -fPIC -nostdlib -fno-stack-protector -O2 -Wl,--build-id=none -s
 
 .PHONY: rng-addon rng-addon-check
-rng-addon: ## Rebuild guest-init's restore reseed addon from reseed.c (ADR-686; needs zig $(RNG_ADDON_ZIG_VERSION))
+rng-addon: ## Rebuild guest-init's restore reseed addon from reseed.c (ADR-687; needs zig $(RNG_ADDON_ZIG_VERSION))
 	@test "$$(zig version 2>/dev/null)" = "$(RNG_ADDON_ZIG_VERSION)" || { echo "rng-addon: need zig $(RNG_ADDON_ZIG_VERSION), have '$$(zig version 2>/dev/null)'"; exit 1; }
 	zig cc $(RNG_ADDON_FLAGS) -o guest/init/rngpreload/reseed.node guest/init/rngpreload/reseed.c
 
-rng-addon-check: ## Verify the committed reseed.node is the reproducible build of reseed.c (ADR-686)
+rng-addon-check: ## Verify the committed reseed.node is the reproducible build of reseed.c (ADR-687)
 	@test "$$(zig version 2>/dev/null)" = "$(RNG_ADDON_ZIG_VERSION)" || { echo "rng-addon-check: need zig $(RNG_ADDON_ZIG_VERSION), have '$$(zig version 2>/dev/null)'"; exit 1; }
 	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
 	  zig cc $(RNG_ADDON_FLAGS) -o "$$tmp/reseed.node" guest/init/rngpreload/reseed.c && \
