@@ -143,7 +143,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const userA = { subject: 'identity|alice', token: await sign('identity|alice') }
   const userB = { subject: 'identity|bob', token: await sign('identity|bob') }
   const { verifyAuthorization } = await import(pathToFileURL(join(root, 'client/test/authorization.mjs')))
-  const { notesClient } = await import(pathToFileURL(join(root, 'client/dist/notes.js')))
+  const { notesClient, noteCursor } = await import(pathToFileURL(join(root, 'client/dist/notes.js')))
   const client = notesClient({ url, subject: userA.subject, accessToken: userA.token })
   // Large fixtures stay local; protected preview checks only create a few rows.
   await owner.query("INSERT INTO api.notes (subject, body) SELECT $1, 'page-limit-fixture' FROM generate_series(1, $2)", [userA.subject, limits.rows + 1])
@@ -155,6 +155,12 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
     const tail = await client.page({ offset: limits.rows, size: 1 }).eq('body', 'page-limit-fixture')
     assert.equal(tail.error, null)
     assert.equal(tail.data.length, 1)
+    const cursorCapped = await client.cursorPage({ size: limits.rows + 1 }).eq('body', 'page-limit-fixture')
+    assert.equal(cursorCapped.error, null)
+    assert.equal(cursorCapped.data.length, limits.rows)
+    const cursorTail = await client.cursorPage({ after: noteCursor(cursorCapped.data.at(-1)) }).eq('body', 'page-limit-fixture')
+    assert.equal(cursorTail.error, null)
+    assert.deepEqual(cursorTail.data.map(row => row.id), tail.data.map(row => row.id))
     assert.ok(!capped.data.some(row => row.id === tail.data[0].id), 'row_cap_page_overlap')
     const ranged = await fetch(url + '/rest/v1/notes?select=id&body=eq.page-limit-fixture&order=id.desc', { headers: { Authorization: `Bearer ${userA.token}`, 'Accept-Profile': 'api', Range: '2-4', 'Range-Unit': 'items', Prefer: 'count=exact' } })
     assert.equal(ranged.status, 206)

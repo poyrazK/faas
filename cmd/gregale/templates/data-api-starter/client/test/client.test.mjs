@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { notesClient } from '../dist/notes.js'
+import { notesClient, noteCursor } from '../dist/notes.js'
 
 test('typed notes use renewed application tokens and schema projections', async () => {
   let token = 'application-token-1'
@@ -29,4 +29,15 @@ test('invalid pagination bounds fail before a request', () => {
   for (const options of [{ offset: -1 }, { size: 0 }, { size: 1.5 }, { offset: NaN }, { size: Infinity }, { offset: Number.MAX_SAFE_INTEGER, size: 2 }]) {
     assert.throws(() => client.page(options), RangeError)
   }
+})
+
+test('cursor validation rejects malformed values before requesting and retains microseconds', () => {
+  const client = notesClient({ url: 'https://notes.example', subject: 'user', accessToken: 'token', fetch: () => { throw new Error('unexpected request') } })
+  const valid = { created_at: '2026-10-08T12:00:00.123456+00:00', id: 1 }
+  assert.deepEqual(noteCursor(valid), valid)
+  assert.equal(noteCursor({ ...valid, created_at: '2000-02-29T00:00:00Z' }).created_at, '2000-02-29T00:00:00Z')
+  for (const after of [null, {}, { ...valid, id: 0 }, { ...valid, id: 1.5 }, { ...valid, id: 2147483648 }, { ...valid, created_at: '2026-02-30T00:00:00Z' }, { ...valid, created_at: '1900-02-29T00:00:00Z' }, { ...valid, created_at: '0000-01-01T00:00:00Z' }, { ...valid, created_at: '2026-10-08T00:00:00Z,id.gt.0' }]) {
+    assert.throws(() => client.cursorPage({ after }), TypeError)
+  }
+  for (const size of [0, -1, NaN, Infinity, 1.5]) assert.throws(() => client.cursorPage({ size }), RangeError)
 })

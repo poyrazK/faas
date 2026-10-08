@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { notesClient } from '../dist/notes.js'
+import { notesClient, noteCursor } from '../dist/notes.js'
 
 async function verifyNoteRelationships(owner, other, subject, otherSubject, id, body, orphaned) {
   const empty = await owner.listWithReplies().eq('id', id).single()
@@ -176,6 +176,47 @@ async function verifyPagination(first, second, userA, userB, owned) {
   }
 }
 
+async function verifyCursors(first, second, userA, userB, owned) {
+  const marker = `cursor-${randomUUID()}`
+  const groups = []
+  for (const [client, user] of [[first, userA], [second, userB]]) {
+    const created = await client.db.from('notes').insert(Array.from({ length: 5 }, (_, i) => ({
+      subject: user.subject, body: marker, priority: i % 2,
+      created_at: i === 0 ? '2026-10-08T12:00:00.123455Z' : '2026-10-08T12:00:00.123456Z',
+    }))).select('id,body,priority,created_at')
+    assert.equal(created.error, null, 'cursor_fixture_failed')
+    for (const row of created.data) owned.push([client, row.id])
+    groups.push([client, user, created.data.sort((a, b) => b.id - a.id)])
+  }
+  for (const [client, user, rows] of groups) {
+    const firstPage = await client.cursorPage({ size: 2 }).eq('body', marker)
+    assert.equal(firstPage.error, null, 'cursor_page_failed')
+    assert.deepEqual(firstPage.data.map(row => row.id), rows.slice(0, 2).map(row => row.id), 'cursor_tie_order_mismatch')
+    const cursor = noteCursor(firstPage.data.at(-1))
+    assert.ok(cursor.created_at.includes('.123456'), 'cursor_precision_lost')
+    const filtered = await client.cursorPage({ priority: 1 }).eq('body', marker)
+    assert.equal(filtered.error, null)
+    assert.deepEqual(filtered.data.map(row => row.id), rows.filter(row => row.priority === 1).map(row => row.id))
+    // Delete the cursor row and an unread row, then insert ahead of the cursor.
+    for (const id of [cursor.id, rows[2].id]) {
+      const removed = await client.remove(id)
+      assert.equal(removed.error, null, 'cursor_delete_failed')
+    }
+    const inserted = await client.db.from('notes').insert({ subject: user.subject, body: marker, created_at: '2026-10-09T12:00:00Z' }).select('id').single()
+    assert.equal(inserted.error, null, 'cursor_concurrent_insert_failed')
+    owned.push([client, inserted.data.id])
+    const next = await client.cursorPage({ after: cursor, size: 2 }).eq('body', marker)
+    assert.equal(next.error, null, 'cursor_continuation_failed')
+    assert.deepEqual(next.data.map(row => row.id), rows.slice(3, 5).map(row => row.id), 'cursor_shifted_after_writes')
+    const exhausted = await client.cursorPage({ after: noteCursor(next.data.at(-1)), size: 2 }).eq('body', marker)
+    assert.equal(exhausted.error, null)
+    assert.deepEqual(exhausted.data, [])
+    const hidden = await client.cursorPage({ after: cursor }).eq('body', marker).eq('subject', user.subject === userA.subject ? userB.subject : userA.subject)
+    assert.equal(hidden.error, null)
+    assert.deepEqual(hidden.data, [], 'cursor_leaked_other_user_rows')
+  }
+}
+
 export async function verifyAuthorization({ url, userA, userB }) {
   assert.ok(url && userA.subject && userB.subject && userA.token && userB.token, 'two_user_configuration_required')
   assert.notEqual(userA.subject, userB.subject, 'subjects_must_differ')
@@ -187,6 +228,7 @@ export async function verifyAuthorization({ url, userA, userB }) {
   const ownedTags = []
   try {
     await verifyPagination(first, second, userA, userB, owned)
+    await verifyCursors(first, second, userA, userB, owned)
     for (const [owner, other, subject, otherSubject] of [
       [first, second, userA.subject, userB.subject], [second, first, userB.subject, userA.subject],
     ]) {

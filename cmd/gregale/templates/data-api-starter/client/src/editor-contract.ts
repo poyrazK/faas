@@ -103,3 +103,18 @@ async function pageContract(client: ReturnType<typeof notesClient>) {
   void count
 }
 void pageContract
+
+async function cursorContract(client: ReturnType<typeof notesClient>) {
+  const result = await client.cursorPage({ after: { created_at: '2026-10-08T00:00:00Z', id: 1 }, priority: 1 })
+  if (result.data) {
+    const id: number | undefined = result.data[0]?.id
+    // @ts-expect-error cursor pages retain their selected projection
+    const subject = result.data[0].subject
+    void [id, subject]
+  }
+  // @ts-expect-error both cursor fields are required
+  client.cursorPage({ after: { id: 1 } })
+  // @ts-expect-error cursor ids have the database column's integer type
+  client.cursorPage({ after: { created_at: '2026-10-08T00:00:00Z', id: '1' } })
+}
+void cursorContract

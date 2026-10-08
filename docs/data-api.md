@@ -293,5 +293,23 @@ at 1,000 rows even when a larger page is requested; its exact count still covers
 all matching visible rows. Advance by the number of returned rows, and stop
 when offset plus returned length reaches count. Counts and separate page
 requests do not provide a shared snapshot: concurrent writes can shift offset
-pages. Exact counts may be expensive on large tables. The example prints the
-first page, total, and next offset without automatically fetching every row.
+pages. Exact counts may be expensive on large tables. The `page()` method supports offset pagination; cursor pagination is shown
+in the runnable example below.
+
+For changing data, use `cursorPage({ size: 20 })` and derive the next `after`
+value with `noteCursor(rows.at(-1))`. Pass that cursor to
+`cursorPage({ after, size: 20 })`, keeping the same filters, until a page is
+empty. The runnable example prints the first page and its next cursor.
+Cursors contain the original `(created_at, id)` values; timestamps retain
+PostgreSQL microseconds. Do not round them through JavaScript `Date` or change
+ordering on the query. The descending query selects timestamps older than the
+cursor, or lower ids with the same timestamp. Newer inserts do not shift the
+continuation, and deleting the cursor row does not invalidate it. RLS applies
+to every page; cursors carry no authorization. Malformed timestamps, invalid
+integer ids and invalid page sizes fail locally before sending a request.
+Cursor pages do not request exact counts. The existing server row cap still
+applies, so continue from the last returned row even for a short page.
+Each request sees current data: this is not a snapshot. Inserts behind the
+cursor may appear, deleted rows disappear, and changing `created_at` can move
+rows across the boundary. Applications needing immutable ordering should
+prevent edits to that column through their database privileges or policies.
