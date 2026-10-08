@@ -376,6 +376,12 @@ const (
 	DevBridgeMetadataRetention     = 7 * 24 * time.Hour
 	DevBridgeWebhookReplayTimeout  = 30 * time.Second
 	DevBridgeReplayResponseBytes   = 64 << 10
+	// WebSocket upgrades (ADR-742) share one per-session budget across the
+	// scoped-traffic and dependency directions. Upgraded tunnels hold their
+	// own HTTP/2 streams, so the laptop accepts requests + upgrades streams.
+	DevBridgeMaxUpgradedConnections = 8
+	DevBridgeUpgradeIdleTimeout     = 5 * time.Minute
+	DevBridgeUpgradeMaxBytes        = 64 << 20 // per connection, per direction
 )
 
 // Flags qualification safeguards, independent from billing allowances.

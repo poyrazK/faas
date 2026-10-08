@@ -25,6 +25,8 @@ type releaseBody struct {
 func (r *releaseBody) Close() error { err := r.ReadCloser.Close(); r.once.Do(r.release); return err }
 
 // ServeLocal forwards HTTP/2 tunnel streams to one fixed loopback HTTP app.
+// maxConcurrent bounds tunnel streams, so callers that accept WebSocket
+// upgrades pass requests + upgraded connections.
 // A remote request cannot alter the destination or use the laptop as an open
 // proxy. Redirects are returned to the caller rather than followed.
 func ServeLocal(ctx context.Context, socket net.Conn, target *url.URL, maxConcurrent uint32, inspectors ...*Inspector) error {
@@ -44,9 +46,21 @@ func ServeLocal(ctx context.Context, socket net.Conn, target *url.URL, maxConcur
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	proxy.Transport = transport
+	var inspector *Inspector
 	if len(inspectors) > 0 && inspectors[0] != nil {
-		proxy.Transport = inspectors[0].Transport(transport)
+		inspector = inspectors[0]
+		proxy.Transport = inspector.Transport(transport)
 	}
+	// Only the relay sets UpgradeHeader: inbound traffic has every
+	// X-Gregale-Dev-Bridge- header stripped before the tunnel. Upgrades still
+	// dial the same fixed loopback origin as ordinary requests.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(UpgradeHeader) == upgradeWebSocket {
+			serveLocalUpgrade(w, r, target.Host, inspector)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	})
 	defer transport.CloseIdleConnections()
 	stopped := make(chan struct{})
 	go func() {
@@ -57,7 +71,7 @@ func ServeLocal(ctx context.Context, socket net.Conn, target *url.URL, maxConcur
 		}
 	}()
 	defer close(stopped)
-	(&http2.Server{MaxConcurrentStreams: maxConcurrent}).ServeConn(socket, &http2.ServeConnOpts{Context: ctx, Handler: proxy})
+	(&http2.Server{MaxConcurrentStreams: maxConcurrent}).ServeConn(socket, &http2.ServeConnOpts{Context: ctx, Handler: handler})
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
