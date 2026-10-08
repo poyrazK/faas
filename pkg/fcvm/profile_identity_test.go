@@ -1,5 +1,7 @@
 package fcvm
 
+// adr: 792 — profile identities distinguish serving workloads and collector lifetimes.
+
 import (
 	"testing"
 	"time"

@@ -1084,3 +1084,10 @@ func TestOrgSlugPattern(t *testing.T) {
 		})
 	}
 }
+
+func TestProfileGateProblemStatus(t *testing.T) {
+	// A reconstructed gate Problem must preserve the actionable 409 status.
+	if got := StatusForCode(CodeProfileGateBlocked); got != http.StatusConflict {
+		t.Fatalf("profiling gate status = %d, want %d", got, http.StatusConflict)
+	}
+}

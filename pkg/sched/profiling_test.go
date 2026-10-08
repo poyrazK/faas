@@ -1,5 +1,7 @@
 package sched
 
+// adr: 792 — profiling captures must survive park without warm-snapshot cloning.
+
 import (
 	"context"
 	"testing"
