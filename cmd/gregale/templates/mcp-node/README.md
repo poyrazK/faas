@@ -463,3 +463,13 @@ and latest expiry for missing versions. Delayed retries, input pauses and leased
 work are included. Missing or unknown coverage returns exit code 1. The Task
 doctor includes the same gate. Stop old-version producers before the final check:
 this read-only snapshot does not fence future Task admission.
+
+Admission is now enforced by a shared database trigger, including for older
+producers. Runtime startup registers current versions but preserves disabled
+and retired entries. Use `npm run tasks:admission -- disable <tool> <version>`,
+keep compatible workers to drain retained Tasks, then run `retire <tool> <version>`
+before removing handler code. `status` reports retained counts and `canRetire`;
+`audit` returns the latest 100 state changes. `allow` explicitly reopens a version.
+These commands use database/namespace bindings and need no payload secrets.
+Upgrade schema first, preserve registry tombstones, and keep the admission trigger
+enabled. Database owners can bypass enforcement; restrict policy administration.

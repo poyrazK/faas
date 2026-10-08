@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { createMcpTaskPayloadCipher } from './task-crypto.js';
+import { initializeMcpTaskAdmission } from './task-admission.js';
 import defaults from './task-limits.json' with { type: 'json' };
 
 const TABLE = 'gregale_mcp_tasks';
@@ -367,7 +368,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
   }
 
   return {
-    async initialize() {
+    async initialize({ admissionHandlers = [] } = {}) {
       await withTransaction(pool, async (client, dedicated) => {
         if (dedicated) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [TABLE]);
         await client.query(CREATE_SCHEMA);
@@ -401,6 +402,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
         `, [namespace]);
         await client.query(CREATE_TASK_NOTIFY_FUNCTION);
         await client.query(CREATE_TASK_NOTIFY_TRIGGER);
+        await initializeMcpTaskAdmission(client, namespace, admissionHandlers);
         // Check key usage across every encrypted field still within TTL, and
         // authenticate a sample per key. Legacy data proves the initial owner key.
         const required = await client.query(`
@@ -481,6 +483,13 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
                   created_at, updated_at, expires_at, attempt_count,
                   lease_token, cancel_requested_at, input_methods
         `, [namespace, taskID, owner, toolName, handlerVersion, encryptedArgs, inputMethods, ttlMs]);
+      }).catch(error => {
+        if (error.code === '23514' && error.constraint === 'gregale_mcp_task_admission') {
+          const denied = new Error('MCP Task handler version is not accepting new Tasks');
+          denied.code = 'MCP_TASK_HANDLER_DISABLED';
+          throw denied;
+        }
+        throw error;
       });
       if (!result.rows?.[0]) throw new Error('Could not persist MCP task');
       return rowTask(result.rows[0], payloadKey, namespace);

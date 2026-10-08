@@ -871,3 +871,71 @@ and candidate code. A passing snapshot cannot prevent an older producer from
 creating incompatible work afterward. Deliberately partitioned workers must use
 an aggregate candidate registry covering the replacement fleet when gating a
 fleet-wide retirement.
+
+### Enforcing handler admission and retirement
+
+Updated worker and web startup installs a database admission trigger on Task
+inserts and registers each current handler version. New current versions start
+allowed; existing disabled or retired entries are preserved. During the first
+namespace upgrade, versions used by retained Tasks and live worker registrations are seeded
+so older producers can keep using known versions. Versions without a registry
+entry are rejected in activated namespaces. Each namespace activates atomically
+with its first updated startup; other namespaces sharing the database keep their
+previous admission behavior until upgraded. Check `status.enforced` before
+relying on the gate. Initialize the namespace before retiring any version;
+older producers are then fenced by the trigger even without application changes.
+
+Run these commands in the starter using the queue database and namespace bindings:
+
+```sh
+npm run tasks:admission -- status
+npm run tasks:admission -- disable build_report 1
+# Keep compatible workers until retained work completes or expires.
+npm run tasks:admission -- status
+npm run tasks:admission -- retire build_report 1
+npm run tasks:admission -- audit
+```
+
+`disable` commits before returning, waiting for transactions that already passed
+admission. Later Task inserts, including inserts waiting behind disablement,
+are rejected. The check and insert share the same database transaction and hold
+a registry row lock, so stale replicas cannot slip work past a committed disable.
+Existing work, retries and input resumes remain executable. `status` reports
+allowed/draining/retired state, retained Task count, latest expiry and `canRetire`.
+`retire` requires disabled admission and zero unexpired nonterminal Tasks under
+the registry lock. Keep the registry tombstone after removing handler code.
+Restarting the runtime cannot reopen it. `allow <tool> <version>` explicitly
+re-enables admission for rollback; use it only while compatible handlers exist.
+
+Every registration, disablement, retirement and re-enable is recorded atomically
+in `gregale_mcp_task_admission_audit`, with timestamp and database role. `audit`
+returns the latest 100 namespace events without Task IDs, caller identities or payloads.
+Repeated no-op operations do not add state-change events. The operator command
+prints JSON and exits nonzero on failure; it does not initialize schema itself.
+The hosting doctor checks current-version admission and the enabled trigger and
+includes registry status in its JSON report.
+
+Runtime Task insertion needs SELECT and UPDATE privileges on the admission table
+because the enforcement trigger takes a shared row lock. Runtime startup also
+needs INSERT for handler registration and INSERT on the audit table (plus its
+identity sequence privileges). Registry administration requires INSERT/UPDATE
+and audit INSERT; status requires registry and Task SELECT. Give runtime and
+operator roles the appropriate migration/DDL permissions separately. Keep the
+trigger enabled, registry tombstones intact, and registry administration limited
+to trusted operators. These are application coordination guarantees: privileged
+SQL that disables triggers, deletes policy rows, or rewrites Task version fields
+can bypass them. Audit retention is operator-managed; startup never deletes
+policy tombstones, namespace activation records or audit history. Initialize the namespace with its existing current producer versions before
+introducing version changes in a split web/worker fleet. Explicitly allow idle
+producer versions absent from retained work or live worker inventory before
+routing traffic to them. The updated web runtime registers its
+current version automatically; a still-older idle producer with no known registry
+entry may be rejected until its version is explicitly allowed.
+
+For activated namespaces, disable admission before taking the final compatibility
+snapshot. The enforced fence lets stale producers continue running while that
+version drains; attempts to enqueue it are rejected. Namespace activation is
+encoded in trigger definitions, so a transaction with an older snapshot cannot
+skip the check. Admission status reports `enforced=false` if the namespace
+trigger is absent or disabled, and policy changes fail until enforcement is
+available.

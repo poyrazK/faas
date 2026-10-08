@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { mcpTaskHandlers } from './tasks.js';
+import { createMcpTaskAdmissionController } from './task-admission.js';
 import { checkMcpTaskCompatibility } from './task-compatibility.js';
 import { resolveMcpTaskSettings } from './task-runtime.js';
 import { createMcpTaskPayloadCipher } from './task-crypto.js';
@@ -31,11 +32,20 @@ try {
       const permissions = await client.query(`SELECT has_table_privilege(current_user, $1, 'SELECT') AND has_table_privilege(current_user, $1, 'INSERT') AND has_table_privilege(current_user, $1, 'UPDATE') AND ($1 = 'gregale_mcp_task_crypto_keys' OR has_table_privilege(current_user, $1, 'DELETE')) AS allowed`, [table]);
       if (!permissions.rows[0].allowed) throw new Error('permissions');
     }
+    const registryAccess = await client.query("SELECT has_table_privilege(current_user, 'gregale_mcp_task_admission_namespaces', 'SELECT') AND has_table_privilege(current_user, 'gregale_mcp_task_admission', 'SELECT') AND has_table_privilege(current_user, 'gregale_mcp_task_admission', 'UPDATE') AS allowed");
+    if (!registryAccess.rows[0].allowed) throw new Error('permissions');
     const sequence = await client.query("SELECT has_sequence_privilege(current_user, 'gregale_mcp_task_claim_order_seq', 'USAGE') AS allowed");
     if (!sequence.rows[0].allowed) throw new Error('permissions');
     // Resolve every column used by the runtime, without reading a Task payload.
     await client.query('SELECT namespace, task_id, owner_hash, tool_name, handler_version, arguments_encrypted, result_encrypted, error_encrypted, input_state_encrypted, status, created_at, updated_at, expires_at, attempt_count, resume_pending, next_attempt_at, lease_token, lease_expires_at, cancel_requested_at, input_methods FROM gregale_mcp_tasks LIMIT 0');
     add('database_schema_and_permissions', 'passed', 'Runtime tables, columns and DML/sequence privileges are available');
+    stage = 'task_admission';
+    const admission = await createMcpTaskAdmissionController({ pool: client, namespace: settings.namespace }).status();
+    report.taskAdmission = admission;
+    const currentHandlers = Object.entries(mcpTaskHandlers);
+    const allowed = admission.enforced && currentHandlers.every(([name, handler]) => admission.versions.some(entry => entry.tool === name && entry.version === handler.version && entry.state === 'allowed'));
+    const trigger = await client.query("SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'gregale_mcp_tasks'::regclass AND tgname = 'gregale_mcp_tasks_admission_' || md5($1) AND tgenabled IN ('O', 'A') AND NOT tgisinternal) AS enabled", [settings.namespace]);
+    add(stage, allowed && trigger.rows[0].enabled ? 'passed' : 'failed', allowed && trigger.rows[0].enabled ? 'Current handler admission is allowed and database enforcement is enabled' : 'Enable the admission trigger and explicitly allow current handler versions before accepting Tasks');
     stage = 'retained_handler_coverage';
     const compatibility = await checkMcpTaskCompatibility({ pool: client, namespace: settings.namespace, handlers: mcpTaskHandlers });
     report.handlerCompatibility = compatibility;
@@ -73,6 +83,7 @@ try {
   const guidance = {
     configuration: 'Provide enabled Task configuration, PostgreSQL binding, stable owner secret, valid key ring and MCP_TASK_NAMESPACE',
     database_schema_and_permissions: 'Check PostgreSQL connectivity, initialized runtime schema and required table/sequence privileges',
+    task_admission: 'Check the admission registry, enforcement trigger and runtime registry permissions',
     retained_handler_coverage: 'Check candidate handler registry and retained Task schema; do not retire a handler while coverage is unknown',
     encryption_keys: 'Check the stable owner secret, registered key fingerprints and every retained payload key version',
     worker_inventory: 'Check the worker registry schema and queue observer database access',

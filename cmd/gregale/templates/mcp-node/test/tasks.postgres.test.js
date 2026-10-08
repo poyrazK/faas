@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { dirname, join } from 'node:path';
@@ -88,7 +88,7 @@ async function harness(t, { legacySchema = false, maxRunning = 64, maxRunningPer
     ttlMs: 60_000,
     maxRunning, maxRunningPerOwner,
   });
-  await store.initialize();
+  await store.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] });
   return { adminPool, namespace, ownerKey, pool, schema, store };
 }
 
@@ -305,7 +305,7 @@ test('PostgreSQL retries a briefly locked owner cursor instead of idling a worke
     },
   };
   const retryingStore = createPostgresMcpTaskStore({ pool: observedPool, namespace, ownerKey, ttlMs: 60_000 });
-  await retryingStore.initialize();
+  await retryingStore.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] });
 
   const lockClient = await pool.connect();
   let transactionOpen = false;
@@ -335,7 +335,7 @@ test('PostgreSQL initialization backfills fairness cursors for existing queued t
   const record = await create(store, 'alice');
   await pool.query('DELETE FROM gregale_mcp_task_fairness WHERE namespace = $1', [namespace]);
 
-  await store.initialize();
+  await store.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] });
 
   const cursor = await pool.query(
     'SELECT 1 FROM gregale_mcp_task_fairness WHERE namespace = $1',
@@ -562,7 +562,7 @@ test('PostgreSQL task notifications are isolated by app namespace', postgresOnly
   const { namespace, ownerKey, pool, store } = await harness(t);
   const otherNamespace = `${namespace}-other-app`;
   const otherStore = createPostgresMcpTaskStore({ pool, namespace: otherNamespace, ownerKey, ttlMs: 60_000 });
-  await otherStore.initialize();
+  await otherStore.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] });
 
   let ownNotifications = 0;
   let otherNotifications = 0;
@@ -794,7 +794,7 @@ test('PostgreSQL persists retry delays, releases capacity and bounds retries by 
   const lease = await store.claim(3, 60_000);
   assert.equal(await store.fail(lease.task_id, lease.lease_token, { message: 'sanitized' }, { retryable: true, maxAttempts: 2, retryDelayMs: 30_000 }), 'queued');
   const restarted = createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs: 60_000 });
-  await restarted.initialize();
+  await restarted.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] });
   assert.equal(await restarted.claim(3, 60_000), null, 'persisted retry delay survives store initialization');
   const metrics = await store.queueMetrics();
   assert.equal(metrics.runningTasks, 0);
@@ -857,12 +857,12 @@ test('payload rotation preserves ownership, input state and mixed-key results, a
   const a = 'a'.repeat(48), b = 'b'.repeat(48);
   const options = { pool, namespace, ownerKey, ttlMs: 60000 };
   const old = createPostgresMcpTaskStore({ ...options, encryptionKeys: { activeKeyId: 'a', keys: { a } } });
-  await old.initialize();
+  await old.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] });
   const task = await create(old, 'alice');
   const running = await old.claim(3, 60000);
   await old.requestInputs({ taskID: task.task_id, leaseToken: running.lease_token, requests: { approval: { method: 'elicitation/create', params: { mode: 'form', message: 'Approve?' } } } });
   const rotated = createPostgresMcpTaskStore({ ...options, encryptionKeys: { activeKeyId: 'b', keys: { a, b } } });
-  await rotated.initialize();
+  await rotated.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] });
   assert.deepEqual((await get(rotated, legacy.task_id, 'alice')).result, { legacy: true });
   assert.equal(await get(rotated, task.task_id, 'bob'), null);
   await rotated.updateInputs({ taskID: task.task_id, authInfo: principal('alice'), authMode: 'external-oauth', inputResponses: { approval: { action: 'accept', content: {} } } });
@@ -872,15 +872,15 @@ test('payload rotation preserves ownership, input state and mixed-key results, a
   await rotated.complete(resumed.task_id, resumed.lease_token, { rotated: true });
   assert.deepEqual((await get(rotated, task.task_id, 'alice')).result, { rotated: true });
   const withoutOld = createPostgresMcpTaskStore({ ...options, encryptionKeys: { activeKeyId: 'b', keys: { b } } });
-  await assert.rejects(withoutOld.initialize(), /unavailable/);
-  await assert.rejects(createPostgresMcpTaskStore(options).initialize(), /unavailable/, 'falling back to legacy writes cannot omit live versioned keys');
+  await assert.rejects(withoutOld.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] }), /unavailable/);
+  await assert.rejects(createPostgresMcpTaskStore(options).initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] }), /unavailable/, 'falling back to legacy writes cannot omit live versioned keys');
   await pool.query("UPDATE gregale_mcp_tasks SET expires_at = clock_timestamp() - interval '1 second' WHERE task_id = $1", [task.task_id]);
-  await withoutOld.initialize();
+  await withoutOld.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] });
   const changedSecret = createPostgresMcpTaskStore({ ...options, encryptionKeys: { activeKeyId: 'a', keys: { a: b } } });
-  await assert.rejects(changedSecret.initialize(), /must remain stable/);
+  await assert.rejects(changedSecret.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] }), /must remain stable/);
   await pool.query("UPDATE gregale_mcp_tasks SET expires_at = clock_timestamp() - interval '1 second' WHERE namespace = $1", [namespace]);
   const changedOwner = createPostgresMcpTaskStore({ ...options, ownerKey: 'new-owner'.repeat(8), encryptionKeys: { activeKeyId: 'b', keys: { b } } });
-  await assert.rejects(changedOwner.initialize(), /must remain stable/);
+  await assert.rejects(changedOwner.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] }), /must remain stable/);
 });
 
 test('worker inventory expires, respects namespace boundaries and distinguishes absent workers from unsupported handlers', postgresOnly, async t => {
@@ -919,7 +919,7 @@ test('candidate compatibility includes delayed retries, paused input and both le
   await pool.query("UPDATE gregale_mcp_tasks SET status = 'completed' WHERE namespace = $1 AND task_id = $2", [namespace, ids[5]]);
   await pool.query("UPDATE gregale_mcp_tasks SET expires_at = clock_timestamp() - interval '1 second' WHERE namespace = $1 AND task_id = $2", [namespace, ids[6]]);
   const other = createPostgresMcpTaskStore({ pool, namespace: namespace + '-other', ownerKey, ttlMs: 60_000 });
-  await other.initialize();
+  await other.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }] });
   await create(other, 'alice');
   const handlers = { build_report: { version: '2', async execute() {} } };
   const blocked = await checkMcpTaskCompatibility({ pool, namespace, handlers });
@@ -955,14 +955,14 @@ test('Task doctor and compatibility command return safe deployment reports', pos
   const root = dirname(dirname(fileURLToPath(import.meta.url)));
   const fixture = await mkdtemp(join(root, 'doctor-fixture-'));
   t.after(() => rm(fixture, { recursive: true, force: true }));
-  for (const file of ['task-doctor.js', 'tasks-compatibility.js', 'task-compatibility.js', 'tasks.js', 'task-runtime.js', 'task-store.js', 'task-crypto.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
+  for (const file of ['task-doctor.js', 'tasks-compatibility.js', 'task-compatibility.js', 'tasks.js', 'task-runtime.js', 'task-store.js', 'task-crypto.js', 'task-admission.js', 'tasks-admission.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
   await writeFile(join(fixture, 'package.json'), JSON.stringify({ type: 'module' }));
   await writeFile(join(fixture, 'gregale-mcp.json'), JSON.stringify({ tasks: { enabled: true, database_url_env: 'DOCTOR_DATABASE', owner_key_env: 'DOCTOR_OWNER' } }));
   const url = new URL(databaseURL);
   url.searchParams.set('options', `-c search_path=${schema}`);
   const env = { ...process.env, DOCTOR_DATABASE: url.href, DOCTOR_OWNER: ownerKey, MCP_TASK_NAMESPACE: namespace };
-  const run = async (script, overrides = {}) => {
-    try { const result = await promisify(execFile)(process.execPath, [script], { cwd: fixture, env: { ...env, ...overrides }, timeout: 15000 }); return { code: 0, report: JSON.parse(result.stdout) }; }
+  const run = async (script, overrides = {}, args = []) => {
+    try { const result = await promisify(execFile)(process.execPath, [script, ...args], { cwd: fixture, env: { ...env, ...overrides }, timeout: 15000 }); return { code: 0, report: JSON.parse(result.stdout) }; }
     catch (error) { return { code: error.code, report: JSON.parse(error.stdout) }; }
   };
   await store.workerHeartbeat(randomUUID(), [{ name: 'build_report', version: '1' }]);
@@ -982,4 +982,141 @@ test('Task doctor and compatibility command return safe deployment reports', pos
   assert.equal(doctor.code, 1);
   assert.ok(doctor.report.checks.some(check => check.name === 'retained_handler_coverage' && check.status === 'failed'));
   assert.equal(doctor.report.handlerCompatibility.gaps[0].taskCount, 1);
+  const disabled = await run('tasks-admission.js', { DOCTOR_OWNER: '' }, ['disable', 'build_report', '1']);
+  assert.equal(disabled.code, 0);
+  assert.equal(disabled.report.versions.find(entry => entry.version === '1').state, 'draining');
+  const fenced = await run('task-doctor.js');
+  assert.equal(fenced.code, 1);
+  assert.ok(fenced.report.checks.some(check => check.name === 'task_admission' && check.status === 'failed'));
+  const retired = await run('tasks-admission.js', { DOCTOR_OWNER: '' }, ['retire', 'build_report', '1']);
+  assert.equal(retired.code, 0);
+  assert.equal(retired.report.versions.find(entry => entry.version === '1').state, 'retired');
+  const audit = await run('tasks-admission.js', { DOCTOR_OWNER: '' }, ['audit']);
+  assert.equal(audit.code, 0);
+  assert.ok(audit.report.events.some(event => event.handler_version === '1' && event.retired_at));
+});
+
+test('admission disable fences old producers, survives restart and requires draining before retirement', postgresOnly, async t => {
+  const { pool, namespace, store } = await harness(t);
+  const { createMcpTaskAdmissionController } = await import('../task-admission.js');
+  const controller = createMcpTaskAdmissionController({ pool, namespace });
+  const task = await create(store, 'alice');
+  await assert.rejects(controller.change('retire', 'build_report', '1'), /Disable admission/);
+  const disabled = await controller.change('disable', 'build_report', '1');
+  const state = disabled.versions.find(version => version.tool === 'build_report' && version.version === '1');
+  assert.equal(state.state, 'draining');
+  assert.equal(state.retainedTasks, 1);
+  assert.equal(state.canRetire, false);
+  await assert.rejects(create(store, 'alice'), error => error.code === 'MCP_TASK_HANDLER_DISABLED');
+  // Legacy writers have no application-side policy check; the trigger fences
+  // even a plain INSERT, with no dependence on a newly deployed runtime.
+  const legacyInsert = () => pool.query(`INSERT INTO gregale_mcp_tasks (namespace, task_id, owner_hash, tool_name, handler_version, arguments_encrypted, status, expires_at)
+    VALUES ($1, $2, $3, 'build_report', '1', $4, 'queued', clock_timestamp() + interval '1 minute')`, [namespace, randomUUID(), randomBytes(32), Buffer.from('legacy-payload')]);
+  await assert.rejects(legacyInsert(), error => error.constraint === 'gregale_mcp_task_admission');
+  await store.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }] });
+  await assert.rejects(create(store, 'alice'), error => error.code === 'MCP_TASK_HANDLER_DISABLED');
+  await assert.rejects(controller.change('retire', 'build_report', '1'), /Retained Tasks/);
+  const leased = await store.claim(3, 30000, [{ name: 'build_report', version: '1' }]);
+  assert.equal(leased.task_id, task.task_id, 'disable leaves existing Tasks claimable');
+  await store.complete(leased.task_id, leased.lease_token, { content: [] });
+  const retired = await controller.change('retire', 'build_report', '1');
+  assert.equal(retired.versions.find(version => version.version === '1').state, 'retired');
+  await controller.change('disable', 'build_report', '1');
+  assert.equal((await controller.status()).versions.find(version => version.version === '1').state, 'retired', 'idempotent disable preserves retirement');
+  await controller.change('allow', 'build_report', '1');
+  assert.ok(await create(store, 'alice'), 'explicit allow supports operator rollback');
+  const events = (await controller.audit()).events.filter(event => event.handler_version === '1');
+  assert.equal(events.length, 4, 'register, disable, retire and allow are audited once each');
+  assert.ok(events.every(event => typeof event.database_role === 'string' && !Object.hasOwn(event, 'arguments')));
+  const other = createMcpTaskAdmissionController({ pool, namespace: namespace + '-other' });
+  assert.deepEqual(await other.audit(), { events: [] });
+  await assert.rejects(store.create({ toolName: 'build_report', handlerVersion: 'unknown', args: {}, authMode: 'open' }), error => error.code === 'MCP_TASK_HANDLER_DISABLED');
+});
+
+test('disable waits for admitted transactions and rejects inserts waiting behind it', postgresOnly, async t => {
+  const { pool, namespace, store } = await harness(t);
+  const { createMcpTaskAdmissionController } = await import('../task-admission.js');
+  const controller = createMcpTaskAdmissionController({ pool, namespace });
+  const admitted = await pool.connect();
+  const insertSQL = `INSERT INTO gregale_mcp_tasks (namespace, task_id, owner_hash, tool_name, handler_version, arguments_encrypted, status, expires_at)
+    VALUES ($1, $2, $3, 'build_report', '1', $4, 'queued', clock_timestamp() + interval '1 minute')`;
+  const params = () => [namespace, randomUUID(), randomBytes(32), Buffer.from('legacy-payload')];
+  try {
+    await admitted.query('BEGIN');
+    await admitted.query(insertSQL, params());
+    let disabled = false;
+    const disabling = controller.change('disable', 'build_report', '1').then(() => { disabled = true; });
+    await delay(50);
+    assert.equal(disabled, false, 'disable cannot return while an allowed insert is uncommitted');
+    await admitted.query('COMMIT');
+    await disabling;
+    await assert.rejects(pool.query(insertSQL, params()), error => error.constraint === 'gregale_mcp_task_admission');
+  } finally { await admitted.query('ROLLBACK').catch(() => {}); admitted.release(); }
+  // Exercise a producer that began while disable was still uncommitted.
+  await controller.change('allow', 'build_report', '1');
+  const disabling = await pool.connect();
+  try {
+    await disabling.query('BEGIN');
+    await disabling.query('UPDATE gregale_mcp_task_admission SET enabled = false WHERE namespace = $1 AND tool_name = $2 AND handler_version = $3', [namespace, 'build_report', '1']);
+    const insertion = pool.query(insertSQL, params());
+    const rejected = assert.rejects(insertion, error => error.constraint === 'gregale_mcp_task_admission');
+    await delay(50);
+    await disabling.query('COMMIT');
+    await rejected;
+  } finally { await disabling.query('ROLLBACK').catch(() => {}); disabling.release(); }
+  // Retire considers every retained status, not only currently eligible work.
+  await assert.rejects(controller.change('retire', 'build_report', '1'), /Retained Tasks/);
+});
+
+test('first admission migration seeds retained versions without reopening disabled entries', postgresOnly, async t => {
+  const { pool, namespace, store } = await harness(t);
+  const { createMcpTaskAdmissionController } = await import('../task-admission.js');
+  const controller = createMcpTaskAdmissionController({ pool, namespace });
+  const legacyTask = await create(store, 'alice');
+  await pool.query("UPDATE gregale_mcp_tasks SET handler_version = 'legacy' WHERE namespace = $1 AND task_id = $2", [namespace, legacyTask.task_id]);
+  await controller.change('disable', 'build_report', '1');
+  await pool.query(`DROP TRIGGER gregale_mcp_tasks_admission_${createHash('md5').update(namespace).digest('hex')} ON gregale_mcp_tasks`);
+  await pool.query('DELETE FROM gregale_mcp_task_admission_namespaces WHERE namespace = $1', [namespace]);
+  await store.initialize({ admissionHandlers: [{ name: 'build_report', version: '1' }] });
+  const status = await controller.status();
+  assert.equal(status.versions.find(entry => entry.version === 'legacy').state, 'allowed');
+  assert.equal(status.versions.find(entry => entry.version === '1').state, 'draining');
+  await assert.rejects(create(store, 'alice'), error => error.code === 'MCP_TASK_HANDLER_DISABLED');
+  assert.ok(await store.create({ toolName: 'build_report', handlerVersion: 'legacy', args: {}, authMode: 'open' }));
+  await assert.rejects(store.create({ toolName: 'build_report', handlerVersion: 'unknown', args: {}, authMode: 'open' }), error => error.code === 'MCP_TASK_HANDLER_DISABLED');
+});
+
+test('namespace activation preserves other queues and fences transactions with older snapshots', postgresOnly, async t => {
+  const { pool, namespace, ownerKey, store } = await harness(t);
+  const { createMcpTaskAdmissionController } = await import('../task-admission.js');
+  const otherNamespace = namespace + "-'unupgraded";
+  const other = createPostgresMcpTaskStore({ pool, namespace: otherNamespace, ownerKey, ttlMs: 60_000 });
+  assert.ok(await create(other, 'alice'), 'an unupgraded namespace keeps its previous admission behavior');
+  const controller = createMcpTaskAdmissionController({ pool, namespace: otherNamespace });
+  assert.equal((await controller.status()).enforced, false);
+  await assert.rejects(controller.change('disable', 'build_report', '1'), /Initialize admission/);
+  const stale = await pool.connect();
+  try {
+    await stale.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+    assert.equal((await stale.query('SELECT namespace FROM gregale_mcp_task_admission_namespaces WHERE namespace = $1', [otherNamespace])).rows.length, 0);
+    await other.initialize({ admissionHandlers: [{ name: 'build_report', version: '2' }] });
+    assert.equal((await controller.status()).enforced, true);
+    await controller.change('disable', 'build_report', '1');
+    await assert.rejects(stale.query(`INSERT INTO gregale_mcp_tasks (namespace, task_id, owner_hash, tool_name, handler_version, arguments_encrypted, status, expires_at)
+      VALUES ($1, $2, $3, 'build_report', '1', $4, 'queued', clock_timestamp() + interval '1 minute')`, [otherNamespace, randomUUID(), randomBytes(32), Buffer.from('legacy')]), error => error.constraint === 'gregale_mcp_task_admission' || error.code === '40001');
+  } finally { await stale.query('ROLLBACK').catch(() => {}); stale.release(); }
+  await assert.rejects(create(other, 'alice'), error => error.code === 'MCP_TASK_HANDLER_DISABLED');
+  assert.ok(await create(store, 'alice'), 'disabling another namespace does not affect this queue');
+});
+
+test('admission status and administration fail closed when the enforcement trigger is disabled', postgresOnly, async t => {
+  const { pool, namespace } = await harness(t);
+  const { createMcpTaskAdmissionController } = await import('../task-admission.js');
+  const controller = createMcpTaskAdmissionController({ pool, namespace });
+  const trigger = `gregale_mcp_tasks_admission_${createHash('md5').update(namespace).digest('hex')}`;
+  await pool.query(`ALTER TABLE gregale_mcp_tasks DISABLE TRIGGER ${trigger}`);
+  assert.equal((await controller.status()).enforced, false);
+  await assert.rejects(controller.change('disable', 'build_report', '1'), /Initialize admission/);
+  await pool.query(`ALTER TABLE gregale_mcp_tasks ENABLE TRIGGER ${trigger}`);
+  assert.equal((await controller.status()).enforced, true);
 });

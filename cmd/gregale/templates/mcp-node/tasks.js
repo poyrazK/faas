@@ -369,7 +369,7 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
     async start() {
       if (stopping) throw new Error('A stopped Task runtime cannot be restarted');
       if (!closed) return;
-      await store.initialize();
+      await store.initialize({ admissionHandlers: Object.entries(handlers).map(([name, handler]) => ({ name, version: handler.version })) });
       closed = false;
       lastWorkerHeartbeat = -Infinity;
       if (workerEnabled) {
