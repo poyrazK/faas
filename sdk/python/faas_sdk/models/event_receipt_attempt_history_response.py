@@ -31,7 +31,7 @@ class EventReceiptAttemptHistoryResponse:
     """History is not backfilled and may be pruned; absence is not proof of no delivery."""
     attempts: list[InvocationAttemptResponse]
     next_after: str | Unset = UNSET
-    """Opaque cursor for the next page of older dispatch attempts for this captured recipient."""
+    """Opaque cursor for the next page of older dispatch attempts for this recipient."""
 
     def to_dict(self) -> dict[str, Any]:
         event_source = self.event_source

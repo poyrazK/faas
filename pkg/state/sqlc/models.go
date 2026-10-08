@@ -2383,6 +2383,7 @@ type EventFanoutRecipient struct {
 	CapacityDeferrals           int32
 	GenerationCapacityDeferrals int32
 	BackfillJobID               pgtype.UUID
+	ReceiptPosition             pgtype.Int8
 }
 
 type EventReplayJob struct {

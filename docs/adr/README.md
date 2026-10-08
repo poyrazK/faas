@@ -635,3 +635,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-617: Event consumer backlog inspection](617-event-consumer-backlog-inspection.md)
 - [ADR-645: Subscription-scoped retained-event replay preview](645-subscription-retained-event-replay-preview.md)
 - [ADR-639: Durable subscription event backfill](639-durable-subscription-event-backfill.md)
+- [ADR-646: Unified backfill delivery inspection](646-unified-backfill-delivery-inspection.md)
+- [ADR-647: Independent event routing by default](647-independent-event-routing-default.md)
+- [ADR-648: Independent workflow event routing](648-independent-workflow-event-routing.md)

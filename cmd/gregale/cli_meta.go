@@ -662,6 +662,12 @@ var cliCommands = []cliCommand{
 				{Name: "after", Short: "opaque next_after cursor for recipients or replays", Value: "CURSOR"},
 				{Name: "limit", Short: "max recipients or replays (1..200, default 100)", Value: "N"},
 			}},
+			{Name: "recover", Short: "Recover one event consumer using its current receipt action", Flags: []cliFlag{
+				{Name: "source", Short: "published event source", Req: true, Value: "SOURCE"},
+				{Name: "id", Short: "published event id", Req: true, Value: "ID"},
+				{Name: "subscription", Short: "captured recipient identifier", Req: true, Value: "SUB"},
+				{Name: "dry-run", Short: "show recovery availability and action without replaying", Bool: true},
+			}},
 			{Name: "attempts", Short: "Inspect retained handler attempts, including retries and replay", Flags: []cliFlag{
 				{Name: "source", Short: "published event source", Req: true, Value: "SOURCE"},
 				{Name: "id", Short: "published event id", Req: true, Value: "ID"},
