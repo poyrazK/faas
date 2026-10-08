@@ -157,7 +157,11 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			work.RecipientProgress[recipient.ID] = expired
 			continue
 		}
-		if previous.NextAttemptAt != nil && previous.NextAttemptAt.After(now) {
+		// Legacy receipts schedule default routing retries when the receipt is
+		// released. Only explicit policies and admission controls add an
+		// independent recipient wait within a claimed legacy receipt.
+		if previous.NextAttemptAt != nil && previous.NextAttemptAt.After(now) &&
+			(recipient.RoutingRetryPolicy != nil || previous.CapacityScope != "" || previous.DeliveryControlReason != "") {
 			routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
 			continue
 		}
