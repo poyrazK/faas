@@ -225,3 +225,59 @@ func (s *PgStore) ListLogEvents(ctx context.Context, filter LogEventFilter) ([]L
 	}
 	return events, hasMore, nil
 }
+
+// ListAccountTraceLogEvents returns the newest events for one exact trace id
+// across a set of the account's apps in one round trip. The equality on
+// trace_id keeps the read on log_events_app_trace_time_idx; the per-app
+// ListLogEvents form cannot, because its optional filters are written as
+// catch-all predicates.
+func (s *PgStore) ListAccountTraceLogEvents(ctx context.Context, filter AccountTraceLogFilter) ([]LogEvent, bool, error) {
+	normalized, err := normalizeAccountTraceLogFilter(filter)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(normalized.AppIDs) == 0 {
+		return nil, false, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		select id, occurred_at, account_id, app_id, deployment_id, instance_id,
+		       source, source_event_id, request_id, trace_id, route, method,
+		       status, level, stream, message, latency_ms, occurrences, cold_boot, fields
+		  from log_events
+		 where account_id = $1
+		   and app_id = any($2::uuid[])
+		   and trace_id = $3
+		   and ($4::text = '' or source = $4)
+		   and occurred_at >= $5
+		   and occurred_at < $6
+		 order by occurred_at desc, id desc
+		 limit $7`,
+		normalized.AccountID,
+		normalized.AppIDs,
+		normalized.TraceID,
+		string(normalized.Source),
+		normalized.Since,
+		normalized.Until,
+		normalized.Limit+1,
+	)
+	if err != nil {
+		return nil, false, mapErr(err)
+	}
+	defer rows.Close()
+	events := make([]LogEvent, 0, normalized.Limit+1)
+	for rows.Next() {
+		event, scanErr := scanLogEvent(rows)
+		if scanErr != nil {
+			return nil, false, scanErr
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, mapErr(err)
+	}
+	hasMore := len(events) > normalized.Limit
+	if hasMore {
+		events = events[:normalized.Limit]
+	}
+	return events, hasMore, nil
+}

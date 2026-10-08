@@ -195,6 +195,21 @@ func TestRestoreReseedBarrier(t *testing.T) {
 	}
 }
 
+// production-us hunt #6 (H5-57): a restored Node process faulting its heap
+// back answered after the original 250 ms budget on about 1 in 20 concurrent
+// restores, and every miss cold-booted the instance. A slow but live process
+// must pass the production budget.
+func TestRestoreReseedBudgetAdmitsASlowRestoredProcess(t *testing.T) {
+	b, sock := startTestBarrier(t)
+	slow := func(int) string { time.Sleep(400 * time.Millisecond); return "ok" }
+	(&scriptedClient{}).dial(t, sock, "hello node 1", func(int) string { return "ok" })
+	(&scriptedClient{}).dial(t, sock, "hello node 2", slow)
+	waitRegistered(t, b, 2)
+	if err := b.Reseed(RestoreReseedTimeout); err != nil {
+		t.Fatalf("Reseed with the production budget: %v", err)
+	}
+}
+
 func TestRestoreReseedNoncesAreFreshPerProcessAndRound(t *testing.T) {
 	b, sock := startTestBarrier(t)
 	a, c := &scriptedClient{}, &scriptedClient{}

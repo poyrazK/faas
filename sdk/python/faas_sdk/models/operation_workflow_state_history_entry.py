@@ -28,9 +28,9 @@ class OperationWorkflowStateHistoryEntry:
     occurred_at: datetime.datetime
     published_at: datetime.datetime
     from_state: str | Unset = UNSET
-    """Previous app state when a declared transition was reported."""
+    """App state immediately before this retained revision"""
     platform_tenant_id: UUID | Unset = UNSET
-    """Included only for account operator feeds."""
+    """Account-owner tenant identifier attached to this report in operator feeds."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

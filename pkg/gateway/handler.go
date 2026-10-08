@@ -2230,8 +2230,25 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 		// successful match is a successful apply (substitute ran).
 		h.metrics.ObserveEdgeRuleApply(rateLimitScopeRoute, "success")
 	}
+	// The target was resolved by slug, not looked up by host, so this
+	// gateway may never have hydrated its routing state. Without production
+	// deployment weights the picker found no target for any routed request,
+	// so each one woke a fresh target instance and still answered 503 "wake
+	// failed" until a direct request to the target warmed it (production-us
+	// hunt #7, H5-63).
+	if preparer, ok := h.backend.(RouteTargetPreparer); ok {
+		preparer.PrepareRouteTarget(r.Context(), target)
+	}
 	*app = target
 	return true
+}
+
+// RouteTargetPreparer is implemented by a backend that must hydrate an
+// app's routing state before its targets can be picked. Backend.Lookup does
+// that for a host it resolves; a kind=route substitution resolves its target
+// by slug and calls this instead.
+type RouteTargetPreparer interface {
+	PrepareRouteTarget(ctx context.Context, app App) bool
 }
 
 // routeRuleForHost picks the kind=route rule for the inbound host. The

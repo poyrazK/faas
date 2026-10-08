@@ -70,6 +70,11 @@ func (m *MemStore) GetRequestTelemetryByAppAndIdentifier(_ context.Context, _ sq
 	return sqlc.GetRequestTelemetryByAppAndIdentifierRow{}, errMemStoreRequestTelemetry
 }
 
+// ListRequestTelemetryByAccountTrace — MemStore stub. Postgres-only.
+func (m *MemStore) ListRequestTelemetryByAccountTrace(_ context.Context, _ sqlc.ListRequestTelemetryByAccountTraceParams) ([]sqlc.ListRequestTelemetryByAccountTraceRow, error) {
+	return nil, errMemStoreRequestTelemetry
+}
+
 // RequestTelemetryByDeployment (ADR-127 §Decision 1) — MemStore
 // stub. Postgres-only.
 func (m *MemStore) RequestTelemetryByDeployment(_ context.Context, _ sqlc.RequestTelemetryByDeploymentParams) ([]sqlc.RequestTelemetryByDeploymentRow, error) {

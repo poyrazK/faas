@@ -51,6 +51,7 @@ var orgSlugRe = regexp.MustCompile(api.OrgSlugPattern)
 // the customer sees the same `list|create|info|rm` + nested
 // namespacing across all three surfaces.
 func cmdOrgs(args []string) int {
+	parent, _ := lookupCliCommand("orgs")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale orgs <list|create|info|activity|update|rm|members|invitations|keys|transfer-ownership|seat-usage> [args]", "orgs")
 		return 1
@@ -90,8 +91,7 @@ func cmdOrgs(args []string) int {
 		// they're currently scoped to.
 		return cmdOrgsMe(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregale orgs: unknown subcommand %q\n", args[0])
-		return 1
+		return printUnknownSubcommand(os.Stderr, "orgs", parent, args[0])
 	}
 }
 

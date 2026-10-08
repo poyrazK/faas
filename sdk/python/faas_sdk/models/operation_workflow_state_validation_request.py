@@ -14,6 +14,8 @@ T = TypeVar("T", bound="OperationWorkflowStateValidationRequest")
 
 @_attrs_define
 class OperationWorkflowStateValidationRequest:
+    """Batch of application-reported workflow updates to validate before their transaction commits."""
+
     workflow_states: list[OperationWorkflowStateReport]
 
     def to_dict(self) -> dict[str, Any]:

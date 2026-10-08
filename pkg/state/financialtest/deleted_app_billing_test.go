@@ -60,9 +60,25 @@ func TestFinancialPostgresDeletedAppResidency(t *testing.T) {
 	if err != nil || len(members) != 1 || members[0].ID != app.ID || members[0].Status != state.AppDeleted {
 		t.Fatalf("retained billing membership: %+v, %v", members, err)
 	}
+	// A restarted sampler catches up closed minutes that were never recorded
+	// complete (H5-55): it may re-roll this one, but must not bill the deleted
+	// app anything new.
 	later := meter.NewSampler(store, nil, func() time.Time { return minute.Add(150 * time.Second) })
-	if rows, err := later.SampleAndRoll(ctx); err != nil || len(rows) != 0 {
-		t.Fatalf("deleted app acquired new floor usage: %+v, %v", rows, err)
+	laterRows, err := later.SampleAndRoll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range laterRows {
+		if !row.CatchUp || !row.Minute.Equal(minute) {
+			t.Fatalf("deleted app acquired new usage: %+v", row)
+		}
+	}
+	head, err = store.FinancialEvidenceHead(ctx, account.ID, start, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again := financialRowsWithContext(t, ctx, store, account.ID, head); len(again) != 1 || again[0].Evidence.Quantity != want {
+		t.Fatalf("catch-up re-billed the deleted app's closed minute: %v; want one row of %d MB-seconds", again, want)
 	}
 	members, err = store.ListDeletedAppsInBillingWindow(ctx, minute.Add(time.Minute), minute.Add(2*time.Minute))
 	if err != nil || len(members) != 0 {

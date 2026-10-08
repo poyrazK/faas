@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 
@@ -27,6 +28,9 @@ class ObjectSignRequest:
 
     method: ObjectSignRequestMethod
     key: str
+    version_id: UUID | Unset = UNSET
+    """GET/HEAD only. Exact owned immutable public version UUID. Mutable null and native provider selectors are
+    rejected. Omit for the current object."""
     expires_in: int | Unset = 300
     size_bytes: int | Unset = UNSET
     """Required for PUT; forbidden for GET."""
@@ -58,6 +62,10 @@ class ObjectSignRequest:
         method: str = self.method
 
         key = self.key
+
+        version_id: str | Unset = UNSET
+        if not isinstance(self.version_id, Unset):
+            version_id = str(self.version_id)
 
         expires_in = self.expires_in
 
@@ -97,6 +105,8 @@ class ObjectSignRequest:
                 "key": key,
             }
         )
+        if version_id is not UNSET:
+            field_dict["version_id"] = version_id
         if expires_in is not UNSET:
             field_dict["expires_in"] = expires_in
         if size_bytes is not UNSET:
@@ -133,6 +143,13 @@ class ObjectSignRequest:
         method = check_object_sign_request_method(d.pop("method"))
 
         key = d.pop("key")
+
+        _version_id = d.pop("version_id", UNSET)
+        version_id: UUID | Unset
+        if isinstance(_version_id, Unset):
+            version_id = UNSET
+        else:
+            version_id = UUID(_version_id)
 
         expires_in = d.pop("expires_in", UNSET)
 
@@ -179,6 +196,7 @@ class ObjectSignRequest:
         object_sign_request = cls(
             method=method,
             key=key,
+            version_id=version_id,
             expires_in=expires_in,
             size_bytes=size_bytes,
             content_type=content_type,
