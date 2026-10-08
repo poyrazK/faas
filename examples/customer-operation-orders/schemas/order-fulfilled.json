@@ -1,0 +1,1 @@
+{"type":"object","required":["order_id","workflow_run_id","status"],"properties":{"order_id":{"type":"string","format":"uuid"},"workflow_run_id":{"type":"string","format":"uuid"},"status":{"const":"fulfilled"}},"additionalProperties":false}

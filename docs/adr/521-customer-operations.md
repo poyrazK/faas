@@ -315,3 +315,22 @@ The Node runtime keeps typed execution context isolated to the delivered
 request and forwards workflow fields without an invocation header. These
 reporting seams remain internal; dispatch, aggregate progress, business
 settlement and explicit confirmed-step recovery still gate public admission.
+
+## Workflow progression ledger — 2026-10-08
+
+The private coordinator query seam can read a workflow's ordered step snapshot
+and first matching event, preserve a received-event wake across wait
+registration/parking, and compare-and-set step and attempt transitions against
+their prior state and exact attempt. Run settlement remains scoped to the
+operation association and an unsettled native run. Callers must hold the parent
+run lock and validate coordinator custody; these queries do not independently
+authorize a transition or wire the production coordinator loop.
+
+The additive `workflow_progress` event type is reserved for aggregate workflow
+progress. It remains separate from guest-reported business progress and does
+not consume the guest report budget. Native retry defaults are centralized in
+`pkg/api/limits.go`: one-second failed-wake delay, three attempts, retry shift
+of eight, and a five-minute backoff cap. Public workflow admission still waits
+for production loop wiring, aggregate progress projection, business
+settlement, explicit confirmed-step recovery, and native lifecycle
+qualification.

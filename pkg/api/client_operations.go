@@ -80,6 +80,12 @@ func (c *Client) GetPlatformTenantSelfOperation(ctx context.Context, id string) 
 func (c *Client) ListPlatformTenantSelfOperations(ctx context.Context, opts OperationListOptions) (OperationListResponse, error) {
 	var out OperationListResponse
 	query := url.Values{"app_id": {opts.AppID}, "scope": {opts.Scope}}
+	if opts.SubjectType != "" {
+		query.Set("subject_type", opts.SubjectType)
+	}
+	if opts.SubjectID != "" {
+		query.Set("subject_id", opts.SubjectID)
+	}
 	if opts.Name != "" {
 		query.Set("name", opts.Name)
 	}
@@ -202,6 +208,12 @@ func (c *Client) ListAccountOperations(ctx context.Context, slug string, opts Op
 	if opts.TenantID != "" {
 		query.Set("tenant_id", opts.TenantID)
 	}
+	if opts.SubjectType != "" {
+		query.Set("subject_type", opts.SubjectType)
+	}
+	if opts.SubjectID != "" {
+		query.Set("subject_id", opts.SubjectID)
+	}
 	if opts.Name != "" {
 		query.Set("name", opts.Name)
 	}
@@ -264,5 +276,85 @@ func (c *Client) GetOperationDeliveryAttempts(ctx context.Context, slug, id stri
 func (c *Client) RetryOperationDeliveryWithReceipt(ctx context.Context, slug, id string, req OperationDeliveryRetryRequest) (OperationDeliveryRetryResponse, error) {
 	var out OperationDeliveryRetryResponse
 	err := c.do(ctx, http.MethodPost, operationAppPath(slug, id)+"/delivery-retries", req, &out)
+	return out, err
+}
+
+// ReportOperationMilestone publishes a fact already committed by the application.
+func (c *Client) ReportOperationMilestone(ctx context.Context, id string, proof OperationRuntimeProof, req OperationMilestoneRequest) (OperationMilestone, error) {
+	var out OperationMilestone
+	err := c.doWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/milestones", req, &out, proof.headers())
+	return out, err
+}
+
+func (c *Client) ValidateOperationMilestones(ctx context.Context, id string, proof OperationRuntimeProof, req OperationMilestoneValidationRequest) (OperationMilestoneValidationResponse, error) {
+	var out OperationMilestoneValidationResponse
+	err := c.doWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/milestones/validate", req, &out, proof.headers())
+	return out, err
+}
+
+func (c *Client) ReportOperationWorkflowState(ctx context.Context, id string, proof OperationRuntimeProof, req OperationWorkflowStateReport) (OperationWorkflowStateReportResponse, error) {
+	var out OperationWorkflowStateReportResponse
+	err := c.doWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/workflow-states", req, &out, proof.headers())
+	return out, err
+}
+
+func (c *Client) ValidateOperationWorkflowStates(ctx context.Context, id string, proof OperationRuntimeProof, req OperationWorkflowStateValidationRequest) (OperationWorkflowStateValidationResponse, error) {
+	var out OperationWorkflowStateValidationResponse
+	err := c.doWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/workflow-states/validate", req, &out, proof.headers())
+	return out, err
+}
+
+func operationMilestoneQuery(opts OperationMilestoneListOptions, reference, customer bool) string {
+	query := url.Values{}
+	if opts.Limit != 0 {
+		query.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if opts.Cursor != "" {
+		query.Set("cursor", opts.Cursor)
+	}
+	if opts.Workflow != "" || opts.WorkflowInstanceID != "" {
+		query.Set("workflow", opts.Workflow)
+		query.Set("workflow_instance_id", opts.WorkflowInstanceID)
+	}
+	if opts.WorkflowStateCursor != "" {
+		query.Set("workflow_state_cursor", opts.WorkflowStateCursor)
+	}
+	if reference {
+		if opts.WorkflowStaleOnly {
+			query.Set("stale_only", "true")
+		}
+		query.Set("scope", opts.Scope)
+		query.Set("subject_type", opts.SubjectType)
+		query.Set("subject_id", opts.SubjectID)
+		if customer {
+			query.Set("app_id", opts.AppID)
+		} else if opts.TenantID != "" {
+			query.Set("tenant_id", opts.TenantID)
+		}
+	}
+	return "?" + query.Encode()
+}
+
+func (c *Client) GetAccountOperationMilestones(ctx context.Context, slug, id string, opts OperationMilestoneListOptions) (OperationMilestonesResponse, error) {
+	var out OperationMilestonesResponse
+	err := c.do(ctx, http.MethodGet, operationAppPath(slug, id)+"/milestones"+operationMilestoneQuery(opts, false, false), nil, &out)
+	return out, err
+}
+
+func (c *Client) GetPlatformTenantSelfOperationMilestones(ctx context.Context, id string, opts OperationMilestoneListOptions) (OperationMilestonesResponse, error) {
+	var out OperationMilestonesResponse
+	err := c.do(ctx, http.MethodGet, operationSelfPath(id)+"/milestones"+operationMilestoneQuery(opts, false, true), nil, &out)
+	return out, err
+}
+
+func (c *Client) ListAccountBusinessMilestones(ctx context.Context, slug string, opts OperationMilestoneListOptions) (OperationMilestonesResponse, error) {
+	var out OperationMilestonesResponse
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/operation-milestones"+operationMilestoneQuery(opts, true, false), nil, &out)
+	return out, err
+}
+
+func (c *Client) ListPlatformTenantSelfBusinessMilestones(ctx context.Context, opts OperationMilestoneListOptions) (OperationMilestonesResponse, error) {
+	var out OperationMilestonesResponse
+	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/customer-operation-milestones"+operationMilestoneQuery(opts, true, true), nil, &out)
 	return out, err
 }

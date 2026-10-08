@@ -746,7 +746,7 @@ func cmdAppScale(slug string, args []string) int {
 	// plan_require_authn_not_allowed, which surfaces as a "Scale failed"
 	// error with the API's problem code.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
-	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL")
+	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement; a bearer-protected public URL opens, an IP allowlist, basic auth or internal_only setting stays")
 	headWakes := fs.Bool("head-wakes", false, "wake a parked app for HEAD / instead of using the cached edge answer")
 	crawlerPolicy := fs.String("crawler-policy", "", "known monitor/crawler policy: wake|cached|block")
 	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
@@ -874,7 +874,18 @@ func cmdAppScale(slug string, args []string) int {
 	if explicit["no-require-authn"] {
 		v := false
 		req.RequireAuthn = &v
-		req.PublicAuth = &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
+		client, err := authedClient()
+		if err != nil {
+			return printErr("Not logged in", err)
+		}
+		current, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(context.Background(), slug)
+		if err != nil {
+			return printErr("Could not fetch app", err)
+		}
+		req.PublicAuth = openPublicAuthAfterTokenRemoval(current)
+		if req.PublicAuth == nil {
+			fmt.Fprintf(os.Stderr, "Public URL access stays %s; use `gregale app %s --public-auth open` to remove it.\n", current.PublicAuth.Mode, slug)
+		}
 	}
 	if explicit["head-wakes"] {
 		v := *headWakes

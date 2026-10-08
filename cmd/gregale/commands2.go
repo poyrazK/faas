@@ -279,7 +279,7 @@ func cmdApp(args []string) int {
 	// surfaces here as an "Update failed" error with the API's
 	// problem code.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
-	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL unless --public-auth is also set")
+	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement; a bearer-protected public URL opens, an IP allowlist, basic auth or internal_only setting stays")
 	// Published app policy controls (issue #2723). Positive/negative flag
 	// pairs preserve PATCH tri-state semantics: an omitted pair leaves the
 	// stored setting untouched, while either member sends one explicit bool.
@@ -530,7 +530,14 @@ func cmdApp(args []string) int {
 		// public URL returning 401, despite this flag promising a public
 		// app. Keep an explicitly selected --public-auth mode authoritative.
 		if !explicit["public-auth"] {
-			req.PublicAuth = &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
+			current, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(ctx, slug)
+			if err != nil {
+				return printErr("Could not fetch app", err)
+			}
+			req.PublicAuth = openPublicAuthAfterTokenRemoval(current)
+			if req.PublicAuth == nil && current.PublicAuth.Mode != api.AppPublicAuthModeOpen {
+				fmt.Fprintf(os.Stderr, "Public URL access stays %s; pass --public-auth open to remove it.\n", current.PublicAuth.Mode)
+			}
 		}
 	}
 	if explicit["maintenance"] {
@@ -905,6 +912,9 @@ func cmdApp(args []string) int {
 		return jsonOut(writeJSON(updated))
 	}
 	PrintOK(osStdout, "Updated")
+	if hint := requireAuthnStillOnHint(req, updated); hint != "" {
+		fmt.Fprintln(os.Stderr, hint)
+	}
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure: the customer just updated an app
 		// successfully, don't surface an unrelated auth/network blip
@@ -1264,6 +1274,31 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 	return configureExistingApp(ctx, client, existing, req, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
 }
 
+// openPublicAuthAfterTokenRemoval is the public_auth change implied by
+// --no-require-authn. Paid plans default public_auth to bearer, so dropping
+// only the token requirement would leave the URL answering 401; that default
+// opens. An access control the owner chose (ip_allowlist, basic,
+// internal_only) stays: resetting it opened IP-restricted apps to everyone
+// (production-us hunt #5, H5-37).
+// requireAuthnStillOnHint explains why opening the public URL did not open
+// the app: require_authn (on by default for new apps) is a separate gate
+// that still answers 401 without a Gregale bearer token (hunt #6, H5-58).
+func requireAuthnStillOnHint(req api.UpdateAppRequest, updated api.AppResponse) string {
+	if req.PublicAuth == nil || req.PublicAuth.Mode != api.AppPublicAuthModeOpen || !updated.RequireAuthn {
+		return ""
+	}
+	return "Requests still need a Gregale bearer token: require_authn is on. Pass --no-require-authn to make the app public."
+}
+
+func openPublicAuthAfterTokenRemoval(current api.AppResponse) *api.PublicAuthBlock {
+	switch current.PublicAuth.Mode {
+	case "", api.AppPublicAuthModeBearer:
+		return &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
+	default:
+		return nil
+	}
+}
+
 func configureExistingApp(ctx context.Context, client *Client, existing api.AppResponse, req api.CreateAppRequest, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock) error {
 	requestedType := req.Type
 	if requestedType == "" {
@@ -1276,6 +1311,9 @@ func configureExistingApp(ctx context.Context, client *Client, existing api.AppR
 	if requireAuthnPtr == nil && req.PlatformTenantRequired == nil && appProtocolPtr == nil && publicAuthPtr == nil && req.ResourceProfile == "" &&
 		req.ExecutionMode == "" && req.RestartPolicy == "" && req.StartupDeadlineS == 0 && req.MaxRetries == 0 && req.ServiceReplicas == nil {
 		return nil
+	}
+	if requireAuthnPtr != nil && !*requireAuthnPtr && publicAuthPtr != nil && publicAuthPtr.Mode == api.AppPublicAuthModeOpen {
+		publicAuthPtr = openPublicAuthAfterTokenRemoval(existing)
 	}
 	upd := api.UpdateAppRequest{RequireAuthn: requireAuthnPtr, PlatformTenantRequired: req.PlatformTenantRequired, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr}
 	if req.ExecutionMode != "" {
@@ -2270,7 +2308,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// gate through `gregale deploy --require-authn` or `gregale
 	// app <slug> --require-authn`.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
-	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL")
+	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement; a bearer-protected public URL opens, an IP allowlist, basic auth or internal_only setting stays")
 	platformTenantRequired := fs.Bool("platform-tenant-required", false, "require verified platform tenant identity on app traffic")
 	noPlatformTenantRequired := fs.Bool("no-platform-tenant-required", false, "allow app traffic without platform tenant identity")
 	// ADR-124: per-app wire-protocol selector (PATCH path).
@@ -2389,6 +2427,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// source I/O; this prevents a stray token from bypassing --dry-run or
 	// changing the target app.
 	if fs.NArg() != 0 {
+		// Every other command names the app with --app <slug>; here --app is
+		// the shape selector, so `deploy --app my-app` left the slug behind as
+		// a positional (production-us hunt #5, H5-26). Point at --name.
+		if explicitAppFlag(fs) && !strings.HasPrefix(fs.Arg(0), "-") {
+			return printErr("Invalid arguments", fmt.Errorf(
+				"gregale deploy names the app with --name; --app only selects the app shape. Did you mean `gregale deploy --name %s`?",
+				fs.Arg(0)))
+		}
 		return printErr("Invalid arguments", fmt.Errorf(
 			"gregale deploy accepts flags only; unexpected positional arguments: %s",
 			strings.Join(fs.Args(), " ")))
@@ -4704,6 +4750,13 @@ func mergeLeadingSlug(app *string, slug string) error {
 	}
 	*app = slug
 	return nil
+}
+
+// explicitAppFlag reports whether --app was passed to a flag set.
+func explicitAppFlag(fs *flag.FlagSet) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == "app" })
+	return set
 }
 
 // cmdTraffic dispatches the implemented traffic leaves.

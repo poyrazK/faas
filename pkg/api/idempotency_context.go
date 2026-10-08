@@ -10,10 +10,9 @@ import (
 type idempotencyKeyContextKey struct{}
 
 // ContextWithIdempotencyKey returns a child context whose key is used for the
-// next mutating SDK request. The value is request-scoped metadata: callers
-// should derive separate keys when a workflow contains more than one
-// mutation, because apid's replay cache is account-scoped rather than
-// path-scoped.
+// next mutating SDK request. The value is request-scoped metadata. Use a
+// distinct key for each logical operation on the same route; realtime channel
+// publish keys are bound to the decoded message payload and binary flag.
 //
 // An empty key clears an inherited value. This is useful when a caller shares
 // a parent context between a deploy mutation and unrelated setup calls.

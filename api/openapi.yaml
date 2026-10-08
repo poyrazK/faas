@@ -3714,8 +3714,9 @@ paths:
       summary: Inspect acceptance, routing, and execution for one event.
       description: |
         Requires apps:read or admin. Reads the retained account/source/id receipt
-        and a bounded page of immutable acceptance-time recipients. Routing
-        counts cover the entire snapshot, including recipients without invocations.
+        and a bounded page of captured and backfilled recipients. recipient_count
+        and routing_summary cover the immutable acceptance snapshot; separate
+        backfill counts cover added consumers, including those without invocations.
         Enqueued routing does not imply handler success: keyed cancellation can
         produce a cancellation receipt instead. The original deterministic
         invocation is shown when retained; trusted generic replay lineage adds
@@ -3724,7 +3725,9 @@ paths:
         when present. Recovery actions require their existing
         write scopes and are revalidated when called. Legacy receipts without
         snapshots report snapshot_captured=false and cannot reconstruct recipients.
-        Pages follow acceptance order while outcomes may change between requests.
+        Pages follow acceptance order then append-only backfill positions, which
+        survive job pruning. Inspection order does not imply delivery order;
+        outcomes may change between requests.
       security: [{ bearerAuth: [] }]
       parameters:
         - { name: source, in: query, required: true, description: Published event source paired with the required ID for this receipt lookup., schema: { type: string, minLength: 1, maxLength: 256 } }
@@ -3748,7 +3751,7 @@ paths:
     get:
       tags: [events]
       operationId: getEventReceiptReplays
-      summary: Inspect retained handler replay history for one captured recipient.
+      summary: Inspect retained handler replay history for one captured or backfilled recipient.
       description: |
         Requires apps:read or admin. Returns generic invocation replays linked by
         ledger-owned parent/root identity, newest first by created_at and ID.
@@ -3783,7 +3786,7 @@ paths:
     get:
       tags: [events]
       operationId: getEventReceiptAttempts
-      summary: Inspect retained handler delivery attempts for one captured recipient.
+      summary: Inspect retained handler delivery attempts for one captured or backfilled recipient.
       description: |
         Requires apps:read or admin. Includes the original async invocation and
         trusted child replays, ordered by descending attempt history ID. Each
@@ -3794,7 +3797,7 @@ paths:
         Closed attempts expire after at most 30 days, earlier when result retention
         expires or their invocation is deleted. Running attempts are not pruned.
         Missing history does not establish that no delivery occurred. Unknown or
-        foreign receipts, captured recipients and current app owners return 404.
+        foreign receipts, recipients and current app owners return 404.
         Cursors bind account, source, event ID, recipient and retained receipt;
         stale or mismatched cursors return 400. New claims do not reorder older
         pages; a running outcome may settle between reads.
@@ -7623,6 +7626,230 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/milestones:
+    get:
+      tags: [operations]
+      operationId: getAccountOperationMilestones
+      summary: Read retained business milestones for an account-owned Operation.
+      description: Requires account read scope and MFA. The app and Operation bind ownership; customer credentials cannot access this operator feed.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationMilestoneLimit'
+      - $ref: '#/components/parameters/OperationMilestoneCursor'
+      responses:
+        '200':
+          description: Account app Operation facts with retained page continuation.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationMilestonesResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/OperationGone'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/platform-tenant-self/customer-operations/{id}/milestones:
+    get:
+      tags: [operations]
+      operationId: getPlatformTenantSelfOperationMilestones
+      summary: Read this customer's retained Operation milestones.
+      description: Requires platform_tenant:operations:read. The authenticated customer must own the Operation. Retention follows business results, independently of generic event history.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationMilestoneLimit'
+      - $ref: '#/components/parameters/OperationMilestoneCursor'
+      responses:
+        '200':
+          description: Authenticated customer Operation facts and page continuation.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationMilestonesResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/OperationGone'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/operation-milestones:
+    get:
+      tags: [operations]
+      operationId: listAccountBusinessMilestones
+      summary: Read a business entity timeline across related Operations.
+      description: Requires account read scope and MFA. Explicit app/environment/reference selectors and optional customer selection remain within account ownership. Paired workflow and workflow-instance selectors narrow the feed to one run. Facts are ordered by first platform publication time, not inferred business causality.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - $ref: '#/components/parameters/OperationMilestoneSubjectType'
+      - $ref: '#/components/parameters/OperationMilestoneSubjectID'
+      - $ref: '#/components/parameters/OperationMilestoneWorkflow'
+      - $ref: '#/components/parameters/OperationMilestoneWorkflowInstanceID'
+      - $ref: '#/components/parameters/OperationMilestoneTenantID'
+      - $ref: '#/components/parameters/OperationMilestoneLimit'
+      - $ref: '#/components/parameters/OperationMilestoneCursor'
+      - $ref: '#/components/parameters/OperationWorkflowStateCursor'
+      - $ref: '#/components/parameters/OperationWorkflowStaleOnly'
+      responses:
+        '200':
+          description: Account environment business-reference milestone feed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationMilestonesResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/OperationGone'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/platform-tenant-self/customer-operation-milestones:
+    get:
+      tags: [operations]
+      operationId: listPlatformTenantSelfBusinessMilestones
+      summary: Read a business entity timeline for the authenticated customer.
+      description: Requires platform_tenant:operations:read. Identity comes only from credentials. The app, environment, and paired public reference select related retained work. Paired workflow and workflow-instance selectors narrow the feed to one run. Opaque pagination binds all selectors; other customers with the same entity ID remain isolated.
+      parameters:
+      - $ref: '#/components/parameters/OperationMilestoneAppID'
+      - $ref: '#/components/parameters/OperationMilestoneScope'
+      - $ref: '#/components/parameters/OperationMilestoneSubjectType'
+      - $ref: '#/components/parameters/OperationMilestoneSubjectID'
+      - $ref: '#/components/parameters/OperationMilestoneWorkflow'
+      - $ref: '#/components/parameters/OperationMilestoneWorkflowInstanceID'
+      - $ref: '#/components/parameters/OperationMilestoneLimit'
+      - $ref: '#/components/parameters/OperationMilestoneCursor'
+      - $ref: '#/components/parameters/OperationWorkflowStateCursor'
+      - $ref: '#/components/parameters/OperationWorkflowStaleOnly'
+      responses:
+        '200':
+          description: Authenticated customer business-reference milestone feed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationMilestonesResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/OperationGone'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/operations/{id}/milestones:
+    post:
+      tags: [operations]
+      operationId: reportOperationMilestone
+      summary: Publish a committed public business milestone.
+      description: Requires a current workload assertion and invocation attempt/capability. Validates the pinned schema, then deduplicates by logical Operation and milestone ID across recovery. Identical retries return the original fact; changed identity content conflicts. Publication never changes business completion or delivery state.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXFaasInvocationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationMilestoneRequest'}
+      responses:
+        '200':
+          description: Committed business fact published or its original acknowledgement replayed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationMilestone'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/OperationConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/operations/{id}/milestones/validate:
+    post:
+      tags: [operations]
+      operationId: validateOperationMilestones
+      summary: Validate public milestones before the application transaction commits.
+      description: Requires the active workload and invocation claim. This bounded, read-only check validates pinned declarations, payload schemas, duplicate identity and remaining milestone capacity. Failure allows the SDK to roll back business writes; success does not publish or reserve capacity.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXFaasInvocationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationMilestoneValidationRequest'}
+      responses:
+        '200':
+          description: Submitted milestone contracts validated under the current execution claim.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationMilestoneValidationResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/OperationConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/operations/{id}/workflow-states:
+    post:
+      tags: [operations]
+      operationId: reportOperationWorkflowState
+      summary: Publish an app-reported business workflow state.
+      description: Requires the current workload and invocation claim. The state name must be declared by the pinned workflow definition. Revisions assigned inside the application transaction prevent late older publications from replacing a newer state.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXFaasInvocationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationWorkflowStateReport'}
+      responses:
+        '200':
+          description: State update accepted idempotently, even when a newer revision is already current.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowStateReportResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/OperationConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/operations/{id}/workflow-states/validate:
+    post:
+      tags: [operations]
+      operationId: validateOperationWorkflowStates
+      summary: Validate app-reported workflow states before transaction commit.
+      description: Requires the active workload and invocation claim. Validates the declared workflow/state vocabulary, business reference, instance ID and positive transaction-assigned revisions without publishing or reserving capacity.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXFaasInvocationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationWorkflowStateValidationRequest'}
+      responses:
+        '200':
+          description: All candidate state updates passed validation under the current execution claim.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowStateValidationResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/OperationConflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/runtime/operations/{id}/progress:
     post:
       tags:
@@ -12029,6 +12256,36 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/RouteMonitorReport' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-monitor/preview:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: previewRouteMonitor
+      summary: Evaluate proposed route budgets against recent production traffic without saving them.
+      description: "Read-only evaluation of proposed absolute budgets against the two latest closed UTC minute windows for the sole fully serving default-scope deployment. Requires app read access and completed MFA. Uses the deployment and rollout observation anchors, but not the saved monitor update anchor, because the proposal has not been saved. If the proposal groups by customer, customer IDs are redacted by default. Saving changed configuration resets its observation anchor, so this preview is current evidence and not a prediction of the first post-save report. Violated and unknown findings return 200; no configuration, incident or traffic state is changed. Body limit is 16 KiB."
+      parameters:
+        - name: customer_details
+          in: query
+          description: Explicitly include observed tenant or consumer UUIDs when customer_group_by is selected. Defaults to false.
+          schema: { type: boolean, default: false }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PreviewRouteMonitorRequest' }
+      responses:
+        '200':
+          description: Read-only evaluation of the proposed budgets and saved revision used for comparison.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteMonitorPreview' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -23834,7 +24091,36 @@ paths:
     post:
       tags: [realtime]
       operationId: publishManagedRealtimeChannel
-      summary: Publish a message to subscribed live connections.
+      summary: Publish a message to live or resumable channel subscribers.
+      description: >-
+        delivery=live (the default) fans out to live raw-frame subscribers.
+        delivery=retained is preview-only and requires
+        FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid; it accepts at most
+        4096 decoded bytes and requires an Idempotency-Key. Retained delivery
+        commits the message to the ordered channel log before fan-out and
+        returns its sequence. V2 subscribers read the committed log in sequence;
+        a best-effort wake reduces latency while bounded polling recovers missed
+        wakes. The retained log remains authoritative if live fan-out is
+        incomplete. The resume protocol separately requires
+        FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on realtimed.
+
+        A supplied Idempotency-Key binds the publish to delivery mode, decoded
+        payload and binary flag for 24 hours. Replays return the original
+        response and do not retry recipients that missed a partial publish.
+        Reusing a key with a different mode or payload returns 409. An in-flight
+        or uncertain reservation also returns 409 and is not run again while
+        the key is active. Queue admission does not confirm client receipt.
+      parameters:
+        - name: delivery
+          in: query
+          required: false
+          description: Use retained to commit a sequenced message before live fan-out; this is preview-only and requires an Idempotency-Key.
+          schema: { type: string, enum: [live, retained], default: live }
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Stable printable-ASCII key for retrying this publish; reuse it only with the same delivery mode, payload, and binary flag.
+          schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[!-~]{1,128}$' }
       requestBody:
         required: true
         content:
@@ -23842,14 +24128,19 @@ paths:
             schema: { $ref: '#/components/schemas/ManagedRealtimeMessageRequest' }
       responses:
         '200':
-          description: Queued recipients and whether every active realtime node accepted the publish.
+          description: Per-recipient queue outcomes; retained publishes also include the committed channel sequence.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ManagedRealtimePublishResponse' }
+          headers:
+            Idempotent-Replayed:
+              description: Present with value true when this response replays a prior result for the supplied key.
+              schema: { type: string, enum: ['true'] }
         '400': { $ref: '#/components/responses/RealtimeInvalid' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
@@ -24112,6 +24403,85 @@ paths:
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '504': { $ref: '#/components/responses/LongPollTimeout' }
+
+  /v1/apps/{slug}/entities/invoke:
+    post:
+      tags: [invocations]
+      operationId: invokeDurableEntity
+      summary: Invoke an object-storage-backed entity in the operator preview.
+      description: |
+        Disabled unless the operator configures a private bucket and explicitly
+        enables this app. Account authentication, deploy-write scopes and MFA
+        apply. A selected customer must belong to the account and be active;
+        customer self-service tokens are not accepted on this surface.
+        Entity identity includes the app, immutable environment identity,
+        optional verified customer, namespace and key. The deployed handler
+        receives state at POST /__gregale/entities and returns data, result and
+        an optional alarm_at. Handlers must compute transitions without external
+        side effects. Alarm delivery requires a separate operator opt-in and
+        private delimiter listing. Due alarms use the same scheduler path with
+        event=alarm. Clearing or replacing the deadline invalidates stale work;
+        a failed handler leaves the alarm due. Attempts may repeat, while state,
+        the alarm receipt and its next deadline publish atomically. Alarm timing
+        depends on bounded entity sweeps and has no production latency guarantee.
+        State and replay receipts commit in object storage; the existing SQL
+        invocation ledger is used only to schedule and observe guest execution.
+        Keep request_id and exact payload bytes for retries, including after an
+        uncertain response. HTTP Idempotency-Key does not identify entity work.
+        Request IDs starting with __gregale_alarm/ are reserved for delivery.
+        Replays return the original result and version without executing code.
+        Calls have a 25 second budget. Owners expire after at most five minutes.
+        An immutable receipt index preserves original results without a receipt
+        count ceiling. Encoded snapshots and individual receipts remain bounded
+        to 1 MiB. Operator cleanup can reclaim superseded snapshots and index
+        nodes after a fenced generation barrier; it never expires replay receipts.
+        An explicit operator per-entity byte cap can limit the current snapshot
+        and its reachable immutable receipts/index/archive. It excludes metadata,
+        abandoned uploads and provider history; it is not a plan billing quota.
+        Over-cap new work returns 409 durable_entity_storage_limit with limit and
+        observed projected bytes. Existing receipts replay at capacity. Legacy
+        entities under a cap return 503 durable_entity_inventory_pending for new
+        work until bounded verified accounting completes. Handler computation
+        can run before quota rejection. Entity deletion is not available yet.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DurableEntityInvokeRequest' }
+      responses:
+        '200':
+          description: Committed or replayed entity result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityInvokeResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanFeatureGated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Request identity conflict, object budget or committed storage cap exceeded, or deployment unavailable. Storage limits include limit and observed projected bytes.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/PlanSourceBytes' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: Handler failed without publishing entity state.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Preview disabled, owner busy, legacy accounting pending, storage unavailable or commit outcome uncertain; retry the same request identity.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Request budget elapsed; retry the same request identity and payload.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/invoke/async:
     post:
@@ -25284,8 +25654,10 @@ paths:
       operationId: replayEventFanoutFailure
       summary: Retry one terminal event recipient routing failure.
       description: |
-        Requeues only the named failed recipient from the immutable recipient
-        snapshot captured when the event was accepted. Other recipients and
+        Requeues only the named failed recipient captured at acceptance or
+        added by a retained historical backfill. Backfill failures must be
+        retryable and have a running or completed-with-failures job; reopening
+        a completed job observes active-job limits. Other recipients and
         their outcomes are left untouched. With independent recipient routing,
         a terminal recipient can be replayed while siblings are active and gets
         a fresh routing retry budget. Legacy receipts must settle first.
@@ -29687,6 +30059,14 @@ paths:
         description: Business state filter.
         required: false
         schema: {type: string, enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation]}
+      - name: subject_type
+        description: Business reference type for this account-owned app. Requires subject_id; supply both selectors together.
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+      - name: subject_id
+        description: Exact public entity identifier within the account app and environment. Requires subject_type. Maximum 256 UTF-8 bytes; ASCII controls are rejected.
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 256, pattern: '^[^\x00-\x1f\x7f]+$'}
       - in: query
         name: limit
         description: Number of account-owned operation summaries to include.
@@ -30250,6 +30630,14 @@ paths:
         description: Stable operation name across definition revisions.
         in: query
         schema: {type: string, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+      - name: subject_type
+        description: Exact business reference type. Requires subject_id; both must be supplied together.
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+      - name: subject_id
+        description: Exact business reference ID, within the authenticated owner/app/environment. Requires subject_type. Maximum 256 UTF-8 bytes; ASCII controls are rejected.
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 256, pattern: '^[^\x00-\x1f\x7f]+$'}
       - name: state
         description: Current business state filter, independent of delivery.
         in: query
@@ -30559,6 +30947,65 @@ components:
       schema:
         type: string
         pattern: ^[0-9a-f]{64}$
+    OperationMilestoneLimit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      description: Maximum retained public facts in a milestone page.
+    OperationMilestoneCursor:
+      name: cursor
+      in: query
+      schema: {type: string, minLength: 1, maxLength: 512}
+      description: Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+    OperationWorkflowStateCursor:
+      name: workflow_state_cursor
+      in: query
+      schema: {type: string, minLength: 1, maxLength: 512}
+      description: Independent continuation for retained state changes. Requires the paired workflow and workflow_instance_id selectors.
+    OperationWorkflowStaleOnly:
+      name: stale_only
+      in: query
+      schema: {type: boolean, default: false}
+      description: When true, return only current workflow states that have passed an app-declared state_stale_after threshold. Applies only to workflow_states; milestone facts and state history are unchanged.
+    OperationMilestoneScope:
+      name: scope
+      in: query
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
+      description: Explicit environment containing the related business Operations.
+    OperationMilestoneSubjectType:
+      name: subject_type
+      in: query
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+      description: Business reference type for a timeline spanning related Operations.
+    OperationMilestoneSubjectID:
+      name: subject_id
+      in: query
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 256, pattern: '^[^\x00-\x1f\x7f]+$'}
+      description: Exact public business identifier for this timeline; maximum 256 UTF-8 bytes.
+    OperationMilestoneWorkflow:
+      name: workflow
+      in: query
+      schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+      description: Optional workflow name. Supply with workflow_instance_id to read one workflow instance.
+    OperationMilestoneWorkflowInstanceID:
+      name: workflow_instance_id
+      in: query
+      schema: {type: string, minLength: 1, maxLength: 256, pattern: '^[^\x00-\x1f\x7f]+$'}
+      description: Optional app-provided workflow instance ID. Supply with workflow; the pair is bound into pagination.
+    OperationMilestoneAppID:
+      name: app_id
+      in: query
+      required: true
+      schema: {type: string, format: uuid}
+      description: App selected within the authenticated customer's milestone feed.
+    OperationMilestoneTenantID:
+      name: tenant_id
+      in: query
+      schema: {type: string, format: uuid}
+      description: Optional account-owned customer selector on an operator milestone timeline.
     OperationDeploymentId:
       name: deployment_id
       in: path
@@ -30894,6 +31341,221 @@ components:
         result:
           description: Required typed output for succeeded.
 
+    OperationMilestoneRequest:
+      type: object
+      additionalProperties: false
+      required: [id, name, payload, occurred_at]
+      description: Public application fact with a stable UUID reused across retries and recovery. Payloads are validated against the immutable definition; publication does not change business outcome.
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        payload:
+          description: Declared JSON payload, bounded to 8192 UTF-8 bytes before and after canonicalization. The application chooses customer-visible data.
+        occurred_at: {type: string, format: date-time, description: Application-recorded time. Normalized to UTC microsecond precision; independent of platform receipt time.}
+    OperationMilestoneValidationRequest:
+      type: object
+      additionalProperties: false
+      required: [milestones]
+      description: Bounded read-only precommit validation; does not reserve capacity, extend the claim, or publish facts. Maximum request size 65536 bytes.
+      properties:
+        milestones: {type: array, minItems: 1, maxItems: 64, items: {$ref: '#/components/schemas/OperationMilestoneRequest'}}
+    OperationMilestoneValidationResponse:
+      description: Confirmation that all candidate facts passed validation under the current execution claim.
+      type: object
+      additionalProperties: false
+      required: [valid]
+      properties:
+        valid: {type: boolean, description: True when the batch satisfies the current execution fence and immutable schemas.}
+    OperationMilestone:
+      type: object
+      additionalProperties: false
+      required: [id, operation_id, name, payload, occurred_at, created_at, sequence]
+      description: Retained public business fact. Deduplicated by Operation and milestone ID across execution generations, retained with the Operation, and attributed to its immutable business reference.
+      properties:
+        workflow_steps:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/OperationWorkflowStep'}
+          description: App-declared workflow labels matched to this retained milestone; only observed steps are included.
+        id: {type: string, format: uuid}
+        operation_id: {type: string, format: uuid}
+        platform_tenant_id: {type: string, format: uuid, description: Only account operator feeds include this customer identity.}
+        subject: {$ref: '#/components/schemas/OperationSubject'}
+        name: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        payload:
+          description: Retained, schema-validated public JSON fact. Read through the existing customer or account ownership boundary.
+        occurred_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time, description: First platform publication time; determines descending timeline order.}
+        sequence: {type: integer, minimum: 1, description: Corresponding Operation event sequence. The general event stream contains a notice; this ledger retains the payload.}
+    OperationWorkflowStep:
+      description: App-declared read-only workflow step represented by an observed milestone. New declarations select the instance ID from the validated public milestone payload using the pinned JSON Pointer.
+      type: object
+      additionalProperties: false
+      required: [workflow, title, step, label, milestone, position]
+      properties:
+        workflow: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+        title: {type: string, minLength: 1, maxLength: 128}
+        states:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+          description: App-declared business state vocabulary pinned with this workflow mapping.
+        terminal_states:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+          description: App-declared terminal states, which must be in states and cannot have outgoing transitions.
+        state_stale_after_seconds:
+          type: object
+          maxProperties: 32
+          propertyNames: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+          additionalProperties: {type: integer, minimum: 1, maximum: 315360000}
+          description: App-declared age thresholds in seconds for active states. Keys must be states and cannot be terminal states.
+        transitions:
+          type: array
+          maxItems: 128
+          items: {$ref: '#/components/schemas/OperationWorkflowTransition'}
+          description: App-declared allowed state edges pinned with this workflow mapping.
+        step: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+        label: {type: string, minLength: 1, maxLength: 128}
+        milestone: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        instance_id_from: {type: string, minLength: 1, maxLength: 2048, description: JSON Pointer to a stable workflow-run ID in this milestone's payload; omitted by older pinned definitions.}
+        instance_id: {type: string, minLength: 1, maxLength: 256, description: App-provided workflow-run ID selected from this observed milestone.}
+        position: {type: integer, minimum: 1, maximum: 32}
+    OperationWorkflowTransition:
+      description: Allowed state edge declared by a pinned application workflow definition.
+      type: object
+      additionalProperties: false
+      required: [from, to]
+      properties:
+        from: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+        to: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+    OperationMilestonesResponse:
+      description: Page of retained public milestone facts in the selected ownership and business-reference boundary.
+      type: object
+      required: [milestones]
+      properties:
+        milestones: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationMilestone'}}
+        workflow_states:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/OperationWorkflowState'}
+          description: Latest explicitly reported states for recent workflow instances under this business reference. With stale_only=true, this list contains only states past their app-declared age threshold. Milestone facts and state history are unaffected. This list is empty on Operation-specific feeds.
+        workflow_state_history:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/OperationWorkflowStateHistoryEntry'}
+          description: Retained app-reported changes for the exact workflow run when paired workflow selectors are supplied, ordered by app-assigned revision.
+        next_cursor: {type: string, description: Opaque continuation bound to the same account, customer, app, environment, reference or Operation, and feed role.}
+        next_workflow_state_cursor: {type: string, description: 'Independent continuation for workflow_state_history, bound to the same run and ownership filters.'}
+    OperationWorkflowStateReport:
+      type: object
+      additionalProperties: false
+      required: [id, workflow, instance_id, state, revision, occurred_at]
+      description: Idempotent app-reported state update already committed with the business write. Revision is assigned transactionally by the application SDK.
+      properties:
+        id: {type: string, format: uuid}
+        workflow: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
+        instance_id: {type: string, minLength: 1, maxLength: 256, pattern: '^[^\\x00-\\x1f\\x7f]+$'}
+        from_state: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: Current app database state before the requested declared transition. Required when the pinned workflow declares transitions.}
+        state: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+        revision: {type: integer, format: int64, minimum: 1}
+        occurred_at: {type: string, format: date-time}
+    OperationWorkflowStateValidationRequest:
+      description: Batch of application-reported workflow updates to validate before their transaction commits.
+      type: object
+      additionalProperties: false
+      required: [workflow_states]
+      properties:
+        workflow_states: {type: array, minItems: 1, maxItems: 64, items: {$ref: '#/components/schemas/OperationWorkflowStateReport'}}
+    OperationWorkflowStateValidationResponse:
+      description: Validation outcome for an app-reported workflow-state batch.
+      type: object
+      additionalProperties: false
+      required: [valid]
+      properties:
+        valid: {type: boolean}
+    OperationWorkflowStateReportResponse:
+      description: Acknowledgement returned after the platform records an app-reported workflow-state update.
+      type: object
+      additionalProperties: false
+      required: [id, operation_id, workflow, instance_id, state, revision]
+      properties:
+        id: {type: string, format: uuid}
+        operation_id: {type: string, format: uuid}
+        workflow: {type: string}
+        instance_id: {type: string}
+        from_state: {type: string, description: Previous app state when a declared transition was reported.}
+        state: {type: string}
+        revision: {type: integer, format: int64, minimum: 1}
+    OperationWorkflowState:
+      description: Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
+      type: object
+      additionalProperties: false
+      required: [workflow, instance_id, state, terminal, stale, occurred_at, revision, updated_at]
+      properties:
+        workflow: {type: string}
+        instance_id: {type: string}
+        state: {type: string}
+        terminal: {type: boolean, description: True when the state is listed in terminal_states on the pinned workflow definition that reported it.}
+        stale: {type: boolean, description: True when the app-reported occurrence time plus the pinned state_stale_after threshold is at or before the read time.}
+        occurred_at: {type: string, format: date-time, description: App-reported time when the current state became true; used for stale-state age.}
+        stale_after_seconds: {type: integer, minimum: 1, maximum: 315360000, description: App-declared age threshold for the current state when one is configured.}
+        revision: {type: integer, format: int64, minimum: 1}
+        updated_at: {type: string, format: date-time}
+        platform_tenant_id: {type: string, format: uuid, description: Included only for account operator feeds.}
+    OperationWorkflowStateHistoryEntry:
+      type: object
+      additionalProperties: false
+      required: [id, operation_id, workflow, instance_id, state, revision, occurred_at, published_at]
+      description: One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
+      properties:
+        id: {type: string, format: uuid}
+        operation_id: {type: string, format: uuid}
+        workflow: {type: string}
+        instance_id: {type: string}
+        from_state: {type: string, description: App state immediately before this retained revision, when the transition was declared.}
+        state: {type: string}
+        revision: {type: integer, format: int64, minimum: 1}
+        occurred_at: {type: string, format: date-time}
+        published_at: {type: string, format: date-time}
+        platform_tenant_id: {type: string, format: uuid, description: Account-owner tenant identifier attached to this report in operator feeds.}
+    OperationSubjectSpec:
+      description: Optional public business reference extracted once from validated input on new admission. This metadata does not authorize access to the business entity.
+      type: object
+      additionalProperties: false
+      required: [type, id_from]
+      properties:
+        type:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9-]{0,63}$'
+        id_from:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          pattern: '^/([^~\x00-\x1f\x7f]|~[01])*$'
+          description: JSON Pointer into input. The selected value must be a nonempty string; array indices use canonical decimal notation. Maximum 2048 UTF-8 bytes; ASCII controls are rejected.
+    OperationSubject:
+      description: Immutable public business correlation metadata. Captured at admission and preserved through recovery and redeploy. Never an ownership or authorization claim.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9-]{0,63}$'
+        id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^[^\x00-\x1f\x7f]+$'
+          description: Opaque application identifier, compared exactly. Maximum 256 UTF-8 bytes; ASCII controls are rejected. Use a public stable ID appropriate for customer-visible history.
     OperationDefinitionSpec:
       description: >-
         Resolved immutable contract for one HTTP handler. Ownership comes from verified authentication,
@@ -30909,6 +31571,18 @@ components:
       - output_schema
       - progress_stages
       properties:
+        milestones:
+          type: object
+          maxProperties: 16
+          additionalProperties: {}
+          description: Declared public milestone names mapped to bundled JSON Schemas. Requires http_transaction_version 1. At most 16 names, with an aggregate 16384 schema bytes.
+        workflow_steps:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/OperationWorkflowStep'}
+          description: Materialized workflow step mappings included in this compact definition view.
+        subject:
+          $ref: '#/components/schemas/OperationSubjectSpec'
         name:
           type: string
           maxLength: 64
@@ -30944,6 +31618,13 @@ components:
           - reconcile_on_unknown
           - safe_retry
           default: reconcile_on_unknown
+        http_transaction_version:
+          description: >-
+            Opt into the internal customer Operation PostgreSQL receipt protocol.
+            Version 1 saves and replays the full JSON business result; it does not
+            negotiate managed operation envelopes or named effects.
+          type: integer
+          enum: [1]
     OperationDefinitionResponse:
       description: Definition identity, content revision and deployment pins.
       type: object
@@ -30994,6 +31675,22 @@ components:
       - progress_stages
       - created_at
       properties:
+        milestones:
+          type: array
+          maxItems: 16
+          items: {type: string, maxLength: 64}
+          description: Declared milestone names; schema documents are available on the full definition.
+        workflow_steps:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/OperationWorkflowStep'}
+          description: Resolved app-declared read-only workflow steps mapped to this definition's transaction-backed milestones.
+        subject:
+          $ref: '#/components/schemas/OperationSubjectSpec'
+        http_transaction_version:
+          type: integer
+          enum: [1]
+          description: Opt-in customer-owned HTTP transaction protocol. Absence means ordinary HTTP execution.
         id:
           type: string
           format: uuid
@@ -31276,6 +31973,8 @@ components:
       - updated_at
       - expires_at
       properties:
+        subject:
+          $ref: '#/components/schemas/OperationSubject'
         id:
           type: string
           format: uuid
@@ -31334,6 +32033,8 @@ components:
       - updated_at
       - expires_at
       properties:
+        subject:
+          $ref: '#/components/schemas/OperationSubject'
         platform_tenant_id:
           type: string
           format: uuid
@@ -32621,6 +33322,14 @@ components:
         customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Optional request-time identity dimension. Omission disables per-cohort evaluation."}
         expected_revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
+    PreviewRouteMonitorRequest:
+      type: object
+      description: Proposed route monitor intent evaluated against recent production observations without being saved.
+      additionalProperties: false
+      required: [routes]
+      properties:
+        customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Optional request-time identity dimension for per-cohort evaluation."}
+        routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "minItems": 1, "maxItems": 20}
     RouteMonitorWindow:
       type: object
       description: "Observed weighted counts and independently evaluated absolute budgets in a closed window."
@@ -32665,6 +33374,15 @@ components:
         minimum_latency_requests: {"type": "integer", "format": "int64"}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorFinding"}, "maxItems": 20}
         customers: {"$ref": "#/components/schemas/RouteMonitorCustomerReport"}
+    RouteMonitorPreview:
+      type: object
+      description: Read-only proposed-budget evaluation. config_change_resets_observation_anchor is true when saving the proposal would change monitor intent and start a fresh observation anchor; unchanged intent preserves its current anchor.
+      required: [current_revision, preview_only, config_change_resets_observation_anchor, report]
+      properties:
+        current_revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
+        preview_only: {"type": "boolean", "const": true}
+        config_change_resets_observation_anchor: {"type": "boolean"}
+        report: {"$ref": "#/components/schemas/RouteMonitorReport"}
     RouteMonitorCustomerWindow:
       type: object
       description: Request-time identity attribution totals for one monitored window. These are observed telemetry counts, not unique people or billing data.
@@ -32733,7 +33451,7 @@ components:
         diagnostics: {"$ref": "#/components/schemas/RouteHealthLatencyDiagnostics", "description": "Candidate describes the monitored deployment. Stable is empty; dependency groups are one-sided with no delta. Percentiles are separate retained populations and are not additive or proof of cause."}
     RouteMonitorEvidence:
       type: object
-      description: "One violated route and selected signal captured in the opening evaluation. Customer-only violations are scoped to the affected request-time identity. At most three route/signal entries are saved; aggregate violations precede customer-scoped entries."
+      description: "One violated route and selected signal captured at incident opening or escalation. Customer-only opening violations are scoped to the affected request-time identity; escalation evidence is aggregate and contains no customer identity."
       required: [method, path, signal, windows]
       properties:
         customer_group_by: {"type": "string", "enum": ["tenant", "consumer"]}
@@ -32742,9 +33460,18 @@ components:
         path: {"type": "string", "minLength": 1, "maxLength": 240}
         signal: {"type": "string", "enum": ["errors", "latency"]}
         windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorEvidenceWindow"}, "minItems": 2, "maxItems": 2}
+    RouteMonitorDeploymentBaseline:
+      type: object
+      description: "The last different fully serving deployment with a healthy route-monitor report before this incident opened. Provenance values are sanitized declared metadata and do not attest to deployment archive bytes."
+      required: [deployment_id]
+      properties:
+        deployment_id: {"type": "string", "format": "uuid"}
+        commit_sha: {"type": "string", "pattern": "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"}
+        repository: {"type": "string", "pattern": "^github.com/[a-z0-9._-]+/[a-z0-9._-]+$"}
+        source_root: {"type": "string", "maxLength": 256}
     RouteMonitorIncident:
       type: object
-      description: "Saved opening evidence, optional comparable recovery report and explicit incident lifecycle. Opening evidence stays fixed even when telemetry expires."
+      description: "Saved opening evidence, the previous healthy deployment when known, bounded route-impact timeline, transition-linked escalation evidence, optional comparable recovery report and explicit incident lifecycle. Opening evidence stays fixed even when telemetry expires. Timeline entries contain aggregate customer counts only and preserve the opening baseline plus the newest evaluations."
       required: [version, id, app_id, deployment_id, revision, status, opened_at, opening_report, evidence, evidence_truncated]
       properties:
         version: {"type": "integer", "minimum": 1, "maximum": 1}
@@ -32755,10 +33482,57 @@ components:
         status: {"type": "string", "enum": ["open", "recovered", "superseded"]}
         opened_at: {"type": "string", "format": "date-time"}
         closed_at: {"type": "string", "format": "date-time"}
+        baseline: {"$ref": "#/components/schemas/RouteMonitorDeploymentBaseline", "description": "Saved last-known healthy deployment. Absent for legacy incidents or when no different prior healthy deployment is available."}
         opening_report: {"$ref": "#/components/schemas/RouteMonitorReport"}
         recovery_report: {"$ref": "#/components/schemas/RouteMonitorReport"}
         evidence: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorEvidence"}, "maxItems": 3}
         evidence_truncated: {"type": "boolean"}
+        timeline: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorIncidentTimelineEntry"}, "maxItems": 60, "description": "Opening baseline and up to 59 most recent confirmed evaluations. Route indexes refer to opening_report.routes."}
+        timeline_truncated: {"type": "boolean", "description": "True when older evaluations were dropped to preserve the opening baseline and bounded incident size."}
+        escalations: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorIncidentEscalation"}, "maxItems": 20, "description": "Newest newly violated route/signal transitions with bounded evidence captured at each transition."}
+        escalations_truncated: {"type": "boolean", "description": "True when older escalation records were dropped to preserve the newest transition details and incident size."}
+    RouteMonitorIncidentTimelineEntry:
+      type: object
+      description: "One confirmed production monitor evaluation. It contains no customer identifiers or request details."
+      required: [checked_at, coverage, status, reason, routes]
+      properties:
+        checked_at: {"type": "string", "format": "date-time"}
+        coverage: {"type": "string", "enum": ["observed_only"]}
+        status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        reason: {"type": "string"}
+        customer_impact: {"$ref": "#/components/schemas/RouteMonitorCustomerImpact"}
+        routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorIncidentTimelineRoute"}, "maxItems": 20}
+    RouteMonitorIncidentTimelineRoute:
+      type: object
+      description: "Status for one route in the incident's fixed opening selector order."
+      required: [route_index, status, error_status, latency_status]
+      properties:
+        route_index: {"type": "integer", "minimum": 0, "maximum": 19}
+        status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        error_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        latency_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
+        customer_impact: {"$ref": "#/components/schemas/RouteMonitorCustomerImpact"}
+    RouteMonitorIncidentEscalationSignal:
+      type: object
+      description: "A route/signal that changed from non-violated to violated. Route indexes refer to opening_report.routes."
+      required: [route_index, signal, finding]
+      properties:
+        route_index: {"type": "integer", "minimum": 0, "maximum": 19}
+        signal: {"type": "string", "enum": ["errors", "latency"]}
+        finding: {"$ref": "#/components/schemas/RouteMonitorFinding"}
+    RouteMonitorIncidentEscalation:
+      type: object
+      description: "One stable route-monitor escalation transition. It preserves the newly violated signals and up to three fresh aggregate request/latency diagnostic entries; no customer identifiers are included."
+      required: [transition_id, checked_at, previous_checked_at, newly_violated_routes, newly_violated_signals, signals, evidence, evidence_truncated]
+      properties:
+        transition_id: {"type": "string", "format": "uuid", "description": "Same stable identifier as the corresponding routes.monitor.escalated outbox event."}
+        checked_at: {"type": "string", "format": "date-time"}
+        previous_checked_at: {"type": "string", "format": "date-time"}
+        newly_violated_routes: {"type": "integer", "minimum": 1, "maximum": 20}
+        newly_violated_signals: {"type": "integer", "minimum": 1, "maximum": 40}
+        signals: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorIncidentEscalationSignal"}, "minItems": 1, "maxItems": 40}
+        evidence: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorEvidence"}, "maxItems": 3}
+        evidence_truncated: {"type": "boolean", "description": "True when more signals changed than the three-entry evidence cap, or incident-size compaction removed evidence."}
     RouteMonitorIncidentPage:
       type: object
       description: "Bounded owned incident history ordered by opening time and UUID descending."
@@ -32769,18 +33543,28 @@ components:
         next_before: {"type": "string", "format": "uuid"}
     RouteMonitorWebhookPayload:
       type: object
-      description: "Transition metadata and optional aggregate customer-impact counts with an authenticated saved incident path. Excludes customer IDs and request data."
+      description: "Incident lifecycle or escalation metadata and optional aggregate customer-impact counts with an authenticated saved incident path. Excludes customer IDs and request data."
       required: [version, app_id, deployment_id, incident_id, revision, status, checked_at, incident_path]
       properties:
         version: {"type": "integer", "minimum": 1, "maximum": 1}
         app_id: {"type": "string", "format": "uuid"}
         deployment_id: {"type": "string", "format": "uuid"}
         incident_id: {"type": "string", "format": "uuid"}
+        transition_id: {"type": "string", "format": "uuid", "description": "Stable identifier for one escalation transition; omitted for incident open and recovery events."}
         revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
         status: {"type": "string", "enum": ["open", "recovered"]}
         checked_at: {"type": "string", "format": "date-time"}
         incident_path: {"type": "string"}
         customer_impact: {"$ref": "#/components/schemas/RouteMonitorCustomerImpact"}
+        escalation: {"$ref": "#/components/schemas/RouteMonitorWebhookEscalation"}
+    RouteMonitorWebhookEscalation:
+      type: object
+      description: "Counts newly violated route and signal budgets since the prior incident evaluation."
+      required: [previous_checked_at, newly_violated_routes, newly_violated_signals]
+      properties:
+        previous_checked_at: {"type": "string", "format": "date-time"}
+        newly_violated_routes: {"type": "integer", "minimum": 1, "maximum": 20}
+        newly_violated_signals: {"type": "integer", "minimum": 1, "maximum": 40}
     RouteMonitorCustomerImpact:
       type: object
       description: Aggregate observed request-time identity counts; never includes customer IDs.
@@ -32790,6 +33574,7 @@ components:
         coverage: {"type": "string", "enum": ["observed_only"]}
         observed_customers: {"type": "integer", "format": "int64", "minimum": 0}
         violated_customers: {"type": "integer", "format": "int64", "minimum": 0}
+        unknown_customers: {"type": "integer", "format": "int64", "minimum": 0, "description": "Distinct observed cohorts whose status cannot be established from retained evidence."}
     RouteHealthRoute:
       type: object
       description: Exact normalized telemetry operation selected for canary error checks and optional latency checks.
@@ -43800,6 +44585,8 @@ components:
         details_truncated: { type: boolean, description: Whether the failure code or routing diagnostic was clipped. }
         retryable: { type: boolean }
         updated_at: { type: string, format: date-time }
+        receipt_url: { type: string, format: uri-reference, description: Account-authenticated receipt inspection; omitted after the original receipt expires. }
+        attempt_history_url: { type: string, format: uri-reference, description: Handler attempt history for this consumer; omitted when retained delivery provenance or current app ownership is unavailable. }
     EventReplayBackfillItemsResponse:
       description: Stable acceptance-ordered page of per-envelope outcomes for one backfill job.
       type: object
@@ -44011,7 +44798,7 @@ components:
         retained_bytes: { type: integer, format: int64, minimum: 0, description: Logical detail bytes including a fixed per-row allowance; excludes physical storage and indexes. }
 
     EventReceiptResponse:
-      description: Acceptance and routing evidence with a bounded recipient page; execution is a separate lifecycle.
+      description: Acceptance and routing evidence with a bounded page of captured and backfilled consumers; execution is a separate lifecycle.
       type: object
       additionalProperties: false
       required: [event_id, event_source, event_type, accepted_at, snapshot_captured, routing_mode, recipient_count, routing_summary, recipients]
@@ -44031,18 +44818,26 @@ components:
           description: Counts across all captured recipients by current routing checkpoint state.
           type: object
           additionalProperties: { type: integer, minimum: 0 }
+        backfill_recipient_count: { type: integer, minimum: 0, description: Additional backfilled consumers across all pages; excluded from recipient_count. }
+        backfill_routing_summary:
+          description: Counts across added backfill consumers, separate from the immutable acceptance snapshot.
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
         recipients:
           type: array
           maxItems: 200
           items: { $ref: '#/components/schemas/EventReceiptRecipientResponse' }
-        next_after: { type: string, description: Opaque cursor for the next acceptance-ordered recipient page. }
+        next_after: { type: string, description: Opaque cursor for captured recipients followed by append-only backfill additions. Delivery order is not guaranteed. }
 
     EventReceiptRecipientResponse:
-      description: One captured recipient with independent routing, original execution or cancellation evidence, and retained generic replay recovery.
+      description: One captured or backfilled recipient with independent routing, original execution or cancellation evidence, and retained generic replay recovery.
       type: object
       additionalProperties: false
       required: [subscription_id, app_id, routing, recovery_actions]
       properties:
+        origin: { type: string, enum: [acceptance, backfill], description: Captured at acceptance or added by a historical backfill. }
+        backfill_job_id: { type: string, format: uuid, description: Originating backfill job while its metadata is retained. }
+        backfill_job_url: { type: string, format: uri-reference, description: Account-authenticated backfill job inspection while the job and current target are available. }
         subscription_id: { type: string, description: Immutable captured subscription or notification identifier. }
         workflow_name: { type: string, description: Published workflow captured as an event recipient. }
         workflow_run_id: { type: string, format: uuid, description: Durable run id after event-trigger admission. }
@@ -44111,7 +44906,7 @@ components:
       properties:
         retained_replay_count: { type: integer, format: int64, minimum: 1 }
         latest_replay: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
-        history_url: { type: string, format: uri-reference, description: Account-authenticated paginated replay history for this captured recipient. }
+        history_url: { type: string, format: uri-reference, description: Account-authenticated paginated replay history for this recipient. }
 
     EventReceiptReplayHistoryResponse:
       description: A page of retained generic replay executions for one captured event consumer.
@@ -44159,7 +44954,7 @@ components:
         attempts:
           type: array
           items: { $ref: '#/components/schemas/InvocationAttemptResponse' }
-        next_after: { type: string, description: Opaque cursor for the next page of older dispatch attempts for this captured recipient. }
+        next_after: { type: string, description: Opaque cursor for the next page of older dispatch attempts for this recipient. }
 
     EventReceiptCancellationResponse:
       description: Durable work-policy cancel_pending operation receipt, which creates no handler invocation.
@@ -53506,6 +54301,28 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         status_url: { type: string, example: "/v1/invocations/0123456789abcdef0123456789abcdef" }
 
+    DurableEntityInvokeRequest:
+      description: "Preview entity invocation; request_id and payload identify durable retries."
+      type: object
+      additionalProperties: false
+      required: [namespace, key, request_id, payload]
+      properties:
+        namespace: { type: string, minLength: 1, maxLength: 256 }
+        key: { type: string, minLength: 1, maxLength: 256 }
+        request_id: { type: string, minLength: 1, maxLength: 256 }
+        payload: { description: "JSON payload; replay fingerprints the exact decoded JSON bytes." }
+        environment: { type: string, description: "Registered project environment; defaults to production. Standalone apps use their default scope." }
+        platform_tenant_id: { type: string, format: uuid, description: "Optional active customer owned by the authenticated account." }
+
+    DurableEntityInvokeResponse:
+      description: "The acknowledged entity result. Replay returns the original value and version."
+      type: object
+      required: [value, version, replayed]
+      properties:
+        value: { description: "JSON result from the committed transition." }
+        version: { type: integer, minimum: 1, description: "Committed transition version, or original version on replay." }
+        replayed: { type: boolean, description: "True when an existing receipt supplied the result." }
+
     InvokeResponse:
       description: "Sync-invoke result. Status is the drain-driven terminal state (`completed` | `failed` | `cancelled`). Result is the handler response. Error contains the terminal delivery error when status is failed."
       type: object
@@ -56703,7 +57520,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered", "workflow.finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -57015,13 +57832,18 @@ components:
 
     ManagedRealtimePublishResponse:
       type: object
-      description: Result of publishing a message to an endpoint-scoped channel.
+      description: Per-recipient queue outcome for publishing to an endpoint-scoped channel. Queue admission does not imply client receipt; retained publishes include their durable channel sequence.
       required: [queued]
       properties:
-        queued: { type: integer, minimum: 0, description: Number of local owner queues that accepted the message. }
-        partial: { type: boolean, description: Whether one or more active realtime nodes did not accept the publish. }
+        queued: { type: integer, minimum: 0, description: Number of live subscriber output queues or retained-resume wake-ups that accepted delivery work. }
+        subscribers: { type: integer, minimum: 0, description: Live and resumable subscribers targeted across reachable nodes. }
+        queue_full: { type: integer, minimum: 0, description: Subscribers whose bounded output queues were full. }
+        failed: { type: integer, minimum: 0, description: Target subscribers that could not be queued for another per-connection reason. }
+        partial: { type: boolean, description: Whether a node or any target subscriber did not accept the publish. }
         nodes_queried: { type: integer, minimum: 0, description: Active realtime nodes that accepted the publish request. }
         nodes_unavailable: { type: integer, minimum: 0, description: Active realtime nodes that did not accept the publish request. }
+        sequence: { type: integer, format: int64, minimum: 1, description: Committed channel sequence; present when durable is true. }
+        durable: { type: boolean, description: Whether this publish was committed to retained channel history before fan-out. }
 
     ManagedRealtimeRetainedMessageRequest:
       type: object
@@ -57186,7 +58008,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered", "workflow.finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -57267,7 +58089,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered", "workflow.finished"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

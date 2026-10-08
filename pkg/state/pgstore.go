@@ -4130,7 +4130,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 	}
 	row := queryer.QueryRow(ctx, upd,
 		id,
-		p.RAMMB, p.SetIdleTimeout, intOrZero(p.IdleTimeoutS),
+		p.RAMMB, p.SetIdleTimeout, nullableInt(intOrZero(p.IdleTimeoutS)),
 		p.MaxConcurrency, nullAppStatus(p.Status),
 		p.Manifest != nil, manifestBytes,
 		p.SetMinInstances, intOrZero(p.MinInstances),
@@ -22196,6 +22196,75 @@ func (s *PgStore) GetIdempotent(ctx context.Context, accountID, key string) (int
 	return status, body, nil
 }
 
+// ReserveManagedRealtimePublish atomically claims a publish key and binds it
+// to its request fingerprint. Unlike the general idempotency reservation, an
+// in-flight publish is not taken over early because the live delivery result
+// may be unknown after a control-plane crash.
+func (s *PgStore) ReserveManagedRealtimePublish(ctx context.Context, accountID, key string, requestDigest []byte) (ManagedRealtimePublishReservation, error) {
+	if len(requestDigest) != 32 {
+		return ManagedRealtimePublishReservation{}, errors.New("state: managed realtime publish digest must be SHA-256")
+	}
+	var reserved bool
+	err := s.pool.QueryRow(ctx,
+		`insert into idempotency_keys (key, account_id, response_status, response_body, request_digest)
+		 values ($1, $2, 0, ''::bytea, $3)
+		 on conflict (account_id, key) do update
+		    set response_status = 0, response_body = ''::bytea,
+		        request_digest = excluded.request_digest, created_at = now()
+		  where idempotency_keys.created_at <= now() - interval '24 hours'
+		 returning true`,
+		key, accountID, requestDigest).Scan(&reserved)
+	if err == nil {
+		return ManagedRealtimePublishReservation{Reserved: true}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return ManagedRealtimePublishReservation{}, err
+	}
+	var reservation ManagedRealtimePublishReservation
+	var storedDigest []byte
+	err = s.pool.QueryRow(ctx,
+		`select response_status, response_body, request_digest from idempotency_keys
+		 where account_id = $1 and key = $2`, accountID, key).
+		Scan(&reservation.Status, &reservation.Body, &storedDigest)
+	if err != nil {
+		return ManagedRealtimePublishReservation{}, err
+	}
+	if len(storedDigest) != len(requestDigest) || subtle.ConstantTimeCompare(storedDigest, requestDigest) != 1 {
+		return ManagedRealtimePublishReservation{Conflict: true}, nil
+	}
+	reservation.InFlight = reservation.Status == 0
+	return reservation, nil
+}
+
+// ReapManagedRealtimePublishIdempotency deletes expired realtime publish
+// receipts in a bounded oldest-first batch. SKIP LOCKED lets apid replicas
+// sweep concurrently without waiting on each other's reservations.
+func (s *PgStore) ReapManagedRealtimePublishIdempotency(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx,
+		`with expired as (
+		   select account_id, key
+		     from idempotency_keys
+		    where request_digest is not null
+		      and created_at <= now() - interval '24 hours'
+		    order by created_at
+		    limit $1
+		    for update skip locked
+		 )
+		 delete from idempotency_keys as receipts
+		 using expired
+		 where receipts.account_id = expired.account_id
+		   and receipts.key = expired.key`,
+		limit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (s *PgStore) PutIdempotent(ctx context.Context, accountID, key string, status int, body []byte) error {
 	_, err := s.pool.Exec(ctx,
 		`insert into idempotency_keys (key, account_id, response_status, response_body)
@@ -22219,7 +22288,7 @@ func (s *PgStore) ReserveIdempotent(ctx context.Context, accountID, key string, 
 		`insert into idempotency_keys (key, account_id, response_status, response_body)
 		 values ($1, $2, 0, ''::bytea)
 		 on conflict (account_id, key) do update
-		    set response_status = 0, response_body = ''::bytea, created_at = now()
+		    set response_status = 0, response_body = ''::bytea, request_digest = NULL, created_at = now()
 		  where idempotency_keys.created_at <= now() - interval '24 hours'
 		     or (idempotency_keys.response_status = 0
 		         and idempotency_keys.created_at <= now() - make_interval(secs => $3))

@@ -101,21 +101,32 @@ type RouteMonitorConfig = api.RouteMonitorConfig
 
 type SetRouteMonitorRequest = api.SetRouteMonitorRequest
 
+type PreviewRouteMonitorRequest = api.PreviewRouteMonitorRequest
+
 type RouteMonitorWindow = api.RouteMonitorWindow
 
 type RouteMonitorFinding = api.RouteMonitorFinding
 
 type RouteMonitorReport = api.RouteMonitorReport
 
+type RouteMonitorPreview = api.RouteMonitorPreview
+
 type RouteMonitorEvidenceWindow = api.RouteMonitorEvidenceWindow
 
 type RouteMonitorEvidence = api.RouteMonitorEvidence
+
+type RouteMonitorIncidentTimelineRoute = api.RouteMonitorIncidentTimelineRoute
+type RouteMonitorIncidentTimelineEntry = api.RouteMonitorIncidentTimelineEntry
+type RouteMonitorIncidentEscalationSignal = api.RouteMonitorIncidentEscalationSignal
+type RouteMonitorIncidentEscalation = api.RouteMonitorIncidentEscalation
+type RouteMonitorDeploymentBaseline = api.RouteMonitorDeploymentBaseline
 
 type RouteMonitorIncident = api.RouteMonitorIncident
 
 type RouteMonitorIncidentPage = api.RouteMonitorIncidentPage
 
 type RouteMonitorWebhookPayload = api.RouteMonitorWebhookPayload
+type RouteMonitorWebhookEscalation = api.RouteMonitorWebhookEscalation
 
 type RouteMonitorReadOptions = api.RouteMonitorReadOptions
 

@@ -106,7 +106,7 @@ def sync_detailed(
     after: str | Unset = UNSET,
     limit: int | Unset = 100,
 ) -> Response[EventReceiptReplayHistoryResponse | Problem]:
-    """Inspect retained handler replay history for one captured recipient.
+    """Inspect retained handler replay history for one captured or backfilled recipient.
 
      Requires apps:read or admin. Returns generic invocation replays linked by
     ledger-owned parent/root identity, newest first by created_at and ID.
@@ -157,7 +157,7 @@ def sync(
     after: str | Unset = UNSET,
     limit: int | Unset = 100,
 ) -> EventReceiptReplayHistoryResponse | Problem | None:
-    """Inspect retained handler replay history for one captured recipient.
+    """Inspect retained handler replay history for one captured or backfilled recipient.
 
      Requires apps:read or admin. Returns generic invocation replays linked by
     ledger-owned parent/root identity, newest first by created_at and ID.
@@ -203,7 +203,7 @@ async def asyncio_detailed(
     after: str | Unset = UNSET,
     limit: int | Unset = 100,
 ) -> Response[EventReceiptReplayHistoryResponse | Problem]:
-    """Inspect retained handler replay history for one captured recipient.
+    """Inspect retained handler replay history for one captured or backfilled recipient.
 
      Requires apps:read or admin. Returns generic invocation replays linked by
     ledger-owned parent/root identity, newest first by created_at and ID.
@@ -252,7 +252,7 @@ async def asyncio(
     after: str | Unset = UNSET,
     limit: int | Unset = 100,
 ) -> EventReceiptReplayHistoryResponse | Problem | None:
-    """Inspect retained handler replay history for one captured recipient.
+    """Inspect retained handler replay history for one captured or backfilled recipient.
 
      Requires apps:read or admin. Returns generic invocation replays linked by
     ledger-owned parent/root identity, newest first by created_at and ID.

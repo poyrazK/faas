@@ -549,8 +549,9 @@ func timeOrZero(value *time.Time) time.Time {
 }
 
 type messageRequest struct {
-	DataBase64 string `json:"data_base64"`
-	Binary     bool   `json:"binary"`
+	DataBase64       string `json:"data_base64"`
+	Binary           bool   `json:"binary"`
+	RetainedSequence int64  `json:"retained_sequence,omitempty"`
 }
 
 type closeRequest struct {
@@ -716,12 +717,21 @@ func (m *Manager) handleEndpointRoute(w http.ResponseWriter, r *http.Request, pa
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		queued, err := m.Publish(r.Context(), parts[0], channel, message)
+		if request.RetainedSequence < 0 {
+			http.Error(w, "invalid retained sequence", http.StatusBadRequest)
+			return
+		}
+		var status PublishStatus
+		if request.RetainedSequence > 0 {
+			status, err = m.PublishRetainedWithStatus(r.Context(), parts[0], channel, message, request.RetainedSequence)
+		} else {
+			status, err = m.PublishWithStatus(r.Context(), parts[0], channel, message)
+		}
 		if err != nil {
 			writeOperationError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]int{"queued": queued})
+		writeJSON(w, http.StatusOK, status)
 		return
 	}
 	http.NotFound(w, r)

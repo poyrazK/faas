@@ -42,15 +42,32 @@ execution contract:
 - Completion notification and named business effects can share webhook
   transport while retaining their independent authorization and delivery
   policies. Retrying delivery does not regenerate a business result.
-- A future adapter must explicitly associate the customer operation with a
-  managed backend receipt, negotiate its result contract, and retain its
-  uncertainty semantics. Customer-database transaction helpers do not infer
-  this association from a frontend operation header.
+- The internal Node/PostgreSQL adapter in
+  [ADR-713](adr/713-customer-operation-http-transactions.md) explicitly opts in
+  through `http_transaction_version: 1`. It negotiates a result-only customer
+  receipt protocol, with a separate table and lock namespace. Its response is
+  the full business JSON result, so existing schema validation and fenced
+  completion apply. It does not create a managed exclusive backend identity or
+  decode the managed envelope. Customer database commit retains the existing
+  uncertainty and authorized recovery semantics.
 
 Acceptance tests cover the header boundary and preserve the underlying
 completed invocation when a managed envelope violates an ordinary output
-schema. The subsequent ingress and SDK slices must also qualify reserved-header
-stripping and negotiated result handling.
+schema. Transaction acceptance covers reserved-header stripping, negotiation
+through synthetic delivery, saved result replay, concurrent duplicates, owner
+and input conflicts, unknown COMMIT, and real Node HTTP process death before
+commit and after commit before reply. These portable checks do not qualify
+fleet rollout or production admission.
+
+Transaction declarations also pass through YAML/TOML validation, selected-source
+schema bundling, and immutable build retry. Definition discovery includes the
+version in the API, CLI, and SDKs. The
+[order-fulfillment example](../examples/customer-operation-orders/README.md)
+ships explicit application database setup and a source-packaging command.
+`TestOperationsOrderHTTPPostgresRecoveryAcceptance` executes its real Node server
+with the production ingress and scheduler paths, loses the response after commit,
+authorizes account recovery, and checks two executions of one Operation against
+one business transition and the retained customer-owned result.
 
 ## Source and qualification
 
@@ -579,3 +596,62 @@ check the complete embedded specification, and tolerate a missing migration
 ledger entry after the same DDL has already applied. No merged migration was
 edited. Focused race tests and migrated PostgreSQL validation qualify these
 changes separately; final current-head repository CI remains the release gate.
+
+## Business-reference continuation (ADR-714)
+
+HTTP definitions may declare `subject: {type: order, id_from: /order_id}`.
+New admissions extract a bounded public string reference after input validation;
+idempotent replay and recovery retain the original reference. Legacy definitions
+and history remain compatible. PostgreSQL keeps the reference in the existing
+record, with an immutable trigger, shape/byte constraints, and customer/account
+expression indexes. SQLC exposes dedicated reference queries with existing
+owner, app, environment, retention, and filter-bound keyset pagination.
+
+The API, Go/Node/Python SDKs, CLI, and dashboard expose references and paired
+`subject_type`/`subject_id` lookup. Dashboard links retain the selected environment
+and customer. The order manifest declares its order reference. References are
+correlation metadata; the application still authorizes the underlying order
+before business writes or receipt replay.
+
+Current-source validation passed shared MemStore/PostgreSQL reference, history,
+recovery and storage-guard tests; API/dashboard/operator/source/recovery acceptance;
+Go SDK wire/DTO parity; Node's 185 unit and eight generator tests; Python's 11
+HTTP/runtime contract tests; focused contract/manifest/CLI race tests; SQLC
+reproduction; OpenAPI DTO parity and lint; and production Go lint. The runnable
+Node/PostgreSQL order acceptance passed commit-before-lost-response recovery and
+customer-isolated lookup by order ID. Native fleet qualification and production
+admission remain gated.
+
+## Durable business milestones continuation (ADR-715)
+
+HTTP transaction definitions may declare source-bundled public milestone schemas.
+The Node transaction helper validates a bounded batch before committing business
+writes, a result receipt, and stable-ID milestone outbox rows together. It then
+publishes under the current execution proof and acknowledges only a matching
+publication receipt. Publication failure keeps the outbox pending and signals
+`committed = true`; authorized replay returns the saved result and publishes the
+pending facts without repeating the business callback. Validation failure rolls
+back all application writes and receipts.
+
+The platform deduplicates logical Operation/milestone IDs across generations,
+fences publication before replay, preserves the original occurrence time, and
+retains a separate JSON ledger for the result lifetime. Generic events carry a
+notice, independently of ledger retention. Definitions negotiate milestone
+support through trusted scheduler/gateway dispatch. The ledger is operational
+state and excluded from environment cloning.
+
+Operation and exact business-reference feeds retain account, app, environment,
+customer, cursor, and retention boundaries. Go/Node/Python SDKs, CLI, and dashboard
+expose them. Customer middleware explicitly permits only the new read routes;
+feeds use the existing Operations `no-store` policy. The order example declares
+and commits an `order-fulfilled` fact alongside fulfillment.
+
+Current-source portable state, contract, manifest, transport, middleware, SDK,
+CLI, dashboard/API, SQLC, OpenAPI, and focused race checks passed. Full API
+acceptance killed the actual Node/PostgreSQL order handler after commit and before
+first publication, verified a pending outbox and empty platform ledger, and then
+recovered one milestone and one business write without running the callback.
+Additional checks cover lost publication acknowledgements, schema rollback,
+stale/suspended claims, immutable payload snapshots, retained facts after event
+cleanup, expiry, quotas, bounded JSON encoding, and customer/filter isolation.
+Production admission and native fleet qualification remain gated.

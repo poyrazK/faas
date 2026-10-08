@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { EventReceiptRecipientResponse } from './EventReceiptRecipientResponse.js';
 /**
- * Acceptance and routing evidence with a bounded recipient page; execution is a separate lifecycle.
+ * Acceptance and routing evidence with a bounded page of captured and backfilled consumers; execution is a separate lifecycle.
  */
 export type EventReceiptResponse = {
   event_id: string;
@@ -43,9 +43,17 @@ export type EventReceiptResponse = {
    * Counts across all captured recipients by current routing checkpoint state.
    */
   routing_summary: Record<string, number>;
+  /**
+   * Additional backfilled consumers across all pages; excluded from recipient_count.
+   */
+  backfill_recipient_count?: number;
+  /**
+   * Counts across added backfill consumers, separate from the immutable acceptance snapshot.
+   */
+  backfill_routing_summary?: Record<string, number>;
   recipients: Array<EventReceiptRecipientResponse>;
   /**
-   * Opaque cursor for the next acceptance-ordered recipient page.
+   * Opaque cursor for captured recipients followed by append-only backfill additions. Delivery order is not guaranteed.
    */
   next_after?: string;
 };

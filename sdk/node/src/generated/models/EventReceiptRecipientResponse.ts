@@ -8,9 +8,21 @@ import type { EventReceiptRecoveryAction } from './EventReceiptRecoveryAction.js
 import type { EventReceiptRecoveryResponse } from './EventReceiptRecoveryResponse.js';
 import type { EventReceiptRoutingResponse } from './EventReceiptRoutingResponse.js';
 /**
- * One captured recipient with independent routing, original execution or cancellation evidence, and retained generic replay recovery.
+ * One captured or backfilled recipient with independent routing, original execution or cancellation evidence, and retained generic replay recovery.
  */
 export type EventReceiptRecipientResponse = {
+  /**
+   * Captured at acceptance or added by a historical backfill.
+   */
+  origin?: 'acceptance' | 'backfill';
+  /**
+   * Originating backfill job while its metadata is retained.
+   */
+  backfill_job_id?: string;
+  /**
+   * Account-authenticated backfill job inspection while the job and current target are available.
+   */
+  backfill_job_url?: string;
   /**
    * Immutable captured subscription or notification identifier.
    */

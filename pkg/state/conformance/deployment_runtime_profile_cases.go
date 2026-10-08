@@ -1,4 +1,4 @@
-// adr: 680, 682
+// adr: 686, 682
 package conformance
 
 import (

@@ -36,7 +36,8 @@ func BenchmarkManagerPublishSparseSubscribers(b *testing.B) {
 			b.Fatalf("publish = (%d, %v), want (%d, nil)", queued, err, subscribers)
 		}
 		for _, c := range receivers {
-			<-c.outbound
+			msg := <-c.outbound
+			c.releaseOutboundBytes(int64(len(msg.Data)))
 		}
 	}
 }

@@ -116,12 +116,15 @@ type QualificationReport struct {
 // codes: logical database, binding, provider resource, credential material,
 // and connection URLs never cross this boundary.
 type LifecycleQualificationReport struct {
+	Mode   string               `json:"mode,omitempty"`
 	Checks []QualificationCheck `json:"checks"`
 }
 
 // QualificationArtifactVersion is bumped whenever the approval document
 // shape or validation semantics change incompatibly.
-const QualificationArtifactVersion = 7
+const QualificationArtifactVersion = 8
+
+const DurableLifecycleMode = "postgres_restart"
 
 const qualificationArtifactVersion = QualificationArtifactVersion
 
@@ -142,6 +145,11 @@ var restoreQualificationChecks = [...]string{
 var requiredLifecycleQualificationChecks = [...]string{
 	"service_present", "binding_service_present", "lifecycle_identity", "lifecycle_access", "lifecycle_spec",
 	"database_create", "database_ready", "binding_create", "binding_ready", "binding_delete", "database_delete",
+	"catalog_postgres", "fixture_ownership", "fixture_fresh", "provision_ack_lost", "restart_catalog_identity", "provision_lost_ack_recovered",
+	"credentials_lost_ack_recovered_setup", "credential_ack_lost", "credentials_lost_ack_recovered_restart", "credentials_lost_ack_recovered",
+	"secret_publication_lost_ack_recovered_setup", "secret_ack_lost", "secret_publication_lost_ack_recovered_restart", "secret_publication_lost_ack_recovered",
+	"sealed_credentials_verified", "workload_sql_round_trip", "rotation_setup", "rotation_ack_lost", "rotation_restart", "rotation_lost_ack_recovered",
+	"rotation_preserves_workload", "dataset_identity_preserved", "cleanup_restart_verified",
 }
 
 // QualificationApproval is the non-secret approval material an operator may
@@ -217,7 +225,7 @@ func LoadQualificationArtifact(path string) (QualificationArtifact, error) {
 // BuildQualificationApproval creates an approval envelope from a successful
 // provider qualification. A missing lifecycle report is allowed here so the
 // command can still emit provider evidence, but readiness remains blocked
-// until the control-plane lifecycle smoke is present and passing.
+// until the durable SQL restart qualification is present and passing.
 func BuildQualificationApproval(report QualificationReport, lifecycle *LifecycleQualificationReport, backendID, backendFingerprint string, canaryAccounts []string, now time.Time, ttl time.Duration) (QualificationApproval, error) {
 	if err := ValidateQualificationReport(report); err != nil {
 		return QualificationApproval{}, err
@@ -339,10 +347,10 @@ func ValidateQualificationReport(report QualificationReport) error {
 	return nil
 }
 
-// ValidateLifecycleQualificationReport checks that every lifecycle assertion
-// passed and that the report is not an empty placeholder.
+// ValidateLifecycleQualificationReport requires independently verified durable
+// SQL restart evidence. The old memory smoke cannot authorize provisioning.
 func ValidateLifecycleQualificationReport(report LifecycleQualificationReport) error {
-	if !hasQualificationChecks(report.Checks, requiredLifecycleQualificationChecks[:]) {
+	if report.Mode != DurableLifecycleMode || !hasQualificationChecks(report.Checks, requiredLifecycleQualificationChecks[:]) {
 		return ErrInvalid
 	}
 	return nil
