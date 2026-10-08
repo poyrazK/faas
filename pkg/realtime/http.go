@@ -858,6 +858,26 @@ func (m *Manager) handleConnectionRoute(w http.ResponseWriter, r *http.Request, 
 	http.NotFound(w, r)
 }
 
+func decodeJSONSized(r *http.Request, target any, limit int64) error {
+	data, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(data)) > limit {
+		return fmt.Errorf("JSON request exceeds size limit")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("expected a single JSON value")
+	}
+	return nil
+}
+
 func decodeJSON(r *http.Request, target any) error {
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 2<<20))
 	decoder.DisallowUnknownFields()

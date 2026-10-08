@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
 	fleetPresenceTombstoneTTL = 10 * time.Second
-	fleetPresenceTombstoneMax = ManagedRealtimePresenceMaxMembers * 2
+	fleetPresenceTombstoneMax = state.ManagedRealtimePresenceMaxMembers * 2
 )
 
 // recordFleetPresenceTombstoneLocked bounds stale-event suppression to recent

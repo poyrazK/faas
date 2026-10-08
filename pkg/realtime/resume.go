@@ -353,6 +353,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 			return
 		}
 		cursorCtx, cancel := context.WithTimeout(ctx, resumeHistoryReadTimeout)
+		var err error
 		after, err = cursorStore.LoadDurableCursor(cursorCtx, c.info.EndpointID, c.info.Principal, frame.Subscription, frame.Channel, frame.After)
 		cancel()
 		if err != nil {
