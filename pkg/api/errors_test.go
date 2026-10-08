@@ -347,8 +347,10 @@ func TestErrTenantSurfacesNotEnabled(t *testing.T) {
 	if strings.Contains(p.Detail, "upgrade to Hobby") {
 		t.Errorf("Detail = %q, must not suggest a plan downgrade", p.Detail)
 	}
-	if !strings.Contains(p.Detail, "FAAS_TENANT_SURFACES_ENABLED") {
-		t.Errorf("Detail = %q, want operator flag guidance", p.Detail)
+	// hunt #8: customer-facing text must not name operator environment
+	// variables; the stable code is what an operator matches on.
+	if strings.Contains(p.Detail, "FAAS_") || !strings.Contains(p.Detail, "contact support") {
+		t.Errorf("Detail = %q, want installation-availability guidance without operator config names", p.Detail)
 	}
 }
 

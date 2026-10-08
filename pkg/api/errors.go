@@ -3105,7 +3105,7 @@ func ErrDoctorUnavailable(domain, reason string) *Problem {
 func ErrAPIContractDiffDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeAPIContractDiffDisabled,
 		"API contract diff is disabled",
-		"the FAAS_API_CONTRACT_DIFF_ENABLED flag is not enabled on this cluster; ask the operator to enable it").
+		"API contract diff is not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/api-hosting/contract-diff")
 }
 
@@ -4353,7 +4353,7 @@ func ErrTenantSurfacesNotAllowed(p Plan) *Problem {
 func ErrTenantSurfacesNotEnabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeTenantSurfacesNotEnabled,
 		"Tenant surfaces are not enabled",
-		"the FAAS_TENANT_SURFACES_ENABLED flag is not enabled on this cluster; ask the cluster operator to enable the tenant-surface API").
+		"tenant surfaces are not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/plans#tenant-surfaces")
 }
 
