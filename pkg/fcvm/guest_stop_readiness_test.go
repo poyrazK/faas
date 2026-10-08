@@ -80,3 +80,28 @@ func TestGuestBootArgsSuppressRCUStallWarnings(t *testing.T) {
 		}
 	}
 }
+
+// spec: §6.1
+// A worker/job whose guest exits during startup loses the characterization
+// race; the error must come from the guest's exit, not the receipt timeout.
+func TestGuestExitedWithinDistinguishesUnrequestedExits(t *testing.T) {
+	rec := &instanceRecord{done: make(chan struct{})}
+	v := &JailerVMM{recs: map[string]*instanceRecord{"inst": rec}}
+	if v.guestExitedWithin("inst", 0) {
+		t.Fatal("a running guest reported as exited")
+	}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		close(rec.done)
+	}()
+	if !v.guestExitedWithin("inst", time.Second) {
+		t.Fatal("an exit inside the grace window was missed")
+	}
+	rec.stopping = true
+	if v.guestExitedWithin("inst", 0) {
+		t.Fatal("an explicit stop must keep its own error")
+	}
+	if v.guestExitedWithin("missing", 0) {
+		t.Fatal("an unknown instance reported as exited")
+	}
+}

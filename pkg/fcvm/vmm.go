@@ -6004,6 +6004,9 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 			receiptReceived = true
 			if receipt.err != nil {
 				if requiresCharacterization {
+					if v.guestExitedWithin(l.Instance, guestExitReportGrace) {
+						return v.guestStoppedDuringStartup(l)
+					}
 					return fmt.Errorf("execution mode %q requires a valid characterization report: %w", executionMode, receipt.err)
 				}
 				continue
@@ -6014,6 +6017,9 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-characterizationDeadline:
+			if v.guestExitedWithin(l.Instance, 0) {
+				return v.guestStoppedDuringStartup(l)
+			}
 			return fmt.Errorf("execution mode %q did not produce a valid characterization report before the startup deadline", executionMode)
 		}
 	}
@@ -6099,6 +6105,41 @@ func (v *JailerVMM) cancelOnGuestStop(ctx context.Context, instance string) (con
 	return ctx, func() {
 		close(stop)
 		cancel(nil)
+	}
+}
+
+// guestExitReportGrace bounds how long a failed characterization receipt
+// waits for the Firecracker exit that usually follows a guest-init exit
+// (kernel panic, then VMM stop, ~1 s later).
+const guestExitReportGrace = 2 * time.Second
+
+// guestExitedWithin reports whether the instance's Firecracker process exited
+// on its own, waiting at most grace. production-us hunt #8: a worker whose
+// command crash-looped surfaced only "requires a valid characterization
+// report: context deadline exceeded" because the receipt failed first; the
+// workload's own error was in the console tail (H8-20).
+func (v *JailerVMM) guestExitedWithin(instance string, grace time.Duration) bool {
+	v.mu.Lock()
+	rec := v.recs[instance]
+	v.mu.Unlock()
+	if rec == nil || rec.done == nil {
+		return false
+	}
+	if grace <= 0 {
+		select {
+		case <-rec.done:
+			return !v.guestStopRequested(instance)
+		default:
+			return false
+		}
+	}
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-rec.done:
+		return !v.guestStopRequested(instance)
+	case <-timer.C:
+		return false
 	}
 }
 
