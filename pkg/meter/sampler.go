@@ -556,8 +556,12 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			liveSeconds += seconds
 		}
 		// Deletion retains actual residency but ends the customer's capacity
-		// promise. It must never create new synthetic floor charges.
-		if app.Status == state.AppDeleted {
+		// promise. It must never create new synthetic floor charges. Neither
+		// may an explicitly parked (evicted_cold) app: schedd leaves it parked
+		// and does not hold its floor (H5-54), so ADR-060's "schedd cannot
+		// provide the configured capacity" applies. Its real instances above
+		// stay billable.
+		if !app.FloorServed() {
 			continue
 		}
 		// PR-A (ADR-060, issue #515): per-app GB-h floor for

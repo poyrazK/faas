@@ -445,3 +445,45 @@ func TestFloorNamespaceFrozen(t *testing.T) {
 		t.Errorf("FloorNamespace drifted: got %s, want %s", FloorNamespace, want)
 	}
 }
+
+// production-us hunt #6: after H5-54 the floor reconciler leaves an
+// explicitly parked (evicted_cold) app parked instead of re-admitting its
+// floor. The sampler must not keep billing a floor schedd does not hold; an
+// active app with the same policy still pays for its gap.
+func TestSampler_MinInstancesFloorSkipsParkedApp(t *testing.T) {
+	ctx := context.Background()
+	at := func() time.Time { return time.Date(2026, 10, 8, 8, 5, 0, 0, time.UTC) }
+	for _, tc := range []struct {
+		status    state.AppStatus
+		wantFloor bool
+	}{
+		{status: state.AppActive, wantFloor: true},
+		{status: state.AppEvictedCold, wantFloor: false},
+	} {
+		t.Run(string(tc.status), func(t *testing.T) {
+			store := state.NewMemStore()
+			appID, _ := seedFloorApp(t, store, api.PlanScale, 1024)
+			setPolicy(t, store, appID, state.ScalingPolicy{MinInstances: 3})
+			status := tc.status
+			if _, err := store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &status}); err != nil {
+				t.Fatalf("UpdateApp status: %v", err)
+			}
+			rows, err := NewSampler(store, nil, at).SampleAndRoll(ctx)
+			if err != nil {
+				t.Fatalf("SampleAndRoll: %v", err)
+			}
+			var floorRows int
+			for _, row := range rows {
+				if row.AppID == appID && row.SyntheticFloor {
+					floorRows++
+				}
+			}
+			if tc.wantFloor && floorRows != 3 {
+				t.Fatalf("active app: %d synthetic floor rows, want 3", floorRows)
+			}
+			if !tc.wantFloor && floorRows != 0 {
+				t.Fatalf("parked app: %d synthetic floor rows, want none", floorRows)
+			}
+		})
+	}
+}

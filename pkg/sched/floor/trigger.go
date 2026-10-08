@@ -357,9 +357,9 @@ func (t *Trigger) manages(app state.App) bool {
 // the floor's admissions do not reactivate it, so the reaper parked every
 // floor instance a tick later and the floor re-admitted them, a snapshot
 // cycle every ~10 s for as long as the app stayed parked (production-us
-// hunt #5, H5-54).
+// hunt #5, H5-54). meterd stops billing the floor under the same predicate.
 func floorRunsFor(app state.App) bool {
-	return app.Status == "" || app.Status == state.AppActive
+	return app.FloorServed()
 }
 
 // observe is a nil-receiver-safe metric emitter. Mirrors
