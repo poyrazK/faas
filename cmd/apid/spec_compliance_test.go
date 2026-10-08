@@ -318,6 +318,12 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	// Workflow list options encode URL query parameters, not JSON request bodies.
+	"OperationWorkflowAttentionOptions":        true,
+	"OperationWorkflowAttentionSummaryOptions": true,
+	"OperationWorkflowOutcomeOptions":          true,
+	"OperationWorkflowOutcomeSummaryOptions":   true,
+
 	// Version listing carries these fields as individual query parameters,
 	// documented on the GET route; it has no JSON request body.
 	"ObjectVersionListRequest":      true,
@@ -1131,6 +1137,17 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_subject.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflows.go"),
 		filepath.Join(root, "pkg", "api", "operation_milestones.go"),
+		filepath.Join(root, "pkg", "api", "operation_business_compensation.go"),
+		filepath.Join(root, "pkg", "api", "operation_business_decisions.go"),
+		filepath.Join(root, "pkg", "api", "operation_business_effects.go"),
+		filepath.Join(root, "pkg", "api", "operation_business_invariants.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_action_preview.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_attention.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_invariants.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_outcomes.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_policies.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_readiness.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
 		filepath.Join(root, "pkg", "api", "route_policy.go"),

@@ -581,7 +581,7 @@ Refreshing blockers also refreshes the reported snapshot age used for staleness;
 applications needing state-entry duration should report that duration separately.
 
 Before upgrading a running installation, apply the platform migration
-`20261008120000001_customer_operation_workflow_blockers.sql`. Application database
+`20261008222056613_customer_operation_workflow_blockers.sql`. Application database
 owners must also reinstall the additive customer Operation schema supplied by
 their SDK before using the updated transaction adapter. The new outbox columns
 have empty/false defaults, so pending older outbox rows remain publishable.
@@ -637,7 +637,7 @@ The dashboard queue is at
 customer, workflow, target Operation, or reason; each row links to the exact
 customer/business reference and workflow instance's explanation and history.
 Apply the additive platform index migration
-`20261008130000001_customer_operation_workflow_attention.sql` when deploying.
+`20261008222056620_customer_operation_workflow_attention.sql` when deploying.
 
 ### Explain blocker resolutions
 
@@ -715,7 +715,7 @@ and source report/revision. Later snapshots can omit the facts without deleting
 retained history.
 
 Before deploying, apply
-`20261008140000001_customer_operation_blocker_resolutions.sql` on the platform.
+`20261008222056623_customer_operation_blocker_resolutions.sql` on the platform.
 Application database owners must reinstall the SDK's additive customer Operation
 schema before upgrading the transaction adapter; the new outbox column defaults
 to an empty list so older pending reports remain publishable.
@@ -972,7 +972,7 @@ Cycles are not traversed. No cross-customer links or business payloads are expos
 Dependency attention appears in the selected instance explanation and in the attention queue and summaries.
 
 Before using this feature, apply platform migration
-`20261008170000001_customer_operation_workflow_dependencies.sql` and the updated
+`20261008222056633_customer_operation_workflow_dependencies.sql` and the updated
 SDK customer schema. The customer schema adds `depends_on`/`dependencies_only`
 to the outbox and dependency snapshots with revision markers to workflow counters.
 Upgrade all writers. Revision gaps from older writers prevent inheritance of
@@ -1054,7 +1054,7 @@ milestones responses. CLI text output adds `workflow-impact` totals and
 `workflow-dependent` rows; JSON preserves the complete nested response.
 
 Apply platform migration
-`20261008180000001_customer_operation_reverse_dependencies.sql` to add a partial
+`20261008222056636_customer_operation_reverse_dependencies.sql` to add a partial
 GIN index on retained-report dependency references for reverse lookup. It follows
 the existing dependency migration; no additional customer outbox schema is needed.
 
