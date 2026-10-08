@@ -3766,7 +3766,7 @@ Show durable TLS status for all domains
 
 Sync local changes to a developer environment
 
-`gregale dev [<subcommand>] [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open]`
+`gregale dev [<subcommand>] [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open] [--postgres] [--postgres-region <REGION>] [--postgres-seed <CMD>] [--reseed]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3778,6 +3778,10 @@ Sync local changes to a developer environment
 | `--stop` | tear down the developer environment |  |
 | `--no-logs` | do not attach the live runtime log stream |  |
 | `--open` | open the developer environment URL after the first live sync |  |
+| `--postgres` | provision an isolated PostgreSQL database and inject DATABASE_URL |  |
+| `--postgres-region <REGION>` | choose managed database placement |  |
+| `--postgres-seed <CMD>` | shell command run once in the developer app after its database is ready |  |
+| `--reseed` | run the seed again even if this database was already seeded |  |
 
 Examples:
 

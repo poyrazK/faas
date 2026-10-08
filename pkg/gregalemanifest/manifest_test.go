@@ -292,6 +292,7 @@ func TestLoad_DevProfile(t *testing.T) {
   service_override_file: .env.services.local
   postgres: true
   postgres_region: eu-central-1
+  postgres_seed: npm run seed
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +300,7 @@ func TestLoad_DevProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || m.Dev == nil || m.Dev.EnvFile != ".env.dev" || m.Dev.ServiceOverrideFile != ".env.services.local" || m.Dev.Postgres == nil || !*m.Dev.Postgres || m.Dev.PostgresRegion != "eu-central-1" {
+	if !ok || m.Dev == nil || m.Dev.EnvFile != ".env.dev" || m.Dev.ServiceOverrideFile != ".env.services.local" || m.Dev.Postgres == nil || !*m.Dev.Postgres || m.Dev.PostgresRegion != "eu-central-1" || m.Dev.PostgresSeed != "npm run seed" {
 		t.Fatalf("dev profile = %+v, want parsed developer defaults", m.Dev)
 	}
 	if err := m.Validate(); err != nil {
@@ -316,6 +317,8 @@ func TestLoad_DevProfileRejectsUnsafePathsAndOrphanedRegion(t *testing.T) {
 		{name: "absolute path", body: "dev:\n  env_file: /tmp/.env\n", want: "relative"},
 		{name: "escape path", body: "dev:\n  env_file: ../.env\n", want: "inside"},
 		{name: "orphaned region", body: "dev:\n  postgres_region: eu-central-1\n", want: "requires postgres"},
+		{name: "orphaned seed", body: "dev:\n  postgres_seed: npm run seed\n", want: "postgres_seed requires postgres"},
+		{name: "invalid seed", body: "dev:\n  postgres: true\n  postgres_seed: \"a\\0b\"\n", want: "postgres_seed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
