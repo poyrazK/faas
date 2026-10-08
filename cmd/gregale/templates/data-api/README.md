@@ -38,3 +38,18 @@ before writing the file or running client checks. Configure the application
 JWT through `GREGALE_DATA_API_ACCESS_TOKEN` (or the workflow's `access_token_env`).
 The fingerprint describes the generated type contract, not policy semantics,
 function bodies or an atomic view spanning engine cache loading and owner DDL.
+
+### Request diagnostics
+
+The gateway generates a fresh UUID for each handled request and returns it in
+`X-Request-Id`. Incoming IDs are ignored. Allowed browser origins can read the
+header. Gateway problem bodies include `request_id`; engine bodies are unchanged.
+
+One JSON record is written to stderr on completion or early close, including
+the ID, allowlisted method, fixed route category, HTTP status, duration and
+outcome. Auth failures, gateway timeouts and engine unavailability have explicit
+outcomes. Raw paths, table/function names, query values, headers, tokens,
+subjects, database credentials and bodies are excluded. Upstream errors are
+classified by HTTP status without inspecting their bodies. Canceled requests
+use `aborted` and a null status if no headers were sent. IDs identify a gateway
+request; these logs do not provide distributed tracing or platform wake timing.

@@ -2,17 +2,19 @@ import http from 'node:http'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
+import { traceRequest, markRequest, requestID, runtimeFailure } from './logging.mjs'
 import { inspect, fingerprint } from './types.mjs'
 import { runtimeConfig, limits } from './config.mjs'
 
-export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001) {
+export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
   return http.createServer(async (req, res) => {
+    traceRequest(req, res, log)
     const origin = req.headers.origin
     if (origin && config.origins.includes(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin)
       res.setHeader('Vary', 'Origin')
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied')
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id')
     }
     if (req.method === 'OPTIONS') {
       if (!origin || !config.origins.includes(origin)) return problem(res, 403, 'origin_not_allowed')
@@ -54,14 +56,16 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
 }
 
 function problem(res, status, code) {
+  markRequest(res, code)
   if (res.headersSent) { res.destroy(); return }
   res.writeHead(status, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store' })
-  res.end(JSON.stringify({ type: 'about:blank', title: code, status, code }))
+  res.end(JSON.stringify({ type: 'about:blank', title: code, status, code, request_id: requestID(res) }))
 }
 
 function readiness(res, port, contract = {}) {
   const request = http.get({ hostname: '127.0.0.1', port, path: '/ready', timeout: 2000 }, upstream => {
     upstream.resume()
+    if (upstream.statusCode !== 200) markRequest(res, 'data_api_unavailable')
     res.writeHead(upstream.statusCode === 200 ? 200 : 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
     res.end(JSON.stringify({ ready: upstream.statusCode === 200, ...(upstream.statusCode === 200 ? contract : {}) }))
   })
@@ -79,11 +83,12 @@ function proxy(req, res, token, port, config) {
   const path = req.url === '/openapi.json' ? '/' : req.url.slice('/rest/v1'.length)
   const upstream = http.request({ hostname: '127.0.0.1', port, path, method: req.method, headers, timeout: limits.queryMs }, response => {
     if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config)
+    if (response.statusCode >= 400) markRequest(res, 'upstream_error')
     const out = {}
     for (const name of ['content-type', 'content-range', 'preference-applied', 'location']) if (response.headers[name]) out[name] = response.headers[name]
     res.writeHead(response.statusCode, { ...out, 'Cache-Control': 'no-store' })
     response.pipe(res)
-    response.on('error', () => res.destroy())
+    response.on('error', () => { markRequest(res, 'data_api_unavailable'); res.destroy() })
   })
   let bytes = 0
   req.on('data', chunk => {
@@ -140,7 +145,7 @@ export async function main(env = process.env) {
   let stopping = false
   server.requestTimeout = limits.queryMs + 5000
   server.headersTimeout = 10000
-  child.on('error', () => { console.error('PostgREST could not start'); process.exitCode = 1; server.close() })
+  child.on('error', () => { runtimeFailure('data_api_postgrest_start_failed'); process.exitCode = 1; server.close() })
   child.on('exit', code => { process.exitCode = stopping ? 0 : (code || 1); server.close() })
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { stopping = true; server.close(); child.kill(signal) })
   process.on('SIGUSR1', () => child.kill('SIGUSR1'))
@@ -151,4 +156,4 @@ export function tokenVerifier(auth, keys) {
   return async token => (await jwtVerify(token, keys, { issuer: auth.issuer, audience: auth.audience, algorithms: ['RS256', 'ES256'], requiredClaims: ['sub', 'exp'] })).payload
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(() => { console.error('Data API configuration is invalid'); process.exitCode = 1 })
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(() => { runtimeFailure('data_api_configuration_invalid'); process.exitCode = 1 })

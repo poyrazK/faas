@@ -15,7 +15,7 @@ fi
 # in the CLI/template archive. Test a temporary copy of the exact runtime source.
 runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/gregale-data-api.XXXXXX")"
 trap 'rm -rf "$runtime_dir"' EXIT
-cp cmd/gregale/templates/data-api/{config.mjs,server.mjs,types.mjs,package.json,package-lock.json} "$runtime_dir/"
+cp cmd/gregale/templates/data-api/{config.mjs,server.mjs,types.mjs,logging.mjs,package.json,package-lock.json} "$runtime_dir/"
 cp -R cmd/gregale/templates/data-api/test "$runtime_dir/"
 npm ci --prefix "$runtime_dir" --ignore-scripts
 npm test --prefix "$runtime_dir"

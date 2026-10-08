@@ -693,3 +693,12 @@ preserves existing types. It requires the current Data API runtime; older
 runtimes return 404. The fingerprint covers the generated contract, including
 RPC grant eligibility, and does not prove RLS semantics or function behavior.
 A successful JSON sync receipt includes `contract_verified: true`.
+
+### Correlate failed requests
+
+Capture the Data API's `X-Request-Id` response header when diagnosing a failure,
+then find that ID in the API app's JSON request logs. The header is exposed to
+allowed browser origins; gateway problem bodies also include `request_id`.
+Engine response bodies remain unchanged. The gateway generates IDs itself and
+ignores caller IDs. Its logs use fixed route categories and exclude tokens,
+subjects, query values, table/function names, credentials and application bodies.

@@ -87,7 +87,8 @@ test('proxy closes canceled upstream requests and sanitizes unavailable and time
   const closing = new Promise(resolve => { closed = resolve })
   const upstream = http.createServer((req, res) => { opened(); res.on('close', closed) })
   await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve))
-  const gateway = createServer(config, async () => ({ sub: 'user', exp: 9999999999 }), upstream.address().port)
+  const records = []
+  const gateway = createServer(config, async () => ({ sub: 'user', exp: 9999999999 }), upstream.address().port, undefined, record => records.push(record))
   await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
   t.after(() => { gateway.closeAllConnections(); gateway.close(); upstream.closeAllConnections(); upstream.close() })
   const url = `http://127.0.0.1:${gateway.address().port}/rest/v1/notes`
@@ -111,6 +112,15 @@ test('proxy closes canceled upstream requests and sanitizes unavailable and time
   assert.equal(JSON.parse(body).code, 'data_api_unavailable')
   assert.doesNotMatch(body, /credential-sentinel|token-sentinel|postgres:/)
   assert.equal(unavailable.headers.get('Cache-Control'), 'no-store')
+  await new Promise(setImmediate)
+  assert.equal(records.length, 3)
+  assert.deepEqual(records.map(record => record.outcome), ['aborted', 'query_timeout', 'unavailable'])
+  assert.deepEqual(records.map(record => record.status), [null, 504, 503])
+  assert.equal(records[1].request_id, timeout.headers.get('x-request-id'))
+  assert.equal(records[2].request_id, unavailable.headers.get('x-request-id'))
+  assert.equal(JSON.parse(timeoutBody).request_id, records[1].request_id)
+  assert.doesNotMatch(JSON.stringify(records), /credential-sentinel|token-sentinel|postgres:/)
+
 })
 
 

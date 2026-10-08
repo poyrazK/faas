@@ -796,3 +796,36 @@ contract while the SQL engine is ready. Coordinate owner DDL with deployment;
 it is not a transaction spanning the catalog inspection, engine cache load and
 export, nor proof of two-user policy correctness or every serving replica.
 Live staging qualification remains required.
+
+### Request IDs and runtime logs
+
+Every request reaching the Data API handler gets a new gateway-generated UUID
+in the `X-Request-Id` response header. Caller-supplied IDs are ignored; upstream
+response IDs cannot replace it. Allowed browser origins can read this header
+through CORS. Gateway-generated problem responses also include `request_id`.
+PostgREST responses retain their original bodies; use the header to correlate
+those errors. An aborted request may close before the client receives headers.
+
+The gateway writes one JSON record to stderr when each response finishes or
+closes early. Records contain only `time`, `level`, `event: "data_api_request"`,
+`request_id`, an allowlisted HTTP `method`, a fixed `route` category, `status`,
+monotonic `duration_ms`, `outcome` and an allowlisted gateway `code` (or null).
+Route categories are `health`, `schema`, `openapi`, `rpc`, `rest` and `unknown`;
+no table, function or full path is recorded. A completed response records its
+HTTP status. An aborted response records the sent status, or null if headers
+were never sent, and `outcome: "aborted"`. A successful local response finish
+is not proof that the client received every byte.
+
+Authentication rejection, gateway query timeout and engine unavailability are
+identified as `authentication_failed`, `query_timeout` and `unavailable`.
+Rejected upstream HTTP responses use `upstream_error`; the gateway does not
+parse database error bodies to classify SQL errors or server-side timeouts.
+These logs never record JWTs, SQL roles, subjects, database URLs, credentials,
+request/response bodies, headers, origins, schema names, query strings or raw
+exception text. Startup configuration and engine spawn failures use fixed JSON
+error events. PostgREST process output remains suppressed.
+
+Use the response ID to find the matching record in your app logs. Logging
+exceptions do not change the response. These are gateway request records, not
+distributed traces or measurements of platform wake latency. Log retention and
+live staging verification remain deployment concerns.
