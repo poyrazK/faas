@@ -4,7 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
 
@@ -30,7 +32,7 @@ func flagSetWasSet(fs *flag.FlagSet) map[string]bool {
 	return set
 }
 
-func applyDevManifestDefaults(manifest *gregalemanifest.Manifest, explicit map[string]bool, sourceDir string, envFile, serviceOverrideFile *string, postgres *bool, postgresRegion *string) {
+func applyDevManifestDefaults(manifest *gregalemanifest.Manifest, explicit map[string]bool, sourceDir string, envFile, serviceOverrideFile *string, postgres *bool, postgresRegion, ttl *string) {
 	if manifest == nil || manifest.Dev == nil {
 		return
 	}
@@ -47,6 +49,30 @@ func applyDevManifestDefaults(manifest *gregalemanifest.Manifest, explicit map[s
 	if !explicit["postgres-region"] && (!explicit["postgres"] || *postgres) {
 		*postgresRegion = dev.PostgresRegion
 	}
+	if !explicit["ttl"] && dev.TTL != "" {
+		*ttl = dev.TTL
+	}
+}
+
+// resolveDevTTL validates `--ttl`/`dev.ttl` locally before any remote
+// mutation. Zero means "not chosen": the API keeps its default lease.
+func resolveDevTTL(raw string) (time.Duration, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	return gregalemanifest.ParseDevTTL(raw)
+}
+
+// formatDevLease renders a lease the way developers type it (72h, 168h)
+// rather than Go's 72h0m0s.
+func formatDevLease(lease time.Duration) string {
+	if lease <= 0 {
+		lease = api.DeveloperLeaseDefault
+	}
+	if lease%time.Hour == 0 {
+		return fmt.Sprintf("%dh", lease/time.Hour)
+	}
+	return lease.String()
 }
 
 func resolveDevSourceConfigWithManifest(sourceDir string) (devSourceConfig, error) {

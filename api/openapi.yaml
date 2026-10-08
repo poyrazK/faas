@@ -46614,6 +46614,11 @@ components:
           description: Opaque identity derived locally from the CLI installation and canonical source path. Omit only for legacy sessions.
         postgres:
           $ref: '#/components/schemas/DevPostgresRequest'
+        lease_seconds:
+          type: integer
+          format: int64
+          minimum: 3600
+          description: How long the environment survives after this request. Omit for the 24-hour default. Values above the plan's developer lease maximum return 403 plan_limit_developer_lease.
 
     RegisterScenarioTestRequest:
       description: Complete set of developer sessions in one isolated scenario run.

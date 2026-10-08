@@ -201,3 +201,82 @@ func TestDevSessionRejectsInvalidWorkspaceID(t *testing.T) {
 		t.Fatalf("DELETE status = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestDevSessionLeaseBoundedByPlan(t *testing.T) {
+	cases := []struct {
+		name         string
+		plan         api.Plan
+		leaseSeconds int64
+		wantStatus   int
+		wantLease    time.Duration
+		wantCode     string
+		wantLimit    int64
+		wantObserved int64
+	}{
+		{name: "omitted keeps default", plan: api.PlanHobby, wantStatus: http.StatusCreated, wantLease: 24 * time.Hour},
+		{name: "minimum accepted", plan: api.PlanFree, leaseSeconds: 3600, wantStatus: http.StatusCreated, wantLease: time.Hour},
+		{name: "plan ceiling accepted", plan: api.PlanHobby, leaseSeconds: 72 * 3600, wantStatus: http.StatusCreated, wantLease: 72 * time.Hour},
+		{name: "below minimum rejected", plan: api.PlanPro, leaseSeconds: 60, wantStatus: http.StatusBadRequest, wantCode: api.CodeValidation},
+		{name: "negative rejected", plan: api.PlanPro, leaseSeconds: -3600, wantStatus: http.StatusBadRequest, wantCode: api.CodeValidation},
+		{name: "free over ceiling", plan: api.PlanFree, leaseSeconds: 25 * 3600, wantStatus: http.StatusForbidden, wantCode: api.CodePlanLimitDeveloperLease, wantLimit: 24, wantObserved: 25},
+		{name: "partial hour rounds up", plan: api.PlanHobby, leaseSeconds: 72*3600 + 1, wantStatus: http.StatusForbidden, wantCode: api.CodePlanLimitDeveloperLease, wantLimit: 72, wantObserved: 73},
+		{name: "overflow-sized value", plan: api.PlanScale, leaseSeconds: 1 << 62, wantStatus: http.StatusForbidden, wantCode: api.CodePlanLimitDeveloperLease, wantLimit: 336, wantObserved: (1<<62)/3600 + 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setup(t, tc.plan)
+			rec := e.do(t, http.MethodPut, "/v1/dev/sessions/lease-app", api.UpsertDevSessionRequest{LeaseSeconds: tc.leaseSeconds}, nil)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if tc.wantCode == "" {
+				var session api.DevSessionResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &session); err != nil {
+					t.Fatal(err)
+				}
+				if until := time.Until(session.ExpiresAt); until > tc.wantLease || until < tc.wantLease-time.Minute {
+					t.Fatalf("lease = %s, want about %s", until, tc.wantLease)
+				}
+				return
+			}
+			var problem api.Problem
+			if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+				t.Fatal(err)
+			}
+			if problem.Code != tc.wantCode {
+				t.Fatalf("problem code = %q, want %q", problem.Code, tc.wantCode)
+			}
+			if tc.wantLimit != 0 && (problem.Limit == nil || *problem.Limit != tc.wantLimit ||
+				problem.Observed == nil || *problem.Observed != tc.wantObserved || problem.DocsURL == "") {
+				t.Fatalf("lease limit problem = %+v", problem)
+			}
+			// A rejected lease never creates the environment.
+			if _, err := e.store.AppBySlug(t.Context(), devSessionSlug(e.acct.ID, "lease-app", "")); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("rejected lease created an app: err=%v", err)
+			}
+		})
+	}
+}
+
+func TestDevSessionRefreshAppliesRequestedLease(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	first := e.do(t, http.MethodPut, "/v1/dev/sessions/lease-app", api.UpsertDevSessionRequest{LeaseSeconds: 3600}, nil)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("create status = %d: %s", first.Code, first.Body.String())
+	}
+	refreshed := e.do(t, http.MethodPut, "/v1/dev/sessions/lease-app", api.UpsertDevSessionRequest{LeaseSeconds: 7 * 24 * 3600}, nil)
+	if refreshed.Code != http.StatusOK {
+		t.Fatalf("refresh status = %d: %s", refreshed.Code, refreshed.Body.String())
+	}
+	var session api.DevSessionResponse
+	if err := json.Unmarshal(refreshed.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	row, err := e.store.AppBySlug(t.Context(), session.App.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.PreviewExpiresAt == nil || time.Until(*row.PreviewExpiresAt) < 7*24*time.Hour-time.Minute {
+		t.Fatalf("stored lease = %v, want about 7 days", row.PreviewExpiresAt)
+	}
+}

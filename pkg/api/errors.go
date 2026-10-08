@@ -405,6 +405,7 @@ const (
 	CodeProjectEnvironmentApprovalInvalid  = "project_environment_approval_invalid"
 	CodePlanLimitApps                      = "plan_limit_apps"
 	CodePlanLimitDeveloperApps             = "plan_limit_developer_apps"
+	CodePlanLimitDeveloperLease            = "plan_limit_developer_lease"
 	CodePlanLimitRAM                       = "plan_limit_ram"
 	CodePlanLimitConcur                    = "plan_limit_concurrency"
 	CodeInvalidAppCPU                      = "invalid_cpu_millicores"
@@ -1877,7 +1878,7 @@ func StatusForCode(code string) int {
 		return http.StatusTooManyRequests
 	case CodeAutomationInvalid:
 		return http.StatusUnprocessableEntity
-	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
+	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitDeveloperLease, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
@@ -2389,6 +2390,22 @@ func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
 		"Developer environment limit reached",
 		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Stop an unused environment with `gregale dev --stop`.", l.Plan, l.DeveloperApps, observed)).
 		WithLimit(int64(l.DeveloperApps), int64(observed)).
+		WithDocs(docsBase + "/plans#developer-environments")
+}
+
+// ErrPlanLimitDeveloperLease is returned when a developer session requests a
+// lease longer than the plan's `gregale dev --ttl` ceiling. Limit and observed
+// values are whole hours; the observed value rounds up so it always exceeds
+// the limit it is compared with.
+func ErrPlanLimitDeveloperLease(l Limits, requestedSeconds int64) *Problem {
+	observedHours := requestedSeconds / 3600
+	if requestedSeconds%3600 != 0 {
+		observedHours++
+	}
+	return NewProblem(http.StatusForbidden, CodePlanLimitDeveloperLease,
+		"Developer environment lease over plan limit",
+		fmt.Sprintf("%s plan allows a developer environment lease of at most %dh; requested %dh. Choose a shorter --ttl.", l.Plan, l.DeveloperLeaseMaxHours, observedHours)).
+		WithLimit(int64(l.DeveloperLeaseMaxHours), observedHours).
 		WithDocs(docsBase + "/plans#developer-environments")
 }
 

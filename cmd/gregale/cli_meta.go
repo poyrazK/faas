@@ -1983,6 +1983,7 @@ var cliCommands = []cliCommand{
 			{Name: "stop", Short: "tear down the developer environment"},
 			{Name: "no-logs", Short: "do not attach the live runtime log stream"},
 			{Name: "open", Short: "open the developer environment URL after the first live sync"},
+			{Name: "ttl", Short: "environment lease after the latest sync (default 24h; plan maximum applies)", Value: "DURATION"},
 		},
 		Subcommands: []cliSub{
 			{Name: "status", Short: "show developer-environment quota usage"},
@@ -2021,6 +2022,7 @@ var cliCommands = []cliCommand{
 				{Name: "open", Short: "open the verified URL"},
 				{Name: "postgres", Short: "provision an isolated PostgreSQL database"},
 				{Name: "postgres-region", Short: "choose managed database placement", Value: "REGION"},
+				{Name: "ttl", Short: "environment lease after the latest sync", Value: "DURATION"},
 			}},
 		},
 	},

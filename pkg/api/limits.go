@@ -1159,6 +1159,12 @@ type Limits struct {
 	AppLayerMaxMB      int // drive1 ext4 cap (spec §4.6)
 	SourceTarballMaxMB int // upload cap; >cap => 413 (spec §4.2)
 
+	// DeveloperLeaseMaxHours is the longest lease a `gregale dev`
+	// environment may request (`--ttl`, `dev.ttl`). Every sync renews the
+	// lease; the preview janitor tears down an environment once it lapses.
+	// A request without a lease gets DeveloperLeaseDefault.
+	DeveloperLeaseMaxHours int
+
 	// ConcurrencyPerVMBound (issue #559) is the platform-advertised
 	// upper bound on concurrent in-flight requests one VM can handle
 	// at the listener layer. Distinct from MaxConcurrency (the per-app
@@ -2623,6 +2629,8 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               1,
 		OutboundRequestsPerDayMax: 100_000,
 		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60,
+		DeveloperLeaseMaxHours: 24, // `gregale dev --ttl` ceiling
+
 		DeploysPerHour: 10,
 		DeveloperApps:  1,
 		MaxConcurrency: 1,
@@ -3017,6 +3025,8 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               2,
 		OutboundRequestsPerDayMax: 1_000_000,
 		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120,
+		DeveloperLeaseMaxHours: 72, // `gregale dev --ttl` ceiling
+
 		DeploysPerHour:        50,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
@@ -3429,6 +3439,8 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               5,
 		OutboundRequestsPerDayMax: 10_000_000,
 		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600,
+		DeveloperLeaseMaxHours: 168, // `gregale dev --ttl` ceiling
+
 		DeploysPerHour:        250,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
@@ -3803,6 +3815,8 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               20,
 		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
 		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000,
+		DeveloperLeaseMaxHours: 336, // `gregale dev --ttl` ceiling
+
 		DeploysPerHour:        1000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
@@ -7958,6 +7972,26 @@ func (p Plan) RateLimitPerAccountRPM() int {
 		return 0
 	}
 	return l.RateLimitPerAccountRPM
+}
+
+// DeveloperLeaseDefault is the `gregale dev` environment lease used when a
+// session request does not choose one; it is also the pre-`--ttl` behavior.
+// DeveloperLeaseMin is the shortest lease a request may choose, so a typo
+// such as `--ttl 1m` cannot make an environment vanish between two saves.
+// The per-plan ceiling is Limits.DeveloperLeaseMaxHours.
+const (
+	DeveloperLeaseDefault = 24 * time.Hour
+	DeveloperLeaseMin     = time.Hour
+)
+
+// DeveloperLeaseMax returns the longest `gregale dev` lease the plan allows.
+// Unknown plans fail closed to the default lease.
+func (p Plan) DeveloperLeaseMax() time.Duration {
+	l, ok := LimitsFor(p)
+	if !ok || l.DeveloperLeaseMaxHours <= 0 {
+		return DeveloperLeaseDefault
+	}
+	return time.Duration(l.DeveloperLeaseMaxHours) * time.Hour
 }
 
 // DeploysPerHour returns the account-wide deploy admission budget for the
