@@ -129,7 +129,7 @@ Reader qualification exercises existing and future object access, write/DDL
 denials with client read-only settings disabled, RLS, password recovery on retry,
 data-preserving rotation, and rejection of retired sessions and fresh logins.
 Version 7 also requires independent proof of the exact source and requested
-restore point, and replay of the same physical target. Versions 1–6 must be
+restore point, and replay of the same physical target. Versions 1–7 must be
 replaced by a new qualification run.
 The [2026-10-07 live acceptance](ops/evidence/20261007-managed-postgres-qualification/REPORT.md)
 passed the version-7 PostgreSQL 18 provider and lifecycle contract. Snapshot
@@ -137,7 +137,10 @@ capture and native copy remain unqualified; the evidence does not enable
 production provisioning or qualify every placement and PostgreSQL major.
 The approval is bound to the report digest, exact backend fingerprint, expiry,
 and the current canary allowlist. A provider-only run remains useful evidence
-but is not rollout-ready until the lifecycle smoke has passed.
+but is not rollout-ready until the durable SQL lifecycle has passed. Version 8
+requires restart recovery, encrypted secret delivery, SQL workload preservation
+through rotation, and cleanup verification. Version-7 evidence remains a
+historical provider result; it cannot authorize new provisioning under v8.
 
 Save the JSON output as an operator-owned artifact and verify it without making
 provider calls:
@@ -161,15 +164,20 @@ expired, tampered, or mismatched artifacts keep the gate closed. The legacy
 approval path is configured. Restart `apid` after replacing the artifact.
 Provisioning remains disabled until the operator deliberately enables it.
 
-Set `FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` for the second,
-control-plane smoke in the same isolated run. After the provider checks pass,
-the command uses the provider-neutral service and binding saga to exercise
-`database_create → database_ready → binding_create → binding_ready →
-binding_delete → database_delete`. The smoke uses an in-memory catalog and a
-non-persistent credential sink, so it validates lease transitions, provider
-credential issuance/revocation, and cleanup without writing a customer app
-secret or exposing a password. This flag is also staging-only and remains
-independent of the customer provisioning gate.
+Set both `FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` and
+`FAAS_MANAGED_POSTGRES_QUALIFY_DURABLE=true` for the second, durable lifecycle
+run. It uses an explicitly marked disposable PostgreSQL catalog, the production
+encrypted app-secret sink, fresh service instances, and actual SQL connections.
+It loses acknowledgements after successful provision, credential and secret
+writes, then reconstructs the services and verifies recovery. Migration
+credentials create a disposable workload; runtime credentials read and update
+it before and after rotation. Cleanup verifies durable tombstones and secret
+absence with provisioning disabled. See the
+[preview runbook](managed-postgres-preview-runbook.md#durable-lifecycle-fixture)
+for fixture inputs and the remaining deployed-app acceptance requirements.
+The lifecycle flag alone retains the in-memory diagnostic but cannot emit a
+version-8 approval. These flags remain staging-only and independent of the
+customer provisioning gate.
 
 The binding catalog, credential saga, and encrypted-secret ownership boundary
 are durable. Reserving a binding claims one `(app, scope, environment key)`
