@@ -1029,8 +1029,10 @@ func (c *EdgeRuleCache) removeElement(el *list.Element) {
 // loop on `db.NotifyEdgeRuleChanged`.
 type EdgeRuleMatcher interface {
 	// Converging reports whether the hostname is inside the short fail-closed
-	// window of a two-phase fleet policy mutation.
-	Converging(host string) bool
+	// window of a two-phase fleet policy mutation by ownerAccountID (the
+	// account owning the app the host resolves to; "" when none claims it).
+	// Another account's mutation never fences an owned host.
+	Converging(host, ownerAccountID string) bool
 	MatchRoute(ctx context.Context, host, path, method string) *EdgeRuleResolved
 	MatchRewrite(ctx context.Context, host, path, method string) *EdgeRuleRewriteResolved
 	MatchRedirect(ctx context.Context, host, path, method string) *EdgeRuleRedirectResolved
@@ -1230,7 +1232,7 @@ var (
 // embed it and only override the kinds it ships.
 type noOpEdgeRuleMatcher struct{}
 
-func (noOpEdgeRuleMatcher) Converging(string) bool { return false }
+func (noOpEdgeRuleMatcher) Converging(string, string) bool { return false }
 
 func (noOpEdgeRuleMatcher) MatchRetry(context.Context, string, string, string) *EdgeRuleRetryResolved {
 	return nil
