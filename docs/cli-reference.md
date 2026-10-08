@@ -8687,7 +8687,7 @@ Manage deployment traffic split (available on every plan)
 
 Set the traffic split for a deployment
 
-`gregale traffic set [--app <SLUG>] --deployment <ID> --percent <N> [<slug>]`
+`gregale traffic set [--app <SLUG>] --deployment <ID> --percent <N>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -8695,11 +8695,18 @@ Set the traffic split for a deployment
 | `--deployment <ID>` | deployment id or vN revision to set the traffic split on | required |
 | `--percent <N>` | traffic weight in [0, 100]; -1 = unset (server default 100) | required |
 
+Examples:
+
+```sh
+gregale traffic set my-api --deployment v7 --percent 30
+gregale traffic set --app my-api --deployment v7 --percent 30
+```
+
 ### traffic promote
 
 Promote a live deployment to 100% production traffic
 
-`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack] [<slug>]`
+`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -8710,6 +8717,13 @@ Promote a live deployment to 100% production traffic
 | `--max-verification-age <DURATION>` | maximum probe age (default 10m); requires --require-bindings |  |
 | `--allow-unsupported` | waive unsupported queue/outbound probes; requires --require-bindings |  |
 | `--require-application-ack` | require current application acknowledgements; requires --require-bindings |  |
+
+Examples:
+
+```sh
+gregale traffic promote my-api --deployment v7
+gregale traffic promote --app my-api --deployment v7 --if-serving v6
+```
 
 ### traffic status
 
