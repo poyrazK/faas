@@ -1160,6 +1160,14 @@ jobs:
           set -o pipefail
           make test-container-contract 2>&1 | tee container-contract.log
       - name: require portable UDP contracts
+        # Match the bounded APID compile settings used by pg shard 1. This
+        # strict verifier also compiles cmd/apid with -race, and cold DWARF
+        # generation can exceed hosted-runner memory before tests begin.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: |
           set -o pipefail
           python3 scripts/ci/udp-contract-check.py 2>&1 | tee udp-contract.log
