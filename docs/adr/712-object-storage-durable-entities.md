@@ -2,7 +2,7 @@
 
 - **Status:** accepted for an internal prototype and opt-in invocation/alarm/maintenance/inventory preview; native runtime and provider qualification pending
 - **Date:** 2026-10-07
-- **Decision:** Implement a SQL-free entity state engine using immutable JSON snapshots, a receipt index and one conditionally updated manifest per account/app/environment/customer/namespace/key. Ownership, state publication and cleanup fencing share that manifest. Add a narrow conditional-object capability to the existing S3 provider, an opt-in authenticated invocation API, scheduled wake-ups, bounded cleanup with durable scan checkpoints, operational metrics and a runnable counter example.
+- **Decision:** Implement a SQL-free entity state engine using immutable JSON snapshots, a receipt index and one conditionally updated manifest per account/app/environment/customer/namespace/key. Ownership, state publication and cleanup fencing share that manifest. Add a narrow conditional-object capability to the existing S3 and native GCS providers, an opt-in authenticated invocation API, scheduled wake-ups, bounded cleanup with durable scan checkpoints, operational metrics and a runnable counter example.
 - **Why:** Applications need persistent logical state without allocating a permanent VM or customer disk. PostgreSQL-backed exclusive operations do not provide this object-storage durability contract, and artifact storage lacks compare-and-swap.
 - **Consequences:** An acknowledged transition has published its snapshot through a successful manifest compare-and-swap. Takeover changes the same manifest, fencing obsolete commits. Request receipts and results commit with state; uncertain responses are resolved by retrying the same request identity and payload. Entity state has no SQL dependency. Existing control-plane ownership, workload isolation and stateless deployment rules remain in force. This prototype is not a launched product capability.
 - **Rejected alternatives:** Unconditional snapshot overwrites permit lost updates. Separate lease and state objects leave a race between ownership checks and commit. Unrooted receipt objects falsely treat unsuccessful uploads as committed work. Age-based cleanup can race an in-flight publisher. Local-only state cannot survive compute loss. Adopting an actor runtime now would couple storage evaluation to execution-language changes.
@@ -28,10 +28,37 @@ and may not perform external effects. The first milestone bounded inline request
 receipts; the journal milestone below removes that count ceiling while preserving
 the original retry contract.
 
-This preview implements the conditional-state capability for S3 only. The native
-GCS provider does not yet implement it, so selecting GCS fails startup when the
-preview is enabled. GCS generation fencing and live-bucket qualification are
-follow-up work; ordinary GCS object storage support does not qualify entity state.
+The preview implements the conditional-state capability for S3 and native GCS.
+Both must pass the same startup probe. Native runtime and live-bucket
+qualification remain pending; ordinary object storage support does not qualify
+entity state.
+
+### Native GCS generations — 2026-10-08
+
+The existing OAuth/ADC client implements the private conditional-state
+capability directly through the native JSON API. A read returns the content and
+its generation from the same response. Generations are canonical positive
+decimal opaque version tokens; HTTP ETags and metagenerations are not used for
+state ownership.
+
+Create uses `ifGenerationMatch=0`; replace uses the observed content generation.
+Writes disable SDK retries and use a single non-resumable upload. The SDK checks
+the response checksum, and the adapter requires a new positive generation and
+the expected size before acknowledging success. Only HTTP 412 is a definite
+generation rejection; other failed dispatched uploads remain uncertain.
+Request-ID receipt replay resolves a lost response after successful publication.
+
+Reads enforce the caller's byte bound and reject unknown-sized, encoded or
+decompressed content and missing generations. Backend identity/fingerprint,
+the dedicated private bucket and all preview opt-ins remain mandatory. The
+existing GCS listing/deletion capabilities serve alarms, inventory and cleanup.
+
+SDK-backed wire conformance tests exercise restart restoration, exact original
+retry results after publication ACK loss, competing CAS writers,
+identical-content generation changes, stale in-flight owner fencing and
+fail-closed startup when a provider ignores generation conditions. These
+fixtures do not qualify a live GCS bucket, network partition behavior, native
+microVM execution or production latency/cost.
 
 Alarm deadlines persist with state. The opt-in alarm milestone below adds
 discovery/delivery; owner-affinity routing, metering,

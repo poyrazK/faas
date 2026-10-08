@@ -1,8 +1,9 @@
 # Object-storage durable entity prototype
 
 This development harness increments a named counter using a private S3 bucket.
-The durable-state preview currently supports S3 only. The native GCS conditional
-state adapter and its live-bucket qualification remain pending.
+The platform preview supports S3 and native GCS. The trusted Go command below
+configures S3; GCS setup is described below. Native and live-provider qualification
+remain pending.
 It needs no SQL database or persistent local disk. Each invocation creates a new
 execution owner; repeating a request ID and the same delta replays the original
 result without incrementing again.
@@ -51,6 +52,43 @@ entity key must never share its state or receipts.
 Use the same request ID and payload after a timeout or uncertain commit. Reusing
 an ID with a different delta fails. A live owner yields a busy error; after a
 process dies, another can acquire when its lease expires (default 30 seconds).
+
+## GCS conditional-state provider
+
+The invocation preview also accepts a configured native GCS backend. GCS uses
+the existing application-default credential and optional service-account
+impersonation path. It does not use the public S3 compatibility gateway or HMAC
+credentials for entity state.
+
+Configure a GCS backend using the fields shown in
+[the GCS backend example](../../deploy/object-storage.gcs.example.json). Point
+`FAAS_DURABLE_ENTITY_BACKEND` and its immutable placement fingerprint at that
+backend, and set `FAAS_DURABLE_ENTITY_BUCKET` to an existing, dedicated private
+platform test bucket. The same app allowlist and invocation/alarm/maintenance
+opt-ins apply. Grant the platform identity object read/create/replace access;
+alarm discovery needs LIST, and cleanup needs LIST/DELETE. Keep customer access,
+automatic lifecycle deletion and public caching away from this bucket.
+
+The trusted Go counter command above still configures S3. For GCS, invoke the
+counter app through the platform API/SDK with the GCS backend selected.
+
+Content generations are the opaque compare-and-swap tokens. Create uses
+`ifGenerationMatch=0`; replacement uses the generation returned with the object
+body. HTTP ETags and metagenerations are not ownership tokens. Each write uses
+one non-resumable native JSON API upload with SDK retries disabled. A successful
+ACK must identify a new positive generation and the expected size; the SDK also
+checks the upload checksum. Reads bind content and generation in the same
+response, reject encoded/unknown-size bodies and enforce the engine's byte limit.
+
+Only a rejected generation precondition is a definite CAS conflict. A lost
+response or any other uncertain upload result must be retried through the entity
+request-ID receipt protocol. Do not retry raw writes independently.
+
+The SDK-backed wire conformance tests cover restart restoration, exact original
+receipt replay after a lost publication response, competing CAS writers,
+identical-content generation changes and stale in-flight owner fencing. These
+fixtures do not qualify a live GCS bucket or native microVM behavior. The testing
+agent must collect that acceptance evidence before enabling a customer rollout.
 
 ## Storage and commit contract
 
