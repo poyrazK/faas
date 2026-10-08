@@ -12,9 +12,10 @@ import (
 
 func printMCPHostingDoctor(status mcpTasksStatusResult, preflightPath string) int {
 	report := struct {
-		App    string             `json:"app_slug"`
-		OK     bool               `json:"ok"`
-		Checks []mcphosting.Check `json:"checks"`
+		App                  string             `json:"app_slug"`
+		OK                   bool               `json:"ok"`
+		Checks               []mcphosting.Check `json:"checks"`
+		HandlerCompatibility json.RawMessage    `json:"handlerCompatibility,omitempty"`
 	}{App: status.AppSlug, OK: true, Checks: []mcphosting.Check{}}
 	add := func(name, state, detail string) {
 		report.Checks = append(report.Checks, mcphosting.Check{Name: name, Status: state, Detail: detail})
@@ -55,12 +56,14 @@ func printMCPHostingDoctor(status mcpTasksStatusResult, preflightPath string) in
 		command.Dir = preflightPath
 		output, runErr := command.Output()
 		var local struct {
-			OK     bool               `json:"ok"`
-			Checks []mcphosting.Check `json:"checks"`
+			OK                   bool               `json:"ok"`
+			Checks               []mcphosting.Check `json:"checks"`
+			HandlerCompatibility json.RawMessage    `json:"handlerCompatibility,omitempty"`
 		}
 		if json.Unmarshal(output, &local) != nil || len(local.Checks) == 0 {
 			add("database_and_keys", "failed", "Could not run Task preflight; check Node dependencies and deployment bindings")
 		} else {
+			report.HandlerCompatibility = local.HandlerCompatibility
 			for _, check := range local.Checks {
 				add(check.Name, check.Status, check.Detail)
 			}
@@ -74,6 +77,9 @@ func printMCPHostingDoctor(status mcpTasksStatusResult, preflightPath string) in
 			return code
 		}
 	} else {
+		if len(report.HandlerCompatibility) > 0 {
+			_, _ = fmt.Fprintf(osStdout, "Retained handler compatibility: %s\n", report.HandlerCompatibility)
+		}
 		for _, check := range report.Checks {
 			_, _ = fmt.Fprintf(osStdout, "%s: %s — %s\n", check.Name, check.Status, check.Detail)
 		}

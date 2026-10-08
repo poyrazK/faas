@@ -14,7 +14,7 @@ test('HTTP origin policy, tool errors, redacted logs and stream cancellation', {
   let child;
   let logs = '';
   try {
-    for (const file of ['server.js', 'app.js', 'auth.js', 'tool-policy.js', 'tasks.js', 'task-store.js', 'task-crypto.js', 'task-metrics.js', 'task-runtime.js', 'task-limits.json']) await copyFile(join(source, file), join(fixture, file));
+    for (const file of ['server.js', 'app.js', 'auth.js', 'tool-policy.js', 'tasks.js', 'task-store.js', 'task-crypto.js', 'task-compatibility.js', 'task-metrics.js', 'task-runtime.js', 'task-limits.json']) await copyFile(join(source, file), join(fixture, file));
     const config = JSON.parse(await readFile(join(source, 'gregale-mcp.json'), 'utf8'));
     config.allowed_origins = ['https://trusted.example'];
     await writeFile(join(fixture, 'gregale-mcp.json'), JSON.stringify(config));

@@ -455,3 +455,11 @@ recovery. Dedicated workers exit after cleanup even if a handler ignores abort.
 External effects must remain idempotent by Task ID. Available and draining
 workers publish separate aggregate gauges; initialize the updated worker schema
 before upgrading read-only observers.
+
+Before retiring a handler, run `npm run check:task-compatibility` with the candidate
+code and queue database/namespace bindings. It checks all unexpired nonterminal
+Tasks against `mcpTaskHandlers`, including `previousVersions`, and returns counts
+and latest expiry for missing versions. Delayed retries, input pauses and leased
+work are included. Missing or unknown coverage returns exit code 1. The Task
+doctor includes the same gate. Stop old-version producers before the final check:
+this read-only snapshot does not fence future Task admission.

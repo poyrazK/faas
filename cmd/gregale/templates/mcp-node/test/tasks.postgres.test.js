@@ -888,7 +888,7 @@ test('worker inventory expires, respects namespace boundaries and distinguishes 
   await create(store, 'alice');
   const incompatible = randomUUID(), compatible = randomUUID();
   await store.workerHeartbeat(incompatible, [{ name: 'build_report', version: '2' }]);
-  await pool.query("INSERT INTO gregale_mcp_task_workers VALUES ($1, $2::uuid, $3::jsonb, clock_timestamp(), clock_timestamp() + interval '90 seconds')", [`${namespace}-other`, randomUUID(), JSON.stringify([{ name: 'build_report', version: '1' }])]);
+  await pool.query("INSERT INTO gregale_mcp_task_workers (namespace, worker_id, handlers, heartbeat_at, expires_at) VALUES ($1, $2::uuid, $3::jsonb, clock_timestamp(), clock_timestamp() + interval '90 seconds')", [`${namespace}-other`, randomUUID(), JSON.stringify([{ name: 'build_report', version: '1' }])]);
   assert.equal((await store.queueMetrics()).activeWorkers, 1);
   assert.equal((await store.queueMetrics()).unsupportedHandlerTasks, 1);
   await store.workerHeartbeat(compatible, [{ name: 'build_report', version: '1' }]);
@@ -904,4 +904,82 @@ test('worker inventory expires, respects namespace boundaries and distinguishes 
   await runtime.start();
   try { assert.equal((await store.queueMetrics()).activeWorkers, 1); } finally { await runtime.stop(); }
   assert.equal((await store.queueMetrics()).activeWorkers, 0, 'shutdown withdraws the worker registration');
+});
+
+test('candidate compatibility includes delayed retries, paused input and both lease states', postgresOnly, async t => {
+  const { pool, namespace, store, ownerKey } = await harness(t);
+  const { checkMcpTaskCompatibility } = await import('../task-compatibility.js');
+  const tasks = await Promise.all(Array.from({ length: 7 }, () => create(store, 'alice')));
+  const ids = tasks.map(task => task.task_id);
+  await pool.query("UPDATE gregale_mcp_tasks SET next_attempt_at = clock_timestamp() + interval '30 seconds' WHERE namespace = $1 AND task_id = $2", [namespace, ids[1]]);
+  await pool.query("UPDATE gregale_mcp_tasks SET status = 'input_required', input_state_encrypted = arguments_encrypted WHERE namespace = $1 AND task_id = $2", [namespace, ids[2]]);
+  for (const [id, interval] of [[ids[3], '30 seconds'], [ids[4], '-1 second']]) {
+    await pool.query("UPDATE gregale_mcp_tasks SET status = 'running', lease_token = $3, lease_expires_at = clock_timestamp() + $4::interval WHERE namespace = $1 AND task_id = $2", [namespace, id, randomUUID(), interval]);
+  }
+  await pool.query("UPDATE gregale_mcp_tasks SET status = 'completed' WHERE namespace = $1 AND task_id = $2", [namespace, ids[5]]);
+  await pool.query("UPDATE gregale_mcp_tasks SET expires_at = clock_timestamp() - interval '1 second' WHERE namespace = $1 AND task_id = $2", [namespace, ids[6]]);
+  const other = createPostgresMcpTaskStore({ pool, namespace: namespace + '-other', ownerKey, ttlMs: 60_000 });
+  await other.initialize();
+  await create(other, 'alice');
+  const handlers = { build_report: { version: '2', async execute() {} } };
+  const blocked = await checkMcpTaskCompatibility({ pool, namespace, handlers });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.gaps.length, 1);
+  assert.deepEqual({ ...blocked.gaps[0], latestExpiry: undefined }, { tool: 'build_report', version: '1', taskCount: 5, queuedCount: 2, runningCount: 2, inputRequiredCount: 1, latestExpiry: undefined });
+  assert.ok(Date.parse(blocked.gaps[0].latestExpiry) > Date.now());
+  handlers.build_report.previousVersions = { '1': async () => {} };
+  assert.deepEqual(await checkMcpTaskCompatibility({ pool, namespace, handlers }), { ok: true, gaps: [] });
+  delete handlers.build_report.previousVersions;
+  await pool.query("UPDATE gregale_mcp_tasks SET expires_at = clock_timestamp() - interval '1 second' WHERE namespace = $1", [namespace]);
+  assert.equal((await checkMcpTaskCompatibility({ pool, namespace, handlers })).ok, true);
+});
+
+test('draining registrations are separate from available handler coverage', postgresOnly, async t => {
+  const { store } = await harness(t);
+  await create(store, 'alice');
+  const id = randomUUID();
+  await store.workerHeartbeat(id, [{ name: 'build_report', version: '1' }]);
+  await store.workerDraining(id);
+  const metrics = await store.queueMetrics();
+  assert.equal(metrics.activeWorkers, 0);
+  assert.equal(metrics.drainingWorkers, 1);
+  await store.workerStopped(id);
+  assert.equal((await store.queueMetrics()).drainingWorkers, 0);
+});
+
+test('Task doctor and compatibility command return safe deployment reports', postgresOnly, async t => {
+  const { pool, schema, namespace, ownerKey, store } = await harness(t);
+  const { mkdtemp, copyFile, writeFile, rm } = await import('node:fs/promises');
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const root = dirname(dirname(fileURLToPath(import.meta.url)));
+  const fixture = await mkdtemp(join(root, 'doctor-fixture-'));
+  t.after(() => rm(fixture, { recursive: true, force: true }));
+  for (const file of ['task-doctor.js', 'tasks-compatibility.js', 'task-compatibility.js', 'tasks.js', 'task-runtime.js', 'task-store.js', 'task-crypto.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
+  await writeFile(join(fixture, 'package.json'), JSON.stringify({ type: 'module' }));
+  await writeFile(join(fixture, 'gregale-mcp.json'), JSON.stringify({ tasks: { enabled: true, database_url_env: 'DOCTOR_DATABASE', owner_key_env: 'DOCTOR_OWNER' } }));
+  const url = new URL(databaseURL);
+  url.searchParams.set('options', `-c search_path=${schema}`);
+  const env = { ...process.env, DOCTOR_DATABASE: url.href, DOCTOR_OWNER: ownerKey, MCP_TASK_NAMESPACE: namespace };
+  const run = async (script, overrides = {}) => {
+    try { const result = await promisify(execFile)(process.execPath, [script], { cwd: fixture, env: { ...env, ...overrides }, timeout: 15000 }); return { code: 0, report: JSON.parse(result.stdout) }; }
+    catch (error) { return { code: error.code, report: JSON.parse(error.stdout) }; }
+  };
+  await store.workerHeartbeat(randomUUID(), [{ name: 'build_report', version: '1' }]);
+  const ready = await run('task-doctor.js');
+  assert.equal(ready.code, 0, JSON.stringify(ready.report));
+  assert.equal(ready.report.ok, true);
+  const safe = await run('task-doctor.js', { DOCTOR_OWNER: 'secret-that-must-not-appear' });
+  assert.equal(safe.code, 1);
+  assert.equal(JSON.stringify(safe.report).includes('secret-that-must-not-appear'), false);
+  const task = await create(store, 'alice');
+  await pool.query("UPDATE gregale_mcp_tasks SET handler_version = 'retired', next_attempt_at = clock_timestamp() + interval '30 seconds' WHERE namespace = $1 AND task_id = $2", [namespace, task.task_id]);
+  const blocked = await run('tasks-compatibility.js', { DOCTOR_OWNER: '' });
+  assert.equal(blocked.code, 1);
+  assert.equal(blocked.report.gaps[0].version, 'retired');
+  assert.equal(blocked.report.gaps[0].taskCount, 1);
+  const doctor = await run('task-doctor.js');
+  assert.equal(doctor.code, 1);
+  assert.ok(doctor.report.checks.some(check => check.name === 'retained_handler_coverage' && check.status === 'failed'));
+  assert.equal(doctor.report.handlerCompatibility.gaps[0].taskCount, 1);
 });

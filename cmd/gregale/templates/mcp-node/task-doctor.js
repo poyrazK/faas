@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
+import { mcpTaskHandlers } from './tasks.js';
+import { checkMcpTaskCompatibility } from './task-compatibility.js';
 import { resolveMcpTaskSettings } from './task-runtime.js';
 import { createMcpTaskPayloadCipher } from './task-crypto.js';
 import { createMcpTaskQueueObserver } from './task-store.js';
@@ -34,6 +36,10 @@ try {
     // Resolve every column used by the runtime, without reading a Task payload.
     await client.query('SELECT namespace, task_id, owner_hash, tool_name, handler_version, arguments_encrypted, result_encrypted, error_encrypted, input_state_encrypted, status, created_at, updated_at, expires_at, attempt_count, resume_pending, next_attempt_at, lease_token, lease_expires_at, cancel_requested_at, input_methods FROM gregale_mcp_tasks LIMIT 0');
     add('database_schema_and_permissions', 'passed', 'Runtime tables, columns and DML/sequence privileges are available');
+    stage = 'retained_handler_coverage';
+    const compatibility = await checkMcpTaskCompatibility({ pool: client, namespace: settings.namespace, handlers: mcpTaskHandlers });
+    report.handlerCompatibility = compatibility;
+    add(stage, compatibility.ok ? 'passed' : 'failed', compatibility.ok ? 'Candidate handlers cover all retained nonterminal Tasks' : 'Retain missing handler versions until the reported Tasks finish or expire');
     stage = 'encryption_keys';
     const registered = await client.query('SELECT key_id, key_fingerprint FROM gregale_mcp_task_crypto_keys WHERE namespace = $1', [settings.namespace]);
     const known = new Map(registered.rows.map(row => [row.key_id, row.key_fingerprint]));
@@ -67,6 +73,7 @@ try {
   const guidance = {
     configuration: 'Provide enabled Task configuration, PostgreSQL binding, stable owner secret, valid key ring and MCP_TASK_NAMESPACE',
     database_schema_and_permissions: 'Check PostgreSQL connectivity, initialized runtime schema and required table/sequence privileges',
+    retained_handler_coverage: 'Check candidate handler registry and retained Task schema; do not retire a handler while coverage is unknown',
     encryption_keys: 'Check the stable owner secret, registered key fingerprints and every retained payload key version',
     worker_inventory: 'Check the worker registry schema and queue observer database access',
   };

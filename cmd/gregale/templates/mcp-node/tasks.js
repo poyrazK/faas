@@ -1,3 +1,4 @@
+import { mcpTaskHandlerInventory } from './task-compatibility.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import * as z from 'zod/v4';
@@ -87,14 +88,14 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
 
   validateMcpTaskRetryPolicy({ maxAttempts, retryBaseDelayMs, retryMaxDelayMs });
 
-  const supportedHandlers = [];
+  const supportedHandlers = mcpTaskHandlerInventory(handlers);
   const executionHandlers = new Map();
   for (const [name, handler] of Object.entries(handlers)) {
     if (!/^[a-z][a-z0-9_.-]{0,127}$/.test(name)) throw new Error('Invalid MCP task handler name');
     if (!handler || typeof handler.version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handler.version)) throw new Error('Invalid MCP task handler version');
     for (const [version, execute] of Object.entries({ ...handler.previousVersions, [handler.version]: handler.execute })) {
       if (!/^[A-Za-z0-9._-]{1,64}$/.test(version) || typeof execute !== 'function') throw new Error('Invalid MCP task handler registry');
-      supportedHandlers.push({ name, version });
+
       executionHandlers.set(JSON.stringify([name, version]), execute);
     }
   }

@@ -616,3 +616,59 @@ test('runtime passes explicit retry classification and bounded jitter to the sto
     assert.ok(observed.options.retryDelayMs >= 50 && observed.options.retryDelayMs <= 100);
   } finally { await runtime.stop(); }
 });
+
+test('drain finishes active handlers and concurrent stop calls share completion', async () => {
+  const store = new MemoryTaskStore();
+  let finish;
+  let began;
+  const started = new Promise(resolve => { began = resolve; });
+  const completion = new Promise(resolve => { finish = resolve; });
+  const events = [];
+  store.workerHeartbeat = async () => { events.push('available'); };
+  store.workerDraining = async () => { events.push('draining'); };
+  store.workerStopped = async () => { events.push('stopped'); };
+  const task = await store.create({ toolName: 'build_report', handlerVersion: '1', args: {}, authMode: 'open' });
+  const runtime = createMcpTaskRuntime({ store, handlers: { build_report: { version: '1', async execute() { began(); return completion; } } } });
+  await runtime.start();
+  await started;
+  const first = runtime.stop();
+  assert.equal(runtime.stop(), first);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(events.includes('draining'));
+  assert.equal(events.includes('stopped'), false);
+  finish({ content: [] });
+  assert.deepEqual(await first, { timedOut: false });
+  assert.equal(store.rows.get(task.task_id).status, 'completed');
+  assert.equal(events.at(-1), 'stopped');
+});
+
+test('drain deadline aborts handlers and suppresses late terminal writes', async () => {
+  const store = new MemoryTaskStore();
+  let finish;
+  let signal;
+  const completion = new Promise(resolve => { finish = resolve; });
+  const task = await store.create({ toolName: 'build_report', handlerVersion: '1', args: {}, authMode: 'open' });
+  const runtime = createMcpTaskRuntime({ store, shutdownTimeoutMs: 1000, handlers: { build_report: { version: '1', async execute(_, context) { signal = context.signal; return completion; } } } });
+  await runtime.start();
+  assert.deepEqual(await runtime.stop(), { timedOut: true });
+  assert.equal(signal.aborted, true);
+  finish({ content: [] });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(store.rows.get(task.task_id).status, 'running');
+});
+
+test('active handlers keep renewing their lease while draining', async () => {
+  const store = new MemoryTaskStore();
+  let finish;
+  let renewed;
+  const completion = new Promise(resolve => { finish = resolve; });
+  const renewal = new Promise(resolve => { renewed = resolve; });
+  const originalHeartbeat = store.heartbeat.bind(store);
+  store.heartbeat = async (...args) => { const state = await originalHeartbeat(...args); renewed(); return state; };
+  await store.create({ toolName: 'build_report', handlerVersion: '1', args: {}, authMode: 'open' });
+  const runtime = createMcpTaskRuntime({ store, shutdownTimeoutMs: 10000, handlers: { build_report: { version: '1', async execute() { return completion; } } } });
+  await runtime.start();
+  const stopping = runtime.stop();
+  try { await renewal; } finally { finish({ content: [] }); }
+  assert.deepEqual(await stopping, { timedOut: false });
+});

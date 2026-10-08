@@ -842,3 +842,32 @@ Upgrade schema via worker startup before upgrading read-only observers: the
 worker registry now includes a `draining` column. Older workers do not report
 draining state, so complete the rollout across workers before relying on this
 metric. Run replacement workers before draining the last compatible worker.
+
+### Retiring Task handler versions
+
+Run the candidate worker's `npm run check:task-compatibility` before replacing
+workers or removing `previousVersions`. Provide the Task PostgreSQL binding and
+`MCP_TASK_NAMESPACE`; this read-only command needs no owner or encryption secret.
+It uses the candidate `mcpTaskHandlers` registry, including retained previous
+implementations, rather than the currently deployed workers' heartbeat inventory.
+Exit code 1 blocks the gate when coverage is missing or cannot be checked.
+
+The JSON `gaps` array reports tool/version, affected Task count, queued/running/
+input-required counts, and latest expiry. The query covers every unexpired
+nonterminal Task: delayed retries, paused client input, and both live and expired
+leases. Terminal and expired Tasks do not need a handler and are excluded. Task
+IDs, caller identities, arguments and results are not reported.
+
+The full Task doctor also runs this check; `gregale mcp doctor --hosting
+--app <worker-app> --preflight-path <candidate-starter>` includes the compatibility
+report in its JSON output and fails when retained work lacks candidate coverage.
+Keep the missing versions in `previousVersions` until the affected Tasks finish
+or expire, then rerun the gate.
+
+This is a database snapshot, not admission fencing. Stop or upgrade producers
+that can enqueue retired versions before taking the final snapshot and replacing
+the last compatible worker. Run the check against the actual deployment namespace
+and candidate code. A passing snapshot cannot prevent an older producer from
+creating incompatible work afterward. Deliberately partitioned workers must use
+an aggregate candidate registry covering the replacement fleet when gating a
+fleet-wide retirement.
