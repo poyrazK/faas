@@ -2,6 +2,7 @@ package templates
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"io"
 	"os"
@@ -31,12 +32,11 @@ func TestDataAPIRPCSharedCatalog(t *testing.T) {
 	if err := TarGz("data-api-starter", archive); err != nil {
 		t.Fatal(err)
 	}
-	file, err := os.Open(archive)
+	contents, err := os.ReadFile(archive)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
-	gz, err := gzip.NewReader(file)
+	gz, err := gzip.NewReader(bytes.NewReader(contents))
 	if err != nil {
 		t.Fatal(err)
 	}
