@@ -28891,6 +28891,11 @@ func (s *PgStore) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, arg
 	return s.appErrorsQueries().GetRequestTelemetryByAppAndIdentifier(ctx, s.pool, arg)
 }
 
+// ListRequestTelemetryByAccountTrace backs the account-wide trace lookup.
+func (s *PgStore) ListRequestTelemetryByAccountTrace(ctx context.Context, arg sqlc.ListRequestTelemetryByAccountTraceParams) ([]sqlc.ListRequestTelemetryByAccountTraceRow, error) {
+	return s.appErrorsQueries().ListRequestTelemetryByAccountTrace(ctx, s.pool, arg)
+}
+
 // RequestTelemetryByDeployment backs the per-deployment drilldown
 // and the regression detector (PR-B cron).
 func (s *PgStore) RequestTelemetryByDeployment(ctx context.Context, arg sqlc.RequestTelemetryByDeploymentParams) ([]sqlc.RequestTelemetryByDeploymentRow, error) {
