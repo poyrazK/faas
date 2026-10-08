@@ -8302,3 +8302,39 @@ run reached its 15-minute limit during verification; the complete verification
 group then passed separately. Targeted lint reports zero issues, and SQLC,
 encoding, shell-quoting and ADR-number checks pass. An initial API attempt exhausted
 test-database disk space; obsolete build cache was removed before the rerun.
+
+### Checkpoint PostgreSQL app-secret envelope conversion
+
+The checkpoint connection journal is a private namespaced envelope containing a
+plan digest and connection bytes. It is not an application secret envelope and
+cannot be copied directly into `app_secrets`. A conversion seam now authenticates
+its original activation-manifest member, connection key/ciphertext digest,
+credential plan and preparation receipt. It opens the original password and
+connection envelopes during key overlap, verifies the complete canonical URI
+against the pinned identity, original password, endpoint, database and
+`sslmode=verify-full`, then seals an app-readable one-value envelope to the current
+recipient with the standard keyed value fingerprint.
+
+The result retains the original account, app, target scope, environment key,
+fresh binding ID, access and generation-one credential reference. Secret class is
+persistent and version is one. No new native credential or password is requested.
+Owned plaintext byte buffers are cleared; transient Go URI/password strings retain
+the same zeroing limitation as connection preparation. Missing original keys,
+changed ownership, foreign namespaces, mismatched plans, altered passwords,
+source endpoints and weaker TLS options fail without disclosing private values.
+
+This seam only prepares ciphertext in memory. It is not yet wired to a publication
+writer, persists no binding or secret, and grants no publication authority. The
+remaining writer must journal the complete original set, authenticate current
+activation at its final commit, enforce target secret quotas and collisions,
+commit bindings and secrets atomically, and provide compensation before native
+retirement. The public full-stage gate and deferred live qualification are unchanged.
+
+Validation: focused conversion tests pass application-envelope decryption, current
+recipient rotation, original-password/endpoint/TLS preservation, ownership and
+fingerprint checks, plus rejection of changed manifests, keys, ciphertext,
+preparation receipts, unsealed values, namespaces, plans, passwords, endpoints,
+TLS options and missing keys/HMAC configuration. Existing managed PostgreSQL
+credential/connection helper tests also pass. SQLC and repository policy checks
+are clean. These are cryptographic preparation tests, not publication or live
+provider qualification.
