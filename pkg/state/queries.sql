@@ -12737,7 +12737,7 @@ WHERE a.id=sqlc.arg(app_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::t
 INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes,customer_group_by)
 VALUES(sqlc.arg(app_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(enabled),sqlc.arg(revision),sqlc.arg(routes)::jsonb,sqlc.arg(customer_group_by)::text)
 ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,customer_group_by=EXCLUDED.customer_group_by,
- updated_at=clock_timestamp(),next_check_at=clock_timestamp(),last_deployment_id=NULL,active_incident_id=NULL,customer_recovery_state='{}'::jsonb;
+	updated_at=clock_timestamp(),next_check_at=clock_timestamp(),last_deployment_id=NULL,active_incident_id=NULL,customer_recovery_state='{}'::jsonb,last_healthy_deployment='{}'::jsonb;
 
 -- name: ReadRouteMonitorRecoveryCustomers :one
 SELECT customer_recovery_state FROM route_monitors WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
@@ -12749,14 +12749,16 @@ ORDER BY m.next_check_at,m.app_id LIMIT sqlc.arg(batch_limit)::integer;
 
 -- name: LockRouteMonitor :one
 SELECT next_check_at,coalesce(last_deployment_id::text,'')::text AS last_deployment_id,coalesce(active_incident_id::text,'')::text AS active_incident_id
+ ,coalesce(last_healthy_deployment,'{}'::jsonb)::text AS last_healthy_deployment
 FROM route_monitors WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid FOR UPDATE SKIP LOCKED;
 
 -- name: WriteRouteMonitorState :exec
 UPDATE route_monitors SET next_check_at=sqlc.arg(next_check_at),last_deployment_id=nullif(sqlc.arg(deployment_id)::text,'')::uuid,
-	active_incident_id=nullif(sqlc.arg(incident_id)::text,'')::uuid,customer_recovery_state=sqlc.arg(customer_recovery_state)::jsonb WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+	active_incident_id=nullif(sqlc.arg(incident_id)::text,'')::uuid,customer_recovery_state=sqlc.arg(customer_recovery_state)::jsonb,
+	last_healthy_deployment=sqlc.arg(last_healthy_deployment)::jsonb WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
 -- name: RouteMonitorServingDeployments :many
-SELECT id::text AS id,commit_sha,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
+SELECT id::text AS id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
 FROM deployments WHERE app_id=sqlc.arg(app_id)::text::uuid AND status='live' AND deleted_at IS NULL AND traffic_percent>0
  AND coalesce(nullif(scope,''),'default')='default' ORDER BY id LIMIT 2;
 

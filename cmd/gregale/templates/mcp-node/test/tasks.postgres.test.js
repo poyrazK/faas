@@ -210,6 +210,8 @@ test('PostgreSQL persists encrypted task inputs, results, and failures with call
   await store.cleanupExpired();
   const remaining = await pool.query('SELECT 1 FROM gregale_mcp_tasks WHERE namespace = $1', [namespace]);
   assert.equal(remaining.rowCount, 0, 'expired task payloads are removed');
+  const fairness = await pool.query('SELECT 1 FROM gregale_mcp_task_fairness WHERE namespace = $1', [namespace]);
+  assert.equal(fairness.rowCount, 0, 'idle owner cursors are removed after their tasks expire');
 });
 
 test('PostgreSQL SKIP LOCKED lets concurrent workers claim each queued task once', postgresOnly, async t => {
@@ -229,6 +231,109 @@ test('PostgreSQL SKIP LOCKED lets concurrent workers claim each queued task once
   assert.equal(new Set(claimed.map(task => task.task_id)).size, tasks.length, 'a task is never leased to two workers');
   assert.deepEqual(new Set(claimed.map(task => task.task_id)), new Set(tasks.map(task => task.task_id)));
   assert.ok(claimed.every(task => task.status === 'running' && task.attempt_count === 1));
+});
+
+test('PostgreSQL rotates claims across owners and preserves FIFO within each owner', postgresOnly, async t => {
+  const { pool, namespace, store } = await harness(t);
+  const aliceTasks = [];
+  const bobTasks = [];
+  for (let index = 0; index < 6; index++) {
+    aliceTasks.push(await create(store, 'alice', { owner: 'alice', index }));
+    bobTasks.push(await create(store, 'bob', { owner: 'bob', index }));
+  }
+
+  const ids = new Map([
+    ...aliceTasks.map(task => [task.task_id, 'alice']),
+    ...bobTasks.map(task => [task.task_id, 'bob']),
+  ]);
+  const claimedByOwner = { alice: [], bob: [] };
+  const claimOrder = [];
+  for (let index = 0; index < 8; index++) {
+    const task = await store.claim(3, 30_000);
+    assert.ok(task, `claim ${index + 1} should find queued work`);
+    const owner = ids.get(task.task_id);
+    assert.ok(owner, `claim returned an unknown task ${task.task_id}`);
+    claimOrder.push(owner);
+    claimedByOwner[owner].push(task.task_id);
+  }
+
+  assert.ok(claimOrder.every((owner, index) => index === 0 || owner !== claimOrder[index - 1]),
+    `active owners should take turns; claim order was ${claimOrder.join(', ')}`);
+  assert.deepEqual(claimedByOwner.alice, aliceTasks.slice(0, 4).map(task => task.task_id));
+  assert.deepEqual(claimedByOwner.bob, bobTasks.slice(0, 4).map(task => task.task_id));
+
+  const cursors = await pool.query(
+    'SELECT owner_hash FROM gregale_mcp_task_fairness WHERE namespace = $1',
+    [namespace],
+  );
+  assert.equal(cursors.rowCount, 2, 'the database keeps one fairness cursor per active owner');
+});
+
+test('PostgreSQL concurrent claims skip a locked owner and serve another owner', postgresOnly, async t => {
+  const { store } = await harness(t);
+  const alice = await create(store, 'alice');
+  const bob = await create(store, 'bob');
+  const claimed = await Promise.all([
+    store.claim(3, 30_000),
+    store.claim(3, 30_000),
+  ]);
+
+  assert.ok(claimed.every(Boolean));
+  assert.deepEqual(new Set(claimed.map(task => task.task_id)), new Set([alice.task_id, bob.task_id]));
+});
+
+test('PostgreSQL retries a briefly locked owner cursor instead of idling a worker', postgresOnly, async t => {
+  const { pool, namespace, ownerKey, store } = await harness(t);
+  const record = await create(store, 'alice');
+  let signalBusy;
+  const sawBusy = new Promise(resolve => { signalBusy = resolve; });
+  const observedPool = {
+    async query(sql, params) {
+      const result = await pool.query(sql, params);
+      if (String(sql).includes('WITH chosen_owner') && result.rows?.[0]?.busy) signalBusy();
+      return result;
+    },
+    connect: (...args) => pool.connect(...args),
+  };
+  const retryingStore = createPostgresMcpTaskStore({ pool: observedPool, namespace, ownerKey, ttlMs: 60_000 });
+  await retryingStore.initialize();
+
+  const lockClient = await pool.connect();
+  let transactionOpen = false;
+  try {
+    await lockClient.query('BEGIN');
+    transactionOpen = true;
+    await lockClient.query(
+      'SELECT owner_hash FROM gregale_mcp_task_fairness WHERE namespace = $1 FOR UPDATE',
+      [namespace],
+    );
+    const claim = retryingStore.claim(3, 30_000);
+    await Promise.race([
+      sawBusy,
+      delay(5_000).then(() => { throw new Error('claim did not report a temporarily locked owner cursor'); }),
+    ]);
+    await lockClient.query('COMMIT');
+    transactionOpen = false;
+    assert.equal((await claim).task_id, record.task_id);
+  } finally {
+    if (transactionOpen) await lockClient.query('ROLLBACK').catch(() => {});
+    lockClient.release();
+  }
+});
+
+test('PostgreSQL initialization backfills fairness cursors for existing queued tasks', postgresOnly, async t => {
+  const { pool, namespace, store } = await harness(t);
+  const record = await create(store, 'alice');
+  await pool.query('DELETE FROM gregale_mcp_task_fairness WHERE namespace = $1', [namespace]);
+
+  await store.initialize();
+
+  const cursor = await pool.query(
+    'SELECT 1 FROM gregale_mcp_task_fairness WHERE namespace = $1',
+    [namespace],
+  );
+  assert.equal(cursor.rowCount, 1, 'existing queue owners receive a fairness cursor during migration');
+  assert.equal((await store.claim(3, 30_000)).task_id, record.task_id);
 });
 
 test('PostgreSQL recovers an expired lease and rejects writes from the former worker', postgresOnly, async t => {

@@ -11008,7 +11008,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -20345,12 +20345,14 @@ CREATE TABLE public.route_monitors (
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     next_check_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     last_deployment_id uuid,
+    last_healthy_deployment jsonb DEFAULT '{}'::jsonb NOT NULL,
     active_incident_id uuid,
     customer_group_by text DEFAULT ''::text NOT NULL,
     customer_recovery_state jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT route_monitors_check CHECK (((NOT enabled) OR (jsonb_array_length(routes) > 0))),
     CONSTRAINT route_monitors_customer_group_by_check CHECK ((customer_group_by = ANY (ARRAY[''::text, 'tenant'::text, 'consumer'::text]))),
     CONSTRAINT route_monitors_customer_recovery_state_check CHECK (((jsonb_typeof(customer_recovery_state) = 'object'::text) AND (octet_length((customer_recovery_state)::text) <= 262144))),
+    CONSTRAINT route_monitors_last_healthy_deployment_check CHECK (((jsonb_typeof(last_healthy_deployment) = 'object'::text) AND (octet_length((last_healthy_deployment)::text) <= 2048))),
     CONSTRAINT route_monitors_next_check_at_check CHECK (isfinite(next_check_at)),
     CONSTRAINT route_monitors_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
     CONSTRAINT route_monitors_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20) AND (octet_length((routes)::text) <= 16384))),

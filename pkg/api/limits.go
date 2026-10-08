@@ -8275,9 +8275,21 @@ func (l Limits) RequestBudgetMaxDuration() time.Duration {
 // one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
 const FunctionInterpreterMaxWorkers = 4
 
-// Startup attestation runs before the scheduler opens its readiness boundary.
-const StartupAttestationWorkers = 2
-const StartupAttestationLayerTimeout = 15 * time.Second
+// The layer attestation warm verifies the owned live layers in the
+// background at schedd start and again every AttestationWarmInterval, so a
+// wake rarely hashes a layer itself. A layer that failed is retried after
+// AttestationWarmRetryBackoff. The per-layer deadline covers a GCS read plus
+// a SHA-256 of a multi-GB image on a busy compute node; at 15 s about half of
+// production-us's layers timed out after every restart (hunt #6, H5-56).
+const AttestationWarmWorkers = 2
+const AttestationWarmLayerTimeout = 2 * time.Minute
+const AttestationWarmInterval = time.Minute
+const AttestationWarmRetryBackoff = 5 * time.Minute
+
+// LayerVerifyTimeout bounds one shared layer verification. Concurrent
+// verifications of one layer share a single read and hash that outlives a
+// caller that gives up, so the next wake finds the layer verified.
+const LayerVerifyTimeout = 2 * time.Minute
 
 // NodeSizing is the per-host RAM/vCPU shape derived from the machine a
 // compute node actually runs on, rather than the single-box constants.
@@ -8901,20 +8913,25 @@ const RouteHealthTransitionVersion = 1
 
 // Production route monitoring and bounded customer evidence (ADR-498/499).
 const (
-	RouteMonitorVersion                         = 1
-	RouteMonitorMaxRateBPS                int64 = 10_000
-	RouteMonitorPollInterval                    = 30 * time.Second
-	RouteMonitorEvaluationInterval              = time.Minute
-	RouteMonitorBatchSize                       = 20
-	RouteMonitorEvidenceRoutesLimit             = 3
-	RouteMonitorIncidentMaxBytes                = 512 << 10
-	RouteMonitorHistoryMaxEntries               = 100
-	RouteMonitorHistoryMaxBytes                 = 8 << 20
-	RouteMonitorPageSize                        = 5
-	RouteMonitorMaxPage                         = 10
-	RouteMonitorCustomersPerRoute               = 5
-	RouteMonitorRecoveryCustomersPerRoute       = 100
-	RouteMonitorRecoveryStateMaxBytes           = 256 << 10
+	RouteMonitorVersion                               = 1
+	RouteMonitorMaxRateBPS                      int64 = 10_000
+	RouteMonitorPollInterval                          = 30 * time.Second
+	RouteMonitorEvaluationInterval                    = time.Minute
+	RouteMonitorBatchSize                             = 20
+	RouteMonitorEvidenceRoutesLimit                   = 3
+	RouteMonitorHealthyBaselineMaxBytes               = 2048
+	RouteMonitorIncidentMaxBytes                      = 512 << 10
+	RouteMonitorIncidentTimelineMaxEntries            = 60
+	RouteMonitorIncidentEscalationMaxEntries          = 20
+	RouteMonitorIncidentEscalationEvidenceLimit       = 3
+	RouteMonitorIncidentEscalationSignalsMax          = 40
+	RouteMonitorHistoryMaxEntries                     = 100
+	RouteMonitorHistoryMaxBytes                       = 8 << 20
+	RouteMonitorPageSize                              = 5
+	RouteMonitorMaxPage                               = 10
+	RouteMonitorCustomersPerRoute                     = 5
+	RouteMonitorRecoveryCustomersPerRoute             = 100
+	RouteMonitorRecoveryStateMaxBytes                 = 256 << 10
 )
 
 // Internal durable-entity prototype budgets, not plan availability.

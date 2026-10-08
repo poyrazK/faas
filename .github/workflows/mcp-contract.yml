@@ -60,7 +60,7 @@ jobs:
   starter:
     needs: go-contracts
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16
@@ -120,3 +120,25 @@ jobs:
           "$RUNNER_TEMP/gregale" mcp lock --url http://127.0.0.1:18808/mcp --out "$RUNNER_TEMP/mcp-candidate.json" --json
           "$RUNNER_TEMP/gregale" mcp diff --before "$RUNNER_TEMP/mcp-baseline.json" --after "$RUNNER_TEMP/mcp-candidate.json" --check --json
           "$RUNNER_TEMP/gregale" mcp lock --url http://127.0.0.1:18808/mcp --legacy --out "$RUNNER_TEMP/mcp-legacy.json" --json
+
+  apid-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mcp
+          POSTGRES_DB: mcp
+          POSTGRES_PASSWORD: mcp-ci-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U mcp"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Portable API server MCP contracts
+        run: go test -race -v -p=1 ./cmd/apid -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1

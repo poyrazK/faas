@@ -34026,6 +34026,7 @@ func (q *Queries) LockRouteHealthRecoverySiblings(ctx context.Context, db DBTX, 
 
 const lockRouteMonitor = `-- name: LockRouteMonitor :one
 SELECT next_check_at,coalesce(last_deployment_id::text,'')::text AS last_deployment_id,coalesce(active_incident_id::text,'')::text AS active_incident_id
+ ,coalesce(last_healthy_deployment,'{}'::jsonb)::text AS last_healthy_deployment
 FROM route_monitors WHERE app_id=$1::text::uuid AND account_id=$2::text::uuid FOR UPDATE SKIP LOCKED
 `
 
@@ -34035,15 +34036,21 @@ type LockRouteMonitorParams struct {
 }
 
 type LockRouteMonitorRow struct {
-	NextCheckAt      pgtype.Timestamptz
-	LastDeploymentID string
-	ActiveIncidentID string
+	NextCheckAt           pgtype.Timestamptz
+	LastDeploymentID      string
+	ActiveIncidentID      string
+	LastHealthyDeployment string
 }
 
 func (q *Queries) LockRouteMonitor(ctx context.Context, db DBTX, arg LockRouteMonitorParams) (LockRouteMonitorRow, error) {
 	row := db.QueryRow(ctx, lockRouteMonitor, arg.AppID, arg.AccountID)
 	var i LockRouteMonitorRow
-	err := row.Scan(&i.NextCheckAt, &i.LastDeploymentID, &i.ActiveIncidentID)
+	err := row.Scan(
+		&i.NextCheckAt,
+		&i.LastDeploymentID,
+		&i.ActiveIncidentID,
+		&i.LastHealthyDeployment,
+	)
 	return i, err
 }
 
@@ -58438,7 +58445,7 @@ func (q *Queries) RouteMonitorCustomerObservations(ctx context.Context, db DBTX,
 }
 
 const routeMonitorServingDeployments = `-- name: RouteMonitorServingDeployments :many
-SELECT id::text AS id,commit_sha,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
+SELECT id::text AS id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
 FROM deployments WHERE app_id=$1::text::uuid AND status='live' AND deleted_at IS NULL AND traffic_percent>0
  AND coalesce(nullif(scope,''),'default')='default' ORDER BY id LIMIT 2
 `
@@ -58446,6 +58453,8 @@ FROM deployments WHERE app_id=$1::text::uuid AND status='live' AND deleted_at IS
 type RouteMonitorServingDeploymentsRow struct {
 	ID                  string
 	CommitSha           pgtype.Text
+	SourceUrl           pgtype.Text
+	SourceRoot          pgtype.Text
 	CreatedAt           pgtype.Timestamptz
 	CanaryStepStartedAt pgtype.Timestamptz
 	RolloutCompletedAt  pgtype.Timestamptz
@@ -58466,6 +58475,8 @@ func (q *Queries) RouteMonitorServingDeployments(ctx context.Context, db DBTX, a
 		if err := rows.Scan(
 			&i.ID,
 			&i.CommitSha,
+			&i.SourceUrl,
+			&i.SourceRoot,
 			&i.CreatedAt,
 			&i.CanaryStepStartedAt,
 			&i.RolloutCompletedAt,
@@ -63239,7 +63250,7 @@ const writeRouteMonitorConfig = `-- name: WriteRouteMonitorConfig :exec
 INSERT INTO route_monitors(app_id,account_id,enabled,revision,routes,customer_group_by)
 VALUES($1::text::uuid,$2::text::uuid,$3,$4,$5::jsonb,$6::text)
 ON CONFLICT(app_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=EXCLUDED.revision,routes=EXCLUDED.routes,customer_group_by=EXCLUDED.customer_group_by,
- updated_at=clock_timestamp(),next_check_at=clock_timestamp(),last_deployment_id=NULL,active_incident_id=NULL,customer_recovery_state='{}'::jsonb
+	updated_at=clock_timestamp(),next_check_at=clock_timestamp(),last_deployment_id=NULL,active_incident_id=NULL,customer_recovery_state='{}'::jsonb,last_healthy_deployment='{}'::jsonb
 `
 
 type WriteRouteMonitorConfigParams struct {
@@ -63300,7 +63311,8 @@ func (q *Queries) WriteRouteMonitorIncident(ctx context.Context, db DBTX, arg Wr
 
 const writeRouteMonitorState = `-- name: WriteRouteMonitorState :exec
 UPDATE route_monitors SET next_check_at=$1,last_deployment_id=nullif($2::text,'')::uuid,
-	active_incident_id=nullif($3::text,'')::uuid,customer_recovery_state=$4::jsonb WHERE app_id=$5::text::uuid AND account_id=$6::text::uuid
+	active_incident_id=nullif($3::text,'')::uuid,customer_recovery_state=$4::jsonb,
+	last_healthy_deployment=$5::jsonb WHERE app_id=$6::text::uuid AND account_id=$7::text::uuid
 `
 
 type WriteRouteMonitorStateParams struct {
@@ -63308,6 +63320,7 @@ type WriteRouteMonitorStateParams struct {
 	DeploymentID          string
 	IncidentID            string
 	CustomerRecoveryState []byte
+	LastHealthyDeployment []byte
 	AppID                 string
 	AccountID             string
 }
@@ -63318,6 +63331,7 @@ func (q *Queries) WriteRouteMonitorState(ctx context.Context, db DBTX, arg Write
 		arg.DeploymentID,
 		arg.IncidentID,
 		arg.CustomerRecoveryState,
+		arg.LastHealthyDeployment,
 		arg.AppID,
 		arg.AccountID,
 	)

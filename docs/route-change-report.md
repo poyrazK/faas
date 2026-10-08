@@ -76,6 +76,86 @@ Names, external references and credentials are never included. Missing or
 plan-gated telemetry stays unavailable; this advisory evidence does not change
 the existing release gate exits or prove that any particular client will break.
 
+### Build a customer migration roster
+
+The preview report is organized by route. To prioritize customer follow-up across
+one app or a multi-app release, first save a report with identity details, then
+derive a roster locally:
+
+```sh
+gregale preview report pr-42-checkout --customer-details --json > route-report.json
+gregale preview customers --report route-report.json --by consumer --format markdown
+
+gregale preview review pr-42-checkout pr-42-catalog --customer-details --json > release-review.json
+gregale preview customers --report release-review.json --by tenant --format csv --out customer-roster.json
+```
+
+The roster lists opaque consumer IDs (scoped to an app) or tenant IDs (scoped to
+the account), changed routes, change reasons, breaking-route counts, observed
+request volume and last-observed time. It ranks breaking exposure first, then
+the number of affected routes, observed requests and recency. The command reads
+only the saved JSON report; it makes no API calls and sends no customer
+communications. `--out` writes the versioned JSON roster to a new file.
+
+This is an outreach aid, not a complete customer inventory. Reports without
+`--customer-details` cannot produce a roster. Missing route observations,
+truncated identities, anonymous or unresolved traffic, and clamped windows are
+marked incomplete. When the same app route appears in multiple preview reports,
+the roster keeps the largest per-customer route count to avoid double-counting
+shared baseline traffic; sums across different routes are only a prioritization
+signal, not billing totals.
+
+### Track customer adoption after a route change
+
+After release, compare that saved cohort with identity-linked requests on the
+new immutable deployments. Map every old route in the cohort explicitly to one
+or more successor routes. This avoids guessing that a similar path, renamed
+operation, or split endpoint is a replacement:
+
+```json
+{
+  "version": 1,
+  "mappings": [
+    {
+      "from": {"app": "checkout", "method": "GET", "path": "/v1/orders/{id}"},
+      "successors": [
+        {"app": "checkout", "method": "GET", "path": "/v2/orders/{id}"}
+      ]
+    }
+  ]
+}
+```
+
+Save that as `route-successors.json`, then select the current deployment for
+each app referenced by the old and successor routes:
+
+```sh
+gregale preview customers track \
+  --roster customer-roster.json \
+  --mapping route-successors.json \
+  --deployment checkout=00000000-0000-4000-8000-000000000001 \
+  --since 14d --format markdown
+```
+
+The report classifies each customer-route link as `old_route_active`,
+`successor_observed`, `both`, `no_current_evidence`, or `incomplete`. An empty
+`successors` array records an intentional retirement with no replacement. A
+same-path contract change is labeled `in_place_unmeasurable`, because route
+telemetry cannot tell old client behavior from updated client behavior when
+both call the same endpoint. For a multi-app release, repeat `--deployment`
+once for each app. For every observed side, the report includes request counts
+and the latest observation time to help separate occasional use from adoption.
+Consumer IDs are scoped to one app, so cross-app successors require a tenant
+roster (`gregale preview customers --by tenant`) to preserve a stable
+account-level identity.
+
+This command makes read-only telemetry requests for the selected deployments.
+Missing traffic is reported as no current evidence, never as proof that a
+customer migrated or stopped using the old route. Truncated identities or route
+inventories, unavailable app telemetry, and clamped observation windows make
+the affected assessment incomplete. `--out` saves the versioned report to a
+new JSON file for later review.
+
 Add a version-controlled [route requirements file](route-requirements.md) to
 check authentication configuration, throttle scope, and configured execution
 budgets in the same report:

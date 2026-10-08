@@ -7003,6 +7003,7 @@
       "customer_recovery_state",
       "enabled",
       "last_deployment_id",
+      "last_healthy_deployment",
       "next_check_at",
       "revision",
       "routes",

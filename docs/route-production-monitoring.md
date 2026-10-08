@@ -25,9 +25,18 @@ gregale routes monitor set my-api --mode enabled \
 gregale routes monitor get my-api --json
 gregale routes monitor report my-api
 gregale routes monitor report my-api --fail-on-unhealthy --json
+gregale routes monitor preview my-api --routes production-routes.json --json
 gregale routes monitor set my-api --mode enabled --routes production-routes.json \
   --customer-group-by tenant --expected-revision 1
 ```
+
+Use `routes monitor preview` to evaluate proposed budgets against the latest
+closed production windows before saving them. It reports route verdicts,
+observed traffic coverage and optional per-customer impact without changing the
+saved monitor. Customer IDs stay redacted unless `--customer-details` is
+explicitly supplied. Saving changed budgets starts a fresh observation window,
+so the preview is evidence about current traffic, not a prediction of the first
+post-save report. Add `--fail-on-unhealthy` to use the preview as a CI check.
 
 Updates replace intent and require the current revision. Identical intent is a
 no-op. Enabling requires request telemetry entitlement; disabling remains
@@ -96,6 +105,12 @@ gregale routes monitor incidents my-api --limit 5 --before INCIDENT_UUID
 gregale routes monitor explain my-api --incident INCIDENT_UUID
 gregale routes monitor explain my-api --incident INCIDENT_UUID \
   --out production-incident.json --json
+gregale routes impact my-api --base BASE_COMMIT --head DEPLOYED_COMMIT \
+  --path services/api --out route-impact.json --json
+gregale routes monitor explain my-api --incident INCIDENT_UUID \
+  --source-impact route-impact.json --out incident-with-source.json --json
+gregale routes monitor explain my-api --incident INCIDENT_UUID \
+  --source-impact auto --out incident-with-source.json --json
 ```
 
 The worker opens one aggregate incident when a budget violation is confirmed.
@@ -103,7 +118,67 @@ Repeated violations stay quiet. The opening report fixes deployment/commit,
 configuration revision, budgets, anchors, counts and exact windows. It preserves
 at most three violated route/signal diagnostic entries in selector order, errors
 before latency, and explicitly reports omitted entries. This snapshot describes
-the opening evaluation; later failures are not added to it.
+the opening evaluation and never changes. While the incident remains open, each
+monitor evaluation appends a compact impact snapshot, including unknown results;
+the final healthy evaluation is retained before recovery. The timeline records
+global and per-route error/latency states plus aggregate observed, violated and
+unknown customer counts when cohort monitoring is enabled. It contains no
+customer IDs or request details. Route indexes refer to the selector order in
+the opening report. The timeline keeps the opening baseline and up to 59 newest
+evaluations; the incident's 512 KiB encoded-size limit can shorten that history.
+When older observations roll off, `timeline_truncated` is true.
+`routes monitor explain` shows route/signal changes and cohort-count changes
+between observations. Older incidents without saved follow-up evaluations
+remain readable and show only their opening baseline.
+
+When an open incident gains a newly violated route signal, the worker saves a
+separate escalation snapshot keyed by the webhook's `transition_id`. It records
+the newly affected route indexes and signal verdicts plus up to three fresh
+aggregate request/latency diagnostic entries from that evaluation. The opening
+snapshot remains unchanged, repeated violations do not create duplicate
+snapshots, and escalation evidence never includes customer identities. Up to 20
+recent transitions are retained; `escalations_truncated` and each transition's
+`evidence_truncated` flag report history or diagnostic caps. `routes monitor
+explain` prints the transition ID, newly violated routes/signals, and captured
+evidence so an operator can connect a webhook directly to its saved diagnosis.
+
+For incident triage, pass a local `routes impact` report to `routes monitor
+explain --source-impact`, or use `--source-impact auto` to have the CLI generate
+that report from the current local Git checkout. Auto mode reads the baseline
+and candidate revisions from the saved incident, using the baseline's stored
+repository-relative source root; it does not clone or fetch source. The CLI
+checks the incident deployment's app and commit and the report base against the
+saved last-known healthy deployment, then compares affected method/path
+selectors with the static route inventory.
+The baseline is retained only after a fully serving deployment receives a
+healthy monitor report, and a different deployment is snapshotted into
+incidents when they open.
+Whole-segment parameter names can differ when the mapping is unique;
+unsupported, ambiguous and unreported routes remain explicit. Matched routes
+show source-change classifications, handler locations and bounded static
+reference chains next to the saved incident evidence. It also includes aggregate
+observed, violated and unknown customer counts for each affected route when
+that route has cohort data; customer identities are not added to the source
+correlation. When the local checkout's origin matches the incident repository,
+the CLI reads CODEOWNERS from the saved candidate commit and shows the matching
+owner rule for each changed or referenced source file. It follows GitHub's
+CODEOWNERS file priority and last-matching-rule behavior. Unowned paths,
+unsupported source paths, missing CODEOWNERS data, and repository mismatches
+remain visible without guessing. This is a local handoff hint: it sends no
+notifications, and the owner list does not prove who is available or responsible
+for a runtime regression.
+
+The report's base and
+candidate revisions, repository and source root must agree with the saved
+healthy baseline and incident deployment's declared metadata. Older incidents
+and incidents without a distinct prior healthy deployment cannot produce a release-pair
+correlation. These metadata checks do not
+verify source bytes against the deployment archive, and static references are
+possible-impact leads rather than proof of execution or root cause. Without
+`--source-impact`, the incident response and output format are unchanged.
+If the local repository or either revision cannot be analyzed, the explanation
+still succeeds and source correlation reports `local_repository_unavailable`
+or `local_analysis_unavailable`.
 
 Each diagnostic window captures up to three matching retained request references.
 Error examples select all 5xx; latency examples include all statuses and prefer
@@ -141,7 +216,8 @@ not found.
 gregale webhooks add --app my-api \
   --target-url https://ops.example.com/gregale/production-routes \
   --secret "$WEBHOOK_SECRET" \
-  --event routes.monitor.violated --event routes.monitor.recovered
+  --event routes.monitor.violated --event routes.monitor.escalated \
+  --event routes.monitor.recovered
 ```
 
 Events commit with saved incident state and app-only recipient snapshots. They
@@ -149,8 +225,15 @@ contain version, app/deployment/incident IDs, revision, status, checked time and
 authenticated incident path. When customer grouping is enabled, aggregate
 observed and violated customer counts are included; identity UUIDs and request
 data remain excluded. Existing signing, retries and delivery replay apply.
-Late subscriptions receive future transitions only. Context changes do not emit
-recovery. A failed evaluation transaction leaves incident and notification state
+`routes.monitor.escalated` fires during an open incident when one or more route
+error or latency signals newly become violated. It reports the number of newly
+affected routes and signals, the previous evaluation time, and aggregate impact
+counts from the current evaluation. Repeated violations of an already-violated
+signal, unknown results, and recovery do not emit escalation events. Each
+transition has a stable `transition_id`; event recipients can fetch the saved
+incident from `incident_path` for route-level evidence. Late subscriptions
+receive future transitions only. Context changes do not emit recovery. A failed
+evaluation transaction leaves incident, timeline and notification state
 unchanged and retries later.
 
 The API and Go, Node and Python SDKs expose:
