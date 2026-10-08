@@ -121,11 +121,13 @@ them, attach a read/write PostgreSQL binding to the app, keep a stable
 }
 ```
 
-The starter creates and migrates its namespaced task table, queue index,
-notification function, and update trigger in that database. The bound role
-must be able to create and alter the table, index, function, and trigger. The
-store hashes owner identity and encrypts arguments, results, and errors with
-AES-256-GCM before writing them.
+The starter creates and migrates its namespaced task table, queue and fairness
+indexes, owner-cursor table, claim-order sequence, notification and fairness
+functions, and their triggers in that database. The bound role must be able to
+create and alter tables, indexes, sequences, functions, and triggers. The store
+hashes owner identity and encrypts arguments, results, and errors with AES-256-GCM
+before writing them. Workers rotate among active owner partitions and preserve
+FIFO order within each owner; open-mode callers share one partition.
 The key must remain stable while tasks exist;
 rotating it early makes those records unreadable. Tasks expire after the
 configured TTL (60 seconds to 30 days). `MCP_TASK_NAMESPACE` overrides
