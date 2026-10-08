@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ProfileRouteWeight")
 
 @_attrs_define
 class ProfileRouteWeight:
+    """Request share used to adjust aggregate CPU comparisons for route mix."""
+
     route: str
     weight: float
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

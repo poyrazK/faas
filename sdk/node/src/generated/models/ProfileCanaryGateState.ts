@@ -5,6 +5,9 @@
 import type { ProfileCanaryGatePolicy } from './ProfileCanaryGatePolicy.js';
 import type { ProfileGateRouteStreak } from './ProfileGateRouteStreak.js';
 import type { ProfileQuery } from './ProfileQuery.js';
+/**
+ * Retained stage evidence and bounded route streaks used to qualify the profiling gate.
+ */
 export type ProfileCanaryGateState = {
   policy: ProfileCanaryGatePolicy;
   status: 'collecting' | 'passed' | 'regressed' | 'timed_out' | 'inconclusive';

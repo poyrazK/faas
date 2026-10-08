@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ProfileCanaryGatePolicy")
 
 @_attrs_define
 class ProfileCanaryGatePolicy:
+    """Opt-in policy requiring consecutive qualified route CPU/request comparisons before a canary stage advances."""
+
     confirmations: int = 2
     timeout_seconds: int = 1800
     """Must cover warmup plus all confirmation windows and ingestion grace."""

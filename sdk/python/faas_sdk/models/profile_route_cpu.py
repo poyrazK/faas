@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ProfileRouteCPU")
 
 @_attrs_define
 class ProfileRouteCPU:
+    """Sampled CPU attributed to one validated static application route."""
+
     route: str
     cpu_seconds: float
     label_coverage: ProfileRouteLabelCoverage | Unset = UNSET

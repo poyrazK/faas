@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { ProfileQuery } from './ProfileQuery.js';
 import type { ProfileRequestMixGroup } from './ProfileRequestMixGroup.js';
+/**
+ * Frozen request-count summary for one profile query window.
+ */
 export type ProfileRequestMixWindow = {
   query: ProfileQuery;
   total: number;

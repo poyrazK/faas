@@ -31,6 +31,7 @@ class CanaryAdvanceResponse:
     audit_id: str
     """The deployment_audit row id, stringified for SDK portability."""
     profile_gate: ProfileCanaryGateDecision | Unset = UNSET
+    """Current profiling gate decision for an owned canary stage and its exact stable predecessor."""
     route_health: RouteHealthDecision | Unset = UNSET
     """Metadata-only decision evaluated inside the canary traffic transaction; history_id correlates the exact
     saved evidence with the advance response and traffic audit."""

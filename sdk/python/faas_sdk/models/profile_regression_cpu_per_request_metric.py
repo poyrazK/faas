@@ -13,6 +13,8 @@ T = TypeVar("T", bound="ProfileRegressionCPUPerRequestMetric")
 
 @_attrs_define
 class ProfileRegressionCPUPerRequestMetric:
+    """Qualified route CPU/request measurements and regression threshold results."""
+
     baseline_cpu_seconds_per_request: float
     candidate_cpu_seconds_per_request: float
     delta_cpu_seconds_per_request: float

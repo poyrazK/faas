@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Qualified route CPU/request measurements and regression threshold results.
+ */
 export type ProfileRegressionCPUPerRequestMetric = {
   baseline_cpu_seconds_per_request: number;
   candidate_cpu_seconds_per_request: number;

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Opt-in policy requiring consecutive qualified route CPU/request comparisons before a canary stage advances.
+ */
 export type ProfileCanaryGatePolicy = {
   confirmations: number;
   /**

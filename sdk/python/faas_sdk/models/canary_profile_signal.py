@@ -57,6 +57,7 @@ class CanaryProfileSignal:
     evidence: list[ProfileRegressionEvidence]
     uncomparable_entries: int
     gate: ProfileCanaryGateState | Unset = UNSET
+    """Retained stage evidence and bounded route streaks used to qualify the profiling gate."""
     attribution: ProfileAttributionComparison | Unset = UNSET
     """Captured route attribution quality comparison. An absolute labeled-share change of at least 20 percentage
     points suppresses advisory route regression conclusions without changing aggregate results or rollout behavior.

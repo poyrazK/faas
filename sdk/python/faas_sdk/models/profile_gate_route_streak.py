@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ProfileGateRouteStreak")
 
 @_attrs_define
 class ProfileGateRouteStreak:
+    """Consecutive qualified observations for one configured route in the current canary stage."""
+
     route: str
     status: ProfileGateRouteStreakStatus
     count: int

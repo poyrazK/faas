@@ -12,11 +12,11 @@ export type ProfileDeploymentPolicyConfig = {
   /**
    * Omitted or null keeps canary checks advisory. Requires enabled checks and explicit routes.
    */
-  canary_gate?: ProfileCanaryGatePolicy | null;
+  canary_gate?: (ProfileCanaryGatePolicy | null);
   /**
    * Omitted or null disables periodic monitoring. Enabled automatic checks and explicit advisory routes are required.
    */
-  periodic?: PeriodicProfilePolicy | null;
+  periodic?: (PeriodicProfilePolicy | null);
   enabled: boolean;
   /**
    * Advisory app webhook notifications on evidence-qualified route regression and recovery transitions. Requires enabled checks and explicit options.routes. Applies to deployment and canary checks; does not affect rollout decisions.

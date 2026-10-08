@@ -28,6 +28,7 @@ class AdvanceCanaryRequest:
     """Reserved for the lease-bound internal worker. Public requests reject true. Rollback intent cannot fall back
     to promotion when gate context changes."""
     profile_gate_override: ProfileGateOverride | Unset = UNSET
+    """Audited customer exception bound to the current profiling policy revision."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

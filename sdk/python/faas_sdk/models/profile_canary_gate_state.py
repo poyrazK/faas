@@ -24,7 +24,10 @@ T = TypeVar("T", bound="ProfileCanaryGateState")
 
 @_attrs_define
 class ProfileCanaryGateState:
+    """Retained stage evidence and bounded route streaks used to qualify the profiling gate."""
+
     policy: ProfileCanaryGatePolicy
+    """Opt-in policy requiring consecutive qualified route CPU/request comparisons before a canary stage advances."""
     status: ProfileCanaryGateStateStatus
     reason: str
     deadline: datetime.datetime

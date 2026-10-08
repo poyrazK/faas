@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ProfileGateOverride")
 
 @_attrs_define
 class ProfileGateOverride:
+    """Audited customer exception bound to the current profiling policy revision."""
+
     expected_policy_revision: int
     reason: str
     """Nonblank customer reason recorded atomically with the traffic change. Workers cannot override."""

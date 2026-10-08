@@ -21,6 +21,8 @@ T = TypeVar("T", bound="ProfilePeriodicMonitor")
 
 @_attrs_define
 class ProfilePeriodicMonitor:
+    """Bounded periodic route evidence and consecutive observations for one deployment and policy revision."""
+
     active: bool
     """Whether this monitor still matches the running deployment, current policy and eligible account."""
     id: UUID

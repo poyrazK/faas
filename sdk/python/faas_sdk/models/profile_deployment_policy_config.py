@@ -122,9 +122,9 @@ class ProfileDeploymentPolicyConfig:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                canary_gate_type_1 = ProfileCanaryGatePolicy.from_dict(data)
+                canary_gate_type_0 = ProfileCanaryGatePolicy.from_dict(data)
 
-                return canary_gate_type_1
+                return canary_gate_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
             return cast(None | ProfileCanaryGatePolicy | Unset, data)
@@ -139,9 +139,9 @@ class ProfileDeploymentPolicyConfig:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                periodic_type_1 = PeriodicProfilePolicy.from_dict(data)
+                periodic_type_0 = PeriodicProfilePolicy.from_dict(data)
 
-                return periodic_type_1
+                return periodic_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
             return cast(None | PeriodicProfilePolicy | Unset, data)

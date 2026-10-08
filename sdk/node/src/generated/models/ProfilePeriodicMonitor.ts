@@ -5,6 +5,9 @@
 import type { ProfileDeploymentPolicyConfig } from './ProfileDeploymentPolicyConfig.js';
 import type { ProfilePeriodicObservation } from './ProfilePeriodicObservation.js';
 import type { ProfileQuery } from './ProfileQuery.js';
+/**
+ * Bounded periodic route evidence and consecutive observations for one deployment and policy revision.
+ */
 export type ProfilePeriodicMonitor = {
   /**
    * Whether this monitor still matches the running deployment, current policy and eligible account.

@@ -27,6 +27,8 @@ T = TypeVar("T", bound="ProfileCanaryGateDecision")
 
 @_attrs_define
 class ProfileCanaryGateDecision:
+    """Current profiling gate decision for an owned canary stage and its exact stable predecessor."""
+
     status: ProfileCanaryGateDecisionStatus
     reason: str
     policy_revision: int

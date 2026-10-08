@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ListProfilePeriodicMonitorsResponse")
 
 @_attrs_define
 class ListProfilePeriodicMonitorsResponse:
+    """Current periodic profiling monitors for the authenticated application."""
+
     monitors: list[ProfilePeriodicMonitor]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

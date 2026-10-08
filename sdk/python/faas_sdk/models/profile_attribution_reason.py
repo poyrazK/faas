@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ProfileAttributionReason")
 
 @_attrs_define
 class ProfileAttributionReason:
+    """Bounded evidence explaining why profile attribution is incomplete or inconsistent."""
+
     reason: ProfileAttributionReasonReason
     cpu_seconds: float
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -40,6 +40,7 @@ class ProfileRouteRegression:
     baseline_requests: int | Unset = UNSET
     candidate_requests: int | Unset = UNSET
     metric: ProfileRegressionCPUPerRequestMetric | Unset = UNSET
+    """Qualified route CPU/request measurements and regression threshold results."""
     comparison_url: str | Unset = UNSET
     """Request-time dashboard link to the route differential flamegraph for the frozen comparison windows."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

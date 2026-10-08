@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ProfileRequestMixGroup")
 
 @_attrs_define
 class ProfileRequestMixGroup:
+    """Bounded request-count aggregate for one route or response-status group."""
+
     label: str
     method: str
     requests: int

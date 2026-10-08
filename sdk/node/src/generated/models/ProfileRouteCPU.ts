@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ProfileRouteLabelCoverage } from './ProfileRouteLabelCoverage.js';
+/**
+ * Sampled CPU attributed to one validated static application route.
+ */
 export type ProfileRouteCPU = {
   readonly label_coverage?: ProfileRouteLabelCoverage;
   route: string;

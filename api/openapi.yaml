@@ -34668,6 +34668,7 @@ components:
           items: { $ref: '#/components/schemas/ProfileRegressionEvidence' }
         uncomparable_entries: { type: integer, minimum: 0 }
     ProfileCanaryGatePolicy:
+      description: Opt-in policy requiring consecutive qualified route CPU/request comparisons before a canary stage advances.
       type: object
       required: [confirmations, timeout_seconds, on_timeout, auto_rollback]
       properties:
@@ -34676,6 +34677,7 @@ components:
         on_timeout: { type: string, enum: [hold, continue], default: hold, description: Continuing is an explicit acceptance of inconclusive profile evidence. Confirmed regressions remain held. }
         auto_rollback: { type: boolean, default: false, description: Worker-only opt-in recovery for request-mode canaries to the exact current stable predecessor. Service recovery uses the checked handoff flow. }
     ProfileGateRouteStreak:
+      description: Consecutive qualified observations for one configured route in the current canary stage.
       type: object
       required: [route, status, count]
       properties:
@@ -34683,6 +34685,7 @@ components:
         status: { type: string, enum: [regressed, no_regression_detected, insufficient_data] }
         count: { type: integer, minimum: 0, maximum: 5 }
     ProfileCanaryGateState:
+      description: Retained stage evidence and bounded route streaks used to qualify the profiling gate.
       type: object
       required: [policy, status, reason, deadline, windows, streaks]
       properties:
@@ -34698,12 +34701,14 @@ components:
           items: { $ref: '#/components/schemas/ProfileGateRouteStreak' }
         next_candidate: { $ref: '#/components/schemas/ProfileQuery', description: Separate next capture selection. Retained code evidence always refers to the signal's baseline and candidate queries. }
     ProfileGateOverride:
+      description: Audited customer exception bound to the current profiling policy revision.
       type: object
       required: [expected_policy_revision, reason]
       properties:
         expected_policy_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         reason: { type: string, minLength: 1, maxLength: 1024, description: Nonblank customer reason recorded atomically with the traffic change. Workers cannot override. }
     ProfileCanaryGateDecision:
+      description: Current profiling gate decision for an owned canary stage and its exact stable predecessor.
       type: object
       required: [status, reason, policy_revision, canary_step, auto_rollback]
       properties:
@@ -59326,6 +59331,7 @@ components:
         interval_seconds: { type: integer, minimum: 60, maximum: 86400, multipleOf: 60 }
         confirmations: { type: integer, minimum: 1, maximum: 5 }
     ProfilePeriodicObservation:
+      description: One retained route CPU/request comparison from a periodic monitor.
       type: object
       required: [id, status, reason, checked_at, baseline, candidate]
       properties:
@@ -59341,6 +59347,7 @@ components:
         investigation_id: { type: string, format: uuid }
         comparison_url: { type: string }
     ProfilePeriodicMonitor:
+      description: Bounded periodic route evidence and consecutive observations for one deployment and policy revision.
       type: object
       required: [active, id, app_id, deployment_id, scope, route, policy_revision, config, candidate, attempts, next_attempt_at, history]
       properties:
@@ -59361,6 +59368,7 @@ components:
           maxItems: 10
           items: { $ref: '#/components/schemas/ProfilePeriodicObservation' }
     ListProfilePeriodicMonitorsResponse:
+      description: Current periodic profiling monitors for the authenticated application.
       type: object
       required: [monitors]
       properties:
@@ -59373,8 +59381,8 @@ components:
       description: Opt-in background comparison policy. Collection must already be enabled on applications. Runtime filters apply to both deployments; capture coverage is not instrumentation completeness.
       required: [enabled, runtime, window_seconds, warmup_seconds, options]
       properties:
-        canary_gate: { allOf: [{ $ref: '#/components/schemas/ProfileCanaryGatePolicy' }], nullable: true, description: 'Omitted or null keeps canary checks advisory. Requires enabled checks and explicit routes.' }
-        periodic: { allOf: [{ $ref: '#/components/schemas/PeriodicProfilePolicy' }], nullable: true, description: "Omitted or null disables periodic monitoring. Enabled automatic checks and explicit advisory routes are required." }
+        canary_gate: { anyOf: [{ $ref: '#/components/schemas/ProfileCanaryGatePolicy' }, { type: 'null' }], description: 'Omitted or null keeps canary checks advisory. Requires enabled checks and explicit routes.' }
+        periodic: { anyOf: [{ $ref: '#/components/schemas/PeriodicProfilePolicy' }, { type: 'null' }], description: "Omitted or null disables periodic monitoring. Enabled automatic checks and explicit advisory routes are required." }
         enabled: { type: boolean, default: false }
         notify_route_regressions: { type: boolean, default: false, description: "Advisory app webhook notifications on evidence-qualified route regression and recovery transitions. Requires enabled checks and explicit options.routes. Applies to deployment and canary checks; does not affect rollout decisions." }
         runtime: { type: string, minLength: 1, maxLength: 64 }
@@ -59485,6 +59493,7 @@ components:
           items: { $ref: '#/components/schemas/ProfileCallPathFrame' }
         metric: { $ref: '#/components/schemas/ProfileRegressionMetric' }
     ProfileRequestMixGroup:
+      description: Bounded request-count aggregate for one route or response-status group.
       type: object
       required: [label, method, requests]
       properties:
@@ -59492,6 +59501,7 @@ components:
         method: { type: string, maxLength: 16 }
         requests: { type: integer, format: int64, minimum: 0 }
     ProfileRequestMixWindow:
+      description: Frozen request-count summary for one profile query window.
       type: object
       required: [query, total, routes, statuses, truncated]
       properties:
@@ -59668,6 +59678,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ProfileStack' }
     ProfileRouteCPU:
+      description: Sampled CPU attributed to one validated static application route.
       type: object
       required: [route, cpu_seconds]
       properties:
@@ -59677,6 +59688,7 @@ components:
         requests: { type: integer, format: int64, minimum: 0 }
         cpu_seconds_per_request: { type: number, minimum: 0 }
     ProfileRouteWeight:
+      description: Request share used to adjust aggregate CPU comparisons for route mix.
       type: object
       required: [route, weight]
       properties:
@@ -60965,6 +60977,7 @@ components:
         comparison_url: { type: string, readOnly: true, description: Request-time dashboard link to the route differential flamegraph for the frozen comparison windows. }
 
     ProfileRegressionCPUPerRequestMetric:
+      description: Qualified route CPU/request measurements and regression threshold results.
       type: object
       required: [baseline_cpu_seconds_per_request, candidate_cpu_seconds_per_request, delta_cpu_seconds_per_request, exceeds_threshold]
       properties:
@@ -60991,6 +61004,7 @@ components:
           maxItems: 6
           items: { $ref: '#/components/schemas/ProfileAttributionReason' }
     ProfileAttributionReason:
+      description: Bounded evidence explaining why profile attribution is incomplete or inconsistent.
       type: object
       required: [reason, cpu_seconds]
       properties:

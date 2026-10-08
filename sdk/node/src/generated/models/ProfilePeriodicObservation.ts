@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { ProfileQuery } from './ProfileQuery.js';
 import type { ProfileRouteRegression } from './ProfileRouteRegression.js';
+/**
+ * One retained route CPU/request comparison from a periodic monitor.
+ */
 export type ProfilePeriodicObservation = {
   id: string;
   status: 'baseline_pinned' | 'baseline_expired' | 'regressed' | 'no_regression_detected' | 'inconclusive';

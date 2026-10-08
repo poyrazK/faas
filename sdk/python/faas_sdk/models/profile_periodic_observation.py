@@ -28,6 +28,8 @@ T = TypeVar("T", bound="ProfilePeriodicObservation")
 
 @_attrs_define
 class ProfilePeriodicObservation:
+    """One retained route CPU/request comparison from a periodic monitor."""
+
     id: UUID
     status: ProfilePeriodicObservationStatus
     reason: str
