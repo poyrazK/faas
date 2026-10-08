@@ -8929,6 +8929,10 @@ const (
 	DurableEntityMaintenancePollInterval = 30 * time.Second
 	DefaultDurableEntityLease            = 30 * time.Second
 	MaxDurableEntityLease                = 5 * time.Minute
+	DurableEntityInvocationLease         = 30 * time.Second
+	DurableEntityInvocationRenewInterval = 10 * time.Second
+	DurableEntityRenewTimeout            = 2 * time.Second
+	DurableEntityRenewRetryInterval      = 100 * time.Millisecond
 	MaxDurableEntityInvocationBytes      = 2 << 20
 	DurableEntityInvokeTimeout           = 25 * time.Second
 	DurableEntityReleaseTimeout          = 2 * time.Second

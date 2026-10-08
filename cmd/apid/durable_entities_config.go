@@ -42,12 +42,12 @@ func (s *server) configureDurableEntities(ctx context.Context, getenv func(strin
 	if err != nil {
 		return err
 	}
-	// The request budget is shorter than this lease. We deliberately avoid a
-	// renewal writer racing every transition in the first synchronous slice.
+	// Invocations and alarms renew a short lease; maintenance retains its longer
+	// budget. Both use the same manifest CAS and ownership token for fencing.
 	probeCtx, cancel := context.WithTimeout(ctx, api.DurableEntityInvokeTimeout)
 	defer cancel()
 	observed := durableEntityObservedStore{ObjectStore: store, metrics: func() *durableEntityMetrics { return s.durableEntityMetrics }}
-	engine, err := durableentity.Open(probeCtx, observed, durableentity.Options{LeaseDuration: api.MaxDurableEntityLease, RetainedBytesLimit: limit})
+	engine, err := durableentity.Open(probeCtx, observed, durableentity.Options{LeaseDuration: api.MaxDurableEntityLease, InvocationLeaseDuration: api.DurableEntityInvocationLease, InvocationRenewInterval: api.DurableEntityInvocationRenewInterval, RetainedBytesLimit: limit})
 	if err != nil {
 		return errors.New("durable entities require private conditional writes and strongly consistent reads")
 	}

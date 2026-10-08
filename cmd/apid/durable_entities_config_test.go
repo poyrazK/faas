@@ -3,11 +3,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 )
@@ -101,8 +104,46 @@ func TestDurableEntityMaintenanceStartupChecksDeleteOnlyWhenEnabled(t *testing.T
 				if provider.deletes != expectedDeletes {
 					t.Fatal("base invocation required DELETE", provider.deletes)
 				}
+				if s.durableEntities != nil {
+					assertConfiguredEntityLeaseBudgets(t, s.durableEntities, provider.entityTestBucket)
+				}
 			})
 		}
+	}
+}
+
+func assertConfiguredEntityLeaseBudgets(t *testing.T, m *durableentity.Manager, bucket *entityTestBucket) {
+	t.Helper()
+	id := durableentity.ID{AccountID: "account", AppID: "app", Namespace: "counters", Key: "configured"}
+	started := time.Now()
+	claim, err := m.Acquire(t.Context(), id, "maintenance")
+	if err != nil || claim.ExpiresAt.Before(started.Add(api.MaxDurableEntityLease)) {
+		t.Fatal("maintenance lost its longer lease", claim.ExpiresAt, err)
+	}
+	if err := m.Release(t.Context(), claim); err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.Invoke(t.Context(), id, "caller", durableentity.Request{ID: "one", Payload: json.RawMessage(`{}`)}, func(context.Context, durableentity.View) (durableentity.Transition, error) {
+		bucket.mu.Lock()
+		defer bucket.mu.Unlock()
+		for key, object := range bucket.objects {
+			if !strings.HasSuffix(key, "/manifest.json") {
+				continue
+			}
+			var value struct {
+				ExpiresAt time.Time `json:"expires_at"`
+			}
+			if err := json.Unmarshal(object.body, &value); err != nil {
+				return durableentity.Transition{}, err
+			}
+			if remaining := time.Until(value.ExpiresAt); remaining <= 0 || remaining > api.DurableEntityInvocationLease {
+				t.Error("runtime invocation did not use the short lease", remaining)
+			}
+		}
+		return durableentity.Transition{Data: json.RawMessage(`{}`), Result: json.RawMessage(`1`)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

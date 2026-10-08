@@ -165,6 +165,10 @@ func qualifyProvider(t *testing.T, target string) {
 	}
 	qualificationFence(t, ctx, restarted, id)
 	qualificationConcurrentCalls(t, ctx, restarted, id)
+	// Injected clock advancement proves confirmed renewals survive the initial
+	// lease through this same native provider. This does not measure wall-clock
+	// recovery latency or substitute for the separate killed-owner case.
+	exerciseManagedLease(t, store, "success")
 	qualificationProcessCrash(t, ctx, restarted, prefix)
 	qualificationAlarm(t, ctx, restarted, id)
 	qualificationStorage(t, ctx, restarted, id)
@@ -181,8 +185,9 @@ func qualifyProvider(t *testing.T, target string) {
 		Deletes      int64  `json:"parent_delete_attempts"`
 		ElapsedMS    int64  `json:"elapsed_ms"`
 		ProcessCrash bool   `json:"owner_process_killed"`
+		ManagedLease bool   `json:"managed_renewal_qualified"`
 		Cleanup      bool   `json:"cleanup_qualified"`
-	}{store.driver, target, prefix, store.reads.Load(), store.writes.Load(), store.lists.Load(), store.deletes.Load(), time.Since(started).Milliseconds(), true, os.Getenv("GREGALE_ENTITY_CLEANUP_QUALIFY") == "1"})
+	}{store.driver, target, prefix, store.reads.Load(), store.writes.Load(), store.lists.Load(), store.deletes.Load(), time.Since(started).Milliseconds(), true, true, os.Getenv("GREGALE_ENTITY_CLEANUP_QUALIFY") == "1"})
 	t.Log(string(report))
 }
 
@@ -358,22 +363,59 @@ func qualificationChild(t *testing.T, prefix string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
-	m, err := Open(ctx, liveQualificationStore(t, prefix), Options{LeaseDuration: 5 * time.Second})
+	store := liveQualificationStore(t, prefix)
+	renewed := make(chan time.Time, 8)
+	observed := qualificationRenewalStore(store, renewed)
+	m, err := Open(ctx, observed, Options{LeaseDuration: 5 * time.Second, InvocationLeaseDuration: 5 * time.Second, InvocationRenewInterval: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := ID{AccountID: "qualification", AppID: "counter", EnvironmentID: "isolated", Namespace: "counters", Key: "crash"}
-	claim, err := m.Acquire(ctx, id, "crashing-process")
+	if _, err := m.Invoke(ctx, id, "crashing-process", request("before-crash"), increment); err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.Invoke(ctx, id, "crashing-process", request("interrupted-work"), func(ctx context.Context, _ View) (Transition, error) {
+		value, _, err := m.readManifest(ctx, id)
+		if err != nil {
+			return Transition{}, err
+		}
+		return qualificationAwaitRenewal(ctx, renewed, value.ExpiresAt)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Execute(ctx, claim, request("before-crash"), increment); err != nil {
-		t.Fatal(err)
+}
+
+func qualificationRenewalStore(store ObjectStore, renewed chan<- time.Time) ObjectStore {
+	return wrappedStore{ObjectStore: store, put: func(ctx context.Context, key string, body []byte, etag string) (string, error) {
+		version, err := store.Put(ctx, key, body, etag)
+		var value manifest
+		if err == nil && strings.HasSuffix(key, "/manifest.json") && json.Unmarshal(body, &value) == nil && value.Version == 1 && value.OwnerID != "" {
+			select {
+			case renewed <- value.ExpiresAt:
+			default:
+			}
+		}
+		return version, err
+	}}
+}
+
+func qualificationAwaitRenewal(ctx context.Context, renewed <-chan time.Time, initial time.Time) (Transition, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return Transition{}, ctx.Err()
+		case expiry := <-renewed:
+			if !expiry.After(initial) {
+				continue
+			}
+		}
+		break
 	}
 	fmt.Println("ENTITY_OWNER_READY")
-	// The parent kills this process. No Release or deferred cleanup runs.
+	// The parent kills this process after a confirmed renewal. No release runs.
 	<-ctx.Done()
-	t.Fatal("qualification parent failed to kill owner")
+	return Transition{}, ctx.Err()
 }
 
 func qualificationProcessCrash(t *testing.T, ctx context.Context, m *Manager, prefix string) {

@@ -15,6 +15,12 @@ import (
 
 type Options struct {
 	LeaseDuration time.Duration
+	// InvocationLeaseDuration enables automatic renewal for Invoke/InvokeAlarm.
+	// Acquire, Execute and maintenance retain LeaseDuration. Zero disables it.
+	InvocationLeaseDuration time.Duration
+	// InvocationRenewInterval defaults to one third of InvocationLeaseDuration.
+	// A configured interval must be shorter than half the invocation lease.
+	InvocationRenewInterval time.Duration
 	// RetainedBytesLimit is an operator preview cap per entity, not a plan quota.
 	// Zero leaves new entities uncapped. Existing persisted caps remain effective.
 	RetainedBytesLimit int64
@@ -23,12 +29,14 @@ type Options struct {
 }
 
 type Manager struct {
-	store        ObjectStore
-	lease        time.Duration
-	storageLimit int64
-	now          func() time.Time
-	mu           sync.Mutex
-	locks        map[string]*entityLock
+	store           ObjectStore
+	lease           time.Duration
+	invocationLease time.Duration
+	renewInterval   time.Duration
+	storageLimit    int64
+	now             func() time.Time
+	mu              sync.Mutex
+	locks           map[string]*entityLock
 }
 
 type entityLock struct {
@@ -48,13 +56,16 @@ func Open(ctx context.Context, store ObjectStore, opts Options) (*Manager, error
 	if opts.LeaseDuration <= 0 || opts.LeaseDuration > api.MaxDurableEntityLease || opts.RetainedBytesLimit < 0 {
 		return nil, ErrInvalid
 	}
+	if err := invocationLeaseOptions(&opts); err != nil {
+		return nil, err
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
 	if err := probe(ctx, store); err != nil {
 		return nil, fmt.Errorf("open durable entities: %w", err)
 	}
-	return &Manager{store: store, lease: opts.LeaseDuration, storageLimit: opts.RetainedBytesLimit, now: opts.Now, locks: make(map[string]*entityLock)}, nil
+	return &Manager{store: store, lease: opts.LeaseDuration, invocationLease: opts.InvocationLeaseDuration, renewInterval: opts.InvocationRenewInterval, storageLimit: opts.RetainedBytesLimit, now: opts.Now, locks: make(map[string]*entityLock)}, nil
 }
 
 func probe(ctx context.Context, store ObjectStore) error {

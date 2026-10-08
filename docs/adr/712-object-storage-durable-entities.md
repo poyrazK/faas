@@ -127,8 +127,9 @@ The preview counter consumes only the supplied state and payload; bucket
 publication remains private to apid.
 The invocation has one attempt and a deadline; final results are polled from the
 durable ledger so missing notifications do not hide completion. The 25-second
-request ceiling inherits a shorter caller budget. A five-minute ownership lease
-avoids concurrent renewal in this slice and bounds recovery after apid loss.
+request ceiling inherits a shorter caller budget. A thirty-second ownership lease
+renews automatically during the call, as described below, and bounds recovery
+after apid loss.
 Release uses a short independent cleanup budget; failed cleanup cannot turn a
 committed result into a reported failure and delays competitors until expiry.
 
@@ -161,6 +162,42 @@ latency or billing; the provider and deployed SDK acceptance remain separate.
 Use the existing exact-commit, dedicated-host runner and final leakcheck in
 [native e2e CI](../ops/e2e-native-ci.md).
 
+### Managed invocation leases — 2026-10-08
+
+Apid configures caller invocations and alarm deliveries with a thirty-second
+lease, renewed every ten seconds. Slow acknowledgements shorten the next wait.
+Each renewal has at most two seconds, further bounded by the last confirmed
+expiry. Only a definite CAS rejection retries after a fresh read, at hundred-
+millisecond intervals within that budget. An uncertain renewal is never blindly
+retried: it cancels work and prevents late responses from publishing. A confirmed
+takeover likewise cancels the obsolete invocation. External effects remain
+outside this state/receipt contract.
+
+A per-invocation mutex serializes renewals with the final authority read and
+manifest CAS. Computation and immutable uploads remain renewable. Neither a
+renewal conflict nor final publication conflict reruns the handler. The renewal
+worker joins before independent release cleanup. A successful publication or
+receipt replay remains successful if cancellation arrives afterward. Manifest
+schema, epoch/token fencing and the public protocol remain unchanged.
+
+The engine enables this behavior through optional invocation timing settings;
+zero preserves the explicit Acquire/Execute/Renew contract. Direct ownership and
+maintenance keep their existing lease, including apid's five-minute maintenance
+budget. Existing long leases must expire or release during rollout. Lost apid
+owners normally become eligible for takeover within thirty seconds of their last
+stored renewal, subject to clock synchronization and provider availability.
+This is a configured bound, not a measured production recovery SLO. Calls still
+have a twenty-five-second ceiling. Each renewal adds a manifest read and
+conditional write to the existing storage-operation metrics.
+
+Managed-lease fixtures exercise uncertain renewal acknowledgements, partitions,
+definite CAS retries, takeover cancellation, upload-time renewal, alarms and
+acknowledgement preservation. Production S3/GCS SDK wire cases cover renewal and
+receipt replay. The shared live harness also checks an injected-clock renewal
+past initial expiry and kills its owner process only after a confirmed renewal
+during unfinished work. Dedicated-host and live-provider qualification remain
+pending; fixture execution does not establish production latency or cost.
+
 ## Alarm delivery preview
 
 `FAAS_DURABLE_ENTITY_ALARMS_ENABLED=1` requires the invocation preview and
@@ -176,8 +213,8 @@ Apid rechecks account status/plan, app allowance/deletion, active customer and
 the immutable project environment before creating guest execution intent. Stage
 invocations retain the expected environment UUID through admission. Schedd owns
 the actual dispatch and wake, with normal execution admission and metering. An
-alarm has the same twenty-five-second call ceiling and five-minute ownership
-lease as a caller invocation. Each process dispatches one alarm at a time and
+alarm has the same twenty-five-second call ceiling and automatically renewed
+thirty-second ownership lease as a caller invocation. Each process dispatches one alarm at a time and
 waits five seconds after its page completes before scanning again.
 
 The guest envelope adds `event`, with `invoke` for caller work and `alarm` for

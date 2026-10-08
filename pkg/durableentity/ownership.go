@@ -12,6 +12,10 @@ import (
 // OwnerID gets a new epoch and token after release or expiry. On ErrUncertain,
 // the returned claim can be confirmed by Renew; it is not yet usable authority.
 func (m *Manager) Acquire(ctx context.Context, id ID, ownerID string) (Claim, error) {
+	return m.acquire(ctx, id, ownerID, m.lease)
+}
+
+func (m *Manager) acquire(ctx context.Context, id ID, ownerID string, lease time.Duration) (Claim, error) {
 	if !id.valid() || !validIdentity(ownerID) {
 		return Claim{}, ErrInvalid
 	}
@@ -33,7 +37,7 @@ func (m *Manager) Acquire(ctx context.Context, id ID, ownerID string) (Claim, er
 	if value.Version == 0 {
 		value.StorageUsage = &StorageUsage{}
 	}
-	value.OwnerID, value.Token, value.ExpiresAt = ownerID, uuid.NewString(), now.Add(m.lease)
+	value.OwnerID, value.Token, value.ExpiresAt = ownerID, uuid.NewString(), now.Add(lease)
 	claim := claimFrom(value)
 	return claim, m.putManifest(ctx, value, etag)
 }
@@ -56,11 +60,15 @@ func (m *Manager) owned(ctx context.Context, claim Claim) (manifest, string, err
 // Renew reloads current state, so renewing a claim never overwrites a commit.
 // A concurrent transition/renewal can return ErrConflict; reload before retry.
 func (m *Manager) Renew(ctx context.Context, claim Claim) (Claim, error) {
+	return m.renew(ctx, claim, m.lease)
+}
+
+func (m *Manager) renew(ctx context.Context, claim Claim, lease time.Duration) (Claim, error) {
 	value, etag, err := m.owned(ctx, claim)
 	if err != nil {
 		return Claim{}, err
 	}
-	value.ExpiresAt = m.now().UTC().Add(m.lease)
+	value.ExpiresAt = m.now().UTC().Add(lease)
 	return claimFrom(value), m.putManifest(ctx, value, etag)
 }
 

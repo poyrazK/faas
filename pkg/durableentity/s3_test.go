@@ -187,6 +187,23 @@ func TestS3WireRestoreAndRetryAcrossEngineRestart(t *testing.T) {
 	assertCount(t, t.Context(), second, id, 1, 1)
 }
 
+func TestS3WireManagedLeaseRenewalAndDefiniteConflict(t *testing.T) {
+	for _, mode := range []string{"success", "conflict"} {
+		t.Run(mode, func(t *testing.T) {
+			upstream := newS3WireServer(t)
+			provider, err := objectstorage.NewS3(objectstorage.BackendConfig{Endpoint: upstream.URL, S3Region: "us-east-1", PathStyle: true, AccessKeyEnv: "KEY", SecretKeyEnv: "SECRET"}, func(string) string { return "fixture-only" })
+			if err != nil {
+				t.Fatal(err)
+			}
+			store, err := NewProviderStore(provider.(objectstorage.ConditionalStateProvider), "private")
+			if err != nil {
+				t.Fatal(err)
+			}
+			exerciseManagedLease(t, store, mode)
+		})
+	}
+}
+
 func TestS3WireAutomaticMaintenanceResumesAndPreservesReplay(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://unreachable:invalid@127.0.0.1:1/unavailable?connect_timeout=1")
 	upstream := newS3WireServer(t)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +16,10 @@ import (
 // one publication. A second process using the same claim can lose CAS and must
 // retry the SAME request. A replay never invokes the callback again.
 func (m *Manager) Execute(ctx context.Context, claim Claim, request Request, handler func(context.Context, View) (Transition, error)) (Result, error) {
+	return m.execute(ctx, claim, request, handler, nil)
+}
+
+func (m *Manager) execute(ctx context.Context, claim Claim, request Request, handler func(context.Context, View) (Transition, error), publication *sync.Mutex) (Result, error) {
 	if !claim.ID.valid() || !validIdentity(request.ID) || !json.Valid(request.Payload) || handler == nil {
 		return Result{}, ErrInvalid
 	}
@@ -59,10 +64,10 @@ func (m *Manager) Execute(ctx context.Context, claim Claim, request Request, han
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	return m.commit(ctx, claim, value, state, request.ID, fingerprint, transition)
+	return m.commit(ctx, claim, value, state, request.ID, fingerprint, transition, publication)
 }
 
-func (m *Manager) commit(ctx context.Context, claim Claim, base manifest, state snapshot, requestID, fingerprint string, transition Transition) (Result, error) {
+func (m *Manager) commit(ctx context.Context, claim Claim, base manifest, state snapshot, requestID, fingerprint string, transition Transition, publication *sync.Mutex) (Result, error) {
 	if !json.Valid(transition.Data) || !json.Valid(transition.Result) || !validAlarm(transition.AlarmAt) {
 		return Result{}, ErrInvalid
 	}
@@ -93,6 +98,15 @@ func (m *Manager) commit(ctx context.Context, claim Claim, base manifest, state 
 	plan.objects = append(plan.objects, plannedObject{key: key, body: body})
 	if err := plan.upload(ctx); err != nil {
 		return Result{}, fmt.Errorf("upload uncommitted entity snapshot: %w", err)
+	}
+	// Renewals continue during guest work and immutable uploads. Serialize only
+	// the final authority read/CAS with this invocation's renewal writer.
+	if publication != nil {
+		publication.Lock()
+		defer publication.Unlock()
+	}
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
 	}
 	// Reload AFTER the callback/upload: renewal may have changed only authority
 	// metadata. Takeover or another commit must never be overwritten.

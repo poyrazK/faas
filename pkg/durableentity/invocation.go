@@ -24,8 +24,9 @@ type HandlerRequest struct {
 
 // Invoke owns an entity for one synchronous call. Local calls wait without
 // allocating permanent workers; another process receives ErrBusy and retries.
-// The handler must finish inside the configured lease. A crash is recovered
-// by takeover after expiry. Leases fence commits, not external side effects.
+// Configured invocation leases renew during work; callers must respect context
+// cancellation. A crash is recovered by takeover after expiry. Leases fence
+// commits, not external side effects.
 func (m *Manager) Invoke(ctx context.Context, id ID, owner string, request Request, handler func(context.Context, View) (Transition, error)) (Result, error) {
 	if IsAlarmRequestID(request.ID) {
 		return Result{}, ErrInvalid
@@ -42,11 +43,15 @@ func (m *Manager) invoke(ctx context.Context, id ID, owner string, request Reque
 		return Result{}, err
 	}
 	defer unlock()
-	claim, err := m.Acquire(ctx, id, owner)
+	lease := m.lease
+	if m.invocationLease != 0 {
+		lease = m.invocationLease
+	}
+	claim, err := m.acquire(ctx, id, owner, lease)
 	if err != nil {
 		return Result{}, err
 	}
-	result, err := m.Execute(ctx, claim, request, handler)
+	result, err := m.executeInvocation(ctx, claim, request, handler)
 	// Cleanup cannot undo an acknowledged commit. Failure only delays the next
 	// process until expiry. Use a bounded context even if the caller went away.
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.DurableEntityReleaseTimeout)

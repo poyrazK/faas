@@ -355,11 +355,23 @@ result, err := client.InvokeDurableEntity(ctx, "counter", faas.DurableEntityInvo
 Keep the request ID and exact payload on every retry, including 503 uncertain
 outcomes and 504 timeouts. `Idempotency-Key` does not identify entity work. Local
 calls queue behind the current call. A different apid process receives 503 busy;
-it can retry after release or expiry. Calls have a 25-second ceiling; an apid
-crash can leave ownership busy for up to five minutes. Entity receipt replay
+it can retry after release or expiry. Calls have a 25-second ceiling. Caller and
+alarm ownership lasts 30 seconds and renews every 10 seconds, earlier if a slow
+acknowledgement leaves less time. A renewal has at most a two-second budget and
+must finish within the last confirmed lease. Only a definite CAS rejection can
+retry after a fresh read; uncertain renewals cancel work and prevent late guest
+responses from publishing. Renewal continues during immutable uploads; final
+publication and renewal serialize without rerunning the handler. The renewal
+worker stops before release, and acknowledged commits remain successful.
+
+An apid crash can leave invocation ownership busy for up to 30 seconds after
+the last stored renewal, subject to clock synchronization and provider
+availability. Existing five-minute leases from older binaries must expire or
+release during rollout. Maintenance retains its longer lease. These are
+configured bounds, not measured recovery latency guarantees. Entity receipt replay
 precedes deployment selection, but current app/customer/environment authorization
 is always rechecked. Invocation rows record guest execution in the existing SQL
-ledger; entity ownership, state and replay results remain authoritative in S3.
+ledger; entity ownership, state and replay results remain authoritative in S3/GCS.
 
 The guest receives protocol version 1, verified entity scope, request ID,
 payload, state and selected deployment ID. It returns
@@ -432,7 +444,10 @@ The test uses a new `gregale/entity-qualification/<UUID>/` prefix. It probes nat
 conditional writes, restores across managers, submits concurrent calls, drops an
 accepted commit acknowledgement at the platform boundary, rejects an obsolete
 owner, and kills a separate owner process before replaying its committed result
-through takeover. It also checks private delimiter discovery and committed alarm
+through takeover. The process is killed during unfinished work after a confirmed
+automatic renewal. A separate injected-clock case keeps ownership past its
+initial expiry and preserves the original receipt. It also checks private
+delimiter discovery and committed alarm
 replay. It verifies committed/current-key inventory, an explicit cap and receipt
 replay at capacity. Its JSON report identifies the provider, target (`live_bucket`
 or `wire_fixture`), cleanup qualification, retained prefix, parent-process
@@ -510,6 +525,11 @@ go test -race -count=1 ./pkg/e2etest/testdata/helloserver
 ```
 
 Compilation runs no native test, and a skipped native test is not acceptance.
+
+Managed-lease fixtures cover renewal past initial expiry, definite CAS retries,
+accepted and rejected uncertain renewals, partitions, takeover cancellation,
+renewal during immutable uploads, alarm replay and cancellation after a commit
+acknowledgement. S3 and GCS SDK wire fixtures exercise the managed invocation path.
 
 ```bash
 go test -race -count=1 ./pkg/durableentity ./pkg/objectstorage ./examples/durable-entities
