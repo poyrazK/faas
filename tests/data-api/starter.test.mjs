@@ -67,23 +67,25 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   // Exercise exactly the stable-owner migration session and restricted API role.
   await migrate(migrationURL.toString())
   await migrate(migrationURL.toString())
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 3)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 4)
   const firstSQL = join(root, 'migrations/sql/0001_notes.sql')
   const originalSQL = await readFile(firstSQL, 'utf8')
   await writeFile(firstSQL, originalSQL + '\n-- changed after deployment\n')
   try { await assert.rejects(migrate(migrationURL.toString()), /changed or removed/) }
   finally { await writeFile(firstSQL, originalSQL) }
-  const failedSQL = join(root, 'migrations/sql/0004_failure.sql')
+  const failedSQL = join(root, 'migrations/sql/0005_failure.sql')
   await writeFile(failedSQL, 'ALTER TABLE api.notes ADD COLUMN rolled_back text; SELECT 1/0;')
   try { await assert.rejects(migrate(migrationURL.toString())) }
   finally { await rm(failedSQL) }
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 3)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 4)
   assert.equal((await owner.query("SELECT count(*)::integer AS count FROM information_schema.columns WHERE table_schema='api' AND column_name='rolled_back'")).rows[0].count, 0)
   const snapshot = await inspect(loginURL.toString(), ['api'])
   assert.deepEqual(snapshot.tables.find(table => table.name === 'comments').relationships[0].referencedColumns, ['subject', 'id'])
   const types = generate(snapshot)
   assert.match(types, /"foreignKeyName":"comments_note_fkey","columns":\["subject","note_id"\],"isOneToOne":false/)
   assert.match(types, /"foreignKeyName":"note_details_note_fkey","columns":\["subject","note_id"\],"isOneToOne":true/)
+  assert.match(types, /"foreignKeyName":"note_tags_note_fkey","columns":\["subject","note_id"\],"isOneToOne":false/)
+  assert.match(types, /"foreignKeyName":"note_tags_tag_fkey","columns":\["subject","tag_id"\],"isOneToOne":false/)
   assert.doesNotMatch(types, /gregale_migrations|test-only|starter_api/)
   const fixture = new URL('../../cmd/gregale/templates/data-api-starter/client/src/database.types.ts', import.meta.url)
   if (process.env.DATA_API_STARTER_UPDATE_FIXTURE === '1') {
@@ -140,7 +142,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const userB = { subject: 'identity|bob', token: await sign('identity|bob') }
   const { verifyAuthorization } = await import(pathToFileURL(join(root, 'client/test/authorization.mjs')))
   await verifyAuthorization({ url, userA, userB })
-  for (const table of ['notes', 'comments', 'note_details']) assert.equal((await owner.query(`SELECT count(*)::integer AS count FROM api.${table}`)).rows[0].count, 0)
+  for (const table of ['notes', 'comments', 'note_details', 'tags', 'note_tags']) assert.equal((await owner.query(`SELECT count(*)::integer AS count FROM api.${table}`)).rows[0].count, 0)
   await assert.rejects(verifyAuthorization({ url, userA, userB: userA }), /subjects_must_differ/)
   const publicRequest = token => fetch(url + '/rest/v1/notes', { headers: token ? { Authorization: `Bearer ${token}` } : {} })
   assert.equal((await publicRequest()).status, 401)
@@ -150,6 +152,15 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   await assert.rejects(verifyAuthorization({ url, userA, userB }), /cross_subject_read_allowed/)
   await owner.query('ALTER TABLE api.notes ENABLE ROW LEVEL SECURITY')
   assert.equal((await owner.query('SELECT count(*)::integer AS count FROM api.notes')).rows[0].count, 0)
+  for (const table of ['tags', 'note_tags']) {
+    await owner.query(`ALTER TABLE api.${table} DISABLE ROW LEVEL SECURITY`)
+    try {
+      await assert.rejects(verifyAuthorization({ url, userA, userB }), /cross_subject_tag_read_allowed/)
+    } finally {
+      await owner.query(`ALTER TABLE api.${table} ENABLE ROW LEVEL SECURITY`)
+    }
+  }
+  for (const table of ['notes', 'tags', 'note_tags']) assert.equal((await owner.query(`SELECT count(*)::integer AS count FROM api.${table}`)).rows[0].count, 0)
   // Schema drift changes the contract; regenerating before client compilation
   // is required, while the committed fixture remains untouched.
   await owner.query('ALTER TABLE api.notes ADD COLUMN description text')

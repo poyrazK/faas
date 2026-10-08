@@ -42,3 +42,23 @@ async function relationshipContract(client: ReturnType<typeof notesClient>) {
   }
 }
 void relationshipContract
+
+async function tagContract(client: ReturnType<typeof notesClient>) {
+  const result = await client.listWithTags()
+  if (result.data) for (const note of result.data) {
+    const tags: { id: number; name: string }[] = note.tags
+    // @ts-expect-error many-to-many embeds are arrays
+    const single: { name: string } = note.tags
+    // @ts-expect-error unselected columns are absent
+    const subject = note.tags[0].subject
+    // @ts-expect-error tag names are text
+    const name: number = note.tags[0].name
+    void [tags, single, subject, name]
+  }
+  const reverse = await client.listTaggedNotes()
+  if (reverse.data) for (const tag of reverse.data) {
+    const notes: { id: number; body: string }[] = tag.notes
+    void notes
+  }
+}
+void tagContract

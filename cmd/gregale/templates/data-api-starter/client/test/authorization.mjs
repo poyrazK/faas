@@ -48,6 +48,70 @@ async function verifyNoteRelationships(owner, other, subject, otherSubject, id, 
   assert.equal(attachedDetails.error?.code, '23503', 'cross_subject_details_attachment_allowed')
 }
 
+async function verifyTags(owner, other, subject, otherSubject, id, body, ownedTags, owned) {
+  const empty = await owner.listWithTags().eq('id', id).single()
+  assert.equal(empty.error, null, 'empty_tags_failed')
+  assert.deepEqual(empty.data.tags, [])
+  const tags = []
+  for (const name of ['first tag', 'second tag']) {
+    const created = await owner.db.from('tags').insert({ subject, name }).select('id,name').single()
+    assert.equal(created.error, null, 'own_tag_failed')
+    tags.push(created.data)
+    ownedTags.push([owner, created.data.id])
+    const linked = await owner.db.from('note_tags').insert({ subject, note_id: id, tag_id: created.data.id })
+    assert.equal(linked.error, null, 'own_tag_link_failed')
+  }
+  const duplicate = await owner.db.from('note_tags').insert({ subject, note_id: id, tag_id: tags[0].id })
+  assert.equal(duplicate.error?.code, '23505', 'duplicate_link_allowed')
+  const joined = await owner.listWithTags().eq('id', id).single()
+  assert.equal(joined.error, null, 'many_to_many_failed')
+  assert.deepEqual(joined.data.tags.sort((a, b) => a.id - b.id), tags)
+  const unhinted = await owner.db.from('notes').select('tags(id,name)').eq('id', id).single()
+  assert.equal(unhinted.error, null, 'unhinted_many_to_many_failed')
+  assert.deepEqual(unhinted.data.tags.sort((a, b) => a.id - b.id), tags)
+  const secondNote = await owner.create('shared tag probe')
+  assert.equal(secondNote.error, null, 'second_tagged_note_failed')
+  owned.push([owner, secondNote.data.id])
+  const shared = await owner.db.from('note_tags').insert({ subject, note_id: secondNote.data.id, tag_id: tags[0].id })
+  assert.equal(shared.error, null, 'shared_tag_link_failed')
+  for (const tag of tags) {
+    const reverse = await owner.listTaggedNotes().eq('id', tag.id).single()
+    assert.equal(reverse.error, null, 'reverse_many_to_many_failed')
+    const expected = [{ id, body }]
+    if (tag.id === tags[0].id) expected.push({ id: secondNote.data.id, body: 'shared tag probe' })
+    assert.deepEqual(reverse.data.notes.sort((a, b) => a.id - b.id), expected.sort((a, b) => a.id - b.id))
+  }
+  for (const table of ['tags', 'note_tags']) {
+    const hidden = await other.db.from(table).select('*').eq('subject', subject)
+    assert.equal(hidden.error, null, 'cross_subject_tag_read_failed')
+    assert.deepEqual(hidden.data, [], 'cross_subject_tag_read_allowed')
+    const updated = await other.db.from(table).update({ subject: otherSubject }).eq('subject', subject).select('*')
+    assert.equal(updated.error, null, 'cross_subject_tag_update_failed')
+    assert.deepEqual(updated.data, [], 'cross_subject_tag_update_allowed')
+    const deleted = await other.db.from(table).delete().eq('subject', subject).select('*')
+    assert.equal(deleted.error, null, 'cross_subject_tag_delete_failed')
+    assert.deepEqual(deleted.data, [], 'cross_subject_tag_delete_allowed')
+  }
+  const forgedTag = await other.db.from('tags').insert({ subject, name: 'forged' })
+  assert.equal(forgedTag.error?.code, '42501', 'forged_tag_subject_allowed')
+  const reassigned = await owner.db.from('note_tags').update({ subject: otherSubject }).eq('note_id', id)
+  assert.equal(reassigned.error?.code, '42501', 'link_subject_reassignment_allowed')
+  const forged = await other.db.from('note_tags').insert({ subject, note_id: id, tag_id: tags[0].id })
+  assert.equal(forged.error?.code, '42501', 'forged_link_subject_allowed')
+  const foreignNote = await other.db.from('note_tags').insert({ subject: otherSubject, note_id: id, tag_id: tags[0].id })
+  assert.equal(foreignNote.error?.code, '23503', 'foreign_note_attachment_allowed')
+  // An owned note still cannot be linked to another user's tag.
+  const ownNote = await other.create('tag authorization probe')
+  assert.equal(ownNote.error, null, 'probe_note_failed')
+  try {
+    const foreignTag = await other.db.from('note_tags').insert({ subject: otherSubject, note_id: ownNote.data.id, tag_id: tags[0].id })
+    assert.equal(foreignTag.error?.code, '23503', 'foreign_tag_attachment_allowed')
+  } finally {
+    const removed = await other.remove(ownNote.data.id)
+    assert.equal(removed.error, null, 'probe_cleanup_failed')
+  }
+}
+
 export async function verifyAuthorization({ url, userA, userB }) {
   assert.ok(url && userA.subject && userB.subject && userA.token && userB.token, 'two_user_configuration_required')
   assert.notEqual(userA.subject, userB.subject, 'subjects_must_differ')
@@ -56,6 +120,7 @@ export async function verifyAuthorization({ url, userA, userB }) {
   const second = notesClient({ url, subject: userB.subject, accessToken: userB.token })
   const owned = []
   const orphaned = []
+  const ownedTags = []
   try {
     for (const [owner, other, subject, otherSubject] of [
       [first, second, userA.subject, userB.subject], [second, first, userB.subject, userA.subject],
@@ -79,6 +144,7 @@ export async function verifyAuthorization({ url, userA, userB }) {
       const reassigned = await owner.db.from('notes').update({ subject: otherSubject }).eq('id', id)
       assert.equal(reassigned.error?.code, '42501', 'cross_subject_reassignment_allowed')
       await verifyNoteRelationships(owner, other, subject, otherSubject, id, created.data.body, orphaned)
+      await verifyTags(owner, other, subject, otherSubject, id, created.data.body, ownedTags, owned)
       const updated = await owner.update(id, { body: 'updated', priority: 1 })
       assert.equal(updated.error, null, 'own_update_failed')
       assert.equal(updated.data.body, 'updated', 'own_update_missing')
@@ -91,6 +157,7 @@ export async function verifyAuthorization({ url, userA, userB }) {
     // Remove only IDs this run received from its own successful inserts.
     const results = await Promise.allSettled([
       ...owned.map(([owner, id]) => owner.remove(id)),
+      ...ownedTags.map(([owner, id]) => owner.db.from('tags').delete().eq('id', id)),
       ...orphaned.map(([owner, id]) => owner.db.from('comments').delete().eq('id', id)),
     ])
     assert.ok(results.every(result => result.status === 'fulfilled' && !result.value.error), 'authorization_cleanup_failed')

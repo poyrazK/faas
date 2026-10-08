@@ -167,8 +167,10 @@ changes affect the schema fingerprint and are detected by `types --check`.
 Cross-schema foreign keys are omitted from generated relationship metadata:
 the client resolves embedded types within the selected schema, so exporting
 such a relationship could infer a same-named, unrelated local table. View-inferred
-and computed relationships are not emitted; many-to-many junction joins are
-outside this preview's acceptance coverage. Each joined table needs its own RLS
+and computed relationships are not emitted. The starter qualifies many-to-many
+joins in both directions using `tags!note_tags(id,name)` and
+`notes!note_tags(id,body)`. The SDK infers these from the junction foreign keys;
+PostgREST requires their columns to be included in the junction primary key. Each joined table needs its own RLS
 policy. RLS can hide a parent even
 when its FK column is NOT NULL, so handle missing embeds at runtime or use
 `!inner` when a visible parent is required; static nullability follows the FK

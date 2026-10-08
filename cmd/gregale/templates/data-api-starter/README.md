@@ -161,12 +161,12 @@ npm run test:authorization --prefix client
 ```
 
 This check performs both users' CRUD operations, rejects cross-user access and
-cleans up only notes whose IDs it created. Missing sessions fail the check;
+cleans up only notes, tags and unattached comments whose IDs it created. Missing sessions fail the check;
 they do not silently skip it.
 
 ## Evolve the schema
 
-Add `migrations/sql/0004_description.sql` and run sync again. Numbered SQL files
+Add `migrations/sql/0005_description.sql` and run sync again. Numbered SQL files
 are applied under a transaction and database advisory lock. The private
 `gregale_migrations.applied` ledger records versions and SHA-256 checksums;
 already-applied SQL cannot be edited, renamed, removed or inserted out of order.
@@ -219,3 +219,11 @@ The visible `ci/` files are the embedded workflow sources; the initialized
 `.github/workflows/` copies are your application workflows. See the
 [Data API guide](https://gregale.dev/docs/data-api) for preview enablement,
 runtime bounds and staging qualification.
+
+Many-to-many tags use `notesClient.listWithTags()` and `listTaggedNotes()`.
+The `tags!note_tags(id,name)` projection names the junction explicitly; both
+embedded results are arrays. The junction primary key includes both composite
+foreign keys, as PostgREST requires for many-to-many discovery. Tags and links
+have their own RLS policies, and subject-bound foreign keys reject attachments
+to another user's note or tag. The authorization check exercises these joins
+and removes only rows created by its own run.
