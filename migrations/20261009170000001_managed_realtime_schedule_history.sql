@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_schedule_history (
+CREATE TABLE IF NOT EXISTS managed_realtime_schedule_history (
  endpoint_id uuid NOT NULL,
  channel text NOT NULL,
  schedule_id text NOT NULL,
@@ -17,6 +17,6 @@ CREATE TABLE managed_realtime_schedule_history (
  FOREIGN KEY(endpoint_id,channel,schedule_id) REFERENCES managed_realtime_schedules(endpoint_id,channel,schedule_id) ON DELETE CASCADE
 );
 INSERT INTO managed_realtime_schedule_history(endpoint_id,channel,schedule_id,version,event,status,attempts,cycle_attempts,deliver_at,next_attempt_at,failure_code,sequence,occurred_at)
- SELECT endpoint_id,channel,schedule_id,version,'baseline',status,attempts,cycle_attempts,deliver_at,next_attempt_at,last_error,sequence,updated_at FROM managed_realtime_schedules;
+ SELECT endpoint_id,channel,schedule_id,version,'baseline',status,attempts,cycle_attempts,deliver_at,next_attempt_at,last_error,sequence,updated_at FROM managed_realtime_schedules ON CONFLICT (endpoint_id,channel,schedule_id,version) DO NOTHING;
 -- +goose Down
 DROP TABLE managed_realtime_schedule_history;

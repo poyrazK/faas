@@ -1,10 +1,16 @@
 -- +goose Up
-ALTER TABLE managed_realtime_inbox_messages ADD COLUMN notification_ttl_seconds integer NOT NULL DEFAULT 0 CHECK(notification_ttl_seconds BETWEEN 0 AND 259200);
-ALTER TABLE managed_realtime_inbox_fallbacks ADD COLUMN expires_at timestamptz;
-ALTER TABLE managed_realtime_push_deliveries ADD COLUMN hard_expires_at timestamptz;
-ALTER FUNCTION faas_drain_realtime_inbox_fallbacks(integer) RENAME TO faas_drain_realtime_inbox_fallbacks_before_ttl;
+ALTER TABLE managed_realtime_inbox_messages ADD COLUMN IF NOT EXISTS notification_ttl_seconds integer NOT NULL DEFAULT 0 CHECK(notification_ttl_seconds BETWEEN 0 AND 259200);
+ALTER TABLE managed_realtime_inbox_fallbacks ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+ALTER TABLE managed_realtime_push_deliveries ADD COLUMN IF NOT EXISTS hard_expires_at timestamptz;
 -- +goose StatementBegin
-CREATE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
+DO $$ BEGIN
+ IF to_regprocedure('faas_drain_realtime_inbox_fallbacks_before_ttl(integer)') IS NULL THEN
+  ALTER FUNCTION faas_drain_realtime_inbox_fallbacks(integer) RENAME TO faas_drain_realtime_inbox_fallbacks_before_ttl;
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
 RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
 BEGIN

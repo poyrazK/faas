@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_schedules (
+CREATE TABLE IF NOT EXISTS managed_realtime_schedules (
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
  channel text NOT NULL,
  schedule_id text NOT NULL,
@@ -15,6 +15,6 @@ CREATE TABLE managed_realtime_schedules (
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(endpoint_id,channel,schedule_id)
 );
-CREATE INDEX managed_realtime_schedule_due_idx ON managed_realtime_schedules(deliver_at,endpoint_id,channel,schedule_id) WHERE status='pending';
+CREATE INDEX IF NOT EXISTS managed_realtime_schedule_due_idx ON managed_realtime_schedules(deliver_at,endpoint_id,channel,schedule_id) WHERE status='pending';
 -- +goose Down
 DROP TABLE managed_realtime_schedules;

@@ -1,18 +1,24 @@
 -- +goose Up
-ALTER TABLE managed_realtime_inbox_messages ADD COLUMN notification_group_key text NOT NULL DEFAULT '' CHECK(octet_length(notification_group_key)<=128);
-ALTER TABLE managed_realtime_inbox_messages ADD COLUMN notification_group_label text NOT NULL DEFAULT '' CHECK(octet_length(notification_group_label)<=128);
-ALTER TABLE managed_realtime_inbox_fallbacks ADD COLUMN group_key text NOT NULL DEFAULT '';
-ALTER TABLE managed_realtime_inbox_fallbacks ADD COLUMN group_label text NOT NULL DEFAULT '';
-ALTER TABLE managed_realtime_push_deliveries ADD COLUMN group_key text NOT NULL DEFAULT '';
-ALTER TABLE managed_realtime_push_deliveries ADD COLUMN group_label text NOT NULL DEFAULT '';
-ALTER TABLE managed_realtime_push_deliveries ADD COLUMN digest_id uuid;
-ALTER TABLE managed_realtime_push_deliveries ADD COLUMN digest_count integer NOT NULL DEFAULT 0;
-ALTER TABLE managed_realtime_push_deliveries ADD COLUMN digest_at timestamptz NOT NULL DEFAULT 'epoch';
-CREATE INDEX managed_realtime_push_digest_members ON managed_realtime_push_deliveries(digest_id,id) WHERE digest_id IS NOT NULL;
-CREATE INDEX managed_realtime_push_group_pending ON managed_realtime_push_deliveries(endpoint_id,principal,device,version,category,group_key) WHERE digest_id IS NULL AND status IN ('pending','sending');
-ALTER FUNCTION faas_drain_realtime_inbox_fallbacks(integer) RENAME TO faas_drain_realtime_inbox_fallbacks_before_digests;
+ALTER TABLE managed_realtime_inbox_messages ADD COLUMN IF NOT EXISTS notification_group_key text NOT NULL DEFAULT '' CHECK(octet_length(notification_group_key)<=128);
+ALTER TABLE managed_realtime_inbox_messages ADD COLUMN IF NOT EXISTS notification_group_label text NOT NULL DEFAULT '' CHECK(octet_length(notification_group_label)<=128);
+ALTER TABLE managed_realtime_inbox_fallbacks ADD COLUMN IF NOT EXISTS group_key text NOT NULL DEFAULT '';
+ALTER TABLE managed_realtime_inbox_fallbacks ADD COLUMN IF NOT EXISTS group_label text NOT NULL DEFAULT '';
+ALTER TABLE managed_realtime_push_deliveries ADD COLUMN IF NOT EXISTS group_key text NOT NULL DEFAULT '';
+ALTER TABLE managed_realtime_push_deliveries ADD COLUMN IF NOT EXISTS group_label text NOT NULL DEFAULT '';
+ALTER TABLE managed_realtime_push_deliveries ADD COLUMN IF NOT EXISTS digest_id uuid;
+ALTER TABLE managed_realtime_push_deliveries ADD COLUMN IF NOT EXISTS digest_count integer NOT NULL DEFAULT 0;
+ALTER TABLE managed_realtime_push_deliveries ADD COLUMN IF NOT EXISTS digest_at timestamptz NOT NULL DEFAULT 'epoch';
+CREATE INDEX IF NOT EXISTS managed_realtime_push_digest_members ON managed_realtime_push_deliveries(digest_id,id) WHERE digest_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS managed_realtime_push_group_pending ON managed_realtime_push_deliveries(endpoint_id,principal,device,version,category,group_key) WHERE digest_id IS NULL AND status IN ('pending','sending');
 -- +goose StatementBegin
-CREATE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
+DO $$ BEGIN
+ IF to_regprocedure('faas_drain_realtime_inbox_fallbacks_before_digests(integer)') IS NULL THEN
+  ALTER FUNCTION faas_drain_realtime_inbox_fallbacks(integer) RENAME TO faas_drain_realtime_inbox_fallbacks_before_digests;
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
 RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
 BEGIN

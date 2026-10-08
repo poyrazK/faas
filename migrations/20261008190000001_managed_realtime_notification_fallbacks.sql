@@ -1,7 +1,7 @@
 -- +goose Up
-ALTER TABLE managed_realtime_inbox_messages ADD COLUMN fallback_after_seconds integer NOT NULL DEFAULT 0 CHECK (fallback_after_seconds BETWEEN 0 AND 86400);
+ALTER TABLE managed_realtime_inbox_messages ADD COLUMN IF NOT EXISTS fallback_after_seconds integer NOT NULL DEFAULT 0 CHECK (fallback_after_seconds BETWEEN 0 AND 86400);
 -- Separate from payload retention: count eviction must not lose a pending timer.
-CREATE TABLE managed_realtime_inbox_fallbacks (
+CREATE TABLE IF NOT EXISTS managed_realtime_inbox_fallbacks (
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
  principal text NOT NULL CHECK (principal ~ '^[0-9a-f]{64}$'),
  sequence bigint NOT NULL CHECK (sequence > 0),
@@ -9,7 +9,7 @@ CREATE TABLE managed_realtime_inbox_fallbacks (
  deadline timestamptz NOT NULL,
  PRIMARY KEY(endpoint_id,principal,sequence)
 );
-CREATE INDEX managed_realtime_inbox_fallbacks_due_idx ON managed_realtime_inbox_fallbacks(deadline);
+CREATE INDEX IF NOT EXISTS managed_realtime_inbox_fallbacks_due_idx ON managed_realtime_inbox_fallbacks(deadline);
 
 -- +goose StatementBegin
 DO $$
@@ -26,9 +26,15 @@ END $$;
 
 -- Wrap the existing ACK transaction. Cursor locks serialize device retries;
 -- fallback row locks serialize devices and cancellation against deadline processing.
-ALTER FUNCTION faas_advance_realtime_inbox_cursor(uuid,text,text,bigint) RENAME TO faas_advance_realtime_inbox_cursor_before_fallback;
 -- +goose StatementBegin
-CREATE FUNCTION faas_advance_realtime_inbox_cursor(ep uuid, pk text, device text, requested bigint)
+DO $$ BEGIN
+ IF to_regprocedure('faas_advance_realtime_inbox_cursor_before_fallback(uuid,text,text,bigint)') IS NULL THEN
+  ALTER FUNCTION faas_advance_realtime_inbox_cursor(uuid,text,text,bigint) RENAME TO faas_advance_realtime_inbox_cursor_before_fallback;
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION faas_advance_realtime_inbox_cursor(ep uuid, pk text, device text, requested bigint)
 RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE previous bigint; current_seq bigint; pending record;
 BEGIN
@@ -51,7 +57,7 @@ END $$;
 -- At-least-once signed dispatch uses the existing transactional app outbox.
 -- Missing subscriptions leave deadlines pending instead of dropping fallback.
 -- +goose StatementBegin
-CREATE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
+CREATE OR REPLACE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
 RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE f record; processed integer := 0; eid uuid;
 BEGIN

@@ -1,10 +1,16 @@
 -- +goose Up
-ALTER TABLE managed_realtime_inbox_messages ADD COLUMN notification_priority text NOT NULL DEFAULT 'normal' CHECK(notification_priority IN ('low','normal','urgent'));
-ALTER TABLE managed_realtime_inbox_fallbacks ADD COLUMN priority text NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','urgent'));
-ALTER TABLE managed_realtime_push_deliveries ADD COLUMN priority text NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','urgent'));
-ALTER FUNCTION faas_drain_realtime_inbox_fallbacks(integer) RENAME TO faas_drain_realtime_inbox_fallbacks_before_priority;
+ALTER TABLE managed_realtime_inbox_messages ADD COLUMN IF NOT EXISTS notification_priority text NOT NULL DEFAULT 'normal' CHECK(notification_priority IN ('low','normal','urgent'));
+ALTER TABLE managed_realtime_inbox_fallbacks ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','urgent'));
+ALTER TABLE managed_realtime_push_deliveries ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','urgent'));
 -- +goose StatementBegin
-CREATE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
+DO $$ BEGIN
+ IF to_regprocedure('faas_drain_realtime_inbox_fallbacks_before_priority(integer)') IS NULL THEN
+  ALTER FUNCTION faas_drain_realtime_inbox_fallbacks(integer) RENAME TO faas_drain_realtime_inbox_fallbacks_before_priority;
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
 RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
 BEGIN

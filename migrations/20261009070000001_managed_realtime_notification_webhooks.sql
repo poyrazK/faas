@@ -11,7 +11,7 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE FUNCTION faas_emit_notification_outcome() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION faas_emit_notification_outcome() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE event_name text; recipients uuid[]; eid uuid; app uuid; account uuid;
 BEGIN
  IF NEW.status NOT IN ('sent','failed','cancelled') THEN RETURN NEW; END IF;
@@ -32,7 +32,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER managed_realtime_notification_outcome AFTER INSERT OR UPDATE ON managed_realtime_push_deliveries FOR EACH ROW EXECUTE FUNCTION faas_emit_notification_outcome();
+CREATE OR REPLACE TRIGGER managed_realtime_notification_outcome AFTER INSERT OR UPDATE ON managed_realtime_push_deliveries FOR EACH ROW EXECUTE FUNCTION faas_emit_notification_outcome();
 -- +goose Down
 DROP TRIGGER managed_realtime_notification_outcome ON managed_realtime_push_deliveries;
 DROP FUNCTION faas_emit_notification_outcome();

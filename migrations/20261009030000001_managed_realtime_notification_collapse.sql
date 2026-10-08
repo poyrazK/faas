@@ -1,11 +1,17 @@
 -- +goose Up
-ALTER TABLE managed_realtime_inbox_messages ADD COLUMN notification_collapse_key text NOT NULL DEFAULT '' CHECK(octet_length(notification_collapse_key)<=128);
-ALTER TABLE managed_realtime_inbox_fallbacks ADD COLUMN collapse_key text NOT NULL DEFAULT '' CHECK(octet_length(collapse_key)<=128);
-ALTER TABLE managed_realtime_push_deliveries ADD COLUMN collapse_key text NOT NULL DEFAULT '' CHECK(octet_length(collapse_key)<=128);
-CREATE INDEX managed_realtime_push_collapse_idx ON managed_realtime_push_deliveries(endpoint_id,principal,device,category,priority,collapse_key,sequence) WHERE collapse_key<>'';
-ALTER FUNCTION faas_drain_realtime_inbox_fallbacks(integer) RENAME TO faas_drain_realtime_inbox_fallbacks_before_collapse;
+ALTER TABLE managed_realtime_inbox_messages ADD COLUMN IF NOT EXISTS notification_collapse_key text NOT NULL DEFAULT '' CHECK(octet_length(notification_collapse_key)<=128);
+ALTER TABLE managed_realtime_inbox_fallbacks ADD COLUMN IF NOT EXISTS collapse_key text NOT NULL DEFAULT '' CHECK(octet_length(collapse_key)<=128);
+ALTER TABLE managed_realtime_push_deliveries ADD COLUMN IF NOT EXISTS collapse_key text NOT NULL DEFAULT '' CHECK(octet_length(collapse_key)<=128);
+CREATE INDEX IF NOT EXISTS managed_realtime_push_collapse_idx ON managed_realtime_push_deliveries(endpoint_id,principal,device,category,priority,collapse_key,sequence) WHERE collapse_key<>'';
 -- +goose StatementBegin
-CREATE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
+DO $$ BEGIN
+ IF to_regprocedure('faas_drain_realtime_inbox_fallbacks_before_collapse(integer)') IS NULL THEN
+  ALTER FUNCTION faas_drain_realtime_inbox_fallbacks(integer) RENAME TO faas_drain_realtime_inbox_fallbacks_before_collapse;
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
 RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
 BEGIN

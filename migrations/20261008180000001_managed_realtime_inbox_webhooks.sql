@@ -1,6 +1,6 @@
 -- +goose Up
-ALTER TABLE managed_realtime_inbox_cursors ADD COLUMN gap_reported boolean NOT NULL DEFAULT false;
-CREATE INDEX managed_realtime_inbox_gap_candidates_idx ON managed_realtime_inbox_cursors(updated_at, endpoint_id) WHERE NOT gap_reported;
+ALTER TABLE managed_realtime_inbox_cursors ADD COLUMN IF NOT EXISTS gap_reported boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS managed_realtime_inbox_gap_candidates_idx ON managed_realtime_inbox_cursors(updated_at, endpoint_id) WHERE NOT gap_reported;
 
 -- Preserve the full event vocabulary installed by earlier migrations.
 -- +goose StatementBegin
@@ -23,7 +23,7 @@ END $$;
 
 -- Recipient snapshot and stable event ID are committed with the checkpoint.
 -- +goose StatementBegin
-CREATE FUNCTION faas_capture_realtime_inbox_webhook(ep uuid, principal_key text, consumer text, event_name text, details jsonb)
+CREATE OR REPLACE FUNCTION faas_capture_realtime_inbox_webhook(ep uuid, principal_key text, consumer text, event_name text, details jsonb)
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE a uuid; account uuid; recipients uuid[]; eid uuid := gen_random_uuid();
 BEGIN
@@ -41,7 +41,7 @@ END $$;
 
 -- Only advancing ACKs emit an event; reconnects, duplicate ACKs and resets do not.
 -- +goose StatementBegin
-CREATE FUNCTION faas_advance_realtime_inbox_cursor(ep uuid, pk text, device text, requested bigint)
+CREATE OR REPLACE FUNCTION faas_advance_realtime_inbox_cursor(ep uuid, pk text, device text, requested bigint)
 RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE previous bigint; current_seq bigint; mid text; floor_seq bigint;
 BEGIN
@@ -69,7 +69,7 @@ END $$;
 -- Detect offline devices too. One notification per gap episode, cleared by an
 -- explicit reset, with a bounded batch and row locks for multiple API workers.
 -- +goose StatementBegin
-CREATE FUNCTION faas_scan_realtime_inbox_gaps(batch_size integer)
+CREATE OR REPLACE FUNCTION faas_scan_realtime_inbox_gaps(batch_size integer)
 RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE c record; processed integer := 0;
 BEGIN

@@ -1,21 +1,27 @@
 -- +goose Up
-CREATE TABLE managed_realtime_push_preferences (
+CREATE TABLE IF NOT EXISTS managed_realtime_push_preferences (
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
  principal text NOT NULL CHECK(principal ~ '^[0-9a-f]{64}$'),
  preferences jsonb NOT NULL CHECK(jsonb_typeof(preferences)='object'),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(endpoint_id,principal)
 );
-ALTER TABLE managed_realtime_inbox_messages ADD COLUMN notification_category text NOT NULL DEFAULT 'notifications' CHECK (notification_category ~ '^[a-z0-9_.-]{1,64}$');
-ALTER TABLE managed_realtime_inbox_fallbacks ADD COLUMN category text NOT NULL DEFAULT 'notifications' CHECK(category ~ '^[a-z0-9_.-]{1,64}$');
-ALTER TABLE managed_realtime_push_deliveries ADD COLUMN category text NOT NULL DEFAULT 'notifications' CHECK(category ~ '^[a-z0-9_.-]{1,64}$');
-ALTER TABLE managed_realtime_push_deliveries ADD COLUMN expires_at timestamptz;
-UPDATE managed_realtime_push_deliveries SET expires_at=created_at+interval '24 hours';
+ALTER TABLE managed_realtime_inbox_messages ADD COLUMN IF NOT EXISTS notification_category text NOT NULL DEFAULT 'notifications' CHECK (notification_category ~ '^[a-z0-9_.-]{1,64}$');
+ALTER TABLE managed_realtime_inbox_fallbacks ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'notifications' CHECK(category ~ '^[a-z0-9_.-]{1,64}$');
+ALTER TABLE managed_realtime_push_deliveries ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'notifications' CHECK(category ~ '^[a-z0-9_.-]{1,64}$');
+ALTER TABLE managed_realtime_push_deliveries ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+UPDATE managed_realtime_push_deliveries SET expires_at=created_at+interval '24 hours' WHERE expires_at IS NULL;
 ALTER TABLE managed_realtime_push_deliveries ALTER COLUMN expires_at SET NOT NULL;
 ALTER TABLE managed_realtime_push_deliveries ALTER COLUMN expires_at SET DEFAULT (clock_timestamp()+interval '24 hours');
-ALTER FUNCTION faas_drain_realtime_inbox_fallbacks(integer) RENAME TO faas_drain_realtime_inbox_fallbacks_before_preferences;
 -- +goose StatementBegin
-CREATE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
+DO $$ BEGIN
+ IF to_regprocedure('faas_drain_realtime_inbox_fallbacks_before_preferences(integer)') IS NULL THEN
+  ALTER FUNCTION faas_drain_realtime_inbox_fallbacks(integer) RENAME TO faas_drain_realtime_inbox_fallbacks_before_preferences;
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
 RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
 BEGIN

@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_event_schemas (
+CREATE TABLE IF NOT EXISTS managed_realtime_event_schemas (
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
  channel text NOT NULL CHECK(octet_length(channel) BETWEEN 1 AND 256),
  event_type text NOT NULL CHECK(event_type ~ '^[a-z0-9_.-]{1,64}$'),

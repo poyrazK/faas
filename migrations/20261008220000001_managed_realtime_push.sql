@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_push_providers (
+CREATE TABLE IF NOT EXISTS managed_realtime_push_providers (
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
  provider text NOT NULL CHECK(provider IN ('fcm','apns','webpush')),
  enabled boolean NOT NULL DEFAULT true,
@@ -7,8 +7,8 @@ CREATE TABLE managed_realtime_push_providers (
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(endpoint_id,provider)
 );
-CREATE SEQUENCE managed_realtime_push_device_version;
-CREATE TABLE managed_realtime_push_devices (
+CREATE SEQUENCE IF NOT EXISTS managed_realtime_push_device_version;
+CREATE TABLE IF NOT EXISTS managed_realtime_push_devices (
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
  principal text NOT NULL CHECK(principal ~ '^[0-9a-f]{64}$'),
  device text NOT NULL,
@@ -20,7 +20,7 @@ CREATE TABLE managed_realtime_push_devices (
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(endpoint_id,principal,device)
 );
-CREATE TABLE managed_realtime_push_deliveries (
+CREATE TABLE IF NOT EXISTS managed_realtime_push_deliveries (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
  principal text NOT NULL,
@@ -40,13 +40,19 @@ CREATE TABLE managed_realtime_push_deliveries (
  lease_until timestamptz,
  UNIQUE(endpoint_id,principal,sequence,device)
 );
-CREATE INDEX managed_realtime_push_due ON managed_realtime_push_deliveries(next_attempt) WHERE status IN ('pending','sending');
-CREATE INDEX managed_realtime_push_expiry ON managed_realtime_push_deliveries(updated_at) WHERE status IN ('sent','failed','cancelled');
-CREATE INDEX managed_realtime_push_history ON managed_realtime_push_deliveries(endpoint_id,principal,created_at DESC);
+CREATE INDEX IF NOT EXISTS managed_realtime_push_due ON managed_realtime_push_deliveries(next_attempt) WHERE status IN ('pending','sending');
+CREATE INDEX IF NOT EXISTS managed_realtime_push_expiry ON managed_realtime_push_deliveries(updated_at) WHERE status IN ('sent','failed','cancelled');
+CREATE INDEX IF NOT EXISTS managed_realtime_push_history ON managed_realtime_push_deliveries(endpoint_id,principal,created_at DESC);
 
-ALTER FUNCTION faas_advance_realtime_inbox_cursor(uuid,text,text,bigint) RENAME TO faas_advance_realtime_inbox_cursor_before_push;
 -- +goose StatementBegin
-CREATE FUNCTION faas_advance_realtime_inbox_cursor(ep uuid, pk text, device text, requested bigint)
+DO $$ BEGIN
+ IF to_regprocedure('faas_advance_realtime_inbox_cursor_before_push(uuid,text,text,bigint)') IS NULL THEN
+  ALTER FUNCTION faas_advance_realtime_inbox_cursor(uuid,text,text,bigint) RENAME TO faas_advance_realtime_inbox_cursor_before_push;
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION faas_advance_realtime_inbox_cursor(ep uuid, pk text, device text, requested bigint)
 RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE previous bigint; current_seq bigint;
 BEGIN
@@ -60,9 +66,15 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
-ALTER FUNCTION faas_drain_realtime_inbox_fallbacks(integer) RENAME TO faas_drain_realtime_inbox_fallbacks_before_push;
 -- +goose StatementBegin
-CREATE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
+DO $$ BEGIN
+ IF to_regprocedure('faas_drain_realtime_inbox_fallbacks_before_push(integer)') IS NULL THEN
+  ALTER FUNCTION faas_drain_realtime_inbox_fallbacks(integer) RENAME TO faas_drain_realtime_inbox_fallbacks_before_push;
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION faas_drain_realtime_inbox_fallbacks(batch_size integer)
 RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE f record; recipients uuid[]; devices jsonb; processed integer:=0; total integer; eid uuid;
 BEGIN

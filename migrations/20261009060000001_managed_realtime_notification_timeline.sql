@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_notification_timeline (
+CREATE TABLE IF NOT EXISTS managed_realtime_notification_timeline (
  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
  principal text NOT NULL,
@@ -14,11 +14,11 @@ CREATE TABLE managed_realtime_notification_timeline (
  not_before timestamptz NOT NULL DEFAULT 'epoch',
  next_attempt timestamptz NOT NULL DEFAULT 'epoch'
 );
-CREATE INDEX managed_realtime_notification_timeline_lookup_idx ON managed_realtime_notification_timeline(endpoint_id,principal,message_id,id DESC);
-CREATE INDEX managed_realtime_notification_timeline_endpoint_idx ON managed_realtime_notification_timeline(endpoint_id,id DESC);
-CREATE INDEX managed_realtime_notification_timeline_cleanup_idx ON managed_realtime_notification_timeline(occurred_at);
+CREATE INDEX IF NOT EXISTS managed_realtime_notification_timeline_lookup_idx ON managed_realtime_notification_timeline(endpoint_id,principal,message_id,id DESC);
+CREATE INDEX IF NOT EXISTS managed_realtime_notification_timeline_endpoint_idx ON managed_realtime_notification_timeline(endpoint_id,id DESC);
+CREATE INDEX IF NOT EXISTS managed_realtime_notification_timeline_cleanup_idx ON managed_realtime_notification_timeline(occurred_at);
 -- +goose StatementBegin
-CREATE FUNCTION faas_record_notification_timeline() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION faas_record_notification_timeline() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE eid uuid; pk text; mid text; event_name text;
 BEGIN
  eid:=CASE WHEN TG_OP='DELETE' THEN OLD.endpoint_id ELSE NEW.endpoint_id END;
@@ -48,8 +48,8 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER managed_realtime_push_timeline AFTER INSERT OR UPDATE ON managed_realtime_push_deliveries FOR EACH ROW EXECUTE FUNCTION faas_record_notification_timeline();
-CREATE TRIGGER managed_realtime_fallback_timeline AFTER INSERT OR UPDATE OR DELETE ON managed_realtime_inbox_fallbacks FOR EACH ROW EXECUTE FUNCTION faas_record_notification_timeline();
+CREATE OR REPLACE TRIGGER managed_realtime_push_timeline AFTER INSERT OR UPDATE ON managed_realtime_push_deliveries FOR EACH ROW EXECUTE FUNCTION faas_record_notification_timeline();
+CREATE OR REPLACE TRIGGER managed_realtime_fallback_timeline AFTER INSERT OR UPDATE OR DELETE ON managed_realtime_inbox_fallbacks FOR EACH ROW EXECUTE FUNCTION faas_record_notification_timeline();
 -- +goose Down
 DROP TRIGGER managed_realtime_fallback_timeline ON managed_realtime_inbox_fallbacks;
 DROP TRIGGER managed_realtime_push_timeline ON managed_realtime_push_deliveries;

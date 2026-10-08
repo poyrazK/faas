@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_channel_reducers (
+CREATE TABLE IF NOT EXISTS managed_realtime_channel_reducers (
  endpoint_id uuid NOT NULL,
  channel text NOT NULL,
  sequence bigint NOT NULL CHECK(sequence>=0),

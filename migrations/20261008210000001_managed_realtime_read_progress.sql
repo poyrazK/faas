@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE managed_realtime_read_progress (
+CREATE TABLE IF NOT EXISTS managed_realtime_read_progress (
  endpoint_id uuid NOT NULL REFERENCES managed_realtime_endpoints(id) ON DELETE CASCADE,
  principal text NOT NULL CHECK(principal ~ '^[0-9a-f]{64}$'),
  stream text NOT NULL CHECK(length(stream) BETWEEN 1 AND 256),
