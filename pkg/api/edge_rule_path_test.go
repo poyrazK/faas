@@ -29,3 +29,27 @@ func TestMatchEdgeRulePath(t *testing.T) {
 		}
 	}
 }
+
+func TestEdgeRuleHostMatchesAndKindPath(t *testing.T) {
+	for _, tc := range []struct {
+		pattern, host string
+		want          bool
+	}{
+		{"*", "anything.example.com", true},
+		{"API.example.com", "api.EXAMPLE.com", true},
+		{"*.example.com", "a.example.com", true},
+		{"*.example.com", "example.com", false},
+		{"api.example.com", "api.example.net", false},
+		{"", "a.example.com", false},
+	} {
+		if got := EdgeRuleHostMatches(tc.pattern, tc.host); got != tc.want {
+			t.Errorf("EdgeRuleHostMatches(%q, %q) = %v, want %v", tc.pattern, tc.host, got, tc.want)
+		}
+	}
+	if ok, _ := MatchEdgeRuleKindPath("maintenance", "/admin/*", "/ADMIN/x"); !ok {
+		t.Error("protective kind did not match a case variant")
+	}
+	if ok, _ := MatchEdgeRuleKindPath("headers", "/admin/*", "/ADMIN/x"); ok {
+		t.Error("non-protective kind widened to a case variant")
+	}
+}

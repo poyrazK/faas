@@ -1897,6 +1897,11 @@ var cliCommands = []cliCommand{
 				{Name: "country", Short: "simulated ISO alpha-2 country for kind=geo rules", Value: "CC"},
 				{Name: "header", Short: "simulated request header; repeat for multiple values", Value: "Name:Value"},
 				{Name: "body-file", Short: "request body file or - for stdin (max 1 MiB; contents are withheld)", Value: "path|-"},
+				{Name: "proposal", Short: "compare against a proposed change: JSON {add,update,remove} file or - for stdin", Value: "file|-"},
+				{Name: "add-rule", Short: "compare against adding this rule (create-request JSON or @file; repeat)", Value: "JSON|@FILE"},
+				{Name: "remove-rule", Short: "compare against removing this rule id (repeat)", Value: "ID"},
+			}, Examples: []string{
+				`gregale edge-rules trace --app my-api --url https://api.example.com/admin --add-rule '{"kind":"maintenance","match_host":"api.example.com","match_path":"/admin/*","action":{"maintenance":{"message":"migrating"}}}'`,
 			}},
 			{Name: subCreate, Short: "Add an edge rule", Examples: []string{
 				"gregale edge-rules create --app my-api --kind throttle --match-host my-api.gregale.dev --match-path /search --throttle-requests-per-second 5 --throttle-burst 10",

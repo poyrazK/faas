@@ -41,3 +41,62 @@ func MatchEdgeRulePath(glob, requestPath string) (bool, error) {
 	}
 	return path.Match(base, requestPath[:cut])
 }
+
+// EdgeRuleKindUsesProtectivePathMatch reports whether a rule kind denies or
+// constrains requests, and therefore matches path variants protectively
+// (MatchProtectiveEdgeRulePath) rather than exactly.
+func EdgeRuleKindUsesProtectivePathMatch(kind string) bool {
+	switch kind {
+	case "jwt", "ip", "geo", "limit", "throttle", "validate", "maintenance":
+		return true
+	}
+	return false
+}
+
+// MatchProtectiveEdgeRulePath is MatchEdgeRulePath for gates that deny or
+// constrain: the rule applies when the raw path, its dot-segment/duplicate-
+// slash normalized form, or either compared case-insensitively matches.
+// Frameworks that normalize before routing would otherwise serve
+// /public/../admin/x or //admin/x as /admin/x, and case-insensitive routers
+// serve /ADMIN/x as /admin/x, while the gate compared the raw string. Every
+// extra form only adds protection. The gateway and the trace simulator both
+// call this so they cannot disagree on which requests a gate covers.
+func MatchProtectiveEdgeRulePath(glob, requestPath string) (bool, error) {
+	ok, err := MatchEdgeRulePath(glob, requestPath)
+	if ok || err != nil {
+		return ok, err
+	}
+	cleaned := path.Clean("/" + strings.ReplaceAll(requestPath, "\\", "/"))
+	if cleaned != requestPath {
+		if ok, _ := MatchEdgeRulePath(glob, cleaned); ok {
+			return true, nil
+		}
+	}
+	foldedGlob := strings.ToLower(glob)
+	if folded := strings.ToLower(cleaned); folded != cleaned || foldedGlob != glob {
+		return MatchEdgeRulePath(foldedGlob, folded)
+	}
+	return false, nil
+}
+
+// MatchEdgeRuleKindPath applies the matching mode the gateway uses for kind.
+func MatchEdgeRuleKindPath(kind, glob, requestPath string) (bool, error) {
+	if EdgeRuleKindUsesProtectivePathMatch(kind) {
+		return MatchProtectiveEdgeRulePath(glob, requestPath)
+	}
+	return MatchEdgeRulePath(glob, requestPath)
+}
+
+// EdgeRuleHostMatches reports whether a rule's match_host pattern ("*",
+// "*.example.com", an exact host, or another path.Match glob) covers host,
+// case-insensitively. It mirrors the store's LIKE translation; the gateway
+// cache invalidation and the trace simulator share it.
+func EdgeRuleHostMatches(pattern, host string) bool {
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	host = strings.ToLower(strings.TrimSpace(host))
+	if pattern == "" || host == "" {
+		return false
+	}
+	ok, err := path.Match(pattern, host)
+	return err == nil && ok
+}
