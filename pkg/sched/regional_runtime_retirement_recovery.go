@@ -117,10 +117,10 @@ func (e *Engine) RunRegionalRuntimeFailureRecovery(ctx context.Context, log *slo
 			var report RegionalRuntimeInventoryReport
 			var observedErr error
 			inventoryAfter, report, observedErr = e.ObserveRegionalRuntimeInventoryPage(ctx, inventoryAfter)
-			if observedErr != nil || len(report.Issues) > 0 || report.NativeUnresolved > 0 {
-				log.Warn("schedd: regional native inventory unresolved; holds retained", "matched", len(report.Matches), "unresolved_holds", len(report.Issues), "native_unresolved", report.NativeUnresolved, "nodes", report.Nodes, "err", observedErr)
+			if observedErr != nil || len(report.Issues) > 0 || len(report.CurrentIssues) > 0 || report.NativeUnresolved > 0 {
+				log.Warn("schedd: regional native inventory unresolved; holds retained", "matched", len(report.Matches), "current_attempts", len(report.CurrentAttempts), "current_attempt_issues", len(report.CurrentIssues), "unresolved_holds", len(report.Issues), "native_unresolved", report.NativeUnresolved, "nodes", report.Nodes, "err", observedErr)
 			} else if report.Nodes > 0 {
-				log.Info("schedd: regional original holds observed; admission remains frozen", "matched", len(report.Matches), "nodes", report.Nodes)
+				log.Info("schedd: regional original holds observed; admission remains frozen", "matched", len(report.Matches), "current_attempts", len(report.CurrentAttempts), "nodes", report.Nodes)
 			}
 		}
 		return next, completed, err

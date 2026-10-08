@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -21,8 +22,13 @@ type RegionalRuntimeInventoryIssue struct {
 // Matches identify original holds observed in this request only. They are never
 // persisted as admission authority, deduplicated against rows or used to release.
 type RegionalRuntimeInventoryReport struct {
-	Matches          []runtimequota.LaunchSource
-	Issues           []RegionalRuntimeInventoryIssue
+	Matches []runtimequota.LaunchSource
+	Issues  []RegionalRuntimeInventoryIssue
+	// CurrentAttempts also have the original run/claim in the customer-intent
+	// store at observation time. This is advisory evidence, never a dispatch
+	// lease, a serving decision or permission to merge/release charges.
+	CurrentAttempts  []runtimequota.LaunchSource
+	CurrentIssues    []RegionalRuntimeInventoryIssue
 	Nodes            int
 	NativeUnresolved int
 }
@@ -51,7 +57,9 @@ func (e *Engine) ObserveRegionalRuntimeInventoryPage(ctx context.Context, after 
 		}
 		after = next
 	}
-	return e.observeRegionalRuntimeRows(ctx, after, rows)
+	next, observed, err := e.observeRegionalRuntimeRows(ctx, after, rows)
+	currentErr := e.observeCurrentRegionalAttempts(ctx, &observed, time.Now())
+	return next, observed, errors.Join(err, currentErr)
 }
 
 func (e *Engine) observeRegionalRuntimeRows(ctx context.Context, after state.RegionalRuntimeRetirementCursor, rows []state.RegionalRuntimeInventoryEntry) (state.RegionalRuntimeRetirementCursor, RegionalRuntimeInventoryReport, error) {
