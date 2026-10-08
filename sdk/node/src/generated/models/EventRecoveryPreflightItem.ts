@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Sampled pending recovery item eligibility and current wait or skip diagnostics.
+ */
 export type EventRecoveryPreflightItem = {
   position: number;
   status: 'eligible' | 'waiting' | 'likely_skipped' | 'unknown';

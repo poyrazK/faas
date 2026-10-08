@@ -10,7 +10,7 @@ import type { EventSubscriptionResponse } from './EventSubscriptionResponse.js';
  */
 export type EventReplayPreviewResponse = {
   /**
-   * Candidates excluded by schema version selection.
+   * Schema version mismatch count in the event replay preview response: candidates excluded by schema version selection.
    */
   schema_version_mismatch_count?: number;
   /**

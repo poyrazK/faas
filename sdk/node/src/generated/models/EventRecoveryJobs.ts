@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventRecoveryJob } from './EventRecoveryJob.js';
+/**
+ * Paginated retained recovery jobs with admission progress and account-bound discovery cursor.
+ */
 export type EventRecoveryJobs = {
   jobs: Array<EventRecoveryJob>;
   /**

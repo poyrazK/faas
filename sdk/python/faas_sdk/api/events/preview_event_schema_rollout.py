@@ -95,7 +95,8 @@ def sync_detailed(
     schema is registered and no events or deliveries are created.
 
     Args:
-        body (EventSchemaRolloutRequest):
+        body (EventSchemaRolloutRequest): Candidate event schema and bounded retained-event sample
+            settings for a read-only rollout preview.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -131,7 +132,8 @@ def sync(
     schema is registered and no events or deliveries are created.
 
     Args:
-        body (EventSchemaRolloutRequest):
+        body (EventSchemaRolloutRequest): Candidate event schema and bounded retained-event sample
+            settings for a read-only rollout preview.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -162,7 +164,8 @@ async def asyncio_detailed(
     schema is registered and no events or deliveries are created.
 
     Args:
-        body (EventSchemaRolloutRequest):
+        body (EventSchemaRolloutRequest): Candidate event schema and bounded retained-event sample
+            settings for a read-only rollout preview.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -196,7 +199,8 @@ async def asyncio(
     schema is registered and no events or deliveries are created.
 
     Args:
-        body (EventSchemaRolloutRequest):
+        body (EventSchemaRolloutRequest): Candidate event schema and bounded retained-event sample
+            settings for a read-only rollout preview.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

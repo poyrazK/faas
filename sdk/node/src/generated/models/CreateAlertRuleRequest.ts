@@ -7,7 +7,7 @@
  */
 export type CreateAlertRuleRequest = {
   /**
-   * Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to 24h are required.
+   * Event subscription id in the create alert rule request: immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to 24h are required.
    */
   event_subscription_id?: string;
   /**

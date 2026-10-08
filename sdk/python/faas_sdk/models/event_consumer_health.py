@@ -46,6 +46,7 @@ class EventConsumerHealth:
     expired_deliveries: int | Unset = UNSET
     """Recorded delivery_expired outcomes in the observation window; included in terminal_failures."""
     circuit_breaker: EventCircuitBreakerResponse | Unset = UNSET
+    """Captured circuit policy and current breaker state for one application event subscription."""
     oldest_pending_at: datetime.datetime | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
     """Absent until an operator sets a control."""

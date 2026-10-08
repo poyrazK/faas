@@ -86,9 +86,9 @@ def sync_detailed(
 ) -> Response[EventSubscriptionSchemaVersionsResponse | Problem]:
     """Accept all schema versions for future events.
 
-     Requires `deploy:write` or `admin`. Captured events retain their acceptance-time selection. An empty
-    selection accepts all versions, including unversioned envelopes. Only current app subscriptions can
-    be configured.
+     Accept all schema versions for future events. Requires `deploy:write` or `admin`. Captured events
+    retain their acceptance-time selection. An empty selection accepts all versions, including
+    unversioned envelopes. Only current app subscriptions can be configured.
 
     Args:
         slug (str):
@@ -122,9 +122,9 @@ def sync(
 ) -> EventSubscriptionSchemaVersionsResponse | Problem | None:
     """Accept all schema versions for future events.
 
-     Requires `deploy:write` or `admin`. Captured events retain their acceptance-time selection. An empty
-    selection accepts all versions, including unversioned envelopes. Only current app subscriptions can
-    be configured.
+     Accept all schema versions for future events. Requires `deploy:write` or `admin`. Captured events
+    retain their acceptance-time selection. An empty selection accepts all versions, including
+    unversioned envelopes. Only current app subscriptions can be configured.
 
     Args:
         slug (str):
@@ -153,9 +153,9 @@ async def asyncio_detailed(
 ) -> Response[EventSubscriptionSchemaVersionsResponse | Problem]:
     """Accept all schema versions for future events.
 
-     Requires `deploy:write` or `admin`. Captured events retain their acceptance-time selection. An empty
-    selection accepts all versions, including unversioned envelopes. Only current app subscriptions can
-    be configured.
+     Accept all schema versions for future events. Requires `deploy:write` or `admin`. Captured events
+    retain their acceptance-time selection. An empty selection accepts all versions, including
+    unversioned envelopes. Only current app subscriptions can be configured.
 
     Args:
         slug (str):
@@ -187,9 +187,9 @@ async def asyncio(
 ) -> EventSubscriptionSchemaVersionsResponse | Problem | None:
     """Accept all schema versions for future events.
 
-     Requires `deploy:write` or `admin`. Captured events retain their acceptance-time selection. An empty
-    selection accepts all versions, including unversioned envelopes. Only current app subscriptions can
-    be configured.
+     Accept all schema versions for future events. Requires `deploy:write` or `admin`. Captured events
+    retain their acceptance-time selection. An empty selection accepts all versions, including
+    unversioned envelopes. Only current app subscriptions can be configured.
 
     Args:
         slug (str):

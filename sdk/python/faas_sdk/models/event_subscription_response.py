@@ -37,8 +37,9 @@ class EventSubscriptionResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     schema_versions: list[str] | Unset = UNSET
-    """Exact case-sensitive schema versions. Empty or omitted accepts all versions; a nonempty selection excludes
-    unversioned events. Selection is captured at publication or backfill creation."""
+    """Schema versions in the event subscription response: exact case-sensitive schema versions. Empty or omitted
+    accepts all versions; a nonempty selection excludes unversioned events. Selection is captured at publication or
+    backfill creation."""
     routing_retry_policy: EventRoutingRetryPolicy | Unset = UNSET
     """Routing policy before invocation admission. Duration budgets include routing attempt time and scheduled
     retry delays. Admission waits add no budget cost. API replacement accepts explicit settings; manifests and CLI

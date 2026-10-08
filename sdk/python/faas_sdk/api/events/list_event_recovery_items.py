@@ -97,7 +97,7 @@ def sync_detailed(
 ) -> Response[EventRecoveryItems | Problem]:
     """Read a stable page of selected recipients and recovery outcomes.
 
-     Requires `apps:read` or `admin`.
+     Read a stable page of selected recipients and recovery outcomes. Requires `apps:read` or `admin`.
 
     Args:
         job_id (UUID):
@@ -134,7 +134,7 @@ def sync(
 ) -> EventRecoveryItems | Problem | None:
     """Read a stable page of selected recipients and recovery outcomes.
 
-     Requires `apps:read` or `admin`.
+     Read a stable page of selected recipients and recovery outcomes. Requires `apps:read` or `admin`.
 
     Args:
         job_id (UUID):
@@ -166,7 +166,7 @@ async def asyncio_detailed(
 ) -> Response[EventRecoveryItems | Problem]:
     """Read a stable page of selected recipients and recovery outcomes.
 
-     Requires `apps:read` or `admin`.
+     Read a stable page of selected recipients and recovery outcomes. Requires `apps:read` or `admin`.
 
     Args:
         job_id (UUID):
@@ -201,7 +201,7 @@ async def asyncio(
 ) -> EventRecoveryItems | Problem | None:
     """Read a stable page of selected recipients and recovery outcomes.
 
-     Requires `apps:read` or `admin`.
+     Read a stable page of selected recipients and recovery outcomes. Requires `apps:read` or `admin`.
 
     Args:
         job_id (UUID):

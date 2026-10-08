@@ -83,7 +83,7 @@ def sync_detailed(
 ) -> Response[EventRecoveryJob | Problem]:
     """Read bulk recovery progress.
 
-     Requires `apps:read` or `admin`.
+     Read bulk recovery progress. Requires `apps:read` or `admin`.
 
     Args:
         job_id (UUID):
@@ -114,7 +114,7 @@ def sync(
 ) -> EventRecoveryJob | Problem | None:
     """Read bulk recovery progress.
 
-     Requires `apps:read` or `admin`.
+     Read bulk recovery progress. Requires `apps:read` or `admin`.
 
     Args:
         job_id (UUID):
@@ -140,7 +140,7 @@ async def asyncio_detailed(
 ) -> Response[EventRecoveryJob | Problem]:
     """Read bulk recovery progress.
 
-     Requires `apps:read` or `admin`.
+     Read bulk recovery progress. Requires `apps:read` or `admin`.
 
     Args:
         job_id (UUID):
@@ -169,7 +169,7 @@ async def asyncio(
 ) -> EventRecoveryJob | Problem | None:
     """Read bulk recovery progress.
 
-     Requires `apps:read` or `admin`.
+     Read bulk recovery progress. Requires `apps:read` or `admin`.
 
     Args:
         job_id (UUID):

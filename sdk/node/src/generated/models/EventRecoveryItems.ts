@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventRecoveryItem } from './EventRecoveryItem.js';
+/**
+ * Paginated frozen recovery items and their individual admission outcomes.
+ */
 export type EventRecoveryItems = {
   job_id: string;
   items: Array<EventRecoveryItem>;

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventRecoveryJobHealth } from './EventRecoveryJobHealth.js';
+/**
+ * Bounded application recovery health summary and sampled actionable jobs.
+ */
 export type EventRecoveryHealth = {
   capacity_wait_warning_seconds: number;
   /**

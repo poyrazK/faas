@@ -12,6 +12,8 @@ T = TypeVar("T", bound="EventRecoveryControlRequest")
 
 @_attrs_define
 class EventRecoveryControlRequest:
+    """Optional audit reason attached to a recovery pause, resume or cancellation."""
+
     reason: str | Unset = UNSET
     """Optional operator reason, at most 512 UTF-8 bytes without control characters."""
 

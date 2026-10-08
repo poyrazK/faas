@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventRecoveryCapacityWait } from './EventRecoveryCapacityWait.js';
+/**
+ * Retained recovery job progress, expiry risk and capacity-wait observations.
+ */
 export type EventRecoveryJobHealth = {
   /**
    * Latest tracked capacity episode. Omitted when no diagnostics have been observed. Preserved while paused; cleared on resume or item progress. Use eligible_at for the next eligible retry.

@@ -20,6 +20,8 @@ T = TypeVar("T", bound="EventRecoveryCapacityWait")
 
 @_attrs_define
 class EventRecoveryCapacityWait:
+    """Current capacity-wait episode with limiting scope and observation timestamps."""
+
     scope: EventRecoveryCapacityWaitScope
     gate: EventRecoveryCapacityWaitGate
     explanation: str

@@ -13,6 +13,8 @@ T = TypeVar("T", bound="EventSchemaRolloutRequest")
 
 @_attrs_define
 class EventSchemaRolloutRequest:
+    """Candidate event schema and bounded retained-event sample settings for a read-only rollout preview."""
+
     source: str
     """Concrete event source; wildcard patterns are not allowed."""
     type_: str

@@ -17,6 +17,8 @@ T = TypeVar("T", bound="EventRecoveryItems")
 
 @_attrs_define
 class EventRecoveryItems:
+    """Paginated frozen recovery items and their individual admission outcomes."""
+
     job_id: UUID
     items: list[EventRecoveryItem]
     next_after: int | Unset = UNSET

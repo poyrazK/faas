@@ -20,6 +20,8 @@ T = TypeVar("T", bound="EventRecoveryPreflight")
 
 @_attrs_define
 class EventRecoveryPreflight:
+    """Read-only pending-item eligibility, current capacity and optimistic drain estimate for a recovery job."""
+
     job_id: UUID
     observed_at: datetime.datetime
     state: EventRecoveryPreflightState

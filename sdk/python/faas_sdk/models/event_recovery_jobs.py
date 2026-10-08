@@ -17,6 +17,8 @@ T = TypeVar("T", bound="EventRecoveryJobs")
 
 @_attrs_define
 class EventRecoveryJobs:
+    """Paginated retained recovery jobs with admission progress and account-bound discovery cursor."""
+
     jobs: list[EventRecoveryJob]
     next_cursor: str | Unset = UNSET
     """Omitted on the final page. Preserve the same app and filters; page size may change."""

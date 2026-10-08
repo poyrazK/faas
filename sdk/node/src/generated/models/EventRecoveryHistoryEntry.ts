@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Immutable recovery lifecycle or control action with actor identity and previous settings.
+ */
 export type EventRecoveryHistoryEntry = {
   id: number;
   occurred_at: string;

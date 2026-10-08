@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventCircuitBreakerPolicy } from './EventCircuitBreakerPolicy.js';
+/**
+ * Captured circuit policy and current breaker state for one application event subscription.
+ */
 export type EventCircuitBreakerResponse = {
   subscription_id: string;
   enabled: boolean;

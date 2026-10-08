@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Candidate event schema and bounded retained-event sample settings for a read-only rollout preview.
+ */
 export type EventSchemaRolloutRequest = {
   /**
    * Concrete event source; wildcard patterns are not allowed.

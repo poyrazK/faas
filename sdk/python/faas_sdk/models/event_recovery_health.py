@@ -16,6 +16,8 @@ T = TypeVar("T", bound="EventRecoveryHealth")
 
 @_attrs_define
 class EventRecoveryHealth:
+    """Bounded application recovery health summary and sampled actionable jobs."""
+
     capacity_wait_warning_seconds: int
     capacity_waiting_jobs: int
     """Running capacity-wait jobs observed within the five-minute freshness grace."""

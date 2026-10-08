@@ -31,9 +31,10 @@ class EventSubscriptionDeliveryControl:
     processing_recipients: int
     oldest_age_seconds: float
     circuit_breaker: EventCircuitBreakerResponse | Unset = UNSET
+    """Captured circuit policy and current breaker state for one application event subscription."""
     oldest_pending_at: datetime.datetime | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
-    """Absent until an operator sets a control."""
+    """Updated at in the event subscription delivery control: absent until an operator sets a control."""
 
     def to_dict(self) -> dict[str, Any]:
         subscription_id = str(self.subscription_id)

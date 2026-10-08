@@ -12,11 +12,13 @@ T = TypeVar("T", bound="EventRecoveryRateRequest")
 
 @_attrs_define
 class EventRecoveryRateRequest:
+    """Replacement admission rate and optional audit reason for an existing recovery job."""
+
     rate_per_second: int
     """Maximum items per second. Does not reset spent permits or existing admission waits."""
     reason: str | Unset = UNSET
-    """Optional operator reason, limited to 512 UTF-8 bytes without control characters. Stored only in audit
-    history; omitted from frozen selection. Preview does not record it."""
+    """Reason in the event recovery rate request: optional operator reason, limited to 512 UTF-8 bytes without
+    control characters. Stored only in audit history; omitted from frozen selection. Preview does not record it."""
 
     def to_dict(self) -> dict[str, Any]:
         rate_per_second = self.rate_per_second

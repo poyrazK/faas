@@ -29,6 +29,8 @@ T = TypeVar("T", bound="EventRecoveryHistoryEntry")
 
 @_attrs_define
 class EventRecoveryHistoryEntry:
+    """Immutable recovery lifecycle or control action with actor identity and previous settings."""
+
     id: int
     occurred_at: datetime.datetime
     action: EventRecoveryHistoryEntryAction

@@ -11,6 +11,8 @@ T = TypeVar("T", bound="EventSchemaRolloutConsumer")
 
 @_attrs_define
 class EventSchemaRolloutConsumer:
+    """Application consumer selection and schema-version compatibility in a rollout preview."""
+
     subscription_id: UUID
     app_id: UUID
     source: str

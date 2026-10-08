@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventRecoveryItem } from './EventRecoveryItem.js';
+/**
+ * Bounded selection preview for a proposed durable event recovery job.
+ */
 export type EventRecoveryPreview = {
   observed_at: string;
   coverage: 'captured_application_recipients' | 'retained_application_executions';

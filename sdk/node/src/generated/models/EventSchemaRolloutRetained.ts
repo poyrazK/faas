@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventSchemaRolloutValidation } from './EventSchemaRolloutValidation.js';
+/**
+ * Retained sample coverage and compatibility observations for the candidate event schema.
+ */
 export type EventSchemaRolloutRetained = {
   requested: boolean;
   from?: string;

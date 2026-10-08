@@ -2,9 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Replacement admission rate and optional audit reason for an existing recovery job.
+ */
 export type EventRecoveryRateRequest = {
   /**
-   * Optional operator reason, limited to 512 UTF-8 bytes without control characters. Stored only in audit history; omitted from frozen selection. Preview does not record it.
+   * Reason in the event recovery rate request: optional operator reason, limited to 512 UTF-8 bytes without control characters. Stored only in audit history; omitted from frozen selection. Preview does not record it.
    */
   reason?: string;
   /**

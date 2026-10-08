@@ -13,6 +13,8 @@ T = TypeVar("T", bound="EventSchemaRolloutValidation")
 
 @_attrs_define
 class EventSchemaRolloutValidation:
+    """Candidate schema validation results for bounded retained event content."""
+
     valid: bool
     sample_index: int | Unset = UNSET
     """Zero-based index for caller-supplied samples."""

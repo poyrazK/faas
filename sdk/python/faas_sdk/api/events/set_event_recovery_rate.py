@@ -98,14 +98,15 @@ def sync_detailed(
 ) -> Response[EventRecoveryJob | Problem]:
     """Change the current recovery admission rate.
 
-     Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window
-    budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed,
-    cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are
-    idempotent.
+     Change the current recovery admission rate. Requires `deploy:write` or `admin` and MFA. Controls
+    preserve the frozen selection, spent window budget, existing waits, quota, and original expiry.
+    Already queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated
+    desired-state controls on active jobs are idempotent.
 
     Args:
         job_id (UUID):
-        body (EventRecoveryRateRequest):
+        body (EventRecoveryRateRequest): Replacement admission rate and optional audit reason for
+            an existing recovery job.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,14 +136,15 @@ def sync(
 ) -> EventRecoveryJob | Problem | None:
     """Change the current recovery admission rate.
 
-     Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window
-    budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed,
-    cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are
-    idempotent.
+     Change the current recovery admission rate. Requires `deploy:write` or `admin` and MFA. Controls
+    preserve the frozen selection, spent window budget, existing waits, quota, and original expiry.
+    Already queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated
+    desired-state controls on active jobs are idempotent.
 
     Args:
         job_id (UUID):
-        body (EventRecoveryRateRequest):
+        body (EventRecoveryRateRequest): Replacement admission rate and optional audit reason for
+            an existing recovery job.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -167,14 +169,15 @@ async def asyncio_detailed(
 ) -> Response[EventRecoveryJob | Problem]:
     """Change the current recovery admission rate.
 
-     Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window
-    budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed,
-    cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are
-    idempotent.
+     Change the current recovery admission rate. Requires `deploy:write` or `admin` and MFA. Controls
+    preserve the frozen selection, spent window budget, existing waits, quota, and original expiry.
+    Already queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated
+    desired-state controls on active jobs are idempotent.
 
     Args:
         job_id (UUID):
-        body (EventRecoveryRateRequest):
+        body (EventRecoveryRateRequest): Replacement admission rate and optional audit reason for
+            an existing recovery job.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -202,14 +205,15 @@ async def asyncio(
 ) -> EventRecoveryJob | Problem | None:
     """Change the current recovery admission rate.
 
-     Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window
-    budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed,
-    cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are
-    idempotent.
+     Change the current recovery admission rate. Requires `deploy:write` or `admin` and MFA. Controls
+    preserve the frozen selection, spent window budget, existing waits, quota, and original expiry.
+    Already queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated
+    desired-state controls on active jobs are idempotent.
 
     Args:
         job_id (UUID):
-        body (EventRecoveryRateRequest):
+        body (EventRecoveryRateRequest): Replacement admission rate and optional audit reason for
+            an existing recovery job.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

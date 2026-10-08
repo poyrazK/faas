@@ -94,11 +94,12 @@ def sync_detailed(
 ) -> Response[EventRecoveryJob | Problem]:
     """Cancel retries that have not yet been queued.
 
-     Requires `deploy:write` or `admin`.
+     Cancel retries that have not yet been queued. Requires `deploy:write` or `admin`.
 
     Args:
         job_id (UUID):
-        body (EventRecoveryControlRequest | Unset):
+        body (EventRecoveryControlRequest | Unset): Optional audit reason attached to a recovery
+            pause, resume or cancellation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -128,11 +129,12 @@ def sync(
 ) -> EventRecoveryJob | Problem | None:
     """Cancel retries that have not yet been queued.
 
-     Requires `deploy:write` or `admin`.
+     Cancel retries that have not yet been queued. Requires `deploy:write` or `admin`.
 
     Args:
         job_id (UUID):
-        body (EventRecoveryControlRequest | Unset):
+        body (EventRecoveryControlRequest | Unset): Optional audit reason attached to a recovery
+            pause, resume or cancellation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,11 +159,12 @@ async def asyncio_detailed(
 ) -> Response[EventRecoveryJob | Problem]:
     """Cancel retries that have not yet been queued.
 
-     Requires `deploy:write` or `admin`.
+     Cancel retries that have not yet been queued. Requires `deploy:write` or `admin`.
 
     Args:
         job_id (UUID):
-        body (EventRecoveryControlRequest | Unset):
+        body (EventRecoveryControlRequest | Unset): Optional audit reason attached to a recovery
+            pause, resume or cancellation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -189,11 +192,12 @@ async def asyncio(
 ) -> EventRecoveryJob | Problem | None:
     """Cancel retries that have not yet been queued.
 
-     Requires `deploy:write` or `admin`.
+     Cancel retries that have not yet been queued. Requires `deploy:write` or `admin`.
 
     Args:
         job_id (UUID):
-        body (EventRecoveryControlRequest | Unset):
+        body (EventRecoveryControlRequest | Unset): Optional audit reason attached to a recovery
+            pause, resume or cancellation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventRecoveryPreflightItem } from './EventRecoveryPreflightItem.js';
+/**
+ * Read-only pending-item eligibility, current capacity and optimistic drain estimate for a recovery job.
+ */
 export type EventRecoveryPreflight = {
   job_id: string;
   observed_at: string;

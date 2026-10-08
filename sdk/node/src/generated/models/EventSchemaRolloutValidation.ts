@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Candidate schema validation results for bounded retained event content.
+ */
 export type EventSchemaRolloutValidation = {
   /**
    * Zero-based index for caller-supplied samples.

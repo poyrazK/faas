@@ -99,14 +99,15 @@ def sync_detailed(
 ) -> Response[EventRecoveryJob | Problem]:
     """Resume the frozen recovery selection.
 
-     Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window
-    budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed,
-    cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are
-    idempotent.
+     Resume the frozen recovery selection. Requires `deploy:write` or `admin` and MFA. Controls preserve
+    the frozen selection, spent window budget, existing waits, quota, and original expiry. Already
+    queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated desired-state
+    controls on active jobs are idempotent.
 
     Args:
         job_id (UUID):
-        body (EventRecoveryControlRequest | Unset):
+        body (EventRecoveryControlRequest | Unset): Optional audit reason attached to a recovery
+            pause, resume or cancellation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -136,14 +137,15 @@ def sync(
 ) -> EventRecoveryJob | Problem | None:
     """Resume the frozen recovery selection.
 
-     Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window
-    budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed,
-    cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are
-    idempotent.
+     Resume the frozen recovery selection. Requires `deploy:write` or `admin` and MFA. Controls preserve
+    the frozen selection, spent window budget, existing waits, quota, and original expiry. Already
+    queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated desired-state
+    controls on active jobs are idempotent.
 
     Args:
         job_id (UUID):
-        body (EventRecoveryControlRequest | Unset):
+        body (EventRecoveryControlRequest | Unset): Optional audit reason attached to a recovery
+            pause, resume or cancellation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -168,14 +170,15 @@ async def asyncio_detailed(
 ) -> Response[EventRecoveryJob | Problem]:
     """Resume the frozen recovery selection.
 
-     Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window
-    budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed,
-    cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are
-    idempotent.
+     Resume the frozen recovery selection. Requires `deploy:write` or `admin` and MFA. Controls preserve
+    the frozen selection, spent window budget, existing waits, quota, and original expiry. Already
+    queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated desired-state
+    controls on active jobs are idempotent.
 
     Args:
         job_id (UUID):
-        body (EventRecoveryControlRequest | Unset):
+        body (EventRecoveryControlRequest | Unset): Optional audit reason attached to a recovery
+            pause, resume or cancellation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -203,14 +206,15 @@ async def asyncio(
 ) -> EventRecoveryJob | Problem | None:
     """Resume the frozen recovery selection.
 
-     Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window
-    budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed,
-    cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are
-    idempotent.
+     Resume the frozen recovery selection. Requires `deploy:write` or `admin` and MFA. Controls preserve
+    the frozen selection, spent window budget, existing waits, quota, and original expiry. Already
+    queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated desired-state
+    controls on active jobs are idempotent.
 
     Args:
         job_id (UUID):
-        body (EventRecoveryControlRequest | Unset):
+        body (EventRecoveryControlRequest | Unset): Optional audit reason attached to a recovery
+            pause, resume or cancellation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

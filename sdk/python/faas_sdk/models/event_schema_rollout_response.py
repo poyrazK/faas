@@ -22,6 +22,8 @@ T = TypeVar("T", bound="EventSchemaRolloutResponse")
 
 @_attrs_define
 class EventSchemaRolloutResponse:
+    """Read-only event schema rollout assessment combining validation, consumer selection and retained coverage."""
+
     source: str
     type_: str
     version: str
@@ -39,6 +41,7 @@ class EventSchemaRolloutResponse:
     sample_invalid_count: int
     samples: list[EventSchemaRolloutValidation]
     retained: EventSchemaRolloutRetained
+    """Retained sample coverage and compatibility observations for the candidate event schema."""
 
     def to_dict(self) -> dict[str, Any]:
         source = self.source

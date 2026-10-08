@@ -17,7 +17,7 @@ export type EventSubscriptionDeliveryControl = {
   oldest_pending_at?: string;
   oldest_age_seconds: number;
   /**
-   * Absent until an operator sets a control.
+   * Updated at in the event subscription delivery control: absent until an operator sets a control.
    */
   updated_at?: string;
 };

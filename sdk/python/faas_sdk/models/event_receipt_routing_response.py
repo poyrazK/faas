@@ -49,9 +49,11 @@ class EventReceiptRoutingResponse:
     retry delays. Admission waits add no budget cost. API replacement accepts explicit settings; manifests and CLI
     default configured policies to jitter enabled."""
     filter_reason: EventReceiptRoutingResponseFilterReason | Unset = UNSET
-    """Why routing was filtered without consuming a routing attempt."""
+    """Filter reason in the event receipt routing response: why routing was filtered without consuming a routing
+    attempt."""
     retry_stop_reason: EventReceiptRoutingResponseRetryStopReason | Unset = UNSET
-    """Why automatic routing retries stopped; failure_code retains the underlying cause."""
+    """Retry stop reason in the event receipt routing response: why automatic routing retries stopped; failure_code
+    retains the underlying cause."""
     retry_spent_ms: int | Unset = UNSET
     """Current replay generation duration budget spent on routing attempts and scheduled delays."""
     generation_capacity_deferrals: int | Unset = UNSET

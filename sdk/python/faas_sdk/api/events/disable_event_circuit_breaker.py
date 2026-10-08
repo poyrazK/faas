@@ -86,11 +86,11 @@ def sync_detailed(
 ) -> Response[EventCircuitBreakerResponse | Problem]:
     """Disable a consumer circuit breaker.
 
-     Requires `deploy:write` or `admin`. Runtime controls apply to retained pending routing for one
-    application consumer. Manual pauses remain independent. Invocation execution failures do not count.
-    PUT uses defaults for omitted fields and resets the observation window. Reset preserves policy and
-    manual pause. Disable removes automatic gating. Status reports the last durable transition; cooldown
-    progresses when work is available.
+     Disable a consumer circuit breaker. Requires `deploy:write` or `admin`. Runtime controls apply to
+    retained pending routing for one application consumer. Manual pauses remain independent. Invocation
+    execution failures do not count. PUT uses defaults for omitted fields and resets the observation
+    window. Reset preserves policy and manual pause. Disable removes automatic gating. Status reports
+    the last durable transition; cooldown progresses when work is available.
 
     Args:
         slug (str):
@@ -124,11 +124,11 @@ def sync(
 ) -> EventCircuitBreakerResponse | Problem | None:
     """Disable a consumer circuit breaker.
 
-     Requires `deploy:write` or `admin`. Runtime controls apply to retained pending routing for one
-    application consumer. Manual pauses remain independent. Invocation execution failures do not count.
-    PUT uses defaults for omitted fields and resets the observation window. Reset preserves policy and
-    manual pause. Disable removes automatic gating. Status reports the last durable transition; cooldown
-    progresses when work is available.
+     Disable a consumer circuit breaker. Requires `deploy:write` or `admin`. Runtime controls apply to
+    retained pending routing for one application consumer. Manual pauses remain independent. Invocation
+    execution failures do not count. PUT uses defaults for omitted fields and resets the observation
+    window. Reset preserves policy and manual pause. Disable removes automatic gating. Status reports
+    the last durable transition; cooldown progresses when work is available.
 
     Args:
         slug (str):
@@ -157,11 +157,11 @@ async def asyncio_detailed(
 ) -> Response[EventCircuitBreakerResponse | Problem]:
     """Disable a consumer circuit breaker.
 
-     Requires `deploy:write` or `admin`. Runtime controls apply to retained pending routing for one
-    application consumer. Manual pauses remain independent. Invocation execution failures do not count.
-    PUT uses defaults for omitted fields and resets the observation window. Reset preserves policy and
-    manual pause. Disable removes automatic gating. Status reports the last durable transition; cooldown
-    progresses when work is available.
+     Disable a consumer circuit breaker. Requires `deploy:write` or `admin`. Runtime controls apply to
+    retained pending routing for one application consumer. Manual pauses remain independent. Invocation
+    execution failures do not count. PUT uses defaults for omitted fields and resets the observation
+    window. Reset preserves policy and manual pause. Disable removes automatic gating. Status reports
+    the last durable transition; cooldown progresses when work is available.
 
     Args:
         slug (str):
@@ -193,11 +193,11 @@ async def asyncio(
 ) -> EventCircuitBreakerResponse | Problem | None:
     """Disable a consumer circuit breaker.
 
-     Requires `deploy:write` or `admin`. Runtime controls apply to retained pending routing for one
-    application consumer. Manual pauses remain independent. Invocation execution failures do not count.
-    PUT uses defaults for omitted fields and resets the observation window. Reset preserves policy and
-    manual pause. Disable removes automatic gating. Status reports the last durable transition; cooldown
-    progresses when work is available.
+     Disable a consumer circuit breaker. Requires `deploy:write` or `admin`. Runtime controls apply to
+    retained pending routing for one application consumer. Manual pauses remain independent. Invocation
+    execution failures do not count. PUT uses defaults for omitted fields and resets the observation
+    window. Reset preserves policy and manual pause. Disable removes automatic gating. Status reports
+    the last durable transition; cooldown progresses when work is available.
 
     Args:
         slug (str):

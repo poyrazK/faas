@@ -24,6 +24,8 @@ T = TypeVar("T", bound="EventRecoveryPreflightItem")
 
 @_attrs_define
 class EventRecoveryPreflightItem:
+    """Sampled pending recovery item eligibility and current wait or skip diagnostics."""
+
     position: int
     status: EventRecoveryPreflightItemStatus
     reason: EventRecoveryPreflightItemReason

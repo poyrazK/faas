@@ -21,6 +21,8 @@ T = TypeVar("T", bound="EventRecoveryJob")
 
 @_attrs_define
 class EventRecoveryJob:
+    """Durable recovery job identity, frozen selection, pacing state and admission progress counters."""
+
     rate_per_second: int
     """Current admission rate; selection.rate_per_second retains the original requested rate."""
     id: UUID

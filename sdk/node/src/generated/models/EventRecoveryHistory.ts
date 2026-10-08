@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventRecoveryHistoryEntry } from './EventRecoveryHistoryEntry.js';
+/**
+ * Paginated chronological audit history for a retained recovery job.
+ */
 export type EventRecoveryHistory = {
   job_id: string;
   entries: Array<EventRecoveryHistoryEntry>;

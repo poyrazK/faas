@@ -17,11 +17,11 @@ export type EventReceiptRoutingResponse = {
   delivery_age_override?: boolean;
   routing_retry_policy?: EventRoutingRetryPolicy;
   /**
-   * Why routing was filtered without consuming a routing attempt.
+   * Filter reason in the event receipt routing response: why routing was filtered without consuming a routing attempt.
    */
   filter_reason?: 'schema_version_mismatch';
   /**
-   * Why automatic routing retries stopped; failure_code retains the underlying cause.
+   * Retry stop reason in the event receipt routing response: why automatic routing retries stopped; failure_code retains the underlying cause.
    */
   retry_stop_reason?: 'non_retryable' | 'max_attempts' | 'max_duration' | 'delivery_expired';
   /**

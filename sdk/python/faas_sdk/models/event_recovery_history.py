@@ -17,6 +17,8 @@ T = TypeVar("T", bound="EventRecoveryHistory")
 
 @_attrs_define
 class EventRecoveryHistory:
+    """Paginated chronological audit history for a retained recovery job."""
+
     job_id: UUID
     entries: list[EventRecoveryHistoryEntry]
     next_after: int | Unset = UNSET

@@ -22,6 +22,8 @@ T = TypeVar("T", bound="EventCircuitBreakerResponse")
 
 @_attrs_define
 class EventCircuitBreakerResponse:
+    """Captured circuit policy and current breaker state for one application event subscription."""
+
     subscription_id: UUID
     enabled: bool
     state: EventCircuitBreakerResponseState

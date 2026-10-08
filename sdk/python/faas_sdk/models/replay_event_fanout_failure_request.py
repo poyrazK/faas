@@ -19,8 +19,8 @@ class ReplayEventFanoutFailureRequest:
     event_source: str
     subscription_id: UUID
     allow_expired: bool | Unset = False
-    """Explicitly override delivery age for this replay generation or historical backfill job. Preserves
-    deterministic invocation identity and manual controls."""
+    """Allow expired in the replay event fanout failure request: explicitly override delivery age for this replay
+    generation or historical backfill job. Preserves deterministic invocation identity and manual controls."""
 
     def to_dict(self) -> dict[str, Any]:
         event_id = self.event_id

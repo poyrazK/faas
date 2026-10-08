@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Application consumer selection and schema-version compatibility in a rollout preview.
+ */
 export type EventSchemaRolloutConsumer = {
   subscription_id: string;
   app_id: string;

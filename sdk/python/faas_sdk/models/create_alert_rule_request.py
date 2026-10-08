@@ -45,8 +45,8 @@ class CreateAlertRuleRequest:
     webhook_secret: str
     """Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed."""
     event_subscription_id: UUID | Unset = UNSET
-    """Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to
-    24h are required."""
+    """Event subscription id in the create alert rule request: immutable subscription selector. Required only for
+    event consumer metrics; webhook action and windows up to 24h are required."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires
     action=rollback. Only deployment-specific error_rate_pct breaches with gt or gte comparisons can qualify."""

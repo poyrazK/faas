@@ -17,6 +17,8 @@ T = TypeVar("T", bound="EventRecoveryPreview")
 
 @_attrs_define
 class EventRecoveryPreview:
+    """Bounded selection preview for a proposed durable event recovery job."""
+
     observed_at: datetime.datetime
     coverage: EventRecoveryPreviewCoverage
     matched_count: int

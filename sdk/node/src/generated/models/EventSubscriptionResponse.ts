@@ -8,7 +8,7 @@ import type { EventRoutingRetryPolicy } from './EventRoutingRetryPolicy.js';
  */
 export type EventSubscriptionResponse = {
   /**
-   * Exact case-sensitive schema versions. Empty or omitted accepts all versions; a nonempty selection excludes unversioned events. Selection is captured at publication or backfill creation.
+   * Schema versions in the event subscription response: exact case-sensitive schema versions. Empty or omitted accepts all versions; a nonempty selection excludes unversioned events. Selection is captured at publication or backfill creation.
    */
   schema_versions?: Array<string>;
   routing_retry_policy?: EventRoutingRetryPolicy;

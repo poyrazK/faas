@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { EventRecoveryExecutionSummary } from './EventRecoveryExecutionSummary.js';
 import type { EventRecoveryRequest } from './EventRecoveryRequest.js';
+/**
+ * Durable recovery job identity, frozen selection, pacing state and admission progress counters.
+ */
 export type EventRecoveryJob = {
   /**
    * Current admission rate; selection.rate_per_second retains the original requested rate.

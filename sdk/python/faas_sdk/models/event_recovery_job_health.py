@@ -28,6 +28,8 @@ T = TypeVar("T", bound="EventRecoveryJobHealth")
 
 @_attrs_define
 class EventRecoveryJobHealth:
+    """Retained recovery job progress, expiry risk and capacity-wait observations."""
+
     job_id: UUID
     mode: EventRecoveryJobHealthMode
     state: EventRecoveryJobHealthState
@@ -47,6 +49,7 @@ class EventRecoveryJobHealth:
     """Pending work exists and expiry is within one hour or already overdue. Paused jobs retain this signal
     separately."""
     capacity_wait: EventRecoveryCapacityWait | Unset = UNSET
+    """Current capacity-wait episode with limiting scope and observation timestamps."""
     last_progress_at: datetime.datetime | Unset = UNSET
     """Last committed item admission or skip; control changes and capacity deferrals do not advance this timestamp.
     Omitted when no tracked progress exists."""

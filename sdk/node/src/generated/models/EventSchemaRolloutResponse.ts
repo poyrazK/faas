@@ -5,6 +5,9 @@
 import type { EventSchemaRolloutConsumer } from './EventSchemaRolloutConsumer.js';
 import type { EventSchemaRolloutRetained } from './EventSchemaRolloutRetained.js';
 import type { EventSchemaRolloutValidation } from './EventSchemaRolloutValidation.js';
+/**
+ * Read-only event schema rollout assessment combining validation, consumer selection and retained coverage.
+ */
 export type EventSchemaRolloutResponse = {
   source: string;
   type: string;

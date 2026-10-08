@@ -17,6 +17,8 @@ T = TypeVar("T", bound="EventSchemaRolloutRetained")
 
 @_attrs_define
 class EventSchemaRolloutRetained:
+    """Retained sample coverage and compatibility observations for the candidate event schema."""
+
     requested: bool
     scanned_count: int
     """Account receipts scanned, including unrelated sources and types."""

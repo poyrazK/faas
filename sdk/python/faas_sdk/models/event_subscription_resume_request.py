@@ -12,6 +12,8 @@ T = TypeVar("T", bound="EventSubscriptionResumeRequest")
 
 @_attrs_define
 class EventSubscriptionResumeRequest:
+    """Resume settings for a paused subscription, including the continuing routing admission rate."""
+
     rate_per_second: int | Unset = 10
     """Maximum new routing admissions in a one-second window; zero removes pacing. This limit continues to apply to
     new publications after the backlog drains."""

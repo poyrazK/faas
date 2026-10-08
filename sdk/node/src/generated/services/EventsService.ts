@@ -997,8 +997,17 @@ export class EventsService {
     subscriptionId,
     window = '5m',
   }: {
+    /**
+     * Application slug for this operation: inspect consumer execution health over a retained history window.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: inspect consumer execution health over a retained history window.
+     */
     subscriptionId: string,
+    /**
+     * Retained observation window for this operation: inspect consumer execution health over a retained history window.
+     */
     window?: '5m' | '15m' | '1h' | '6h' | '24h',
   }): CancelablePromise<EventConsumerExecutionHealth> {
     return __request(OpenAPI, {
@@ -1031,8 +1040,17 @@ export class EventsService {
     subscriptionId,
     window = '5m',
   }: {
+    /**
+     * Application slug for this operation: inspect consumer routing health over a retained history window.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: inspect consumer routing health over a retained history window.
+     */
     subscriptionId: string,
+    /**
+     * Retained observation window for this operation: inspect consumer routing health over a retained history window.
+     */
     window?: '5m' | '15m' | '1h' | '6h' | '24h',
   }): CancelablePromise<EventConsumerHealth> {
     return __request(OpenAPI, {
@@ -1046,11 +1064,11 @@ export class EventsService {
         'window': window,
       },
       errors: {
-        400: `Invalid subscription identifier or observation window.`,
+        400: `Inspect consumer routing health over a retained history window: invalid subscription identifier or observation window.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Inspect consumer routing health over a retained history window: subscription control request timed out.`,
       },
     });
   }
@@ -1064,7 +1082,13 @@ export class EventsService {
     slug,
     subscriptionId,
   }: {
+    /**
+     * Application slug for this operation: inspect consumer circuit breaker state.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: inspect consumer circuit breaker state.
+     */
     subscriptionId: string,
   }): CancelablePromise<EventCircuitBreakerResponse> {
     return __request(OpenAPI, {
@@ -1079,14 +1103,14 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Inspect consumer circuit breaker state: subscription control request timed out.`,
       },
     });
   }
   /**
    * Enable or replace a consumer circuit breaker policy.
    * Requires `deploy:write` or `admin`. Runtime controls apply to retained pending routing for one application consumer. Manual pauses remain independent. Invocation execution failures do not count. PUT uses defaults for omitted fields and resets the observation window. Reset preserves policy and manual pause. Disable removes automatic gating. Status reports the last durable transition; cooldown progresses when work is available.
-   * @returns EventCircuitBreakerResponse Durable breaker configuration and state.
+   * @returns EventCircuitBreakerResponse Enable or replace a consumer circuit breaker policy: durable breaker configuration and state.
    * @throws ApiError
    */
   public static setEventCircuitBreaker({
@@ -1094,7 +1118,13 @@ export class EventsService {
     subscriptionId,
     requestBody,
   }: {
+    /**
+     * Application slug for this operation: enable or replace a consumer circuit breaker policy.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: enable or replace a consumer circuit breaker policy.
+     */
     subscriptionId: string,
     requestBody: EventCircuitBreakerPolicy,
   }): CancelablePromise<EventCircuitBreakerResponse> {
@@ -1108,25 +1138,31 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid subscription identifier or circuit breaker policy.`,
+        400: `Enable or replace a consumer circuit breaker policy: invalid subscription identifier or circuit breaker policy.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Enable or replace a consumer circuit breaker policy: subscription control request timed out.`,
       },
     });
   }
   /**
    * Disable a consumer circuit breaker.
-   * Requires `deploy:write` or `admin`. Runtime controls apply to retained pending routing for one application consumer. Manual pauses remain independent. Invocation execution failures do not count. PUT uses defaults for omitted fields and resets the observation window. Reset preserves policy and manual pause. Disable removes automatic gating. Status reports the last durable transition; cooldown progresses when work is available.
-   * @returns EventCircuitBreakerResponse Durable breaker configuration and state.
+   * Disable a consumer circuit breaker. Requires `deploy:write` or `admin`. Runtime controls apply to retained pending routing for one application consumer. Manual pauses remain independent. Invocation execution failures do not count. PUT uses defaults for omitted fields and resets the observation window. Reset preserves policy and manual pause. Disable removes automatic gating. Status reports the last durable transition; cooldown progresses when work is available.
+   * @returns EventCircuitBreakerResponse Disable a consumer circuit breaker: durable breaker configuration and state.
    * @throws ApiError
    */
   public static disableEventCircuitBreaker({
     slug,
     subscriptionId,
   }: {
+    /**
+     * Application slug for this operation: disable a consumer circuit breaker.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: disable a consumer circuit breaker.
+     */
     subscriptionId: string,
   }): CancelablePromise<EventCircuitBreakerResponse> {
     return __request(OpenAPI, {
@@ -1137,25 +1173,31 @@ export class EventsService {
         'subscriptionID': subscriptionId,
       },
       errors: {
-        400: `Invalid subscription identifier or circuit breaker policy.`,
+        400: `Disable a consumer circuit breaker: invalid subscription identifier or circuit breaker policy.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Disable a consumer circuit breaker: subscription control request timed out.`,
       },
     });
   }
   /**
    * Close an enabled circuit breaker and start a fresh observation window.
-   * Requires `deploy:write` or `admin`. Runtime controls apply to retained pending routing for one application consumer. Manual pauses remain independent. Invocation execution failures do not count. PUT uses defaults for omitted fields and resets the observation window. Reset preserves policy and manual pause. Disable removes automatic gating. Status reports the last durable transition; cooldown progresses when work is available.
-   * @returns EventCircuitBreakerResponse Durable breaker configuration and state.
+   * Close an enabled circuit breaker and start a fresh observation window. Requires `deploy:write` or `admin`. Runtime controls apply to retained pending routing for one application consumer. Manual pauses remain independent. Invocation execution failures do not count. PUT uses defaults for omitted fields and resets the observation window. Reset preserves policy and manual pause. Disable removes automatic gating. Status reports the last durable transition; cooldown progresses when work is available.
+   * @returns EventCircuitBreakerResponse Close an enabled circuit breaker and start a fresh observation window: durable breaker configuration and state.
    * @throws ApiError
    */
   public static resetEventCircuitBreaker({
     slug,
     subscriptionId,
   }: {
+    /**
+     * Application slug for this operation: close an enabled circuit breaker and start a fresh observation window.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: close an enabled circuit breaker and start a fresh observation window.
+     */
     subscriptionId: string,
   }): CancelablePromise<EventCircuitBreakerResponse> {
     return __request(OpenAPI, {
@@ -1166,11 +1208,11 @@ export class EventsService {
         'subscriptionID': subscriptionId,
       },
       errors: {
-        400: `Invalid subscription identifier or circuit breaker policy.`,
+        400: `Close an enabled circuit breaker and start a fresh observation window: invalid subscription identifier or circuit breaker policy.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Close an enabled circuit breaker and start a fresh observation window: subscription control request timed out.`,
       },
     });
   }
@@ -1184,7 +1226,13 @@ export class EventsService {
     slug,
     subscriptionId,
   }: {
+    /**
+     * Application slug for this operation: inspect schema version selection for future events.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: inspect schema version selection for future events.
+     */
     subscriptionId: string,
   }): CancelablePromise<EventSubscriptionSchemaVersionsResponse> {
     return __request(OpenAPI, {
@@ -1199,14 +1247,14 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Inspect schema version selection for future events: subscription control request timed out.`,
       },
     });
   }
   /**
    * Replace schema version selection for future events.
    * Requires `deploy:write` or `admin`. Captured events retain their acceptance-time selection. An empty selection accepts all versions, including unversioned envelopes. Only current app subscriptions can be configured.
-   * @returns EventSubscriptionSchemaVersionsResponse Selected schema versions; an empty array accepts all versions.
+   * @returns EventSubscriptionSchemaVersionsResponse Replace schema version selection for future events: selected schema versions; an empty array accepts all versions.
    * @throws ApiError
    */
   public static setEventSubscriptionSchemaVersions({
@@ -1214,7 +1262,13 @@ export class EventsService {
     subscriptionId,
     requestBody,
   }: {
+    /**
+     * Application slug for this operation: replace schema version selection for future events.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: replace schema version selection for future events.
+     */
     subscriptionId: string,
     requestBody: EventSubscriptionSchemaVersionsRequest,
   }): CancelablePromise<EventSubscriptionSchemaVersionsResponse> {
@@ -1228,25 +1282,31 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid subscription identifier or schema version selection.`,
+        400: `Replace schema version selection for future events: invalid subscription identifier or schema version selection.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Replace schema version selection for future events: subscription control request timed out.`,
       },
     });
   }
   /**
    * Accept all schema versions for future events.
-   * Requires `deploy:write` or `admin`. Captured events retain their acceptance-time selection. An empty selection accepts all versions, including unversioned envelopes. Only current app subscriptions can be configured.
-   * @returns EventSubscriptionSchemaVersionsResponse Selected schema versions; an empty array accepts all versions.
+   * Accept all schema versions for future events. Requires `deploy:write` or `admin`. Captured events retain their acceptance-time selection. An empty selection accepts all versions, including unversioned envelopes. Only current app subscriptions can be configured.
+   * @returns EventSubscriptionSchemaVersionsResponse Accept all schema versions for future events: selected schema versions; an empty array accepts all versions.
    * @throws ApiError
    */
   public static resetEventSubscriptionSchemaVersions({
     slug,
     subscriptionId,
   }: {
+    /**
+     * Application slug for this operation: accept all schema versions for future events.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: accept all schema versions for future events.
+     */
     subscriptionId: string,
   }): CancelablePromise<EventSubscriptionSchemaVersionsResponse> {
     return __request(OpenAPI, {
@@ -1257,11 +1317,11 @@ export class EventsService {
         'subscriptionID': subscriptionId,
       },
       errors: {
-        400: `Invalid subscription identifier or schema version selection.`,
+        400: `Accept all schema versions for future events: invalid subscription identifier or schema version selection.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Accept all schema versions for future events: subscription control request timed out.`,
       },
     });
   }
@@ -1275,7 +1335,13 @@ export class EventsService {
     slug,
     subscriptionId,
   }: {
+    /**
+     * Application slug for this operation: inspect routing retry policy for future events.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: inspect routing retry policy for future events.
+     */
     subscriptionId: string,
   }): CancelablePromise<EventRoutingRetryPolicyResponse> {
     return __request(OpenAPI, {
@@ -1290,14 +1356,14 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Inspect routing retry policy for future events: subscription control request timed out.`,
       },
     });
   }
   /**
    * Replace routing retry policy for future events.
    * Requires `deploy:write` or `admin`. Captured events retain their acceptance-time policy. Omitted policy uses legacy defaults. Only current app subscriptions can be configured.
-   * @returns EventRoutingRetryPolicyResponse Effective policy and whether explicitly configured.
+   * @returns EventRoutingRetryPolicyResponse Replace routing retry policy for future events: effective policy and whether explicitly configured.
    * @throws ApiError
    */
   public static setEventSubscriptionRetryPolicy({
@@ -1305,7 +1371,13 @@ export class EventsService {
     subscriptionId,
     requestBody,
   }: {
+    /**
+     * Application slug for this operation: replace routing retry policy for future events.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: replace routing retry policy for future events.
+     */
     subscriptionId: string,
     requestBody: EventRoutingRetryPolicy,
   }): CancelablePromise<EventRoutingRetryPolicyResponse> {
@@ -1319,25 +1391,31 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid subscription identifier or retry policy.`,
+        400: `Replace routing retry policy for future events: invalid subscription identifier or retry policy.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Replace routing retry policy for future events: subscription control request timed out.`,
       },
     });
   }
   /**
    * Restore legacy routing retry defaults for future events.
-   * Requires `deploy:write` or `admin`. Captured events retain their acceptance-time policy. Omitted policy uses legacy defaults. Only current app subscriptions can be configured.
-   * @returns EventRoutingRetryPolicyResponse Effective policy and whether explicitly configured.
+   * Restore legacy routing retry defaults for future events. Requires `deploy:write` or `admin`. Captured events retain their acceptance-time policy. Omitted policy uses legacy defaults. Only current app subscriptions can be configured.
+   * @returns EventRoutingRetryPolicyResponse Restore legacy routing retry defaults for future events: effective policy and whether explicitly configured.
    * @throws ApiError
    */
   public static resetEventSubscriptionRetryPolicy({
     slug,
     subscriptionId,
   }: {
+    /**
+     * Application slug for this operation: restore legacy routing retry defaults for future events.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: restore legacy routing retry defaults for future events.
+     */
     subscriptionId: string,
   }): CancelablePromise<EventRoutingRetryPolicyResponse> {
     return __request(OpenAPI, {
@@ -1348,11 +1426,11 @@ export class EventsService {
         'subscriptionID': subscriptionId,
       },
       errors: {
-        400: `Invalid subscription identifier or retry policy.`,
+        400: `Restore legacy routing retry defaults for future events: invalid subscription identifier or retry policy.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Restore legacy routing retry defaults for future events: subscription control request timed out.`,
       },
     });
   }
@@ -1366,7 +1444,13 @@ export class EventsService {
     slug,
     subscriptionId,
   }: {
+    /**
+     * Application slug for this operation: inspect one consumer pause, pacing and backlog.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: inspect one consumer pause, pacing and backlog.
+     */
     subscriptionId: string,
   }): CancelablePromise<EventSubscriptionDeliveryControl> {
     return __request(OpenAPI, {
@@ -1381,21 +1465,27 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Inspect one consumer pause, pacing and backlog: subscription control request timed out.`,
       },
     });
   }
   /**
    * Pause new routing admissions for one event consumer.
    * Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already admitted invocations continue. Resume defaults to ten admissions per second and zero removes pacing.
-   * @returns EventSubscriptionDeliveryControl Current control configuration and waiting recipient counts.
+   * @returns EventSubscriptionDeliveryControl Pause new routing admissions for one event consumer: current control configuration and waiting recipient counts.
    * @throws ApiError
    */
   public static pauseEventSubscription({
     slug,
     subscriptionId,
   }: {
+    /**
+     * Application slug for this operation: pause new routing admissions for one event consumer.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: pause new routing admissions for one event consumer.
+     */
     subscriptionId: string,
   }): CancelablePromise<EventSubscriptionDeliveryControl> {
     return __request(OpenAPI, {
@@ -1406,18 +1496,18 @@ export class EventsService {
         'subscriptionID': subscriptionId,
       },
       errors: {
-        400: `Invalid subscription identifier or drain rate.`,
+        400: `Pause new routing admissions for one event consumer: invalid subscription identifier or drain rate.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Pause new routing admissions for one event consumer: subscription control request timed out.`,
       },
     });
   }
   /**
    * Resume one event consumer with controlled draining.
-   * Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already admitted invocations continue. Resume defaults to ten admissions per second and zero removes pacing.
-   * @returns EventSubscriptionDeliveryControl Current control configuration and waiting recipient counts.
+   * Resume one event consumer with controlled draining. Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already admitted invocations continue. Resume defaults to ten admissions per second and zero removes pacing.
+   * @returns EventSubscriptionDeliveryControl Resume one event consumer with controlled draining: current control configuration and waiting recipient counts.
    * @throws ApiError
    */
   public static resumeEventSubscription({
@@ -1425,7 +1515,13 @@ export class EventsService {
     subscriptionId,
     requestBody,
   }: {
+    /**
+     * Application slug for this operation: resume one event consumer with controlled draining.
+     */
     slug: string,
+    /**
+     * Application event subscription identifier for this operation: resume one event consumer with controlled draining.
+     */
     subscriptionId: string,
     requestBody: EventSubscriptionResumeRequest,
   }): CancelablePromise<EventSubscriptionDeliveryControl> {
@@ -1439,11 +1535,11 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid subscription identifier or drain rate.`,
+        400: `Resume one event consumer with controlled draining: invalid subscription identifier or drain rate.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription control request timed out.`,
+        504: `Resume one event consumer with controlled draining: subscription control request timed out.`,
       },
     });
   }
@@ -1456,6 +1552,9 @@ export class EventsService {
   public static getEventRecoveryHealth({
     slug,
   }: {
+    /**
+     * Application slug for this operation: inspect active recovery progress and expiry risk.
+     */
     slug: string,
   }): CancelablePromise<EventRecoveryHealth> {
     return __request(OpenAPI, {
@@ -1483,6 +1582,9 @@ export class EventsService {
     slug,
     requestBody,
   }: {
+    /**
+     * Application slug for this operation: preview failed application event recipients without requeueing.
+     */
     slug: string,
     requestBody: EventRecoveryRequest,
   }): CancelablePromise<EventRecoveryPreview> {
@@ -1519,6 +1621,9 @@ export class EventsService {
     cursor,
     limit = 50,
   }: {
+    /**
+     * Application slug for this operation: discover retained recovery jobs for an owned application.
+     */
     slug: string,
     /**
      * Current admission state.
@@ -1576,7 +1681,7 @@ export class EventsService {
   /**
    * Create a durable recovery job for a frozen selection of routing failures.
    * Requires `deploy:write` or `admin`.
-   * @returns EventRecoveryJob Recovery result.
+   * @returns EventRecoveryJob Create a durable recovery job for a frozen selection of routing failures: recovery result.
    * @throws ApiError
    */
   public static createEventRecovery({
@@ -1584,6 +1689,9 @@ export class EventsService {
     requestBody,
     idempotencyKey,
   }: {
+    /**
+     * Application slug for this operation: create a durable recovery job for a frozen selection of routing failures.
+     */
     slug: string,
     requestBody: EventRecoveryRequest,
     /**
@@ -1605,24 +1713,27 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid request or selection larger than 10000 recipients.`,
+        400: `Create a durable recovery job for a frozen selection of routing failures: invalid request or selection larger than 10000 recipients.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Account already has three active recovery jobs.`,
-        504: `Recovery request timed out.`,
+        504: `Create a durable recovery job for a frozen selection of routing failures: recovery request timed out.`,
       },
     });
   }
   /**
    * Read bulk recovery progress.
-   * Requires `apps:read` or `admin`.
-   * @returns EventRecoveryJob Recovery result.
+   * Read bulk recovery progress. Requires `apps:read` or `admin`.
+   * @returns EventRecoveryJob Read bulk recovery progress: recovery result.
    * @throws ApiError
    */
   public static getEventRecovery({
     jobId,
   }: {
+    /**
+     * Durable recovery job identifier for this operation: read bulk recovery progress.
+     */
     jobId: string,
   }): CancelablePromise<EventRecoveryJob> {
     return __request(OpenAPI, {
@@ -1632,24 +1743,27 @@ export class EventsService {
         'jobID': jobId,
       },
       errors: {
-        400: `Invalid request or selection larger than 10000 recipients.`,
+        400: `Read bulk recovery progress: invalid request or selection larger than 10000 recipients.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Recovery request timed out.`,
+        504: `Read bulk recovery progress: recovery request timed out.`,
       },
     });
   }
   /**
    * Cancel retries that have not yet been queued.
-   * Requires `deploy:write` or `admin`.
-   * @returns EventRecoveryJob Recovery result.
+   * Cancel retries that have not yet been queued. Requires `deploy:write` or `admin`.
+   * @returns EventRecoveryJob Cancel retries that have not yet been queued: recovery result.
    * @throws ApiError
    */
   public static cancelEventRecovery({
     jobId,
     requestBody,
   }: {
+    /**
+     * Durable recovery job identifier for this operation: cancel retries that have not yet been queued.
+     */
     jobId: string,
     /**
      * Optional operator reason; an empty body preserves existing clients.
@@ -1665,27 +1779,30 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid request or selection larger than 10000 recipients.`,
+        400: `Cancel retries that have not yet been queued: invalid request or selection larger than 10000 recipients.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Recovery request timed out.`,
+        504: `Cancel retries that have not yet been queued: recovery request timed out.`,
       },
     });
   }
   /**
    * Pause further recovery admissions.
    * Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are idempotent.
-   * @returns EventRecoveryJob Recovery result.
+   * @returns EventRecoveryJob Pause further recovery admissions: recovery result.
    * @throws ApiError
    */
   public static pauseEventRecovery({
     jobId,
     requestBody,
   }: {
+    /**
+     * Durable recovery job identifier for this operation: pause further recovery admissions.
+     */
     jobId: string,
     /**
-     * Optional operator reason; an empty body preserves existing clients.
+     * Request to pause further recovery admissions: optional operator reason; an empty body preserves existing clients.
      */
     requestBody?: EventRecoveryControlRequest,
   }): CancelablePromise<EventRecoveryJob> {
@@ -1698,28 +1815,31 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid request or selection larger than 10000 recipients.`,
+        400: `Pause further recovery admissions: invalid request or selection larger than 10000 recipients.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Recovery job is completed, cancelled, or expired.`,
-        504: `Recovery request timed out.`,
+        504: `Pause further recovery admissions: recovery request timed out.`,
       },
     });
   }
   /**
    * Resume the frozen recovery selection.
-   * Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are idempotent.
-   * @returns EventRecoveryJob Recovery result.
+   * Resume the frozen recovery selection. Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are idempotent.
+   * @returns EventRecoveryJob Resume the frozen recovery selection: recovery result.
    * @throws ApiError
    */
   public static resumeEventRecovery({
     jobId,
     requestBody,
   }: {
+    /**
+     * Durable recovery job identifier for this operation: resume the frozen recovery selection.
+     */
     jobId: string,
     /**
-     * Optional operator reason; an empty body preserves existing clients.
+     * Request to resume the frozen recovery selection: optional operator reason; an empty body preserves existing clients.
      */
     requestBody?: EventRecoveryControlRequest,
   }): CancelablePromise<EventRecoveryJob> {
@@ -1732,25 +1852,28 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid request or selection larger than 10000 recipients.`,
+        400: `Resume the frozen recovery selection: invalid request or selection larger than 10000 recipients.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Recovery job is completed, cancelled, or expired.`,
-        504: `Recovery request timed out.`,
+        409: `Resume the frozen recovery selection: recovery job is completed, cancelled, or expired.`,
+        504: `Resume the frozen recovery selection: recovery request timed out.`,
       },
     });
   }
   /**
    * Change the current recovery admission rate.
-   * Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are idempotent.
-   * @returns EventRecoveryJob Recovery result.
+   * Change the current recovery admission rate. Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are idempotent.
+   * @returns EventRecoveryJob Change the current recovery admission rate: recovery result.
    * @throws ApiError
    */
   public static setEventRecoveryRate({
     jobId,
     requestBody,
   }: {
+    /**
+     * Durable recovery job identifier for this operation: change the current recovery admission rate.
+     */
     jobId: string,
     requestBody: EventRecoveryRateRequest,
   }): CancelablePromise<EventRecoveryJob> {
@@ -1763,12 +1886,12 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid request or selection larger than 10000 recipients.`,
+        400: `Change the current recovery admission rate: invalid request or selection larger than 10000 recipients.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Recovery job is completed, cancelled, or expired.`,
-        504: `Recovery request timed out.`,
+        409: `Change the current recovery admission rate: recovery job is completed, cancelled, or expired.`,
+        504: `Change the current recovery admission rate: recovery request timed out.`,
       },
     });
   }
@@ -1781,6 +1904,9 @@ export class EventsService {
   public static getEventRecoveryPreflight({
     jobId,
   }: {
+    /**
+     * Durable recovery job identifier for this operation: assess a frozen recovery selection without admitting work.
+     */
     jobId: string,
   }): CancelablePromise<EventRecoveryPreflight> {
     return __request(OpenAPI, {
@@ -1809,11 +1935,17 @@ export class EventsService {
     after,
     limit = 100,
   }: {
+    /**
+     * Durable recovery job identifier for this operation: inspect retained recovery control audit history.
+     */
     jobId: string,
     /**
      * Exclusive last history entry ID; IDs need not be contiguous.
      */
     after?: number,
+    /**
+     * Maximum page size for this operation: inspect retained recovery control audit history.
+     */
     limit?: number,
   }): CancelablePromise<EventRecoveryHistory> {
     return __request(OpenAPI, {
@@ -1837,8 +1969,8 @@ export class EventsService {
   }
   /**
    * Read a stable page of selected recipients and recovery outcomes.
-   * Requires `apps:read` or `admin`.
-   * @returns EventRecoveryItems Recovery result.
+   * Read a stable page of selected recipients and recovery outcomes. Requires `apps:read` or `admin`.
+   * @returns EventRecoveryItems Read a stable page of selected recipients and recovery outcomes: recovery result.
    * @throws ApiError
    */
   public static listEventRecoveryItems({
@@ -1846,11 +1978,17 @@ export class EventsService {
     after,
     limit = 100,
   }: {
+    /**
+     * Durable recovery job identifier for this operation: read a stable page of selected recipients and recovery outcomes.
+     */
     jobId: string,
     /**
      * Last item position returned on the preceding page of this job.
      */
     after?: number,
+    /**
+     * Maximum page size for this operation: read a stable page of selected recipients and recovery outcomes.
+     */
     limit?: number,
   }): CancelablePromise<EventRecoveryItems> {
     return __request(OpenAPI, {
@@ -1864,11 +2002,11 @@ export class EventsService {
         'limit': limit,
       },
       errors: {
-        400: `Invalid request or selection larger than 10000 recipients.`,
+        400: `Read a stable page of selected recipients and recovery outcomes: invalid request or selection larger than 10000 recipients.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Recovery request timed out.`,
+        504: `Read a stable page of selected recipients and recovery outcomes: recovery request timed out.`,
       },
     });
   }

@@ -15,6 +15,8 @@ T = TypeVar("T", bound="EventRoutingRetryPolicyResponse")
 
 @_attrs_define
 class EventRoutingRetryPolicyResponse:
+    """Configured routing retry policy for an application event subscription, or its default policy."""
+
     subscription_id: UUID
     configured: bool
     policy: EventRoutingRetryPolicy

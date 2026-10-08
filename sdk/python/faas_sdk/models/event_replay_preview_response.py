@@ -49,7 +49,8 @@ class EventReplayPreviewResponse:
     """Matching events whose original snapshot contains this target."""
     matches: list[EventReplayPreviewMatch]
     schema_version_mismatch_count: int | Unset = UNSET
-    """Candidates excluded by schema version selection."""
+    """Schema version mismatch count in the event replay preview response: candidates excluded by schema version
+    selection."""
     expired_count: int | Unset = UNSET
     """Matching retained events exceeding the current subscription age limit."""
     next_after: str | Unset = UNSET

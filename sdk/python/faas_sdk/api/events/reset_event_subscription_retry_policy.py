@@ -86,8 +86,9 @@ def sync_detailed(
 ) -> Response[EventRoutingRetryPolicyResponse | Problem]:
     """Restore legacy routing retry defaults for future events.
 
-     Requires `deploy:write` or `admin`. Captured events retain their acceptance-time policy. Omitted
-    policy uses legacy defaults. Only current app subscriptions can be configured.
+     Restore legacy routing retry defaults for future events. Requires `deploy:write` or `admin`.
+    Captured events retain their acceptance-time policy. Omitted policy uses legacy defaults. Only
+    current app subscriptions can be configured.
 
     Args:
         slug (str):
@@ -121,8 +122,9 @@ def sync(
 ) -> EventRoutingRetryPolicyResponse | Problem | None:
     """Restore legacy routing retry defaults for future events.
 
-     Requires `deploy:write` or `admin`. Captured events retain their acceptance-time policy. Omitted
-    policy uses legacy defaults. Only current app subscriptions can be configured.
+     Restore legacy routing retry defaults for future events. Requires `deploy:write` or `admin`.
+    Captured events retain their acceptance-time policy. Omitted policy uses legacy defaults. Only
+    current app subscriptions can be configured.
 
     Args:
         slug (str):
@@ -151,8 +153,9 @@ async def asyncio_detailed(
 ) -> Response[EventRoutingRetryPolicyResponse | Problem]:
     """Restore legacy routing retry defaults for future events.
 
-     Requires `deploy:write` or `admin`. Captured events retain their acceptance-time policy. Omitted
-    policy uses legacy defaults. Only current app subscriptions can be configured.
+     Restore legacy routing retry defaults for future events. Requires `deploy:write` or `admin`.
+    Captured events retain their acceptance-time policy. Omitted policy uses legacy defaults. Only
+    current app subscriptions can be configured.
 
     Args:
         slug (str):
@@ -184,8 +187,9 @@ async def asyncio(
 ) -> EventRoutingRetryPolicyResponse | Problem | None:
     """Restore legacy routing retry defaults for future events.
 
-     Requires `deploy:write` or `admin`. Captured events retain their acceptance-time policy. Omitted
-    policy uses legacy defaults. Only current app subscriptions can be configured.
+     Restore legacy routing retry defaults for future events. Requires `deploy:write` or `admin`.
+    Captured events retain their acceptance-time policy. Omitted policy uses legacy defaults. Only
+    current app subscriptions can be configured.
 
     Args:
         slug (str):

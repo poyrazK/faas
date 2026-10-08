@@ -11,10 +11,13 @@ T = TypeVar("T", bound="EventSubscriptionSchemaVersionsResponse")
 
 @_attrs_define
 class EventSubscriptionSchemaVersionsResponse:
+    """Current exact schema-version selection associated with one subscription."""
+
     subscription_id: UUID
     schema_versions: list[str]
-    """Exact case-sensitive schema versions. Empty or omitted accepts all versions; a nonempty selection excludes
-    unversioned events. Selection is captured at publication or backfill creation."""
+    """Schema versions in the event subscription schema versions response: exact case-sensitive schema versions.
+    Empty or omitted accepts all versions; a nonempty selection excludes unversioned events. Selection is captured
+    at publication or backfill creation."""
 
     def to_dict(self) -> dict[str, Any]:
         subscription_id = str(self.subscription_id)

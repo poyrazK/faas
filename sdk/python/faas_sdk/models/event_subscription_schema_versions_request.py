@@ -10,9 +10,12 @@ T = TypeVar("T", bound="EventSubscriptionSchemaVersionsRequest")
 
 @_attrs_define
 class EventSubscriptionSchemaVersionsRequest:
+    """Replacement schema-version selection for future subscription publications and backfills."""
+
     schema_versions: list[str]
-    """Exact case-sensitive schema versions. Empty or omitted accepts all versions; a nonempty selection excludes
-    unversioned events. Selection is captured at publication or backfill creation."""
+    """Schema versions in the event subscription schema versions request: exact case-sensitive schema versions.
+    Empty or omitted accepts all versions; a nonempty selection excludes unversioned events. Selection is captured
+    at publication or backfill creation."""
 
     def to_dict(self) -> dict[str, Any]:
         schema_versions = self.schema_versions

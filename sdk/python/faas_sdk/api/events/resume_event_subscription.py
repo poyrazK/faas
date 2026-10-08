@@ -96,13 +96,15 @@ def sync_detailed(
 ) -> Response[EventSubscriptionDeliveryControl | Problem]:
     """Resume one event consumer with controlled draining.
 
-     Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already
-    admitted invocations continue. Resume defaults to ten admissions per second and zero removes pacing.
+     Resume one event consumer with controlled draining. Requires `deploy:write` or `admin`. Controls
+    survive deployment and subscription removal. Already admitted invocations continue. Resume defaults
+    to ten admissions per second and zero removes pacing.
 
     Args:
         slug (str):
         subscription_id (UUID):
-        body (EventSubscriptionResumeRequest):
+        body (EventSubscriptionResumeRequest): Resume settings for a paused subscription,
+            including the continuing routing admission rate.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -134,13 +136,15 @@ def sync(
 ) -> EventSubscriptionDeliveryControl | Problem | None:
     """Resume one event consumer with controlled draining.
 
-     Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already
-    admitted invocations continue. Resume defaults to ten admissions per second and zero removes pacing.
+     Resume one event consumer with controlled draining. Requires `deploy:write` or `admin`. Controls
+    survive deployment and subscription removal. Already admitted invocations continue. Resume defaults
+    to ten admissions per second and zero removes pacing.
 
     Args:
         slug (str):
         subscription_id (UUID):
-        body (EventSubscriptionResumeRequest):
+        body (EventSubscriptionResumeRequest): Resume settings for a paused subscription,
+            including the continuing routing admission rate.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -167,13 +171,15 @@ async def asyncio_detailed(
 ) -> Response[EventSubscriptionDeliveryControl | Problem]:
     """Resume one event consumer with controlled draining.
 
-     Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already
-    admitted invocations continue. Resume defaults to ten admissions per second and zero removes pacing.
+     Resume one event consumer with controlled draining. Requires `deploy:write` or `admin`. Controls
+    survive deployment and subscription removal. Already admitted invocations continue. Resume defaults
+    to ten admissions per second and zero removes pacing.
 
     Args:
         slug (str):
         subscription_id (UUID):
-        body (EventSubscriptionResumeRequest):
+        body (EventSubscriptionResumeRequest): Resume settings for a paused subscription,
+            including the continuing routing admission rate.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -203,13 +209,15 @@ async def asyncio(
 ) -> EventSubscriptionDeliveryControl | Problem | None:
     """Resume one event consumer with controlled draining.
 
-     Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already
-    admitted invocations continue. Resume defaults to ten admissions per second and zero removes pacing.
+     Resume one event consumer with controlled draining. Requires `deploy:write` or `admin`. Controls
+    survive deployment and subscription removal. Already admitted invocations continue. Resume defaults
+    to ten admissions per second and zero removes pacing.
 
     Args:
         slug (str):
         subscription_id (UUID):
-        body (EventSubscriptionResumeRequest):
+        body (EventSubscriptionResumeRequest): Resume settings for a paused subscription,
+            including the continuing routing admission rate.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

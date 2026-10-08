@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Current capacity-wait episode with limiting scope and observation timestamps.
+ */
 export type EventRecoveryCapacityWait = {
   scope: 'account' | 'app' | 'consumer' | 'unknown';
   gate: 'pending_delivery_limit' | 'unknown';
