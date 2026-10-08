@@ -3,16 +3,16 @@
 #
 # ADR-111 + ADR-005: image bakes a Go toolchain at a specific version so the
 # compiled daemons are reproducible across boxes. Version matches CI's
-# pinned GO_VERSION (1.25.13) so the gofmt byte-equivalence gate holds.
+# pinned GO_VERSION (1.26.9) so the gofmt byte-equivalence gate holds.
 #
 # Pattern: curl + sha256 + tar (no `curl | tar -xz`; mirrors the
 # codeql-go-clear-text-logging-obfuscator-barrier lesson).
 set -euo pipefail
 
-GO_VERSION="${GO_VERSION:-1.25.13}"
-# SHA-256 of go1.25.13.linux-amd64.tar.gz from https://go.dev/dl/.
+GO_VERSION="${GO_VERSION:-1.26.9}"
+# SHA-256 of go1.26.9.linux-amd64.tar.gz from https://go.dev/dl/.
 # Pinned; CI install-golang uses the same value (action v5).
-GO_SHA="39042a078ea9ceebe3ecda4a7188f0f5b96e14a071d27923ba7f40b456e85ae3"
+GO_SHA="42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d"
 URL="https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
 
 TMP="$(mktemp -d)"
