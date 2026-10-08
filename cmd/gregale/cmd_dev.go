@@ -340,7 +340,11 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("Invalid developer manifest", err)
 	}
-	applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion)
+	// --stop only tears the environment down, so team defaults for files that
+	// would be synced on start must not turn it into a flag conflict.
+	if !*stop {
+		applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion)
+	}
 	if !*withPostgres && *postgresRegion != "" {
 		return printErr("Invalid flags", fmt.Errorf("--postgres-region requires --postgres"))
 	}
