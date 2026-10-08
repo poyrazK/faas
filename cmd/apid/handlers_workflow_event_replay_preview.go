@@ -53,7 +53,7 @@ func parseWorkflowEventReplayPreview(values url.Values) (api.WorkflowEventReplay
 	if problem != nil {
 		return api.WorkflowEventReplayPreviewOptions{}, problem
 	}
-	options := api.WorkflowEventReplayPreviewOptions{From: parsed.From, Until: parsed.Until, After: parsed.After, Limit: parsed.Limit}
+	options := api.WorkflowEventReplayPreviewOptions(parsed)
 	if strings.TrimSpace(values.Get("workflow_name")) == "" || len(values.Get("workflow_name")) > 256 {
 		return options, api.ErrValidation("workflow_name must contain 1 to 256 non-whitespace bytes")
 	}

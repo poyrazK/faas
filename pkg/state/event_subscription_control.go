@@ -27,6 +27,12 @@ func validSubscriptionControlIDs(account, app, sub string) error {
 	}
 	return nil
 }
+
+// Application controls apply only to UUID subscription identities.
+func isEventSubscriptionUUID(id string) bool {
+	return uuid.Validate(id) == nil
+}
+
 func getSubscriptionControl(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, account, app, sub string) (api.EventSubscriptionDeliveryControl, error) {
 	out := api.EventSubscriptionDeliveryControl{SubscriptionID: canonicalMemUUID(sub), AppID: canonicalMemUUID(app)}
 	row, err := q.EventSubscriptionControlGet(ctx, db, sqlc.EventSubscriptionControlGetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub)})
@@ -115,7 +121,8 @@ func eventSubscriptionGateTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, p 
 	if !p.matched || p.prior {
 		return "", time.Time{}, nil
 	}
-	if _, err := uuid.Parse(p.recipient.ID); err != nil {
+	// Non-UUID workflow/object recipients do not use application subscription controls.
+	if !isEventSubscriptionUUID(p.recipient.ID) {
 		return "", time.Time{}, nil
 	}
 	if err := q.EventSubscriptionControlLock(ctx, tx, canonicalMemUUID(p.recipient.ID)); err != nil {

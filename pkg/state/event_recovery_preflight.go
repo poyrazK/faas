@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -76,7 +77,7 @@ func (s *PgStore) GetEventRecoveryPreflight(ctx context.Context, account, id str
 	if err != nil {
 		return api.EventRecoveryPreflight{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	job, err := getEventRecoveryMetadata(ctx, q, tx, account, id)
 	if err != nil {
@@ -212,7 +213,7 @@ func (m *MemStore) preflightItemLocked(job *memEventRecoveryJob, item memEventRe
 		replay := parent
 		replay.Source = InvocationReplay
 		if err := m.platformTenantInvocationAllowedLocked(replay); err != nil {
-			if err == ErrPlatformTenantSuspended {
+			if errors.Is(err, ErrPlatformTenantSuspended) {
 				return "target_unavailable", "", nil
 			}
 			return "unknown", "", nil

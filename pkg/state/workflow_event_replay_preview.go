@@ -69,7 +69,7 @@ func validateWorkflowEventReplayPreviewQuery(accountID string, q *WorkflowEventR
 	}
 	q.AppID = canonicalMemUUID(q.AppID)
 	q.From, q.Until = q.From.UTC(), q.Until.UTC()
-	if err := q.WorkflowEventReplayPreviewOptions.Validate(); err != nil {
+	if err := q.Validate(); err != nil {
 		return workflowEventReplayPreviewCursor{}, fmt.Errorf("%w: %w", ErrEventReplayPreviewQuery, err)
 	}
 	if q.Limit == 0 {

@@ -87,13 +87,14 @@ func cmdEventsRecoveryJob(args []string, action string) int {
 		return printErr("Not logged in", err)
 	}
 	var out api.EventRecoveryJob
-	if action == "cancel" {
+	switch action {
+	case "cancel":
 		out, err = client.CancelEventRecoveryWithReason(context.Background(), positional[0], api.EventRecoveryControlRequest{Reason: *reason})
-	} else if action == "pause" {
+	case "pause":
 		out, err = client.PauseEventRecoveryWithReason(context.Background(), positional[0], api.EventRecoveryControlRequest{Reason: *reason})
-	} else if action == "resume" {
+	case "resume":
 		out, err = client.ResumeEventRecoveryWithReason(context.Background(), positional[0], api.EventRecoveryControlRequest{Reason: *reason})
-	} else {
+	default:
 		out, err = client.GetEventRecovery(context.Background(), positional[0])
 	}
 	if err != nil {

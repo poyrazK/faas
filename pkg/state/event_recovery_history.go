@@ -19,7 +19,7 @@ func WithEventRecoveryActor(ctx context.Context, kind, id string) context.Contex
 }
 func WithEventRecoveryReason(ctx context.Context, reason string) (context.Context, error) {
 	if err := (api.EventRecoveryControlRequest{Reason: reason}).Validate(); err != nil {
-		return ctx, fmt.Errorf("%w: %v", ErrEventRecoveryQuery, err)
+		return ctx, fmt.Errorf("%w: %w", ErrEventRecoveryQuery, err)
 	}
 	a, _ := ctx.Value(recoveryAuditKey{}).(recoveryAudit)
 	a.Reason = reason
@@ -77,7 +77,7 @@ func (s *PgStore) ListEventRecoveryHistory(ctx context.Context, account, job str
 	if err != nil {
 		return api.EventRecoveryHistory{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	if _, err = getEventRecoveryMetadata(ctx, q, tx, account, job); err != nil {
 		return api.EventRecoveryHistory{}, err

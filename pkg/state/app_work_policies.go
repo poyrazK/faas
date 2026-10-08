@@ -230,7 +230,7 @@ func validateOrderedPolicyChange(bindings map[string]EventWorkBinding, appID str
 	for _, binding := range bindings {
 		if binding.Ordered && sameMemUUID(binding.AppID, appID) && binding.PolicyName == policy.Name {
 			if err := validateOrderedEventWorkPolicy(policy); err != nil {
-				return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+				return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 			}
 			break
 		}

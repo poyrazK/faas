@@ -30,7 +30,7 @@ func (s *PgStore) CreateWorkflowEventReplayBackfill(ctx context.Context, account
 	if _, err := uuid.Parse(query.AppID); err != nil {
 		return api.EventReplayBackfillJobResponse{}, ErrEventReplayBackfillQuery
 	}
-	if err := query.WorkflowEventReplayBackfillRequest.Validate(); err != nil {
+	if err := query.Validate(); err != nil {
 		return api.EventReplayBackfillJobResponse{}, fmt.Errorf("%w: %w", ErrEventReplayBackfillQuery, err)
 	}
 	query.AppID = canonicalMemUUID(query.AppID)
@@ -77,7 +77,7 @@ func (s *PgStore) CreateWorkflowEventReplayBackfill(ctx context.Context, account
 	}
 	plan := api.Plan(targets[0].Plan)
 	if _, err := api.ValidateWorkflowDAG(definition, plan); err != nil {
-		return api.EventReplayBackfillJobResponse{}, fmt.Errorf("%w: validate current workflow definition: %v", ErrEventReplayBackfillQuery, err)
+		return api.EventReplayBackfillJobResponse{}, fmt.Errorf("%w: validate current workflow definition: %w", ErrEventReplayBackfillQuery, err)
 	}
 	account := uuidFromPgtype(targets[0].AccountID).String()
 	app := uuidFromPgtype(targets[0].AppID).String()
@@ -91,7 +91,7 @@ func (s *PgStore) CreateWorkflowEventReplayBackfill(ctx context.Context, account
 		Type: definition.Trigger.EventType, Filter: filter, Workflow: definitionBytes, WorkSnapshotCaptured: true,
 	}
 	if err := (eventcontract.Subscription{ID: recipient.ID, AccountID: account, Source: recipient.Source, Type: recipient.Type, Filter: recipient.Filter}).Validate(); err != nil {
-		return api.EventReplayBackfillJobResponse{}, fmt.Errorf("%w: validate workflow event trigger: %v", ErrEventReplayBackfillQuery, err)
+		return api.EventReplayBackfillJobResponse{}, fmt.Errorf("%w: validate workflow event trigger: %w", ErrEventReplayBackfillQuery, err)
 	}
 	recipientBytes, err := json.Marshal(recipient)
 	if err != nil {

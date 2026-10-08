@@ -441,21 +441,21 @@ func cmdEventsSubscriptions(args []string) int {
 		_, _ = fmt.Fprintln(osStdout, "(no event subscriptions)")
 		return 0
 	}
-	_, _ = fmt.Fprintln(osStdout, "ID\tSOURCE\tTYPE\tFILTER\tVERSIONS\tORDERED\tENABLED\tUPDATED")
+	_, _ = fmt.Fprintln(osStdout, "ID\tSOURCE\tTYPE\tFILTER\tORDERED\tENABLED\tUPDATED\tVERSIONS")
 	for _, subscription := range resp.Subscriptions {
 		filter := string(subscription.Filter)
 		if filter == "" {
 			filter = "{}"
 		}
-		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%t\t%t\t%s\n",
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%t\t%t\t%s\t%s\n",
 			subscription.ID,
 			subscription.Source,
 			subscription.Type,
 			filter,
-			eventSchemaVersionsLabel(subscription.SchemaVersions),
 			subscription.Ordered,
 			subscription.Enabled,
 			subscription.UpdatedAt.Format(time.RFC3339),
+			eventSchemaVersionsLabel(subscription.SchemaVersions),
 		)
 	}
 	return 0

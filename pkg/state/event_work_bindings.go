@@ -232,7 +232,7 @@ func (m *MemStore) SetEventWorkBinding(_ context.Context, appID, subscriptionID,
 		}
 		if ordered {
 			if err := validateOrderedEventWorkPolicy(policy.Policy); err != nil {
-				return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+				return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 			}
 		}
 	}

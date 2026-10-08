@@ -32,8 +32,8 @@ func appendRecoveryHealth(out *api.EventRecoveryHealth, job api.EventRecoveryJob
 	job.ProgressAgeSeconds = max(0, now.Sub(baseline).Seconds())
 	job.OverdueSeconds = max(0, now.Sub(job.EligibleAt).Seconds())
 	job.Expiring = job.PendingCount > 0 && !job.ExpiresAt.After(now.Add(api.EventRecoveryExpiryWarning))
-	switch {
-	case job.State == "paused":
+	switch job.State {
+	case "paused":
 		job.Status = "paused"
 		out.PausedJobs++
 		if job.Expiring {
@@ -88,7 +88,7 @@ func (s *PgStore) GetEventRecoveryHealth(ctx context.Context, account, app strin
 	if err != nil {
 		return out, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	if _, err = q.EventRecoveryListApp(ctx, tx, sqlc.EventRecoveryListAppParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app)}); err != nil {
 		return out, mapErr(err)

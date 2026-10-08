@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -34,7 +35,7 @@ func normalizeRecoveryList(account, app string, query api.EventRecoveryListQuery
 		return query, recoveryListCursor{}, err
 	}
 	if err := query.Validate(); err != nil {
-		return query, recoveryListCursor{}, fmt.Errorf("%w: %v", ErrEventRecoveryQuery, err)
+		return query, recoveryListCursor{}, fmt.Errorf("%w: %w", ErrEventRecoveryQuery, err)
 	}
 	if query.CreatedAfter != nil {
 		t := query.CreatedAfter.UTC()
@@ -92,10 +93,10 @@ func (s *PgStore) ListEventRecoveries(ctx context.Context, account, app string, 
 	if err != nil {
 		return api.EventRecoveryJobs{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	_, err = q.EventRecoveryListApp(ctx, tx, sqlc.EventRecoveryListAppParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app)})
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return api.EventRecoveryJobs{}, ErrNotFound
 	}
 	if err != nil {

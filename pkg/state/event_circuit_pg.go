@@ -6,7 +6,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -236,7 +235,8 @@ func circuitWorkEligible(work *PublishedEventRecipientWork) bool {
 	return validSubscriptionControlIDs(work.Recipient.AccountID, work.Recipient.AppID, work.Recipient.ID) == nil
 }
 func observeCircuitTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, id int64, app, sub string, p PublishedEventRecipientProgress) error {
-	if _, err := uuid.Parse(sub); err != nil {
+	// Non-UUID workflow/object recipient identities do not have application circuits.
+	if !isEventSubscriptionUUID(sub) {
 		return nil
 	}
 	row, err := q.EventCircuitGetForApp(ctx, tx, sqlc.EventCircuitGetForAppParams{AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub)})

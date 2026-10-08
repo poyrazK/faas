@@ -52,7 +52,7 @@ func previewEventSchemaRollout(ctx context.Context, store eventSchemaRolloutBack
 		return out, ErrInvalidArgument
 	}
 	if err := req.Validate(); err != nil {
-		return out, fmt.Errorf("%w: %s", ErrInvalidArgument, err)
+		return out, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	schema := req.Schema
 	out.SchemaOrigin = "proposed"
