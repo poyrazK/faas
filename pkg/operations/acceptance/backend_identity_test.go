@@ -223,11 +223,20 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "operations-test", Type: state.AppTypeApp})
+	// Seed the original pre-traffic-policy app shape too. This is historical
+	// fixture data, not permission to relax today's production writer.
+	app := state.App{ID: uuid.NewString(), AccountID: account.ID, Slug: "operations-test", Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 1}
+	_, err = pool.Exec(ctx, `INSERT INTO apps(id,account_id,slug,type,ram_mb,max_concurrency)
+		VALUES($1,$2,$3,$4,$5,$6)`, app.ID, app.AccountID, app.Slug, string(app.Type), app.RAMMB, app.MaxConcurrency)
 	if err != nil {
 		t.Fatal(err)
 	}
-	deployment, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:operations", Status: state.DeployLive})
+	// This fixture represents the pre-identity writer and schema. Today's
+	// deployment writer must still require the complete traffic policy schema;
+	// those later migrations remain unapplied until the real upgrade below.
+	deployment := state.Deployment{ID: uuid.NewString(), AppID: app.ID, Scope: "default", Kind: state.DeploymentKindImage, ImageDigest: "sha256:operations", Status: state.DeployLive}
+	_, err = pool.Exec(ctx, `INSERT INTO deployments(id,app_id,scope,kind,image_digest,status)
+		VALUES($1,$2,$3,$4,$5,$6)`, deployment.ID, deployment.AppID, deployment.Scope, string(deployment.Kind), deployment.ImageDigest, string(deployment.Status))
 	if err != nil {
 		t.Fatal(err)
 	}

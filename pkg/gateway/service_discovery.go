@@ -13,6 +13,8 @@ import (
 // plane addresses to workloads. Port is the effective workload HTTP port;
 // legacy targets that carry zero use the vmmd default of 8080.
 type ServiceEndpoint struct {
+	// Internal lease identity; the discovery JSON remains backward compatible.
+	wakeID              string
 	InstanceID          string `json:"instance_id"`
 	NodeID              string `json:"node_id"`
 	DeploymentID        string `json:"deployment_id,omitempty"`
@@ -42,6 +44,13 @@ type ServiceEndpointsSnapshot struct {
 // snapshot.
 type ServiceEndpointProvider interface {
 	ServiceEndpoints(ctx context.Context, appID string) (ServiceEndpointsSnapshot, error)
+}
+
+// ServiceEndpointRoutability checks current process-local readiness and target
+// identity independently from the discovery lease. Production PGBackend
+// implements it; static legacy providers retain their immutable-view contract.
+type ServiceEndpointRoutability interface {
+	ServiceEndpointRoutable(appID string, endpoint ServiceEndpoint) bool
 }
 
 // ServiceEndpoints returns a deterministic snapshot of the app's currently
@@ -90,7 +99,7 @@ func (b *PGBackend) ServiceEndpoints(ctx context.Context, appID string) (Service
 	byInstance := make(map[string]ServiceEndpoint)
 	for _, set := range picker.sets {
 		for _, target := range set.entries {
-			if target.InstanceID == "" || target.NodeID == "" {
+			if target.InstanceID == "" || target.NodeID == "" || !target.routeReady() {
 				continue
 			}
 			deploymentID := target.DeploymentID
@@ -102,6 +111,7 @@ func (b *PGBackend) ServiceEndpoints(ctx context.Context, appID string) (Service
 				port = 8080
 			}
 			candidate := ServiceEndpoint{
+				wakeID:              target.WakeID,
 				InstanceID:          target.InstanceID,
 				NodeID:              target.NodeID,
 				DeploymentID:        deploymentID,
@@ -131,6 +141,36 @@ func (b *PGBackend) ServiceEndpoints(ctx context.Context, appID string) (Service
 	return snapshot, nil
 }
 
+func (b *PGBackend) ServiceEndpointRoutable(appID string, endpoint ServiceEndpoint) bool {
+	if b == nil {
+		return false
+	}
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	picker := b.appsPicker[appID]
+	if picker == nil {
+		return false
+	}
+	deployment := endpoint.DeploymentID
+	if deployment == "" {
+		deployment = "_legacy"
+	}
+	set := picker.sets[deployment]
+	if set == nil {
+		return false
+	}
+	for _, target := range set.entries {
+		port := target.Port
+		if port == 0 {
+			port = 8080
+		}
+		if target.InstanceID == endpoint.InstanceID && target.NodeID == endpoint.NodeID && target.WakeID == endpoint.wakeID && port == endpoint.Port && target.routeReady() {
+			return true
+		}
+	}
+	return false
+}
+
 func serviceEndpointLess(a, b ServiceEndpoint) bool {
 	if a.NodeID != b.NodeID {
 		return a.NodeID < b.NodeID
@@ -145,3 +185,4 @@ func serviceEndpointLess(a, b ServiceEndpoint) bool {
 }
 
 var _ ServiceEndpointProvider = (*PGBackend)(nil)
+var _ ServiceEndpointRoutability = (*PGBackend)(nil)

@@ -237,7 +237,7 @@ func (s *server) createDashboardWizardApp(ctx context.Context, r *http.Request, 
 		case errors.Is(err, state.ErrConflict):
 			return state.App{}, api.NewProblem(http.StatusConflict, api.CodeValidation, "Slug taken", fmt.Sprintf("app slug %q is already in use", slug))
 		default:
-			return state.App{}, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Capacity", "could not create app")
+			return state.App{}, trafficPolicyWriteProblem(err, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Capacity", "could not create app"))
 		}
 	}
 	s.log.Info("app created from GitHub wizard", "app_id", created.ID, "account_id", acct.ID)

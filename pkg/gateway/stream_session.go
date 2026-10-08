@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -10,6 +11,18 @@ import (
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
+func isLongLivedForward(r *http.Request) bool {
+	return r.Header.Get("x-faas-stream") == "true" || r.Header.Get("x-faas-protocol") == "grpc"
+}
+
+func newHTTPForwardSession(parent context.Context, longLived bool) (context.Context, func(), func(), context.CancelFunc) {
+	if longLived {
+		return newStreamSession(parent, api.HTTPForwardSessionTimeout, streamIdleTimeout)
+	}
+	ctx, touch, cancel := newOrdinaryResponseSession(parent, api.HTTPForwardSessionTimeout, streamIdleTimeout)
+	return ctx, func() {}, touch, cancel
+}
+
 // newStreamSession builds the context used by a response that may outlive
 // the ordinary request budget. Before the response starts, the request
 // budget (and the optional hop ceiling) still controls the session. Once the
@@ -17,25 +30,40 @@ import (
 // original request cancellation remains active, and the idle timer provides a
 // separate resource-safety bound for a quiet stream.
 func newStreamSession(parent context.Context, ceiling, idle time.Duration) (ctx context.Context, detach func(), touch func(), cancel context.CancelFunc) {
-	budgetParent := parent
-	budgetCancel := func() {}
-	if b, ok := reqbudget.FromContext(parent); ok {
-		if ceiling > 0 {
-			budgetParent, budgetCancel, _ = b.WithCeiling(parent, ceiling)
-		}
-	} else if ceiling > 0 {
-		budgetParent, budgetCancel = context.WithTimeout(parent, ceiling)
-	}
-
-	budgetCtx, detachBudget, cancelBudget := reqbudget.WithStream(budgetParent)
-	ctx, cancelSession := context.WithCancel(budgetCtx)
+	budgetCtx, detachBudget, cancelBudget := reqbudget.WithStream(parent)
+	// gRPC serializes Deadline into a remote timer when opening an RPC. That
+	// timer cannot be detached after response headers. Keep the handshake
+	// budget in Done, and expose only the independent session ceiling.
+	ctx, cancelSession := responseSessionContext(streamTransportContext{budgetCtx}, ceiling)
 	idleCtl := newIdleSession(ctx, idle)
 
 	return idleCtl.ctx, detachBudget, idleCtl.touch, func() {
 		idleCtl.stop()
 		cancelSession()
 		cancelBudget()
-		budgetCancel()
+	}
+}
+
+// streamTransportContext preserves cancellation and values while hiding the
+// handshake deadline from transports that copy it into an independent timer.
+type streamTransportContext struct{ context.Context }
+
+func (streamTransportContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+
+func responseSessionContext(parent context.Context, ceiling time.Duration) (context.Context, context.CancelFunc) {
+	if ceiling > 0 {
+		return context.WithTimeout(parent, ceiling)
+	}
+	return context.WithCancel(parent)
+}
+
+// Ordinary responses retain the request deadline for their complete body.
+func newOrdinaryResponseSession(parent context.Context, ceiling, idle time.Duration) (context.Context, func(), context.CancelFunc) {
+	ctx, cancelSession := responseSessionContext(parent, ceiling)
+	idleCtl := newIdleSession(ctx, idle)
+	return idleCtl.ctx, idleCtl.touch, func() {
+		idleCtl.stop()
+		cancelSession()
 	}
 }
 

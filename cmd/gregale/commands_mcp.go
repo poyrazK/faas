@@ -619,7 +619,7 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if code != 0 {
 		return code
 	}
-	return finishMCPDeploy(ctx, c, o.slug, candidate.ID, cfg, token, roles)
+	return finishVerifiedMCPDeploy(ctx, c, o.slug, candidate.ID, cfg, token, roles)
 }
 
 func quietMCPDeploy(args []string, execution deployExecution) int {

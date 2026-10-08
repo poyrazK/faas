@@ -34,6 +34,10 @@ func nativeNetworkFixture(t *testing.T) (*Manager, *JailerVMM, *Instance) {
 		t.Fatal(err)
 	}
 	m.live[l.Instance] = inst
+	m.WithEgressCircuitBreaker(true)
+	if err := m.registerEgressCircuitNetwork(t.Context(), inst.AppID, inst.Net); err != nil {
+		t.Fatal(err)
+	}
 	return m, v, inst
 }
 
@@ -335,7 +339,7 @@ func TestNativeNetworkPoliciesRejectStaleLiveGeneration(t *testing.T) {
 			case "attachment":
 				err = m.UpdatePrivateNetworkAttachment(t.Context(), inst.AppID, "team", netip.MustParseAddr("10.20.0.2"), []netip.Prefix{netip.MustParsePrefix("10.20.0.0/24")})
 			case "circuit":
-				err = m.UpdateEgressCircuit(t.Context(), inst.AppID, []netns.EgressCircuitTarget{{}})
+				err = m.UpdateEgressCircuit(t.Context(), inst.AppID, []netns.EgressCircuitTarget{circuitTarget("203.0.113.9", 443)})
 			case "dns":
 				err = m.AllowResolvedEgress(t.Context(), inst.Net.HostIP, []netip.Addr{netip.MustParseAddr("1.2.3.4")}, time.Minute)
 			}

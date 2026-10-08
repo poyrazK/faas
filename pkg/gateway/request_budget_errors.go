@@ -48,6 +48,13 @@ const (
 )
 
 func writeRequestBudgetExceeded(w http.ResponseWriter, r *http.Request, detail string) {
+	if r != nil {
+		recordTrafficRefusal(r.Context(), "deadline")
+	}
+	markRequestBudgetError(w)
+	ctx, cancel := context.WithTimeout(context.Background(), api.RequestBudgetErrorWriteTimeout)
+	defer cancel()
+	defer guardResponseWrites(ctx, w)() //nolint:contextcheck // best-effort error delivery has its own bounded allowance after the request has expired.
 	// Avoid Header.Add here. gatewayd-internal stamps the request id before
 	// this path and duplicate correlation headers make clients disagree about
 	// which value to log.
@@ -84,6 +91,10 @@ var requestBudgetDocsURL = docsTypeBase
 // caller disconnect with a platform failure. It returns false when the client
 // has already gone away and no response should be written.
 func writeBurstCapacityError(w http.ResponseWriter, r *http.Request, err error) bool {
+	if r != nil && trafficRevocationCause(r.Context()) != nil {
+		writeTrafficRevocationError(w, r, trafficRevocationCause(r.Context()))
+		return true
+	}
 	if r != nil && requestBudgetExpired(r.Context()) {
 		writeRequestBudgetExceeded(w, r, requestBudgetDetailCapacity)
 		return true
@@ -105,7 +116,14 @@ func handleForwardRequestCancellation(w http.ResponseWriter, r *http.Request, ca
 		return false
 	}
 	ctx := r.Context()
+	if cause := trafficRevocationCause(ctx); cause != nil {
+		if canWrite {
+			writeTrafficRevocationError(w, r, cause)
+		}
+		return true
+	}
 	if requestBudgetExpired(ctx) {
+		recordTrafficRefusal(ctx, "deadline")
 		if canWrite {
 			writeRequestBudgetExceededForRequest(w, r)
 		}

@@ -459,7 +459,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.ErrEdgeRuleConflict(err.Error()))
 		default:
-			api.WriteProblem(w, api.ErrCapacity("could not create edge rule"))
+			api.WriteProblem(w, trafficPolicyWriteProblem(err, api.ErrCapacity("could not create edge rule")))
 		}
 		return
 	}
@@ -686,6 +686,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			// apid-Validate.
 			out.Budget = &state.EdgeRuleBudgetAction{
 				BudgetMs:            a.BudgetMs,
+				TotalDeadlineMs:     a.TotalDeadlineMs,
 				AllowOverrideHeader: a.AllowOverrideHeader,
 			}
 		}
@@ -919,7 +920,7 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 			s.notFound(w, "no such edge rule")
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not update edge rule"))
+		api.WriteProblem(w, trafficPolicyWriteProblem(err, api.ErrCapacity("could not update edge rule")))
 		return
 	}
 	s.log.Info("edge rule updated",

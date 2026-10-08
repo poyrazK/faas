@@ -122,26 +122,7 @@ func (s *PgStore) DeleteCustomDomainWithActivity(ctx context.Context, domain str
 	if err != nil {
 		return 0, err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return 0, fmt.Errorf("state: begin domain activity delete: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	tag, err := tx.Exec(ctx, `delete from custom_domains where domain = $1`, domain)
-	if err != nil {
-		return 0, fmt.Errorf("state: delete domain with activity: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return 0, ErrNotFound
-	}
-	outboxID, err := enqueueOrgActivityOutboxTx(ctx, tx, entry)
-	if err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("state: commit domain activity delete: %w", err)
-	}
-	return outboxID, nil
+	return s.deleteTrafficCustomDomain(ctx, domain, "", &entry)
 }
 
 // EnqueueOrgActivityOutbox durably accepts a fact produced by an external or

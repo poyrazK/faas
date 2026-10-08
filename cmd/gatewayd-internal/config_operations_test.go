@@ -17,7 +17,10 @@ import (
 func TestOperationPreviewGatewayConfiguration(t *testing.T) {
 	policy := filepath.Join(t.TempDir(), "preview.json")
 	var encoded bytes.Buffer
-	if err := toml.NewEncoder(&encoded).Encode(Config{OperationsPreviewPolicyPath: policy}); err != nil {
+	if err := toml.NewEncoder(&encoded).Encode(Config{
+		OperationsPreviewPolicyPath: policy,
+		RateLimit:                   TOMLRateLimitConfig{Mode: "central"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "gatewayd.toml")

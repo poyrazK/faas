@@ -397,6 +397,16 @@
     "kind": "configuration"
   },
   {
+    "table": "app_egress_circuits",
+    "columns": [
+      "app_id",
+      "revision",
+      "targets",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "app_egress_policy_node_status",
     "columns": [
       "app_id",
@@ -3260,6 +3270,37 @@
       "last_change_id",
       "node_name",
       "observed_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "gateway_traffic_policy_observations",
+    "columns": [
+      "boot_id",
+      "generation",
+      "last_change_id",
+      "node_name",
+      "observed_at",
+      "policy_kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "gateway_traffic_runtime_observations",
+    "columns": [
+      "boot_id",
+      "deadline_signing",
+      "generation",
+      "managed_circuit",
+      "managed_http",
+      "node_name",
+      "policy_snapshot",
+      "rate_counter_mode",
+      "reported_at",
+      "retry_backend_id",
+      "retry_counter_mode",
+      "retry_enabled",
+      "security_revocation"
     ],
     "kind": "operational"
   },
@@ -7452,6 +7493,28 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "traffic_retry_counters",
+    "columns": [
+      "app_id",
+      "expires_at",
+      "originals",
+      "retries"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "traffic_security_epochs",
+    "columns": [
+      "reason",
+      "revision",
+      "revoked",
+      "scope_id",
+      "scope_kind",
+      "updated_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "trigger_consumer_health",

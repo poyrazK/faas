@@ -108,7 +108,7 @@ func TestMCPCandidatePromotion(t *testing.T) {
 				roles = []mcpReleaseRole{{Name: "reader", contract: baseline}}
 			}
 			cfg := mcphosting.Config{Endpoint: "/mcp", Auth: mcphosting.AuthConfig{Mode: "open"}}
-			if got := finishMCPDeploy(context.Background(), NewClient(control.URL, "operator-only"), "my-mcp", "candidate", cfg, "", roles); got != tc.want {
+			if got := finishVerifiedMCPDeploy(context.Background(), NewClient(control.URL, "operator-only"), "my-mcp", "candidate", cfg, "", roles); got != tc.want {
 				t.Fatalf("exit=%d want=%d output=%s", got, tc.want, output.String())
 			}
 			if calls != 0 || (tc.want != 0 && promotions != 0) || (!tc.first && updates != 0) {

@@ -2074,6 +2074,12 @@ Clear the pinned outbound address
 
 `gregale app <slug> static-egress-ip clear`
 
+### app traffic-status
+
+Show policy convergence and fresh gateway traffic wiring
+
+`gregale app <slug> traffic-status`
+
 ### app routes
 
 List admitted per-route labels for one app

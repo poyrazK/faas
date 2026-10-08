@@ -170,7 +170,7 @@ func TestCustomerOperationCLIRecoveryAndRoutes(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /v1/apps/exports/operations":
 			q := r.URL.Query()
-			if q.Get("subject_type") != "order" || q.Get("subject_id") != "ord/42&é" || q.Get("scope") != "production" || q.Get("tenant_id") != "tenant" || q.Has("app_id") {
+			if q.Get("scope") != "production" || q.Get("tenant_id") != "tenant" || q.Has("app_id") {
 				t.Errorf("selectors %s", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(api.OperationListResponse{Operations: []api.OperationSummary{}, NextCursor: "cursor"})
@@ -200,7 +200,7 @@ func TestCustomerOperationCLIRecoveryAndRoutes(t *testing.T) {
 	osStdout, jsonOutput = &out, true
 	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
 	recover := []string{"recover", "op", "--app", "exports", "--expected-generation", "1", "--recovery-id", "decision-1", "--resolution", "safe_to_retry", "--evidence-file", evidence}
-	for _, args := range [][]string{{"list", "--app", "exports", "--scope", "production", "--tenant", "tenant", "--subject-type", "order", "--subject-id", "ord/42&é"}, {"events", "op", "--app", "exports"}, {"executions", "op", "--app", "exports"}, recover, recover} {
+	for _, args := range [][]string{{"list", "--app", "exports", "--scope", "production", "--tenant", "tenant"}, {"events", "op", "--app", "exports"}, {"executions", "op", "--app", "exports"}, recover, recover} {
 		if code := cmdCustomerOperations(args); code != 0 {
 			t.Fatalf("%v exit=%d", args, code)
 		}
@@ -226,7 +226,7 @@ func TestCustomerOperationCLIRecoveryAndRoutes(t *testing.T) {
 }
 
 func TestCustomerOperationCLIRejectsUnfencedOrAmbiguousCommands(t *testing.T) {
-	for _, args := range [][]string{{"list", "--app", "exports", "--scope", "production", "--subject-type", "order"}, {"list", "--app", "exports", "--scope", "production", "--subject-id", "42"}, nil, {"list", "--app", "exports"}, {"list", "--app", "exports", "--scope", "production", "--limit", "101"}, {"get", "op"}, {"get", "op", "extra", "--app", "exports"}, {"watch", "op", "--app", "exports", "--interval", "0s"}, {"download", "op", "--app", "exports"}, {"recover", "op", "--app", "exports"}, {"cancel", "op", "--app", "exports"}, {"retry-delivery", "op", "--app", "exports", "--resolution", "safe_to_retry"}} {
+	for _, args := range [][]string{nil, {"list", "--app", "exports"}, {"list", "--app", "exports", "--scope", "production", "--limit", "101"}, {"get", "op"}, {"get", "op", "extra", "--app", "exports"}, {"watch", "op", "--app", "exports", "--interval", "0s"}, {"download", "op", "--app", "exports"}, {"recover", "op", "--app", "exports"}, {"cancel", "op", "--app", "exports"}, {"retry-delivery", "op", "--app", "exports", "--resolution", "safe_to_retry"}} {
 		if _, err := parseCustomerOperationCommand(args); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
@@ -300,5 +300,88 @@ func TestCustomerOperationRecoveryRejectsSymlinkInputs(t *testing.T) {
 	}
 	if _, err := readCustomerOperationFile(link, api.OperationRecoveryEvidenceMaxBytes); err == nil {
 		t.Fatal("customer file guard bypassed")
+	}
+}
+
+func TestCustomerOperationCLIRecoveryAndRoutesIntegratedBusinessWorkflows(t *testing.T) {
+	evidence := filepath.Join(t.TempDir(), "evidence.txt")
+	if err := os.WriteFile(evidence, []byte("provider confirmed no effect"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var requests []api.OperationRecoveryRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer fp_live_operator" {
+			t.Error("credential missing")
+		}
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/apps/exports/operations":
+			q := r.URL.Query()
+			if q.Get("subject_type") != "order" || q.Get("subject_id") != "ord/42&é" || q.Get("scope") != "production" || q.Get("tenant_id") != "tenant" || q.Has("app_id") {
+				t.Errorf("selectors %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(api.OperationListResponse{Operations: []api.OperationSummary{}, NextCursor: "cursor"})
+		case "GET /v1/apps/exports/operations/op/events":
+			_ = json.NewEncoder(w).Encode(api.OperationEventsResponse{Events: []api.OperationEvent{}, ResyncRequired: true})
+		case "GET /v1/apps/exports/operations/op/executions":
+			_ = json.NewEncoder(w).Encode(api.OperationExecutionsResponse{Executions: []api.OperationExecution{{Generation: 2, Attempts: 1}}})
+		case "POST /v1/apps/exports/operations/op/recover":
+			var req api.OperationRecoveryRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Error(err)
+			}
+			requests = append(requests, req)
+			_ = json.NewEncoder(w).Encode(api.OperationResponse{ID: "op", State: api.OperationAccepted, Generation: 2})
+		case "POST /v1/apps/exports/operations/op/retry-delivery":
+			_ = json.NewEncoder(w).Encode(api.OperationResponse{ID: "op", State: api.OperationSucceeded, Generation: 1, CompletionDelivery: api.OperationDeliveryResponse{State: "pending"}})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_operator")
+	oldOut, oldJSON := osStdout, jsonOutput
+	var out bytes.Buffer
+	osStdout, jsonOutput = &out, true
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	recover := []string{"recover", "op", "--app", "exports", "--expected-generation", "1", "--recovery-id", "decision-1", "--resolution", "safe_to_retry", "--evidence-file", evidence}
+	for _, args := range [][]string{{"list", "--app", "exports", "--scope", "production", "--tenant", "tenant", "--subject-type", "order", "--subject-id", "ord/42&é"}, {"events", "op", "--app", "exports"}, {"executions", "op", "--app", "exports"}, recover, recover} {
+		if code := cmdCustomerOperations(args); code != 0 {
+			t.Fatalf("%v exit=%d", args, code)
+		}
+	}
+	// The legacy API remains compatible; CLI retries now require a durable receipt.
+	legacy, err := api.NewClient(srv.URL, "fp_live_operator").RetryOperationDelivery(t.Context(), "exports", "op")
+	if err != nil || legacy.CompletionDelivery.State != "pending" {
+		t.Fatalf("legacy notification API: %+v %v", legacy, err)
+	}
+	if len(requests) != 2 {
+		t.Fatal("recovery requests missing")
+	}
+	a, _ := json.Marshal(requests[0])
+	b, _ := json.Marshal(requests[1])
+	if !bytes.Equal(a, b) || requests[0].ExpectedGeneration != 1 || requests[0].Evidence != "provider confirmed no effect" {
+		t.Fatal("recovery identity/evidence drift")
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		if !json.Valid([]byte(line)) {
+			t.Fatal("JSON output polluted")
+		}
+	}
+}
+
+func TestCustomerOperationCLIRejectsUnfencedOrAmbiguousCommandsIntegratedBusinessWorkflows(t *testing.T) {
+	for _, args := range [][]string{{"list", "--app", "exports", "--scope", "production", "--subject-type", "order"}, {"list", "--app", "exports", "--scope", "production", "--subject-id", "42"}, nil, {"list", "--app", "exports"}, {"list", "--app", "exports", "--scope", "production", "--limit", "101"}, {"get", "op"}, {"get", "op", "extra", "--app", "exports"}, {"watch", "op", "--app", "exports", "--interval", "0s"}, {"download", "op", "--app", "exports"}, {"recover", "op", "--app", "exports"}, {"cancel", "op", "--app", "exports"}, {"retry-delivery", "op", "--app", "exports", "--resolution", "safe_to_retry"}} {
+		if _, err := parseCustomerOperationCommand(args); err == nil {
+			t.Fatalf("accepted %v", args)
+		}
+	}
+	command, ok := lookupCliCommand("customer-operations")
+	if !ok || len(command.Subcommands) != 15 {
+		t.Fatal("command help/completion manifest missing")
+	}
+	if _, ok := lookupCliCommand("operations"); !ok {
+		t.Fatal("exclusive operations compatibility lost")
 	}
 }

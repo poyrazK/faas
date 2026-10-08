@@ -1,7 +1,7 @@
 // vmmd — the only root component, owns firecracker+jailer (spec §4.4, ADR-013,
 // ADR-014, ADR-016). RPCs map 1:1 to spec §4.4 line 138. Wire shape
-// stays narrow: the caller resolves `(app)` into AppSpec; vmmd never queries
-// apid or postgres on its own.
+// stays narrow: the caller resolves `(app)` into AppSpec; ADR-570 additionally reads schedd-owned durable circuit policy before boot;
+// it never writes customer intent or scheduler instance state.
 
 syntax = "proto3";
 
@@ -1380,6 +1380,29 @@ message InstanceStats {
   // the per-destination rate, and the plan's flood ceiling (0 = none).
   google.protobuf.Int64Value egress_flood_drops_per_min = 19;
   int64 egress_flood_drops_limit_per_min = 20;
+  // ADR-570: absent on older nodes; present even when disabled. Actual nft
+  // completion is distinct from the scheduler's logical probe-health state.
+  EgressCircuitEnforcement egress_circuit_enforcement = 21;
+  // ADR-570: authoritative node-owned HTTP/Upgrade admission. Absent means
+  // the node does not report this guarantee; the plan cap is for this VM.
+  HTTPAdmissionEnforcement http_admission_enforcement = 22;
+}
+
+message HTTPAdmissionEnforcement {
+  bool enabled = 1;
+  int64 limit = 2;
+  int64 inflight = 3;
+  string generation = 4;
+  bool retiring = 5;
+  string plan = 6;
+}
+
+message EgressCircuitEnforcement {
+  bool enabled = 1;
+  bool applied = 2;
+  int64 desired_revision = 3;
+  int64 applied_revision = 4;
+  int32 target_count = 5;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the
@@ -1494,28 +1517,32 @@ message UpdateAppCPULimitAck {}
 message UpdateEgressCircuitRequest {
   string app_id = 1;
   repeated EgressCircuitTarget circuits = 2;
+  // ADR-570: committed desired-policy revision; required on nodes configured
+  // for durable enforcement. Delayed pushes cannot overwrite newer state.
+  int64 revision = 3;
 }
 
 // EgressCircuitTarget is one open circuit: a resolved upstream address and
 // port whose new connections must fail fast.
 message EgressCircuitTarget {
   // addr is a resolved IPv4 or IPv6 address in its textual form. vmmd
-  // renders it into an nftables set element; a value that does not parse is
-  // skipped rather than emitted, because one malformed element fails the
-  // whole nft batch and would leave the tenant's firewall in whatever state
-  // the partial batch produced.
+  // renders it into an nftables set element. A malformed complete-set update
+  // is rejected without altering current policy.
   string addr = 1;
   // port is the upstream TCP port (1..65535).
   uint32 port = 2;
 }
 
-// UpdateEgressCircuitAck is the empty success response. On failure vmmd
+// UpdateEgressCircuitAck reports the enforced revision. On failure vmmd
 // returns a gRPC status: Internal when the nft batch failed for a live
 // instance. Unlike UpdateEgressAllowlist there is no partial-revert path —
 // the operation is a flush plus adds against a set that is re-derived on
 // every reconcile, so a failure is corrected by the next push rather than by
 // unwinding this one.
-message UpdateEgressCircuitAck {}
+message UpdateEgressCircuitAck {
+  // Revision enforced on all matching live and pending tenant networks.
+  int64 revision = 1;
+}
 
 // UpdateStaticEgressIPRequest (ADR-119) is the input to
 // UpdateStaticEgressIP. app_id is the apps.id UUID whose live

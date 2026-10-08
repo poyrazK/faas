@@ -268,9 +268,25 @@ func (g *Group) Release(key string) {
 func (g *Group) observe(key string, ok bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.observeLocked(key, ok, g.now())
+}
+
+// ObserveAt folds an actual probe timestamp, including during restart replay.
+// Historical samples must not all become fresh observations at startup.
+// Callers supply strictly increasing timestamps per key.
+func (g *Group) ObserveAt(key string, ok bool, at time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	b := g.at(key)
+	if b.state == StateOpen && at.Sub(b.openedAt) >= b.openFor {
+		g.transition(key, b, StateHalfOpen)
+	}
+	g.observeLocked(key, ok, at)
+}
+
+func (g *Group) observeLocked(key string, ok bool, now time.Time) {
 	cfg := g.cfgAt(key)
 	b := g.at(key)
-	now := g.now()
 
 	if b.state == StateHalfOpen {
 		// The probe decides, on its own, with no reference to the window —

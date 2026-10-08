@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(_ context.Context, accountID, projectID, operationID string, revision int64) ([]ProjectEnvironmentCloneWorkload, error) {
+func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, accountID, projectID, operationID string, revision int64) ([]ProjectEnvironmentCloneWorkload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	op, ok := m.projectEnvironmentCloneOperations[operationID]
@@ -131,7 +131,7 @@ func cloneWorkloadViews(records map[string]projectCloneWorkloadRecord) []Project
 	return views
 }
 
-func (m *MemStore) ProjectEnvironmentCloneWorkloads(_ context.Context, accountID, projectID, operationID string) ([]ProjectEnvironmentCloneWorkload, error) {
+func (m *MemStore) ProjectEnvironmentCloneWorkloads(ctx context.Context, accountID, projectID, operationID string) ([]ProjectEnvironmentCloneWorkload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	op, ok := m.projectEnvironmentCloneOperations[operationID]
@@ -141,9 +141,9 @@ func (m *MemStore) ProjectEnvironmentCloneWorkloads(_ context.Context, accountID
 	return cloneWorkloadViews(m.projectEnvironmentCloneWorkloads[operationID]), nil
 }
 
-func (m *MemStore) CreateDeploymentForEnvironmentClone(_ context.Context, accountID, projectID, operationID string, revision int64, appID, targetSettingsHash string) (Deployment, error) {
+func (m *MemStore) CreateDeploymentForEnvironmentClone(ctx context.Context, accountID, projectID, operationID string, revision int64, appID, targetSettingsHash string) (Deployment, error) {
 	input := projectEnvironmentCloneDeploymentInput{AccountID: accountID, ProjectID: projectID, OperationID: operationID, Revision: revision, AppID: appID, TargetSettingsHash: targetSettingsHash}
-	created, _, err := m.createDeployment(Deployment{AppID: appID}, nil, nil, &input)
+	created, _, err := m.createDeployment(ctx, Deployment{AppID: appID}, nil, nil, &input)
 	return created, err
 }
 

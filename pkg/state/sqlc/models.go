@@ -500,6 +500,13 @@ type AppDefaultDomain struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type AppEgressCircuit struct {
+	AppID     pgtype.UUID
+	Revision  int64
+	Targets   []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type AppEgressPolicyNodeStatus struct {
 	AppID             pgtype.UUID
 	NodeID            pgtype.UUID
@@ -1630,12 +1637,12 @@ type CustomerOperationWorkflowStateReport struct {
 	ID          pgtype.UUID
 	Workflow    string
 	InstanceID  string
-	FromState   string
 	State       string
 	Revision    int64
 	OccurredAt  pgtype.Timestamptz
 	CreatedAt   pgtype.Timestamptz
 	Fingerprint string
+	FromState   string
 }
 
 type DataUpstream struct {
@@ -2824,6 +2831,31 @@ type GatewayResponseCachePurgeWatermark struct {
 	NodeName     string
 	LastChangeID int64
 	ObservedAt   pgtype.Timestamptz
+}
+
+type GatewayTrafficPolicyObservation struct {
+	NodeName     string
+	PolicyKind   string
+	Generation   int64
+	BootID       pgtype.UUID
+	LastChangeID int64
+	ObservedAt   pgtype.Timestamptz
+}
+
+type GatewayTrafficRuntimeObservation struct {
+	NodeName           string
+	Generation         int64
+	BootID             pgtype.UUID
+	ReportedAt         pgtype.Timestamptz
+	RetryEnabled       bool
+	RateCounterMode    string
+	RetryCounterMode   string
+	RetryBackendID     string
+	DeadlineSigning    bool
+	PolicySnapshot     bool
+	SecurityRevocation bool
+	ManagedHttp        bool
+	ManagedCircuit     bool
 }
 
 type GdprRequest struct {
@@ -6570,6 +6602,22 @@ type TenantSurface struct {
 	UpdatedAt             pgtype.Timestamptz
 	PlatformTenantID      pgtype.UUID
 	PlatformTenantManaged bool
+}
+
+type TrafficRetryCounter struct {
+	AppID     pgtype.UUID
+	Originals int64
+	Retries   int64
+	ExpiresAt pgtype.Timestamptz
+}
+
+type TrafficSecurityEpoch struct {
+	ScopeKind string
+	ScopeID   pgtype.UUID
+	Revision  int64
+	Revoked   bool
+	Reason    string
+	UpdatedAt pgtype.Timestamptz
 }
 
 type Trigger struct {

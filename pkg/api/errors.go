@@ -474,11 +474,15 @@ const (
 	// mirrors CodeCapacity / CodeBuildXXX — the failure is transient
 	// and the customer's CLI/CI will retry on the backoff.
 	CodeSourceRefUnavailable = "source_ref_unavailable"
-	CodeSourceRefStale       = "source_ref_stale"
-	CodeAppLayerTooBig       = "app_layer_too_large"
-	CodeBuildUndetected      = "build_undetected"
-	CodeBuildOOM             = "build_oom"
-	CodeBuildTimeout         = "build_timeout"
+	// ADR-570: connection-circuit enforcement availability and revision errors.
+	CodeEgressCircuitUnavailable = "egress_circuit_unavailable"
+	CodeEgressCircuitDisabled    = "egress_circuit_disabled"
+	CodeEgressCircuitRevision    = "egress_circuit_revision"
+	CodeSourceRefStale           = "source_ref_stale"
+	CodeAppLayerTooBig           = "app_layer_too_large"
+	CodeBuildUndetected          = "build_undetected"
+	CodeBuildOOM                 = "build_oom"
+	CodeBuildTimeout             = "build_timeout"
 	// CodeStage* (ADR-117 §Production-ready follow-on): per-stage
 	// RFC 7807 stable codes for the closed-6 deploy stage vocabulary.
 	// Distinct from CodeBuildXXX (which mark the whole build VM's
@@ -1602,9 +1606,15 @@ const (
 	// no-op when it already has ≥1 cached target, while plan_limit
 	// (the Wake path) is always fatal to the requesting call.
 	CodeAppConcurReached = "app_concurrency_reached"
-	// CodeConcurrencyThrottled is returned when an app explicitly selects
-	// overflow=drop and its concurrency boundary is saturated.
+	// CodeConcurrencyThrottled is returned by overflow=drop or the final node
+	// HTTP gate when the instance request boundary is saturated.
 	CodeConcurrencyThrottled = "concurrency_throttled"
+	// The node refused forwarding before guest execution because its trusted
+	// instance plan or admission owner was unavailable.
+	CodeHTTPAdmissionUnavailable = "http_admission_unavailable"
+	CodeTrafficPolicyUnavailable = "traffic_policy_unavailable"
+	CodeTrafficPolicyTooLarge    = "traffic_policy_too_large"
+	CodeTrafficPolicyTooComplex  = "traffic_policy_too_complex"
 	// Warm saturation queue outcomes are distinct from cold-wake and fleet
 	// capacity failures so clients can make safe retry decisions.
 	CodeConcurrencyQueueFull    = "concurrency_queue_full"
@@ -1889,6 +1899,8 @@ func StatusForCode(code string) int {
 		return http.StatusBadRequest
 	case CodeRequestUploadTimeout:
 		return http.StatusRequestTimeout
+	case CodeTrafficPolicyTooLarge, CodeTrafficPolicyTooComplex:
+		return http.StatusUnprocessableEntity
 	case CodeWorkflowDefinitionNotFound, CodeWorkflowRunNotFound, CodeWorkflowStepNotFound,
 		CodeWorkflowEventNotFound:
 		return http.StatusNotFound
@@ -1896,7 +1908,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotImplemented
 	case CodeWorkflowCallbackExpired:
 		return http.StatusGone
-	case CodeAppAdmissionUnavailable, CodeCapacity, CodeDeploymentVerificationUnavailable, CodeServiceRecoveryCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
+	case CodeAppAdmissionUnavailable, CodeDeploymentVerificationUnavailable, CodeServiceRecoveryCapacity, CodeTrafficPolicyUnavailable, CodeHTTPAdmissionUnavailable, CodeEgressCircuitUnavailable, CodeEgressCircuitDisabled, CodeCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
 		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable:
 		return http.StatusServiceUnavailable
@@ -1954,7 +1966,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
+	case CodeEgressCircuitRevision, CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid, CodeSecurityPostureBlocked:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -2761,6 +2773,46 @@ func ErrRequestBodyTooLarge(limit, observed int64) *Problem {
 		WithByteLimit(limit, observed).
 		WithDocs(docsBase + "/storage#signed-uploads").
 		WithHint("For larger uploads, use a bucket signed URL (gregale storage ... signed-url).")
+}
+
+// ErrTrafficPolicyTooLarge reports an unsaved runtime policy projection.
+func ErrTrafficPolicyTooLarge(scope string, limit, observed int64) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeTrafficPolicyTooLarge,
+		"Traffic policy too large",
+		fmt.Sprintf("%s runtime projection is %d bytes, above the %d-byte cap; no policy was changed", scope, observed, limit)).
+		WithByteLimit(limit, observed).
+		WithDocs(docsBase + "/plans#edge-rules").
+		WithHint("Reduce policy values and replace the policy. Clear an environment overlay or disable and clear its scoped route contract to recover it.")
+}
+
+// ErrTrafficPolicyAggregateTooLarge reports the combined policy selected by
+// an overlapping host language, including distinct referenced CORS presets.
+func ErrTrafficPolicyAggregateTooLarge(scope, unit string, limit, observed int64) *Problem {
+	problem := NewProblem(http.StatusUnprocessableEntity, CodeTrafficPolicyTooLarge,
+		"Traffic policy too large",
+		fmt.Sprintf("%s host aggregate is %d %s, above the %d cap; no policy was changed", scope, observed, unit, limit)).
+		WithLimit(limit, observed).
+		WithDocs(docsBase + "/plans#edge-rules").
+		WithHint("Reduce rules or preset values that match the same host. Size-reducing repairs to an existing oversized host remain allowed.")
+	if unit == "bytes" {
+		problem = problem.WithByteLimit(limit, observed)
+	}
+	return problem
+}
+
+// ErrTrafficPolicyTooComplex distinguishes an unfinished bounded analysis
+// from a proved oversized policy. The mutation has not been saved.
+func ErrTrafficPolicyTooComplex(scope, unit string, limit, observed int64) *Problem {
+	problem := NewProblem(http.StatusUnprocessableEntity, CodeTrafficPolicyTooComplex,
+		"Traffic policy analysis limit reached",
+		fmt.Sprintf("%s analysis reached %d %s, above the %d cap; no policy was changed", scope, observed, unit, limit)).
+		WithLimit(limit, observed).
+		WithDocs(docsBase + "/plans#edge-rules").
+		WithHint("Simplify host selectors, replace legacy rules with the supported API shape, or remove unused rules, then retry. Analysis could not verify the proposed policy within its limits.")
+	if unit == "bytes" {
+		problem = problem.WithByteLimit(limit, observed)
+	}
+	return problem
 }
 
 // ErrRequestUploadTimeout reports a stalled or too-slow inbound upload. The
@@ -3653,7 +3705,11 @@ const (
 	// handler body" — surfaces this single stable code on every
 	// outbound problem envelope so an SDK can branch on it
 	// without parsing prose. ADR-093 §Decision.
-	CodeRequestBudgetExceeded = "request_budget_exceeded"
+	CodeRequestBudgetExceeded        = "request_budget_exceeded"
+	CodeTrafficRevoked               = "traffic_revoked"
+	CodeTrafficRevocationUnavailable = "traffic_revocation_unavailable"
+	CodeTrafficDeadlineUnavailable   = "traffic_deadline_unavailable"
+	CodeTrafficDeadlineInvalid       = "traffic_deadline_invalid"
 	// CodeCircuitOpen is the 503 the public gateway answers when every
 	// candidate instance of an app has an open instance-health circuit
 	// (ADR-201 §2). It carries Retry-After.

@@ -29,6 +29,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -205,7 +206,7 @@ func LoadConfig(path string) (*Config, error) {
 		// / `faas-githubd` doesn't exist in the test container).
 		ListenAddr:     "127.0.0.1:8081",
 		GithubdSocket:  "/run/faas/githubd.sock",
-		AppsDomain:     "gregale.dev",
+		AppsDomain:     hostidentity.DefaultAppsDomain,
 		CLIAuthURLBase: defaultCLIAuthURLBase,
 		// Issue #995 Phase 1: seed the timeout / header defaults
 		// so a partial toml still produces the hardened listener.

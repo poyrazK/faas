@@ -792,6 +792,7 @@ var cliCommands = []cliCommand{
 				{Name: "set", Short: "Pin a static outbound address", Positionals: []string{"<ip>"}},
 				{Name: "clear", Short: "Clear the pinned outbound address"},
 			}},
+			{Name: "traffic-status", Short: "Show policy convergence and fresh gateway traffic wiring"},
 			{Name: "routes", Short: "List admitted per-route labels for one app"},
 			{Name: "tcp", Short: "Manage raw TCP listeners"},
 		},

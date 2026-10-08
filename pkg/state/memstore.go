@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/netip"
 	"reflect"
@@ -29,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/hostport"
+	"github.com/onebox-faas/faas/pkg/openapiimport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -138,6 +140,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	trafficAppsSuffix           string
 	deploymentDependencyGates   map[string]DeploymentDependencyGate
 	invocationAttemptHistory    map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID     int64
@@ -1148,8 +1151,9 @@ type builderVMCleanupRow struct {
 // The seed mirrors migrations/00024_compute_nodes.sql so unit tests
 // don't have to call CreateComputeNode to exercise the single-box path.
 // Production (PgStore) gets the same row from the migration.
-func NewMemStore() *MemStore {
+func NewMemStore(options ...StoreOption) *MemStore {
 	m := &MemStore{
+		trafficAppsSuffix:           configuredTrafficAppsSuffix(options),
 		deploymentDependencyGates:   map[string]DeploymentDependencyGate{},
 		qualificationExecutions:     map[string]EnvironmentQualificationExecutionStatus{},
 		financialRetainedFrom:       time.Now().UTC(),
@@ -3074,14 +3078,19 @@ func (m *MemStore) CreateProject(_ context.Context, p Project) (Project, error) 
 }
 
 func (m *MemStore) seedProjectProductionEnvironmentLocked(p Project) {
+	env := m.projectProductionEnvironmentLocked(p)
+	m.projectEnvironments[env.ID] = env
+}
+
+func (m *MemStore) projectProductionEnvironmentLocked(p Project) ProjectEnvironment {
 	for _, env := range m.projectEnvironments {
 		if env.ProjectID == p.ID && env.Slug == "production" {
-			return
+			return env
 		}
 	}
 	now := time.Now()
 	id := newID()
-	m.projectEnvironments[id] = ProjectEnvironment{
+	return ProjectEnvironment{
 		ID: id, AccountID: p.AccountID, ProjectID: p.ID, Slug: "production",
 		Protected: true, CreatedAt: now, UpdatedAt: now,
 	}
@@ -3378,7 +3387,7 @@ func (m *MemStore) ProjectEnvironmentByID(_ context.Context, id string) (Project
 	return environment, nil
 }
 
-func (m *MemStore) CreateProjectEnvironment(_ context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
+func (m *MemStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	project, ok := m.projects[env.ProjectID]
@@ -3403,6 +3412,9 @@ func (m *MemStore) CreateProjectEnvironment(_ context.Context, env ProjectEnviro
 		env.CreatedAt = now
 	}
 	env.UpdatedAt = now
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, env.AccountID, memTrafficPolicyChange{Environments: map[string]ProjectEnvironment{env.ID: env}}); err != nil {
+		return ProjectEnvironment{}, err
+	}
 	m.projectEnvironments[env.ID] = env
 	return env, nil
 }
@@ -3679,7 +3691,7 @@ func (m *MemStore) ConsumeProjectEnvironmentApproval(_ context.Context, accountI
 // insert for project + apps + crons inside one Tx so the apid
 // "one keypress" path either lands the whole set or nothing.
 func (m *MemStore) ApplyProjectPlan(
-	_ context.Context,
+	ctx context.Context,
 	project Project,
 	apps []App,
 	crons []Cron,
@@ -3782,8 +3794,7 @@ func (m *MemStore) ApplyProjectPlan(
 	if project.ScanSource == "" {
 		project.ScanSource = ProjectScanSourceUnknown
 	}
-	m.projects[project.ID] = project
-	m.seedProjectProductionEnvironmentLocked(project)
+	environment := m.projectProductionEnvironmentLocked(project)
 
 	// 6. Insert apps. The apply handler resolves crons[i].AppID
 	// against the just-inserted apps — callers see the same Cron
@@ -3805,9 +3816,20 @@ func (m *MemStore) ApplyProjectPlan(
 			a.CPUMillicores = api.DefaultAppCPUMillicores
 		}
 		a.CreatedAt = now
-		m.ensureServiceAddressIndexLocked(&a)
-		m.apps[a.ID] = a
 		insertedApps = append(insertedApps, a)
+	}
+	change := memTrafficPolicyChange{Apps: make(map[string]App, len(insertedApps)), Environments: map[string]ProjectEnvironment{environment.ID: environment}}
+	for _, app := range insertedApps {
+		change.Apps[app.ID] = app
+	}
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, project.AccountID, change); err != nil {
+		return Project{}, nil, nil, err
+	}
+	m.projects[project.ID] = project
+	m.projectEnvironments[environment.ID] = environment
+	for _, app := range insertedApps {
+		m.ensureServiceAddressIndexLocked(&app)
+		m.apps[app.ID] = app
 	}
 
 	// 7. Insert crons (AppID is the caller's responsibility to set
@@ -3831,12 +3853,11 @@ func (m *MemStore) ApplyProjectPlan(
 }
 
 // ApplyProjectReconcile applies an existing project's desired app and cron
-// membership under one MemStore critical section. The map snapshots make
-// the operation rollback-safe even when a validation or uniqueness error is
-// discovered after an earlier mutation; PostgreSQL provides the equivalent
-// guarantee with its transaction in pgstore.go.
+// membership under one MemStore critical section. Proposed app, cron and project
+// changes remain staged until the final binding topology passes analysis;
+// PostgreSQL provides the equivalent guarantee with its guarded transaction.
 func (m *MemStore) ApplyProjectReconcile(
-	_ context.Context,
+	ctx context.Context,
 	project Project,
 	mutations []ProjectReconcileMutation,
 	desiredCrons []ProjectReconcileCron,
@@ -3851,25 +3872,12 @@ func (m *MemStore) ApplyProjectReconcile(
 	if !ok || storedProject.AccountID != project.AccountID {
 		return ProjectReconcileResult{}, ErrNotFound
 	}
-	appsBackup := make(map[string]App, len(m.apps))
-	for id, app := range m.apps {
-		appsBackup[id] = app
-	}
-	cronsBackup := make(map[string]Cron, len(m.crons))
-	for id, cron := range m.crons {
-		cronsBackup[id] = cron
-	}
-	projectBackup := storedProject
-	rollback := func(err error) (ProjectReconcileResult, error) {
-		m.apps = appsBackup
-		m.crons = cronsBackup
-		m.projects[project.ID] = projectBackup
-		return ProjectReconcileResult{}, err
-	}
+	stagedApps := maps.Clone(m.apps)
+	stagedCrons := maps.Clone(m.crons)
 
 	// Validate the action vocabulary and ownership before mutating anything.
 	liveProjectApps := make(map[string]App)
-	for id, app := range m.apps {
+	for id, app := range stagedApps {
 		if app.ProjectID == project.ID && app.AccountID == project.AccountID && app.PreviewOfSlug == "" && app.Status != AppDeleted {
 			liveProjectApps[id] = app
 		}
@@ -3892,31 +3900,31 @@ func (m *MemStore) ApplyProjectReconcile(
 		switch mutation.Op {
 		case "create":
 			if mutation.App.PreviewOfSlug != "" || mutation.App.PreviewPrNumber != 0 {
-				return rollback(ErrConflict)
+				return ProjectReconcileResult{}, ErrConflict
 			}
 			creates++
 			key := mutation.App.WorkloadName
 			if _, exists := workloadKeys[key]; exists {
-				return rollback(ErrConflict)
+				return ProjectReconcileResult{}, ErrConflict
 			}
 			workloadKeys[key] = mutation.App.ID
-			for _, existing := range m.apps {
+			for _, existing := range stagedApps {
 				if existing.Status != AppDeleted && existing.Slug == mutation.App.Slug && !removeIDs[existing.ID] {
-					return rollback(ErrConflict)
+					return ProjectReconcileResult{}, ErrConflict
 				}
 			}
 			if newSlugs[mutation.App.Slug] {
-				return rollback(ErrConflict)
+				return ProjectReconcileResult{}, ErrConflict
 			}
 			newSlugs[mutation.App.Slug] = true
 		case "update", "remove":
 			existing, found := liveProjectApps[mutation.App.ID]
 			if !found || existing.AccountID != project.AccountID {
-				return rollback(ErrNotFound)
+				return ProjectReconcileResult{}, ErrNotFound
 			}
 			if mutation.Op == "remove" {
 				if seenRemoves[mutation.App.ID] {
-					return rollback(ErrConflict)
+					return ProjectReconcileResult{}, ErrConflict
 				}
 				seenRemoves[mutation.App.ID] = true
 				removes++
@@ -3924,35 +3932,32 @@ func (m *MemStore) ApplyProjectReconcile(
 			} else {
 				key := mutation.App.WorkloadName
 				if prior, exists := workloadKeys[key]; exists && prior != mutation.App.ID {
-					return rollback(ErrConflict)
+					return ProjectReconcileResult{}, ErrConflict
 				}
 				delete(workloadKeys, existing.WorkloadName)
 				workloadKeys[key] = mutation.App.ID
 			}
 		default:
-			return rollback(fmt.Errorf("state: unknown project reconcile operation %q", mutation.Op))
+			return ProjectReconcileResult{}, fmt.Errorf("state: unknown project reconcile operation %q", mutation.Op)
 		}
 	}
 
 	observedApps := 0
-	for _, app := range m.apps {
+	for _, app := range stagedApps {
 		if app.AccountID == project.AccountID && (app.Status == AppActive || app.Status == AppEvictedCold) && app.PreviewOfSlug == "" {
 			observedApps++
 		}
 	}
 	if observedApps-removes+creates > limits.DeployedApps {
-		return rollback(&QuotaError{Kind: QuotaErrorKindApps, Limit: limits.DeployedApps, Observed: observedApps - removes + creates})
+		return ProjectReconcileResult{}, &QuotaError{Kind: QuotaErrorKindApps, Limit: limits.DeployedApps, Observed: observedApps - removes + creates}
 	}
 
-	if err := m.checkServiceCapacityChangeLocked(capacityBefore, false); err != nil {
-		return rollback(err)
-	}
 	if desiredCrons != nil {
 		desiredPerWorkload := make(map[string]int)
 		for _, cron := range desiredCrons {
 			desiredPerWorkload[cron.WorkloadName]++
 			if limits.CronLimitPerApp > 0 && desiredPerWorkload[cron.WorkloadName] > limits.CronLimitPerApp {
-				return rollback(&QuotaError{Kind: QuotaErrorKindCrons, Limit: limits.CronLimitPerApp, Observed: desiredPerWorkload[cron.WorkloadName]})
+				return ProjectReconcileResult{}, &QuotaError{Kind: QuotaErrorKindCrons, Limit: limits.CronLimitPerApp, Observed: desiredPerWorkload[cron.WorkloadName]}
 			}
 		}
 		projectAppIDs := make(map[string]bool, len(liveProjectApps))
@@ -3961,8 +3966,8 @@ func (m *MemStore) ApplyProjectReconcile(
 		}
 		observedCrons := 0
 		projectCronCount := 0
-		for _, cron := range m.crons {
-			app, exists := m.apps[cron.AppID]
+		for _, cron := range stagedCrons {
+			app, exists := stagedApps[cron.AppID]
 			if !exists || app.Status == AppDeleted || app.AccountID != project.AccountID {
 				continue
 			}
@@ -3972,11 +3977,11 @@ func (m *MemStore) ApplyProjectReconcile(
 			}
 		}
 		if len(desiredCrons) > 0 && limits.CronLimitPerAccount == 0 {
-			return rollback(&QuotaError{Kind: QuotaErrorKindCrons, NotAllowed: true})
+			return ProjectReconcileResult{}, &QuotaError{Kind: QuotaErrorKindCrons, NotAllowed: true}
 		}
 		projectedCrons := observedCrons - projectCronCount + len(desiredCrons)
 		if projectedCrons > limits.CronLimitPerAccount {
-			return rollback(&QuotaError{Kind: QuotaErrorKindCrons, Limit: limits.CronLimitPerAccount, Observed: projectedCrons})
+			return ProjectReconcileResult{}, &QuotaError{Kind: QuotaErrorKindCrons, Limit: limits.CronLimitPerAccount, Observed: projectedCrons}
 		}
 	}
 
@@ -3986,7 +3991,7 @@ func (m *MemStore) ApplyProjectReconcile(
 		case "create":
 			app := mutation.App
 			var tombstone App
-			for _, existing := range m.apps {
+			for _, existing := range stagedApps {
 				if existing.AccountID == project.AccountID && existing.ProjectID == project.ID &&
 					existing.WorkloadName == app.WorkloadName && existing.PreviewOfSlug == "" && existing.Status == AppDeleted {
 					tombstone = existing
@@ -4006,8 +4011,7 @@ func (m *MemStore) ApplyProjectReconcile(
 				tombstone.Status = AppActive
 				tombstone.DeletedAt = nil
 				tombstone.DeleteGraceUntil = nil
-				m.ensureServiceAddressIndexLocked(&tombstone)
-				m.apps[tombstone.ID] = tombstone
+				stagedApps[tombstone.ID] = tombstone
 				out.Added = append(out.Added, tombstone)
 				continue
 			}
@@ -4033,12 +4037,10 @@ func (m *MemStore) ApplyProjectReconcile(
 			if app.CreatedAt.IsZero() {
 				app.CreatedAt = time.Now()
 			}
-			m.ensureServiceAddressIndexLocked(&app)
-			m.apps[app.ID] = app
+			stagedApps[app.ID] = app
 			out.Added = append(out.Added, app)
 		case "update":
-			app := m.apps[mutation.App.ID]
-			before := app
+			app := stagedApps[mutation.App.ID]
 			app.RootDir = mutation.App.RootDir
 			app.WorkloadName = mutation.App.WorkloadName
 			app.WorkloadClass = mutation.App.WorkloadClass
@@ -4047,13 +4049,10 @@ func (m *MemStore) ApplyProjectReconcile(
 			if mutation.SetPlatformTenantRequired {
 				app.PlatformTenantRequired = mutation.App.PlatformTenantRequired
 			}
-			m.apps[app.ID] = app
-			if routeCheckAppInputsChanged(before, app) {
-				m.enqueueRoutePolicyChecksLocked(app.ID)
-			}
+			stagedApps[app.ID] = app
 			out.Changed = append(out.Changed, app)
 		case "remove":
-			app := m.apps[mutation.App.ID]
+			app := stagedApps[mutation.App.ID]
 			now := time.Now().UTC()
 			deadline := now.Add(AppDeleteGraceDuration())
 			app.Status = AppDeleted
@@ -4063,7 +4062,7 @@ func (m *MemStore) ApplyProjectReconcile(
 			if app.DeleteGraceUntil == nil {
 				app.DeleteGraceUntil = &deadline
 			}
-			m.apps[app.ID] = app
+			stagedApps[app.ID] = app
 			out.Removed = append(out.Removed, app)
 		}
 	}
@@ -4073,7 +4072,7 @@ func (m *MemStore) ApplyProjectReconcile(
 		// identities retain their row ID while enabled state is updated; removed
 		// schedules are deleted and new schedules are inserted.
 		appByWorkload := make(map[string]string)
-		for id, app := range m.apps {
+		for id, app := range stagedApps {
 			if app.ProjectID == project.ID && app.AccountID == project.AccountID && app.PreviewOfSlug == "" && app.Status != AppDeleted {
 				appByWorkload[app.WorkloadName] = id
 			}
@@ -4083,26 +4082,26 @@ func (m *MemStore) ApplyProjectReconcile(
 		for _, cron := range desiredCrons {
 			appID := appByWorkload[cron.WorkloadName]
 			if appID == "" {
-				return rollback(fmt.Errorf("state: cron workload %q has no project app", cron.WorkloadName))
+				return ProjectReconcileResult{}, fmt.Errorf("state: cron workload %q has no project app", cron.WorkloadName)
 			}
 			key := cron.Schedule + "\x00" + cron.Path
 			if desiredByApp[appID] == nil {
 				desiredByApp[appID] = make(map[string]ProjectReconcileCron)
 			}
 			if _, duplicate := desiredByApp[appID][key]; duplicate {
-				return rollback(fmt.Errorf("state: duplicate project cron for workload %q schedule %q path %q", cron.WorkloadName, cron.Schedule, cron.Path))
+				return ProjectReconcileResult{}, fmt.Errorf("state: duplicate project cron for workload %q schedule %q path %q", cron.WorkloadName, cron.Schedule, cron.Path)
 			}
 			desiredByApp[appID][key] = cron
 			desiredOrder[appID] = append(desiredOrder[appID], key)
 		}
 		kept := make(map[string]map[string]bool)
-		for id, cron := range m.crons {
-			app := m.apps[cron.AppID]
+		for id, cron := range stagedCrons {
+			app := stagedApps[cron.AppID]
 			if app.ProjectID != project.ID || app.AccountID != project.AccountID || app.PreviewOfSlug != "" {
 				continue
 			}
 			if app.Status == AppDeleted {
-				delete(m.crons, id)
+				delete(stagedCrons, id)
 				continue
 			}
 			// Command crons are explicitly managed through `gregale crons`;
@@ -4113,7 +4112,7 @@ func (m *MemStore) ApplyProjectReconcile(
 			key := cron.Schedule + "\x00" + cron.Path
 			desired, keep := desiredByApp[cron.AppID][key]
 			if !keep || kept[cron.AppID][key] {
-				delete(m.crons, id)
+				delete(stagedCrons, id)
 				continue
 			}
 			cron.Enabled = desired.Enabled
@@ -4121,7 +4120,7 @@ func (m *MemStore) ApplyProjectReconcile(
 				kept[cron.AppID] = make(map[string]bool)
 			}
 			kept[cron.AppID][key] = true
-			m.crons[id] = cron
+			stagedCrons[id] = cron
 		}
 		for appID, keys := range desiredOrder {
 			for _, key := range keys {
@@ -4130,20 +4129,41 @@ func (m *MemStore) ApplyProjectReconcile(
 				}
 				desired := desiredByApp[appID][key]
 				id := newID()
-				m.crons[id] = Cron{ID: id, AppID: appID, Schedule: desired.Schedule, Path: desired.Path, Enabled: desired.Enabled, Timezone: "UTC", CreatedAt: time.Now()}
+				stagedCrons[id] = Cron{ID: id, AppID: appID, Schedule: desired.Schedule, Path: desired.Path, Enabled: desired.Enabled, Timezone: "UTC", CreatedAt: time.Now()}
 			}
 		}
 	}
 
 	if scanSource != "" && tierRank(scanSource) < tierRank(storedProject.ScanSource) {
-		return rollback(ErrScanSourceDowngrade)
+		return ProjectReconcileResult{}, ErrScanSourceDowngrade
 	}
 	if scanSource != "" {
 		storedProject.ScanSource = scanSource
 		storedProject.UpdatedAt = time.Now()
-		m.projects[project.ID] = storedProject
 	}
 	out.Project = storedProject
+	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, project.AccountID, nil, "", memTrafficPolicyChange{Apps: stagedApps})); err != nil {
+		return ProjectReconcileResult{}, err
+	}
+	beforeApps := m.apps
+	m.apps = stagedApps
+	capacityErr := m.checkServiceCapacityChangeLocked(capacityBefore, false)
+	m.apps = beforeApps
+	if capacityErr != nil {
+		return ProjectReconcileResult{}, capacityErr
+	}
+	m.apps, m.crons = stagedApps, stagedCrons
+	// Allocate addresses only once both traffic and capacity validation have
+	// accepted the proposed topology. Refused creates must not consume indices.
+	for _, app := range out.Added {
+		m.ensureServiceAddressIndexLocked(&app)
+	}
+	for _, app := range out.Changed {
+		if routeCheckAppInputsChanged(beforeApps[app.ID], app) {
+			m.enqueueRoutePolicyChecksLocked(app.ID)
+		}
+	}
+	m.projects[project.ID] = storedProject
 	return out, nil
 }
 
@@ -4165,7 +4185,7 @@ func (m *MemStore) ensureAppOrgLocked(app *App) {
 	}
 }
 
-func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
+func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, a := range m.apps {
@@ -4226,6 +4246,9 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 		return App{}, err
 	}
 	m.ensureAppOrgLocked(&app)
+	if err := m.validateMemAppTrafficChangeLocked(ctx, app); err != nil {
+		return App{}, err
+	}
 	m.ensureServiceAddressIndexLocked(&app)
 	m.apps[app.ID] = app
 	return app, nil
@@ -4237,15 +4260,15 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 // so a Free account that already holds 1 app always sees observed=1 on
 // the second call. The handler's CreateApp call site becomes store-
 // agnostic.
-func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.Limits) (App, error) {
+func (m *MemStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.createAppIfUnderQuotaLocked(app, limits)
+	return m.createAppIfUnderQuotaLocked(ctx, app, limits)
 }
 
 // CreatePRPreviewAppsIfUnderQuota mirrors PgStore's all-or-nothing preview
 // reservation. The mutex covers the full batch, including quota accounting.
-func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App, limits api.Limits) ([]App, error) {
+func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(ctx context.Context, apps []App, limits api.Limits) ([]App, error) {
 	if err := validatePRPreviewBatch(apps); err != nil {
 		return nil, err
 	}
@@ -4257,18 +4280,12 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	for i := range apps {
 		m.ensureAppOrgLocked(&apps[i])
 	}
+	stagedApps := maps.Clone(m.apps)
 	created := make([]App, 0, len(apps))
-	insertedIDs := make([]string, 0, len(apps))
-	rollback := func(err error) ([]App, error) {
-		for _, id := range insertedIDs {
-			delete(m.apps, id)
-		}
-		return nil, err
-	}
 	for _, app := range apps {
-		row, err := m.createAppIfUnderQuotaLocked(app, limits)
+		row, err := m.prepareAppIfUnderQuotaLocked(app, limits, stagedApps)
 		if errors.Is(err, ErrConflict) {
-			for _, existing := range m.apps {
+			for _, existing := range stagedApps {
 				if existing.Slug == app.Slug && existing.Status != AppDeleted {
 					row = existing
 					if samePRPreview(existing, app) {
@@ -4278,12 +4295,19 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 				}
 			}
 		} else if err == nil {
-			insertedIDs = append(insertedIDs, row.ID)
+			stagedApps[row.ID] = row
 		}
 		if err != nil {
-			return rollback(err)
+			return nil, err
 		}
 		created = append(created, row)
+	}
+	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, apps[0].AccountID, nil, "", memTrafficPolicyChange{Apps: stagedApps})); err != nil {
+		return nil, err
+	}
+	m.apps = stagedApps
+	for _, app := range created {
+		m.ensureServiceAddressIndexLocked(&app)
 	}
 	return created, nil
 }
@@ -4291,10 +4315,14 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 // checkAppQuotaLocked mirrors PgStore's checkAppQuotaTx predicates,
 // including the separate developer-environment cap. Caller holds m.mu.
 func (m *MemStore) checkAppQuotaLocked(app App, limits api.Limits) error {
+	return checkAppQuotaInApps(app, limits, m.apps)
+}
+
+func checkAppQuotaInApps(app App, limits api.Limits, apps map[string]App) error {
 	observed := 0
 	developer := IsDeveloperApp(app)
 	preview := IsPRPreviewApp(app)
-	for _, a := range m.apps {
+	for _, a := range apps {
 		if a.AccountID != app.AccountID || (a.Status != AppActive && a.Status != AppEvictedCold) {
 			continue
 		}
@@ -4324,19 +4352,34 @@ func (m *MemStore) checkAppQuotaLocked(app App, limits api.Limits) error {
 	return nil
 }
 
-func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App, error) {
+func (m *MemStore) createAppIfUnderQuotaLocked(ctx context.Context, app App, limits api.Limits) (App, error) {
+	app, err := m.prepareAppIfUnderQuotaLocked(app, limits, m.apps)
+	if err != nil {
+		return App{}, err
+	}
+	if err := m.validateMemAppTrafficChangeLocked(ctx, app); err != nil {
+		return App{}, err
+	}
+	m.ensureServiceAddressIndexLocked(&app)
+	m.apps[app.ID] = app
+	return app, nil
+}
+
+// prepareAppIfUnderQuotaLocked constructs an app against a proposed map. The
+// caller holds m.mu and must validate the final topology before publishing it.
+func (m *MemStore) prepareAppIfUnderQuotaLocked(app App, limits api.Limits, apps map[string]App) (App, error) {
 	if _, ok := m.accounts[app.AccountID]; !ok {
 		return App{}, ErrNotFound
 	}
 	// 1. Return the slug collision before quota. Deploy clients use this
 	// signal to fetch and continue with an app they previously reserved.
-	for _, a := range m.apps {
+	for _, a := range apps {
 		if a.Slug == app.Slug && a.Status != AppDeleted {
 			return App{}, ErrConflict
 		}
 	}
 	// 2. Authoritative count under the same lock.
-	if err := m.checkAppQuotaLocked(app, limits); err != nil {
+	if err := checkAppQuotaInApps(app, limits, apps); err != nil {
 		return App{}, err
 	}
 	// 3. Conditional insert. The lock keeps the collision check above and
@@ -4386,14 +4429,16 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 		return App{}, err
 	}
 	m.ensureAppOrgLocked(&app)
-	m.ensureServiceAddressIndexLocked(&app)
-	m.apps[app.ID] = app
 	return app, nil
 }
 
 func (m *MemStore) AppByID(_ context.Context, id string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.appByIDLocked(id)
+}
+
+func (m *MemStore) appByIDLocked(id string) (App, error) {
 	a, ok := m.apps[id]
 	if !ok {
 		// Production UUID columns accept canonical dashed UUIDs while
@@ -5952,7 +5997,7 @@ func (m *MemStore) UpdateAppWithActivity(ctx context.Context, id string, p Updat
 	return app, outboxID, err
 }
 
-func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateAppParams, entry *OrgActivity, build OrgActivityAppConfigBuilder, outboxID *int64) (App, error) {
+func (m *MemStore) updateAppWithActivity(ctx context.Context, id string, p UpdateAppParams, entry *OrgActivity, build OrgActivityAppConfigBuilder, outboxID *int64) (App, error) {
 	if (p.SetRequestRateLimitRPS && p.RequestRateLimitRPS != nil && *p.RequestRateLimitRPS < 0) ||
 		(p.SetRequestRateLimitBurst && p.RequestRateLimitBurst != nil && *p.RequestRateLimitBurst < 0) {
 		return App{}, ErrInvalidArgument
@@ -6041,6 +6086,11 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 			recordActivity = true
 		}
 	}
+	if appConfigChangesTrafficScope(p) {
+		if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
+			return App{}, err
+		}
+	}
 	if err := m.checkServiceCapacityAppLocked(a); err != nil {
 		return App{}, err
 	}
@@ -6065,7 +6115,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 // CompareAndSetAppStatus is the in-memory equivalent of PgStore's atomic
 // lifecycle claim. Holding m.mu across the predicate and write makes parallel
 // restart requests deterministic in tests and local development.
-func (m *MemStore) CompareAndSetAppStatus(_ context.Context, id string, from, to AppStatus) (bool, error) {
+func (m *MemStore) CompareAndSetAppStatus(ctx context.Context, id string, from, to AppStatus) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
@@ -6076,6 +6126,11 @@ func (m *MemStore) CompareAndSetAppStatus(_ context.Context, id string, from, to
 		return false, nil
 	}
 	a.Status = to
+	if from != to && (from == AppDeleted || to == AppDeleted) {
+		if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
+			return false, err
+		}
+	}
 	if err := m.checkServiceCapacityAppLocked(a); err != nil {
 		return false, err
 	}
@@ -6093,7 +6148,7 @@ func (m *MemStore) CompareAndSetAppStatus(_ context.Context, id string, from, to
 // in-memory map under lock for the (accountID, oldSlug) pair; rejects
 // newSlug collisions with ErrConflict so tests can exercise the same
 // 409 surface PgStore produces from the apps.slug unique constraint.
-func (m *MemStore) RenameApp(_ context.Context, accountID, oldSlug, newSlug string) (App, error) {
+func (m *MemStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var found *App
@@ -6115,6 +6170,9 @@ func (m *MemStore) RenameApp(_ context.Context, accountID, oldSlug, newSlug stri
 		}
 	}
 	found.Slug = newSlug
+	if err := m.validateMemAppTrafficChangeLocked(ctx, *found); err != nil {
+		return App{}, err
+	}
 	m.apps[found.ID] = *found
 	return *found, nil
 }
@@ -6166,20 +6224,20 @@ func (m *MemStore) DeleteApp(ctx context.Context, id string) error {
 
 // ScheduleAppDeletion stamps a restorable tombstone. Repeated calls preserve
 // the first deadline, matching the PostgreSQL COALESCE update.
-func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil time.Time) (App, error) {
-	a, _, err := m.scheduleAppDeletion(id, graceUntil, nil)
+func (m *MemStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time) (App, error) {
+	a, _, err := m.scheduleAppDeletion(ctx, id, graceUntil, nil)
 	return a, err
 }
 
-func (m *MemStore) RestoreApp(_ context.Context, id string, limits api.Limits) (App, error) {
+func (m *MemStore) RestoreApp(ctx context.Context, id string, limits api.Limits) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.restoreAppLocked(id, limits)
+	return m.restoreAppLocked(ctx, id, limits)
 }
 
 // restoreAppLocked is the restore body shared by RestoreApp and
 // RestoreAppWithActivity. Caller holds m.mu.
-func (m *MemStore) restoreAppLocked(id string, limits api.Limits) (App, error) {
+func (m *MemStore) restoreAppLocked(ctx context.Context, id string, limits api.Limits) (App, error) {
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
@@ -6193,6 +6251,9 @@ func (m *MemStore) restoreAppLocked(id string, limits api.Limits) (App, error) {
 	a.Status = AppActive
 	a.DeletedAt = nil
 	a.DeleteGraceUntil = nil
+	if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
+		return App{}, err
+	}
 	if err := m.checkServiceCapacityAppLocked(a); err != nil {
 		return App{}, err
 	}
@@ -6299,7 +6360,7 @@ func (m *MemStore) ClaimAppDeletion(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
+func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
@@ -6318,6 +6379,10 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	if err := m.checkMemTrafficAppPurgeLocked(ctx, a); err != nil {
+		return err
+	}
+	m.publishMemTrafficAppPurgeLocked(id)
 	m.forgetOwnedOperationsLocked("", id)
 	delete(m.appDeletionClaims, id)
 	m.deleteAppWorkOwnershipLocked(id)
@@ -6411,6 +6476,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	for buildID := range buildIDs {
 		delete(m.buildProvenance, buildID)
+		delete(m.builderVMCleanup, buildID)
 	}
 	filtered := m.snapshots[:0]
 	for _, snap := range m.snapshots {
@@ -6486,7 +6552,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 // SoftDeleteAppCascade marks the app deleted and atomically cancels
 // non-terminal deployment/build work. Child rows survive for history and
 // slug reuse, but no pipeline writer may resume work after acknowledgement.
-func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, error) {
+func (m *MemStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
@@ -6511,7 +6577,11 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	if a.DeleteGraceUntil == nil {
 		a.DeleteGraceUntil = &deadline
 	}
+	if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
+		return App{}, err
+	}
 	m.apps[id] = a
+	m.cancelAppInvocationsLocked(id, now)
 	for _, memory := range sources {
 		touchGitOpsMemoryIntent(memory)
 	}
@@ -6909,16 +6979,16 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // the new row. The race-free supersede closes the same TOCTOU the
 // image: branch had before, and gives the tarball branch the parity
 // it has always lacked.
-func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
-	created, _, err := m.createDeployment(d, nil, nil)
+func (m *MemStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
+	created, _, err := m.createDeployment(ctx, d, nil, nil)
 	return created, err
 }
 
-func (m *MemStore) CreateDeploymentWithActivity(_ context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
-	return m.createDeployment(d, &activity, nil)
+func (m *MemStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
+	return m.createDeployment(ctx, d, &activity, nil)
 }
 
-func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
+func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
 	if d.EnvironmentWorkloadHeld() {
 		return Deployment{}, 0, ErrInvalidArgument
 	}
@@ -7072,10 +7142,10 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 			hasPrior = true
 		}
 	}
+	proposed := make(map[string]Deployment)
 	if hasPrior && d.CanaryTotalSteps <= 0 && !serviceRollout {
-		// Match PgStore exactly: mutate the stored prior in-place so
-		// subsequent LatestDeployment / DeploymentByID readers see
-		// the supersede immediately, under m.mu.
+		// Stage the prior alongside the new row. The traffic verdict
+		// precedes publication of either row or the activity receipt.
 		//
 		// Issue #556 PR-A: zero the prior row's traffic_percent so
 		// Σ over live rows remains 100 by construction. The new row
@@ -7085,7 +7155,7 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 		prior := m.deployments[priorID]
 		prior.Status = DeploySuperseded
 		prior.TrafficPercent = 0
-		m.putDeploymentLocked(priorID, prior)
+		proposed[priorID] = prior
 	}
 
 	if d.CreatedAt.IsZero() {
@@ -7118,8 +7188,14 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	if d.Revision <= 0 {
 		d.Revision = m.nextDeploymentRevisionLocked(d.AppID)
 	}
+	proposed[d.ID] = d
+	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, app.AccountID, nil, app.ID, memTrafficPolicyChange{Deployments: proposed})); err != nil {
+		return Deployment{}, 0, err
+	}
 	m.recordRecoveryPredecessorLocked(d)
-	m.putDeploymentLocked(d.ID, d)
+	for id, row := range proposed {
+		m.putDeploymentLocked(id, row)
+	}
 	if dependencyGate != nil {
 		m.deploymentDependencyGates[d.ID] = *dependencyGate
 	}
@@ -8329,7 +8405,7 @@ func (m *MemStore) ListDeploymentsForAccountPage(_ context.Context, accountID st
 	return all, nil
 }
 
-func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status DeploymentStatus, errMsg string) error {
+func (m *MemStore) UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
@@ -8370,6 +8446,10 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	} else {
 		d.Status = status
 		d.Error = errMsg
+		d = m.preserveFailedRollbackTargetLocked(id, d)
+		if err := m.checkMemTrafficDeploymentChangeLocked(ctx, d); err != nil {
+			return err
+		}
 		m.putDeploymentLocked(id, d)
 		if status == DeployLive && previousStatus != DeployLive {
 			m.enqueueDeploymentLifecycleWebhooksLocked(d)
@@ -8552,6 +8632,12 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 				}
 			}
 		}
+	}
+
+	next := d
+	next.Status = DeployLive
+	if err := m.checkMemTrafficDeploymentChangeLocked(ctx, next); err != nil {
+		return err
 	}
 
 	if _, gateErr := m.checkDeploymentDependenciesLocked(id, time.Now().UTC(), false); gateErr != nil {
@@ -10101,9 +10187,16 @@ func (m *MemStore) UpsertAppOpenAPIDoc(_ context.Context, appID, accountID strin
 	if !ok || app.AccountID != accountID {
 		return ErrNotFound
 	}
+	docJSON, err := openapiimport.JSONDocument(doc)
+	if err != nil {
+		return fmt.Errorf("state: normalize imported OpenAPI: %w", err)
+	}
+	if err := validateMemTrafficProjection("imported_openapi_contract", json.RawMessage(docJSON)); err != nil {
+		return err
+	}
 	now := time.Now()
-	docCopy := append([]byte(nil), doc...)
-	sum := sha256.Sum256(docCopy)
+	docCopy := append([]byte(nil), docJSON...)
+	sum := sha256.Sum256(doc)
 	row := appOpenAPIImportRow{
 		AppID:          appID,
 		AccountID:      accountID,
@@ -10111,7 +10204,7 @@ func (m *MemStore) UpsertAppOpenAPIDoc(_ context.Context, appID, accountID strin
 		Source:         OpenAPIImportSourceManualImport,
 		OpenAPIVersion: openapiVersion,
 		EndpointCount:  endpointCount,
-		ByteSize:       len(docCopy),
+		ByteSize:       len(doc),
 		DocSHA256:      sum[:],
 	}
 	if existing, ok := m.openAPIImports[appID]; ok {
@@ -10194,12 +10287,23 @@ func (m *MemStore) UpsertAppOpenAPIDocIfUnderQuota(_ context.Context, appID, acc
 			observed++
 		}
 	}
-	if observed >= planMax {
+	existing, replacement := m.openAPIImports[appID]
+	if !replacement && observed >= planMax {
 		return &QuotaError{Kind: QuotaErrorKindOpenAPIImports, Limit: planMax, Observed: observed}
 	}
+	if replacement && existing.AccountID != accountID {
+		return ErrNotFound
+	}
+	docJSON, err := openapiimport.JSONDocument(doc)
+	if err != nil {
+		return fmt.Errorf("state: normalize imported OpenAPI: %w", err)
+	}
+	if err := validateMemTrafficProjection("imported_openapi_contract", json.RawMessage(docJSON)); err != nil {
+		return err
+	}
 	now := time.Now()
-	docCopy := append([]byte(nil), doc...)
-	sum := sha256.Sum256(docCopy)
+	docCopy := append([]byte(nil), docJSON...)
+	sum := sha256.Sum256(doc)
 	row := appOpenAPIImportRow{
 		AppID:          appID,
 		AccountID:      accountID,
@@ -10207,7 +10311,7 @@ func (m *MemStore) UpsertAppOpenAPIDocIfUnderQuota(_ context.Context, appID, acc
 		Source:         OpenAPIImportSourceManualImport,
 		OpenAPIVersion: openapiVersion,
 		EndpointCount:  endpointCount,
-		ByteSize:       len(docCopy),
+		ByteSize:       len(doc),
 		DocSHA256:      sum[:],
 	}
 	if existing, ok := m.openAPIImports[appID]; ok {
@@ -11197,7 +11301,7 @@ func (m *MemStore) RequeueBuildIfClaim(_ context.Context, claim Build) error {
 
 // --- Custom domains ---------------------------------------------------------
 
-func (m *MemStore) CreateCustomDomain(_ context.Context, domain, appID, token string) (CustomDomain, error) {
+func (m *MemStore) CreateCustomDomain(ctx context.Context, domain, appID, token string) (CustomDomain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
@@ -11210,6 +11314,9 @@ func (m *MemStore) CreateCustomDomain(_ context.Context, domain, appID, token st
 		Domain: domain, AppID: appID, ChallengeToken: token,
 		CertStatus: CustomDomainCertPending, VerificationNextCheckAt: now,
 		VerificationExpiresAt: now.Add(7 * 24 * time.Hour),
+	}
+	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
+		return CustomDomain{}, err
 	}
 	m.domains[domain] = d
 	return d, nil
@@ -11278,7 +11385,7 @@ func (m *MemStore) WildcardDomainForHost(_ context.Context, host string) (Custom
 		if !WildcardMatchesHost(d.Domain, host) {
 			continue
 		}
-		if best.Domain == "" || len(d.Domain) > len(best.Domain) {
+		if best.Domain == "" || len(d.Domain) > len(best.Domain) || len(d.Domain) == len(best.Domain) && d.Domain < best.Domain {
 			best = d
 		}
 	}
@@ -11318,7 +11425,7 @@ func (m *MemStore) ListDomainsForAccount(_ context.Context, accountID string) ([
 	return out, nil
 }
 
-func (m *MemStore) MarkDomainVerified(_ context.Context, domain string) error {
+func (m *MemStore) MarkDomainVerified(ctx context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
@@ -11326,13 +11433,16 @@ func (m *MemStore) MarkDomainVerified(_ context.Context, domain string) error {
 		return ErrNotFound
 	}
 	d.VerifiedAt = time.Now()
+	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
+		return err
+	}
 	m.domains[domain] = d
 	return nil
 }
 
 // MarkDomainVerifiedIfChallenge mirrors PgStore's compare-and-set so an old
 // verifier cannot mark a newly reclaimed claim as verified.
-func (m *MemStore) MarkDomainVerifiedIfChallenge(_ context.Context, domain, token string) (bool, error) {
+func (m *MemStore) MarkDomainVerifiedIfChallenge(ctx context.Context, domain, token string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
@@ -11343,6 +11453,9 @@ func (m *MemStore) MarkDomainVerifiedIfChallenge(_ context.Context, domain, toke
 		return false, nil
 	}
 	d.VerifiedAt = time.Now()
+	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
+		return false, err
+	}
 	m.domains[domain] = d
 	return true, nil
 }
@@ -11373,23 +11486,21 @@ func (m *MemStore) UpdateCustomDomainCertStatus(_ context.Context, domain string
 	return nil
 }
 
-func (m *MemStore) DeleteCustomDomain(_ context.Context, domain string) error {
+func (m *MemStore) DeleteCustomDomain(ctx context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.deleteCustomDomainLocked(domain)
+	_, err := m.deleteTrafficCustomDomainLocked(ctx, domain, "", nil)
+	return err
 }
 
-func (m *MemStore) DeleteCustomDomainWithActivity(_ context.Context, domain string, entry OrgActivity) (int64, error) {
+func (m *MemStore) DeleteCustomDomainWithActivity(ctx context.Context, domain string, entry OrgActivity) (int64, error) {
 	entry, err := normalizeOrgActivity(entry, time.Now())
 	if err != nil {
 		return 0, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.deleteCustomDomainLocked(domain); err != nil {
-		return 0, err
-	}
-	return m.enqueueOrgActivityOutboxLocked(entry), nil
+	return m.deleteTrafficCustomDomainLocked(ctx, domain, "", &entry)
 }
 
 func (m *MemStore) deleteCustomDomainLocked(domain string) error {
@@ -21202,7 +21313,7 @@ func AppDeleteGraceDuration() time.Duration {
 // DeleteAccount walks the FK graph in dependency order under a single
 // m.mu lock. The dependency order matches the PgStore tx so a redelivered
 // grace tick finds the same idempotent answer.
-func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
+func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.accounts[id]
@@ -21228,6 +21339,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	change, err := m.checkMemTrafficAccountPurgeLocked(ctx, id)
+	if err != nil {
+		return err
+	}
+	m.publishMemTrafficAccountPurgeLocked(id, change)
 	m.forgetOwnedOperationsLocked(id, "")
 	for bucketID, b := range m.objectBuckets {
 		if b.AccountID == id {
@@ -21461,6 +21577,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for bid, b := range m.builds {
 		if _, ok := deletedDeployments[b.DeploymentID]; ok {
 			delete(m.builds, bid)
+			delete(m.builderVMCleanup, bid)
 		}
 	}
 	for aid, a := range m.apps {
@@ -22145,7 +22262,7 @@ func (m *MemStore) manifestEdgeRuleKeyExistsLocked(appID, manifestKey, excludeID
 	return false
 }
 
-func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
+func (m *MemStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.manifestEdgeRuleKeyExistsLocked(in.AppID, in.ManifestKey, "") {
@@ -22177,6 +22294,12 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
+	if err := validateMemEdgeRuleTrafficProjection(r); err != nil {
+		return EdgeRule{}, err
+	}
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, r.AccountID, memTrafficPolicyChange{Rules: map[string]EdgeRule{r.ID: r}}); err != nil {
+		return EdgeRule{}, err
+	}
 	stored := r
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	m.edgeRules[r.ID] = stored
@@ -22189,7 +22312,7 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 // mirrors the pgstore's `where id = $1 and status <> 'deleted'`
 // predicate: a soft-deleted app is treated as missing so the
 // customer can't smuggle rules into a dead app.
-func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
+func (m *MemStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.manifestEdgeRuleKeyExistsLocked(in.AppID, in.ManifestKey, "") {
@@ -22297,6 +22420,12 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 		ValidateMode: in.ValidateMode,
 		CreatedAt:    now,
 		UpdatedAt:    now,
+	}
+	if err := validateMemEdgeRuleTrafficProjection(r); err != nil {
+		return EdgeRule{}, err
+	}
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, r.AccountID, memTrafficPolicyChange{Rules: map[string]EdgeRule{r.ID: r}}); err != nil {
+		return EdgeRule{}, err
 	}
 	stored := r
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
@@ -22441,7 +22570,10 @@ func (m *MemStore) GetCorsPresetByID(_ context.Context, accountID, id string) (C
 // section as the insert. UNIQUE collision on
 // (account_id, COALESCE(app_id, ...), name) returns ErrConflict,
 // matching pgstore's 23505-→-ErrConflict map.
-func (m *MemStore) CreateCorsPresetIfUnderQuota(_ context.Context, p CorsPreset, limits api.Limits) (CorsPreset, error) {
+func (m *MemStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset, limits api.Limits) (CorsPreset, error) {
+	if err := validateMemTrafficProjection("cors_preset", corsPresetTrafficProjection(p)); err != nil {
+		return CorsPreset{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if p.AppID != "" {
@@ -22500,6 +22632,9 @@ func (m *MemStore) CreateCorsPresetIfUnderQuota(_ context.Context, p CorsPreset,
 		p.CreatedAt = now
 	}
 	p.UpdatedAt = now
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, p.AccountID, memTrafficPolicyChange{Presets: map[string]CorsPreset{p.ID: p}}); err != nil {
+		return CorsPreset{}, err
+	}
 	m.corsPresets[p.ID] = p
 	return p, nil
 }
@@ -22509,7 +22644,7 @@ func (m *MemStore) CreateCorsPresetIfUnderQuota(_ context.Context, p CorsPreset,
 // matching the pgstore WHERE clause. UNIQUE collisions
 // (account_id, COALESCE(app_id, ...), name) return ErrConflict
 // (the apid boundary maps to 409 "name already in use").
-func (m *MemStore) UpdateCorsPreset(_ context.Context, accountID, id string, p CorsPreset) (CorsPreset, error) {
+func (m *MemStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p CorsPreset) (CorsPreset, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, ok := m.corsPresets[id]
@@ -22530,7 +22665,13 @@ func (m *MemStore) UpdateCorsPreset(_ context.Context, accountID, id string, p C
 	p.ID = id
 	p.AccountID = accountID
 	p.CreatedAt = existing.CreatedAt
+	if err := validateMemTrafficProjection("cors_preset", corsPresetTrafficProjection(p)); err != nil {
+		return CorsPreset{}, err
+	}
 	p.UpdatedAt = time.Now()
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, accountID, memTrafficPolicyChange{Presets: map[string]CorsPreset{id: p}}); err != nil {
+		return CorsPreset{}, err
+	}
 	m.corsPresets[id] = p
 	return p, nil
 }
@@ -22824,7 +22965,7 @@ func (m *MemStore) ListCertExpiryStateForWalker(_ context.Context, staleCutoff t
 
 // UpdateEdgeRule mirrors the pgstore nil-skip semantics. Action
 // replacement is whole-struct (no partial jsonb merge in MemStore).
-func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRuleParams) (EdgeRule, error) {
+func (m *MemStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRuleParams) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.edgeRules[id]
@@ -22865,6 +23006,12 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 		r.ValidateMode = *p.ValidateMode
 	}
 	r.UpdatedAt = time.Now()
+	if err := validateMemEdgeRuleTrafficProjection(r); err != nil {
+		return EdgeRule{}, err
+	}
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, r.AccountID, memTrafficPolicyChange{Rules: map[string]EdgeRule{r.ID: r}}); err != nil {
+		return EdgeRule{}, err
+	}
 	stored := r
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	m.edgeRules[id] = stored
@@ -22947,10 +23094,8 @@ func (m *MemStore) MatchEdgeRulesForHost(_ context.Context, host string) ([]Edge
 	return out, nil
 }
 
-// matchHostPattern mirrors the pgstore LIKE: "*" → every host;
-// "*.<suffix>" → any subdomain of suffix; exact hosts match
-// themselves. The two stores MUST stay aligned — a drift here
-// surfaces as "rule matches in test, fails in prod".
+// matchHostPattern shares the aggregate analyzer's exact-or-SQL-LIKE parser,
+// including translated */?, literal %/_, Unicode and backslash escaping.
 func matchHostPattern(pattern, host string) bool {
 	switch pattern {
 	case "*":
@@ -22958,9 +23103,25 @@ func matchHostPattern(pattern, host string) bool {
 	case host:
 		return true
 	}
-	if len(pattern) > 2 && pattern[:2] == "*." {
+	if len(pattern) > 2 && pattern[:2] == "*." && !strings.ContainsAny(pattern[2:], "*?%_\\") {
 		suffix := pattern[1:] // ".example.com"
-		return len(host) > len(suffix) && host[len(host)-len(suffix):] == suffix
+		return strings.HasSuffix(host, suffix)
+	}
+	machine := hostAnalysisMachine{nodes: []hostAnalysisNode{newHostAnalysisNode()}, maxNodes: api.TrafficPolicyMaxAnalysisNodes}
+	if err := machine.add(pattern, hostAnalysisRef{}); err != nil {
+		return false
+	}
+	positions := machine.closure([]int{0})
+	for _, character := range host {
+		positions = machine.step(positions, character)
+		if len(positions) == 0 {
+			return false
+		}
+	}
+	for _, position := range positions {
+		if len(machine.nodes[position].accepted) > 0 {
+			return true
+		}
 	}
 	return false
 }

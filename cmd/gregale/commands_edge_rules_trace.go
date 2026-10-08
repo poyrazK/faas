@@ -252,6 +252,11 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 		}
 	}
 	_, _ = fmt.Fprintf(osStdout, "simulation: status=%s outcome=%s final_path=%s\n", result.Simulation.Status, result.Simulation.Outcome, result.Simulation.FinalPath)
+	if policy := result.Simulation.TotalDeadlinePolicy; policy != nil {
+		_, _ = fmt.Fprintf(osStdout, "  ingress total deadline: %d ms effective (configured %d ms; plan ceiling %d ms; rule %s selected on original path %s; status %s; enforcement %s)\n",
+			policy.DeadlineMS, policy.ConfiguredMS, policy.PlanMaxMS, policy.RuleID, policy.SelectionPath, policy.Status, policy.EnforcementStatus)
+		_, _ = fmt.Fprintln(osStdout, "    scope: ordinary public HTTP and stream/upgrade handshake; includes upload/wake/queue and pins the execution rule; execution overrides cannot increase it")
+	}
 	for _, step := range result.Simulation.Steps {
 		label := step.RuleID
 		if label == "" {
@@ -262,6 +267,9 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 			policy := step.BudgetPolicy
 			_, _ = fmt.Fprintf(osStdout, "    request budget: %d ms effective (configured %d ms; plan ceiling %d ms; source %s; override %s)\n",
 				policy.BudgetMS, policy.ConfiguredMS, policy.PlanMaxMS, policy.Source, policy.OverrideStatus)
+			if policy.TotalDeadlineMS > 0 {
+				_, _ = fmt.Fprintf(osStdout, "    total deadline: %d ms from public ingress (includes upload/wake/queue; execution overrides cannot increase it)\n", policy.TotalDeadlineMS)
+			}
 		}
 		if step.ThrottlePolicy != nil {
 			policy := step.ThrottlePolicy

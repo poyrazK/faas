@@ -96,8 +96,10 @@ func TestUnwiredBackendReturnsNotFound(t *testing.T) {
 func TestRunWithDeps_ServesAndShutsDown(t *testing.T) {
 	t.Setenv("FAAS_CONSUMER_USAGE_OUTBOX_ROOT", t.TempDir())
 	deps := defaultDeps()
+	deps.config = &Config{RateLimit: TOMLRateLimitConfig{Mode: "local"}}
 	deps.capCheck = func() error { return nil }
 	deps.backend = &fixedBackend{}
+	deps.edgeRulesMatcher = newGatewaydEdgeRules(&fakeEdgeRuleStore{}, nil, nil, nil)
 	deps.newSrv = func(addr string, h http.Handler) *http.Server {
 		return &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 5 * time.Second}
 	}
@@ -190,6 +192,7 @@ func TestListenAddr_OffSentinelIsHandled(t *testing.T) {
 func TestRunWithDeps_ListenErrorReturns(t *testing.T) {
 	t.Setenv("FAAS_CONSUMER_USAGE_OUTBOX_ROOT", t.TempDir())
 	deps := defaultDeps()
+	deps.config = &Config{RateLimit: TOMLRateLimitConfig{Mode: "local"}}
 	deps.capCheck = func() error { return nil }
 	deps.listen = func(_, _ string) (net.Listener, error) {
 		return nil, errors.New("addr in use")
@@ -210,6 +213,7 @@ func TestRunWithDeps_ServeError(t *testing.T) {
 	// Serve error or a successful Shutdown — both are acceptable termination
 	// signals.
 	deps := defaultDeps()
+	deps.config = &Config{RateLimit: TOMLRateLimitConfig{Mode: "local"}}
 	deps.capCheck = func() error { return nil }
 	deps.backend = &fixedBackend{}
 

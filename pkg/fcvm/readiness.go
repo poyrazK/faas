@@ -14,6 +14,8 @@ import (
 // vmmd. Unlike liveness, a failed readiness probe only withdraws traffic; it
 // never destroys or restarts the instance.
 type ReadinessProbeConfig struct {
+	// Captured under the live-map lock; a retired loop cannot borrow a new VM identity.
+	WakeID, NodeID   string
 	Path             string
 	GRPC             bool
 	GRPCService      string
@@ -101,6 +103,7 @@ func (m *Manager) startReadinessLoop(ctx context.Context, instance string, slot 
 		return
 	}
 	appID := inst.AppID
+	cfg.WakeID, cfg.NodeID = inst.WakeID, inst.NodeID
 	if inst.Port > 0 && inst.Port <= 65535 {
 		cfg.Port = inst.Port
 	}
@@ -124,4 +127,16 @@ func (m *Manager) cancelReadinessLoop(instance string) {
 	if cancel != nil {
 		cancel()
 	}
+}
+
+// InstanceTrafficIdentity reads the routing lifetime atomically. It is host
+// metadata, independent of guest-authored lifecycle payloads.
+func (m *Manager) InstanceTrafficIdentity(instance string) (appID, wakeID, nodeID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok {
+		return "", "", "", fmt.Errorf("fcvm: traffic identity %s: not live", instance)
+	}
+	return inst.AppID, inst.WakeID, inst.NodeID, nil
 }

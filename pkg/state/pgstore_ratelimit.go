@@ -8,10 +8,8 @@
 //
 //   1. The Store adapter already owns the pgxpool — no need to
 //      open a second pool just for the counter.
-//   2. The consume SQL is hand-written (per ADR-041 carve-out for
-//      single-statement rate counters), bypassing sqlc. This file
-//      keeps the package-level import set narrow: pgx + pgxpool
-//      only.
+//   2. The atomic consume uses sqlc (ADR-570). Existing diagnostic and
+//      maintenance queries retain the ADR-041 single-statement carve-out.
 //
 // Interface assertion: the compile-time `var _ gateway.CentralBackend =
 // (*PGRateLimitBackend)(nil)` lives in
@@ -35,13 +33,10 @@
 // fractional elapsed remainder; setting it to now on every request would
 // prevent a drained bucket from refilling under steady traffic.
 //
-// # Degraded posture
+// # Store outage posture
 //
-// If Postgres is unreachable, ConsumeToken / PeekToken return
-// (0, false, err) / (0, err). The Limiter falls back to the in-process bucket
-// under that error path
-// (see pkg/gateway/ratelimit.go:300-609 the Allow/Poke seam)
-// and emits a `ratelimit_degraded` audit row.
+// A store error refuses unverified admission (ADR-570). No process-local
+// allowance is substituted; the gateway returns rate_limit_unavailable/503.
 //
 // # Dimensional rule scope
 //
@@ -58,8 +53,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // RateLimitRow is the minimum row projection PGRateLimitBackend
@@ -89,6 +87,18 @@ func NewPGRateLimitBackend(pool *pgxpool.Pool) *PGRateLimitBackend {
 	return &PGRateLimitBackend{pool: pool}
 }
 
+// rateLimitConsultError preserves the underlying error and whether acquiring
+// a connection failed. Statement errors must not impose a limiter-wide
+// blackout after a counter table or row lock recovers.
+type rateLimitConsultError struct {
+	err     error
+	backoff bool
+}
+
+func (e *rateLimitConsultError) Error() string                  { return e.err.Error() }
+func (e *rateLimitConsultError) Unwrap() error                  { return e.err }
+func (e *rateLimitConsultError) CanBackoffCentralConsult() bool { return e.backoff }
+
 // ConsumeToken attempts to consume one token from the central
 // counter for (scope, subjectID, plan). Implements
 // gateway.CentralBackend (the interface assertion lives in
@@ -102,40 +112,31 @@ func NewPGRateLimitBackend(pool *pgxpool.Pool) *PGRateLimitBackend {
 //	ok bool         — true iff the consume succeeded.
 //	err error       — non-nil iff Postgres was unreachable or
 //	                  the advisory lock deadlocked; the caller
-//	                  MUST fall back to the in-process bucket.
+//	                  MUST reject unverified shared admission.
 func (b *PGRateLimitBackend) ConsumeToken(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (int, bool, error) {
 	if rps <= 0 || burst < 1 {
 		return 0, false, nil
 	}
-	const q = `
-		INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
-		VALUES ($1, $2, $3, GREATEST(0, FLOOR($4)::bigint - 1), now())
-		ON CONFLICT (scope, subject_id, plan) DO UPDATE
-		  SET tokens = LEAST(FLOOR($4)::bigint,
-		    pg_ratelimit_counters.tokens
-		    + FLOOR(EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill))
-		            * $5)::bigint) - 1,
-		  last_refill = CASE
-		    WHEN pg_ratelimit_counters.tokens
-		         + FLOOR(EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)) * $5)::bigint
-		         >= FLOOR($4)::bigint
-		      THEN now()
-		    ELSE pg_ratelimit_counters.last_refill
-		         + (FLOOR(EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)) * $5) / $5)
-		           * interval '1 second'
-		  END
-		WHERE LEAST(FLOOR($4)::bigint,
-		            pg_ratelimit_counters.tokens
-		            + FLOOR(EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)) * $5)::bigint) >= 1
-		RETURNING tokens`
-	var remaining int64
-	if err := b.pool.QueryRow(ctx, q,
-		scope, subjectID, plan, burst, rps,
-	).Scan(&remaining); err != nil {
+	id, err := uuid.Parse(subjectID)
+	if err != nil {
+		return 0, false, &rateLimitConsultError{err: fmt.Errorf("rate-limit subject: %w", err)}
+	}
+	// This remains ordinary pooled work: one atomic SQLC statement with no
+	// session state. Acquire separately to classify pool versus statement
+	// failures, and release on every path (see pkg/db's acquisition gate).
+	conn, err := b.pool.Acquire(ctx)
+	if err != nil {
+		return 0, false, &rateLimitConsultError{err: fmt.Errorf("ratelimit central acquire: %w", err), backoff: true}
+	}
+	defer conn.Release()
+	remaining, err := sqlc.New().ConsumeTrafficRateToken(ctx, conn, sqlc.ConsumeTrafficRateTokenParams{
+		Scope: scope, SubjectID: pgtype.UUID{Bytes: id, Valid: true}, Plan: plan, Burst: burst, Rps: rps,
+	})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, false, nil
 		}
-		return 0, false, fmt.Errorf("ratelimit central ConsumeToken: %w", err)
+		return 0, false, &rateLimitConsultError{err: fmt.Errorf("ratelimit central ConsumeToken: %w", err)}
 	}
 	return int(remaining), true, nil
 }
@@ -154,56 +155,44 @@ func (b *PGRateLimitBackend) ConsumeTokens(ctx context.Context, scope, subjectID
 	if rps <= 0 || burst < 1 || n <= 0 {
 		return 0, 0, nil
 	}
-	const consume = `
-		WITH cur AS (
-			SELECT LEAST(FLOOR($4)::bigint, tokens + FLOOR(EXTRACT(EPOCH FROM (now() - last_refill)) * $5)::bigint) AS avail,
-			       tokens + FLOOR(EXTRACT(EPOCH FROM (now() - last_refill)) * $5)::bigint AS refilled,
-			       FLOOR(EXTRACT(EPOCH FROM (now() - last_refill)) * $5) AS whole
-			  FROM pg_ratelimit_counters
-			 WHERE scope = $1 AND subject_id = $2 AND plan = $3
-			 FOR UPDATE
-		), upd AS (
-			UPDATE pg_ratelimit_counters c
-			   SET tokens = cur.avail - LEAST($6::bigint, cur.avail),
-			       last_refill = CASE
-			         WHEN cur.refilled >= FLOOR($4)::bigint THEN now()
-			         ELSE c.last_refill + (cur.whole / $5) * interval '1 second'
-			       END
-			  FROM cur
-			 WHERE c.scope = $1 AND c.subject_id = $2 AND c.plan = $3 AND cur.avail >= 1
-			RETURNING LEAST($6::bigint, cur.avail) AS granted, c.tokens AS remaining
-		)
-		SELECT EXISTS (SELECT 1 FROM cur),
-		       COALESCE((SELECT granted FROM upd), 0),
-		       COALESCE((SELECT remaining FROM upd), (SELECT GREATEST(avail, 0) FROM cur), 0)`
-	const insert = `
-		INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
-		VALUES ($1, $2, $3, FLOOR($4)::bigint - LEAST($5::bigint, FLOOR($4)::bigint), now())
-		ON CONFLICT (scope, subject_id, plan) DO NOTHING
-		RETURNING tokens`
+	id, err := uuid.Parse(subjectID)
+	if err != nil {
+		return 0, 0, &rateLimitConsultError{err: fmt.Errorf("rate-limit subject: %w", err)}
+	}
+	// Classify connection acquisition separately from statements just as in
+	// ConsumeToken. A statement failure must not keep a recovered key offline.
+	conn, err := b.pool.Acquire(ctx)
+	if err != nil {
+		return 0, 0, &rateLimitConsultError{err: fmt.Errorf("ratelimit central acquire: %w", err), backoff: true}
+	}
+	defer conn.Release()
+	q := sqlc.New()
+	params := sqlc.ConsumeTrafficRateTokensParams{
+		Scope: scope, SubjectID: pgtype.UUID{Bytes: id, Valid: true}, Plan: plan,
+		Burst: burst, Rps: rps, BatchSize: int64(n),
+	}
 	// Two attempts: a concurrent first consume can insert the row between
 	// this statement's existence check and its insert.
 	for attempt := 0; attempt < 2; attempt++ {
-		var (
-			found     bool
-			granted   int64
-			remaining int64
-		)
-		if err := b.pool.QueryRow(ctx, consume, scope, subjectID, plan, burst, rps, int64(n)).Scan(&found, &granted, &remaining); err != nil {
-			return 0, 0, fmt.Errorf("ratelimit central ConsumeTokens: %w", err)
+		row, err := q.ConsumeTrafficRateTokens(ctx, conn, params)
+		if err != nil {
+			return 0, 0, &rateLimitConsultError{err: fmt.Errorf("ratelimit central ConsumeTokens: %w", err)}
 		}
-		if found {
-			return int(granted), int(remaining), nil
+		if row.Found {
+			return int(row.Granted), int(row.Remaining), nil
 		}
-		err := b.pool.QueryRow(ctx, insert, scope, subjectID, plan, burst, int64(n)).Scan(&remaining)
+		remaining, err := q.CreateTrafficRateBatchCounter(ctx, conn, sqlc.CreateTrafficRateBatchCounterParams{
+			Scope: params.Scope, SubjectID: params.SubjectID, Plan: params.Plan,
+			Burst: burst, BatchSize: int64(n),
+		})
 		if err == nil {
 			return int(min(int64(n), int64(burst))), int(remaining), nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
-			return 0, 0, fmt.Errorf("ratelimit central ConsumeTokens insert: %w", err)
+			return 0, 0, &rateLimitConsultError{err: fmt.Errorf("ratelimit central ConsumeTokens insert: %w", err)}
 		}
 	}
-	return 0, 0, fmt.Errorf("ratelimit central ConsumeTokens: counter row for %s/%s raced its creation twice", scope, plan)
+	return 0, 0, &rateLimitConsultError{err: fmt.Errorf("ratelimit central ConsumeTokens: counter row for %s/%s raced its creation twice", scope, plan)}
 }
 
 // PeekToken returns the central counter's current tokens WITHOUT

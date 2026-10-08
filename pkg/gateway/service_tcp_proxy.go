@@ -261,7 +261,8 @@ func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, target Ser
 		if reason != "" {
 			return "", reason, err
 		}
-		endpoint, ok := services.pick(target.AppID, endpoints)
+		endpoint, ok, eligible := services.pickForAttempt(target.AppID, endpoints)
+		services.recordEndpointPick(ctx, ok, eligible, len(endpoints))
 		if !ok {
 			return "", "no_replica", nil
 		}

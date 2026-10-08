@@ -1,0 +1,71 @@
+// adr: 570
+package state
+
+import (
+	"context"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+func (s *PgStore) beginDeploymentTrafficMutation(ctx context.Context, id string) (pgx.Tx, error) {
+	owner, err := sqlc.New().ReadDeploymentTrafficOwner(ctx, s.pool, mustPgUUID(id))
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	tx, err := s.beginAccountAppTrafficMutation(ctx, owner.AccountID.String(), owner.AppID.String())
+	if err != nil {
+		return nil, err
+	}
+	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+		app, err := sqlc.New().LockTrafficDeploymentApp(bounded, tx, mustPgUUID(id))
+		if err != nil {
+			return mapErr(err)
+		}
+		if app != owner.AppID {
+			return ErrConflict
+		}
+		return nil
+	})
+	if err != nil {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+		return nil, appTrafficBindingError(err)
+	}
+	return tx, nil
+}
+
+func (s *PgStore) updateTrafficDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error {
+	tx, err := s.beginDeploymentTrafficMutation(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	queries := sqlc.New()
+	changed, err := queries.UpdateTrafficDeploymentStatus(ctx, tx, sqlc.UpdateTrafficDeploymentStatusParams{
+		DeploymentID: mustPgUUID(id), Status: string(status), Error: pgtype.Text{String: errMsg, Valid: errMsg != ""},
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	if changed == 0 {
+		if _, err := queries.ReadTrafficDeploymentStatus(ctx, tx, mustPgUUID(id)); err != nil {
+			return mapErr(err)
+		}
+		return ErrInvalidStateTransition
+	}
+	return tx.Commit(ctx)
+}
+
+// The target changes alias/revision eligibility. Shared binding analysis also
+// applies raw alias precedence before granting any legacy primary allowance.
+func (m *MemStore) checkMemTrafficDeploymentChangeLocked(ctx context.Context, after Deployment) error {
+	if !after.DeploymentAliasActive() {
+		return nil
+	}
+	app, found := m.apps[after.AppID]
+	if !found {
+		return ErrNotFound
+	}
+	return appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, app.AccountID, nil, app.ID, memTrafficPolicyChange{Deployments: map[string]Deployment{after.ID: after}}))
+}

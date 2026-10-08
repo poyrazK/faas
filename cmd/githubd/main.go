@@ -167,7 +167,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reconcile service shares the same state.Store as the
 	// apid-side reconcile (one PgStore per daemon — no
 	// cross-process shared state).
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.AppsDomain))
 	wire.BootStamps(ctx, "githubd", ops)
 	wire.RegisterDefaultOps(ops)
 	// ADR-190 follow-up: export this pool's live statistics so the

@@ -66,8 +66,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/bridgecompletion"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -186,8 +188,6 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	start := time.Now()
 	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
 
-	ctx := stream.Context()
-
 	// 1. Receive the init frame. The bidi protocol is:
 	//    [init] [body_chunk]…  on the inbound side; the server
 	//    treats everything before the first init as a protocol
@@ -203,6 +203,12 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	if reqInit.GetInstance() == "" {
 		return status.Error(codes.InvalidArgument, "instance is required")
 	}
+	stream, release, err := admitHTTPForward(s, stream, reqInit.GetInstance())
+	if err != nil {
+		return err
+	}
+	defer release()
+	ctx := stream.Context()
 	// PR-B (issue #462): in-flight request accounting on the
 	// streaming bridge. Begin as soon as the init frame is
 	// validated; End runs via defer after the bridge returns
@@ -326,6 +332,7 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	// depend on a shell.
 	cmd := exec.CommandContext(ctx, "ip", "netns", "exec", netnsName, "bash", "-c",
 		buildStreamingBridgeScript(reqInit, respTimeout))
+	configureForwardCommand(cmd)
 	cmd.Stdin = stdinR
 	cmd.Stdout = stdoutW
 	var stderr bytes.Buffer
@@ -752,6 +759,11 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	if reqInit.GetInstance() == "" {
 		return status.Error(codes.InvalidArgument, "instance is required")
 	}
+	stream, release, err := admitHTTPForward(s, stream, reqInit.GetInstance())
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	// Per-instance concurrency accounting (mirrors ForwardHTTPStream).
 	s.beginActivity(reqInit.GetInstance())
@@ -872,6 +884,7 @@ func rawBridgeSpawn(ctx context.Context, instancePID int, dialPort uint32) (*exe
 	}
 
 	cmd := rawBridgeCommand(ctx, instancePID, bridgePath, dialPort)
+	configureForwardCommand(cmd)
 	cmd.Stdin = stdinR
 	cmd.Stdout = stdoutW
 	var stderr bytes.Buffer
@@ -1597,6 +1610,15 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		// not through process-wide environment variables. The bridge strips
 		// these private headers before it forwards anything to the guest.
 		httpReq.Header.Set("X-Faas-Bridge-Persistent", "1")
+		exchange := uuid.NewString()
+		httpReq.Header.Set(bridgecompletion.ExchangeHeader, exchange)
+		defer func() {
+			reqCancel()
+			if err := awaitBridgeCompletion(context.WithoutCancel(ctx), client, exchange); err != nil {
+				s.log.Warn("vmmd: bridge completion uncertain; fencing child", "instance", reqInit.GetInstance(), "err", err)
+				s.streamBridges.invalidate(ctx, bridgeLease)
+			}
+		}()
 		httpReq.Header.Set("X-Faas-Bridge-Protocol", requestBridgeProtocol)
 		httpReq.Header.Set("X-Faas-Bridge-Port", strconv.FormatUint(uint64(dialPort), 10))
 		for _, h := range reqInit.GetHeaders() {
@@ -1669,7 +1691,7 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 			if reqCtx.Err() != nil {
 				return status.FromContextError(reqCtx.Err()).Err()
 			}
-			s.streamBridges.invalidate(bridgeLease)
+			s.streamBridges.invalidate(ctx, bridgeLease)
 		} else {
 			bridgeErr = stopStreamBridge(ctx, cmd, stderr)
 			bridgeWaited = true
@@ -1928,9 +1950,9 @@ func streamBridgeSpawnReal(ctx context.Context, bridgePath, netnsName, sockPath,
 	// entire lifetime. An orphan would block the next wake with
 	// EADDRINUSE on the same sock path; on a control-plane node
 	// with many restarts that leaks until tmpfs is exhausted (the
-	// same gotcha CLAUDE.md flags for /srv/fc/jail). SIGTERM is the
-	// same signal vmmd sends on graceful shutdown, so a graceful
-	// path is unchanged; only the SIGKILL escape gets cleaned up.
+	// same gotcha CLAUDE.md flags for /srv/fc/jail). Parent death kills it
+	// immediately so a replacement permit owner cannot overlap it. Normal
+	// shutdown still drains with SIGTERM and reaps before releasing capacity.
 	//
 	// The SysProcAttr setup is split into platform-specific files
 	// (forward_pdeathsig_linux.go / forward_pdeathsig_other.go) so
@@ -1939,7 +1961,7 @@ func streamBridgeSpawnReal(ctx context.Context, bridgePath, netnsName, sockPath,
 	// always gated on `ip netns exec`, which only works on Linux —
 	// darwin compiles and unit-tests the vmmd package without ever
 	// hitting the production spawn path.
-	cmd.SysProcAttr = streamBridgeSysProcAttr()
+	configureForwardCommand(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {

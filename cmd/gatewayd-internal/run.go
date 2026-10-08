@@ -50,6 +50,7 @@ import (
 	"github.com/caddyserver/certmagic"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/miekg/dns"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/prometheus/client_golang/prometheus"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
@@ -73,7 +74,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logarchive"
-	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -83,6 +83,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/trafficdeadline"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -458,12 +460,13 @@ func dnsTokenLookupFromEnv(provider string) string {
 // wake-only path left cron traffic invisible to the runner and the
 // meter (spec §4.4, M7).
 type synthAdapter struct {
-	backend          gateway.Backend
-	store            state.Store
-	log              *slog.Logger
-	wake             func(ctx context.Context, appID string) error
-	invoke           func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
-	invokeWithStatus func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error)
+	backend            gateway.Backend
+	store              state.Store
+	log                *slog.Logger
+	wake               func(ctx context.Context, appID string) error
+	invoke             func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
+	invokeWithStatus   func(ctx context.Context, appID string, inv state.Invocation, version state.InvocationVersion) (state.Invocation, int, error)
+	trafficRevocations *trafficrevocation.Registry
 	// forward is the same HTTP→vmmd bridge installed on the public
 	// gateway handler. Synthetic invocations must use that bridge too;
 	// waking an instance without delivering the envelope leaves the row
@@ -489,14 +492,8 @@ func (a *synthAdapter) Invoke(ctx context.Context, appID string, inv state.Invoc
 		out, _, err := a.replayMirror(ctx, appID, inv)
 		return out, err
 	}
-	if a.invokeWithStatus != nil {
-		out, _, err := a.InvokeWithStatus(ctx, appID, inv)
-		return out, err
-	}
-	if a.invoke == nil {
-		return inv, fmt.Errorf("gateway synth: invoke is not wired (legacy wake-only adapter)")
-	}
-	return a.invoke(ctx, appID, inv)
+	out, _, err := a.InvokeWithStatus(ctx, appID, inv)
+	return out, err
 }
 
 func (a *synthAdapter) InvokeWithStatus(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
@@ -508,11 +505,27 @@ func (a *synthAdapter) InvokeWithStatus(ctx context.Context, appID string, inv s
 	if isDebugMirrorReplayInvocation(inv) {
 		return a.replayMirror(ctx, appID, inv)
 	}
-	if a.invokeWithStatus != nil {
-		return a.invokeWithStatus(ctx, appID, inv)
+	inv.AppID = appID
+	ctx, inv, version, cleanup, err := a.prepareInvocation(ctx, inv, nil)
+	if err != nil {
+		return inv, 0, err
 	}
-	out, err := a.Invoke(ctx, appID, inv)
-	return out, http.StatusOK, err
+	defer cleanup()
+	var out state.Invocation
+	var status int
+	if a.invokeWithStatus != nil {
+		out, status, err = a.invokeWithStatus(ctx, appID, inv, version)
+	} else if a.invoke != nil {
+		out, err = a.invoke(ctx, appID, inv)
+		status = http.StatusOK
+	} else {
+		return inv, 0, fmt.Errorf("gateway synth: invoke is not wired (legacy wake-only adapter)")
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		inv.Result = nil
+		return inv, 0, cause
+	}
+	return out, status, err
 }
 
 // replayMirror executes either a metadata-only debugger replay or an
@@ -566,7 +579,7 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 			return inv, 0, fmt.Errorf("gateway synth: encode replay headers: %w", err)
 		}
 	}
-	out, statusCode, mirrorBody, err := a.forwardInvocationWithStatusAndBody(ctx, target, mirrorInv)
+	out, statusCode, mirrorBody, err := a.forwardInvocationWithStatusAndBody(ctx, target, mirrorInv, false)
 	latencyMs := int(time.Since(start) / time.Millisecond)
 	if err != nil {
 		statusCode = 0
@@ -722,8 +735,8 @@ func debugReplayMetadata(inv state.Invocation) (map[string]string, error) {
 
 // InvokeWithTarget is the pre-woken synthetic invocation path. Schedd owns
 // admission, so gatewayd-internal must not resolve the app and issue another
-// Wake RPC for the same invocation. The target is forwarded directly to the
-// existing node-client path, so the handler needs no second app lookup.
+// Wake RPC for the same invocation. The target claim is verified before it is
+// forwarded through the existing node-client path.
 func (a *synthAdapter) InvokeWithTarget(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, error) {
 	out, _, err := a.InvokeWithTargetStatus(ctx, appID, inv, target)
 	return out, err
@@ -794,13 +807,54 @@ func (a *synthAdapter) forwardInvocation(ctx context.Context, target gateway.Tar
 }
 
 func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target gateway.Target, inv state.Invocation) (state.Invocation, int, error) {
-	out, status, _, err := a.forwardInvocationWithStatusAndBody(ctx, target, inv)
+	claim := state.InvocationTarget{InstanceID: target.InstanceID, NodeID: target.NodeID, DeploymentID: target.DeploymentID}
+	ctx, inv, _, cleanup, err := a.prepareInvocation(ctx, inv, &claim)
+	if err != nil {
+		return inv, 0, err
+	}
+	defer cleanup()
+	out, status, _, err := a.forwardInvocationWithStatusAndBody(ctx, target, inv, true)
+	if cause := context.Cause(ctx); cause != nil {
+		inv.Result = nil
+		return inv, 0, cause
+	}
 	return out, status, err
 }
 
-func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, target gateway.Target, inv state.Invocation) (state.Invocation, int, []byte, error) {
+func (a *synthAdapter) prepareInvocation(ctx context.Context, inv state.Invocation, target *state.InvocationTarget) (context.Context, state.Invocation, state.InvocationVersion, func(), error) {
+	noop := func() {}
+	if a.store == nil { // Legacy in-process adapters have no durable state.
+		if a.trafficRevocations != nil || trafficrevocation.HandoffValue(ctx) != "" {
+			return ctx, inv, state.InvocationVersion{}, noop, trafficrevocation.ErrUnavailable
+		}
+		return ctx, inv, state.InvocationVersion{}, noop, nil
+	}
+	prepared, version, owner, err := state.ResolveInvocationDispatch(ctx, a.store, inv, target)
+	if err != nil {
+		return ctx, inv, state.InvocationVersion{}, noop, fmt.Errorf("gateway synth: verify invocation dispatch: %w", err)
+	}
+	scopes := []trafficrevocation.Scope{{Kind: "account", ID: owner}, {Kind: "app", ID: inv.AppID}}
+	deployment := version.DeploymentID
+	if target != nil {
+		deployment = target.DeploymentID
+	}
+	if deployment != "" {
+		scopes = append(scopes, trafficrevocation.Scope{Kind: "deployment", ID: deployment})
+	}
+	ctx, cleanup, err := gateway.AdmitSyntheticTraffic(ctx, a.trafficRevocations, scopes...)
+	if err != nil {
+		return ctx, inv, state.InvocationVersion{}, noop, fmt.Errorf("gateway synth: admit invocation security: %w", err)
+	}
+	return ctx, prepared, version, cleanup, nil
+}
+
+func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, target gateway.Target, inv state.Invocation, publish bool) (state.Invocation, int, []byte, error) {
 	if a.forward == nil {
 		return inv, 0, nil, fmt.Errorf("gateway synth: invocation forwarder is not wired")
+	}
+	target, err := a.prepareInvocationTarget(ctx, inv.AppID, target, publish)
+	if err != nil {
+		return inv, 0, nil, err
 	}
 
 	method := inv.Method
@@ -894,7 +948,10 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	req = req.WithContext(gateway.WithSyntheticInvocation(req.Context()))
 
 	rec := httptest.NewRecorder()
-	a.forward(target).ServeHTTP(rec, req)
+	if err := serveSyntheticForward(ctx, a.forward(target), rec, req); err != nil {
+		inv.Result = nil
+		return inv, 0, nil, err
+	}
 	if rec.Code == 0 {
 		rec.Code = http.StatusOK
 	}
@@ -927,6 +984,49 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	return inv, rec.Code, append([]byte(nil), body...), nil
 }
 
+// serveSyntheticForward translates the HTTP abort signal at the buffered
+// invocation boundary. A partial response cannot become a completed result.
+// adr: 570
+func serveSyntheticForward(ctx context.Context, handler http.Handler, w http.ResponseWriter, r *http.Request) (err error) {
+	defer func() {
+		if caught := recover(); caught != nil {
+			abort, ok := caught.(error)
+			if !ok || !errors.Is(abort, http.ErrAbortHandler) {
+				panic(caught)
+			}
+			if cause := context.Cause(ctx); cause != nil {
+				err = cause
+			} else {
+				err = fmt.Errorf("gateway synth: forwarding response aborted: %w", abort)
+			}
+		}
+	}()
+	handler.ServeHTTP(w, r)
+	return nil
+}
+
+func (a *synthAdapter) prepareInvocationTarget(ctx context.Context, appID string, target gateway.Target, publish bool) (gateway.Target, error) {
+	if target.AppID != "" && target.AppID != appID {
+		return target, gateway.ErrTargetReadinessUnavailable
+	}
+	var err error
+	if verifier, ok := a.backend.(interface {
+		VerifyTargetReadiness(context.Context, gateway.Target) (gateway.Target, error)
+	}); ok {
+		target.AppID = appID
+		target, err = verifier.VerifyTargetReadiness(ctx, target)
+	}
+	// Ownership/security verification precedes this call. Ordinary admitted
+	// residents retain capacity even on readiness failure; dedicated mirrors
+	// stay outside the ordinary public placement cache.
+	if publish {
+		if recorder, ok := a.backend.(interface{ RecordTarget(string, gateway.Target) }); ok {
+			recorder.RecordTarget(appID, target)
+		}
+	}
+	return target, err
+}
+
 func scheduledInvocationOutcomeCode(headers http.Header) string {
 	values := headers.Values(api.ScheduledOutcomeCodeHeader)
 	if len(values) != 1 || !workpolicy.ValidOutcomeCode(values[0]) {
@@ -956,8 +1056,10 @@ func isHandlerErrorResult(body []byte) bool {
 type runDeps struct {
 	listen       func(network, addr string) (net.Listener, error)
 	listenPacket func(network, addr string) (net.PacketConn, error)
-	newSrv       func(addr string, handler http.Handler) *http.Server
-	backend      gateway.Backend
+	// Nil reads the system resolver configuration; tests can supply a local upstream.
+	serviceDNSUpstreams func() []string
+	newSrv              func(addr string, handler http.Handler) *http.Server
+	backend             gateway.Backend
 	// drain (issue #587 / PR-A) is the per-request WaitGroup-backed
 	// drain tracker the graceful-shutdown path waits on. ONE
 	// tracker per daemon, shared by Handler + InternalReverseProxy +
@@ -988,7 +1090,8 @@ type runDeps struct {
 	// synth is the internal unix-socket RPC server schedd dials for cron
 	// dispatch (spec §4.4, M7). nil in tests; production wires it after
 	// the schedd client is dialed.
-	synth *gateway.SynthServer
+	synth               *gateway.SynthServer
+	syntheticDispatcher *synthAdapter
 	// egressGRPC is the ADR-046 PR-2 producer channel — a
 	// *grpc.Server on a second unix socket dedicated to the egress
 	// stream (one unix socket can serve either HTTP or gRPC, not
@@ -1064,7 +1167,8 @@ type runDeps struct {
 	// for the issue #294 replay dedupe and by the gatewayd audit
 	// emitter. nil in tests (the githubdProxy then skips the
 	// replay check).
-	pgStore *state.PgStore
+	pgStore        *state.PgStore
+	trafficSession *trafficRuntimeSession
 	// authMw is the pkg/auth.Middleware that powers the AppLogsHandler
 	// (issue #254 / Move 4 PR-2). It hosts the bearer / session / MFA
 	// / scope checks + the IDOR-safe LoadApp + the shared per-IP
@@ -1084,7 +1188,9 @@ type runDeps struct {
 	// session cookie. cmd/apid shares the same construct; the two
 	// daemons are independent processes so the AEAD keys are loaded
 	// separately per daemon. nil in tests.
-	sessions *session.Manager
+	sessions           *session.Manager
+	trafficDeadlines   *trafficdeadline.Signer
+	trafficRevocations *trafficrevocation.Registry
 	// hostKeyDir (issue #477 / ADR-079) is the directory
 	// secretbox.LoadHostKeys reads from to build the
 	// multi-identity rotation-overlap slice for the basic-auth
@@ -1437,6 +1543,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer func() { _ = responseCache.Close() }()
 	deps.responseCache = responseCache
 	backend := gateway.NewPGBackend(router, sched, log).
+		WithTargetReadinessLoader(newTargetReadinessLoader(pgStore)).
+		WithTargetPlacementLoader(newTargetPlacementLoader(pgStore)).
 		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
 			releaseID, deploymentID, err := pgStore.ResolveProjectRelease(ctx, appID, scope, requestedID)
 			if errors.Is(err, state.ErrNotFound) {
@@ -1462,124 +1570,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			return router.toApp(ctx, app)
 		}).
-		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
-			// An instances row can outlive its deployment. Restrict the
-			// reconciliation snapshot to instances belonging to a current
-			// live deployment; otherwise an old RUNNING row could recreate a
-			// route for a deployment that the control plane no longer serves.
-			liveDeployments, err := pgStore.LiveDeployments(ctx, appID)
-			if err != nil {
-				return nil, err
-			}
-			live := make(map[string]int, len(liveDeployments))
-			readinessSources := make(map[string][]string, len(liveDeployments))
-			for _, deployment := range liveDeployments {
-				if deployment.ID != "" {
-					live[deployment.ID] = schedpkg.DeploymentRuntimePort(deployment)
-					sources, err := readinessSourcesForDeployment(deployment)
-					if err != nil {
-						return nil, fmt.Errorf("resolve live deployment %s readiness sources: %w", deployment.ID, err)
-					}
-					readinessSources[deployment.ID] = sources
-				}
-			}
-			instances, err := pgStore.ListInstancesForApp(ctx, appID)
-			if err != nil {
-				return nil, err
-			}
-			targets := make([]gateway.Target, 0, len(instances))
-			readinessInstanceIDs := make([]string, 0, len(instances))
-			for _, instance := range instances {
-				if instance.State != string(state.StateRunning) || instance.ID == "" || instance.NodeID == "" {
-					continue
-				}
-				port, ok := live[instance.DeploymentID]
-				if !ok {
-					continue
-				}
-				requiredReadinessSources := readinessSources[instance.DeploymentID]
-				requiresReadiness := len(requiredReadinessSources) > 0
-				targets = append(targets, gateway.Target{
-					AppID:             appID,
-					InstanceID:        instance.ID,
-					NodeID:            instance.NodeID,
-					WakeID:            instance.WakeID,
-					DeploymentID:      instance.DeploymentID,
-					Port:              port,
-					RequiresReadiness: requiresReadiness,
-					ReadinessGates: &gateway.ReadinessGates{
-						RequiredSources: append([]string(nil), requiredReadinessSources...),
-						States:          make(map[string]gateway.ReadinessState),
-					},
-				})
-				if requiresReadiness {
-					readinessInstanceIDs = append(readinessInstanceIDs, instance.ID)
-				}
-			}
-			if len(readinessInstanceIDs) > 0 {
-				readiness, err := pgStore.LatestInstanceReadinessBySource(ctx, readinessInstanceIDs)
-				if err != nil {
-					return nil, fmt.Errorf("load readiness for live targets: %w", err)
-				}
-				for i := range targets {
-					if !targets[i].RequiresReadiness {
-						continue
-					}
-					states := readiness[targets[i].InstanceID]
-					if targets[i].ReadinessGates == nil {
-						targets[i].ReadinessGates = &gateway.ReadinessGates{States: make(map[string]gateway.ReadinessState)}
-					}
-					targets[i].ReadinessGates.States = make(map[string]gateway.ReadinessState, len(states))
-					targets[i].Ready = len(targets[i].ReadinessGates.RequiredSources) > 0
-					for _, source := range targets[i].ReadinessGates.RequiredSources {
-						current, ok := states[source]
-						if !ok {
-							targets[i].Ready = false
-							continue
-						}
-						targets[i].ReadinessGates.States[source] = gateway.ReadinessState{
-							Ready: current.Ready, UpdatedAt: current.At, EventID: current.EventID,
-						}
-						if targets[i].ReadinessUpdatedAt.IsZero() || current.At.After(targets[i].ReadinessUpdatedAt) || (current.At.Equal(targets[i].ReadinessUpdatedAt) && current.EventID > targets[i].ReadinessEventID) {
-							targets[i].ReadinessUpdatedAt = current.At
-							targets[i].ReadinessEventID = current.EventID
-						}
-						if !current.Ready {
-							targets[i].Ready = false
-						}
-					}
-				}
-			}
-			return targets, nil
-		}).
-		WithDeploymentSmokeTargetLoader(func(ctx context.Context, appID, deploymentID string) (gateway.Target, bool, error) {
-			dep, err := pgStore.DeploymentByID(ctx, deploymentID)
-			if errors.Is(err, state.ErrNotFound) {
-				return gateway.Target{}, false, nil
-			}
-			if err != nil {
-				return gateway.Target{}, false, err
-			}
-			if dep.AppID != appID || (dep.Status != state.DeploySnapshotting && dep.Status != state.DeployLive) {
-				return gateway.Target{}, false, nil
-			}
-			instances, err := pgStore.ListInstancesForApp(ctx, appID)
-			if err != nil {
-				return gateway.Target{}, false, err
-			}
-			for _, instance := range instances {
-				if instance.DeploymentID != deploymentID || instance.State != string(state.StateRunning) ||
-					instance.ID == "" || instance.NodeID == "" {
-					continue
-				}
-				return gateway.Target{
-					AppID: appID, InstanceID: instance.ID, NodeID: instance.NodeID,
-					WakeID: instance.WakeID, DeploymentID: deploymentID,
-					Port: schedpkg.DeploymentRuntimePort(dep), AddedAt: time.Now(),
-				}, true, nil
-			}
-			return gateway.Target{}, false, nil
-		}).
+		WithDeploymentSmokeTargetLoader(newDeploymentSmokeTargetLoader(pgStore)).
 		WithClientForApp(func(ctx context.Context, app gateway.App) (gateway.Scheduler, bool, error) {
 			cli, err := deps.scheddRouter.ScheddForApp(ctx, state.App{ID: app.ID, NodeID: app.NodeID})
 			if err != nil {
@@ -1713,7 +1704,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			err = admitErr
 			if err == nil && !atCapacity {
-				backend.RecordTarget(appID, gateway.Target{
+				err = backend.RecordTargetWithReadiness(ctx, appID, gateway.Target{
 					AppID:               appID,
 					InstanceID:          instanceID,
 					NodeID:              nodeID,
@@ -1777,15 +1768,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 			inv.InstanceID = instanceID
 			return synth.forwardInvocation(ctx, target, inv)
 		},
-		invokeWithStatus: func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
+		invokeWithStatus: func(ctx context.Context, appID string, inv state.Invocation, version state.InvocationVersion) (state.Invocation, int, error) {
 			acceptedAt := time.Now()
 			ctx = gateway.WithStartTime(ctx, acceptedAt)
 			ctx = gateway.WithWakeTimelineStart(ctx, acceptedAt)
 			inv.AppID = appID
-			inv, version, err := state.ResolveInvocationVersion(ctx, pgStore, inv)
-			if err != nil {
-				return inv, 0, fmt.Errorf("synth invoke resolve version: %w", err)
-			}
 			app, err := pgStore.AppByID(ctx, appID)
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke resolve app %s: %w", appID, err)
@@ -1804,20 +1791,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if version.DeploymentID != "" && deploymentID != version.DeploymentID {
 				return inv, 0, fmt.Errorf("synth invoke woke deployment %s instead of pinned %s", deploymentID, version.DeploymentID)
 			}
-			if version.DeploymentID != "" {
-				_, checked, checkErr := state.ResolveInvocationVersion(ctx, pgStore, inv)
-				if checkErr != nil {
-					return inv, 0, fmt.Errorf("synth invoke release changed during wake: %w", checkErr)
-				}
-				if checked.DeploymentID != version.DeploymentID || checked.ReleaseID != version.ReleaseID {
-					return inv, 0, fmt.Errorf("synth invoke release changed during wake: expected %s/%s, got %s/%s",
-						version.ReleaseID, version.DeploymentID, checked.ReleaseID, checked.DeploymentID)
-				}
-				instance, lookupErr := pgStore.InstanceByID(ctx, instanceID)
-				if lookupErr != nil || instance.AppID != appID || instance.DeploymentID != version.DeploymentID || instance.NodeID != nodeID || instance.State != string(state.StateRunning) {
-					return inv, 0, fmt.Errorf("synth invoke woke instance outside selected release")
-				}
-			}
 			target := gateway.Target{AppID: appID, InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port, Region: identity.Region, CommitSHA: identity.CommitSHA, DeploymentTag: identity.DeploymentTag, DeploymentCreatedAt: identity.DeploymentCreatedAt, ImageDigest: identity.ImageDigest}
 			if err := synth.verifyInvocationScopeTarget(ctx, appID, version.Scope, target); err != nil {
 				return inv, 0, err
@@ -1835,31 +1808,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// of the synthAdapter struct literal, which broke the compile.
 	// Restoring the off-the-brace call keeps both sides readable.
 	deps.synth = gateway.NewSynthServer(gatewaydInternalSocket, synth, log)
-	// ADR-119 — wire the synth-side metrics, audit emitter, and app-mode
-	// lookup here. The verifier itself is loaded later from the cluster key or
-	// environment fallback and is attached after that load completes.
-	// appPublicAuthMode is consulted via the per-app cache
-	// populated by the same hydration path Handler.PublicAuthConfig
-	// reads; nil-safe (nil lookup = every app treated as "open").
-	deps.synth.WithMetrics(deps.metrics).
-		WithAudit(deps.requireAuthnAudit.Emit).
-		WithAppModeLookup(func(ctx context.Context, appID string) string {
-			// ADR-119 — per-app mode lookup for the synth-side
-			// gate. Reads from the per-app cache hydrated by
-			// the same path Handler.PublicAuthConfig reads.
-			// A cache miss returns "" which the gate treats
-			// as "open" (no JWT required). Returns "" on error
-			// so a transient pg failure doesn't 500 every
-			// internal_only cron fire. Round-3 golangci-lint
-			// contextcheck: now uses the inbound request's ctx
-			// (with timeout / cancel chain) instead of a
-			// fresh context.Background().
-			app, err := pgStore.AppByID(ctx, appID)
-			if err != nil {
-				return ""
-			}
-			return app.PublicAuthMode
-		})
+	deps.syntheticDispatcher = synth
+	// ADR-119 — wire synth-side metrics and audit. The verifier is loaded
+	// later. runWithDeps attaches the actual startup store's verified mode
+	// projection before serving, preserving lookup errors rather than an allow.
+	deps.synth.WithMetrics(deps.metrics).WithAudit(deps.requireAuthnAudit.Emit)
 	deps.synth.WithWorkflowAdmission(func(ctx context.Context, appID, runID, platformTenantID, stepName string, attempt int) error {
 		run, err := pgStore.GetWorkflowRun(ctx, runID)
 		if err != nil {
@@ -2106,6 +2059,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd: session manager init failed")
 	}
 	deps.sessions = sessions
+	deps.trafficDeadlines, err = loadTrafficDeadlineSigner(osGetenv)
+	if err != nil {
+		return fmt.Errorf("gatewayd: traffic deadline signer init: %w", err)
+	}
 	deps.apiAuthLimiter = middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
 	deps.audit = audit.New(pgStore, log, nil, "gatewayd")
 	deps.authMw = authmw.New(
@@ -2144,20 +2101,25 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// reads state.EdgeRule via the store; reset on
 	// db.NotifyEdgeRuleChanged is wired via PGBackend.WithEdgeRules
 	// below.
-	deps.edgeRulesMatcher = newGatewaydEdgeRules(pgStore, log, deps.edgeValidateAdapter, deps.metrics)
+	deps.edgeRulesMatcher = newGatewaydEdgeRules(pgStore, log, deps.edgeValidateAdapter, deps.metrics).withPublicHostRouter(router)
 	// The backend is constructed before the production matcher so the
 	// dependency graph can be assembled in one pass. Re-attach the concrete
 	// matcher here (rather than leaving a typed-nil interface in PGBackend),
 	// then start the durable repair loop alongside LISTEN/NOTIFY.
 	backend.WithEdgeRules(deps.edgeRulesMatcher)
-	go watchDurableEdgeRuleChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
-	go watchDurableCorsPresetChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
-	go watchDurableResponseCachePurges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
+	deps.trafficSession, err = newTrafficRuntimeSession(ctx, pgStore, cfg.NodeName)
+	if err != nil {
+		return err
+	}
+	repairStore := &gatewayPolicyRepairStore{PgStore: pgStore, session: deps.trafficSession}
+	go watchDurableEdgeRuleChanges(ctx, repairStore, backend, log, cfg.NodeName)
+	go watchDurableCorsPresetChanges(ctx, repairStore, backend, log, cfg.NodeName)
+	go watchDurableResponseCachePurges(ctx, repairStore, backend, log, cfg.NodeName)
 	// App and traffic mutations still use notifications as their low-latency
 	// signal. The durable broadcast ledger closes the reconnect gap for every
 	// gateway replica without turning the shared notification outbox into a
 	// single-consumer queue.
-	go watchDurableControlPlaneChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
+	go watchDurableControlPlaneChanges(ctx, repairStore, backend, log, cfg.NodeName)
 	deps.declaredRoutesMatcher = newDeclaredRoutesMatcher(pgStore)
 	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(deps.pgStore, log))
 	// ADR-091 D21 — build the pkg/geoip.Reader backed by the
@@ -2374,6 +2336,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 // Production calls run → runWithDeps(defaultDeps()); tests inject a custom
 // deps.listen so they can probe a real socket without binding :8080.
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+	if backend, ok := deps.backend.(*gateway.PGBackend); ok {
+		repairCtx, stop := context.WithCancel(ctx)
+		stopped := make(chan struct{})
+		go func() { defer close(stopped); backend.RunTargetReadinessReconciler(repairCtx) }()
+		placementStopped := make(chan struct{})
+		go func() { defer close(placementStopped); backend.RunTargetPlacementReconciler(repairCtx) }()
+		defer func() { stop(); <-stopped; <-placementStopped }()
+	}
+	cleanup := &gatewayShutdownBudget{}
 	cfg := deps.config
 	if cfg == nil {
 		cfg = &Config{}
@@ -2394,6 +2365,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if err := capCheck(); err != nil {
 		return err
+	}
+	if deps.pgStore != nil && deps.trafficSession == nil {
+		var err error
+		deps.trafficSession, err = newTrafficRuntimeSession(ctx, deps.pgStore, cfg.NodeName)
+		if err != nil {
+			return err
+		}
 	}
 	var metricsRegisterer prometheus.Registerer
 	var metricPrefix string
@@ -2479,16 +2457,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		shutdownCtx, cancel := cleanup.context(ctx)
+		defer cancel()
 		if err := traceShutdown(shutdownCtx); err != nil {
 			log.Warn("gatewayd-internal: trace shutdown failed", "err", err)
 		}
-		cancel()
 		if retainedFlushCancel != nil {
 			retainedFlushCancel()
 			select {
 			case <-retainedFlushDone:
-			case <-time.After(6 * time.Second):
+			case <-shutdownCtx.Done():
 				log.Warn("gatewayd-internal: timed out draining retained spans")
 			}
 		}
@@ -2502,24 +2480,36 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// harness path); production traffic terminates TLS at gatewayd-public
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
-	retryBudget := gateway.NewRetryBudget(0, nil)
-	budgetURL, budgetConfigErr := retryBudgetRedisURL(osGetenv)
-	if budgetConfigErr != nil {
-		return fmt.Errorf("gatewayd-internal: %w", budgetConfigErr)
-	}
-	if budgetURL != "" {
-		sharedBudget, budgetErr := gateway.NewRedisRetryBudget(ctx, budgetURL, 0)
-		if budgetErr != nil {
-			return fmt.Errorf("gatewayd-internal: connect shared retry budget: %w", budgetErr)
-		}
-		retryBudget = sharedBudget
-		deps.metrics.SetRetryBudgetShared(true)
-		deps.metrics.SetRetryBudgetBackendID(sharedBudget.BackendID())
-		log.Info("gatewayd-internal: shared retry budget enabled")
+	counterCtx, stopCounters := context.WithCancel(ctx)
+	defer stopCounters()
+	retryBudget, budgetErr := buildTrafficRetryBudget(counterCtx, deps.config, deps.pool, deps.metrics, log)
+	if budgetErr != nil {
+		return budgetErr
 	}
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
-	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	if deps.pool != nil && deps.trafficRevocations == nil {
+		var err error
+		deps.trafficRevocations, err = newTrafficRevocationRegistry(counterCtx, deps.pool)
+		if err != nil {
+			return err
+		}
+	}
+	if deps.trafficRevocations != nil {
+		defer deps.trafficRevocations.Close()
+		go deps.trafficRevocations.Run(counterCtx)
+		if backend, ok := deps.backend.(*gateway.PGBackend); ok {
+			backend.WithTrafficRevocations(deps.trafficRevocations)
+		}
+		if deps.syntheticDispatcher != nil {
+			deps.syntheticDispatcher.trafficRevocations = deps.trafficRevocations
+		}
+	}
+	if deps.synth != nil && deps.pgStore != nil {
+		deps.synth.WithVerifiedAppModeLookup(deps.pgStore.ReadSyntheticIngressAuthMode)
+	}
+	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).
+		WithTrafficDeadlines(deps.trafficDeadlines).WithTrafficRevocations(deps.trafficRevocations)
 	if err := configureOperationRoutes(handler, deps); err != nil {
 		return fmt.Errorf("gatewayd-internal: %w", err)
 	}
@@ -2568,24 +2558,29 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// invalidates the exact cache serving customer traffic.
 	handler.WithResponseCache(deps.responseCache)
 	handler.WithDeclaredRouteMatcher(deps.declaredRoutesMatcher)
+	if deps.pool != nil {
+		routingStore := deps.pgStore
+		if routingStore == nil {
+			routingStore = state.NewPgStore(deps.pool)
+		}
+		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(routingStore))
+	}
 	if deps.declaredRoutesMatcher != nil && deps.pool != nil {
 		go watchDeclaredRouteInvalidations(ctx, deps.pool, deps.declaredRoutesMatcher, log)
 	}
-	// ADR-104 amendment 5 / issue #881 Phase 4 C3: opt-in
-	// central-mode rate-limit counter (the [ratelimit] mode TOML
-	// knob added in C2). mode = "local" (default) leaves every
-	// Limiter on its noop backend — behaviour unchanged from
-	// pre-Phase-4. mode = "central" wires the production
-	// PGRateLimitBackend + the LISTEN-side invalidator (C4).
-	if deps.config != nil && deps.config.RateLimit.Mode == "central" {
+	mode, modeErr := trafficCounterMode(deps.config)
+	if modeErr != nil {
+		return modeErr
+	}
+	if mode == "central" {
 		backend, rps := buildCentralRateLimitBackend(deps.pool, log)
-		if backend != nil {
-			handler.WithCentralBackend(backend)
-			log.Info("gatewayd-internal: rate-limit central mode armed",
-				"rps_resolver", rpsKind(rps))
-		} else {
-			return fmt.Errorf("gatewayd-internal: [ratelimit] mode = \"central\" requires a Postgres pool")
+		if backend == nil {
+			return errors.New("gatewayd-internal: ratelimit.mode central requires a Postgres pool")
 		}
+		handler.WithCentralBackend(backend)
+		log.Info("gatewayd-internal: shared rate counters enabled", "rps_resolver", rpsKind(rps))
+	} else {
+		log.Warn("gatewayd-internal: explicit local traffic counters; fleet caps unavailable")
 	}
 	// Exact pre-auth routes opt into a shared source budget independently of
 	// the app/account limiter mode. The handler consults this backend only for
@@ -2615,7 +2610,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// An operator can therefore enable the flag fleet-wide and roll retry out
 	// per app, rather than changing every app's behaviour at once — which is
 	// why the default policy here is inert rather than a 2-attempt default.
-	handler.WithRetryEnabled(trafficResilienceEnabled("FAAS_GATEWAY_RETRY"))
+	publicRetryEnabled := trafficResilienceEnabled("FAAS_GATEWAY_RETRY")
+	handler.WithRetryEnabled(publicRetryEnabled)
 	handler.WithRetryObserver(deps.metrics)
 	// ADR-093: arm the per-process routeMetricsEnabled kill-switch on
 	// the Handler so routeSetFor can AND the operator flag against the
@@ -2673,45 +2669,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// lookup, so the account and app limiters receive the same plan as the
 	// ordinary hostname path. An empty plan fails both limiters closed.
 	//
-	// Error classification (review fix R2): state.ErrNotFound
-	// is a clean miss (the target app row was deleted) — silent
-	// fall-through. Anything else is a real error (DB outage,
-	// pool exhaustion, ctx cancel) and gets logged at WARN +
-	// audited so a dashboard operator can distinguish a noisy
-	// transient from a sustained backend failure.
-	handler.WithEdgeRules(deps.edgeRulesMatcher, func(ctx context.Context, slug string) (gateway.App, bool) {
-		app, err := deps.pgStore.AppBySlug(ctx, slug)
-		if err != nil {
-			if !errors.Is(err, state.ErrNotFound) {
-				if log != nil {
-					log.Warn("edge rule target AppBySlug failed", "slug", slug, "err", err)
-				}
-				if deps.edgeRulesAudit != nil {
-					subject := slug
-					deps.edgeRulesAudit.Emit(ctx, "edge_rule.route_loader_error", &subject, map[string]any{
-						"slug": slug,
-						"err":  err.Error(),
-					})
-				}
-			}
-			return gateway.App{}, false
-		}
-		resolved, ok, err := (pgRouter{store: deps.pgStore}).toApp(ctx, app)
+	// Selected target misses and policy read failures refuse the request before
+	// source-app fallback. Read failures are also logged and audited.
+	handler.WithEdgeRules(deps.edgeRulesMatcher, nil, deps.edgeRulesAudit).WithEdgeTargetPolicyLoader(func(ctx context.Context, slug string) (gateway.App, bool, error) {
+		resolved, ok, err := (pgRouter{store: deps.pgStore}).resolvePublicAppSlug(ctx, slug)
 		if err != nil {
 			if log != nil {
-				log.Warn("edge rule target account lookup failed", "slug", slug, "err", err)
+				log.Warn("edge rule target policy lookup failed", "slug", slug, "err", err)
 			}
 			if deps.edgeRulesAudit != nil {
 				subject := slug
 				deps.edgeRulesAudit.Emit(ctx, "edge_rule.route_loader_error", &subject, map[string]any{
-					"slug": slug,
-					"err":  err.Error(),
+					"slug": slug, "err": err.Error(),
 				})
 			}
-			return gateway.App{}, false
+			return gateway.App{}, false, err
 		}
-		return resolved, ok
-	}, deps.edgeRulesAudit)
+		return resolved, ok, nil
+	})
 	if deps.pgStore != nil {
 		handler.WithAsyncRouteEnqueuer(&asyncRouteEnqueuer{store: deps.pgStore})
 	}
@@ -2818,7 +2793,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.egressGRPC == nil {
 			return
 		}
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := cleanup.context(ctx)
 		defer cancel()
 		_ = deps.egressGRPC.stop(shutdownCtx)
 	}()
@@ -2916,9 +2891,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if journalDialErr != nil {
 		log.Warn("request ID journal: apid client unavailable; debugger-enabled requests will fail closed", "err", journalDialErr)
 	}
-	// ADR-634: the handler only enqueues; a bounded writer pool talks to apid,
-	// so a slow journal never delays or fails a customer request.
-	journalQueue := gateway.NewRequestIDJournalQueue(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
+	handler.WithRequestIDJournalWriter(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
 		if journalClient == nil {
 			return errors.New("request ID journal apid client unavailable")
 		}
@@ -2936,9 +2909,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return errors.New("apid did not record the request ID journal entry")
 		}
 		return nil
-	}, deps.metrics, log)
-	go journalQueue.Run(ctx)
-	handler.WithRequestIDJournalWriter(journalQueue.Submit)
+	})
 	if journalClient != nil {
 		defer func() {
 			if err := journalClient.Close(); err != nil {
@@ -3108,8 +3079,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		recorder.SetWakeHook(publisher.Wake)
 		publisher.Start(ctx)
 		handler.WithRequestTelemetryRecorder(recorder)
-		// Stop() drains the final batch synchronously on shutdown.
-		defer publisher.Stop()
+		// Join the publisher's bounded final flush after the HTTP drain.
+		defer func() {
+			shutdownCtx, cancel := cleanup.context(ctx)
+			defer cancel()
+			publisher.StopWithContext(shutdownCtx)
+		}()
 		// Expose counters for the dashboard via /metrics; read by
 		// the existing Prometheus scrape.
 		log.Info("request_telemetry recorder enabled",
@@ -3298,7 +3273,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		)
 	}
 
-	apidHandler := newApidProxyWithGate(apidTarget, handler, logsHandler, writeGate, deps.appsDomain, log)
+	apidHandler := newApidProxyWithGate(apidTarget, gateway.TrustedTrafficIngress(handler), logsHandler, writeGate, deps.appsDomain, log)
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
 	// to githubd's loopback listener (ADR-012, §11 single-public-
@@ -3595,6 +3570,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var guestServices *gateway.ServiceProxy
 	var guestServiceCallerResolver gateway.ServiceProxyCallerResolver
 	var guestServiceAliasAllowed gateway.ServiceAliasAllowed
+	managedCircuitWired := false
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
 		pgStore := deps.pgStore
 		guestServiceAliasAllowed = newServiceAliasAllowed(pgStore)
@@ -3603,10 +3579,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		breaker := egressBreakerGroup(circuitRuleSource(pgStore), log)
 		handler.WithCircuitBreaker(breaker)
 		serviceProxyConfig := gateway.ServiceProxyConfig{
-			Provider:   serviceEndpointProvider,
-			Resolve:    newServiceProxyResolver(pgStore),
-			Authorize:  newServiceProxyAuthorizer(pgStore),
-			AllowAlias: guestServiceAliasAllowed,
+			Policy:             newServicePolicyPinner(pgStore),
+			TrafficDeadlines:   deps.trafficDeadlines,
+			TrafficRevocations: deps.trafficRevocations,
+			Provider:           serviceEndpointProvider,
+			Resolve:            newServiceProxyResolver(pgStore),
+			Authorize:          newServiceProxyAuthorizer(pgStore),
+			AllowAlias:         guestServiceAliasAllowed,
 			ResolveChaos: func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
 				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)
 			},
@@ -3645,12 +3624,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// signing key is available, so the default path is unchanged.
 			MintCallerAssertion: newServiceCallerMinter(ctx, pgStore, cfg.NodeName, log),
 		}
+		managedCircuitWired = serviceProxyConfig.Breaker != nil
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
-			guestServiceCallerResolver = newServiceProxyCallerResolver(pgStore.ListAllInstances, cfg.NodeName)
-			serviceProxyConfig.ResolveCaller = guestServiceCallerResolver
-			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
+			// DNS and HTTP must use the same fresh source lookup. Ordinary
+			// instance inventory carries node UUIDs rather than cfg.NodeName,
+			// and cached HostIPs can belong to another guest after teardown.
+			identityResolver := newServiceProxyCallerIdentityResolver(nil, cfg.NodeName)
 			identityResolver.lookup = pgStore.LiveInstancesByHostIP
+			guestServiceCallerResolver = identityResolver.Resolve
+			serviceProxyConfig.ResolveCaller = guestServiceCallerResolver
 			serviceProxyConfig.ResolveCallerIdentity = identityResolver.ResolveIdentity
 			if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" {
 				serviceProxyConfig.DevBridge = developmentBridgeServiceForwarder(pgStore, handler)
@@ -3879,7 +3862,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if bridgeErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS bridge address: %w", bridgeErr)
 			}
-			dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, serviceDiscoveryUpstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
+			upstreams := deps.serviceDNSUpstreams
+			if upstreams == nil {
+				upstreams = serviceDiscoveryUpstreams
+			}
+			dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, upstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
 			if dnsErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
 			}
@@ -3956,11 +3943,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// M7). Best-effort: if the socket can't bind (e.g. /run/faas
 	// doesn't exist on a dev box), log and continue — the public +
 	// control listeners are still up.
+	servingListenerReady := listenAddr != "off"
 	if deps.synth != nil {
 		if err := deps.synth.Start(); err != nil {
 			log.Warn("gatewayd synth listen failed; cron traffic will fail until restart",
 				"socket", gatewaydInternalSocket, "err", err)
+		} else {
+			servingListenerReady = true
 		}
+	}
+	if deps.pgStore != nil && servingListenerReady {
+		managedHTTP := guestServiceProxy != nil && serviceProxyAddr != ""
+		stopTrafficObserver := startTrafficRuntimeObserver(ctx, deps.trafficSession, state.GatewayTrafficFeatures{
+			RetryEnabled: publicRetryEnabled, RateCounterMode: mode,
+			RetryCounterMode: retryBudget.CounterMode(), RetryBackendID: retryBudget.BackendID(),
+			DeadlineSigning: deps.trafficDeadlines != nil, PolicySnapshot: deps.pool != nil,
+			SecurityRevocation: deps.trafficRevocations != nil,
+			ManagedHTTP:        managedHTTP, ManagedCircuit: managedHTTP && managedCircuitWired,
+		}, readyProbe.ReadyFunc(), log)
+		defer stopTrafficObserver()
 	}
 
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
@@ -3971,6 +3972,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	case err := <-errc:
 		return err
 	case <-ctx.Done():
+		cleanup.beginDrain()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), drain.DrainGrace)
 		defer cancel()
 		for _, s := range serviceDiscoveryServers {
@@ -4003,9 +4005,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		// Issue #587 / PR-A: wait for the per-request drain
 		// tracker to flush before exiting. shutdownCtx has
-		// already been wired to drain.DrainGrace (25s) — that
-		// sits inside systemd's TimeoutStopSec=30s with 5s
-		// headroom. The drain sets its own internal `draining`
+		// already been wired to drain.DrainGrace (25s). Deferred evidence,
+		// egress and trace cleanup share the following 5s, capped at 30s
+		// from drain start. Deployment must verify the service manager's
+		// stop deadline separately. The drain sets its internal `draining`
 		// flag so any post-Shutdown stragglers become no-op
 		// Begin closures (pkg/gateway/drain.Drain doc).
 		//
@@ -4302,20 +4305,8 @@ func (a mirrorRulesStoreAdapter) ListMirrorRules(ctx context.Context, appID stri
 	return out, nil
 }
 
-// buildCentralRateLimitBackend wires the production
-// CentralBackend iff deps.pool is non-nil (Postgres reachable)
-// (ADR-104 amendment 5, issue #881 Phase 4 C3). Returns
-// (nil, nil) when the pool is missing — runWithDeps logs a
-// warning and falls back to the noop backend (degraded posture,
-// single-box dev with no Postgres still works).
-//
-// The rps closure looks up the per-plan refill rate via
-// api.LimitsFor; an unknown plan (defensive — e.g. a future
-// plan addition that hasn't shipped everywhere) degrades to
-// (0, false) which the backend treats as "infinite tokens"
-// (admit-soft). The closure avoids an explicit pkg/api import
-// in this file (state.PGRateLimitBackend accepts the closure
-// directly).
+// buildCentralRateLimitBackend shares the daemon's Postgres pool. The caller
+// refuses central-mode startup when the pool is absent (ADR-570).
 func buildCentralRateLimitBackend(pool *pgxpool.Pool, log *slog.Logger) (*state.PGRateLimitBackend, func(plan string) (float64, bool)) {
 	if pool == nil {
 		return nil, nil

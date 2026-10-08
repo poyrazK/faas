@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // tenantSurfaceCols is the canonical SELECT column list for a
@@ -275,16 +276,7 @@ func (s *PgStore) CountTenantSurfacesForAccount(ctx context.Context, accountID s
 // UpdateTenantSurfaceStatus — apid sets status (pending/active/suspended/deleted).
 // Returns ErrNotFound if the row is gone.
 func (s *PgStore) UpdateTenantSurfaceStatus(ctx context.Context, id string, status SurfaceStatus) error {
-	tag, err := s.pool.Exec(ctx,
-		`update tenant_surfaces set status = $1, updated_at = now() where id = $2`,
-		string(status), id)
-	if err != nil {
-		return mapErr(err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.setTrafficTenantSurfaceStatus(ctx, id, status)
 }
 
 // UpdateTenantSurfaceCert — the cert engine's only writer to cert_*
@@ -453,11 +445,22 @@ func (s *PgStore) TenantSurfaceByHostname(ctx context.Context, hostname string) 
 //   - (TenantHostname{}, ErrNotFound) when the parent surface is missing
 //   - (TenantHostname{}, ErrConflict) on UQ violation
 func (s *PgStore) CreateTenantHostnameIfUnderQuota(ctx context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	account, err := sqlc.New().ReadTenantSurfaceTrafficAccount(ctx, s.pool, uuidToPgtype(in.SurfaceID))
+	if err != nil {
+		return TenantHostname{}, mapErr(err)
+	}
+	tx, err := s.beginTrafficTenantBinding(ctx, account.String(), []string{in.Hostname})
 	if err != nil {
 		return TenantHostname{}, fmt.Errorf("state: begin create tenant hostname tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	fresh, err := sqlc.New().ReadTenantSurfaceTrafficAccount(ctx, tx, uuidToPgtype(in.SurfaceID))
+	if err != nil || fresh != account {
+		if err == nil {
+			err = ErrNotFound
+		}
+		return TenantHostname{}, mapErr(err)
+	}
 
 	var locked int
 	if err := tx.QueryRow(ctx,
@@ -581,20 +584,8 @@ func (s *PgStore) CountTenantHostnamesForSurface(ctx context.Context, surfaceID 
 // last_error. Idempotent: a second call with last_error stays
 // unchanged.
 func (s *PgStore) MarkTenantHostnameVerified(ctx context.Context, hostname string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update tenant_hostnames
-		    set verified_at = now(),
-		        last_check_at = now(),
-		        last_error = ''
-		  where hostname = $1`,
-		hostname)
-	if err != nil {
-		return mapErr(err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	_, err := s.markTrafficTenantHostnameVerified(ctx, hostname, "", false)
+	return err
 }
 
 // MarkTenantHostnameCheckFailed — the dns_poller path. Preserves
@@ -643,15 +634,7 @@ func (s *PgStore) ListPendingTenantHostnames(ctx context.Context, olderThan time
 // DeleteTenantHostname — apid path; cascades nothing (hostnames have
 // no children).
 func (s *PgStore) DeleteTenantHostname(ctx context.Context, hostname string) error {
-	tag, err := s.pool.Exec(ctx,
-		`delete from tenant_hostnames where hostname = $1`, hostname)
-	if err != nil {
-		return mapErr(err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.deleteTrafficTenantHostname(ctx, hostname, "")
 }
 
 // GetTenantHostnameByName — pgRouter.ResolveHost's tenant-surface

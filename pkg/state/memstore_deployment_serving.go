@@ -10,14 +10,7 @@ import "time"
 // m.mu.
 func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 	prev, existed := m.deployments[id]
-	if existed && prev.Status == DeploySnapshotting && d.Status == DeployFailed {
-		// Mirrors the deployment_failed_rollback_keeps_target trigger
-		// (migration 20261005013455209): a release re-primed by a rollback
-		// that fails stays a rollback target.
-		if _, served := m.deploymentServingEndedAt[id]; served {
-			d.Status = DeploySuperseded
-		}
-	}
+	d = m.preserveFailedRollbackTargetLocked(id, d)
 	m.deployments[id] = d
 	switch {
 	case deploymentServing(d):
@@ -34,6 +27,17 @@ func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 		m.lastServingEndedAt = at
 		m.deploymentServingEndedAt[id] = at
 	}
+}
+
+// preserveFailedRollbackTargetLocked mirrors the rollback failure trigger
+// before traffic validation, so validation sees the same alias eligibility
+// that putDeploymentLocked will publish. It does not change stored intent.
+func (m *MemStore) preserveFailedRollbackTargetLocked(id string, d Deployment) Deployment {
+	prev, existed := m.deployments[id]
+	if existed && prev.Status == DeploySnapshotting && d.Status == DeployFailed && m.deploymentServedLocked(id) {
+		d.Status = DeploySuperseded
+	}
+	return d
 }
 
 // deploymentServedLocked reports whether id stopped serving traffic at some

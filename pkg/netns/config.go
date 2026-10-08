@@ -753,6 +753,9 @@ func (c Config) NftCommands() [][]string {
 	// Accept reply traffic first (mirrors the v4 chain above) so a published
 	// request's IPv6 reply isn't dropped by the lateral-movement deny.
 	add("add", "rule", "ip6", "faas", "forward", "ct", "state", "established,related", "accept")
+	// Circuit updates replace both families in one transaction; declare the
+	// IPv6 set and rule as well, after accepting established connections.
+	cmds = append(cmds, c.egressCircuitRules(nft, "ip6")...)
 	// §7 cap mirrored on the v6 chain: spec mandates one per-instance budget
 	// without distinguishing v4 vs v6 entries. Without this sibling a guest
 	// could flood only IPv6 to exhaust the conntrack table separately. Placed

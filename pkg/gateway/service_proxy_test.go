@@ -2,6 +2,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/circuit"
+	"github.com/onebox-faas/faas/pkg/trafficdeadline"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"go.opentelemetry.io/otel"
@@ -266,18 +268,23 @@ func TestServiceProxyHonorsAggregateRetryBudget(t *testing.T) {
 }
 
 func TestServiceProxyAppliesCallerDependencyPolicy(t *testing.T) {
+	signer, err := trafficdeadline.New(bytes.Repeat([]byte{42}, 32), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: "app-orders", Endpoints: []ServiceEndpoint{
 		{InstanceID: "instance-a", NodeID: "node-a", Port: 8080},
 		{InstanceID: "instance-b", NodeID: "node-b", Port: 8081},
 	}}}
 	var calls atomic.Int32
 	proxy := NewServiceProxy(ServiceProxyConfig{
-		Provider: provider,
+		TrafficDeadlines: signer,
+		Provider:         provider,
 		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
 			return ServiceTarget{AppID: "app-orders"}, true, nil
 		},
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
-			return ServiceCaller{AppID: "app-client", Reliability: &api.ServiceReliabilityPolicy{TimeoutMS: 1000, MaxAttempts: 1}}, nil
+			return ServiceCaller{AppID: "app-client", AccountID: "account-client", Reliability: &api.ServiceReliabilityPolicy{TimeoutMS: 1000, MaxAttempts: 1}}, nil
 		},
 		Forward: func(Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -100,8 +100,9 @@ func mustUUID(t *testing.T, s string) pgtype.UUID {
 
 func TestBuildDispatchEnvelope_BasicFields(t *testing.T) {
 	tr := sqlc.Trigger{
-		ID:    mustUUID(t, "11111111-1111-1111-1111-111111111111"),
-		AppID: mustUUID(t, "22222222-2222-2222-2222-222222222222"),
+		ID:        mustUUID(t, "11111111-1111-1111-1111-111111111111"),
+		AppID:     mustUUID(t, "22222222-2222-2222-2222-222222222222"),
+		AccountID: mustUUID(t, "33333333-3333-3333-3333-333333333333"),
 	}
 	batch := []SourceRecord{
 		{ItemIdentifier: "k1", Payload: []byte(`{"hello":"world"}`), Headers: map[string]string{"X-K": "v"}},
@@ -109,6 +110,9 @@ func TestBuildDispatchEnvelope_BasicFields(t *testing.T) {
 	env := buildDispatchEnvelope(tr, batch)
 	if env.AppID != "22222222-2222-2222-2222-222222222222" {
 		t.Errorf("AppID = %q", env.AppID)
+	}
+	if env.AccountID != "33333333-3333-3333-3333-333333333333" {
+		t.Errorf("AccountID = %q", env.AccountID)
 	}
 	if !strings.HasPrefix(env.InvocationID, "trigger-") {
 		t.Errorf("InvocationID prefix = %q", env.InvocationID)

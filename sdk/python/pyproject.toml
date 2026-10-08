@@ -1,7 +1,13 @@
 [tool.poetry]
-name = "faas_sdk"
+# Distribution name is `gregale-sdk`; the import package stays `faas_sdk`
+# (like `pip install pillow` -> `import PIL`). Do NOT publish as
+# `faas-sdk` — that name is already taken on PyPI by an unrelated
+# package from Sonra Intelligence Ltd, so shipping under it would point
+# customers at someone else's code.
+name = "gregale-sdk"
 version = "0.1.0"
-description = "A client library for accessing one-box FaaS REST API"
+description = "Python client library for the Gregale FaaS platform"
+license = "LicenseRef-onebox-internal"
 authors = []
 readme = "README.md"
 packages = [
@@ -11,6 +17,11 @@ include = [
     "faas_sdk/py.typed",
     { path = "faas_sdk/operation_schema.sql", format = ["sdist", "wheel"] },
 ]
+
+[tool.poetry.urls]
+Homepage = "https://gregale.dev/docs/cli"
+Repository = "https://github.com/poyrazK/faas"
+Issues = "https://github.com/poyrazK/faas/issues"
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -26,3 +37,16 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["F", "I", "UP"]
+
+[tool.pytest.ini_options]
+markers = [
+    "regen: deterministic-regen tripwire (heavy; opt in with -m regen).",
+]
+# Default selection excludes the heavy regen tripwire; run it via
+# `pytest -m regen tests/test_post_process.py` to opt in.
+addopts = ["-m", "not regen"]
+asyncio_mode = "auto"
+
+[tool.ruff.lint.per-file-ignores]
+"faas_sdk/api/**" = ["UP"]
+"faas_sdk/models/**" = ["UP"]

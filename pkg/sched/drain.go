@@ -16,7 +16,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -126,7 +128,8 @@ type Drain struct {
 	// check (Move 2). One entry per account; the 5s TTL collapses the
 	// 64-row batch's per-row AccountByID into ≤0.2 RPS at Meta's
 	// "everyone suspends at once" worst case.
-	accts *acctCache
+	accts              *acctCache
+	trafficRevocations *trafficrevocation.Registry
 }
 
 // DefaultDrainDispatchConcurrency is deliberately small: it removes the
@@ -755,14 +758,16 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// every due task forever, so the backlog could never fall below the
 	// limit that is blocking it.
 	//
-	// 2. Account Active gate. The cron path has this (loop.go:580);
+	// 2. Legacy/mirror account gate. Production normal delivery enrolls fresh
+	// security generations after claim instead of trusting this cache.
+	// The cron path has this (loop.go:580);
 	// the drain needs it too because rows queued while the account was
 	// Active may sit in 'pending' across a suspension (Free goes past
 	// due → suspended). Cap+Activeness = the complete per-app gate.
 	// 5-minute backoff is short enough that a reactivation lands within
 	// a SLO; long enough that we don't churn cycles on a suspended
 	// account.
-	if !d.isAccountActive(ctx, inv.AppID) {
+	if (d.trafficRevocations == nil || isDebugMirrorReplay(inv)) && !d.isAccountActive(ctx, inv.AppID) {
 		// budget=0: account-suspended deferral does not consume the row's
 		// delivery budget because no app delivery was attempted.
 		_ = d.store.FailInvocation(ctx, inv.ID, "account suspended", 5*time.Minute, 0)
@@ -841,7 +846,9 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	}
 
 	var version state.InvocationVersion
-	inv, version, err = state.ResolveInvocationVersion(ctx, d.store, inv)
+	var traffic *invocationTraffic
+	var deliveryCtx context.Context
+	deliveryCtx, inv, version, traffic, err = d.prepareInvocationTraffic(claimCtx, inv)
 	if err != nil {
 		retryAfter := d.invocationRetryDelay(inv)
 		if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrConflict) {
@@ -853,18 +860,19 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 		return
 	}
+	defer traffic.close()
 	// 3. EnsureWake coalesces same-app wake attempts while the bounded
 	// dispatch pool lets different apps progress concurrently. Returns
 	// the live instance handle on success; the drain stamps it onto the
 	// row so the meter's per-instance count is non-zero for this minute.
 	var wakeRes WakeResult
 	if version.DeploymentID != "" {
-		wakeRes, err = d.engine.Wake(claimCtx, inv.AppID, version.DeploymentID, version.Scope, TriggerMeterd)
+		wakeRes, err = d.engine.Wake(deliveryCtx, inv.AppID, version.DeploymentID, version.Scope, TriggerMeterd)
 		if err == nil && (wakeRes.AtCapacity || wakeRes.InstanceID == "" || wakeRes.DeploymentID != version.DeploymentID) {
 			err = fmt.Errorf("%w: selected deployment is no longer wakeable", ErrPermanentWake)
 		}
 	} else {
-		coord, wakeErr := d.engine.EnsureWake(WithScope(claimCtx, version.Scope), inv.AppID, TriggerMeterd)
+		coord, wakeErr := d.awaitInvocationWake(WithScope(deliveryCtx, version.Scope), inv.AppID)
 		err = wakeErr
 		if err == nil && coord.Err != nil {
 			err = coord.Err
@@ -876,6 +884,15 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			wakeRes = WakeResult{InstanceID: coord.Instance.InstanceID, NodeID: coord.Instance.NodeID,
 				DeploymentID: coord.Instance.DeploymentID, WakeID: coord.Instance.WakeID, Port: int(coord.Instance.Port)}
 		}
+	}
+	if cause := context.Cause(deliveryCtx); cause != nil {
+		err = cause
+	}
+	if err == nil {
+		inv, err = d.verifyInvocationWake(deliveryCtx, inv, wakeRes, traffic)
+	}
+	if err == nil && traffic != nil {
+		deliveryCtx, err = traffic.handoff(deliveryCtx)
 	}
 	if err != nil {
 		retryAfter := d.invocationRetryDelay(inv)
@@ -893,22 +910,22 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
-		d.log.Warn("drain: wake", "inv", inv.ID, "err", err, "permanent", retryAfter == 0)
+		d.log.Warn("drain: wake", "inv", logsanitize.Field(inv.ID), "err", logsanitize.FieldAny(err), "permanent", retryAfter == 0)
 		return
 	}
 	// Operation progress authority must be bound before customer code runs.
 	// Ordinary invocation stamps retain their metering-only behavior.
-	if err := d.stampInvocationInstance(claimCtx, inv, wakeRes.InstanceID); err != nil {
-		d.log.Warn("drain: stamp instance", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err)
+	if err := d.stampInvocationInstance(deliveryCtx, inv, wakeRes.InstanceID); err != nil {
+		d.log.Warn("drain: stamp instance", "inv", logsanitize.Field(inv.ID), "inst", wakeRes.InstanceID, "err", dispatchErrorClass(err))
 		if state.InvocationHasOperation(inv) {
 			if failErr := d.store.FailInvocation(ctx, inv.ID, "bind operation instance: "+err.Error(), d.invocationRetryDelay(inv), d.invocationAttemptBudget(ctx, inv), failOutcome(err), state.WithClaimAttempt(inv.Attempts), state.WithDispatchNotStarted()); failErr != nil {
-				d.log.Warn("drain: settle operation binding failure", "inv", inv.ID, "err", failErr)
+				d.log.Warn("drain: settle operation binding failure", "inv", logsanitize.Field(inv.ID), "err", dispatchErrorClass(failErr))
 			}
 			return
 		}
 	}
 	// 5. Invoke (deliver envelope).
-	if d.gateway == nil {
+	if d.gateway == nil && traffic == nil {
 		// No gateway (test seam): the drain still completes the
 		// row so the meter gets its tick.
 		if err := completeClaimedInvocation(ctx, d.store, inv, nil); err == nil {
@@ -918,10 +935,18 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		return
 	}
 	var dispatched state.Invocation
-	if prewoken, ok := d.gateway.(prewokenGatewaySynth); ok {
-		dispatched, err = prewoken.InvokeWithWake(claimCtx, inv.AppID, inv, wakeRes)
+	if d.gateway == nil {
+		err = fmt.Errorf("%w: invocation gateway is not configured", trafficrevocation.ErrUnavailable)
+	} else if prewoken, ok := d.gateway.(prewokenGatewaySynth); ok {
+		dispatched, err = prewoken.InvokeWithWake(deliveryCtx, inv.AppID, inv, wakeRes)
 	} else {
-		dispatched, err = d.gateway.Invoke(claimCtx, inv.AppID, inv)
+		dispatched, err = d.gateway.Invoke(deliveryCtx, inv.AppID, inv)
+	}
+	if cause := context.Cause(deliveryCtx); cause != nil {
+		err = cause
+	}
+	if err == nil {
+		err = traffic.verify()
 	}
 	if inv.Source == state.InvocationCron && inv.FailureRules != nil {
 		if err == nil && dispatched.ResponseStatusCode == 0 {
@@ -953,7 +978,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
-		d.log.Warn("drain: invoke", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
+		d.log.Warn("drain: invoke", "inv", logsanitize.Field(inv.ID), "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
 		return
 	}
 	// 6. Complete.
@@ -961,7 +986,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		// pgstore.ErrNotFound would mean someone else completed
 		// first; drain does NOT have to retry — the row is in a
 		// terminal state and the meter join will see it.
-		d.log.Warn("drain: complete", "inv", inv.ID, "err", err)
+		d.log.Warn("drain: complete", "inv", logsanitize.Field(inv.ID), "err", err)
 		return
 	}
 	d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
@@ -978,15 +1003,15 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 	if decision.Action == "complete" {
 		store, ok := d.store.(state.ClassifiedInvocationCompletionStore)
 		if !ok {
-			d.log.Error("drain: classified cron completion is unsupported by store", "inv", inv.ID)
+			d.log.Error("drain: classified cron completion is unsupported by store", "inv", logsanitize.Field(inv.ID))
 			if err := d.store.CompleteInvocation(ctx, inv.ID, response.Result); err != nil {
-				d.log.Warn("drain: complete classified cron invocation fallback", "inv", inv.ID, "err", err)
+				d.log.Warn("drain: complete classified cron invocation fallback", "inv", logsanitize.Field(inv.ID), "err", err)
 			}
 			d.emitDone(ctx, inv)
 			return
 		}
 		if err := store.CompleteInvocationWithWorkClassification(ctx, inv.ID, response.Result, decision, response.OutcomeCode); err != nil {
-			d.log.Warn("drain: complete classified cron invocation", "inv", inv.ID, "err", err)
+			d.log.Warn("drain: complete classified cron invocation", "inv", logsanitize.Field(inv.ID), "err", err)
 			return
 		}
 		d.emitDone(ctx, inv)
@@ -1010,7 +1035,7 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 		state.WithWorkClassification(decision, response.OutcomeCode),
 	}
 	if err := d.store.FailInvocation(ctx, inv.ID, message, retryAfter, budget, options...); err != nil {
-		d.log.Warn("drain: fail classified cron invocation", "inv", inv.ID, "action", decision.Action, "err", err)
+		d.log.Warn("drain: fail classified cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
 	if retryAfter == 0 {
@@ -1035,7 +1060,7 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 		options = append(options, state.WithOutcome(state.OutcomeUncertain))
 	}
 	if err := d.store.FailInvocation(ctx, inv.ID, "invoke receipt uncertain: "+dispatchErr.Error(), retryAfter, budget, options...); err != nil {
-		d.log.Warn("drain: settle uncertain cron invocation", "inv", inv.ID, "action", decision.Action, "err", err)
+		d.log.Warn("drain: settle uncertain cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
 	if decision.Action == "hold" {
@@ -1126,11 +1151,11 @@ func (d *Drain) emitDone(ctx context.Context, inv state.Invocation, terminalStat
 		"state":         string(finalState),
 	})
 	if err != nil {
-		d.log.Warn("drain: marshal invocation_done", "inv", inv.ID, "err", err)
+		d.log.Warn("drain: marshal invocation_done", "inv", logsanitize.Field(inv.ID), "err", err)
 		return
 	}
 	if err := d.notifier.Notify(ctx, db.NotifyInvocationDone, string(body)); err != nil && !errors.Is(err, context.Canceled) {
-		d.log.Warn("drain: notify invocation_done", "inv", inv.ID, "err", err)
+		d.log.Warn("drain: notify invocation_done", "inv", logsanitize.Field(inv.ID), "err", err)
 	}
 }
 
@@ -1184,13 +1209,13 @@ func (d *Drain) invocationAttemptBudget(ctx context.Context, inv state.Invocatio
 	app, err := d.engine.Store().AppByID(ctx, inv.AppID)
 	if err != nil {
 		d.log.WarnContext(ctx, "invocationAttemptBudget: AppByID failed; using finite safety ceiling",
-			"inv_id", inv.ID, "app_id", inv.AppID, "err", err)
+			"inv_id", logsanitize.Field(inv.ID), "app_id", logsanitize.Field(inv.AppID), "err", err)
 		return api.EffectiveRetryMaxAttempts(requested, api.DurableRetryMaxAttempts)
 	}
 	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
 	if err != nil {
 		d.log.WarnContext(ctx, "invocationAttemptBudget: AccountByID failed; using finite safety ceiling",
-			"inv_id", inv.ID, "app_id", inv.AppID, "account_id", app.AccountID, "err", err)
+			"inv_id", logsanitize.Field(inv.ID), "app_id", logsanitize.Field(inv.AppID), "account_id", app.AccountID, "err", err)
 		return api.EffectiveRetryMaxAttempts(requested, api.DurableRetryMaxAttempts)
 	}
 	return api.EffectiveRetryMaxAttempts(requested, api.MustLimitsFor(acct.Plan).MaxQueueAttempts)

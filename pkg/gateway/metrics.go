@@ -24,9 +24,8 @@
 //   - gateway_pre_auth_rate_limit_total{app, outcome} counter
 //   - gateway_pre_auth_policy_shadow_total{app, policy, outcome} counter
 //   - gateway_ratelimit_degraded_total{scope}        counter (central-store
-//     requests decided locally after a central consume failed or while the
-//     consult breaker is open; scope is a
-//     closed app|account|rule|other set)
+//     admission refusals after a central consume failed or while the consult
+//     breaker is open; scope is a closed app|account|rule|preauth|other set)
 //   - gateway_cold_boot_total{app}                   counter (renamed from
 //     gateway_cold_wake_total in #273 / ADR-042; zero external consumers so
 //     it is a straight rename, not a dual-emit migration)
@@ -226,9 +225,10 @@ type Metrics struct {
 	preAuthRateLimited    *prometheus.CounterVec
 	preAuthPolicyShadow   *prometheus.CounterVec
 	// rateLimitDegraded counts every central-counter error that caused a
-	// process-local fallback. The closed scope label keeps cardinality fixed;
+	// refusal of unverified admission. The closed scope label keeps cardinality fixed;
 	// warning logs and audit events are separately cooled down by Handler.
 	rateLimitDegraded *prometheus.CounterVec
+	rateLimitShared   prometheus.Gauge
 	// leaderBootstrapAborts (ADR-098 C7): counter labelled by
 	// reason — closed set {queue_empty_no_instance, ttl_expired,
 	// app_deleted}. Pre-instantiated in NewMetrics so the §12
@@ -997,15 +997,19 @@ func NewMetrics() *Metrics {
 		}, []string{"reason"}),
 		retryBudgetShared: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "gateway_retry_budget_shared",
-			Help: "Whether this gateway uses the shared Redis retry budget (1) or a process-local budget (0).",
+			Help: "Whether this gateway uses the shared retry budget (1) or a process-local budget (0).",
+		}),
+		rateLimitShared: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gateway_rate_limit_shared",
+			Help: "Whether app/account/rule rate admission uses a shared authoritative backend (1) or explicit local counters (0).",
 		}),
 		retryBudgetBackendInfo: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_retry_budget_backend_info",
-			Help: "Shared retry-budget Redis endpoint identity, hashed from transport address and logical DB without credentials.",
+			Help: "Shared retry-budget endpoint identity, hashed without credentials.",
 		}, []string{"backend_id"}),
 		retryBudgetBackend: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_retry_budget_backend_operations_total",
-			Help: "Shared retry-budget Redis operations by observe/admit and ok/allowed/denied/error. A backend error denies retry admission.",
+			Help: "Shared retry-budget operations by observe/admit and ok/allowed/denied/error. A backend error denies retry admission.",
 		}, []string{"operation", "result"}),
 		circuitTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_circuit_transitions_total",
@@ -1307,7 +1311,7 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "policy", "outcome"}),
 		rateLimitDegraded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_degraded_total",
-			Help: "Requests the rate limiter decided with process-local counters because a central consume failed or recently failed (breaker open), labelled by closed scope (app|account|rule|preauth|other).",
+			Help: "Requests refused unverified shared admission because a central consume failed or recently failed (breaker open), labelled by closed scope (app|account|rule|preauth|other).",
 		}, []string{"scope"}),
 		// ADR-046 PR-2 producer observability. Counter is
 		// registered on the gatewayd-internal-local registry (this
@@ -1906,7 +1910,7 @@ func NewMetrics() *Metrics {
 	for _, result := range []string{"recorded", "failed"} {
 		m.requestIDJournalWrites.WithLabelValues(result)
 	}
-	reg.MustRegister(m.requests, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow)
@@ -3705,7 +3709,7 @@ func (m *Metrics) SetRetryBudgetShared(shared bool) {
 	}
 }
 
-// SetRetryBudgetBackendID permits a fleet check for one common Redis endpoint.
+// SetRetryBudgetBackendID permits a fleet check for one common shared endpoint.
 func (m *Metrics) SetRetryBudgetBackendID(id string) {
 	if m == nil || m.retryBudgetBackendInfo == nil || id == "" {
 		return
@@ -3713,7 +3717,7 @@ func (m *Metrics) SetRetryBudgetBackendID(id string) {
 	m.retryBudgetBackendInfo.WithLabelValues(id).Set(1)
 }
 
-// RecordRetryBudgetOperation records Redis outcomes without tenant labels.
+// RecordRetryBudgetOperation records shared backend outcomes without tenant labels.
 func (m *Metrics) RecordRetryBudgetOperation(operation, result string) {
 	if m == nil || m.retryBudgetBackend == nil {
 		return

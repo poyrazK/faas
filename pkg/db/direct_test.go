@@ -1,4 +1,6 @@
+// adr: 570 — classify ordinary shared-rate admission without session state.
 // adr: 568 — environment policy batches retain session locks on the direct pool.
+
 package db
 
 import (
@@ -178,6 +180,7 @@ var sessionScopedAcquire = map[string]string{
 	"pkg/db/migrate_advisory.go":                "session pg_advisory_lock held across statements",
 	"pkg/state/pgstore.go":                      "session pg_advisory_lock for the edge-rule mutation fence",
 	"pkg/state/pgstore_edge_rule_batch_lock.go": "session pg_advisory_lock for all apps in an environment policy batch",
+	"pkg/state/traffic_policy_session.go":       "session locks precede the guarded repeatable-read transaction",
 }
 
 // pooledAcquireOK records Acquires that are deliberately on the ordinary
@@ -187,7 +190,8 @@ var pooledAcquireOK = map[string]string{
 	"pkg/db/warmup.go":                                   "pool warm-up: acquires and releases N connections to prove capacity; must exercise the POOLED path",
 	"pkg/db/pgtest/pgtest.go":                            "test harness; never runs against a pooler",
 	"pkg/db/pgtest/template.go":                          "test harness; never runs against a pooler",
-	"pkg/managedpostgres/neon/checkpoint_connections.go": "private customer maintenance pool: opened from the authenticated direct provider endpoint, never the control-plane transaction pooler",
+	"pkg/state/pgstore_ratelimit.go":                     "atomic shared-rate statements, released on every path; no LISTEN, session lock, or other session state",
+	"pkg/managedpostgres/neon/checkpoint_connections.go": "private customer maintenance pool: authenticated direct provider endpoint, never the control-plane transaction pooler",
 }
 
 // TestSessionScopedAcquiresRouteThroughDirectPool is the gate.
@@ -332,6 +336,8 @@ func TestDirectMaxConnsFollowsNotifyHubMode(t *testing.T) {
 	}{
 		{"hub on is the small pooled budget", "", "faas-schedd", directHubOnMaxConns},
 		{"hub on, unprefixed", "1", "gatewayd-internal", directHubOnMaxConns},
+		{"hub on reserves apid's nested guard", "", "faas-apid", directAPIDHubOnMaxConns},
+		{"hub on reserves apid's nested guard, unprefixed", "1", "apid", directAPIDHubOnMaxConns},
 		// Hub off: LISTEN moves onto the direct pool wholesale, so the direct
 		// pool needs the pre-hub per-subscriber sizing.
 		{"hub off uses the legacy per-subscriber budget", "0", "faas-schedd",

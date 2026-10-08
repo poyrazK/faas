@@ -604,6 +604,7 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 		s.incWakeFailure(ctx, "snapshot_restore_err")
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wr.NodeID = s.nodeID
 	wakeCtx, wakeSpan := newWakeSpan(ctx, "restore", wr)
 	// issue #517 / PR-C / ADR-064 — emit wake.boot_observed at
 	// the gRPC server boundary. Schedd is the canonical emit site;
@@ -670,6 +671,7 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 		s.incWakeFailure(ctx, "mem_backend_err")
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wr.NodeID = s.nodeID
 	wakeCtx, wakeSpan := newWakeSpan(ctx, "cold_boot", wr)
 	// issue #517 / PR-C / ADR-064 — emit wake.boot_observed at
 	// the gRPC server boundary. Same canonical-site pairing as
@@ -1255,6 +1257,8 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 			}
 		}
 		row.OpenConns = openConns[inst]
+		row.EgressCircuitEnforcement = s.egressCircuitEnforcement(inst)
+		row.HttpAdmissionEnforcement = s.httpAdmissionEnforcement(inst)
 		row.FlowSummaries = flowSummariesToProto(flowTelemetry.summaries[inst])
 		resp.Instances = append(resp.Instances, row)
 	}

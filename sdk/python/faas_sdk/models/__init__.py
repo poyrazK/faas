@@ -2046,6 +2046,7 @@ from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
 from .publish_event_response import PublishEventResponse
+from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .put_app_env_request import PutAppEnvRequest
@@ -2536,6 +2537,13 @@ from .trace import Trace
 from .trace_span import TraceSpan
 from .trace_span_attributes import TraceSpanAttributes
 from .trace_span_status import TraceSpanStatus
+from .traffic_runtime_feature_status import TrafficRuntimeFeatureStatus
+from .traffic_runtime_feature_status_mode import TrafficRuntimeFeatureStatusMode
+from .traffic_runtime_feature_status_state import TrafficRuntimeFeatureStatusState
+from .traffic_runtime_status import TrafficRuntimeStatus
+from .traffic_runtime_status_enforcement_status import TrafficRuntimeStatusEnforcementStatus
+from .traffic_runtime_status_scope import TrafficRuntimeStatusScope
+from .traffic_runtime_status_state import TrafficRuntimeStatusState
 from .transfer_ownership_request import TransferOwnershipRequest
 from .trigger import Trigger
 from .trigger_broker_poison_strategy import TriggerBrokerPoisonStrategy
@@ -4725,6 +4733,7 @@ __all__ = (
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishManagedRealtimeChannelDelivery",
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
     "PutAppEnvRequest",
@@ -5207,6 +5216,13 @@ __all__ = (
     "TraceSpan",
     "TraceSpanAttributes",
     "TraceSpanStatus",
+    "TrafficRuntimeFeatureStatus",
+    "TrafficRuntimeFeatureStatusMode",
+    "TrafficRuntimeFeatureStatusState",
+    "TrafficRuntimeStatus",
+    "TrafficRuntimeStatusEnforcementStatus",
+    "TrafficRuntimeStatusScope",
+    "TrafficRuntimeStatusState",
     "TransferOwnershipRequest",
     "Trigger",
     "TriggerBrokerPoisonStrategy",

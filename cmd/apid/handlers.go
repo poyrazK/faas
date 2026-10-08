@@ -209,8 +209,8 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Slug taken", fmt.Sprintf("app slug %q is already in use", req.Slug)))
 		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
-				"Capacity", "could not create app"))
+			api.WriteProblem(w, trafficPolicyWriteProblem(err, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
+				"Capacity", "could not create app")))
 		}
 		return
 	}

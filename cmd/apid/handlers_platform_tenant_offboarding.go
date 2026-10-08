@@ -28,7 +28,7 @@ func (s *server) planPlatformTenantOffboarding(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not plan platform tenant offboarding"))
+		api.WriteProblem(w, tenantBindingWriteProblem(err, api.ErrInternal("could not plan platform tenant offboarding")))
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

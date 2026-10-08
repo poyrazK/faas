@@ -514,7 +514,7 @@ def _fix_docstrings(text: str) -> str:
 def _patch_generator_bugs(sdk_root: Path) -> None:
     """Fix known bugs in the openapi-python-client 0.29.0 generator output.
 
-    Five cleanups:
+    Six cleanups:
 
     1. `from ...types import UNSET, Response` is missing `Unset` even
        though generated service files reference `Unset` in type
@@ -554,6 +554,8 @@ def _patch_generator_bugs(sdk_root: Path) -> None:
     5. Binary File responses can be generated as BytesIO(response.text) when
        a route also offers text/csv. BytesIO requires bytes; response.content
        preserves ZIP and UTF-8 artifacts without decoding or corruption.
+    6. Optional WorkerScaling.name omits any Unset instance, matching the
+       established model contract when callers construct Unset() explicitly.
     """
     import re
 
@@ -585,6 +587,10 @@ def _patch_generator_bugs(sdk_root: Path) -> None:
     for path in sdk_root.rglob("*.py"):
         text = path.read_text()
         original = text
+        # Preserve the optional WorkerScaling.name contract for every Unset
+        # instance, including callers that construct Unset() explicitly.
+        if path.relative_to(sdk_root).as_posix() == "models/worker_scaling.py":
+            text = text.replace("if name is not UNSET:", "if not isinstance(name, Unset):")
         # Fix 5: downloads must preserve bytes, including invalid UTF-8 in ZIPs.
         text = text.replace("BytesIO(response.text)", "BytesIO(response.content)")
         # Fix 1: add `Unset` to the types import when referenced in
@@ -732,12 +738,15 @@ from .operations import (
 from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
 from .release_context import (
     GREGALE_RELEASE_HEADER,
+    GREGALE_REQUEST_DEADLINE_HEADER,
     GREGALE_REVISION_HEADER,
     AsyncGregaleReleaseTransport,
     GregaleReleaseMiddleware,
     GregaleReleaseTransport,
     current_gregale_release,
+    current_gregale_request_deadline,
     with_gregale_release,
+    with_gregale_request_context,
 )
 from .webhook import (
     DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE,
@@ -765,6 +774,9 @@ __all__ = (
     "mint_idempotency_key",
     "current_idempotency_key",
     "GREGALE_RELEASE_HEADER",
+    "GREGALE_REQUEST_DEADLINE_HEADER",
+    "current_gregale_request_deadline",
+    "with_gregale_request_context",
     "GREGALE_REVISION_HEADER",
     "GREGALE_FLAG_CONTEXT_HEADER",
     "GREGALE_FLAG_EVIDENCE_HEADER",

@@ -13,10 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/httpjson"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
 
 func TestHTTPGatewaySynthNegotiatesManagedOperationResults(t *testing.T) {
@@ -77,11 +79,12 @@ func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 			AppID            string            `json:"app_id"`
 			Headers          map[string]string `json:"headers"`
 			BodyB64          string            `json:"body_b64"`
+			AccountID        string            `json:"account_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if got.InvocationID != "inv-1" || got.AppID != "app-1" || got.PlatformTenantID != "tenant-1" {
+		if got.InvocationID != "inv-1" || got.AppID != "app-1" || got.PlatformTenantID != "tenant-1" || got.AccountID != "acct-1" {
 			t.Fatalf("identity = %#v", got)
 		}
 		if got.Headers["content-type"] != "application/json" {
@@ -105,6 +108,7 @@ func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 		Path:             "/e2e",
 		Headers:          json.RawMessage(`{"content-type":"application/json"}`),
 		Payload:          []byte(`{"hello":"world"}`),
+		AccountID:        "acct-1",
 	})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
@@ -284,5 +288,38 @@ func TestHTTPGatewaySynthExecuteStepRequiresWorkflowTokenMinter(t *testing.T) {
 	_, _, err := h.ExecuteStep(context.Background(), "app-1", "/step", http.MethodPost, nil, nil, time.Second)
 	if err == nil || !strings.Contains(err.Error(), "workflow invocation requires internal service token minter") {
 		t.Fatalf("err = %v, want missing workflow token minter", err)
+	}
+}
+
+// adr: 570
+func TestHTTPGatewaySynthSecurityHandoffComesFromOwnerContext(t *testing.T) {
+	value, err := trafficrevocation.EncodeSnapshot(map[trafficrevocation.Scope]trafficrevocation.State{{Kind: "account", ID: uuid.NewString()}: {Revision: 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := trafficrevocation.WithHandoffSnapshot(t.Context(), value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got struct {
+			SecuritySnapshot string            `json:"security_snapshot"`
+			Headers          map[string]string `json:"headers"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Error(err)
+			http.Error(w, "decode", 400)
+			return
+		}
+		if got.SecuritySnapshot != value {
+			t.Errorf("handoff was rebased or replaced by guest metadata: %q", got.SecuritySnapshot)
+		}
+		_, _ = w.Write([]byte(`{"state":"dispatching"}`))
+	}))
+	defer srv.Close()
+	synth := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL}
+	_, err = synth.InvokeWithWake(ctx, "app", state.Invocation{ID: "inv", Headers: json.RawMessage(`{"security_snapshot":"forged","X-Faas-Traffic-Security":"forged"}`)}, WakeResult{InstanceID: "inst", NodeID: "node", DeploymentID: "dep"})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

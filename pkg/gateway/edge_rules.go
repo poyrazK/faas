@@ -421,16 +421,18 @@ type EdgeRuleCache struct {
 // `cache.Put(host, &gateway.HostEntry{...})` — see how the cmd-side
 // loadHost builds the entry. PR 5 widens with CORS / JWT / IP slots.
 type HostEntry struct {
-	expiresAt time.Time
-	Host      string
-	Route     []EdgeRuleResolved
-	Rewrite   []EdgeRuleRewriteResolved
-	Redirect  []EdgeRuleRedirectResolved
-	Headers   []EdgeRuleHeadersResolved
-	CORS      []EdgeRuleCORSResolved
-	JWT       []EdgeRuleJWTResolved
-	IP        []EdgeRuleIPResolved
-	Validate  []EdgeRuleValidateResolved
+	expiresAt            time.Time
+	snapshot             *edgePolicySnapshot
+	Host                 string
+	PublicSourceRevision string `json:",omitempty"`
+	Route                []EdgeRuleResolved
+	Rewrite              []EdgeRuleRewriteResolved
+	Redirect             []EdgeRuleRedirectResolved
+	Headers              []EdgeRuleHeadersResolved
+	CORS                 []EdgeRuleCORSResolved
+	JWT                  []EdgeRuleJWTResolved
+	IP                   []EdgeRuleIPResolved
+	Validate             []EdgeRuleValidateResolved
 	// Limit carries the kind=limit subset (ADR-091 D24). Same
 	// shape as Validate above; the applier
 	// (handler.go::applyEdgeRuleLimit) installs MaxBytesReader on
@@ -493,10 +495,11 @@ type HostEntry struct {
 	// Retry and CircuitBreaker carry the ADR-201 subsets. Same
 	// kind-agnostic slot shape as every kind above; the cmd-side loader
 	// threads one slice per kind into the HostEntry.
-	Retry          []EdgeRuleRetryResolved
-	CircuitBreaker []EdgeRuleCircuitBreakerResolved
-	Async          []EdgeRuleAsyncResolved
-	PathGlobErrs   []PathGlobError
+	Retry            []EdgeRuleRetryResolved
+	CircuitBreaker   []EdgeRuleCircuitBreakerResolved
+	Async            []EdgeRuleAsyncResolved
+	PathGlobErrs     []PathGlobError
+	PolicyRuleOwners map[string]string
 }
 
 // NewEdgeRuleCache returns a cache holding up to `capacity` host
@@ -1295,6 +1298,9 @@ func (noOpEdgeRuleMatcher) Reset() {}
 // time same-account guarantee at
 // `cmd/apid/handlers_edge_rules.go:184-201`).
 type ResolveTargetApp func(ctx context.Context, slug string) (App, bool)
+
+// ResolveTargetAppPolicy retains authoritative read failures for production.
+type ResolveTargetAppPolicy func(ctx context.Context, slug string) (App, bool, error)
 
 // PickFirstRouteMatch is the pure-Go filter used by
 // cmd/gatewayd-internal/edge_rules.go::gatewaydEdgeRules.MatchRoute

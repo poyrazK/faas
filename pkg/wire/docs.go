@@ -19,6 +19,8 @@
 // Issue: https://github.com/onebox-faas/faas/issues/420
 package wire
 
+import "github.com/onebox-faas/faas/pkg/hostidentity"
+
 const (
 	// DocsHost is the LEGACY documentation host. It is NOT a
 	// deployed site: DNS resolves (Cloudflare) but every path
@@ -70,7 +72,7 @@ const (
 	// PR previews and deployment previews both use the current
 	// *.gregale.dev contract; their closed-set labels (pr- vs
 	// deploy-) keep the routing and allowlist audiences separate.
-	DeployWildcardSuffix = ".gregale.dev"
+	DeployWildcardSuffix = hostidentity.DeployWildcardSuffix
 	// DeployPreviewURIScheme is the URI scheme stamped on the
 	// GET /v1/deployments/{id}/url response's URL field
 	// (SAFE-RELEASES-C.2). "https" is the only valid production

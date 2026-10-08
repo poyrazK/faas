@@ -16,7 +16,7 @@ func TestOperationAccountOperatorRoutes(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /v1/apps/exports/operations":
 			q := r.URL.Query()
-			if q.Get("subject_type") != "order" || q.Get("subject_id") != "ord/42&é" || q.Get("scope") != "production" || q.Get("tenant_id") != "customer" || q.Get("limit") != "2" || q.Get("cursor") != "opaque" || q.Get("state") != "succeeded" || q.Get("name") != "export" || q.Has("app_id") {
+			if q.Get("scope") != "production" || q.Get("tenant_id") != "customer" || q.Get("limit") != "2" || q.Get("cursor") != "opaque" || q.Get("state") != "succeeded" || q.Get("name") != "export" || q.Has("app_id") {
 				t.Errorf("account selectors %v", q)
 			}
 			writeOperationJSON(w, 200, `{"operations":[{"id":"operation","platform_tenant_id":"customer","completion_delivery":{"state":"dead","attempts":7}}],"next_cursor":"next"}`)
@@ -39,7 +39,7 @@ func TestOperationAccountOperatorRoutes(t *testing.T) {
 	}))
 	defer server.Close()
 	client := operationClient(t, server)
-	page, err := client.ListAccountOperations(context.Background(), "exports", faas.OperationListOptions{SubjectType: "order", SubjectID: "ord/42&é", Scope: "production", TenantID: "customer", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque"})
+	page, err := client.ListAccountOperations(context.Background(), "exports", faas.OperationListOptions{Scope: "production", TenantID: "customer", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque"})
 	if err != nil || len(page.Operations) != 1 || page.Operations[0].PlatformTenantID != "customer" || page.NextCursor != "next" {
 		t.Fatalf("list %+v %v", page, err)
 	}
@@ -106,5 +106,51 @@ func TestOperationDoctorScopedReadOnlyContract(t *testing.T) {
 	r, err := client.GetOperationDoctor(context.Background(), "exports", definitionID, "tenant+selector", "export name")
 	if err != nil || r.SubmissionState != "eligible" || r.ObservedSubmissionState() != "eligible" || len(r.Checks) != 3 || r.Checks[1].Status != "warning" || r.Checks[2].Status != "unknown" {
 		t.Fatal("doctor contract", r, err)
+	}
+}
+
+func TestOperationAccountOperatorRoutesIntegratedBusinessWorkflows(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/apps/exports/operations":
+			q := r.URL.Query()
+			if q.Get("subject_type") != "order" || q.Get("subject_id") != "ord/42&é" || q.Get("scope") != "production" || q.Get("tenant_id") != "customer" || q.Get("limit") != "2" || q.Get("cursor") != "opaque" || q.Get("state") != "succeeded" || q.Get("name") != "export" || q.Has("app_id") {
+				t.Errorf("account selectors %v", q)
+			}
+			writeOperationJSON(w, 200, `{"operations":[{"id":"operation","platform_tenant_id":"customer","completion_delivery":{"state":"dead","attempts":7}}],"next_cursor":"next"}`)
+		case "GET /v1/apps/exports/operations/operation/events":
+			if r.URL.Query().Get("after") != "7" {
+				t.Error("event watermark lost")
+			}
+			writeOperationJSON(w, 200, `{"events":[],"latest_sequence":9,"resync_required":true}`)
+		case "GET /v1/apps/exports/operations/operation/executions":
+			if r.URL.Query().Get("after") != "1" || r.URL.Query().Get("limit") != "2" {
+				t.Error("generation pagination lost")
+			}
+			writeOperationJSON(w, 200, `{"executions":[{"generation":2,"invocation_id":"execution","state":"completed","attempts":1}],"next_generation":2}`)
+		case "POST /v1/apps/exports/operations/operation/retry-delivery":
+			writeOperationJSON(w, 200, `{"id":"operation","state":"succeeded","generation":2,"completion_delivery":{"state":"pending","attempts":0}}`)
+		default:
+			t.Errorf("unexpected account route %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := operationClient(t, server)
+	page, err := client.ListAccountOperations(context.Background(), "exports", faas.OperationListOptions{SubjectType: "order", SubjectID: "ord/42&é", Scope: "production", TenantID: "customer", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque"})
+	if err != nil || len(page.Operations) != 1 || page.Operations[0].PlatformTenantID != "customer" || page.NextCursor != "next" {
+		t.Fatalf("list %+v %v", page, err)
+	}
+	events, err := client.GetAccountOperationEvents(context.Background(), "exports", "operation", 7)
+	if err != nil || !events.ResyncRequired {
+		t.Fatalf("events %+v %v", events, err)
+	}
+	executions, err := client.GetOperationExecutions(context.Background(), "exports", "operation", 1, 2)
+	if err != nil || executions.NextGeneration != 2 || executions.Executions[0].Attempts != 1 {
+		t.Fatalf("executions %+v %v", executions, err)
+	}
+	op, err := client.RetryOperationDelivery(context.Background(), "exports", "operation")
+	if err != nil || op.State != faas.OperationSucceeded || op.Generation != 2 || op.CompletionDelivery.State != "pending" {
+		t.Fatalf("notification retry %+v %v", op, err)
 	}
 }

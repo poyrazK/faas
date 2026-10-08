@@ -10,6 +10,8 @@ T = TypeVar("T", bound="OperationWorkflowTransition")
 
 @_attrs_define
 class OperationWorkflowTransition:
+    """Allowed state edge declared by a pinned application workflow definition."""
+
     from_: str
     to: str
 

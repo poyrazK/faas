@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // RequestTelemetryPublisherConfig bundles the knobs the publisher
@@ -58,6 +59,10 @@ type RequestTelemetryPublisherConfig struct {
 	// app_errors_publisher.go default.
 	MaxRetries int
 
+	// ShutdownTimeout is one budget for joining an interrupted RPC and flushing
+	// all remaining evidence. Values above the API ceiling are clamped.
+	ShutdownTimeout time.Duration
+
 	// Now is injectable for tests. nil ⇒ time.Now.
 	Now func() time.Time
 
@@ -78,6 +83,10 @@ func (c *RequestTelemetryPublisherConfig) setDefaults() {
 	if c.MaxRetries <= 0 {
 		c.MaxRetries = 3
 	}
+	maximumShutdown := time.Duration(api.GatewayRequestTelemetryShutdownTimeoutSeconds) * time.Second
+	if c.ShutdownTimeout <= 0 || c.ShutdownTimeout > maximumShutdown {
+		c.ShutdownTimeout = maximumShutdown
+	}
 	if c.Now == nil {
 		c.Now = time.Now
 	}
@@ -89,7 +98,7 @@ func (c *RequestTelemetryPublisherConfig) setDefaults() {
 // streams the rows. Test implementation: appends the rows to a
 // slice for assertion.
 //
-// Returning a non-nil error tells the publisher to retry with
+// The callback must honor context cancellation. Returning a non-nil error tells the publisher to retry with
 // exponential backoff. After MaxRetries retries, the batch is
 // dropped with a warn log + droppedTotal counter increment.
 type ShipFn func(ctx context.Context, rows []RequestTelemetryRow) error
@@ -120,12 +129,18 @@ type requestTelemetryPublisher struct {
 	// wakes early.
 	wakeCh chan struct{}
 
-	// startOnce / stopOnce / stopCh guard lifecycle. Start must
-	// be called exactly once; Stop must be called exactly once.
-	startOnce sync.Once
-	stopOnce  sync.Once
-	stopCh    chan struct{}
-	doneCh    chan struct{}
+	// Only the actor owns pending, including its final flush. A canceled RPC
+	// retains the exact collapsed payload and event IDs for receiver deduplication.
+	pending []RequestTelemetryRow
+
+	lifecycleMu      sync.Mutex
+	started, stopped bool
+	parentCtx        context.Context
+	cancel           context.CancelFunc
+	finalCtx         context.Context
+	finalCancel      context.CancelFunc
+	stopCh           chan struct{}
+	doneCh           chan struct{}
 }
 
 // NewRequestTelemetryPublisher wires a publisher. The recorder +
@@ -143,26 +158,8 @@ func NewRequestTelemetryPublisher(cfg RequestTelemetryPublisherConfig, recorder 
 		log:      log,
 		wakeCh:   make(chan struct{}, 1),
 		stopCh:   make(chan struct{}),
-		doneCh:   make(chan struct{}, 1),
+		doneCh:   make(chan struct{}),
 	}
-}
-
-// Start launches the publisher goroutine. Safe to call once;
-// subsequent calls are no-ops.
-func (p *requestTelemetryPublisher) Start(ctx context.Context) {
-	p.startOnce.Do(func() {
-		go p.run(ctx)
-	})
-}
-
-// Stop signals the publisher goroutine to halt, drains the
-// recorder one final time, and waits for the goroutine to exit.
-// Safe to call once; subsequent calls are no-ops.
-func (p *requestTelemetryPublisher) Stop() {
-	p.stopOnce.Do(func() {
-		close(p.stopCh)
-		<-p.doneCh
-	})
 }
 
 // Wake nudges the publisher to drain immediately (non-blocking).
@@ -188,16 +185,13 @@ func (p *requestTelemetryPublisher) ShippedTotal() int64 {
 }
 
 // run is the goroutine loop. Drains on FlushInterval (or on Wake)
-// until stopCh closes. Drains one final batch synchronously on
-// the way out so Stop() returns "nothing left to ship".
+// until stopCh closes. Its bounded final flush ships remaining evidence or
+// accounts for loss before every Stop caller returns.
 func (p *requestTelemetryPublisher) run(ctx context.Context) {
 	defer func() {
-		// Final drain on the way out so Stop() blocks until every
-		// pending row has been attempted, not just one batch.
-		for p.recorder.PendingCount() > 0 {
-			p.tick(ctx)
-		}
-		p.doneCh <- struct{}{}
+		p.drainFinal()
+		p.finalCancel()
+		close(p.doneCh)
 	}()
 
 	ticker := time.NewTicker(p.cfg.FlushInterval)
@@ -206,6 +200,11 @@ func (p *requestTelemetryPublisher) run(ctx context.Context) {
 	for {
 		select {
 		case <-p.stopCh:
+			return
+		case <-ctx.Done():
+			// HTTP producers can finish after daemon cancellation. Quiesce
+			// ordinary shipping until their owner calls Stop after draining.
+			<-p.stopCh
 			return
 		case <-ticker.C:
 			p.tick(ctx)
@@ -222,51 +221,55 @@ func (p *requestTelemetryPublisher) run(ctx context.Context) {
 // Errors are logged + retried with exponential backoff up to
 // MaxRetries; final failure increments droppedTotal.
 func (p *requestTelemetryPublisher) tick(ctx context.Context) {
-	rows := p.recorder.DrainBatch(p.cfg.FlushBatchSize)
-	if len(rows) == 0 {
+	if ctx.Err() != nil {
 		return
 	}
-	rawCount := requestTelemetryCount(rows)
+	if len(p.pending) == 0 {
+		p.pending = collapseRequestTelemetry(p.recorder.DrainBatch(p.cfg.FlushBatchSize))
+	}
+	if len(p.pending) == 0 {
+		return
+	}
 	if p.ship == nil {
-		// ship not wired (test-only or boot race); drop the
-		// drained rows on the floor and make the loss visible.
-		p.recordDropped(rawCount)
-		p.log.Warn("request telemetry ship unavailable; dropping batch",
-			slog.Int("batch_size", len(rows)),
-			slog.Int64("request_count", rawCount))
+		p.dropPending("request telemetry ship unavailable; dropping batch")
 		return
 	}
-	collapsed := collapseRequestTelemetry(rows)
+	if p.shipPending(ctx) {
+		p.recordShipped(requestTelemetryCount(p.pending))
+		p.pending = nil
+	} else if ctx.Err() == nil {
+		p.dropPending("request telemetry ship exhausted retries; dropping batch")
+	}
+}
 
-	var lastErr error
+func (p *requestTelemetryPublisher) shipPending(ctx context.Context) bool {
 	for attempt := 0; attempt < p.cfg.MaxRetries; attempt++ {
 		if attempt > 0 {
 			// Exponential backoff: 100ms, 200ms, 400ms...
 			backoff := time.Duration(1<<attempt) * 100 * time.Millisecond
 			select {
 			case <-ctx.Done():
-				p.recordDropped(rawCount)
-				return
+				return false
 			case <-time.After(backoff):
 			}
 		}
-		lastErr = p.ship(ctx, collapsed)
+		if ctx.Err() != nil {
+			return false
+		}
+		lastErr := p.ship(ctx, p.pending)
 		if lastErr == nil {
-			p.recordShipped(rawCount)
-			return
+			return true
+		}
+		if ctx.Err() != nil {
+			return false
 		}
 		// Transient — log + retry.
 		p.log.Warn("request telemetry ship failed; retrying",
 			slog.Int("attempt", attempt+1),
-			slog.Int("batch_size", len(collapsed)),
+			slog.Int("batch_size", len(p.pending)),
 			slog.Any("error", lastErr))
 	}
-	// Out of retries — drop the batch.
-	p.recordDropped(rawCount)
-	p.log.Warn("request telemetry ship exhausted retries; dropping batch",
-		slog.Int("batch_size", len(collapsed)),
-		slog.Int64("request_count", rawCount),
-		slog.Any("last_error", lastErr))
+	return false
 }
 
 // requestTelemetryCount returns the number of original requests represented

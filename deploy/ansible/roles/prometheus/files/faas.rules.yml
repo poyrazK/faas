@@ -4389,7 +4389,7 @@ groups:
           family: retry_safety
         annotations:
           summary: "Gateway retry budgets use mixed local and shared modes"
-          description: "At least one gateway uses a process-local allowance while another uses Redis. Check the fleet Vault variable and restart all gatewayd-internal units before claiming a fleet-wide retry cap."
+          description: "At least one gateway uses a process-local allowance while another uses a shared backend. Check ratelimit.mode and any Redis override before claiming a fleet-wide retry cap."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSharedRetryBudget.md"
 
       - alert: FaasRetryBudgetBackendErrors
@@ -4400,8 +4400,8 @@ groups:
           component: gatewayd-internal
           family: retry_safety
         annotations:
-          summary: "Shared retry budget Redis operations are failing"
-          description: "Gateway retries are being denied because Redis observations or admissions failed. Check Redis availability, TLS, credentials, and private transport. Original requests continue."
+          summary: "Shared retry budget operations are failing"
+          description: "Gateway retries are being denied because shared observations or admissions failed. Check Postgres or the configured Redis backend. Original requests run only when their independent admission checks succeed."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSharedRetryBudget.md"
 
       - alert: FaasRetryBudgetBackendMismatch
@@ -4413,7 +4413,7 @@ groups:
           family: retry_safety
         annotations:
           summary: "Gateways point at different shared retry budget endpoints"
-          description: "Redis-backed gateways report more than one endpoint identity. Check that one common fleet Vault URL reaches every gateway before relying on the aggregate retry cap."
+          description: "Gateways report more than one shared backend identity. Check that all gateways select the same Postgres database or common Redis override before relying on the aggregate retry cap."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSharedRetryBudget.md"
 
       - alert: FaasRetryAmplificationHigh

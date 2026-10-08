@@ -183,6 +183,8 @@ func cmdRealtimePublish(args []string) int {
 	}
 	if response.Durable {
 		PrintOK(osStdout, "Realtime message retained at channel sequence %d and accepted for %d of %d targeted connection(s).", response.Sequence, response.Queued, response.Subscribers)
+	} else if response.Subscribers == 0 && response.Queued > 0 {
+		PrintOK(osStdout, "Realtime message queued for %d connection(s).", response.Queued)
 	} else {
 		PrintOK(osStdout, "Realtime message queued for %d of %d targeted connection(s).", response.Queued, response.Subscribers)
 	}

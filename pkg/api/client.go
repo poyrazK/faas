@@ -1428,7 +1428,8 @@ func (c *Client) GetApp(ctx context.Context, slug string) (AppResponse, error) {
 // traffic weights, and edge-rule changes. Edge rules have their own revision
 // sequence in the response. wait may be zero for a snapshot or up to 10
 // seconds for a bounded server-side wait; a pending result remains possible
-// on timeout.
+// on timeout. TrafficRuntime reports fresh compute gateway wiring separately
+// from convergence; it does not attest request enforcement or backend health.
 func (c *Client) GetAppsSlugPolicyStatus(ctx context.Context, slug string, wait time.Duration) (RuntimePolicyStatusResponse, error) {
 	var out RuntimePolicyStatusResponse
 	if wait < 0 || wait > 10*time.Second {

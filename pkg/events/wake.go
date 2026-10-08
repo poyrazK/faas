@@ -1262,6 +1262,7 @@ func (e SidecarRestart) Payload() map[string]any {
 // sidecar. It is emitted independently of a single wake because the signal is
 // produced by guest-init's supervisor over the instance event channel.
 type SidecarHealth struct {
+	NodeID      string
 	EmitAt      time.Time
 	WakeID      string
 	AppID       string
@@ -1277,6 +1278,7 @@ func (e SidecarHealth) Subject() *string { return nil }
 func (e SidecarHealth) Payload() map[string]any {
 	return map[string]any{
 		"wake_id":      e.WakeID,
+		"node_id":      e.NodeID,
 		"app_id":       e.AppID,
 		"instance_id":  e.InstanceID,
 		"sidecar_name": e.SidecarName,
@@ -1286,9 +1288,11 @@ func (e SidecarHealth) Payload() map[string]any {
 }
 
 // AppReadiness records a continuous readiness transition for the primary app.
-// It is emitted independently of a wake so routing state can be hydrated after
-// a gateway restart and updated while an instance remains running.
+// It carries the VM wake and node identity even though it is emitted after the
+// original wake RPC. A retired loop cannot certify a replacement VM.
 type AppReadiness struct {
+	WakeID     string
+	NodeID     string
 	EmitAt     time.Time
 	AppID      string
 	InstanceID string
@@ -1301,6 +1305,8 @@ func (e AppReadiness) At() time.Time    { return e.EmitAt }
 func (e AppReadiness) Subject() *string { return nil }
 func (e AppReadiness) Payload() map[string]any {
 	return map[string]any{
+		"wake_id":     e.WakeID,
+		"node_id":     e.NodeID,
 		"app_id":      e.AppID,
 		"instance_id": e.InstanceID,
 		"source":      "primary_app",

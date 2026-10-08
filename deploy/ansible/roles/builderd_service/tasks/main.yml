@@ -134,6 +134,15 @@
     group: root
     mode: "0644"
 
+- name: builderd_service — install traffic apps-domain drop-in
+  notify: restart faas-builderd
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-apps-domain.conf.j2
+    dest: /etc/systemd/system/faas-builderd.service.d/99-faas-apps-domain.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # Mega-PR-C (issue #911 / ADR-110): wire the per-box role gate
 # through to builderd via FAAS_BUILDERD_ROLE so
 # cmd/builderd/config.go::LoadConfig picks up faas_box_role

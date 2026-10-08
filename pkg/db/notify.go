@@ -795,6 +795,8 @@ const (
 	NotifyCronRunNow             = "cron_run_now"
 	NotifyAccountDeletionPending = "account_deletion_pending"
 	NotifyAccountDeleted         = "account_deleted"
+	// Security transitions wake a reread; the payload is not an allow/revoke command.
+	NotifyTrafficSecurityChanged = "traffic_security_changed"
 	// NotifyAppDelete is emitted by apid on app deletion (spec §6.2
 	// / ADR-098). schedd's app-delete subscriber consumes it and
 	// evicts any in-flight wake for the deleted app via

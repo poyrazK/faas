@@ -286,7 +286,8 @@ func cmdEdgeRulesCreate(args []string) int {
 	// a kind=budget rule with no budget is a silent no-op. The
 	// override header defaults to api.RequestBudgetDefaultOverrideHeader
 	// server-side when left empty.
-	budgetMs := fs.Int("budget-ms", 0, "kind=budget: per-request wall-clock budget in ms (>0; max 30000)")
+	budgetMs := fs.Int("budget-ms", 0, "kind=budget: execution budget in ms (>0; max 30000)")
+	totalDeadlineMs := fs.Int("total-deadline-ms", 0, "kind=budget: optional total deadline from public ingress in ms (includes upload, wake and queue)")
 	budgetOverrideHeader := fs.String("budget-allow-override-header", "", "kind=budget: header that may override budget-ms per request (default x-faas-budget-ms)")
 
 	// retry (ADR-201 §1). Replay a request that died in transport
@@ -412,6 +413,7 @@ func cmdEdgeRulesCreate(args []string) int {
 		CacheVaryOn:                       cacheVaryOn,
 		CacheMethods:                      cacheMethods,
 		BudgetMs:                          *budgetMs,
+		TotalDeadlineMs:                   *totalDeadlineMs,
 		BudgetOverrideHeader:              *budgetOverrideHeader,
 		RetryMaxAttempts:                  *retryMaxAttempts,
 		RetryAllowNonIdempotent:           *retryAllowNonIdempotent,
@@ -613,7 +615,8 @@ func cmdEdgeRulesUpdate(args []string) int {
 	// budget + maintenance (ADR-093 / ADR-091 D20). Mirror of the
 	// create-side flags; same structural checks run in
 	// buildEdgeRuleAction for both paths.
-	budgetMs := fs.Int("budget-ms", 0, "kind=budget: new per-request wall-clock budget in ms (>0; max 30000)")
+	budgetMs := fs.Int("budget-ms", 0, "kind=budget: new execution budget in ms (>0; max 30000)")
+	totalDeadlineMs := fs.Int("total-deadline-ms", 0, "kind=budget: optional total deadline from public ingress in ms (includes upload, wake and queue)")
 	budgetOverrideHeader := fs.String("budget-allow-override-header", "", "kind=budget: header that may override budget-ms per request (default x-faas-budget-ms)")
 
 	// retry (ADR-201 §1). Replay a request that died in transport
@@ -780,6 +783,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 			CacheVaryOn:                       cacheVaryOn,
 			CacheMethods:                      cacheMethods,
 			BudgetMs:                          *budgetMs,
+			TotalDeadlineMs:                   *totalDeadlineMs,
 			BudgetOverrideHeader:              *budgetOverrideHeader,
 			RetryMaxAttempts:                  *retryMaxAttempts,
 			RetryAllowNonIdempotent:           *retryAllowNonIdempotent,
@@ -946,6 +950,7 @@ type edgeRuleActionInputs struct {
 	// is a silent no-op — the worst shape for a safety primitive.
 	// BudgetOverrideHeader is optional; empty means the runtime uses
 	// api.RequestBudgetDefaultOverrideHeader (`x-faas-budget-ms`).
+	TotalDeadlineMs      int
 	BudgetMs             int
 	BudgetOverrideHeader string
 	// maintenance (ADR-091 D20). Per-route 503 + Retry-After. Both
@@ -1222,6 +1227,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		}
 		a := api.EdgeRuleBudgetAction{
 			BudgetMs:            in.BudgetMs,
+			TotalDeadlineMs:     in.TotalDeadlineMs,
 			AllowOverrideHeader: in.BudgetOverrideHeader,
 		}
 		if err := a.Validate(); err != nil {
@@ -1561,7 +1567,7 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"geo-allow", "geo-deny",
 		"cache-max-age-seconds", "cache-stale-while-revalidate-seconds", "cache-stale-if-error-seconds",
 		"cache-vary-on", "cache-methods",
-		"budget-ms", "budget-allow-override-header",
+		"budget-ms", "total-deadline-ms", "budget-allow-override-header",
 		"retry-max-attempts", "retry-allow-non-idempotent", "retry-min-remaining-ms", "retry-backoff-ms",
 		"retry-budget-percent", "retry-budget-min-retries",
 		"maintenance-retry-after-seconds", "maintenance-message",

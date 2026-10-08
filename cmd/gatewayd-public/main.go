@@ -226,6 +226,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd-public: open db: %w", err)
 	}
 	defer pool.Close()
+	trafficRevocations, err := newPublicTrafficRevocationRegistry(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("gatewayd-public: %w", err)
+	}
+	defer trafficRevocations.Close()
+	go trafficRevocations.Run(ctx)
 	// pgStore is the shared state.Store. gatewayd-public only
 	// needs ActiveComputeNodes (for the leader-election adapter
 	// in cmd/gatewayd-public/store_adapter.go); the rest of the
@@ -378,7 +384,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		internalURL,
 		log,
 		h2cEnabled,
-	).WithTrustedIngressCIDRs(trustedIngressCIDRs)
+	).WithTrustedIngressCIDRs(trustedIngressCIDRs).WithTrafficRevocations(trafficRevocations)
 	// A dynamic dialer selects a different compute node per request. Do not
 	// let the transport pool an idle connection under the single logical
 	// gatewayd URL, otherwise a drained node could keep receiving traffic.

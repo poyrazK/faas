@@ -25,6 +25,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -45,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched/targets"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -3578,6 +3580,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 	dispatchCtx := pkgtrace.ExtractHeaders(ctx, headers)
 	dispatch := map[string]any{
 		"platform_tenant_id": inv.PlatformTenantID,
+		"account_id":         inv.AccountID,
 		"invocation_id":      inv.ID,
 		"app_id":             appID,
 		"source":             string(inv.Source),
@@ -3603,6 +3606,9 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		dispatch["deployment_id"] = wake.DeploymentID
 		dispatch["wake_id"] = wake.WakeID
 		dispatch["port"] = wake.Port
+	}
+	if snapshot := trafficrevocation.HandoffValue(ctx); snapshot != "" {
+		dispatch["security_snapshot"] = snapshot
 	}
 	body, err := json.Marshal(dispatch)
 	if err != nil {
@@ -3644,7 +3650,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		if res, lookupErr := h.appPublicAuthModeLookup(ctx, appID); lookupErr != nil || res.Mode == "internal_only" {
 			if h.mintInternalSvcToken == nil {
 				h.log.Warn("sched: invoke path: app in internal_only mode (or lookup failed) but no minter wired; gate will 403",
-					"app_id", appID, "lookup_err", lookupErrStr(lookupErr))
+					"app_id", logsanitize.Field(appID), "lookup_err", lookupErrStr(lookupErr))
 			} else {
 				tok, mErr := h.mintInternalSvcToken(appID)
 				if mErr != nil {
@@ -3953,7 +3959,7 @@ func (l *Loop) runJobsReaperTick(ctx context.Context) {
 func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 	l.submitWork(workWorkflowSchedules, "tick", func() {
 		if err := l.runWorkflowSchedulesTick(ctx); err != nil && l.log != nil {
-			l.log.Warn("schedd: workflow schedule tick failed", "error_type", fmt.Sprintf("%T", err))
+			l.log.Warn("schedd: workflow schedule tick failed", "error_type", logsanitize.Field(fmt.Sprintf("%T", err)))
 		}
 	})
 	key := fmt.Sprintf("%d", l.workflowDispatchCursor.Add(1)%4)
@@ -4668,7 +4674,7 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	}
 	enq, err := l.engine.Store().EnqueueInvocation(ctx, inv)
 	if err != nil {
-		l.log.Warn("cron: enqueue invocation", "cron_id", c.ID, "err", err)
+		l.log.Warn("cron: enqueue invocation", "cron_id", logsanitize.Field(c.ID), "error_class", dispatchErrorClass(err))
 		return CronRun{}, true
 	}
 	// Enqueue mints the durable invocation ID. Dispatch that persisted row;

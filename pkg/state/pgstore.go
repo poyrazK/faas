@@ -43,14 +43,15 @@ import (
 // PgStore implements Store against Postgres. It holds a connection pool and
 // is safe for concurrent use.
 type PgStore struct {
-	pool *pgxpool.Pool
+	pool              *pgxpool.Pool
+	trafficAppsSuffix string
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
 // close it on shutdown so daemons can share a single pool across a Store and
 // their LISTEN goroutine.
-func NewPgStore(pool *pgxpool.Pool) *PgStore {
-	return &PgStore{pool: pool}
+func NewPgStore(pool *pgxpool.Pool, options ...StoreOption) *PgStore {
+	return &PgStore{pool: pool, trafficAppsSuffix: configuredTrafficAppsSuffix(options)}
 }
 
 // Ping tests database connectivity through the underlying connection pool.
@@ -2177,6 +2178,11 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	// follow this pattern; the wrapper is a no-op when no Budget
 	// is attached.
 	ctx = db.WithBudget(ctx)
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(app.AccountID))
+	if err != nil {
+		return App{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	manifest := app.Manifest
 	if manifest.IsZero() {
 		manifest = AppManifest{}
@@ -2344,7 +2350,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if len(retryPolicy) == 0 {
 		retryPolicy = []byte(`{}`)
 	}
-	row := s.pool.QueryRow(ctx, insertAppSQL,
+	row := tx.QueryRow(ctx, insertAppSQL,
 		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, cidrPrefixesToArray(app.EgressAllowlist), cidrPrefixesToArray(app.PublicAuthIPAllowlist), app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
 		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, app.WarmPoolSize, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
 		// Tier A10 / ADR-088: overflow_node preference (nullable
@@ -2385,7 +2391,14 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 		// last-line defence for internal callers that build an
 		// App by hand.
 		appProtocol, cpuMillicores, string(visibility), retryPolicy, nullString(app.OrgID), app.PlatformTenantRequired)
-	return scanApp(row)
+	created, err := scanApp(row)
+	if err != nil {
+		return App{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, fmt.Errorf("state: commit create app: %w", err)
+	}
+	return created, nil
 }
 
 // CreateAppIfUnderQuota inserts an app iff the account currently holds
@@ -2404,7 +2417,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 // other createApp for the same account only. Cross-account inserts don't
 // contend, so the one-box stays well under its max_concurrency ceiling.
 func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(app.AccountID))
 	if err != nil {
 		return App{}, fmt.Errorf("state: begin tx: %w", err)
 	}
@@ -2447,11 +2460,11 @@ func (s *PgStore) CreatePRPreviewAppsIfUnderQuota(ctx context.Context, apps []Ap
 			}
 		}
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAccountAppTrafficMutation(ctx, apps[0].AccountID, "")
 	if err != nil {
 		return nil, fmt.Errorf("state: begin preview batch: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
 	created := make([]App, 0, len(apps))
 	for _, app := range apps {
 		row, createErr := createAppIfUnderQuotaTx(ctx, tx, app, limits)
@@ -3905,27 +3918,23 @@ func (s *PgStore) AuthDefaultFlippedAt(ctx context.Context) (time.Time, error) {
 }
 
 func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return App{}, mapErr(err)
-	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	var found int
-	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, id).Scan(&found); err != nil {
-		return App{}, mapErr(err)
-	}
-	app, err := updateApp(ctx, tx, id, p)
+	tx, err := s.beginAppConfigMutation(ctx, id, p)
 	if err != nil {
 		return App{}, err
 	}
-	app, err = syncProductionWorkloadSpecTx(ctx, tx, app, p)
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	updated, err := updateApp(ctx, tx, id, p)
+	if err != nil {
+		return App{}, err
+	}
+	updated, err = syncProductionWorkloadSpecTx(ctx, tx, updated, p)
 	if err != nil {
 		return App{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return App{}, mapErr(err)
+		return App{}, fmt.Errorf("state: commit app status update: %w", err)
 	}
-	return app, nil
+	return updated, nil
 }
 
 type appUpdateQueryRower interface {
@@ -4256,6 +4265,9 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 // UpdateApp. PgStore and MemStore both implement it, which covers every real
 // server and integration test path.
 func (s *PgStore) CompareAndSetAppStatus(ctx context.Context, id string, from, to AppStatus) (bool, error) {
+	if from != to && (from == AppDeleted || to == AppDeleted) {
+		return s.compareAndSetAppTrafficStatus(ctx, id, from, to)
+	}
 	tag, err := s.pool.Exec(ctx,
 		`update apps
 		    set status = $3,
@@ -4420,12 +4432,23 @@ func (s *PgStore) SetAppWorkloadClass(ctx context.Context, appID string, class W
 // Both PgStore and MemStore share the same error contract so the apid
 // handler can branch on errors.Is without checking the concrete type.
 func (s *PgStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug string) (App, error) {
+	tx, err := s.beginAccountAppTrafficMutation(ctx, accountID, "")
+	if err != nil {
+		return App{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	upd := `update apps set slug = $3
 		 where account_id = $1 and slug = $2 and status <> 'deleted'
 		 returning ` + appsSelectColumns
-	row := s.pool.QueryRow(ctx, upd,
-		accountID, oldSlug, newSlug)
-	return scanApp(row)
+	row := tx.QueryRow(ctx, upd, accountID, oldSlug, newSlug)
+	updated, err := scanApp(row)
+	if err != nil {
+		return App{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, err
+	}
+	return updated, nil
 }
 
 func (s *PgStore) DeleteApp(ctx context.Context, id string) error {
@@ -4438,11 +4461,16 @@ func (s *PgStore) DeleteApp(ctx context.Context, id string) error {
 // ScheduleAppDeletion parks an app in a restorable tombstone. Repeated
 // requests preserve the original deletion timestamp and deadline.
 func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time) (App, error) {
+	tx, err := s.beginAppTrafficMutation(ctx, id)
+	if err != nil {
+		return App{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if graceUntil.IsZero() {
 		graceUntil = time.Now().UTC().Add(AppDeleteGraceDuration())
 	}
 	var a App
-	row := s.pool.QueryRow(ctx, `
+	row := tx.QueryRow(ctx, `
 		with suspended_crons as (
 			-- Suspend, don't delete: restoring the app inside its grace
 			-- window brings its schedules back. The purge removes them.
@@ -4468,6 +4496,12 @@ func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil
 	if err := scanAppInto(&a, row); err != nil {
 		return App{}, mapErr(err)
 	}
+	if err := cancelAppInvocationsTx(ctx, tx, id); err != nil {
+		return App{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, err
+	}
 	return a, nil
 }
 
@@ -4475,11 +4509,14 @@ func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil
 // still in the future. The conditional update makes restore vs. sweep a
 // single race-safe decision; an unsuccessful update is reported as conflict.
 func (s *PgStore) RestoreApp(ctx context.Context, id string, limits api.Limits) (App, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAppTrafficMutation(ctx, id)
 	if err != nil {
-		return App{}, fmt.Errorf("state: begin tx: %w", err)
+		if errors.Is(err, ErrNotFound) {
+			return App{}, ErrConflict
+		}
+		return App{}, fmt.Errorf("state: begin app restore: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
 	a, err := restoreAppTx(ctx, tx, id, limits)
 	if err != nil {
 		return App{}, err
@@ -4554,7 +4591,7 @@ func (s *PgStore) ClaimAppDeletion(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("state: begin app purge claim: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var activeBuckets int
 	if err := tx.QueryRow(ctx,
 		`select count(*) from object_buckets where app_id = $1 and state <> 'deleted'`, id).Scan(&activeBuckets); err != nil {
@@ -4655,11 +4692,11 @@ func (s *PgStore) ListAppDeletionArtifacts(ctx context.Context, appID string) ([
 // covered by an ON DELETE CASCADE. It deliberately rechecks the deadline in
 // the final DELETE so a concurrent restore cannot be lost.
 func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAppTrafficMutation(ctx, id)
 	if err != nil {
 		return fmt.Errorf("state: begin app purge: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var activeBuckets int
 	if err := tx.QueryRow(ctx,
 		`select count(*) from object_buckets where app_id = $1 and state <> 'deleted'`, id).Scan(&activeBuckets); err != nil {
@@ -4738,11 +4775,11 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 // reuse, while the status fence prevents a late pipeline writer from
 // resuming work after deletion is acknowledged.
 func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginAppTrafficMutation(ctx, id)
 	if err != nil {
 		return App{}, fmt.Errorf("state: soft delete app begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var locked int
 	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, id).Scan(&locked); err != nil {
 		return App{}, mapErr(err)
@@ -4806,6 +4843,9 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 			where id = $1
 			returning `+appsSelectColumns, id, now, deadline)); err != nil {
 		return App{}, mapErr(err)
+	}
+	if err := cancelAppInvocationsTx(ctx, tx, id); err != nil {
+		return App{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return App{}, fmt.Errorf("state: soft delete app commit: %w", err)
@@ -5217,7 +5257,7 @@ func (s *PgStore) ProjectEnvironmentByID(ctx context.Context, id string) (Projec
 }
 
 func (s *PgStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(env.AccountID))
 	if err != nil {
 		return ProjectEnvironment{}, err
 	}
@@ -5227,17 +5267,17 @@ func (s *PgStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvir
 	}); err != nil {
 		return ProjectEnvironment{}, err
 	}
-	row := tx.QueryRow(ctx, `
-		insert into project_environments (account_id, project_id, slug, protected)
-		values ($1, $2, $3, $4)
-		returning id, account_id, project_id, slug, protected, created_at, updated_at
-	`, env.AccountID, env.ProjectID, env.Slug, env.Protected)
-	created, err := scanProjectEnvironment(row)
+	data, err := sqlc.New().CreateTrafficProjectEnvironment(ctx, tx, sqlc.CreateTrafficProjectEnvironmentParams{
+		AccountID: uuidToPgtype(env.AccountID), ProjectID: uuidToPgtype(env.ProjectID), Slug: env.Slug, Protected: env.Protected})
 	if err != nil {
 		return ProjectEnvironment{}, mapErr(err)
 	}
+	var created ProjectEnvironment
+	if err := json.Unmarshal(data, &created); err != nil {
+		return ProjectEnvironment{}, fmt.Errorf("state: decode created environment: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
-		return ProjectEnvironment{}, mapErr(err)
+		return ProjectEnvironment{}, fmt.Errorf("state: commit environment registration: %w", err)
 	}
 	return created, nil
 }
@@ -5417,7 +5457,7 @@ func (s *PgStore) ApplyProjectPlan(
 	crons []Cron,
 	limits api.Limits,
 ) (Project, []App, []Cron, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(project.AccountID))
 	if err != nil {
 		return Project{}, nil, nil, fmt.Errorf("state: begin tx: %w", err)
 	}
@@ -5636,11 +5676,11 @@ func (s *PgStore) ApplyProjectReconcile(
 	scanSource ProjectScanSource,
 	limits api.Limits,
 ) (ProjectReconcileResult, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAccountAppTrafficMutation(ctx, project.AccountID, "")
 	if err != nil {
 		return ProjectReconcileResult{}, fmt.Errorf("state: begin project reconcile: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	var locked int
 	if err := tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, project.AccountID).Scan(&locked); err != nil {
@@ -6778,11 +6818,11 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		return Deployment{}, 0, err
 	}
 	d.Scope = normalizedDeploymentScope(d.Scope)
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAppTrafficMutation(ctx, d.AppID)
 	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: begin tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
 	var cloneOperation ProjectEnvironmentCloneOperation
 	var cloneRecord projectCloneWorkloadRecord
 	if len(cloneInputs) > 0 {
@@ -8630,6 +8670,9 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 		}
 		return tx.Commit(ctx)
 	}
+	if (Deployment{Status: status}).DeploymentAliasActive() {
+		return s.updateTrafficDeploymentStatus(ctx, id, status, errMsg)
+	}
 	tag, err := s.pool.Exec(ctx, `
 		update deployments set status = $2, error = $3
 		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')`, id, string(status), nullString(errMsg))
@@ -9267,12 +9310,33 @@ func (s *PgStore) MarkDeploymentLiveIfLatest(ctx context.Context, id string) err
 	return s.markDeploymentLive(ctx, id, true)
 }
 
+// A dependency or admission writer may commit after the traffic snapshot
+// starts. A serialization failure has aborted the complete attempt; its
+// deferred rollback releases every row/session lock and pool connection.
+// Retry only that failure with a fresh snapshot and the same original guards.
 func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest bool) error {
-	tx, err := s.pool.Begin(ctx)
+	for {
+		err := s.markDeploymentLiveOnce(ctx, id, fenceLatest)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.SerializationFailure {
+			return err
+		}
+		timer := time.NewTimer(api.TrafficPolicyMutationLockRetry)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLatest bool) error {
+	tx, err := s.beginDeploymentTrafficMutation(ctx, id)
 	if err != nil {
 		return fmt.Errorf("state: mark deployment live begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	// CreateDeployment takes the app lock before touching deployment rows.
 	// Use the same order here so two ready candidates cannot race through
@@ -12464,7 +12528,12 @@ func (s *PgStore) RequeueBuildIfClaim(ctx context.Context, claim Build) error {
 // --- custom domains ---------------------------------------------------------
 
 func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token string) (CustomDomain, error) {
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.beginTrafficDomainPublication(ctx, domain, appID)
+	if err != nil {
+		return CustomDomain{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	row := tx.QueryRow(ctx,
 		`insert into custom_domains (domain, app_id, challenge_token) values ($1, $2, $3)
 		 on conflict (domain) do update
 		 set app_id = excluded.app_id,
@@ -12495,6 +12564,9 @@ func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token s
 			return CustomDomain{}, ErrConflict
 		}
 		return CustomDomain{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CustomDomain{}, err
 	}
 	return d, nil
 }
@@ -12582,25 +12654,11 @@ func (s *PgStore) DefaultCustomDomain(ctx context.Context, appID string) (string
 // the match label-boundary safe ("badexample.com" cannot match
 // "*.example.com").
 func (s *PgStore) WildcardDomainForHost(ctx context.Context, host string) (CustomDomain, error) {
-	row := s.pool.QueryRow(ctx,
-		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
-		        cert_status, coalesce(cert_expires_at, 'epoch'::timestamptz),
-		        coalesce(cert_last_error, ''), coalesce(dns_last_checked_at, 'epoch'::timestamptz),
-		        coalesce(cert_failed_at, 'epoch'::timestamptz), verification_next_check_at,
-		        verification_expires_at, verification_attempts, coalesce(environment_id::text, '')
-		   from custom_domains
-		  where domain like '*.%'
-		    and lower($1) like '%' || lower(substr(domain, 2))
-		    and lower($1) <> lower(substr(domain, 3))
-		  order by length(domain) desc
-		  limit 1`, host)
-	d := CustomDomain{}
-	if err := scanCustomDomain(row, &d); err != nil {
-		return CustomDomain{}, mapErr(err)
-	}
-	return d, nil
+	data, err := sqlc.New().ReadWildcardCustomDomain(ctx, s.pool, sqlc.ReadWildcardCustomDomainParams{
+		Host: normalizeWildcardDomainHost(host), TrimCharacters: customDomainTrimCharacters,
+	})
+	return decodePublicHostJSON[CustomDomain](data, err)
 }
-
 func (s *PgStore) ListDomainsForApp(ctx context.Context, appID string) ([]CustomDomain, error) {
 	rows, err := s.pool.Query(ctx,
 		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
@@ -12657,14 +12715,8 @@ func (s *PgStore) ListUnverifiedCustomDomains(ctx context.Context) ([]CustomDoma
 }
 
 func (s *PgStore) MarkDomainVerified(ctx context.Context, domain string) error {
-	tag, err := s.pool.Exec(ctx, `update custom_domains set verified_at = now() where domain = $1`, domain)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	_, err := s.markTrafficDomainVerified(ctx, domain, "", false)
+	return err
 }
 
 // MarkDomainVerifiedIfChallenge is the ownership-safe verification write.
@@ -12672,17 +12724,7 @@ func (s *PgStore) MarkDomainVerified(ctx context.Context, domain string) error {
 // lookup started for an old claim cannot verify a row after another account
 // has atomically reclaimed the domain with a new challenge.
 func (s *PgStore) MarkDomainVerifiedIfChallenge(ctx context.Context, domain, token string) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
-		update custom_domains
-		   set verified_at = now()
-		 where domain = $1
-		   and challenge_token = $2
-		   and verified_at is null
-		   and verification_expires_at > now()`, domain, token)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
+	return s.markTrafficDomainVerified(ctx, domain, token, true)
 }
 
 func (s *PgStore) UpdateCustomDomainCertStatus(ctx context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error {
@@ -12709,14 +12751,8 @@ func (s *PgStore) UpdateCustomDomainCertStatus(ctx context.Context, domain strin
 }
 
 func (s *PgStore) DeleteCustomDomain(ctx context.Context, domain string) error {
-	tag, err := s.pool.Exec(ctx, `delete from custom_domains where domain = $1`, domain)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	_, err := s.deleteTrafficCustomDomain(ctx, domain, "", nil)
+	return err
 }
 
 // --- domain_doctor_observations (ADR-120) ----------------------
@@ -13668,6 +13704,11 @@ func scanEdgeRuleCols(scan func(...any) error) (EdgeRule, error) {
 // CreateEdgeRule is the un-capped insert path used by tests. The
 // customer-facing handler always calls CreateEdgeRuleIfUnderQuota.
 func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
+	tx, err := s.beginRuleTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID), in.Kind)
+	if err != nil {
+		return EdgeRule{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	actionBytes, err := json.Marshal(in.Action)
 	if err != nil {
 		return EdgeRule{}, fmt.Errorf("state: marshal edge_rule.action: %w", err)
@@ -13687,7 +13728,7 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 	if in.CorsPresetID != nil {
 		corsPresetIDArg = *in.CorsPresetID
 	}
-	row := s.pool.QueryRow(ctx, `
+	row := tx.QueryRow(ctx, `
 		insert into edge_rules (
 			account_id, app_id, match_host, match_path,
 			match_methods, priority, enabled, kind, action,
@@ -13697,7 +13738,7 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 			$5, $6, $7, $8, $9::jsonb,
 			$10::uuid, coalesce(nullif($11, ''), 'block'), $12::jsonb, nullif($13, '')
 		)
-		returning `+edgeRuleSelectCols,
+		returning id`,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
 		methods, in.Priority, in.Enabled, string(in.Kind), actionBytes,
 		// $10: cors_preset_id nullable FK (migration 00428). nil
@@ -13714,9 +13755,12 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 		matchHeadersBytes,
 		in.ManifestKey,
 	)
-	r, err := scanEdgeRule(row)
+	r, err := readBoundedEdgeRuleTrafficProjection(ctx, tx, row)
 	if err != nil {
 		return EdgeRule{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return EdgeRule{}, fmt.Errorf("state: commit edge rule: %w", err)
 	}
 	return r, nil
 }
@@ -13731,7 +13775,7 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 // count, so a burst of N parallel inserts can't race past the cap
 // by N-1.
 func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginRuleTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID), in.Kind)
 	if err != nil {
 		return EdgeRule{}, fmt.Errorf("state: begin tx: %w", err)
 	}
@@ -13850,7 +13894,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 			$5, $6, $7, $8, $9::jsonb,
 			coalesce(nullif($10, ''), 'block'), $11::jsonb, nullif($12, '')
 		)
-		returning `+edgeRuleSelectCols,
+		returning id`,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
 		methods, in.Priority, in.Enabled, string(in.Kind), actionBytes,
 		// $10: same empty-string→'block' coalesce as the un-capped
@@ -13859,7 +13903,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 		matchHeadersBytes,
 		in.ManifestKey,
 	)
-	r, err := scanEdgeRule(row)
+	r, err := readBoundedEdgeRuleTrafficProjection(ctx, tx, row)
 	if err != nil {
 		return EdgeRule{}, mapErr(err)
 	}
@@ -14066,7 +14110,12 @@ func (s *PgStore) GetCorsPresetByID(ctx context.Context, accountID, id string) (
 // signal. The notification is delivered after commit; gatewayd also polls the
 // ledger so a missed notification cannot leave compiled CORS policy stale.
 func (s *PgStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset, limits api.Limits) (CorsPreset, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	proposed := p
+	proposed.ID = "" // the insert generates its UUID rather than accepting p.ID
+	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(proposed)); err != nil {
+		return CorsPreset{}, err
+	}
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(p.AccountID))
 	if err != nil {
 		return CorsPreset{}, fmt.Errorf("state: begin tx: %w", err)
 	}
@@ -14169,6 +14218,15 @@ func (s *PgStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset
 // and emits pg_notify; gateways replay the ledger if notification delivery
 // is missed.
 func (s *PgStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p CorsPreset) (CorsPreset, error) {
+	p.ID, p.AccountID = id, accountID
+	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(p)); err != nil {
+		return CorsPreset{}, err
+	}
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(accountID))
+	if err != nil {
+		return CorsPreset{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var appIDArg any
 	if p.AppID != "" {
 		appIDArg = p.AppID
@@ -14177,7 +14235,7 @@ func (s *PgStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p 
 	if p.Description != "" {
 		descriptionArg = p.Description
 	}
-	row := s.pool.QueryRow(ctx, `
+	row := tx.QueryRow(ctx, `
 		update cors_presets set
 			app_id           = $2,
 			name             = $3,
@@ -14198,6 +14256,9 @@ func (s *PgStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p 
 	r, err := scanCorsPreset(row)
 	if err != nil {
 		return CorsPreset{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CorsPreset{}, fmt.Errorf("state: commit preset replacement: %w", err)
 	}
 	return r, nil
 }
@@ -14607,6 +14668,11 @@ func (s *PgStore) ListCertExpiryStateForWalker(ctx context.Context, staleCutoff 
 // the action union (a 'cors' action has no fields a 'route' rule
 // expects); the customer deletes + recreates instead.
 func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRuleParams) (EdgeRule, error) {
+	tx, txErr := s.beginEdgeRuleTrafficMutation(ctx, id)
+	if txErr != nil {
+		return EdgeRule{}, txErr
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var (
 		hostArg, pathArg any
 		methodsArg       any
@@ -14669,7 +14735,7 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 		validateModeArg = *p.ValidateMode
 	}
 
-	row := s.pool.QueryRow(ctx, `
+	row := tx.QueryRow(ctx, `
 		update edge_rules set
 			match_host    = coalesce($2, match_host),
 			match_path    = coalesce($3, match_path),
@@ -14681,7 +14747,7 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 			validate_mode = coalesce(nullif($9, ''), validate_mode),
 			match_headers = case when $12 then $13::jsonb else match_headers end
 		where id = $1
-		returning `+edgeRuleSelectCols,
+		returning id`,
 		id, hostArg, pathArg, methodsArg, p.Priority, p.Enabled,
 		p.Action != nil, actionArg,
 		// $9: nil-skip via coalesce (nil → keep existing).
@@ -14699,9 +14765,12 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 		// a UUID for the "set preset" signal.
 		corsPresetSet, corsPresetValue, matchHeadersSet, matchHeadersArg,
 	)
-	r, err := scanEdgeRule(row)
+	r, err := readBoundedEdgeRuleTrafficProjection(ctx, tx, row)
 	if err != nil {
 		return EdgeRule{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return EdgeRule{}, fmt.Errorf("state: commit rule replacement: %w", err)
 	}
 	return r, nil
 }
@@ -25951,11 +26020,11 @@ func (s *PgStore) ListDeploymentLogs(ctx context.Context, deploymentID string, b
 // `delete from accounts` is the sentinel — 0 rows affected means the
 // account was already gone (idempotent retry by pkg/grace).
 func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAccountAppTrafficMutation(ctx, id, "")
 	if err != nil {
 		return fmt.Errorf("state: begin tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
 	// Match bucket reservation/admission order before traversing cascades.
 	if _, err = sqlc.New().ObjectUsageLockAccount(ctx, tx, mustPgUUID(id)); err != nil {
 		return mapErr(err)
@@ -25978,6 +26047,27 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	// the sources, ownership, definitions and issued controller leases together.
 	if err := sqlc.New().DeleteAccountEnvironmentGitSources(ctx, tx, mustPgUUID(id)); err != nil {
 		return fmt.Errorf("state: purge account environment Git sources: %w", err)
+	}
+
+	status, err := sqlc.New().ReadTrafficDeletionAccountStatus(ctx, tx, uuidToPgtype(id))
+	if err != nil {
+		return mapErr(err)
+	}
+	if status != string(AccountDeletedPending) {
+		return ErrNotFound
+	}
+	if err := sqlc.New().DeleteTrafficAccountRedirectDomains(ctx, tx, uuidToPgtype(id)); err != nil {
+		return fmt.Errorf("state: delete account redirect domains: %w", err)
+	}
+
+	// Operation projections reference their current invocation. Purge that
+	// ownership graph before the account-wide invocation delete, in this tx.
+	if err := purgeOperationOwnerTx(ctx, tx, id, ""); err != nil {
+		return fmt.Errorf("state: purge customer operation owner: %w", err)
+	}
+
+	if err := sqlc.New().DeleteTrafficAccountInvocations(ctx, tx, uuidToPgtype(id)); err != nil {
+		return fmt.Errorf("state: delete account invocations: %w", err)
 	}
 
 	// Capture email at copy-time for the audit_log row (issue #755 /
@@ -26014,9 +26104,6 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	// trips the FK constraint on `apps.account_id → accounts.id` and
 	// aborts the whole transaction. Walking children first lets the
 	// `delete from accounts` at the bottom be the natural sentinel.
-	if err := purgeOperationOwnerTx(ctx, tx, id, ""); err != nil {
-		return fmt.Errorf("state: purge customer operation owner: %w", err)
-	}
 	// Custody outlives provider cleanup until final account erasure. Refuse to
 	// purge any acknowledgement whose lifecycle has not confirmed deletion.
 	if err := sqlc.New().PurgeAccountManagedPostgresCreationReceipts(ctx, tx, mustPgUUID(id)); err != nil {

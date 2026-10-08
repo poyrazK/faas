@@ -1,5 +1,6 @@
 //go:build !no_pg
 
+// adr: 570
 package migrations_test
 
 import (
@@ -35,10 +36,7 @@ func TestMigrationInvocationDeploymentScopeBackfillAndIdentity(t *testing.T) {
 		{"project-preview", project.ID, "project-member", "default"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: tc.name, ProjectID: tc.projectID, PreviewOfSlug: tc.preview})
-			if err != nil {
-				t.Fatal(err)
-			}
+			app := seedHistoricalInvocationApp(t, ctx, pool, state.App{AccountID: account.ID, Slug: tc.name, ProjectID: tc.projectID, PreviewOfSlug: tc.preview})
 			var invocationID string
 			if err := pool.QueryRow(ctx, `INSERT INTO invocations(app_id, account_id, source)
 			  VALUES ($1, $2, 'queue') RETURNING id`, app.ID, account.ID).Scan(&invocationID); err != nil {

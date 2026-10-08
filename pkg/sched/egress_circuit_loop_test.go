@@ -146,8 +146,8 @@ func TestEgressLoopContinuesPastOneFailingApp(t *testing.T) {
 		WithClock(func() time.Time { return clock })
 
 	for i := 0; i < 3; i++ {
-		if err := l.Tick(context.Background()); err != nil {
-			t.Fatalf("Tick: %v", err)
+		if err := l.Tick(context.Background()); err == nil {
+			t.Fatal("Tick acknowledged success despite the failing app")
 		}
 		sampled = sampled.Add(30 * time.Second)
 		clock = clock.Add(30 * time.Second)

@@ -424,15 +424,17 @@ type VMInstanceStat struct {
 // Empty slice = no allowlist rule emitted in the per-netns forward chain
 // (current behaviour preserved).
 type AppSpec struct {
-	// Migration evidence stays in schedd; no receipt values enter the protobuf
-	// envelope. The flat APIEnv/sealed inputs already carry the boot payload.
+	// Migration evidence remains control-plane metadata, outside the guest envelope.
 	migrationRuntime *migrationRuntimeInputs
-	BaseKey          string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
-	LayerKey         string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
-	VCPUCount        int32  // 2, or 4 for Scale
-	MemSizeMiB       int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
-	CPUMillicores    int32  // sustained cgroup CPU allowance; 250, 500, or 1000
-	EgressMbit       int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	// WakeID preserves an existing VM lifetime through migration or pool restore metadata.
+	// It is control-plane identity, independent of the guest AppSpec proto.
+	WakeID        string
+	BaseKey       string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
+	LayerKey      string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
+	VCPUCount     int32  // 2, or 4 for Scale
+	MemSizeMiB    int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
+	CPUMillicores int32  // sustained cgroup CPU allowance; 250, 500, or 1000
+	EgressMbit    int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int32
@@ -1008,6 +1010,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 	}
 	// issue #517: see CreateColdBoot above for the rationale.
 	fields, _ := wire.FromContext(ctx)
+	if keepPaused && app.WakeID != "" {
+		fields.WakeID, fields.AppID, fields.InstanceID, fields.DeploymentID = app.WakeID, app.AppID, instance, app.DeploymentID
+	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.CreateFromSnapshot(ctx, &vmmdpb.CreateFromSnapshotRequest{
 		Instance:  instance,
@@ -1422,6 +1427,7 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 		return LiveMigrationAdopt{}, err
 	}
 	fields, _ := wire.FromContext(ctx)
+	fields.WakeID, fields.AppID, fields.InstanceID, fields.DeploymentID = app.WakeID, app.AppID, instanceID, app.DeploymentID
 	if app.migrationRuntime != nil {
 		fields.WakeID = app.migrationRuntime.WakeID
 	}

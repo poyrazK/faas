@@ -1,0 +1,330 @@
+// adr: 570
+package state
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"hash"
+	"math"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+// PublicHostPolicyReader exposes only the routing projection. Account
+// credentials, application env and deployment artifacts are never loaded.
+type PublicHostPolicyReader interface {
+	AppByID(context.Context, string) (App, error)
+	AppBySlug(context.Context, string) (App, error)
+	AccountByID(context.Context, string) (Account, error)
+	DeploymentByID(context.Context, string) (Deployment, error)
+	DeploymentByRevision(context.Context, string, int) (Deployment, error)
+	LiveDeploymentForScope(context.Context, string, string) (Deployment, error)
+	LiveDeploymentsForScope(context.Context, string, string) ([]Deployment, error)
+	ProductionLiveDeployments(context.Context, string) ([]Deployment, error)
+	ProjectEnvironmentCloneTargetOperation(context.Context, string, string, string) (ProjectEnvironmentCloneOperation, error)
+	ProjectEnvironmentWorkloadSpecForDeployment(context.Context, string, string, string) (ProjectEnvironmentWorkloadSpec, error)
+	ProjectEnvironmentByID(context.Context, string) (ProjectEnvironment, error)
+	GetProjectEnvironmentEdgePolicy(context.Context, string, string, string) (ProjectEnvironmentEdgePolicy, error)
+	ActiveProjectReleaseSet(context.Context, string, string, string) (ProjectReleaseSet, error)
+	DeploymentAliasByHostLabel(context.Context, string) (DeploymentAlias, error)
+	DeploymentAliasReserved(context.Context, string) (bool, error)
+	DomainByName(context.Context, string) (CustomDomain, error)
+	WildcardDomainForHost(context.Context, string) (CustomDomain, error)
+	TenantSurfaceByHostname(context.Context, string) (TenantSurface, error)
+	GetTenantHostnameByName(context.Context, string) (TenantHostname, error)
+	PlatformTenantHostBinding(context.Context, string) (PlatformTenantHostBinding, error)
+	PublicHostReserved(context.Context, string, string) (bool, error)
+	PublicHostRoutePolicy(context.Context, string, string, string) (ProjectEnvironmentRoutePolicy, error)
+	PublicHostOpenAPIDoc(context.Context, string, string) ([]byte, error)
+	PublicHostEdgeRules(context.Context, string, string, bool) ([]EdgeRule, error)
+	GetCorsPresetByID(context.Context, string, string) (CorsPreset, error)
+	NewProjectionReader() PublicHostPolicyReader
+	PublicHostPolicyRevision() string
+}
+
+type PublicHostPolicySnapshotStore interface {
+	WithPublicHostPolicySnapshot(context.Context, func(PublicHostPolicyReader) error) error
+}
+
+// The routing verifier uses the same transaction as eligibility and weights.
+type PublicRoutingHostPolicyReader interface {
+	HostPolicyReader() PublicHostPolicyReader
+}
+
+func (s *PgStore) WithPublicHostPolicySnapshot(ctx context.Context, read func(PublicHostPolicyReader) error) error {
+	if read == nil {
+		return ErrInvalidArgument
+	}
+	return s.WithServicePolicySnapshot(ctx, func(reader ServicePolicyReader) error {
+		return read(newPublicHostPolicyReader(reader.(servicePolicyReader).tx))
+	})
+}
+
+type publicHostPolicyReader struct {
+	tx       pgx.Tx
+	revision hash.Hash
+}
+
+func newPublicHostPolicyReader(tx pgx.Tx) *publicHostPolicyReader {
+	return &publicHostPolicyReader{tx: tx, revision: sha256.New()}
+}
+
+func (s *publicHostPolicyReader) PublicHostPolicyRevision() string {
+	return "public-host-v1:" + hex.EncodeToString(s.revision.Sum(nil))
+}
+
+func (s *publicHostPolicyReader) NewProjectionReader() PublicHostPolicyReader {
+	return newPublicHostPolicyReader(s.tx)
+}
+
+// Framed JSON records include successful reads and authoritative
+// misses. A claimed hostname cannot silently become a different fallback.
+func (s *publicHostPolicyReader) record(key string, data []byte, err error) {
+	if err != nil && !errors.Is(mapErr(err), ErrNotFound) {
+		return
+	}
+	encoded, _ := json.Marshal(struct {
+		Key  string
+		Data json.RawMessage
+	}{key, data})
+	_, _ = s.revision.Write(encoded)
+}
+
+func decodePublicHostJSON[T any](data []byte, err error) (T, error) {
+	var result T
+	if err != nil {
+		return result, mapErr(err)
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return result, fmt.Errorf("decode public host policy: %w", err)
+	}
+	return result, nil
+}
+
+func (s *publicHostPolicyReader) AppByID(ctx context.Context, id string) (App, error) {
+	data, err := sqlc.New().ReadPublicHostApp(ctx, s.tx, sqlc.ReadPublicHostAppParams{AppID: uuidToPgtype(id)})
+	s.record("app-id:"+id, data, err)
+	return decodePublicHostJSON[App](data, err)
+}
+
+func (s *publicHostPolicyReader) AppBySlug(ctx context.Context, slug string) (App, error) {
+	data, err := sqlc.New().ReadPublicHostApp(ctx, s.tx, sqlc.ReadPublicHostAppParams{Slug: slug})
+	s.record("app-slug:"+slug, data, err)
+	return decodePublicHostJSON[App](data, err)
+}
+
+func (s *publicHostPolicyReader) AccountByID(ctx context.Context, id string) (Account, error) {
+	data, err := sqlc.New().ReadPublicHostAccount(ctx, s.tx, uuidToPgtype(id))
+	s.record("account:"+id, data, err)
+	return decodePublicHostJSON[Account](data, err)
+}
+
+func (s *publicHostPolicyReader) deployments(ctx context.Context, params sqlc.ReadPublicHostDeploymentParams) ([]Deployment, error) {
+	rows, err := sqlc.New().ReadPublicHostDeployment(ctx, s.tx, params)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if len(rows) > api.TrafficPolicyMaxDeployments {
+		return nil, errors.New("public host deployment limit exceeded")
+	}
+	key, _ := json.Marshal(params)
+	encoded, _ := json.Marshal(rows)
+	s.record("deployments:"+string(key), encoded, nil)
+	result := make([]Deployment, 0, len(rows))
+	for _, data := range rows {
+		deployment, err := decodePublicHostJSON[Deployment](data, nil)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, deployment)
+	}
+	return result, nil
+}
+
+func onePublicHostDeployment(rows []Deployment, err error) (Deployment, error) {
+	if err != nil {
+		return Deployment{}, err
+	}
+	if len(rows) == 0 {
+		return Deployment{}, ErrNotFound
+	}
+	if len(rows) != 1 {
+		return Deployment{}, ErrConflict
+	}
+	return rows[0], nil
+}
+
+func (s *publicHostPolicyReader) DeploymentByID(ctx context.Context, id string) (Deployment, error) {
+	return onePublicHostDeployment(s.deployments(ctx, sqlc.ReadPublicHostDeploymentParams{DeploymentID: uuidToPgtype(id), RowLimit: 2}))
+}
+
+func (s *publicHostPolicyReader) DeploymentByRevision(ctx context.Context, app string, revision int) (Deployment, error) {
+	if revision <= 0 || revision > math.MaxInt32 {
+		return Deployment{}, ErrNotFound
+	}
+	return onePublicHostDeployment(s.deployments(ctx, sqlc.ReadPublicHostDeploymentParams{AppID: uuidToPgtype(app), Revision: int32(revision), RowLimit: 2}))
+}
+
+func (s *publicHostPolicyReader) LiveDeploymentForScope(ctx context.Context, app, scope string) (Deployment, error) {
+	return onePublicHostDeployment(s.deployments(ctx, sqlc.ReadPublicHostDeploymentParams{AppID: uuidToPgtype(app), Scope: scope, RowLimit: 1}))
+}
+
+func (s *publicHostPolicyReader) LiveDeploymentsForScope(ctx context.Context, app, scope string) ([]Deployment, error) {
+	return s.deployments(ctx, sqlc.ReadPublicHostDeploymentParams{AppID: uuidToPgtype(app), Scope: scope, RowLimit: int32(api.TrafficPolicyMaxDeployments + 1)})
+}
+
+func (s *publicHostPolicyReader) ProjectEnvironmentByID(ctx context.Context, id string) (ProjectEnvironment, error) {
+	data, err := sqlc.New().ReadPublicHostEnvironment(ctx, s.tx, uuidToPgtype(id))
+	s.record("environment:"+id, data, err)
+	return decodePublicHostJSON[ProjectEnvironment](data, err)
+}
+
+func (s *publicHostPolicyReader) GetProjectEnvironmentEdgePolicy(ctx context.Context, account, app, scope string) (ProjectEnvironmentEdgePolicy, error) {
+	row, err := sqlc.New().ReadPublicHostEnvironmentPolicy(ctx, s.tx, sqlc.ReadPublicHostEnvironmentPolicyParams{
+		AccountID: uuidToPgtype(account), AppID: uuidToPgtype(app), Scope: scope, MaxBytes: api.TrafficPolicyMaxContractBytes})
+	if err == nil && row.Oversized {
+		return ProjectEnvironmentEdgePolicy{}, errors.New("public environment edge policy exceeds the projection limit")
+	}
+	s.record("environment-policy:"+account+":"+app+":"+scope, row.Data, err)
+	return decodePublicHostJSON[ProjectEnvironmentEdgePolicy](row.Data, err)
+}
+
+func (s *publicHostPolicyReader) ActiveProjectReleaseSet(ctx context.Context, account, project, scope string) (ProjectReleaseSet, error) {
+	data, err := sqlc.New().ReadProjectReleaseSet(ctx, s.tx, sqlc.ReadProjectReleaseSetParams{
+		AccountID: uuidToPgtype(account), ProjectID: uuidToPgtype(project), Environment: scope})
+	s.record("release:"+account+":"+project+":"+scope, data, err)
+	return decodePublicHostJSON[ProjectReleaseSet](data, err)
+}
+
+func (s *publicHostPolicyReader) DeploymentAliasByHostLabel(ctx context.Context, label string) (DeploymentAlias, error) {
+	rows, err := sqlc.New().DeploymentAliasByHostLabel(ctx, s.tx, label)
+	if err != nil {
+		return DeploymentAlias{}, mapErr(err)
+	}
+	encoded, _ := json.Marshal(rows)
+	s.record("alias:"+label, encoded, nil)
+	if len(rows) == 0 {
+		return DeploymentAlias{}, ErrNotFound
+	}
+	if len(rows) != 1 {
+		return DeploymentAlias{}, ErrConflict
+	}
+	row := rows[0]
+	return DeploymentAlias{AppID: pgUUIDString(row.AppID), Name: row.Name, DeploymentID: pgUUIDString(row.DeploymentID), Revision: int(row.Revision)}, nil
+}
+
+func (s *publicHostPolicyReader) domain(ctx context.Context, host string, wildcard bool) (CustomDomain, error) {
+	lookup := host
+	if wildcard {
+		lookup = normalizeWildcardDomainHost(host)
+	}
+	data, err := sqlc.New().ReadPublicHostDomain(ctx, s.tx, sqlc.ReadPublicHostDomainParams{Host: lookup, Wildcard: wildcard, TrimCharacters: customDomainTrimCharacters})
+	s.record(fmt.Sprintf("domain:%t:%s", wildcard, host), data, err)
+	return decodePublicHostJSON[CustomDomain](data, err)
+}
+
+func (s *publicHostPolicyReader) DomainByName(ctx context.Context, host string) (CustomDomain, error) {
+	return s.domain(ctx, host, false)
+}
+
+func (s *publicHostPolicyReader) WildcardDomainForHost(ctx context.Context, host string) (CustomDomain, error) {
+	return s.domain(ctx, host, true)
+}
+
+func (s *publicHostPolicyReader) TenantSurfaceByHostname(ctx context.Context, host string) (TenantSurface, error) {
+	data, err := sqlc.New().ReadPublicHostTenantSurface(ctx, s.tx, host)
+	s.record("surface:"+host, data, err)
+	return decodePublicHostJSON[TenantSurface](data, err)
+}
+
+func (s *publicHostPolicyReader) GetTenantHostnameByName(ctx context.Context, host string) (TenantHostname, error) {
+	data, err := sqlc.New().ReadPublicHostTenantHostname(ctx, s.tx, host)
+	s.record("tenant-hostname:"+host, data, err)
+	return decodePublicHostJSON[TenantHostname](data, err)
+}
+
+func (s *publicHostPolicyReader) PlatformTenantHostBinding(ctx context.Context, host string) (PlatformTenantHostBinding, error) {
+	data, err := sqlc.New().ReadPublicHostTenantBinding(ctx, s.tx, host)
+	s.record("tenant-binding:"+host, data, err)
+	return decodePublicHostJSON[PlatformTenantHostBinding](data, err)
+}
+
+func (s *publicHostPolicyReader) PublicHostReserved(ctx context.Context, slug, host string) (bool, error) {
+	reserved, err := sqlc.New().ReadPublicHostReservation(ctx, s.tx, sqlc.ReadPublicHostReservationParams{
+		Slug: slug, Host: host, WildcardHost: normalizeWildcardDomainHost(host), TrimCharacters: customDomainTrimCharacters})
+	data, _ := json.Marshal(reserved)
+	key, _ := json.Marshal([]string{slug, host})
+	s.record("host-reservation:"+string(key), data, err)
+	return reserved, err
+}
+
+func (s *publicHostPolicyReader) PublicHostRoutePolicy(ctx context.Context, account, app, scope string) (ProjectEnvironmentRoutePolicy, error) {
+	row, err := sqlc.New().ReadPublicHostRoutePolicy(ctx, s.tx, sqlc.ReadPublicHostRoutePolicyParams{
+		AccountID: uuidToPgtype(account), AppID: uuidToPgtype(app), Scope: scope, MaxBytes: api.TrafficPolicyMaxContractBytes})
+	if err == nil && row.Oversized {
+		return ProjectEnvironmentRoutePolicy{}, errors.New("public route contract exceeds the projection limit")
+	}
+	key, _ := json.Marshal([]string{account, app, scope})
+	s.record("route-contract:"+string(key), row.Data, err)
+	return decodePublicHostJSON[ProjectEnvironmentRoutePolicy](row.Data, err)
+}
+
+func (s *publicHostPolicyReader) PublicHostOpenAPIDoc(ctx context.Context, app, account string) ([]byte, error) {
+	row, err := sqlc.New().ReadPublicHostOpenAPIDoc(ctx, s.tx, sqlc.ReadPublicHostOpenAPIDocParams{
+		AppID: uuidToPgtype(app), AccountID: uuidToPgtype(account), MaxBytes: api.TrafficPolicyMaxContractBytes})
+	if err == nil && row.Oversized {
+		return nil, errors.New("public OpenAPI contract exceeds the projection limit")
+	}
+	key, _ := json.Marshal([]string{account, app})
+	s.record("openapi-contract:"+string(key), row.Doc, err)
+	return row.Doc, mapErr(err)
+}
+
+func (s *publicHostPolicyReader) DeploymentAliasReserved(ctx context.Context, label string) (bool, error) {
+	reserved, err := sqlc.New().ReadPublicAliasHostReserved(ctx, s.tx, label)
+	encoded, _ := json.Marshal(reserved)
+	s.record("alias-reserved:"+label, encoded, err)
+	return reserved, mapErr(err)
+}
+
+// Clone readiness and pinned settings participate in the host policy revision.
+func (s *publicHostPolicyReader) ProjectEnvironmentCloneTargetOperation(ctx context.Context, account, project, environment string) (ProjectEnvironmentCloneOperation, error) {
+	data, err := sqlc.New().ReadPublicHostCloneReadiness(ctx, s.tx, sqlc.ReadPublicHostCloneReadinessParams{
+		AccountID: uuidToPgtype(account), ProjectID: uuidToPgtype(project), Environment: environment})
+	s.record("clone-readiness:"+account+":"+project+":"+environment, data, err)
+	return decodePublicHostJSON[ProjectEnvironmentCloneOperation](data, err)
+}
+
+func (s *publicHostPolicyReader) ProjectEnvironmentWorkloadSpecForDeployment(ctx context.Context, account, project, deployment string) (ProjectEnvironmentWorkloadSpec, error) {
+	spec, data, err := readSnapshotWorkloadSpec(ctx, s.tx, account, project, deployment)
+	s.record("workload-spec:"+account+":"+project+":"+deployment, data, err)
+	return spec, err
+}
+
+func (s *publicHostPolicyReader) ProductionLiveDeployments(ctx context.Context, app string) ([]Deployment, error) {
+	rows, err := sqlc.New().ReadPublicHostProductionDeployment(ctx, s.tx, sqlc.ReadPublicHostProductionDeploymentParams{
+		AppID: uuidToPgtype(app), RowLimit: int32(api.TrafficPolicyMaxDeployments + 1)})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if len(rows) > api.TrafficPolicyMaxDeployments {
+		return nil, errors.New("public host deployment limit exceeded")
+	}
+	encoded, _ := json.Marshal(rows)
+	s.record("production-deployments:"+app, encoded, nil)
+	result := make([]Deployment, 0, len(rows))
+	for _, row := range rows {
+		dep, err := decodePublicHostJSON[Deployment](row, nil)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, dep)
+	}
+	return ProductionRoutingDeployments(result), nil
+}

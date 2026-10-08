@@ -121,6 +121,7 @@ import (
 	"golang.org/x/net/http2/h2c"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/bridgecompletion"
 )
 
 // dialTimeout caps the inner-leg TCP dial against the guest.
@@ -353,7 +354,7 @@ func newHandler(guestIP string, guestPort uint16, deadline time.Time) http.Handl
 }
 
 func newHandlerWithPool(guestIP string, guestPort uint16, deadline time.Time, guestPool *guestTransportPool) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return bridgecompletion.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Read FAAS_BRIDGE_PROTOCOL once per request: currentBridgeFraming uses the same value for dispatch, and the slog line below logs the raw string verbatim (operator correlation with FAAS_BRIDGE_PROTOCOL env flips). One syscall beats two.
 		bridgeProtoEnv := os.Getenv("FAAS_BRIDGE_PROTOCOL")
 		if bridgeRequestUsesWireMetadata(r) {
@@ -390,7 +391,7 @@ func newHandlerWithPool(guestIP string, guestPort uint16, deadline time.Time, gu
 		default:
 			handleH1Stream(w, r, guestIP, requestPort, deadline, guestPool)
 		}
-	})
+	}))
 }
 
 // handleH1Stream is the legacy H1+chunked framing path (today's

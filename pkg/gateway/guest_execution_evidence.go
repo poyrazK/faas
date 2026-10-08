@@ -163,6 +163,9 @@ func forwardedResponseHeader(ctx context.Context, dst http.Header, name, value s
 }
 
 func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, name, value string, preserveUpgrade bool) {
+	if isTrafficResponseControlHeader(name) {
+		return
+	}
 	// Response headers cross the internal bridge before they reach the
 	// customer-facing writer. Connection-management headers belong only to
 	// that hop (RFC 7230 §6.1) and must not be exposed as guest application
@@ -239,6 +242,16 @@ func stripGuestEvidenceResponseHeaders(resp *http.Response) {
 	resp.Header.Del(api.ReleaseHeader)
 	resp.Header.Del(api.DeploymentIDHeader)
 	resp.Header.Del(apihostingreceipt.ServedResponseHeader)
+	for name := range resp.Header {
+		if isTrafficResponseControlHeader(name) {
+			resp.Header.Del(name)
+		}
+	}
+	stripTrafficControlTrailerDeclarations(resp.Header)
+	stripTrafficControlTrailers(resp.Trailer)
+	if resp.Body != nil {
+		resp.Body = &contextResponseBody{Reader: resp.Body, Closer: resp.Body, response: resp}
+	}
 	ctx := context.Background()
 	if resp.Request != nil {
 		ctx = resp.Request.Context()

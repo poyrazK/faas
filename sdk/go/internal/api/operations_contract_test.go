@@ -24,24 +24,6 @@ func TestOperationWireContractMatchesPlatform(t *testing.T) {
 	}
 	want := operationDeclarations(t, platform)
 	got := operationDeclarations(t, "operations.go")
-	for name, declaration := range operationDeclarations(t, filepath.Join(root, "operation_subject.go")) {
-		want[name] = declaration
-	}
-	for name, declaration := range operationDeclarations(t, "operation_subject.go") {
-		got[name] = declaration
-	}
-	for name, declaration := range operationDeclarations(t, filepath.Join(root, "operation_milestones.go")) {
-		want[name] = declaration
-	}
-	for name, declaration := range operationDeclarations(t, "operation_milestones.go") {
-		got[name] = declaration
-	}
-	for name, declaration := range operationDeclarations(t, filepath.Join(root, "operation_workflows.go")) {
-		want[name] = declaration
-	}
-	for name, declaration := range operationDeclarations(t, "operation_workflows.go") {
-		got[name] = declaration
-	}
 	for name, declaration := range want {
 		if got[name] != declaration {
 			t.Errorf("operation wire declaration drift: %s", name)
@@ -105,4 +87,56 @@ func operationDeclarations(t *testing.T, path string) map[string]string {
 		}
 	}
 	return result
+}
+
+func TestOperationWireContractMatchesPlatformIntegratedBusinessWorkflows(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "..", "pkg", "api")
+	platform := filepath.Join(root, "operations.go")
+	if _, err := os.Stat(platform); os.IsNotExist(err) {
+		t.Skip("platform source is absent from the standalone module")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	want := operationDeclarations(t, platform)
+	got := operationDeclarations(t, "operations.go")
+	for name, declaration := range operationDeclarations(t, filepath.Join(root, "operation_subject.go")) {
+		want[name] = declaration
+	}
+	for name, declaration := range operationDeclarations(t, "operation_subject.go") {
+		got[name] = declaration
+	}
+	for name, declaration := range operationDeclarations(t, filepath.Join(root, "operation_milestones.go")) {
+		want[name] = declaration
+	}
+	for name, declaration := range operationDeclarations(t, "operation_milestones.go") {
+		got[name] = declaration
+	}
+	for name, declaration := range operationDeclarations(t, filepath.Join(root, "operation_workflows.go")) {
+		want[name] = declaration
+	}
+	for name, declaration := range operationDeclarations(t, "operation_workflows.go") {
+		got[name] = declaration
+	}
+	for name, declaration := range want {
+		if got[name] != declaration {
+			t.Errorf("operation wire declaration drift: %s", name)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatal("operation wire declaration set changed")
+	}
+	bounds := operationDeclarations(t, filepath.Join(root, "limits.go"))
+	sdkBounds := operationDeclarations(t, "operations_http.go")
+	for sdkName, platformName := range map[string]string{
+		"operationArtifactMaxBytes": "OperationArtifactSpoolMaxBytes",
+		"operationSubmissionKeyMax": "OperationIdempotencyKeyMaxBytes",
+	} {
+		if sdkBounds[sdkName] != bounds[platformName] || sdkBounds[sdkName] == "" {
+			t.Errorf("operation bound drift: %s", sdkName)
+		}
+	}
+	headers := operationDeclarations(t, filepath.Join(root, "headers.go"))
+	if sdkBounds["InvocationIDHeader"] != headers["InvocationIDHeader"] || sdkBounds["InvocationIDHeader"] == "" {
+		t.Fatal("operation invocation header drift")
+	}
 }

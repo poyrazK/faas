@@ -117,8 +117,9 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    # Full cold-cache lint exceeded twenty minutes with bounded memory.
-    # Leave time for analysis, cold builds and the remaining policy gates.
+    # Cold package loading exceeded eight minutes with bounded memory.
+    # Allow full lint, cold builds, nftables and all remaining policy gates
+    # to finish within a bounded job budget.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -195,10 +196,10 @@ jobs:
           GOMAXPROCS: 2
         with:
           version: v2.4.0
-          # The expanded repository exceeded the twenty-minute cold-cache
-          # deadline under these memory bounds. Retain every rule and give
-          # the complete analysis a bounded thirty-minute deadline.
-          args: --timeout=30m
+          # Hosted full analysis exceeded twenty minutes on a cold cache.
+          # Keep every rule and the same memory bounds, with a bounded
+          # thirty-minute deadline for complete repository analysis.
+          args: --timeout=30m --concurrency=2
           # The action's own cache is keyed per 7-day interval and never re-saved
           # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
           skip-cache: true
@@ -659,89 +660,11 @@ jobs:
             ~/go/pkg/mod
           key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
-  # The complete state test inventory runs on two independent PostgreSQL
-  # runners. Fuzz seeds and runnable examples belong to exactly one shard;
-  # Go's registered list guards against silently omitting a new test family.
-  unit-tests-state:
-    name: unit tests (state shard ${{ matrix.shard }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2]
-    permissions:
-      contents: read
-      id-token: write
-    services:
-      postgres:
-        image: mirror.gcr.io/library/postgres:16
-        env:
-          POSTGRES_USER: faas
-          POSTGRES_PASSWORD: faas
-          POSTGRES_DB: faas
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U faas -d faas"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
-      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
-      GREGALE_GITOPS_ACCEPTANCE: "1"
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-      - id: cache-date
-        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-      - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
-          restore-keys: |
-            go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-state-${{ matrix.shard }}-${{ runner.os }}-
-      - name: verify complete state inventory
-        run: |
-          mkdir -p coverage
-          go test -race -coverpkg=./pkg/state -covermode=atomic -list . ./pkg/state > coverage/state-inventory.txt
-          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -check -list-file=coverage/state-inventory.txt
-      - name: state tests (shard ${{ matrix.shard }})
-        run: |
-          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -shard=${{ matrix.shard }})
-          go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
-      - name: upload state coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-state-${{ matrix.shard }}
-          path: coverage/cover-shard-state-${{ matrix.shard }}.out
-          if-no-files-found: error
-      - name: upload to Codecov (state shard ${{ matrix.shard }})
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
-        with:
-          files: coverage/cover-shard-state-${{ matrix.shard }}.out
-          flags: unittests
-          use_oidc: true
-          fail_ci_if_error: false
-      - name: save Go build + test cache
-        if: always() && github.event_name == 'push'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
-
-  # PostgreSQL parity/reconciliation and CLI/daemon packages have independent
-  # services. The state package itself runs in unit-tests-state above.
+  # State roots run in eight exhaustive partitions on separate runners and
+  # PostgreSQL services. The daemon shard retains its existing package scope.
+  # All state partitions declare the same package scope. Partition 0 also
+  # runs every non-state package and the strict PostgreSQL contract gates.
+  # Coverage is merged only after every state partition has completed.
   unit-tests-pg-2:
     name: unit tests (pg shard 2${{ matrix.id }} — ${{ matrix.label }})
     runs-on: ubuntu-latest
@@ -749,13 +672,76 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: a
-            label: parity/operations/reconcile/reposcan
-            # Bridge, GitOps, and customer-operation acceptance require PostgreSQL.
-            package_pattern: '/(pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
-            coverage_file: cover-shard2a.out
+          - id: a0
+            label: state partition 1/8+reconcile/reposcan
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
+            coverage_file: cover-shard2a-0.out
             gitops_acceptance: true
             state_coverage: true
+            state_partition: 0
+            test_timeout: 30m
+            job_timeout_minutes: 40
+          - id: a1
+            label: state partition 2/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
+            coverage_file: cover-shard2a-1.out
+            gitops_acceptance: true
+            state_coverage: true
+            state_partition: 1
+            test_timeout: 30m
+            job_timeout_minutes: 40
+          - id: a2
+            label: state partition 3/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
+            coverage_file: cover-shard2a-2.out
+            gitops_acceptance: true
+            state_coverage: true
+            state_partition: 2
+            test_timeout: 30m
+            job_timeout_minutes: 40
+          - id: a3
+            label: state partition 4/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
+            coverage_file: cover-shard2a-3.out
+            gitops_acceptance: true
+            state_coverage: true
+            state_partition: 3
+            test_timeout: 30m
+            job_timeout_minutes: 40
+          - id: a4
+            label: state partition 5/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
+            coverage_file: cover-shard2a-4.out
+            gitops_acceptance: true
+            state_coverage: true
+            state_partition: 4
+            test_timeout: 30m
+            job_timeout_minutes: 40
+          - id: a5
+            label: state partition 6/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
+            coverage_file: cover-shard2a-5.out
+            gitops_acceptance: true
+            state_coverage: true
+            state_partition: 5
+            test_timeout: 30m
+            job_timeout_minutes: 40
+          - id: a6
+            label: state partition 7/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
+            coverage_file: cover-shard2a-6.out
+            gitops_acceptance: true
+            state_coverage: true
+            state_partition: 6
+            test_timeout: 30m
+            job_timeout_minutes: 40
+          - id: a7
+            label: state partition 8/8
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
+            coverage_file: cover-shard2a-7.out
+            gitops_acceptance: true
+            state_coverage: true
+            state_partition: 7
             test_timeout: 30m
             job_timeout_minutes: 45
           - id: b
@@ -769,11 +755,9 @@ jobs:
             state_coverage: false
             test_timeout: 20m
             job_timeout_minutes: 30
-    # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
-    # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
-    # in its two deterministic shards above.
-    # Allow headroom for race compilation, coverage, PostgreSQL contract gates,
-    # and artifact upload after the main suite completes.
+    # Each state partition retains its own runner and PostgreSQL service.
+    # Every test executes once with main’s bounded 30-minute state budget;
+    # full inventory and coverage gates run only after all eight receipts.
     timeout-minutes: ${{ matrix.job_timeout_minutes }}
     permissions:
       contents: read
@@ -834,53 +818,42 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-pg-2-${{ matrix.state_coverage && 'a' || matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-pg-2-${{ matrix.id }}-${{ runner.os }}-
+            go-pg-2-${{ matrix.state_coverage && 'a' || matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-pg-2-${{ matrix.state_coverage && 'a' || matrix.id }}-${{ runner.os }}-
       - name: unit tests (pg shard 2${{ matrix.id }})
         env:
           GREGALE_GITOPS_ACCEPTANCE: ${{ matrix.gitops_acceptance && '1' || '' }}
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '${{ matrix.package_pattern }}' | grep -v '/pkg/state$')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '${{ matrix.package_pattern }}')
           test -n "$PKGS"
           printf '%s\n' "$PKGS"
-          COVERARGS=()
-          TESTLOGARGS=()
           if [ '${{ matrix.state_coverage }}' = 'true' ]; then
-            # Keep named adapter outcomes alongside the complete coverage run.
-            TESTLOGARGS=(-v)
-            python3 -m unittest discover -s scripts/ci -p 'test_normalize_go_cover_profile.py'
-            # External GitOps and Operations tests exercise the state adapters.
-            # Union those calls with both complete state test shards below.
-            # Generated sqlc remains outside the exact-package 70% gate.
-            STATEPKG=$(go list ./pkg/state)
-            COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | grep -v '/pkg/state/sqlc$' | sort -u | paste -sd, -)
-            COVERARGS=(-coverpkg="$COVERPKGS")
-          fi
-          go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' "${TESTLOGARGS[@]}" "${COVERARGS[@]}" -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
-          if [ '${{ matrix.state_coverage }}' = 'true' ]; then
-            # Credit the union of blocks covered by multiple test binaries.
-            python3 scripts/ci/normalize_go_cover_profile.py "coverage/${{ matrix.coverage_file }}"
+            PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/ci -p 'test_normalize_go_cover_profile.py'
+            PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/state-suite_test.py
+            PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/state-suite.py --packages "$PKGS" --coverage "coverage/${{ matrix.coverage_file }}" --partition "${{ matrix.state_partition }}"
+          else
+            go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
           fi
 
-      - name: upload external state-adapter coverage
-        if: matrix.state_coverage
+      - name: preserve full state suite receipts
+        if: ${{ always() && matrix.state_coverage }}
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-state-parity
-          path: coverage/${{ matrix.coverage_file }}
-          if-no-files-found: error
+          name: state-suite-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.state_partition }}
+          path: coverage/state-suite/${{ matrix.state_partition }}
+          retention-days: 14
 
       - name: require PostgreSQL operation-policy retirement
-        if: matrix.id == 'a'
+        if: matrix.id == 'a0'
         run: |
           set -o pipefail
           python3 scripts/ci/operation-policy-postgres-check.py 2>&1 | tee operation-policy-postgres-contract.log
 
       - name: upload PostgreSQL operation-policy retirement log
-        if: always() && matrix.id == 'a'
+        if: always() && matrix.id == 'a0'
         uses: actions/upload-artifact@v4
         with:
           name: operation-policy-postgres-contract
@@ -888,7 +861,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: require PostgreSQL UDP contracts
-        if: matrix.id == 'a'
+        if: matrix.id == 'a0'
         env:
           GOFLAGS: -race
         run: |
@@ -896,7 +869,7 @@ jobs:
           make udp-postgres-check 2>&1 | tee udp-postgres-contract.log
 
       - name: upload PostgreSQL UDP contract log
-        if: always() && matrix.id == 'a'
+        if: always() && matrix.id == 'a0'
         uses: actions/upload-artifact@v4
         with:
           name: udp-postgres-contract
@@ -904,8 +877,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: coverage floor (ship-blocking packages)
-        # Shard a contributes external state coverage to the aggregate gate.
-        if: matrix.id == 'b'
+        if: ${{ !matrix.state_coverage }}
         # Validates the ship-blocking package floors via the shared
         # coverage-floor gate (see Makefile). Packages not exercised by
         # this matrix entry's PKGS list print "(no statements — skip)"
@@ -913,6 +885,7 @@ jobs:
         run: make coverage-floor COVERDIR=coverage
 
       - name: upload to Codecov (pg shard 2${{ matrix.id }})
+        if: ${{ !matrix.state_coverage }}
         uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
         with:
           files: coverage/${{ matrix.coverage_file }}
@@ -928,50 +901,168 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-pg-2-${{ matrix.state_coverage && 'a' || matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
-  # Require all three compatible profiles. A half-suite or parity-only profile
-  # cannot replace the full exact-package 70% gate.
   state-coverage:
-    name: pkg/state coverage gate (all shards)
-    needs: [unit-tests-state, unit-tests-pg-2]
+    name: state full inventory + coverage
+    needs: unit-tests-pg-2
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
+      id-token: write
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
       - uses: actions/download-artifact@v4
         with:
-          pattern: coverage-state-*
-          path: coverage
-          merge-multiple: true
-      - name: exact pkg/state coverage gate
+          pattern: state-suite-${{ github.sha }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/state-suite-artifacts
+      - name: Verify exhaustive state receipts and merge atomic coverage
         run: |
-          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard2a.out
+          python3 scripts/ci/state-suite-merge_test.py
+          python3 scripts/ci/state-suite-merge.py --artifacts "$RUNNER_TEMP/state-suite-artifacts" --coverage coverage/cover-shard2a.out
+      - name: pkg/state coverage gate
+        run: make check-state-coverage COVERFILE=coverage/cover-shard2a.out
       - name: coverage floor (ship-blocking packages)
         run: make coverage-floor COVERDIR=coverage
+      - name: Retain complete state coverage verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: state-coverage-${{ github.sha }}-${{ github.run_attempt }}
+          path: coverage
+          retention-days: 14
+      - name: upload to Codecov (full state shard)
+        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        with:
+          files: coverage/cover-shard2a.out
+          flags: unittests
+          use_oidc: true
+          fail_ci_if_error: false
+
+  # ADR-570: the pure gateway shard skips pgtest fixtures. Preserve its scope
+  # and additionally execute all traffic PG requirements against a real store.
+  traffic-platform:
+    name: traffic platform (unit + PostgreSQL evidence)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      CGO_ENABLED: "0"
+      GOMAXPROCS: "2"
+      GOGC: "50"
+      PYTHONDONTWRITEBYTECODE: "1"
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Prepare traffic evidence
+        run: |
+          mkdir -p "$RUNNER_TEMP/traffic-evidence/go-tmp" "$RUNNER_TEMP/traffic-evidence/binaries"
+          printf 'GOTMPDIR=%s\n' "$RUNNER_TEMP/traffic-evidence/go-tmp" >> "$GITHUB_ENV"
+          python3 scripts/ci/traffic-platform-checks_test.py
+          test "$(go env GOOS)/$(go env GOARCH)" = linux/amd64
+          go version > "$RUNNER_TEMP/traffic-evidence/go-version.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/traffic-evidence/source-commit.txt"
+      - name: Verify isolated PostgreSQL source and durability
+        run: |
+          probe=$(docker exec '${{ job.services.postgres.id }}' psql -U faas -d faas -Atc "SELECT current_setting('fsync'),current_setting('synchronous_commit'),current_setting('full_page_writes'),(SELECT count(*) FROM information_schema.tables WHERE table_schema='public');")
+          printf '%s\n' "$probe" > "$RUNNER_TEMP/traffic-evidence/postgres-before.txt"
+          test "$probe" = 'on|on|on|0'
+      - name: Complete fourteen-package traffic unit scope
+        run: python3 scripts/ci/traffic-platform-checks.py unit --output "$RUNNER_TEMP/traffic-evidence"
+      - name: Additive fourteen-package PostgreSQL scope
+        if: ${{ !cancelled() }}
+        env:
+          DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+          FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+        run: python3 scripts/ci/traffic-platform-checks.py postgres --output "$RUNNER_TEMP/traffic-evidence"
+      - name: Refuse incomplete or skipped PostgreSQL evidence
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/traffic-platform-checks.py verify --output "$RUNNER_TEMP/traffic-evidence"
+      - name: Linux amd64 compilation (no native execution)
+        run: |
+          go test -c -p=1 -vet=off -gcflags='all=-l -dwarf=false' -ldflags='-s -w' -o "$RUNNER_TEMP/traffic-evidence/binaries/vmmd-linux.test" ./cmd/vmmd
+          go test -c -tags=metal -p=1 -vet=off -gcflags='all=-l -dwarf=false' -ldflags='-s -w' -o "$RUNNER_TEMP/traffic-evidence/binaries/fcvm-metal-linux.test" ./pkg/fcvm
+          sha256sum "$RUNNER_TEMP/traffic-evidence/binaries/"*.test > "$RUNNER_TEMP/traffic-evidence/linux-compilation-sha256.txt"
+          file "$RUNNER_TEMP/traffic-evidence/binaries/"*.test > "$RUNNER_TEMP/traffic-evidence/linux-compilation-types.txt"
+      - name: SQLC reproducibility and traffic policy gates
+        run: |
+          make sqlc-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check 2>&1 | tee "$RUNNER_TEMP/traffic-evidence/static-gates.log"
+      - name: Verify PostgreSQL source remains isolated
+        if: ${{ !cancelled() }}
+        run: |
+          probe=$(docker exec '${{ job.services.postgres.id }}' psql -U faas -d faas -Atc "SELECT current_setting('fsync'),current_setting('synchronous_commit'),current_setting('full_page_writes'),(SELECT count(*) FROM information_schema.tables WHERE table_schema='public');")
+          printf '%s\n' "$probe" > "$RUNNER_TEMP/traffic-evidence/postgres-after.txt"
+          test "$probe" = 'on|on|on|0'
+      - name: Verify final source hashes
+        run: |
+          python3 - "$RUNNER_TEMP/traffic-evidence" <<'PY'
+          import hashlib, importlib.util, json, pathlib, sys
+          spec = importlib.util.spec_from_file_location('traffic_checks', 'scripts/ci/traffic-platform-checks.py')
+          checks = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(checks)
+          output = pathlib.Path(sys.argv[1])
+          freeze = json.loads((output / 'source-freeze.json').read_text())
+          assert checks.source_snapshot(pathlib.Path.cwd()) == freeze
+          checks.write_json(output / 'final-source-check.json', {'commit': freeze['commit'], 'source_files': len(freeze['files']), 'source_unchanged': True, 'source_freeze_sha256': hashlib.sha256((output / 'source-freeze.json').read_bytes()).hexdigest(), 'native_executions': 0})
+          PY
+      - name: Retain traffic logs, source freeze and verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: traffic-platform-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/traffic-evidence
+          if-no-files-found: error
+          retention-days: 14
 
   # Branch protection matches this historical name exactly. Keep it stable
   # while its original state/PostgreSQL inventory runs in parallel above.
   unit-tests-pg-2a-gate:
     name: unit tests (pg shard 2a — state/reconcile/reposcan)
     if: always()
-    needs: [unit-tests-state, unit-tests-pg-2, state-coverage]
+    needs: [unit-tests-pg-2, state-coverage]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
     steps:
       - name: require every state and PostgreSQL shard
         env:
-          STATE_RESULT: ${{ needs.unit-tests-state.result }}
           POSTGRES_RESULT: ${{ needs.unit-tests-pg-2.result }}
           COVERAGE_RESULT: ${{ needs.state-coverage.result }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$STATE_RESULT" != success || "$POSTGRES_RESULT" != success || "$COVERAGE_RESULT" != success ]]; then
-            echo "::error::Required state/PostgreSQL tests or coverage did not pass: state=$STATE_RESULT postgres=$POSTGRES_RESULT coverage=$COVERAGE_RESULT"
+          if [[ "$POSTGRES_RESULT" != success || "$COVERAGE_RESULT" != success ]]; then
+            echo "::error::Required state/PostgreSQL tests or coverage did not pass: postgres=$POSTGRES_RESULT coverage=$COVERAGE_RESULT"
             exit 1
           fi
 

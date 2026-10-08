@@ -11,10 +11,10 @@ import (
 
 var _ OrgActivityAppLifecycleMutationStore = (*MemStore)(nil)
 
-func (m *MemStore) CreateAppIfUnderQuotaWithActivity(_ context.Context, app App, limits api.Limits, entry OrgActivity) (App, int64, error) {
+func (m *MemStore) CreateAppIfUnderQuotaWithActivity(ctx context.Context, app App, limits api.Limits, entry OrgActivity) (App, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	created, err := m.createAppIfUnderQuotaLocked(app, limits)
+	created, err := m.createAppIfUnderQuotaLocked(ctx, app, limits)
 	if err != nil {
 		return App{}, 0, err
 	}
@@ -33,11 +33,11 @@ func (m *MemStore) CreateAppIfUnderQuotaWithActivity(_ context.Context, app App,
 	return created, m.enqueueOrgActivityOutboxLocked(entry), nil
 }
 
-func (m *MemStore) ScheduleAppDeletionWithActivity(_ context.Context, id string, graceUntil time.Time, entry OrgActivity) (App, int64, error) {
-	return m.scheduleAppDeletion(id, graceUntil, &entry)
+func (m *MemStore) ScheduleAppDeletionWithActivity(ctx context.Context, id string, graceUntil time.Time, entry OrgActivity) (App, int64, error) {
+	return m.scheduleAppDeletion(ctx, id, graceUntil, &entry)
 }
 
-func (m *MemStore) scheduleAppDeletion(id string, graceUntil time.Time, entry *OrgActivity) (App, int64, error) {
+func (m *MemStore) scheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time, entry *OrgActivity) (App, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
@@ -74,7 +74,11 @@ func (m *MemStore) scheduleAppDeletion(id string, graceUntil time.Time, entry *O
 		a.DeleteGraceUntil = &deadline
 	}
 	a.Status = AppDeleted
+	if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
+		return App{}, 0, err
+	}
 	m.apps[id] = a
+	m.cancelAppInvocationsLocked(id, now)
 	if !wasDeleted {
 		for _, memory := range sources {
 			touchGitOpsMemoryIntent(memory)
@@ -103,7 +107,7 @@ func (m *MemStore) scheduleAppDeletion(id string, graceUntil time.Time, entry *O
 	return a, outboxID, nil
 }
 
-func (m *MemStore) RestoreAppWithActivity(_ context.Context, id string, limits api.Limits, entry OrgActivity) (App, int64, error) {
+func (m *MemStore) RestoreAppWithActivity(ctx context.Context, id string, limits api.Limits, entry OrgActivity) (App, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
@@ -114,7 +118,7 @@ func (m *MemStore) RestoreAppWithActivity(_ context.Context, id string, limits a
 	if err != nil {
 		return App{}, 0, err
 	}
-	restored, err := m.restoreAppLocked(id, limits)
+	restored, err := m.restoreAppLocked(ctx, id, limits)
 	if err != nil {
 		return App{}, 0, err
 	}

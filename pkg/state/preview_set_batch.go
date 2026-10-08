@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -71,11 +72,11 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 			}
 		}
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginAccountAppTrafficMutation(ctx, apps[0].AccountID, "")
 	if err != nil {
 		return nil, fmt.Errorf("state: begin PR preview replacement: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
 	var locked int
 	if err := tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, apps[0].AccountID).Scan(&locked); err != nil {
 		return nil, fmt.Errorf("state: lock PR preview account: %w", mapErr(err))
@@ -236,7 +237,7 @@ func retireReplacedPreviewMembersTx(ctx context.Context, tx pgx.Tx, head PRPrevi
 	return nil
 }
 
-func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, apps []App, limits api.Limits) ([]App, error) {
+func (m *MemStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, apps []App, limits api.Limits) ([]App, error) {
 	if err := validatePRPreviewHead(head, apps); err != nil {
 		return nil, err
 	}
@@ -257,23 +258,13 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 			return nil, ErrConflict
 		}
 	}
-	original := make(map[string]App)
-	var inserted []string
-	rollback := func(err error) ([]App, error) {
-		for _, id := range inserted {
-			delete(m.apps, id)
-		}
-		for id, app := range original {
-			m.apps[id] = app
-		}
-		return nil, err
-	}
+	stagedApps := maps.Clone(m.apps)
 	desiredSlugs := make(map[string]bool, len(apps))
 	for _, app := range apps {
 		desiredSlugs[app.Slug] = true
 	}
 	for _, id := range previous.MemberAppIDs {
-		old, ok := m.apps[id]
+		old, ok := stagedApps[id]
 		if !ok || old.AccountID != apps[0].AccountID || old.ProjectID != apps[0].ProjectID ||
 			old.PreviewPrNumber != head.PRNumber || old.PreviewOfSlug == "" || old.Status == AppDeleted || desiredSlugs[old.Slug] ||
 			old.PreviewPrState == PreviewPrStateTearingDown || old.PreviewPrState == PreviewPrStateTornDown {
@@ -293,10 +284,9 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		}
 		for _, bucket := range m.objectBuckets {
 			if bucket.AppID == id && bucket.State != "deleted" {
-				return rollback(ErrConflict)
+				return nil, ErrConflict
 			}
 		}
-		original[id] = old
 		now := time.Now().UTC()
 		deadline := now.Add(AppDeleteGraceDuration())
 		old.Slug = "retired-pr-" + strings.ReplaceAll(old.ID, "-", "")
@@ -307,36 +297,33 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		if old.DeleteGraceUntil == nil {
 			old.DeleteGraceUntil = &deadline
 		}
-		m.apps[id] = old
+		stagedApps[id] = old
 	}
 	reserved := make([]App, 0, len(apps))
 	for _, desired := range apps {
 		var row App
 		found := false
-		for _, existing := range m.apps {
+		for _, existing := range stagedApps {
 			if existing.Slug != desired.Slug {
 				continue
 			}
 			if existing.Status == AppDeleted || !samePRPreview(existing, desired) ||
 				existing.PreviewPrState == PreviewPrStateTearingDown || existing.PreviewPrState == PreviewPrStateTornDown {
-				return rollback(ErrConflict)
+				return nil, ErrConflict
 			}
 			row, found = existing, true
 			break
 		}
 		if !found {
 			var err error
-			row, err = m.createAppIfUnderQuotaLocked(desired, limits)
+			row, err = m.prepareAppIfUnderQuotaLocked(desired, limits, stagedApps)
 			if err != nil {
-				return rollback(err)
+				return nil, err
 			}
-			inserted = append(inserted, row.ID)
-		} else {
-			original[row.ID] = row
 		}
 		row.PreviewPrState = PreviewPrStateOpen
 		row.PreviewExpiresAt = desired.PreviewExpiresAt
-		m.apps[row.ID] = row
+		stagedApps[row.ID] = row
 		reserved = append(reserved, row)
 	}
 	set := PRPreviewSet{InstallationID: head.InstallationID, RepoFullName: head.RepoFullName,
@@ -345,8 +332,12 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		set.MemberAppIDs = append(set.MemberAppIDs, app.ID)
 	}
 	if err := validatePRPreviewSet(set); err != nil {
-		return rollback(err)
+		return nil, err
 	}
+	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, apps[0].AccountID, nil, "", memTrafficPolicyChange{Apps: stagedApps})); err != nil {
+		return nil, err
+	}
+	m.apps = stagedApps
 	if m.previewSets == nil {
 		m.previewSets = make(map[string]PRPreviewSet)
 	}

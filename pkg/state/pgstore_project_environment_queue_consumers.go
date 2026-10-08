@@ -94,8 +94,24 @@ func projectEnvironmentQueueConsumersDB(ctx context.Context, db sqlc.DBTX, accou
 }
 
 func readQueueRuntimeSetDB(ctx context.Context, db sqlc.DBTX, environment, deploymentID string) (ProjectEnvironmentQueueRuntimeSet, error) {
+	return readQueueRuntimeSetModeDB(ctx, db, environment, deploymentID, false)
+}
+
+func readSnapshotQueueRuntimeSetDB(ctx context.Context, db sqlc.DBTX, environment, deploymentID string) (ProjectEnvironmentQueueRuntimeSet, error) {
+	return readQueueRuntimeSetModeDB(ctx, db, environment, deploymentID, true)
+}
+
+// Snapshot queries retain the original JSON definition bytes and use the same
+// strict decoder and ownership checks as locking transactional reads.
+func readQueueRuntimeSetModeDB(ctx context.Context, db sqlc.DBTX, environment, deploymentID string, snapshot bool) (ProjectEnvironmentQueueRuntimeSet, error) {
 	queries := sqlc.New()
-	row, err := queries.ReadProjectEnvironmentQueueRuntimeSet(ctx, db, mustPgUUID(deploymentID))
+	var row sqlc.ProjectEnvironmentQueueRuntimeSet
+	var err error
+	if snapshot {
+		row, err = queries.ReadInvocationVersionQueueSet(ctx, db, mustPgUUID(deploymentID))
+	} else {
+		row, err = queries.ReadProjectEnvironmentQueueRuntimeSet(ctx, db, mustPgUUID(deploymentID))
+	}
 	if err != nil {
 		return ProjectEnvironmentQueueRuntimeSet{}, mapErr(err)
 	}
@@ -106,7 +122,12 @@ func readQueueRuntimeSetDB(ctx context.Context, db sqlc.DBTX, environment, deplo
 		QueueRevision: row.QueueRevision, BindingCount: int(row.BindingCount), BookHash: row.BookHash, State: row.State,
 		CreatedAt: row.CreatedAt.Time.UTC(), Consumers: []ProjectEnvironmentQueueConsumer{},
 	}
-	rows, err := queries.ReadProjectEnvironmentQueueConsumers(ctx, db, row.ID)
+	var rows []sqlc.ProjectEnvironmentQueueConsumer
+	if snapshot {
+		rows, err = queries.ReadInvocationVersionQueueConsumers(ctx, db, row.ID)
+	} else {
+		rows, err = queries.ReadProjectEnvironmentQueueConsumers(ctx, db, row.ID)
+	}
 	if err != nil {
 		return ProjectEnvironmentQueueRuntimeSet{}, mapErr(err)
 	}

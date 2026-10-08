@@ -16,16 +16,21 @@ func (s *PgStore) PlanPlatformTenantReconciliation(ctx context.Context, in Platf
 	if err := validatePlatformTenantReconciliation(in); err != nil {
 		return api.PlatformTenantReconciliationPlanResponse{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginTrafficTenantBinding(ctx, in.AccountID, trafficTenantApplyHosts(in.ApplyPlatformTenantParams))
 	if err != nil {
 		return api.PlatformTenantReconciliationPlanResponse{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if err := lockPlatformTenantAccount(ctx, tx, in.AccountID); err != nil {
 		return api.PlatformTenantReconciliationPlanResponse{}, err
 	}
 	snapshot, err := planPlatformTenantReconciliationTx(ctx, tx, in)
 	if err != nil {
+		return api.PlatformTenantReconciliationPlanResponse{}, err
+	}
+	proposal := trafficTenantApplyProposal(in.ApplyPlatformTenantParams, snapshot.planned)
+	addTrafficTenantRemovals(&proposal, snapshot.changes)
+	if err := tx.ValidateProposal(ctx, proposal); err != nil {
 		return api.PlatformTenantReconciliationPlanResponse{}, err
 	}
 	return api.PlatformTenantReconciliationPlanResponse{TenantID: in.TenantID,
@@ -39,11 +44,11 @@ func (s *PgStore) ApplyPlatformTenantReconciliation(ctx context.Context, in Plat
 	if err := validatePlatformTenantReconciliation(in); err != nil {
 		return api.PlatformTenantReconciliationApplyResponse{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginTrafficTenantBinding(ctx, in.AccountID, trafficTenantApplyHosts(in.ApplyPlatformTenantParams))
 	if err != nil {
 		return api.PlatformTenantReconciliationApplyResponse{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if err := lockPlatformTenantAccount(ctx, tx, in.AccountID); err != nil {
 		return api.PlatformTenantReconciliationApplyResponse{}, err
 	}
@@ -53,6 +58,11 @@ func (s *PgStore) ApplyPlatformTenantReconciliation(ctx context.Context, in Plat
 	}
 	if !platformTenantPlanHashMatches(expectedPlanHash, snapshot.planHash) {
 		return api.PlatformTenantReconciliationApplyResponse{}, ErrPlatformTenantPlanStale
+	}
+	proposal := trafficTenantApplyProposal(in.ApplyPlatformTenantParams, snapshot.planned)
+	addTrafficTenantRemovals(&proposal, snapshot.changes)
+	if err := tx.ValidateProposal(ctx, proposal); err != nil {
+		return api.PlatformTenantReconciliationApplyResponse{}, err
 	}
 	applyInput := in.ApplyPlatformTenantParams
 	applyInput.DryRun = false

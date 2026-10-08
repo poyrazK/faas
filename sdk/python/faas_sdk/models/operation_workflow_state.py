@@ -14,6 +14,8 @@ T = TypeVar("T", bound="OperationWorkflowState")
 
 @_attrs_define
 class OperationWorkflowState:
+    """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
+
     workflow: str
     instance_id: str
     state: str

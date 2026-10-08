@@ -76,6 +76,7 @@ func Run(t *testing.T, open Open) {
 		{"fire_now_claim_respects_node_ownership_and_handoff", testFireNowNodeOwnershipAndHandoff},
 		{"manual_command_cron_fire_now_is_idempotent_and_keeps_schedule_cursor", testManualCommandCronFireNow},
 		{"runtime_config_operation_claim_is_exactly_once", testRuntimeConfigOperationClaimIsExactlyOnce},
+		{"egress_circuit_desired_state_is_durable_or_explicitly_unsupported", testEgressCircuitDesiredState},
 		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
@@ -2258,6 +2259,38 @@ func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
 	}
 	if created != 1 || replayed != 1 {
 		t.Fatalf("concurrent create outcomes = created:%d replayed:%d, want one of each", created, replayed)
+	}
+
+	lookup, err := fx.Store.GetWorkflowRunByIdempotencyKey(fx.Ctx, fx.App.ID, "idempotent-create", key, fingerprint)
+	if err != nil || lookup == nil || lookup.ID != runID || lookup.AppID != fx.App.ID || lookup.WorkflowName != "idempotent-create" {
+		t.Fatalf("idempotency lookup = (%+v, %v), want original scoped run %s", lookup, err, runID)
+	}
+	var input map[string]string
+	if err := json.Unmarshal(lookup.Input, &input); err != nil || input["order_id"] != "same" {
+		t.Fatalf("idempotency lookup input = (%s, %v), want original input", lookup.Input, err)
+	}
+	changedFingerprint := append([]byte(nil), fingerprint...)
+	changedFingerprint[0] = 'x'
+	for _, tc := range []struct {
+		name, appID, workflowName, key string
+		fingerprint                    []byte
+		want                           error
+	}{
+		{"other app", uuid.NewString(), "idempotent-create", key, fingerprint, state.ErrWorkflowRunNotFound},
+		{"other workflow", fx.App.ID, "other-workflow", key, fingerprint, state.ErrWorkflowRunNotFound},
+		{"other key", fx.App.ID, "idempotent-create", "other-" + key, fingerprint, state.ErrWorkflowRunNotFound},
+		{"changed request", fx.App.ID, "idempotent-create", key, changedFingerprint, state.ErrWorkflowRunIdempotencyConflict},
+	} {
+		got, err := fx.Store.GetWorkflowRunByIdempotencyKey(fx.Ctx, tc.appID, tc.workflowName, tc.key, tc.fingerprint)
+		if !errors.Is(err, tc.want) || got != nil {
+			t.Fatalf("idempotency lookup (%s) = (%+v, %v), want nil and %v", tc.name, got, err, tc.want)
+		}
+	}
+	// A caller cannot alter the authoritative input through the returned value.
+	lookup.Input[0] = 'x'
+	unchanged, err := fx.Store.GetWorkflowRunByIdempotencyKey(fx.Ctx, fx.App.ID, "idempotent-create", key, fingerprint)
+	if err != nil || unchanged == nil || !json.Valid(unchanged.Input) {
+		t.Fatalf("idempotency lookup returned aliased input = (%+v, %v)", unchanged, err)
 	}
 
 	changedDefinition := &state.WorkflowRun{

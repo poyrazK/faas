@@ -369,7 +369,7 @@ func (s legacyEventReceiptStore) ListMatchingEventSubscriptionsForAccount(ctx co
 	return s.mem.ListMatchingEventSubscriptionsForAccount(ctx, accountID, source, typ, cursor, limit)
 }
 
-func TestEventFanoutLegacyReceiptKeepsCurrentSubscriptionRouting(t *testing.T) {
+func TestEventFanoutLegacyReceiptKeepsCurrentSubscriptionRoutingIntegratedRouting(t *testing.T) {
 	ctx := context.Background()
 	mem := state.NewMemStore()
 	account, err := mem.CreateAccount(ctx, "event-legacy-snapshot@example.com", api.PlanPro)
@@ -806,4 +806,46 @@ func mustCanonicalEventAccountID(t *testing.T, id string) string {
 		t.Fatalf("parse account ID %q: %v", id, err)
 	}
 	return parsed.String()
+}
+
+func TestEventFanoutLegacyReceiptKeepsCurrentSubscriptionRouting(t *testing.T) {
+	ctx := context.Background()
+	mem := state.NewMemStore()
+	account, err := mem.CreateAccount(ctx, "event-legacy-snapshot@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := mustCanonicalEventAccountID(t, account.ID)
+	app, err := mem.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-legacy-snapshot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscription, _, err := mem.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "created", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := events.Envelope{SpecVersion: "1.0", ID: uuid.NewString(), Source: "orders", Type: "created",
+		Time: time.Now().UTC(), DataContentType: "application/json", Data: json.RawMessage(`{}`), AccountID: accountID}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.AppendEvent(ctx, "apid", "event.published", &accountID, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.DeleteEventSubscription(ctx, subscription.ID, accountID, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	loop := &Loop{engine: &Engine{store: legacyEventReceiptStore{Store: mem, mem: mem}}}
+	loop.runEventFanoutSweep(ctx)
+	invocations, err := mem.ListInvocationsForApp(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invocations) != 0 {
+		t.Fatalf("pre-migration receipt delivered to removed subscription: %d invocations", len(invocations))
+	}
+	if _, err := mem.ClaimDuePublishedEvent(ctx, time.Now().UTC()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("legacy receipt was not acknowledged: %v", err)
+	}
 }

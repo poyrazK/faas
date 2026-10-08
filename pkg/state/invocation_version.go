@@ -20,9 +20,10 @@ type InvocationVersion struct {
 	Scope        string
 }
 
-type invocationVersionStore interface {
-	ResolveProjectRelease(context.Context, string, string, string) (string, string, error)
-	ResolveRevisionPin(context.Context, string, string, string) (Deployment, error)
+// InvocationTarget is a scheduler delivery claim, verified against its running
+// instance and scoped live deployment before forwarding.
+type InvocationTarget struct {
+	InstanceID, NodeID, DeploymentID string
 }
 
 type invocationAppReader interface {
@@ -49,14 +50,68 @@ var ErrInvocationEnvironmentWorkIsolation = fmt.Errorf("%w: invocation environme
 // explicit pin at enqueue and checking it again here prevents a delayed task
 // from silently moving to a newer graph after the old one expires.
 func ResolveInvocationVersion(ctx context.Context, store invocationAppReader, inv Invocation) (Invocation, InvocationVersion, error) {
-	return resolveInvocationVersion(ctx, store, inv, "", false)
+	if snapshot, ok := store.(InvocationVersionSnapshotStore); ok {
+		prepared, version, _, err := resolveInvocationDispatch(ctx, snapshot, inv, nil, "", false)
+		return prepared, version, err
+	}
+	// Compatibility for minimal unpinned adapters. Hide optional pool resolvers:
+	// a pin requires a committed snapshot and cannot use independent reads.
+	return resolveInvocationVersion(ctx, struct{ invocationAppReader }{store}, inv, "", false)
 }
 
-// ResolveInvocationVersionForEnvironment accepts the environment selected by a
-// trusted ingress router. Delivery recovers that scope from the persisted pin;
-// customer headers cannot select a different environment on an ingress host.
+// ResolveInvocationDispatch reads owner, version and optional delivery target in
+// one committed view. No selection or resolved owner escapes a failed snapshot.
+// Passing nil checks before wake; passing a target checks again before delivery.
+func ResolveInvocationDispatch(ctx context.Context, store invocationAppReader, inv Invocation, target *InvocationTarget) (Invocation, InvocationVersion, string, error) {
+	snapshot, ok := store.(InvocationVersionSnapshotStore)
+	if !ok {
+		return inv, InvocationVersion{}, "", ErrConflict
+	}
+	return resolveInvocationDispatch(ctx, snapshot, inv, target, "", false)
+}
+
+func resolveInvocationDispatch(ctx context.Context, snapshot InvocationVersionSnapshotStore, inv Invocation, target *InvocationTarget, environment string, ingress bool) (Invocation, InvocationVersion, string, error) {
+	var prepared Invocation
+	var version InvocationVersion
+	var owner string
+	err := snapshot.WithInvocationVersionSnapshot(ctx, func(reader InvocationVersionReader) error {
+		app, err := reader.AppByID(ctx, inv.AppID)
+		if err != nil {
+			return err
+		}
+		prepared, version, err = resolveInvocationVersionForApp(ctx, reader, inv, app, environment, ingress)
+		if err != nil {
+			return err
+		}
+		if target != nil {
+			if target.InstanceID == "" || target.NodeID == "" || target.DeploymentID == "" || version.DeploymentID != "" && target.DeploymentID != version.DeploymentID {
+				return ErrNotFound
+			}
+			allowed, err := reader.InvocationTargetAllowed(ctx, app.ID, version.Scope, *target)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return ErrNotFound
+			}
+		}
+		owner = app.AccountID
+		return nil
+	})
+	if err != nil {
+		return inv, InvocationVersion{}, "", err
+	}
+	return prepared, version, owner, nil
+}
+
+// ResolveInvocationVersionForEnvironment authenticates a trusted ingress scope
+// in the same committed view as owner, release and private work admission.
 func ResolveInvocationVersionForEnvironment(ctx context.Context, store invocationAppReader, inv Invocation, environment string) (Invocation, InvocationVersion, error) {
-	return resolveInvocationVersion(ctx, store, inv, environment, true)
+	if snapshot, ok := store.(InvocationVersionSnapshotStore); ok {
+		prepared, version, _, err := resolveInvocationDispatch(ctx, snapshot, inv, nil, environment, true)
+		return prepared, version, err
+	}
+	return resolveInvocationVersion(ctx, struct{ invocationAppReader }{store}, inv, environment, true)
 }
 
 func resolveInvocationVersion(ctx context.Context, store invocationAppReader, inv Invocation, environment string, ingress bool) (Invocation, InvocationVersion, error) {
@@ -64,7 +119,11 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
-	if inv.AccountID != "" && inv.AccountID != app.AccountID {
+	return resolveInvocationVersionForApp(ctx, store, inv, app, environment, ingress)
+}
+
+func resolveInvocationVersionForApp(ctx context.Context, store invocationAppReader, inv Invocation, app App, environment string, ingress bool) (Invocation, InvocationVersion, error) {
+	if app.Status == AppDeleted || app.DeletedAt != nil || inv.AccountID != "" && inv.AccountID != app.AccountID {
 		return inv, InvocationVersion{}, ErrNotFound
 	}
 	headers := map[string]string{}
@@ -170,7 +229,7 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 		}
 		return inv, version, nil
 	}
-	resolver, ok := store.(invocationVersionStore)
+	resolver, ok := store.(InvocationVersionReader)
 	if !ok {
 		return inv, InvocationVersion{}, ErrConflict
 	}
@@ -181,6 +240,7 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 		}
 		version.DeploymentID = dep.ID
 	} else {
+		var err error
 		version.ReleaseID, version.DeploymentID, err = resolver.ResolveProjectRelease(ctx, app.ID, scope, release)
 		if err != nil {
 			return inv, InvocationVersion{}, err
@@ -214,10 +274,11 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	} else {
 		headers[api.RevisionHeader] = version.DeploymentID
 	}
-	inv.Headers, err = json.Marshal(headers)
+	encoded, err := json.Marshal(headers)
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
+	inv.Headers = encoded
 	return inv, version, nil
 }
 
@@ -286,7 +347,9 @@ func invocationPinHeaders(headers map[string]string) (revision, release string, 
 // Durable operation pins are trusted admission metadata. They outlive public
 // revision-pin TTLs, and cannot move to a newer deployment when dispatch waits.
 func resolveOperationInvocationVersion(ctx context.Context, store invocationAppReader, app App, inv Invocation) (Invocation, InvocationVersion, error) {
-	operations, ok := store.(OperationStore)
+	operations, ok := store.(interface {
+		OperationByID(context.Context, string, string, string) (Operation, error)
+	})
 	if !ok {
 		return inv, InvocationVersion{}, ErrConflict
 	}
@@ -307,7 +370,7 @@ func resolveOperationInvocationVersion(ctx context.Context, store invocationAppR
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
-	if dep.AppID != app.ID || dep.Scope != op.Scope || dep.Status != DeployLive {
+	if dep.AppID != app.ID || dep.Scope != op.Scope || dep.Status != DeployLive || dep.DeletedAt != nil {
 		return inv, InvocationVersion{}, ErrConflict
 	}
 	return inv, InvocationVersion{DeploymentID: op.DeploymentID, ReleaseID: op.ReleaseID, Scope: op.Scope}, nil

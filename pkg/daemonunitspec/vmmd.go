@@ -59,6 +59,7 @@ func UnitVmmd() daemonunit.Unit {
 		ExecStartPre: []string{
 			`/usr/bin/install -d -o root -g faas -m 0775 /run/faas`,
 			`/usr/bin/chmod 0775 /run/faas`,
+			`/usr/bin/install -d -o root -g root -m 0700 /run/faas/stream`,
 			`/usr/bin/install -d -o root -g faas -m 0750 /var/log/faas/vmmd-archive`,
 		},
 		// Re-assert the shared host-directory ownership after startup.
@@ -69,6 +70,10 @@ func UnitVmmd() daemonunit.Unit {
 			`/usr/bin/chmod 0775 /run/faas`,
 		},
 		Restart: "on-failure",
+		// HTTP forwarding permits die with vmmd. Reap its bridge processes and
+		// compatibility shell children before a replacement permit owner starts.
+		// Jailer VMs live in their separate delegated tenant/build scopes.
+		KillMode: "control-group",
 		// vmmd opens Postgres before it binds its serving sockets so a
 		// compute node never advertises itself without a durable identity.
 		// During a simultaneous fleet boot, the control-plane database can

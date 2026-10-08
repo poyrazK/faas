@@ -200,7 +200,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		if outcome.State == state.PublishedEventRecipientFailed && l.log != nil {
 			l.log.Error("sched: event recipient fanout permanently failed", "event_id", envelope.ID,
 				"source", envelope.Source, "subscription_id", recipient.ID, "app_id", recipient.AppID,
-				"attempts", outcome.Attempts, "err", outcome.LastError)
+				"attempts", outcome.Attempts, "error_class", dispatchErrorClass(routeErr))
 		}
 	}
 	err = errors.Join(routeErrs...)
@@ -430,7 +430,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		if retention, ok := l.engine.store.(state.PublishedEventRetentionStore); ok {
 			if _, err := retention.PruneDeliveredPublishedEvents(ctx, now.Add(-state.PublishedEventIdentityRetention), 5000); err != nil {
 				if l.log != nil {
-					l.log.Warn("sched: prune delivered event identities failed", "err", err)
+					l.log.Warn("sched: prune delivered event identities failed", "error_class", dispatchErrorClass(err))
 				}
 			} else {
 				if backfills, ok := l.engine.store.(state.EventReplayBackfillStore); ok {
@@ -454,7 +454,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		}
 		if err != nil {
 			if l.log != nil {
-				l.log.Warn("sched: claim event fanout failed", "err", err)
+				l.log.Warn("sched: claim event fanout failed", "error_class", dispatchErrorClass(err))
 			}
 			return
 		}
@@ -474,13 +474,13 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			routeErr = errors.New("sched: legacy event receipt requires subscription matcher")
 		}
 		if routeErr != nil && !eventFanoutCapacityWait(routeErr) && l.log != nil {
-			l.log.Warn("sched: event fanout failed", "outbox_id", work.ID, "err", routeErr)
+			l.log.Warn("sched: event fanout failed", "outbox_id", work.ID, "error_class", dispatchErrorClass(routeErr))
 		}
 		if work.Delivered {
 			continue
 		}
 		if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, routeErr); err != nil && l.log != nil {
-			l.log.Warn("sched: finish event fanout failed", "outbox_id", work.ID, "err", err)
+			l.log.Warn("sched: finish event fanout failed", "outbox_id", work.ID, "error_class", dispatchErrorClass(err))
 		}
 	}
 }
@@ -527,7 +527,7 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 		}
 		if err != nil {
 			if l.log != nil {
-				l.log.Error("sched: claim event recipient failed", "err", err)
+				l.log.Error("sched: claim event recipient failed", "error_class", dispatchErrorClass(err))
 			}
 			return
 		}
@@ -595,11 +595,11 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 		next := finishedAt.Add(min(backoff, 300*time.Second))
 		if err := store.FinishPublishedEventRecipient(ctx, work, progress, next); err != nil && l.log != nil {
 			l.log.Error("sched: finish event recipient failed", "outbox_id", work.OutboxID,
-				"subscription_id", work.Recipient.ID, "err", err)
+				"subscription_id", work.Recipient.ID, "error_class", dispatchErrorClass(err))
 		} else if progress.State == state.PublishedEventRecipientFailed && l.log != nil {
 			l.log.Error("sched: event recipient routing failed", "outbox_id", work.OutboxID,
 				"subscription_id", work.Recipient.ID, "failure_code", progress.FailureCode,
-				"retryable", progress.Retryable, "err", progress.LastError)
+				"retryable", progress.Retryable, "error_class", dispatchErrorClass(routeErr))
 		}
 	}
 }
@@ -663,7 +663,7 @@ func (l *Loop) runEventHistoryPrune(ctx context.Context, now time.Time) {
 	}
 	if _, err := retention.PruneEventFanoutHistory(ctx, now, api.EventRoutingHistoryPruneBatch); err != nil {
 		if l.log != nil {
-			l.log.Warn("sched: compact routing history failed", "err", err)
+			l.log.Warn("sched: compact routing history failed", "error_class", dispatchErrorClass(err))
 		}
 		return
 	}

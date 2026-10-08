@@ -19,7 +19,7 @@ import (
 // no production fallback. Production callers, standalone previews,
 // unregistered developer sessions, and legacy preview rows without project
 // identity retain global slug resolution.
-func newServiceProxyResolver(store state.Store) gateway.ServiceProxyResolver {
+func newServiceProxyResolver(store servicePolicyApps) gateway.ServiceProxyResolver {
 	return func(ctx context.Context, callerAppID, service string) (gateway.ServiceTarget, bool, error) {
 		scopedPreviewCaller := false
 		if isAppID(callerAppID) {

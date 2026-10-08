@@ -13,53 +13,36 @@ T = TypeVar("T", bound="EdgeRuleBudgetAction")
 
 @_attrs_define
 class EdgeRuleBudgetAction:
-    """Per-route end-to-end request budget (ADR-093 / §4.1.2.16).
-    The primitive for "POST /payment → 3 s, POST /signup → 10 s"
-    without writing timeout-propagation code in the customer's
-    app. The hot-path applier (cmd/gatewayd-public/main.go:PR-B
-    + pkg/gateway/handler_apply_edge_rule_budget.go) installs a
-    per-request `Budget` onto `r.Context()` via
-    `reqbudget.WithRemaining`; every downstream hop (DB, gRPC,
-    HTTP) tightens itself against the budget via
-    `reqbudget.WithOverhead` / `WithCeiling`.
+    """Per-route execution budget plus an optional total deadline (ADR-570).
+    budget_ms starts after upload, wake and capacity admission. Its
+    configured override header (default x-faas-budget-ms) may alter the
+    execution allowance within the plan ceiling.
 
-    On expiry the platform returns 504 + RFC 7807 problem
-    envelope (`code: request_budget_exceeded`) BEFORE the
-    customer's handler runs — the goal is bounded resource
-    pin per request, not customer-visible timer logic. Customer
-    code can read `reqbudget.FromContext(r.Context()).Remaining`
-    if it wants to short-circuit its own work early.
-
-    Field-by-field:
-      * `budget_ms` — required wall-clock budget. Must be > 0
-        and ≤ the per-plan max (`Plan.RequestBudgetMaxMs`, default
-        `RequestBudgetMax = 30 s`). A 0 or negative value is
-        rejected at create-time with 422.
-      * `allow_override_header` — optional HTTP request header
-        that lets a customer set a per-request override
-        (default `x-faas-budget-ms`). Empty (default) =
-        no override accepted; the edge-rule value is the
-        authoritative budget. The header is parsed as a
-        decimal integer in `[1, math.MaxInt32]`; out-of-range
-        values are ignored and the edge-rule value wins
-        (silent clamp, no 400 — the budget is a quality
-        primitive, not a security gate).
-
-    Rejections never reach the wake gate, the auth chain, or
-    the rate limiter — same posture as the other kind=budget
-    edge-rule appliers. Free-and-above (no plan gate).
+    total_deadline_ms starts when the public proxy receives the request
+    and includes upload, routing, auth, queueing, wake, retries and the
+    ordinary response exchange. It cannot be increased by an execution
+    override. Zero or omission leaves existing execution semantics.
+    Plan limits cap both values. Expiry returns a 504 problem with code
+    request_budget_exceeded before response commitment; a committed
+    ordinary response is terminated on expiry. Streaming and upgrades
+    use their idle/session contract after successful response headers.
+    Detached work and unmediated guest sockets are excluded. Nested
+    managed-service deadline transport remains pending acceptance.
 
     """
 
     budget_ms: int
-    """Per-request wall-clock budget in milliseconds (1 ms – 30 s)."""
+    """Execution allowance in milliseconds, after upload/wake/admission."""
+    total_deadline_ms: int | Unset = 0
+    """Optional total deadline from trusted public ingress; zero leaves it unset."""
     allow_override_header: str | Unset = UNSET
-    """Optional RFC 7230 token header name for per-request override (default `x-faas-budget-ms`). Empty = no
-    override."""
+    """Header for the execution override; default x-faas-budget-ms. It never increases total_deadline_ms."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         budget_ms = self.budget_ms
+
+        total_deadline_ms = self.total_deadline_ms
 
         allow_override_header = self.allow_override_header
 
@@ -70,6 +53,8 @@ class EdgeRuleBudgetAction:
                 "budget_ms": budget_ms,
             }
         )
+        if total_deadline_ms is not UNSET:
+            field_dict["total_deadline_ms"] = total_deadline_ms
         if allow_override_header is not UNSET:
             field_dict["allow_override_header"] = allow_override_header
 
@@ -80,10 +65,13 @@ class EdgeRuleBudgetAction:
         d = dict(src_dict)
         budget_ms = d.pop("budget_ms")
 
+        total_deadline_ms = d.pop("total_deadline_ms", UNSET)
+
         allow_override_header = d.pop("allow_override_header", UNSET)
 
         edge_rule_budget_action = cls(
             budget_ms=budget_ms,
+            total_deadline_ms=total_deadline_ms,
             allow_override_header=allow_override_header,
         )
 

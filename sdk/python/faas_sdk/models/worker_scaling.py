@@ -49,7 +49,7 @@ class WorkerScaling:
                 "target": target,
             }
         )
-        if name is not UNSET:
+        if not isinstance(name, Unset):
             field_dict["name"] = name
 
         return field_dict

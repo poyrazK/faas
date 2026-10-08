@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
 
 // batchDispatchStatus values are the per-record terminal states the
@@ -169,14 +170,10 @@ type SynthServer struct {
 	// constructs the gatewaydAuditor and passes it to both
 	// Handler.WithEdgeRules and SynthServer.WithAudit).
 	synthAuditEmit func(ctx context.Context, kind string, subject *string, data map[string]any)
-	// appPublicAuthMode (ADR-119) returns the public_auth_mode
-	// for a given appID. nil = every app treated as "open"
-	// (no gate, no JWT check). Wired by SynthServer.WithAppModeLookup;
-	// production wires the same per-app cache the Handler
-	// consults (cmd/gatewayd-internal/run.go). The lookup
-	// takes a context so the request's ctx (with timeout /
-	// cancel chain) flows into the per-app store call.
-	appPublicAuthMode func(ctx context.Context, appID string) string
+	// appPublicAuthMode reads fresh ingress policy before synthetic dispatch.
+	// Production wires its actual startup store through WithVerifiedAppModeLookup.
+	// nil preserves legacy in-process fixtures; failed/unknown reads refuse.
+	appPublicAuthMode func(ctx context.Context, appID string) (string, error)
 	// workflowAdmission authenticates and replay-checks workflow invocations
 	// before they reach the customer instance. Production wires this to the
 	// gatewayd-internal Postgres store; nil is fail-closed for workflow traffic.
@@ -344,29 +341,16 @@ func (s *SynthServer) WithAudit(emit func(ctx context.Context, kind string, subj
 	return s
 }
 
-// WithAppModeLookup (ADR-119) arms the per-app mode lookup
-// the synth-side gate consults on every /v1/synthesize
-// request. nil = no mode lookup, every app treated as
-// "open" (the gate is a no-op for non-internal_only apps).
-//
-// The lookup signature takes a context.Context so the gate
-// can pass the inbound request's ctx (with the canonical
-// timeout / cancel chain) into the per-app store call. Round-3
-// golangci-lint contextcheck hooked the closure in
-// cmd/gatewayd-internal/run.go::WithAppModeLookup — the lint
-// flagged that the closure builds a fresh context.Background()
-// instead of receiving the request's context. The fix surfaces
-// here: the wired callback now receives ctx.
-//
-// A cache miss (or transient pg error) returns "" which the
-// gate treats as "open" (no JWT required). Returning "" on
-// error is the same posture as the HTTP-front-door gate's
-// fail-closed-on-Verify-error behavior — but at the lookup
-// layer we treat "I don't know" as "open" so a transient pg
-// blip doesn't 500 every internal_only cron fire.
+// WithAppModeLookup preserves the legacy string callback. Empty and unknown
+// results refuse; nil is only for in-process fixtures without a policy store.
+// Production uses WithVerifiedAppModeLookup to preserve lookup errors.
 func (s *SynthServer) WithAppModeLookup(lookup func(ctx context.Context, appID string) string) *SynthServer {
-	s.appPublicAuthMode = lookup
-	return s
+	if lookup == nil {
+		return s.WithVerifiedAppModeLookup(nil)
+	}
+	return s.WithVerifiedAppModeLookup(func(ctx context.Context, appID string) (string, error) {
+		return lookup(ctx, appID), nil
+	})
 }
 
 // Calls returns the number of synthesize requests served. Metric-only;
@@ -423,12 +407,8 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 	// verifier + same metric + same audit vocabulary as the
 	// HTTP-front-door side; the only difference is the
 	// "from" field is "synth" instead of a from_host string.
-	// The mode lookup consults the per-app cache populated by
-	// the same hydration path Handler.PublicAuthConfig reads.
-	if s.appPublicAuthMode != nil {
-		if s.applyIngressInternalSvc(w, r, req.AppID, s.appPublicAuthMode(r.Context(), req.AppID), "synth") {
-			return
-		}
+	if s.applySynthIngressPolicy(w, r, req.AppID, "synth") {
+		return
 	}
 	s.log.Debug("gateway synth: dispatched", "app_id", logAppID, "method", logMethod, "path", logPath)
 	if err := s.dispatcher.Wake(r.Context(), req.AppID); err != nil {
@@ -449,6 +429,8 @@ type invocationDispatchRequest struct {
 	PlatformTenantID string            `json:"platform_tenant_id,omitempty"`
 	InvocationID     string            `json:"invocation_id"`
 	AppID            string            `json:"app_id"`
+	AccountID        string            `json:"account_id,omitempty"`
+	SecuritySnapshot string            `json:"security_snapshot,omitempty"`
 	Source           string            `json:"source"` // async_invoke|queue|delayed_task|cron
 	Method           string            `json:"method"`
 	Path             string            `json:"path"`
@@ -483,6 +465,14 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	if req.AppID == "" || req.InvocationID == "" {
 		http.Error(w, "app_id + invocation_id required", http.StatusBadRequest)
 		return
+	}
+	if req.SecuritySnapshot != "" {
+		ctx, err := trafficrevocation.WithHandoffSnapshot(r.Context(), req.SecuritySnapshot)
+		if err != nil {
+			writeTrafficRevocationError(w, r, err)
+			return
+		}
+		r = r.WithContext(ctx)
 	}
 	workflowOperationAccount := ""
 	if req.Source == "workflow" {
@@ -524,14 +514,10 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	// handleSynthesize (the legacy wake-only path) and on
 	// handleInvocationDispatchBatch (the trigger batch path);
 	// closing one surface without the others leaves the gate
-	// bypassable. The mode lookup consults the per-app cache
-	// populated by the same hydration path Handler.PublicAuthConfig
-	// reads. The handler returns 403 + audit + metric; the
-	// dispatcher is never reached.
-	if s.appPublicAuthMode != nil {
-		if s.applyIngressInternalSvc(w, r, req.AppID, s.appPublicAuthMode(r.Context(), req.AppID), "synth_dispatch") {
-			return
-		}
+	// bypassable. Unverified mode reads refuse with 503; internal_only
+	// token failures return the existing problem + audit + metric.
+	if s.applySynthIngressPolicy(w, r, req.AppID, "synth_dispatch") {
+		return
 	}
 	method := req.Method
 	if method == "" {
@@ -570,6 +556,7 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		ManagedOperationID:         req.ManagedWorkflowOperationID,
 		ManagedOperationGeneration: req.ManagedWorkflowOperationGeneration,
 		ManagedOperationAccountID:  workflowOperationAccount,
+		AccountID:                  req.AccountID,
 	}
 	// Pre-flush logsanitised fields so a malicious /invocations:dispatch
 	// caller cannot forge lines.
@@ -607,7 +594,7 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		// Transient vs permanent split: any error here means the
 		// runner never received the body. schedd retries transient
 		// (5s); permanent shapes (no such app) end the row.
-		s.log.Warn("gateway synth: invoke", "inv", logsanitize.Field(req.InvocationID), "err", err)
+		s.log.Warn("gateway synth: invoke", "inv", logsanitize.Field(req.InvocationID), "err", logsanitize.FieldAny(err))
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -660,6 +647,7 @@ func base64Decode(s string) ([]byte, error) {
 type batchDispatchRequest struct {
 	InvocationID string                `json:"invocation_id"`
 	AppID        string                `json:"app_id"`
+	AccountID    string                `json:"account_id,omitempty"`
 	Source       string                `json:"source"`
 	TriggerID    string                `json:"trigger_id"`
 	Records      []batchDispatchRecord `json:"records"`
@@ -825,10 +813,8 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 	// vocabulary as the HTTP-front-door side; the only
 	// difference is the "from" field is "synth_batch" instead
 	// of "synth" so dashboards can split the two surfaces.
-	if s.appPublicAuthMode != nil {
-		if s.applyIngressInternalSvc(w, r, req.AppID, s.appPublicAuthMode(r.Context(), req.AppID), "synth_batch") {
-			return
-		}
+	if s.applySynthIngressPolicy(w, r, req.AppID, "synth_batch") {
+		return
 	}
 	if len(req.Records) == 0 {
 		w.Header().Set("Content-Type", "application/json")
@@ -953,13 +939,14 @@ func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatch
 	// decoder so the headers / metadata land on the runner
 	// envelope unchanged.
 	inv := state.Invocation{
-		ID:      req.InvocationID + "-" + rec.ItemIdentifier,
-		AppID:   req.AppID,
-		Source:  state.InvocationSource(req.Source),
-		Method:  http.MethodPost,
-		Path:    "/_triggers/" + req.Source + "/" + req.TriggerID,
-		Payload: payload,
-		Headers: jsonOrEmpty(rec.Headers),
+		ID:        req.InvocationID + "-" + rec.ItemIdentifier,
+		AppID:     req.AppID,
+		AccountID: req.AccountID,
+		Source:    state.InvocationSource(req.Source),
+		Method:    http.MethodPost,
+		Path:      "/_triggers/" + req.Source + "/" + req.TriggerID,
+		Payload:   payload,
+		Headers:   jsonOrEmpty(rec.Headers),
 	}
 	if rec.InvocationID != "" || rec.InvocationAttempt != 0 || rec.InvocationReplayGeneration != 0 {
 		if _, err := uuid.Parse(rec.InvocationID); err != nil || rec.InvocationID != rec.ItemIdentifier || rec.InvocationAttempt <= 0 || rec.InvocationReplayGeneration < 0 || req.Source != "esm" {
@@ -983,7 +970,7 @@ func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatch
 		s.log.Warn("gateway synth: invoke (batch)",
 			"inv", logsanitize.Field(inv.ID),
 			"item", logsanitize.Field(rec.ItemIdentifier),
-			"err", err)
+			"err", logsanitize.FieldAny(err))
 		// Per-record timeout: recCtx.Err() returns
 		// context.DeadlineExceeded when the per-record timeout
 		// fired (and NOT when only the total-batch timeout

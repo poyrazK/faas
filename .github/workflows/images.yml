@@ -530,10 +530,6 @@ jobs:
           # Debian lanes on their existing fixed-finding gate until their
           # shared parent migration lands separately.
           GRYPE_ONLY_FIXED: ${{ (matrix.image == 'runner-python313' || matrix.image == 'execution-python-data-v1') && 'false' || 'true' }}
-          # The staging-only Debian parent cannot patch its own layer
-          # (ADR-053); its version-pinned exceptions are documented in the
-          # file. Every other lane scans without it.
-          GRYPE_CONFIG: ${{ matrix.image == 'base-debian-parent' && 'images/base-debian-parent.grype.yaml' || '' }}
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
             ref="${IMAGE_NAME}:ci-${GITHUB_SHA}"

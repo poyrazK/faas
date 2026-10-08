@@ -2,8 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": 1,
   "comment": "Tier 3 (issue #197 B3.5 + B3.6). The FROM line in each Dockerfile below this lock is digest-pinned; this lock is the source of truth. `make images-lock-update` resolves the current registry digest and updates BOTH the lock and the FROM line. CI runs `make images-lock-check` to fail any PR that drifts (either a Dockerfile with a non-digest-pinned FROM, or a Dockerfile whose FROM line doesn't match the lock's `pinned_in_dockerfile` field). The PLACEHOLDER digests below fail the check by design \u2014 the operator runs `make images-lock-update` once at PR-merge time, before this file is squashed into main. `scratch` is the canonical empty image and is exempt from the lock (audit_dockerfile_froms.py whitelists it).",
-  "generated_at": "2026-10-06T15:24:35Z",
-  "generated_by": "make images-lock-update",
+  "generated_at": "2026-10-07T09:00:30Z",
+  "generated_by": "registry API (focused Debian parent and children security update)",
   "pinned": [
     {
       "dockerfile": "images/builder-base.Dockerfile",
@@ -52,12 +52,12 @@
     {
       "dockerfile": "images/base-debian-parent.Dockerfile",
       "instruction": "FROM",
-      "alias": "debian:12-slim",
+      "alias": "debian:13-slim",
       "resolved_repo": "docker.io/library/debian",
-      "resolved_tag": "12-slim",
+      "resolved_tag": "13-slim",
       "platform": "linux/amd64",
-      "digest": "sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91",
-      "pinned_in_dockerfile": "FROM debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91"
+      "digest": "sha256:918311b7b6c4c6f68b232ba516584925f6c78ad82b6fd534b98979df6438e483",
+      "pinned_in_dockerfile": "FROM debian:13-slim@sha256:918311b7b6c4c6f68b232ba516584925f6c78ad82b6fd534b98979df6438e483"
     },
     {
       "dockerfile": "images/base-minimal.Dockerfile",
@@ -93,12 +93,12 @@
     {
       "dockerfile": "images/runner-python312.Dockerfile",
       "instruction": "FROM",
-      "alias": "python:3.12-slim-bookworm",
+      "alias": "python:3.12-slim-trixie",
       "resolved_repo": "docker.io/library/python",
-      "resolved_tag": "3.12-slim-bookworm",
+      "resolved_tag": "3.12-slim-trixie",
       "platform": "linux/amd64",
-      "digest": "sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d",
-      "pinned_in_dockerfile": "FROM python:3.12-slim-bookworm@sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d"
+      "digest": "sha256:2b4f19dae3a777dfc3b76730bda1e82e1f66ab2a2686fa93ca78edbfb4f04ffe",
+      "pinned_in_dockerfile": "FROM python:3.12-slim-trixie@sha256:2b4f19dae3a777dfc3b76730bda1e82e1f66ab2a2686fa93ca78edbfb4f04ffe"
     },
     {
       "dockerfile": "images/runner-go124.Dockerfile",
@@ -123,12 +123,12 @@
     {
       "dockerfile": "images/runner-node24.Dockerfile",
       "instruction": "FROM",
-      "alias": "node:24-bookworm-slim",
+      "alias": "node:24-trixie-slim",
       "resolved_repo": "docker.io/library/node",
-      "resolved_tag": "24-bookworm-slim",
+      "resolved_tag": "24-trixie-slim",
       "platform": "linux/amd64",
-      "digest": "sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd",
-      "pinned_in_dockerfile": "FROM node:24-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd"
+      "digest": "sha256:c83040f7e24bacea68e58a0b96a484ba430bf24abb2973eab7ba4701144b7b63",
+      "pinned_in_dockerfile": "FROM node:24-trixie-slim@sha256:c83040f7e24bacea68e58a0b96a484ba430bf24abb2973eab7ba4701144b7b63"
     },
     {
       "dockerfile": "images/runner-python313.Dockerfile",

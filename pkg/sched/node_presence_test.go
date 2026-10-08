@@ -84,6 +84,7 @@ type inventoryFixture struct {
 	now      time.Time
 	clock    atomic.Int64
 	instance state.Instance
+	work     *workPool
 }
 
 func newInventoryFixture(t *testing.T, service bool) *inventoryFixture {
@@ -104,7 +105,8 @@ func newInventoryFixture(t *testing.T, service bool) *inventoryFixture {
 		// Use the production submission path and finish bootstrap notifications
 		// before advancing fake time; no recovery callback may escape the fixture.
 		loop := NewLoop(nil, engine, testLog()).WithClock(engine.now)
-		t.Cleanup(loop.workPool().drain)
+		f.work = loop.workPool()
+		t.Cleanup(f.work.drain)
 		manifest := state.AppManifest{ExecutionMode: api.ExecutionModeService, ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 1, Desired: 1}}
 		if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
 			t.Fatal(err)
@@ -275,6 +277,19 @@ func TestNodeInventoryServiceRecoversWithoutTrafficAndNotifiesRouting(t *testing
 	}
 	if live != 1 {
 		t.Fatalf("live replicas=%d, want exactly 1", live)
+	}
+	// The worker commits RUNNING before publishing its route invalidation.
+	// Join that worker within the original recovery deadline before inspecting
+	// notifications; observing the row alone does not prove it has returned.
+	finished := make(chan struct{})
+	go func() {
+		f.work.drain()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(time.Until(deadline)):
+		t.Fatal("service recovery worker did not finish route invalidation notifications")
 	}
 	f.notifier.mu.Lock()
 	defer f.notifier.mu.Unlock()

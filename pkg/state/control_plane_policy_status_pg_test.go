@@ -17,7 +17,7 @@ import (
 
 func TestPgGatewayControlPlaneWatermarkResetsAcrossBoots(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestPgGatewayControlPlaneWatermarkResetsAcrossBoots(t *testing.T) {
 	if got := find(); got.LastChangeID != 0 {
 		t.Fatalf("unobserved node revision = %d, want 0", got.LastChangeID)
 	}
-	if err := store.UpsertGatewayResponseCachePurgeWatermark(ctx, node.Name, 7); err != nil {
+	if err := reportPolicyTestProgress(t, ctx, store, state.GatewayPolicyCachePurge, node.Name, uuid.NewString(), 7); err != nil {
 		t.Fatalf("upsert response-cache purge watermark: %v", err)
 	}
 	if got := find(); got.LastResponseCachePurgeID != 7 || got.ResponseCachePurgesObservedAt.Before(time.Now().Add(-time.Minute)) {
@@ -57,14 +57,14 @@ func TestPgGatewayControlPlaneWatermarkResetsAcrossBoots(t *testing.T) {
 	}
 	bootA, bootB := uuid.NewString(), uuid.NewString()
 	for _, revision := range []int64{5, 4} {
-		if err := store.UpsertGatewayControlPlaneWatermark(ctx, node.Name, bootA, revision); err != nil {
+		if err := reportPolicyTestProgress(t, ctx, store, state.GatewayPolicyControlPlane, node.Name, bootA, revision); err != nil {
 			t.Fatalf("upsert boot A revision %d: %v", revision, err)
 		}
 	}
 	if got := find(); got.LastChangeID != 5 {
 		t.Fatalf("same-boot revision = %d, want monotonic 5", got.LastChangeID)
 	}
-	if err := store.UpsertGatewayControlPlaneWatermark(ctx, node.Name, bootB, 2); err != nil {
+	if err := reportPolicyTestProgress(t, ctx, store, state.GatewayPolicyControlPlane, node.Name, bootB, 2); err != nil {
 		t.Fatalf("upsert boot B: %v", err)
 	}
 	if got := find(); got.LastChangeID != 2 {
@@ -74,7 +74,7 @@ func TestPgGatewayControlPlaneWatermarkResetsAcrossBoots(t *testing.T) {
 
 func TestPgLatestAppRequestPolicyRevisionExcludesTrafficChanges(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestPgLatestAppRequestPolicyRevisionExcludesTrafficChanges(t *testing.T) {
 
 func TestPgPruneControlPlaneChangeLogWaitsForServingGateways(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -175,16 +175,16 @@ func TestPgPruneControlPlaneChangeLogWaitsForServingGateways(t *testing.T) {
 		t.Fatalf("prune before observations = %d, %v; want 0, nil", removed, err)
 	}
 	bootFirst, bootSecond := uuid.NewString(), uuid.NewString()
-	if err := store.UpsertGatewayControlPlaneWatermark(ctx, first.Name, bootFirst, ids[0]); err != nil {
+	if err := reportPolicyTestProgress(t, ctx, store, state.GatewayPolicyControlPlane, first.Name, bootFirst, ids[0]); err != nil {
 		t.Fatalf("first gateway watermark: %v", err)
 	}
-	if err := store.UpsertGatewayControlPlaneWatermark(ctx, second.Name, bootSecond, ids[2]); err != nil {
+	if err := reportPolicyTestProgress(t, ctx, store, state.GatewayPolicyControlPlane, second.Name, bootSecond, ids[2]); err != nil {
 		t.Fatalf("second gateway watermark: %v", err)
 	}
 	if removed, err := store.PruneControlPlaneChangeLog(ctx, cutoff); err != nil || removed != 1 {
 		t.Fatalf("prune with lagging gateway = %d, %v; want 1, nil", removed, err)
 	}
-	if err := store.UpsertGatewayControlPlaneWatermark(ctx, first.Name, bootFirst, ids[2]); err != nil {
+	if err := reportPolicyTestProgress(t, ctx, store, state.GatewayPolicyControlPlane, first.Name, bootFirst, ids[2]); err != nil {
 		t.Fatalf("advance first gateway watermark: %v", err)
 	}
 	if removed, err := store.PruneControlPlaneChangeLog(ctx, cutoff); err != nil || removed != 2 {
@@ -194,7 +194,7 @@ func TestPgPruneControlPlaneChangeLogWaitsForServingGateways(t *testing.T) {
 
 func TestPgEdgeRuleWatermarkTracksBootsAndProtectsReplayHistory(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -245,14 +245,14 @@ func TestPgEdgeRuleWatermarkTracksBootsAndProtectsReplayHistory(t *testing.T) {
 	}
 	bootA, bootB := uuid.NewString(), uuid.NewString()
 	for _, revision := range []int64{changeID, changeID - 1} {
-		if err := store.UpsertGatewayEdgeRuleWatermark(ctx, node.Name, bootA, revision); err != nil {
+		if err := reportPolicyTestProgress(t, ctx, store, state.GatewayPolicyEdgeRules, node.Name, bootA, revision); err != nil {
 			t.Fatalf("upsert boot A revision %d: %v", revision, err)
 		}
 	}
 	if got := find(); got.LastEdgeRuleChangeID != changeID || got.EdgeRulesObservedAt.IsZero() {
 		t.Fatalf("same-boot edge-rule state = %+v, want revision %d and observation", got, changeID)
 	}
-	if err := store.UpsertGatewayEdgeRuleWatermark(ctx, node.Name, bootB, 0); err != nil {
+	if err := reportPolicyTestProgress(t, ctx, store, state.GatewayPolicyEdgeRules, node.Name, bootB, 0); err != nil {
 		t.Fatalf("upsert new boot watermark: %v", err)
 	}
 	if got := find(); got.LastEdgeRuleChangeID != 0 {
@@ -261,7 +261,7 @@ func TestPgEdgeRuleWatermarkTracksBootsAndProtectsReplayHistory(t *testing.T) {
 	if removed, err := store.PruneEdgeRuleChangeLog(ctx, cutoff); err != nil || removed != 0 {
 		t.Fatalf("prune after boot reset = %d, %v; want 0, nil", removed, err)
 	}
-	if err := store.UpsertGatewayEdgeRuleWatermark(ctx, node.Name, bootB, changeID); err != nil {
+	if err := reportPolicyTestProgress(t, ctx, store, state.GatewayPolicyEdgeRules, node.Name, bootB, changeID); err != nil {
 		t.Fatalf("advance new boot watermark: %v", err)
 	}
 	if removed, err := store.PruneEdgeRuleChangeLog(ctx, cutoff); err != nil || removed != 1 {

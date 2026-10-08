@@ -18,8 +18,8 @@ import (
 // bodyless GET path used by Node's built-in Fetch client. The bridge receives
 // a persistent-stream request, forwards it to a guest handler that waits for
 // two seconds, and must carry AbortSignal.timeout(150) through to that guest.
-// Arm the timeout after all requests reach the guest so client startup and
-// runner scheduling cannot expire a signal before there is a request to cancel.
+// Arm the timeout signals after all guest requests are active so cold Node
+// startup or connection setup cannot consume the cancellation test's budget.
 // A concurrent fast request verifies that cancelling those streams leaves the
 // shared per-port transport usable.
 func TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET(t *testing.T) {
@@ -33,39 +33,34 @@ func TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET(t *testing.T) 
 	started := 0
 	aborted := 0
 	completed := 0
-	slowStarted := make(chan time.Time, slowRequests)
-	slowAborted := make(chan time.Duration, slowRequests)
+	slowStarted := make(chan struct{}, slowRequests)
+	slowAborted := make(chan time.Time, slowRequests)
 	slowCompleted := make(chan struct{}, slowRequests)
-	var arrived atomic.Int32
-	var startWork sync.Once
-	workReady := make(chan struct{})
+	allSlowStarted := make(chan struct{})
+	startSlowWork := make(chan struct{})
+	var activeSlow atomic.Int32
+	var startWorkOnce sync.Once
+	var slowWorkStarted time.Time
 	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/fast" {
 			_, _ = fmt.Fprint(w, "fast-ok")
 			return
 		}
-		if r.URL.Path == "/ready" {
-			if arrived.Load() == slowRequests {
-				startWork.Do(func() { close(workReady) })
-				_, _ = fmt.Fprint(w, "ready")
-			} else {
-				_, _ = fmt.Fprint(w, "waiting")
-			}
-			return
+		slowStarted <- struct{}{}
+		if activeSlow.Add(1) == slowRequests {
+			close(allSlowStarted)
 		}
-		arrived.Add(1)
 		select {
-		case <-workReady:
+		case <-startSlowWork:
 		case <-r.Context().Done():
+			slowAborted <- time.Now()
 			return
 		}
-		requestStarted := time.Now()
-		slowStarted <- requestStarted
 		timer := time.NewTimer(2 * time.Second)
 		defer timer.Stop()
 		select {
 		case <-r.Context().Done():
-			slowAborted <- time.Since(requestStarted)
+			slowAborted <- time.Now()
 		case <-timer.C:
 			slowCompleted <- struct{}{}
 			_, _ = fmt.Fprint(w, "slow-completed")
@@ -85,6 +80,18 @@ func TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET(t *testing.T) 
 	t.Cleanup(pool.closeIdleConnections)
 	inner := newHandlerWithPool(guestIP, uint16(guestPort), time.Now().Add(10*time.Second), pool)
 	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ready" {
+			select {
+			case <-allSlowStarted:
+				startWorkOnce.Do(func() {
+					slowWorkStarted = time.Now()
+					close(startSlowWork)
+				})
+				_, _ = fmt.Fprint(w, "ready")
+			case <-r.Context().Done():
+			}
+			return
+		}
 		// ForwardHTTPStream supplies these private wire headers to the
 		// persistent bridge. Set them here to exercise the same dispatch and
 		// pooled transport without needing a VM or gRPC server in this test.
@@ -107,29 +114,25 @@ const slow = controllers.map(async controller => {
     if (err.name !== 'TimeoutError') throw err;
   }
 });
-(async () => {
-  const allSlow = Promise.all(slow);
-  while ((await (await fetch(base + '/ready')).text()) !== 'ready') {
-    await new Promise(resolve => setTimeout(resolve, 5));
-  }
+const armTimeouts = (async () => {
+  const response = await fetch(base + '/ready');
+  if (!response.ok || await response.text() !== 'ready') throw new Error('guest readiness barrier failed');
   for (const controller of controllers) {
     const timeout = AbortSignal.timeout(150);
     timeout.addEventListener('abort', () => controller.abort(timeout.reason), {once: true});
   }
-  await allSlow;
+})();
+Promise.all([armTimeouts, Promise.all(slow)]).then(async () => {
   const response = await fetch(base + '/fast');
   const body = await response.text();
   if (!response.ok || body !== 'fast-ok') throw new Error('fast sibling failed: ' + response.status + ' ' + body);
   process.stdout.write('slow fetches timed out; fast sibling completed');
-})().catch(err => {
+}).catch(err => {
   process.stderr.write(err.stack || String(err));
   process.exitCode = 1;
 });
 `, slowRequests)
-	// Go package tests and the Node subprocess share a busy CI runner; leave
-	// enough time for Node startup and guest request scheduling while still
-	// bounding a hung script.
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, node, "-e", script, bridge.URL).CombinedOutput()
 	if err != nil {
@@ -139,32 +142,37 @@ const slow = controllers.map(async controller => {
 		t.Fatalf("Node Fetch output = %q, want %q", got, want)
 	}
 
-	// On a loaded runner a 150 ms signal can fire before the bridge has
-	// forwarded every slow request; such a request never reaches the guest,
-	// which is cancellation propagating even earlier. Every request the guest
-	// did see must observe cancellation. Keep watching through the guest's
-	// two-second work window: a dropped signal would let a started request
-	// complete there even though Node had already rejected its promise.
-	watch := time.NewTimer(2300 * time.Millisecond)
-	defer watch.Stop()
+	abortDeadline := time.NewTimer(time.Second)
+	defer abortDeadline.Stop()
+	<-startSlowWork // Synchronize the timestamp published by the ready handler.
 	for started < slowRequests || aborted < slowRequests {
 		select {
 		case <-slowStarted:
 			started++
-		case latency := <-slowAborted:
+		case at := <-slowAborted:
 			aborted++
-			if latency > maxGuestAbortLatency {
+			latency := at.Sub(slowWorkStarted)
+			if latency < 0 || latency > maxGuestAbortLatency {
 				t.Fatalf("guest cancellation latency = %s, want <= %s", latency, maxGuestAbortLatency)
 			}
 		case <-slowCompleted:
 			completed++
 			t.Fatalf("%d slow guest request(s) completed instead of observing cancellation", completed)
-		case <-watch.C:
-			if started == 0 || aborted != started {
-				t.Fatalf("guest cancellation did not propagate: started=%d aborted=%d completed=%d", started, aborted, completed)
-			}
-			t.Logf("%d of %d slow request(s) were cancelled before reaching the guest", slowRequests-started, slowRequests)
-			return
+		case <-abortDeadline.C:
+			t.Fatalf("guest cancellation did not propagate: started=%d aborted=%d completed=%d", started, aborted, completed)
+		}
+	}
+
+	// Keep the guest alive through the original two-second work window. If
+	// the signal was dropped at any layer, the guest would complete during
+	// this period even though Node had already rejected the fetch promises.
+	remaining := time.Until(slowWorkStarted.Add(2300 * time.Millisecond))
+	if remaining > 0 {
+		select {
+		case <-slowCompleted:
+			completed++
+			t.Fatalf("%d slow guest request(s) completed after Fetch timed out", completed)
+		case <-time.After(remaining):
 		}
 	}
 }

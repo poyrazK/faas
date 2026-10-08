@@ -39,9 +39,9 @@ func TestSynthBatchStoredScopeAndClaimAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	adapter := &synthAdapter{store: store, invokeWithStatus: func(_ context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
+	adapter := &synthAdapter{store: store, invokeWithStatus: func(_ context.Context, appID string, inv state.Invocation, version state.InvocationVersion) (state.Invocation, int, error) {
 		calls++
-		if appID != app.ID || inv.ID != row.ID || inv.DeploymentScope != "staging" || inv.Attempts != claim.Attempts || inv.ReplayGeneration != claim.ReplayGeneration ||
+		if appID != app.ID || inv.ID != row.ID || inv.DeploymentScope != "staging" || version.Scope != "staging" || inv.Attempts != claim.Attempts || inv.ReplayGeneration != claim.ReplayGeneration ||
 			inv.Method != "POST" || inv.Path != "/_triggers/esm/test" || string(inv.Payload) != `{"job":true}` {
 			t.Errorf("batch routing contract: id=%q scope=%q attempt=%d path=%q", inv.ID, inv.DeploymentScope, inv.Attempts, inv.Path)
 		}
@@ -117,7 +117,7 @@ func TestSynthBatchStoredScopeAndClaimAdmission(t *testing.T) {
 }
 
 func TestSynthBatchDurableIdentityRequiresStore(t *testing.T) {
-	adapter := &synthAdapter{invokeWithStatus: func(_ context.Context, _ string, inv state.Invocation) (state.Invocation, int, error) {
+	adapter := &synthAdapter{invokeWithStatus: func(_ context.Context, _ string, inv state.Invocation, _ state.InvocationVersion) (state.Invocation, int, error) {
 		t.Fatal("durable delivery reached invoke without its admission store")
 		return inv, http.StatusOK, nil
 	}}

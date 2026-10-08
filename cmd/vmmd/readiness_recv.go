@@ -105,6 +105,8 @@ func (l *appReadinessProbeLoop) emit(ctx context.Context, status, reason string)
 	}
 	l.events.Emit(ctx, events.AppReadiness{
 		EmitAt:     time.Now().UTC(),
+		WakeID:     l.cfg.WakeID,
+		NodeID:     l.cfg.NodeID,
 		AppID:      l.appID,
 		InstanceID: l.instance,
 		Status:     status,

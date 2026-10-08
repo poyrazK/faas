@@ -182,7 +182,7 @@ func verifyMCPRoles(ctx context.Context, candidate string, roles []mcpReleaseRol
 	return checks, nil
 }
 
-func finishMCPDeploy(ctx context.Context, c *Client, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole) int {
+func finishVerifiedMCPDeploy(ctx context.Context, c *Client, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole) int {
 	endpoint, candidate, serving, err := prepareMCPCandidate(ctx, c, slug, id, cfg)
 	if err != nil {
 		return printErr("MCP candidate", err)
