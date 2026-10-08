@@ -88,6 +88,18 @@ test('restart admission does not count as schema refresh completion', async t =>
   assert.deepEqual(seen, ['/v1/apps/owned/runtime-config-restarts/accepted-wake'])
 })
 
+test('migration binding readiness is awaited before a release can consume it', async t => {
+  const calls = []
+  let reads = 0
+  const runner = await fixture(t, { runCommand: async (_binary, argv) => {
+    const action = argv.slice(1).join(' '); calls.push(action)
+    if (argv[2] === 'attach') return JSON.stringify({ id: 'binding-id', app_id: 'app-id', access: 'migration', state: 'provisioning' })
+    return JSON.stringify({ state: ++reads === 1 ? 'provisioning' : 'ready' })
+  } })
+  await runner.attachMigration('db-id', { id: 'app-id', slug: 'owned' })
+  assert.deepEqual(calls, ['postgres attach db-id owned --scope default --access migration --env MIGRATION_DATABASE_URL', 'postgres bindings get binding-id', 'postgres bindings get binding-id'])
+})
+
 test('binding retirement completes before app and database deletion', async t => {
   const calls = []
   const runner = await fixture(t, {

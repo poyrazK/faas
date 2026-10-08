@@ -124,6 +124,11 @@ export class Canary {
     const receipt = await this.exec(['deploy', '--name', app.slug, '--dockerfile', '--source', 'worktree', '--healthcheck-path', '/healthz', '--no-doctor', '--no-require-authn'], directory)
     await this.deployed(receipt, app)
   }
+  async attachMigration(database, app) {
+    const binding = await this.exec(['postgres', 'attach', database, app.slug, '--scope', 'default', '--access', 'migration', '--env', 'MIGRATION_DATABASE_URL'])
+    requireValue(binding.id && binding.app_id === app.id && binding.access === 'migration', 'invalid_migration_binding_receipt')
+    await this.wait(() => this.exec(['postgres', 'bindings', 'get', binding.id]), x => x.state === 'ready')
+  }
   async refresh(app) {
     const receipt = await this.exec(['data-api', 'refresh', app.slug])
     requireValue(receipt.wake_id, 'restart_receipt_missing')
@@ -205,7 +210,7 @@ export class Canary {
       await writeFile(join(issuerDir, 'Dockerfile'), 'FROM node:22-bookworm-slim\nWORKDIR /app\nCOPY . .\nEXPOSE 8080\nCMD ["node","issuer.mjs"]\n')
       await this.check('issuer_native_build', () => this.deploy(issuer, issuerDir))
       const migrator = await this.createApp('migrate')
-      await this.exec(['postgres', 'attach', db.id, migrator.slug, '--scope', 'default', '--access', 'migration', '--env', 'MIGRATION_DATABASE_URL'])
+      await this.check('migration_binding_ready', () => this.attachMigration(db.id, migrator))
       await this.request(`/v1/apps/${migrator.slug}`, { method: 'PATCH', body: { egress_ports: [5432] } })
       const migrationDir = join(this.workspace, 'migration'); await mkdir(migrationDir)
       for (const file of ['package.json', 'package-lock.json']) await cp(join(this.repoRoot, 'cmd/gregale/templates/data-api', file), join(migrationDir, file))
