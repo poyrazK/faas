@@ -31,7 +31,7 @@ func readCheckpointPgActivationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvi
 	}
 	return checkpointPgActivationFromSQL(row, op)
 }
-func checkpointPgActivationPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, l ProjectEnvironmentCloneLease, proofs []ProjectEnvironmentCloneCheckpointPgConnectionProof, attached bool) (ProjectEnvironmentCloneCheckpointPgActivationPlan, error) {
+func checkpointPgActivationPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, l ProjectEnvironmentCloneLease, proofs []ProjectEnvironmentCloneCheckpointPgConnectionProof, attached, publishedOwned bool) (ProjectEnvironmentCloneCheckpointPgActivationPlan, error) {
 	out := ProjectEnvironmentCloneCheckpointPgActivationPlan{OperationID: op.ID, AccountID: op.AccountID, ProjectID: op.ProjectID, Scope: op.TargetEnvironment, SourceRevisionHash: op.SourceRevisionHash}
 	records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
 	if err != nil {
@@ -90,7 +90,7 @@ func checkpointPgActivationPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvi
 		if err != nil {
 			return out, mapErr(err)
 		}
-		if !published.Valid || published.Bool {
+		if !published.Valid || published.Bool && !publishedOwned {
 			return out, ErrConflict
 		}
 		if proofs != nil {
@@ -111,7 +111,11 @@ func checkpointPgActivationPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvi
 	return out, nil
 }
 func validateCheckpointPgActivationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, l ProjectEnvironmentCloneLease, in ProjectEnvironmentCloneCheckpointPgActivation, proofs []ProjectEnvironmentCloneCheckpointPgConnectionProof) error {
-	p, err := checkpointPgActivationPlanTx(ctx, tx, op, l, proofs, true)
+	owned, err := checkpointPgPublicationOwnedTx(ctx, tx, op)
+	if err != nil {
+		return err
+	}
+	p, err := checkpointPgActivationPlanTx(ctx, tx, op, l, proofs, true, owned)
 	if err != nil {
 		return err
 	}
@@ -152,7 +156,7 @@ func (s *PgStore) ReserveProjectEnvironmentCloneCheckpointPgActivation(ctx conte
 		if proofs == nil {
 			return ErrConflict
 		}
-		p, err := checkpointPgActivationPlanTx(ctx, tx, op, l, proofs, false)
+		p, err := checkpointPgActivationPlanTx(ctx, tx, op, l, proofs, false, false)
 		if err != nil {
 			return err
 		}

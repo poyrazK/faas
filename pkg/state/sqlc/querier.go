@@ -404,6 +404,7 @@ type Querier interface {
 	DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) error
 	DeleteAutomation(ctx context.Context, db DBTX, arg DeleteAutomationParams) error
 	DeleteAutomationScheduleCursor(ctx context.Context, db DBTX, arg DeleteAutomationScheduleCursorParams) error
+	DeleteCloneCheckpointPgAppSecret(ctx context.Context, db DBTX, arg DeleteCloneCheckpointPgAppSecretParams) (int64, error)
 	DeleteCron(ctx context.Context, db DBTX, arg DeleteCronParams) error
 	DeleteCustomDomain(ctx context.Context, db DBTX, domain interface{}) error
 	DeleteCustomerAppSecret(ctx context.Context, db DBTX, arg DeleteCustomerAppSecretParams) (int64, error)
@@ -869,7 +870,9 @@ type Querier interface {
 	InsertCheckedRollback(ctx context.Context, db DBTX, arg InsertCheckedRollbackParams) error
 	InsertCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
 	InsertCloneCheckpointPgActivation(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgActivationParams) (ProjectEnvironmentCloneCheckpointPgActivation, error)
+	InsertCloneCheckpointPgAppSecret(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgAppSecretParams) error
 	InsertCloneCheckpointPgConnectionValue(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgConnectionValueParams) (ProjectEnvironmentCloneCheckpointPgConnectionValue, error)
+	InsertCloneCheckpointPgPublication(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgPublicationParams) (ProjectEnvironmentCloneCheckpointPgPublication, error)
 	InsertCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error)
 	InsertCloneCheckpointPostgresCredentialRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresCredentialRetirementParams) (ProjectEnvironmentCloneCheckpointPgCredentialRetirement, error)
 	InsertCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error)
@@ -2202,6 +2205,7 @@ type Querier interface {
 	ReadCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
 	ReadCloneCheckpointPgActivation(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointPgActivation, error)
 	ReadCloneCheckpointPgConnectionValue(ctx context.Context, db DBTX, arg ReadCloneCheckpointPgConnectionValueParams) (ProjectEnvironmentCloneCheckpointPgConnectionValue, error)
+	ReadCloneCheckpointPgPublication(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointPgPublication, error)
 	ReadCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error)
 	ReadCloneCheckpointPostgresCredentialRetirement(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresCredentialRetirementParams) (ProjectEnvironmentCloneCheckpointPgCredentialRetirement, error)
 	ReadCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error)
@@ -2969,6 +2973,8 @@ type Querier interface {
 	ValidateInvocationWorkEnvironmentClaim(ctx context.Context, db DBTX, invocationID pgtype.UUID) (ValidateInvocationWorkEnvironmentClaimRow, error)
 	ValidateManagedPostgresSnapshotCreationIntent(ctx context.Context, db DBTX, arg ValidateManagedPostgresSnapshotCreationIntentParams) (pgtype.UUID, error)
 	WebhookAutomationLegacyReceiptExists(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
+	WithdrawCloneCheckpointPgBinding(ctx context.Context, db DBTX, arg WithdrawCloneCheckpointPgBindingParams) (int64, error)
+	WithdrawCloneCheckpointPgPublication(ctx context.Context, db DBTX, arg WithdrawCloneCheckpointPgPublicationParams) (int64, error)
 	WorkAdmissionCancel(ctx context.Context, db DBTX, arg WorkAdmissionCancelParams) (int64, error)
 	WorkAdmissionCancelBroker(ctx context.Context, db DBTX, arg WorkAdmissionCancelBrokerParams) (int64, error)
 	WorkAdmissionCancellation(ctx context.Context, db DBTX, id pgtype.UUID) (InvocationWorkCancellation, error)

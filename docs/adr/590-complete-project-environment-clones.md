@@ -8338,3 +8338,65 @@ TLS options and missing keys/HMAC configuration. Existing managed PostgreSQL
 credential/connection helper tests also pass. SQLC and repository policy checks
 are clean. These are cryptographic preparation tests, not publication or live
 provider qualification.
+
+### Atomic private checkpoint PostgreSQL binding publication
+
+One transaction now materializes the complete original activated PostgreSQL
+binding matrix and its app-readable encrypted secrets. It authenticates the frozen
+activation manifest, sealed connection ownership, original credential/runtime graph,
+current exact native grant scope and health, and current capture retention. Every
+member must match its original account, app, target scope/key, binding identity,
+access, credential reference and generation. It locks apps and secret targets,
+rejects existing target secrets, and enforces the account plan's current per-app
+secret quota. A collision, partial set, invalid member or late journal failure rolls
+back all binding and secret writes.
+
+The publication journal commits the original normalized secret envelopes with the
+activation-plan and terminal-receipt digests. A lost reply or worker handoff reuses
+that complete immutable set without credential keys or resealing. Replay still
+requires independently current activation/retention proof and verifies every owned
+binding and secret against the journal. Shared activation recovery accepts only
+metadata authenticated by this publication journal. Foreign references, changed
+ciphertext, scope, access, generation, rotation/cutover state or secret delivery
+state fail closed.
+
+Compensation first authenticates and withdraws the complete owned set atomically:
+it removes its app-secret rows, tombstones its bindings and records withdrawal.
+Native credential retirement cannot begin through the coordinator until withdrawal
+succeeds. Lost withdrawal replies are replayable without keys; retained journals
+and tombstones remain authenticatable after the original fork is deleted. Changed
+or extra references block withdrawal without deleting unrelated metadata. Native
+retirement still requires the permanent preparation and delayed-activation fences
+before fork cleanup. Withdrawn publication cannot be republished.
+
+There is one bounded publication journal per activation, with a 24 MiB plan cap
+and the existing 4096-credential account ledger. App-readable envelopes retain the
+4 KiB per-owner cap. Password, checkpoint connection, journaled app-secret
+and live app-secret ciphertext together are bounded at 64 MiB per account by
+the existing owner ledger; withdrawal removes the live app-secret copy.
+Retained journal ciphertext continues to count as owned material; audited erasure and quota reclamation remain separate work. Restrictive
+activation foreign keys and an explicit downgrade guard preserve both published
+and withdrawn ownership.
+
+This is PostgreSQL metadata publication inside the private target. Database role
+remains `checkpoint`, operation resources remain the original checkpoint inventory,
+and no release set or serving graph is published. The internal helper is not yet a
+qualified full-stage worker. Complete object-storage publication, integration of
+the common resource graph with workload/configuration materialization and final
+release publication, and qualified native adapters remain required. Live R2/OVH
+qualification stays deferred at the user's request.
+
+Validation: the final PostgreSQL publication suite passes lost commit replies,
+keyless worker handoff and activation replay, complete-set rollback for invalid
+members, quotas, collisions, late journal writes, health/retention loss and stale
+workers; withdrawal/retirement through fork deletion; immutable owned metadata;
+empty/published/withdrawn downgrade guards; and withdrawal rollback/recovery.
+Scope corruption is injected only in a disposable database by temporarily disabling
+its owner trigger and restoring it before replay checks. An extra binding reference
+is rejected by the database's unique-owner index. Initial fixtures hit these
+existing guards before reaching the intended assertion and were corrected.
+Activation, app-secret conversion, credential retirement and affected parent
+migration regression groups also passed. State/schema tests and SQLC, encoding,
+shell-quoting and ADR-number checks pass; targeted lint reports zero issues.
+Native effects use the protocol test driver and do not establish live provider
+qualification or complete stage publication.

@@ -15174,3 +15174,30 @@ UPDATE project_environment_clone_checkpoint_pg_activations i SET state='active',
 WHERE i.operation_id=sqlc.arg(operation_id)::uuid AND i.state='requested'
 AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
 AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp());
+
+-- name: ReadCloneCheckpointPgPublication :one
+SELECT * FROM project_environment_clone_checkpoint_pg_publications WHERE operation_id=$1 FOR UPDATE;
+
+-- name: InsertCloneCheckpointPgPublication :one
+INSERT INTO project_environment_clone_checkpoint_pg_publications(operation_id,plan,plan_sha256,state)
+SELECT o.id,sqlc.arg(plan)::jsonb,sqlc.arg(plan_sha256)::text,'published' FROM project_environment_clone_operations o
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp() RETURNING *;
+
+-- name: WithdrawCloneCheckpointPgPublication :execrows
+UPDATE project_environment_clone_checkpoint_pg_publications p SET state='withdrawn',withdrawn_at=clock_timestamp()
+FROM project_environment_clone_operations o WHERE p.operation_id=sqlc.arg(operation_id)::uuid AND p.state='published'
+AND o.id=p.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
+AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp();
+
+-- name: InsertCloneCheckpointPgAppSecret :exec
+INSERT INTO app_secrets(account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_postgres_binding_id,managed_credential_ref,managed_credential_generation,secret_class,secret_version)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,1,'persistent',1);
+
+-- name: DeleteCloneCheckpointPgAppSecret :execrows
+DELETE FROM app_secrets WHERE managed_postgres_binding_id=$1 AND account_id=$2 AND app_id=$3 AND scope=$4 AND key=$5;
+
+-- name: WithdrawCloneCheckpointPgBinding :execrows
+UPDATE managed_postgres_bindings SET state='deleted',deleted_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE id=$1 AND account_id=$2 AND state='ready' AND credential_generation=1 AND lease_token IS NULL
+AND rotation_previous_generation IS NULL AND cutover_id IS NULL;

@@ -5101,6 +5101,15 @@ type ProjectEnvironmentCloneCheckpointPgCredentialRetirement struct {
 	RetiredAt         pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneCheckpointPgPublication struct {
+	OperationID pgtype.UUID
+	Plan        []byte
+	PlanSha256  string
+	State       string
+	PublishedAt pgtype.Timestamptz
+	WithdrawnAt pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneCheckpointPostgresCredential struct {
 	OperationID       pgtype.UUID
 	SourceBindingID   pgtype.UUID

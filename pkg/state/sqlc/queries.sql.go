@@ -8660,6 +8660,32 @@ func (q *Queries) DeleteAutomationScheduleCursor(ctx context.Context, db DBTX, a
 	return err
 }
 
+const deleteCloneCheckpointPgAppSecret = `-- name: DeleteCloneCheckpointPgAppSecret :execrows
+DELETE FROM app_secrets WHERE managed_postgres_binding_id=$1 AND account_id=$2 AND app_id=$3 AND scope=$4 AND key=$5
+`
+
+type DeleteCloneCheckpointPgAppSecretParams struct {
+	ManagedPostgresBindingID pgtype.UUID
+	AccountID                pgtype.UUID
+	AppID                    pgtype.UUID
+	Scope                    string
+	Key                      string
+}
+
+func (q *Queries) DeleteCloneCheckpointPgAppSecret(ctx context.Context, db DBTX, arg DeleteCloneCheckpointPgAppSecretParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteCloneCheckpointPgAppSecret,
+		arg.ManagedPostgresBindingID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteCron = `-- name: DeleteCron :exec
 delete from crons where id = $1 and app_id = $2
 `
@@ -16936,6 +16962,38 @@ func (q *Queries) InsertCloneCheckpointPgActivation(ctx context.Context, db DBTX
 	return i, err
 }
 
+const insertCloneCheckpointPgAppSecret = `-- name: InsertCloneCheckpointPgAppSecret :exec
+INSERT INTO app_secrets(account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_postgres_binding_id,managed_credential_ref,managed_credential_generation,secret_class,secret_version)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,1,'persistent',1)
+`
+
+type InsertCloneCheckpointPgAppSecretParams struct {
+	AccountID                pgtype.UUID
+	AppID                    pgtype.UUID
+	Scope                    string
+	Key                      string
+	Ciphertext               []byte
+	Kid                      pgtype.Text
+	ValueHash                pgtype.Text
+	ManagedPostgresBindingID pgtype.UUID
+	ManagedCredentialRef     pgtype.Text
+}
+
+func (q *Queries) InsertCloneCheckpointPgAppSecret(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgAppSecretParams) error {
+	_, err := db.Exec(ctx, insertCloneCheckpointPgAppSecret,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.Ciphertext,
+		arg.Kid,
+		arg.ValueHash,
+		arg.ManagedPostgresBindingID,
+		arg.ManagedCredentialRef,
+	)
+	return err
+}
+
 const insertCloneCheckpointPgConnectionValue = `-- name: InsertCloneCheckpointPgConnectionValue :one
 INSERT INTO project_environment_clone_checkpoint_pg_connection_values(operation_id,source_binding_id,plan)
 SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
@@ -16970,6 +17028,41 @@ func (q *Queries) InsertCloneCheckpointPgConnectionValue(ctx context.Context, db
 		&i.CiphertextSha256,
 		&i.SealedAt,
 		&i.ActivationOperationID,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPgPublication = `-- name: InsertCloneCheckpointPgPublication :one
+INSERT INTO project_environment_clone_checkpoint_pg_publications(operation_id,plan,plan_sha256,state)
+SELECT o.id,$1::jsonb,$2::text,'published' FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, plan_sha256, state, published_at, withdrawn_at
+`
+
+type InsertCloneCheckpointPgPublicationParams struct {
+	Plan             []byte
+	PlanSha256       string
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPgPublication(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgPublicationParams) (ProjectEnvironmentCloneCheckpointPgPublication, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPgPublication,
+		arg.Plan,
+		arg.PlanSha256,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPgPublication
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.PublishedAt,
+		&i.WithdrawnAt,
 	)
 	return i, err
 }
@@ -47008,6 +47101,24 @@ func (q *Queries) ReadCloneCheckpointPgConnectionValue(ctx context.Context, db D
 	return i, err
 }
 
+const readCloneCheckpointPgPublication = `-- name: ReadCloneCheckpointPgPublication :one
+SELECT operation_id, plan, plan_sha256, state, published_at, withdrawn_at FROM project_environment_clone_checkpoint_pg_publications WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointPgPublication(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointPgPublication, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPgPublication, operationID)
+	var i ProjectEnvironmentCloneCheckpointPgPublication
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.PublishedAt,
+		&i.WithdrawnAt,
+	)
+	return i, err
+}
+
 const readCloneCheckpointPostgresCredential = `-- name: ReadCloneCheckpointPostgresCredential :one
 SELECT operation_id, source_binding_id, source_database_id, account_id, target_binding_id, plan, state, ciphertext, key_id, ciphertext_sha256, requested_at, observation_sha256, prepared_at FROM project_environment_clone_checkpoint_postgres_credentials WHERE operation_id=$1 AND source_binding_id=$2 FOR UPDATE
 `
@@ -61818,6 +61929,46 @@ func (q *Queries) WebhookAutomationLegacyReceiptExists(ctx context.Context, db D
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const withdrawCloneCheckpointPgBinding = `-- name: WithdrawCloneCheckpointPgBinding :execrows
+UPDATE managed_postgres_bindings SET state='deleted',deleted_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE id=$1 AND account_id=$2 AND state='ready' AND credential_generation=1 AND lease_token IS NULL
+AND rotation_previous_generation IS NULL AND cutover_id IS NULL
+`
+
+type WithdrawCloneCheckpointPgBindingParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) WithdrawCloneCheckpointPgBinding(ctx context.Context, db DBTX, arg WithdrawCloneCheckpointPgBindingParams) (int64, error) {
+	result, err := db.Exec(ctx, withdrawCloneCheckpointPgBinding, arg.ID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const withdrawCloneCheckpointPgPublication = `-- name: WithdrawCloneCheckpointPgPublication :execrows
+UPDATE project_environment_clone_checkpoint_pg_publications p SET state='withdrawn',withdrawn_at=clock_timestamp()
+FROM project_environment_clone_operations o WHERE p.operation_id=$1::uuid AND p.state='published'
+AND o.id=p.operation_id AND o.status='compensating' AND o.revision=$2::bigint
+AND o.lease_token=$3::uuid AND o.lease_until>clock_timestamp()
+`
+
+type WithdrawCloneCheckpointPgPublicationParams struct {
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) WithdrawCloneCheckpointPgPublication(ctx context.Context, db DBTX, arg WithdrawCloneCheckpointPgPublicationParams) (int64, error) {
+	result, err := db.Exec(ctx, withdrawCloneCheckpointPgPublication, arg.OperationID, arg.ExpectedRevision, arg.WorkerToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const workerAdmissionCount = `-- name: WorkerAdmissionCount :one

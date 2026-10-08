@@ -28,6 +28,19 @@ func (s *server) retireCheckpointPostgresCredentials(ctx context.Context, l stat
 	if l.Operation.Status != state.CloneOperationCompensating {
 		return l, state.ErrConflict
 	}
+	if publications, ok := s.store.(state.ProjectEnvironmentCloneCheckpointPgPublicationStore); ok {
+		var err error
+		l, err = renewCloneObjectWorkerLease(ctx, leases, l, state.CloneOperationCompensating)
+		if err != nil {
+			return l, err
+		}
+		if err = s.cloneWorkerAdmission(ctx); err != nil {
+			return l, err
+		}
+		if err = publications.WithdrawProjectEnvironmentCloneCheckpointPgBindings(ctx, l); err != nil {
+			return l, err
+		}
+	}
 	views, err := captures.ProjectEnvironmentCloneBindings(ctx, l.Operation.AccountID, l.Operation.ProjectID, l.Operation.ID)
 	if err != nil {
 		return l, err

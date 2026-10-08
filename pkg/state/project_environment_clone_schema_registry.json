@@ -5778,6 +5778,18 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_checkpoint_pg_publications",
+    "columns": [
+      "operation_id",
+      "plan",
+      "plan_sha256",
+      "published_at",
+      "state",
+      "withdrawn_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_checkpoint_pg_connection_values",
     "columns": [
       "activation_operation_id",
