@@ -1246,3 +1246,118 @@ test('read-only startup waits for an active migration before checking compatibil
     assert.equal(initialized, true);
   } finally { await migration.query('ROLLBACK').catch(() => {}); migration.release(); }
 });
+
+test('release gate starts verified replacements before draining old workers', postgresOnly, async t => {
+  const { releaseMcpTasks } = await import('../task-release.js');
+  const { pool, namespace, store } = await harness(t);
+  const handlers = { build_report: { version: '2', previousVersions: { '1': async () => ({}) }, execute: async () => ({}) } };
+  const old = createMcpTaskRuntime({ store, handlers, pollIntervalMs: 500 });
+  const candidate = createMcpTaskRuntime({ store, handlers, pollIntervalMs: 500 });
+  t.after(async () => { await old.stop(); await candidate.stop(); });
+  await old.start();
+  await create(store, 'release-owner');
+  const report = await releaseMcpTasks({ pool, namespace, store, handlers, timeoutMs: 5000,
+    migrate: () => store.migrate({ admissionHandlers: [{ name: 'build_report', version: '2' }] }),
+    start: async ({ previousWorkerIDs }) => {
+      assert.deepEqual(previousWorkerIDs, [old.workerID]);
+      await candidate.start();
+      return [candidate.workerID];
+    },
+    drain: async ({ previousWorkerIDs, replacementWorkerIDs }) => {
+      assert.deepEqual(previousWorkerIDs, [old.workerID]);
+      assert.deepEqual(replacementWorkerIDs, [candidate.workerID]);
+      await old.stop();
+    },
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.stage, 'complete');
+});
+
+test('release gate fails closed for missing admitted handlers, false readiness and failed drain', postgresOnly, async t => {
+  const { releaseMcpTasks } = await import('../task-release.js');
+  const { pool, namespace, store } = await harness(t);
+  const full = { build_report: { version: '2', previousVersions: { '1': async () => ({}) }, execute: async () => ({}) } };
+  let drained = false;
+  const base = { pool, namespace, store, timeoutMs: 100, migrate: async () => {}, drain: async () => { drained = true; } };
+  const missing = await releaseMcpTasks({ ...base, handlers: { build_report: { version: '2', execute: async () => ({}) } }, start: async () => { throw new Error('must not start'); } });
+  assert.equal(missing.stage, 'candidate_preflight');
+  assert.equal(missing.ok, false);
+  const unregistered = await releaseMcpTasks({ ...base, handlers: full, start: async () => [randomUUID()] });
+  assert.equal(unregistered.stage, 'replacement_readiness');
+  assert.equal(unregistered.ok, false);
+  assert.equal(drained, false);
+  const oldID = randomUUID(), newID = randomUUID();
+  const inventory = [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }];
+  await store.workerHeartbeat(oldID, inventory);
+  const reused = await releaseMcpTasks({ ...base, handlers: full, start: async () => [oldID] });
+  assert.equal(reused.stage, 'start_replacements');
+  assert.equal(reused.ok, false);
+  const stalled = await releaseMcpTasks({ ...base, handlers: full, start: async () => { await store.workerHeartbeat(newID, inventory); return [newID]; } });
+  assert.equal(stalled.stage, 'drain_previous');
+  assert.equal(stalled.ok, false);
+  assert.equal(drained, true);
+});
+
+test('release gate serializes namespace rollouts and releases its lock on failure', postgresOnly, async t => {
+  const { releaseMcpTasks } = await import('../task-release.js');
+  const { pool, namespace, store } = await harness(t);
+  const handlers = { build_report: { version: '2', previousVersions: { '1': async () => ({}) }, execute: async () => ({}) } };
+  const client = await pool.connect();
+  await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [`gregale_mcp_release:${namespace}`]);
+  try {
+    const report = await releaseMcpTasks({ pool, namespace, store, handlers, migrate: async () => { throw new Error('must not run'); }, start: async () => [], drain: async () => {} });
+    assert.deepEqual(report, { ok: false, stage: 'release_lock' });
+  } finally {
+    await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [`gregale_mcp_release:${namespace}`]);
+    client.release();
+  }
+  const report = await releaseMcpTasks({ pool, namespace, store, handlers, migrate: async () => { throw new Error('secret credential'); }, start: async () => [], drain: async () => {} });
+  assert.deepEqual(report, { ok: false, stage: 'migrations' });
+});
+
+test('release CLI executes bounded adapters without migration credentials', postgresOnly, async t => {
+  const { pool, schema, namespace, ownerKey, store } = await harness(t);
+  const { mkdtemp, copyFile, writeFile, rm } = await import('node:fs/promises');
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const root = dirname(dirname(fileURLToPath(import.meta.url)));
+  const fixture = await mkdtemp(join(root, 'release-fixture-'));
+  t.after(() => rm(fixture, { recursive: true, force: true }));
+  for (const file of ['task-release.js', 'tasks-release.js', 'task-compatibility.js', 'tasks.js', 'task-runtime.js', 'task-store.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
+  await writeFile(join(fixture, 'package.json'), '{"type":"module"}');
+  await writeFile(join(fixture, 'gregale-mcp.json'), JSON.stringify({ tasks: { enabled: true, database_url_env: 'RELEASE_DATABASE', owner_key_env: 'RELEASE_OWNER' } }));
+  // Default candidate supports version 1; disable version 2 before retiring its workers.
+  const { createMcpTaskAdmissionController } = await import('../task-admission.js');
+  await createMcpTaskAdmissionController({ pool, namespace }).change('disable', 'build_report', '2');
+  const previous = randomUUID();
+  await store.workerHeartbeat(previous, [{ name: 'build_report', version: '1' }]);
+  await writeFile(join(fixture, 'adapter.js'), `
+    import pg from 'pg';
+    import { randomUUID } from 'node:crypto';
+    if (process.env.MCP_TASK_MIGRATION_DATABASE_URL) throw new Error('Migration credentials leaked');
+    const input = JSON.parse(process.env.MCP_TASK_RELEASE_INPUT);
+    const pool = new pg.Pool({ connectionString: process.env.RELEASE_DATABASE });
+    try {
+      if (process.argv[2] === 'start') {
+        const id = randomUUID();
+        await pool.query("INSERT INTO gregale_mcp_task_workers (namespace, worker_id, handlers, heartbeat_at, expires_at) VALUES ($1, $2, $3, clock_timestamp(), clock_timestamp() + interval '90 seconds')", [process.env.MCP_TASK_NAMESPACE, id, JSON.stringify([{name:'build_report',version:'1'}])]);
+        console.log(JSON.stringify({workerIDs:[id]}));
+      } else {
+        await pool.query('DELETE FROM gregale_mcp_task_workers WHERE namespace=$1 AND worker_id=ANY($2::uuid[])', [process.env.MCP_TASK_NAMESPACE,input.previousWorkerIDs]);
+      }
+    } finally { await pool.end(); }
+  `);
+  await writeFile(join(fixture, 'plan.json'), JSON.stringify({ timeoutMs: 5000, start: [process.execPath, join(fixture, 'adapter.js'), 'start'], drain: [process.execPath, join(fixture, 'adapter.js'), 'drain'] }));
+  const url = new URL(databaseURL);
+  url.searchParams.set('options', `-c search_path=${schema}`);
+  const result = await promisify(execFile)(process.execPath, ['tasks-release.js', 'plan.json'], { cwd: fixture, timeout: 15000, env: { ...process.env, RELEASE_DATABASE: url.href, RELEASE_OWNER: ownerKey, MCP_TASK_NAMESPACE: namespace, MCP_TASK_MIGRATION_DATABASE_URL: url.href } });
+  assert.equal(JSON.parse(result.stdout).ok, true);
+  assert.equal((await pool.query('SELECT 1 FROM gregale_mcp_task_workers WHERE worker_id=$1', [previous])).rowCount, 0);
+  await writeFile(join(fixture, 'plan.json'), JSON.stringify({ timeoutMs: 1000, start: [process.execPath, '-e', "console.log('private-hook-output'); setInterval(() => {}, 1000)"], drain: [process.execPath, '-e', "throw new Error('must not drain')"] }));
+  await assert.rejects(promisify(execFile)(process.execPath, ['tasks-release.js', 'plan.json'], { cwd: fixture, timeout: 15000, env: { ...process.env, RELEASE_DATABASE: url.href, RELEASE_OWNER: ownerKey, MCP_TASK_NAMESPACE: namespace, MCP_TASK_MIGRATION_DATABASE_URL: url.href } }), error => {
+    assert.equal(error.code, 1);
+    assert.deepEqual(JSON.parse(error.stdout), { ok: false, stage: 'start_replacements' });
+    assert.equal(error.stdout.includes('private-hook-output'), false);
+    return true;
+  });
+});

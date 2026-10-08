@@ -500,3 +500,45 @@ application roles. Grants cover the selected schema, not individual namespaces.
 `npm run doctor:tasks -- --role observer` and `--role operator` validate those
 role profiles without payload secrets. The default doctor checks the runtime
 profile, encryption keys, handler compatibility and operational signals.
+
+### Gated Task releases
+
+Run `npm run tasks:release -- release-plan.json` from the candidate starter with
+its runtime bindings and `MCP_TASK_MIGRATION_DATABASE_URL` bound to the schema
+owner. All accounts must target the same database and trusted schema.
+
+```json
+{
+  "timeoutMs": 60000,
+  "start": ["/deployment/start-candidate", "candidate-image"],
+  "drain": ["/deployment/drain-workers"]
+}
+```
+
+Hooks are executable argument arrays, without a shell. They receive JSON in
+`MCP_TASK_RELEASE_INPUT`: start receives `previousWorkerIDs` and `timeoutMs`;
+drain also receives `replacementWorkerIDs`. Start must launch the candidate
+artifact and return only `{"workerIDs":["uuid"]}` on stdout. Dedicated workers
+emit their ID in `mcp_task_worker_started`; orchestrator adapters must associate
+these IDs with their deployment processes. Drain must signal exactly the
+previous workers and await their exit within the platform shutdown deadline.
+Migration credentials are removed from hook environments.
+
+The gate serializes cooperating releases per namespace, migrates first, checks
+runtime privileges, retained keys, retained handlers and every allowed admission
+version, then verifies each specified replacement has a fresh, non-draining
+heartbeat covering the candidate inventory. It drains old workers only after
+readiness, waits for their registrations to disappear, and rechecks replacements
+and compatibility. A nonzero exit and sanitized failing stage block promotion.
+Disable unsupported admission versions before removing handlers, and coordinate
+all writers during key changes. Restrict independent admission/schema changes
+during release; the release lock coordinates this command, not arbitrary SQL.
+
+Each hook and readiness/drain wait has its own bounded deadline. Failed releases
+leave migrations and any started replacements in place for operator recovery;
+there is no automatic rollback or destructive cleanup. A heartbeat proves
+registered handler coverage, not artifact identity, web endpoint readiness,
+future uptime, or observer health. The deployment adapter must verify the
+candidate artifact and external endpoints before reporting start success. A
+worker that exceeds its shutdown deadline retains its registration until expiry;
+the gate fails rather than promoting prematurely.

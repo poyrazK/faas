@@ -1015,3 +1015,26 @@ it before serving traffic or within a controlled release window. Upgrade all
 replicas that previously performed startup DDL before removing their elevated
 credentials; older binaries must not restart with schema-owner credentials and
 rewrite the migrated trigger definitions.
+
+#### Automated Task release gate
+
+Generated Node starters provide `npm run tasks:release -- release-plan.json`.
+A plan supplies executable argument arrays `start` and `drain`, and an optional
+`timeoutMs` (1–600 seconds per hook or wait). The candidate runtime binding and
+`MCP_TASK_MIGRATION_DATABASE_URL` must target the same namespace/database/schema.
+See the generated README's **Gated Task releases** section for the adapter contract.
+
+The gate runs explicit migrations, checks retained payload keys and handler
+compatibility, and requires coverage of all admission versions still allowed to
+create work. It verifies fresh heartbeats for the replacement IDs returned by
+the start adapter before signaling previous workers through the drain adapter.
+Old registrations must disappear and replacements remain ready before promotion.
+Worker startup logs include `workerID` for deployment adapters. Failed stages
+return nonzero without exposing hook output, payloads, or database credentials.
+
+This is a deployment-adapter workflow: it does not infer image identity, deploy
+applications automatically, or roll back migrations. Independently verify web
+readiness and observer health in the start adapter. Namespace release locks
+serialize cooperating gate invocations; coordinate independent policy changes
+and all key-writing processes during rollout. No automatic cleanup follows a
+failed release; inspect the reported stage and reconcile candidate processes.

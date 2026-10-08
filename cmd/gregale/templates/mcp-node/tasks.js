@@ -366,6 +366,7 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
   }
 
   return {
+    workerID,
     async start() {
       if (stopping) throw new Error('A stopped Task runtime cannot be restarted');
       if (!closed) return;
