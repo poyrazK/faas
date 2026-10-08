@@ -118,13 +118,18 @@ func workflowScheduleReplayDefinition(row WorkflowScheduleOccurrence, raw json.R
 	if definition.Trigger.Enabled != nil && !*definition.Trigger.Enabled {
 		return nil, WorkflowScheduleReplayScheduleDisabled, nil
 	}
-	if _, err := api.ValidateWorkflowDAG(*definition, plan); err != nil {
+	if workflowScheduleReplayDefinitionDAGInvalid(*definition, plan) {
 		return nil, WorkflowScheduleReplayDefinitionChanged, nil
 	}
 	if workflowScheduleDefinitionHash(*definition) != row.DefinitionHash {
 		return nil, WorkflowScheduleReplayDefinitionChanged, nil
 	}
 	return definition, WorkflowScheduleReplayEligible, nil
+}
+
+func workflowScheduleReplayDefinitionDAGInvalid(definition api.WorkflowSpec, plan api.Plan) bool {
+	_, err := api.ValidateWorkflowDAG(definition, plan)
+	return err != nil
 }
 
 func workflowScheduleReplayInitialOutcome(row WorkflowScheduleOccurrence) string {

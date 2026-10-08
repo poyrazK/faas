@@ -354,8 +354,7 @@ func lockWorkflowScheduleReplayTarget(ctx context.Context, tx pgx.Tx, appID, ten
 			return sqlc.LockWorkflowScheduleTargetRow{}, "", "", fmt.Errorf("state: lock tenant surface replay link: %w", surfaceErr)
 		}
 	}
-	target := sqlc.LockWorkflowScheduleTargetRow{AccountID: tenantTarget.AccountID, DeploymentID: tenantTarget.DeploymentID,
-		Workflows: tenantTarget.Workflows, Plan: tenantTarget.Plan}
+	target := sqlc.LockWorkflowScheduleTargetRow(tenantTarget)
 	return target, api.Plan(tenantTarget.Plan), WorkflowScheduleReplayEligible, nil
 }
 

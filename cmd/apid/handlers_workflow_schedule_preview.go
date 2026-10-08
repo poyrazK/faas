@@ -72,7 +72,7 @@ func (s *server) previewWorkflowSchedule(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrCapacity("workflow schedule preview unavailable"))
 		return
 	}
-	cursors, err := store.ListWorkflowScheduleCursors(r.Context(), app.ID)
+	cursors, err := store.ListWorkflowScheduleCursors(ctx, app.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("failed to read workflow schedule state"))
 		return
@@ -110,7 +110,7 @@ func (s *server) previewPlatformTenantSelfWorkflowSchedule(w http.ResponseWriter
 		api.WriteProblem(w, api.ErrCapacity("tenant workflow schedule preview unavailable"))
 		return
 	}
-	schedules, err := store.ListTenantWorkflowSchedules(r.Context(), account.ID, tenantID, app.ID)
+	schedules, err := store.ListTenantWorkflowSchedules(ctx, account.ID, tenantID, app.ID)
 	if errors.Is(err, state.ErrNotFound) {
 		s.notFound(w, "workflow schedule not found")
 		return

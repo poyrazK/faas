@@ -72,7 +72,9 @@ func cmdWorkflowsQueuedCancel(args []string, execute bool) int {
 		return printErr("Output failed", err)
 	}
 	if !execute {
-		fmt.Fprintln(osStdout, "Preview only. Recheck the same selection with workflows cancel-queued --yes to cancel eligible runs.")
+		if _, err := fmt.Fprintln(osStdout, "Preview only. Recheck the same selection with workflows cancel-queued --yes to cancel eligible runs."); err != nil {
+			return printErr("Output failed", err)
+		}
 	}
 	return 0
 }
