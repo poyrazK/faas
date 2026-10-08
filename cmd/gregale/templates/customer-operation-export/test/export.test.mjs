@@ -76,7 +76,7 @@ test('browser assets and public selectors work with the installed SDK', async t 
   t.after(() => { server.closeAllConnections(); server.close(); });
   const base = `http://127.0.0.1:${server.address().port}`;
   assert.deepEqual(await (await fetch(base+'/config')).json(), config);
-  for (const path of ['/', '/app.mjs', '/style.css', '/sdk/operations.js', '/sdk/customer-operations.js', '/sdk/operation-session.js', '/sdk/operation-submission.js', '/sdk/sse.js']) {
+  for (const path of ['/', '/app.mjs', '/style.css', '/sdk/operations.js', '/sdk/customer-operations.js', '/sdk/operation-session.js', '/sdk/operation-submission.js', '/sdk/operation-contract.js', '/sdk/sse.js']) {
     const response = await fetch(base+path); assert.equal(response.status, 200, path);
     const text = await response.text(); assert.ok(text.length > 0);
     if (path.startsWith('/sdk/')) assert.doesNotMatch(text, /from ['"]node:/);

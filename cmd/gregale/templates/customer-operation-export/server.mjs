@@ -17,6 +17,7 @@ const files = new Map([
   ['/sdk/customer-operations.js', [new URL('customer-operations.js', sdkRoot), 'text/javascript']],
   ['/sdk/operation-session.js', [new URL('operation-session.js', sdkRoot), 'text/javascript']],
   ['/sdk/operation-submission.js', [new URL('operation-submission.js', sdkRoot), 'text/javascript']],
+  ['/sdk/operation-contract.js', [new URL('operation-contract.js', sdkRoot), 'text/javascript']],
   ['/sdk/sse.js', [new URL('sse.js', sdkRoot), 'text/javascript']],
 ]);
 

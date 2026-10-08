@@ -99,6 +99,9 @@ test('native control denies mismatched ownership and stale generation before upl
 test('public server exposes only selectors and browser assets, and waits for deployment setup', async t => {
   const f = await fixture(t);
   assert.deepEqual(await (await fetch(f.base + 'config')).json(), config);
+  const operationContract = await fetch(f.base + 'sdk/operation-contract.js');
+  assert.equal(operationContract.status, 200);
+  assert.doesNotMatch(await operationContract.text(), /from ['"]node:/);
   for (const path of ['job.mjs', 'upload.mjs', 'contract.mjs', 'package.json', 'sdk/job-operations-runtime.js', 'sdk/operations-runtime.js']) {
     assert.equal((await fetch(f.base + path)).status, 404);
   }
