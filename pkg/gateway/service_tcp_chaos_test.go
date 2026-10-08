@@ -1,3 +1,4 @@
+// adr: 640 — exercise scenario-scoped TCP chaos on private service streams.
 package gateway
 
 import (
