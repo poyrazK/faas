@@ -7533,10 +7533,14 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	snapStart := time.Now()
 	var b SnapshotBytes
 	var reused *state.Snapshot
-	if allowReuse {
-		b, reused, err = e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil)
+	// A profiled process must acknowledge its current collection checkpoint
+	// before terminal capture. Reusing an older snapshot bypasses that handshake
+	// and loses the process state needed to qualify park/restore (ADR-797).
+	profilingEnabled := app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled
+	if allowReuse && !profilingEnabled {
+		b, reused, err = e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil || profilingEnabled)
 	} else {
-		b, err = e.vmm.PauseAndSnapshot(snapCtx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil)
+		b, err = e.vmm.PauseAndSnapshot(snapCtx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil || profilingEnabled)
 	}
 	if reused != nil {
 		storageKey = reused.StorageKey
@@ -7685,7 +7689,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instance, app state.App) (SnapshotBytes, error) {
 	// The source VM resumes after warm capture. A callback may close sockets
 	// or flush state for checkpoint and leave that VM unable to serve traffic.
-	if app.Manifest.BeforeCheckpoint != nil {
+	if app.Manifest.BeforeCheckpoint != nil || (app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled) {
 		return SnapshotBytes{}, nil
 	}
 	// Gate 1 + 2: the cheap configuration checks. snapshotAndPark loaded

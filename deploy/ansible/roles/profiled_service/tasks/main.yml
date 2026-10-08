@@ -1,0 +1,11 @@
+---
+# Profiling remains operator-only until native lifecycle acceptance passes.
+# Stage the unit; enable it explicitly after the backend is configured.
+- name: profiled_service — install CPU profile daemon unit
+  ansible.builtin.copy:
+    src: faas-profiled.service
+    dest: /etc/systemd/system/faas-profiled.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-profiled

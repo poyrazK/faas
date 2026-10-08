@@ -1,0 +1,69 @@
+name: Profiling native acceptance
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pkg/profiling/**"
+      - "pkg/guestprofiling/**"
+      - "pkg/profileproto/**"
+      - "pkg/api/profile*.go"
+      - "pkg/sched/**"
+      - "guest/init/**"
+      - "tests/profiling/deployment/**"
+      - "scripts/ci/profile*"
+      - "scripts/ci/profilefixtures/**"
+      - "scripts/ci/run-native-profiling-acceptance.sh"
+      - ".github/workflows/profiling-native.yml"
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      GREGALE_ACCEPTANCE_TOKEN:
+        required: true
+      GREGALE_NATIVE_PROFILE_TOKEN:
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: profiling-native-acceptance
+  cancel-in-progress: false
+jobs:
+  native:
+    # No pull_request trigger: a privileged live stack must not run fork code.
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, gregale-profiling-acceptance]
+    environment: profiling-acceptance
+    timeout-minutes: 60
+    env:
+      GREGALE_ACCEPTANCE_API_URL: ${{ vars.GREGALE_ACCEPTANCE_API_URL }}
+      GREGALE_ACCEPTANCE_TOKEN: ${{ secrets.GREGALE_ACCEPTANCE_TOKEN }}
+      GREGALE_NATIVE_PROFILE_TOKEN: ${{ secrets.GREGALE_NATIVE_PROFILE_TOKEN }}
+      GREGALE_PROFILE_EVIDENCE: ${{ github.workspace }}/profile-native-evidence/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25.13"
+          cache: true
+      - name: Deploy fixtures and qualify profiling
+        run: bash scripts/ci/run-native-profiling-acceptance.sh
+      - name: Retry fixture cleanup
+        if: always()
+        run: |
+          if [ -x "$GREGALE_PROFILE_EVIDENCE/profilefixtures" ]; then
+            timeout --signal=TERM --kill-after=10s 4m "$GREGALE_PROFILE_EVIDENCE/profilefixtures" \
+              -action cleanup -root "$GITHUB_WORKSPACE" -out "$GREGALE_PROFILE_EVIDENCE"
+          fi
+      - name: Require complete evidence
+        if: always()
+        run: python3 scripts/ci/profile-verdict.py --evidence "$GREGALE_PROFILE_EVIDENCE"
+      - name: Upload evidence and investigation links
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiling-native-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            ${{ env.GREGALE_PROFILE_EVIDENCE }}/*.json
+          if-no-files-found: error
+          retention-days: 14

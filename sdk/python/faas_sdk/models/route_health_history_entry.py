@@ -52,7 +52,8 @@ class RouteHealthHistoryEntry:
     saved evidence with the advance response and traffic audit."""
     report: RouteHealthReport
     """Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry
-    provenance."""
+    provenance. When the app's automatic profile policy is enabled, profile_signal adds an ephemeral report-only
+    comparison for an active canary; it never affects canary advancement or rollback and is not persisted."""
     purpose: RouteHealthHistoryEntryPurpose | Unset = UNSET
     """Abort identifies a committed automatic rollback with worker source and requested traffic 0. Omitted for
     advance evaluations."""

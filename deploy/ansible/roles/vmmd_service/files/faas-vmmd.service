@@ -26,6 +26,7 @@ EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/storage.env
 EnvironmentFile=-/etc/faas/imaged-storage.env
 EnvironmentFile=-/etc/faas/runtime-bases.env
+EnvironmentFile=-/etc/faas/profiling.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=TMPDIR=/srv/fc/base
 Environment=FAAS_HOST_AGE_RECIPIENT_PATH=/etc/faas/secrets/host.age.pub

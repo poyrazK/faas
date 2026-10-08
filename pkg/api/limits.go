@@ -33,6 +33,127 @@ const (
 )
 
 // Historical replay preview bounds retained-envelope reads (ADR-645).
+// CPU profiling transport and admission bounds (ADR-792). These limits are
+// independent of request telemetry and never change billing dimensions.
+const (
+	ProfileDefaultWindowSeconds                         = 10
+	ProfileMinWindowSeconds                             = 1
+	ProfileMaxWindowSeconds                             = 60
+	ProfileMaxCaptureDuration                           = time.Duration(ProfileMaxWindowSeconds)*time.Second + ProfileTransportTimeout
+	ProfileMaxCompressedBytes                           = 1 << 20
+	ProfileMaxExpandedBytes                             = 8 << 20
+	ProfileMaxFrameBytes                                = (ProfileMaxCompressedBytes * 2) + (32 << 10)
+	ProfileControlPollInterval                          = 100 * time.Millisecond
+	ProfileMaxStackDepth                                = 256
+	ProfileMaxProcesses                                 = 64
+	ProfileMaxDeploymentChoices                         = 64
+	ProfileAttributionMaxReasons                        = 6
+	ProfileAttributionMaxWarnings                       = 3
+	ProfileAttributionMaxChangePercentagePoints         = 20
+	ProfileRouteRegressionMaxRoutes                     = 10
+	ProfileRouteRequestTimestampTolerance               = time.Second
+	ProfileRouteRequestReportMaxBytes                   = 16 << 10
+	ProfileRouteRequestMetadataMaxBytes                 = 2500
+	ProfileRouteMaxLabeledRequests                      = int64(1000000000)
+	ProfileRouteMinimumLabelCoveragePercent             = 80.0
+	ProfileRouteLabelMaxChangePercentagePoints          = 20.0
+	ProfileRouteMaxLabels                               = 50
+	ProfileRouteMaxLabelBytes                           = 256
+	ProfileRequestMixMaxRoutes                          = 50
+	ProfileRequestMixSnapshotMaxRoutes                  = 20
+	ProfileRequestMixSnapshotMaxBytes                   = 16 << 10
+	ProfileRequestMixDifferencePercent                  = 20.0
+	ProfileInvestigationMaxPerApp                       = 50
+	ProfileInvestigationMaxBytes                        = 64 << 10
+	ProfileInvestigationMaxStoredBytes                  = 2 * ProfileInvestigationMaxBytes
+	ProfileInvestigationMaxFormBytes                    = 3*ProfileInvestigationMaxBytes + (8 << 10)
+	ProfileInvestigationMaxTitleBytes                   = 160
+	ProfileInvestigationMaxTextBytes                    = 8 << 10
+	ProfileInvestigationMaxPathBytes                    = 16 << 10
+	ProfileInvestigationMaxRevision               int64 = 9007199254740991
+	ProfileRegressionDefaultRelativePercent             = 20.0
+	ProfileRegressionDefaultAbsoluteCPU                 = 0.01
+	ProfileRegressionDefaultAbsoluteCPUPerRequest       = 0.0001
+	ProfileRegressionDefaultMinimumProfiles       int64 = 3
+	ProfileRegressionDefaultCoverageRatio               = 0.8
+	ProfileRegressionDefaultMinimumRequests       int64 = 20
+	ProfileRegressionMaxAbsoluteCPUPerRequest           = 3600.0
+	ProfileRegressionMaxMinimumRequests           int64 = 100000000
+	ProfileRegressionMaxRelativePercent                 = 10000.0
+	ProfileRegressionMaxAbsoluteCPU                     = 1e6
+	ProfileRegressionMinimumCoverageRatio               = 0.1
+	ProfileRegressionMaxEvidence                        = 10
+	ProfileRegressionMaxEvidenceBytes                   = 32 << 10
+	ProfileGateMaxConfirmations                         = 5
+	ProfileGateMaxTimeoutSeconds                        = 86400
+	ProfileGateDefaultTimeoutSeconds                    = 1800
+	ProfileGateDefaultConfirmations                     = 2
+	ProfileGateOverrideMaxReasonBytes                   = 1024
+	ProfileRouteCodeMaxEvidenceBytes                    = 8 << 10
+	ProfileRegressionMaxAssessmentBytes                 = 64 << 10
+	ProfileRegressionMaxStoredBytes                     = 2 * ProfileRegressionMaxAssessmentBytes
+	ProfilePeriodicMinIntervalSeconds                   = 60
+	ProfilePeriodicMaxIntervalSeconds                   = 86400
+	ProfilePeriodicDefaultIntervalSeconds               = 900
+	ProfilePeriodicMaxConfirmations                     = 5
+	ProfilePeriodicDefaultConfirmations                 = 2
+	ProfilePeriodicMaxHistory                           = 10
+	ProfilePeriodicMaxRows                              = 50
+	ProfilePeriodicMaxDataBytes                         = 262144
+
+	ProfileAutoDefaultWindowSeconds = 300
+	ProfileAutoDefaultWarmupSeconds = 120
+	ProfileAutoMinWindowSeconds     = 60
+	ProfileAutoMaxWindowSeconds     = 1800
+	ProfileAutoMaxWarmupSeconds     = 3600
+	ProfileAutoMaxAttempts          = 5
+	ProfileAutoBatchSize            = 10
+	ProfileAutoMaxResults           = 50
+	ProfileAlertMaxFrames           = 5
+	ProfileAlertMaxSymbolBytes      = 256
+	ProfileAutoTickInterval         = 30 * time.Second
+	ProfileAutoIngestionGrace       = 30 * time.Second
+	ProfileAutoRetryInterval        = time.Minute
+	ProfileAutoLeaseDuration        = 2 * time.Minute
+	ProfileAutoDiscoveryLookback    = 24 * time.Hour
+	ProfileAutoReceiptRetention     = 30 * 24 * time.Hour
+	ProfileCanaryHistoryPageSize    = 5
+	ProfileCanaryHistoryMaxPage     = 10
+	ProfileMaxGenerationBytes       = 128
+	ProfileMaxRuntimeBytes          = 64
+	ProfileRetryCacheTTL            = 2 * time.Minute
+	ProfileRPCOverheadBytes         = 1024
+	ProfileControlMaxBytes          = 4096
+	ProfileProcessStaleAfter        = 2 * time.Second
+	ProfileDrainTimeout             = 500 * time.Millisecond
+	ProfileNodeBootstrapPath        = "/opt/gregale/profiling/node.cjs"
+	ProfilePythonBootstrapDir       = "/opt/gregale/profiling/python"
+	ProfileMaxSymbolBytes           = 4096
+	ProfileMaxTotalFrames           = 200000
+	ProfileMaxNodes                 = 20000
+	ProfileMaxViewNodes             = 5000
+	ProfileMaxViewSymbolBytes       = 256 << 10
+	ProfileMaxCoverageEntries       = 5000
+	ProfileFailureRecordInterval    = time.Minute
+	ProfileMaxChartPoints           = 120
+	ProfileChartMinStep             = time.Minute
+	ProfileMaxConcurrentUploads     = 4
+	ProfileMaxConcurrentQueries     = 4
+	ProfileMaxTrackedAccounts       = 10000
+	ProfileTransportTimeout         = 2 * time.Second
+	ProfileQueryTimeout             = 15 * time.Second
+	ProfileVsockPort                = 1040
+	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
+	ProfileHealthListen             = "127.0.0.1:9160"
+	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+)
+
+type ProfilingLimits struct {
+	Enabled          bool
+	RetentionDays    int
+	UploadsPerMinute int
+}
+
 const (
 	EventReplayPreviewPageDefault    = 50
 	EventReplayPreviewPageMax        = 100
@@ -958,6 +1079,7 @@ type EventStorageLimits struct {
 }
 
 type Limits struct {
+	Profiling       ProfilingLimits
 	EventStorage    EventStorageLimits
 	EventDeliveries EventDeliveryLimits
 	Operations      OperationPlanLimits
@@ -2830,6 +2952,7 @@ var planLimits = map[Plan]Limits{
 		// is touched; the 0/0/0/0 here is the fail-closed
 		// defence-in-depth value the store still reads.
 		DebugTelemetryEnabled:           false,
+		Profiling:                       ProfilingLimits{},
 		DebugTelemetryRetentionDays:     0,
 		DebugTelemetryRequestsPerMinute: 0,
 		DebugTelemetryDeploymentsPerApp: 0,
@@ -3242,6 +3365,7 @@ var planLimits = map[Plan]Limits{
 		// (spec §4.7).
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     3,
+		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60},
 		DebugTelemetryRequestsPerMinute: 1000,
 		DebugTelemetryDeploymentsPerApp: 10,
 		DebugTelemetrySpansPerTrace:     50,
@@ -3616,6 +3740,7 @@ var planLimits = map[Plan]Limits{
 		// for the Pro plan.
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     7,
+		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180},
 		DebugTelemetryRequestsPerMinute: 10000,
 		DebugTelemetryDeploymentsPerApp: 50,
 		DebugTelemetrySpansPerTrace:     200,
@@ -4023,6 +4148,7 @@ var planLimits = map[Plan]Limits{
 		// would blow up Prometheus cardinality).
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     14,
+		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600},
 		DebugTelemetryRequestsPerMinute: 50000,
 		DebugTelemetryDeploymentsPerApp: 200,
 		DebugTelemetrySpansPerTrace:     1000,

@@ -1868,6 +1868,8 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
+	case CodeProfileInvestigationLimit:
+		return http.StatusTooManyRequests
 	case CodeAutomationInvalid:
 		return http.StatusUnprocessableEntity
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
@@ -6461,3 +6463,8 @@ func ErrUDPListenerLimit(limit, observed int) *Problem {
 		"UDP listener reservation limit reached", "Delete an existing UDP listener before reserving another public port. Disabled listeners still reserve their ports.").
 		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/containers#udp-listeners")
 }
+
+// CodeProfileInvestigationLimit is the per-app saved metadata quota.
+const CodeProfileInvestigationLimit = "profile_investigation_limit"
+
+const CodeProfileGateBlocked = "profile_gate_blocked"

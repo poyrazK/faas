@@ -1,0 +1,6 @@
+{
+  "name": "gregale-runtime-profiling",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": { "@pyroscope/nodejs": "0.6.5" }
+}

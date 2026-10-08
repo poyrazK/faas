@@ -151,7 +151,7 @@ func UnitVmmd() daemonunit.Unit {
 		// vmmd owns the node-local snapshot fan-out worker, so it needs the
 		// lifecycle credential to publish snapshots as well as the shared
 		// read-only OCI registry configuration used by request-serving daemons.
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/imaged-storage.env -/etc/faas/runtime-bases.env -/etc/faas/otel.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/imaged-storage.env -/etc/faas/runtime-bases.env -/etc/faas/profiling.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "TMPDIR", Value: "/srv/fc/base"},
 			// Public half of the host X25519 age key — read by vmmd's
