@@ -262,9 +262,13 @@ const (
 
 // Workflow coordinator attempts use the positive PostgreSQL integer domain.
 const (
-	OperationWorkflowClaimsMaxPerRun   = 1<<31 - 1
-	OperationWorkflowStepAttemptsMax   = 1<<31 - 1
-	OperationWorkflowStepErrorMaxBytes = 4096
+	OperationWorkflowDispatchRetryDelay = time.Second
+	OperationWorkflowDefaultAttempts    = 3
+	OperationWorkflowRetryShiftMax      = 8
+	OperationWorkflowRetryBackoffMax    = 5 * time.Minute
+	OperationWorkflowClaimsMaxPerRun    = 1<<31 - 1
+	OperationWorkflowStepAttemptsMax    = 1<<31 - 1
+	OperationWorkflowStepErrorMaxBytes  = 4096
 )
 
 // Operations protocol limits apply before customer schemas are evaluated.

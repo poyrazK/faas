@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS customer_operation_job_executions (
 );
 ALTER TABLE customer_operation_events DROP CONSTRAINT IF EXISTS customer_operation_events_event_type_check;
 ALTER TABLE customer_operation_events ADD CONSTRAINT customer_operation_events_event_type_check
- CHECK(event_type IN ('accepted','running','progress','result_prepared','artifact_prepared','artifact_attached','succeeded','failed','cancellation_requested','cancelled','reconciliation_required','recovery_requested','delivery_changed','result_expired'));
+ CHECK(event_type IN ('accepted','running','progress','workflow_progress','result_prepared','artifact_prepared','artifact_attached','succeeded','failed','cancellation_requested','cancelled','reconciliation_required','recovery_requested','delivery_changed','result_expired'));
 -- +goose StatementEnd
 
 -- +goose Down
