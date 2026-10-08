@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,6 +40,9 @@ func decodeProfileCanarySignal(body []byte) (api.CanaryProfileSignal, error) {
 }
 
 func (s *PgStore) GetProfileCanaryCheck(ctx context.Context, accountID, appID string, key ProfileCanaryCheckKey) (api.CanaryProfileSignal, error) {
+	if key.CanaryStep < 0 || key.CanaryStep > math.MaxInt32 {
+		return api.CanaryProfileSignal{}, ErrInvalidArgument
+	}
 	body, err := sqlc.New().ReadProfileCanaryCheck(ctx, s.pool, sqlc.ReadProfileCanaryCheckParams{
 		DeploymentID: key.DeploymentID, AppID: appID, AccountID: accountID, CanaryStep: int32(key.CanaryStep),
 		CanaryStepStartedAt: profileCheckTime(key.CanaryStepStartedAt), PolicyRevision: key.PolicyRevision,

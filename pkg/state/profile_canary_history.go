@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,7 +34,7 @@ func decodeProfileCanaryHistoryCursor(value, deploymentID string) (profileCanary
 		return cursor, ErrInvalidArgument
 	}
 	id, err := uuid.Parse(cursor.DeploymentID)
-	if err != nil || id.String() != cursor.DeploymentID || cursor.DeploymentID != deploymentID || cursor.CanaryStep < 0 || cursor.CanaryStepStartedAt.IsZero() || cursor.PolicyRevision < 1 {
+	if err != nil || id.String() != cursor.DeploymentID || cursor.DeploymentID != deploymentID || cursor.CanaryStep < 0 || cursor.CanaryStep > math.MaxInt32 || cursor.CanaryStepStartedAt.IsZero() || cursor.PolicyRevision < 1 {
 		return profileCanaryHistoryCursor{}, ErrInvalidArgument
 	}
 	canonicalJSON, err := json.Marshal(cursor)

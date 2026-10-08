@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -39,6 +40,9 @@ func copyProfileCanarySignal(in api.CanaryProfileSignal) api.CanaryProfileSignal
 }
 
 func (m *MemStore) GetProfileCanaryCheck(_ context.Context, accountID, appID string, key ProfileCanaryCheckKey) (api.CanaryProfileSignal, error) {
+	if key.CanaryStep < 0 || key.CanaryStep > math.MaxInt32 {
+		return api.CanaryProfileSignal{}, ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	row, ok := m.profileCanaryChecks[profileCanaryCheckMapKey(key)]
