@@ -59,12 +59,11 @@ func (s *server) objectBucketTags(w http.ResponseWriter, r *http.Request, acct s
 
 func (s *server) objectTaggingService(b state.ObjectBucket, p objectstorage.Provider, key string) objectstorage.TaggingService {
 	refs, _ := s.store.(state.ObjectVersionReferenceStore)
-	metrics, _ := s.store.(state.ObjectStorageProviderUsageStore)
 	return objectstorage.TaggingService{References: refs, Provider: p, BeforeRequest: func(ctx context.Context) error {
 		if err := s.admitObjectMultipartPartURL(ctx, b, key); err != nil {
 			return err
 		}
-		return objectstorage.VersioningRequestRecorder(metrics, b.ID)(ctx)
+		return s.customerObjectRequestRecorder(b)(ctx)
 	}}
 }
 

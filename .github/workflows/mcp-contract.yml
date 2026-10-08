@@ -37,7 +37,7 @@ permissions:
 jobs:
   starter:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16
@@ -60,7 +60,7 @@ jobs:
           cache: npm
           cache-dependency-path: cmd/gregale/templates/mcp-node/package-lock.json
       - name: Portable MCP and secret-scanner contracts
-        run: go test -race -p=1 ./pkg/mcphosting ./pkg/gateway ./pkg/api ./pkg/state ./pkg/secretscan ./pkg/apihostingscorecard ./cmd/gregale ./cmd/apid -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
+        run: go test -race -v -p=1 ./pkg/mcphosting ./pkg/gateway ./pkg/api ./pkg/state ./pkg/secretscan ./pkg/apihostingscorecard ./cmd/gregale -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
       - name: Validate the release evidence gate
         run: python3 -m unittest discover -s scripts/ci -p test_mcp_qualification_check.py
       - name: Gate supplied native and provider qualification evidence
@@ -99,3 +99,25 @@ jobs:
           "$RUNNER_TEMP/gregale" mcp lock --url http://127.0.0.1:18808/mcp --out "$RUNNER_TEMP/mcp-candidate.json" --json
           "$RUNNER_TEMP/gregale" mcp diff --before "$RUNNER_TEMP/mcp-baseline.json" --after "$RUNNER_TEMP/mcp-candidate.json" --check --json
           "$RUNNER_TEMP/gregale" mcp lock --url http://127.0.0.1:18808/mcp --legacy --out "$RUNNER_TEMP/mcp-legacy.json" --json
+
+  apid-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mcp
+          POSTGRES_DB: mcp
+          POSTGRES_PASSWORD: mcp-ci-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U mcp"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Portable API server MCP contracts
+        run: go test -race -v -p=1 ./cmd/apid -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1

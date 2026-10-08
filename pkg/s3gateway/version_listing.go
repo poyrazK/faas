@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -78,7 +77,7 @@ func (h *Handler) listObjectVersions(w http.ResponseWriter, r *http.Request, req
 			return
 		}
 	}
-	result, err := h.customerVersionPage(r.Context(), req, st, q, input.Limit, page)
+	result, err := h.customerVersionPage(r.Context(), req, st, q, input, page)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, "")
 		return
@@ -98,51 +97,24 @@ func versionListInput(ctx context.Context, req requestContext, st state.ObjectVe
 	return input, err
 }
 
-func (h *Handler) customerVersionPage(parent context.Context, req requestContext, st state.ObjectVersionReferenceStore, q url.Values, limit int32, page objectstorage.ObjectVersionListPage) (listVersionsResult, error) {
-	result := listVersionsResult{XMLNS: s3XMLNamespace, Name: req.bucket.Name, Prefix: q.Get("prefix"), Delimiter: q.Get("delimiter"), KeyMarker: q.Get("key-marker"), VersionMarker: q.Get("version-id-marker"), EncodingType: q.Get("encoding-type"), MaxKeys: limit, IsTruncated: page.NextKeyMarker != "", NextKeyMarker: page.NextKeyMarker}
-	if len(page.Items)+len(page.CommonPrefixes) > int(limit) || page.NextProviderVersionMarker != "" && page.NextKeyMarker == "" {
-		return result, objectstorage.ErrUnavailable
-	}
-	items := make([]state.ObjectVersionIdentity, 0, len(page.Items)+1)
-	seen := map[string]bool{}
-	for _, v := range page.Items {
-		items = append(items, state.ObjectVersionIdentity{Key: v.Key, ProviderVersionID: v.ProviderVersionID, DeleteMarker: v.DeleteMarker})
-		seen[v.Key+"\x00"+v.ProviderVersionID] = true
-	}
-	if page.NextProviderVersionMarker != "" && !seen[page.NextKeyMarker+"\x00"+page.NextProviderVersionMarker] {
-		items = append(items, state.ObjectVersionIdentity{Key: page.NextKeyMarker, ProviderVersionID: page.NextProviderVersionMarker})
-	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), api.ObjectUploadSettlementTimeout)
-	defer cancel()
-	refs, err := st.RecordObjectVersions(ctx, req.bucket.AccountID, req.bucket.ID, items)
+func (h *Handler) customerVersionPage(parent context.Context, req requestContext, st state.ObjectVersionReferenceStore, q url.Values, input objectstorage.ObjectVersionListRequest, page objectstorage.ObjectVersionListPage) (listVersionsResult, error) {
+	public, err := objectstorage.PublicObjectVersionPage(parent, st, req.bucket, input, page)
 	if err != nil {
-		return result, err
+		return listVersionsResult{}, err
 	}
-	if len(refs) != len(items) {
-		return result, objectstorage.ErrUnavailable
-	}
-	ids := map[string]string{}
-	for i, v := range refs {
-		if !validReturnedVersionIdentity(v, items[i].Key, items[i].ProviderVersionID) {
-			return result, objectstorage.ErrUnavailable
-		}
-		ids[v.Key+"\x00"+v.ProviderVersionID] = v.ID
-	}
-	if len(ids) != len(items) {
-		return result, objectstorage.ErrUnavailable
-	}
-	for _, v := range page.Items {
-		item := listedVersion{Key: v.Key, VersionID: ids[v.Key+"\x00"+v.ProviderVersionID], IsLatest: v.IsLatest, LastModified: v.LastModified.UTC().Format(time.RFC3339Nano), ETag: v.ETag}
+	result := listVersionsResult{XMLNS: s3XMLNamespace, Name: req.bucket.Name, Prefix: q.Get("prefix"), Delimiter: q.Get("delimiter"), KeyMarker: q.Get("key-marker"), VersionMarker: q.Get("version-id-marker"), EncodingType: q.Get("encoding-type"), MaxKeys: input.Limit, IsTruncated: public.NextKeyMarker != "", NextKeyMarker: public.NextKeyMarker, NextVersionMarker: public.NextVersionIDMarker}
+	for _, v := range public.Items {
+		item := listedVersion{Key: v.Key, VersionID: v.VersionID, IsLatest: v.IsLatest, LastModified: v.LastModified.UTC().Format(time.RFC3339Nano), ETag: v.ETag}
 		if v.DeleteMarker {
 			result.DeleteMarkers = append(result.DeleteMarkers, item)
 		} else {
-			size := v.Size
+			size := v.SizeBytes
 			item.Size = &size
 			item.StorageClass = v.StorageClass
 			result.Versions = append(result.Versions, item)
 		}
 	}
-	result.NextVersionMarker = ids[page.NextKeyMarker+"\x00"+page.NextProviderVersionMarker]
+
 	encoded := q.Get("encoding-type") == "url"
 	result.Prefix, result.Delimiter, result.KeyMarker, result.NextKeyMarker = encodeListText(result.Prefix, encoded), encodeListText(result.Delimiter, encoded), encodeListText(result.KeyMarker, encoded), encodeListText(result.NextKeyMarker, encoded)
 	for i := range result.Versions {
@@ -151,7 +123,7 @@ func (h *Handler) customerVersionPage(parent context.Context, req requestContext
 	for i := range result.DeleteMarkers {
 		result.DeleteMarkers[i].Key = encodeListText(result.DeleteMarkers[i].Key, encoded)
 	}
-	for _, p := range page.CommonPrefixes {
+	for _, p := range public.CommonPrefixes {
 		result.CommonPrefixes = append(result.CommonPrefixes, commonPrefix{Prefix: encodeListText(p, encoded)})
 	}
 	return result, nil
