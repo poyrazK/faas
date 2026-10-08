@@ -296,6 +296,12 @@ func cmdDev(args []string) int {
 	if len(args) > 0 && args[0] == "history" {
 		return cmdDevHistory(args[1:])
 	}
+	if len(args) > 0 && args[0] == "info" {
+		return cmdDevInfo(args[1:])
+	}
+	if len(args) > 0 && args[0] == "trigger" {
+		return cmdDevTrigger(args[1:])
+	}
 	fs := newFlagSet("dev", flag.ContinueOnError)
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
@@ -398,19 +404,9 @@ func cmdDev(args []string) int {
 	if *withPostgres && serviceOverrideContainsKey(serviceOverridePairs, "DATABASE_URL") {
 		return printErr("Invalid flags", fmt.Errorf("--postgres cannot be combined with DATABASE_URL in --service-override-file"))
 	}
-	project := *name
-	if project == "" {
-		if linkedErr == nil {
-			if linkedContext.App == "" {
-				return printErr("No app selected", fmt.Errorf("linked project %q has multiple or no workloads; pass --name or relink with --app <slug>", linkedContext.Project))
-			}
-			project = linkedContext.App
-		} else {
-			project = sanitizeSlug(filepath.Base(sourceDir))
-		}
-	}
-	if project != sanitizeSlug(project) || len(project) < 3 || len(project) > 40 {
-		return printErr("Invalid --name", fmt.Errorf("use 3–40 lowercase letters, digits, and hyphens"))
+	project, targetErr := selectDevProject(*name, sourceDir, linkedContext, linkedErr)
+	if targetErr != nil {
+		return targetErr.print()
 	}
 	developerID, err := loadOrCreateDeveloperID()
 	if err != nil {
@@ -735,46 +731,18 @@ func cmdDevHistory(args []string) int {
 		PrintUsage(osStderr, "usage: gregale dev history [--path DIR] [--name PROJECT] [--limit N]", "dev")
 		return 1
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return printErr("Could not read current directory", err)
+	target, targetErr := resolveDevTarget(*sourcePath, *name)
+	if targetErr != nil {
+		return targetErr.print()
 	}
-	sourceDir, err := resolveDeploySourceDir(cwd, *sourcePath)
-	if err != nil {
-		return printErr("Invalid developer source", err)
-	}
-	project := *name
-	if project == "" {
-		linkedContext, _, linkedErr := linkedProjectContext(cwd)
-		if linkedErr == nil {
-			if linkedContext.App == "" {
-				return printErr("No app selected", fmt.Errorf("linked project %q has multiple or no workloads; pass --name or relink with --app <slug>", linkedContext.Project))
-			}
-			project = linkedContext.App
-		} else if !errors.Is(linkedErr, errProjectContextNotFound) {
-			return printErr("Could not read local project context", linkedErr)
-		} else {
-			project = sanitizeSlug(filepath.Base(sourceDir))
-		}
-	}
-	if project != sanitizeSlug(project) || len(project) < 3 || len(project) > 40 {
-		return printErr("Invalid --name", fmt.Errorf("use 3–40 lowercase letters, digits, and hyphens"))
-	}
-	developerID, err := loadOrCreateDeveloperID()
-	if err != nil {
-		return printErr("Could not load local developer identity", err)
-	}
-	workspaceID, err := deriveDevWorkspaceID(developerID, sourceDir)
-	if err != nil {
-		return printErr("Could not identify developer workspace", err)
-	}
+	project := target.Project
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	history, err := client.GetDevSyncHistory(ctx, project, workspaceID, *limit)
+	history, err := client.GetDevSyncHistory(ctx, project, target.WorkspaceID, *limit)
 	if err != nil {
 		return printErr("Could not load developer sync history", err)
 	}

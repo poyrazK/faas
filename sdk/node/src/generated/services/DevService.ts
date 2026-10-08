@@ -247,6 +247,45 @@ export class DevService {
     });
   }
   /**
+   * Inspect a remote developer environment.
+   * Returns the stable URL, app, lease expiry, and safe PostgreSQL binding state of one developer environment. Unlike the upsert, this read never renews the lease or provisions resources.
+   * @returns DevSessionResponse Developer environment.
+   * @throws ApiError
+   */
+  public static getDevSession({
+    project,
+    workspaceId,
+  }: {
+    /**
+     * Stable local project label used to derive the developer URL.
+     */
+    project: string,
+    /**
+     * Opaque local workspace identity returned by the CLI derivation. Omit only to target a legacy session.
+     */
+    workspaceId?: string,
+  }): CancelablePromise<DevSessionResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dev/sessions/{project}',
+      path: {
+        'project': project,
+      },
+      query: {
+        'workspace_id': workspaceId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
    * Tear down a remote developer environment.
    * @returns void
    * @throws ApiError

@@ -280,3 +280,68 @@ func TestDevSessionRefreshAppliesRequestedLease(t *testing.T) {
 		t.Fatalf("stored lease = %v, want about 7 days", row.PreviewExpiresAt)
 	}
 }
+
+func TestDevSessionGetIsReadOnly(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	const (
+		project   = "gregale-api"
+		workspace = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+	created := e.do(t, http.MethodPut, "/v1/dev/sessions/"+project, api.UpsertDevSessionRequest{WorkspaceID: workspace}, nil)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status = %d: %s", created.Code, created.Body.String())
+	}
+	var session api.DevSessionResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	// Shorten the lease so a renewal by the GET would be visible.
+	expiry := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	if _, err := e.store.RefreshDevSession(t.Context(), session.App.ID, expiry); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/dev/sessions/"+project+"?workspace_id="+workspace, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var got api.DevSessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.App.Slug != session.App.Slug || !got.ExpiresAt.Equal(expiry) || got.Postgres != nil {
+		t.Fatalf("get = slug %q expires %s postgres %+v; want %q %s nil", got.App.Slug, got.ExpiresAt, got.Postgres, session.App.Slug, expiry)
+	}
+	row, err := e.store.AppBySlug(t.Context(), session.App.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.PreviewExpiresAt == nil || !row.PreviewExpiresAt.Equal(expiry) {
+		t.Fatalf("GET renewed the lease: stored expiry = %v, want %s", row.PreviewExpiresAt, expiry)
+	}
+}
+
+func TestDevSessionGetRejectsUnknownOrInvalidSelection(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	created := e.do(t, http.MethodPut, "/v1/dev/sessions/gregale-api", api.UpsertDevSessionRequest{WorkspaceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, nil)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status = %d: %s", created.Code, created.Body.String())
+	}
+	for _, test := range []struct {
+		name, path string
+		want       int
+	}{
+		{"other workspace", "/v1/dev/sessions/gregale-api?workspace_id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", http.StatusNotFound},
+		{"legacy identity", "/v1/dev/sessions/gregale-api", http.StatusNotFound},
+		{"other project", "/v1/dev/sessions/other-api?workspace_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", http.StatusNotFound},
+		{"invalid workspace", "/v1/dev/sessions/gregale-api?workspace_id=NOT-HEX", http.StatusBadRequest},
+		{"invalid project", "/v1/dev/sessions/A?workspace_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rec := e.do(t, http.MethodGet, test.path, nil, nil)
+			if rec.Code != test.want {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, test.want, rec.Body.String())
+			}
+		})
+	}
+}

@@ -2011,6 +2011,22 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
 				{Name: "limit", Short: "number of recent syncs to show", Value: "N"},
 			}},
+			{Name: "info", Short: "show the developer environment URL, app slug, lease, and database without renewing it", Flags: []cliFlag{
+				{Name: "path", Short: "source directory", Value: "DIR"},
+				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
+			}},
+			{Name: "trigger", Short: "invoke the developer app, fire a declared cron route, or schedule a delayed task", Examples: []string{
+				"gregale dev trigger invoke --method POST --path /orders --payload @order.json",
+				"gregale dev trigger cron /jobs/nightly",
+				"gregale dev trigger delayed-task --delay 5m --path /reminders",
+			}, Flags: []cliFlag{
+				{Name: "path", Short: "source directory (before the verb)", Value: "DIR"},
+				{Name: "name", Short: "developer-session project name (before the verb)", Value: "PROJECT"},
+			}, Subcommands: []cliSub{
+				{Name: "invoke", Short: "run `gregale invoke` against the developer app"},
+				{Name: "cron", Short: "POST to a cron route declared for this app in gregale.yaml", Positionals: []string{"[ROUTE]"}},
+				{Name: "delayed-task", Short: "run `gregale delayed-task add` against the developer app"},
+			}},
 			{Name: "setup", Short: "preflight a project and prepare the first developer environment", Flags: []cliFlag{
 				{Name: "path", Short: "source directory", Value: "DIR"},
 				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},

@@ -1533,6 +1533,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/dev/bridges/{id}/status", s.proxyDevBridge)
 	mux.HandleFunc("/v1/dev/bridges/{id}/traffic/{path...}", s.proxyDevBridge)
 	mux.HandleFunc("/v1/dev/bridges/{id}/dependencies/{app}/{path...}", s.proxyDevBridge)
+	mux.HandleFunc("GET /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDevSession))))
 	mux.HandleFunc("DELETE /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.destroyDevSession))))
 	mux.HandleFunc("PUT /v1/dev/test-runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.registerScenarioTest))))
 	mux.HandleFunc("PUT /v1/dev/test-runs/{run_id}/chaos", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.injectScenarioTestChaos))))

@@ -44,6 +44,10 @@ gregale dev history            # inspect recent edit-to-live timings and SLO gui
 gregale dev setup              # preflight a project and print the exact next command
 gregale dev setup --start      # preflight, provision, and start the developer loop
 gregale dev history --limit 50 # show a larger bounded history
+gregale dev info               # show the URL, app slug, lease, and database without renewing
+gregale dev trigger invoke --path /orders  # call the developer app through the invoke API
+gregale dev trigger cron /jobs/nightly     # fire a cron route declared in gregale.yaml
+gregale dev trigger delayed-task --delay 5m --path /reminders # schedule a delayed task
 gregale dev --no-logs          # keep the watcher quiet for scripts
 gregale dev --open             # open the verified dev URL after the first live sync
 gregale dev --env-file .env.dev # opt in to syncing local config as secrets
@@ -84,6 +88,32 @@ edit-to-live timing, and a phase-level hint when the latest sync regresses.
 `--path` or `--name` to select a workspace and `--json` for the summary and
 receipt list as one stable object. History is keyed by deployment ID, so a
 retry cannot double-count a sync.
+
+`gregale dev info` shows the selected environment's stable URL, the backing
+`dev-*` app slug that every other `gregale` command accepts, the lease expiry,
+and the safe managed PostgreSQL state. It reads
+`GET /v1/dev/sessions/{project}` and, unlike starting `gregale dev`, never
+renews the lease or provisions anything. `--json` emits the session object.
+
+`gregale dev trigger` exercises request-driven and async paths against the
+developer app without copying its slug. Put `--path` and `--name` (source
+selection) before the verb; everything after the verb belongs to the
+delegated command, so `invoke --path` still means the URL path:
+
+- `gregale dev trigger invoke [invoke flags]` runs `gregale invoke` against
+  the developer app, including `--async`.
+- `gregale dev trigger cron [ROUTE]` fires a cron trigger declared for this
+  app in `gregale.yaml`. Manifest crons are keyed to the production app slug,
+  so they never run on a schedule in a developer environment. The trigger
+  sends the request a scheduled cron would send: a body-less `POST` to the
+  route, synchronously through the invoke API. `ROUTE` is optional when the
+  app declares exactly one cron route.
+- `gregale dev trigger delayed-task [delayed-task add flags]` runs
+  `gregale delayed-task add` against the developer app.
+
+A stray app slug or `--app` is rejected rather than silently retargeting
+another app. If no environment exists for the source directory (or its lease
+expired), the commands say so and point to `gregale dev`.
 
 `gregale dev setup` is the first-run preflight. It is local and read-only: it
 uses the same source-shape detector as `gregale dev`, validates

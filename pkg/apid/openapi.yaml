@@ -10644,6 +10644,27 @@ paths:
         '403': { $ref: '#/components/responses/PlanLimit' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+    get:
+      tags: [dev]
+      operationId: getDevSession
+      summary: Inspect a remote developer environment.
+      description: Returns the stable URL, app, lease expiry, and safe PostgreSQL binding state of one developer environment. Unlike the upsert, this read never renews the lease or provisions resources.
+      parameters:
+        - name: workspace_id
+          in: query
+          required: false
+          description: Opaque local workspace identity returned by the CLI derivation. Omit only to target a legacy session.
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+      responses:
+        '200':
+          description: Developer environment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevSessionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     delete:
       tags: [dev]
       operationId: destroyDevSession
