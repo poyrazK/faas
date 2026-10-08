@@ -65,7 +65,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		return session, nil
 	}
-	relay := devbridge.NewRelay(api.DevBridgeMaxConcurrentRequests)
+	relay := devbridge.NewRelay(api.DevBridgeMaxConcurrentRequests).WithUpgradeLimits(devbridge.UpgradeLimits{
+		MaxConnections: api.DevBridgeMaxUpgradedConnections,
+		IdleTimeout:    api.DevBridgeUpgradeIdleTimeout,
+		MaxBytes:       api.DevBridgeUpgradeMaxBytes,
+	})
 	dependencyGateway := os.Getenv("FAAS_DEV_BRIDGE_GATEWAY_URL")
 	if dependencyGateway == "" {
 		dependencyGateway = "http://127.0.0.1:8080"
