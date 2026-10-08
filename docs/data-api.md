@@ -5,6 +5,13 @@ generate TypeScript application types from the same schema. This is a managed
 PostgreSQL preview: your account and region must already be enabled for managed
 databases, `data_api` bindings, port 5432 egress, and app tasks.
 
+For a complete application starting point, run
+`gregale init --template data-api-starter --path notes`. The
+[starter README](../cmd/gregale/templates/data-api-starter/README.md) covers
+versioned release migrations, two-user RLS, SDK tarball installation, a typed
+client, `data-api sync` and application CI. The migration app and generated API
+remain ordinary, separately deployed apps.
+
 ## Create an API
 
 Start with a ready managed database. Use your application's identity provider

@@ -1,0 +1,133 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import net from 'node:net'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { createRequire } from 'node:module'
+import { readFile, writeFile, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { command } from './staging/canary.mjs'
+
+const enabled = Boolean(process.env.DATA_API_TEST_DATABASE_URL && process.env.DATA_API_POSTGREST_BIN && process.env.DATA_API_STARTER_DIR)
+const runtime = process.env.DATA_API_RUNTIME_DIR ? pathToFileURL(process.env.DATA_API_RUNTIME_DIR + '/') : new URL('../../cmd/gregale/templates/data-api/', import.meta.url)
+const runtimeRequire = createRequire(new URL('package.json', runtime))
+const pg = runtimeRequire('pg')
+const { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } = await import(pathToFileURL(runtimeRequire.resolve('jose')))
+const { runtimeConfig } = await import(new URL('config.mjs', runtime))
+const { createServer, tokenVerifier } = await import(new URL('server.mjs', runtime))
+const { inspect, generate } = await import(new URL('types.mjs', runtime))
+
+async function port() {
+  const server = net.createServer()
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const value = server.address().port
+  await new Promise(resolve => server.close(resolve))
+  return value
+}
+
+test('starter migrations, generated contract, packed client and two-user RLS', { skip: !enabled, timeout: 60000 }, async t => {
+  const root = process.env.DATA_API_STARTER_DIR
+  const { migrate } = await import(pathToFileURL(join(root, 'migrations/migrate.mjs')))
+  const suffix = `${process.pid}_${Date.now()}`
+  const database = `starter_${suffix}`
+  const schemaOwner = `starter_owner_${suffix}`
+  const migrator = `starter_migration_${suffix}`
+  const role = `starter_api_${suffix}`
+  const admin = new pg.Client({ connectionString: process.env.DATA_API_TEST_DATABASE_URL })
+  await admin.connect()
+  let owner, child, gateway
+  t.after(async () => {
+    if (gateway) { gateway.closeAllConnections(); await new Promise(resolve => gateway.close(resolve)) }
+    if (child && child.exitCode === null) { child.kill(); await once(child, 'exit') }
+    await owner?.end()
+    await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`)
+    for (const name of [migrator, role, schemaOwner]) await admin.query(`DROP ROLE IF EXISTS "${name}"`)
+    await admin.end()
+  })
+  await admin.query(`CREATE ROLE "${schemaOwner}" NOLOGIN NOBYPASSRLS;
+    CREATE ROLE "${migrator}" LOGIN NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD 'test-only';
+    GRANT "${schemaOwner}" TO "${migrator}";
+    ALTER ROLE "${migrator}" SET role TO "${schemaOwner}";
+    CREATE ROLE "${role}" LOGIN NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD 'test-only';`)
+  await admin.query(`CREATE DATABASE "${database}"`)
+  const ownerURL = new URL(process.env.DATA_API_TEST_DATABASE_URL); ownerURL.pathname = `/${database}`
+  owner = new pg.Client({ connectionString: ownerURL.toString() }); await owner.connect()
+  await owner.query(`REVOKE ALL ON DATABASE "${database}" FROM PUBLIC;
+    GRANT CONNECT ON DATABASE "${database}" TO "${migrator}", "${role}";
+    GRANT CONNECT, CREATE ON DATABASE "${database}" TO "${schemaOwner}";
+    REVOKE ALL ON SCHEMA public FROM PUBLIC;
+    SET ROLE "${schemaOwner}";
+    CREATE SCHEMA api;
+    GRANT USAGE ON SCHEMA api TO "${role}";
+    ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "${role}";
+    ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT USAGE, SELECT ON SEQUENCES TO "${role}";`)
+  const migrationURL = new URL(ownerURL); migrationURL.username = migrator; migrationURL.password = 'test-only'
+  const loginURL = new URL(ownerURL); loginURL.username = role; loginURL.password = 'test-only'
+  // Exercise exactly the stable-owner migration session and restricted API role.
+  await migrate(migrationURL.toString())
+  await migrate(migrationURL.toString())
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 2)
+  const firstSQL = join(root, 'migrations/sql/0001_notes.sql')
+  const originalSQL = await readFile(firstSQL, 'utf8')
+  await writeFile(firstSQL, originalSQL + '\n-- changed after deployment\n')
+  try { await assert.rejects(migrate(migrationURL.toString()), /changed or removed/) }
+  finally { await writeFile(firstSQL, originalSQL) }
+  const failedSQL = join(root, 'migrations/sql/0003_failure.sql')
+  await writeFile(failedSQL, 'ALTER TABLE api.notes ADD COLUMN rolled_back text; SELECT 1/0;')
+  try { await assert.rejects(migrate(migrationURL.toString())) }
+  finally { await rm(failedSQL) }
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 2)
+  assert.equal((await owner.query("SELECT count(*)::integer AS count FROM information_schema.columns WHERE table_schema='api' AND column_name='rolled_back'")).rows[0].count, 0)
+  const types = generate(await inspect(loginURL.toString(), ['api']))
+  assert.doesNotMatch(types, /gregale_migrations|test-only|starter_api/)
+  const fixture = new URL('../../cmd/gregale/templates/data-api-starter/client/src/database.types.ts', import.meta.url)
+  if (process.env.DATA_API_STARTER_UPDATE_FIXTURE === '1') {
+    await writeFile(fixture, types)
+    await writeFile(join(root, 'client/src/database.types.ts'), types)
+  } else {
+    assert.equal(types, await readFile(fixture, 'utf8'), 'starter types must match its migrations')
+  }
+  await command('npm', ['run', 'typecheck'], { cwd: join(root, 'client'), env: process.env })
+  await command('npm', ['run', 'build'], { cwd: join(root, 'client'), env: process.env })
+  const restricted = new pg.Client({ connectionString: loginURL.toString() }); await restricted.connect()
+  try {
+    await assert.rejects(restricted.query('SELECT * FROM gregale_migrations.applied'), error => error.code === '42501')
+    await assert.rejects(restricted.query('ALTER TABLE api.notes ADD COLUMN forbidden integer'), error => error.code === '42501')
+  } finally { await restricted.end() }
+  const config = runtimeConfig({ DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
+  const upstream = await port(), ready = await port()
+  child = spawn(process.env.DATA_API_POSTGREST_BIN, [], { env: { ...process.env, ...config.postgrestEnv, PGRST_SERVER_PORT: String(upstream), PGRST_ADMIN_SERVER_PORT: String(ready) }, stdio: ['ignore', 'pipe', 'pipe'] })
+  let logs = ''
+  child.stdout.on('data', value => { logs += value }); child.stderr.on('data', value => { logs += value })
+  const { privateKey, publicKey } = await generateKeyPair('ES256')
+  const jwk = await exportJWK(publicKey)
+  gateway = createServer(config, tokenVerifier(config.auth, createLocalJWKSet({ keys: [jwk] })), upstream, ready)
+  await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
+  const url = `http://127.0.0.1:${gateway.address().port}`
+  let available = false
+  for (let i = 0; i < 100; i++) {
+    if ((await fetch(url + '/healthz')).status === 200) { available = true; break }
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  assert.equal(available, true, logs)
+  const sign = (subject, audience = 'notes') => new SignJWT({ sub: subject, role: 'postgres' }).setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience(audience).setExpirationTime('5m').sign(privateKey)
+  const userA = { subject: 'identity|alice', token: await sign('identity|alice') }
+  const userB = { subject: 'identity|bob', token: await sign('identity|bob') }
+  const { verifyAuthorization } = await import(pathToFileURL(join(root, 'client/test/authorization.mjs')))
+  await verifyAuthorization({ url, userA, userB })
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM api.notes')).rows[0].count, 0)
+  await assert.rejects(verifyAuthorization({ url, userA, userB: userA }), /subjects_must_differ/)
+  const publicRequest = token => fetch(url + '/rest/v1/notes', { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+  assert.equal((await publicRequest()).status, 401)
+  assert.equal((await publicRequest(await sign(userA.subject, 'wrong'))).status, 401)
+  // Prove the shipped authorization check catches a policy regression.
+  await owner.query('ALTER TABLE api.notes DISABLE ROW LEVEL SECURITY')
+  await assert.rejects(verifyAuthorization({ url, userA, userB }), /cross_subject_read_allowed/)
+  await owner.query('ALTER TABLE api.notes ENABLE ROW LEVEL SECURITY')
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM api.notes')).rows[0].count, 0)
+  // Schema drift changes the contract; regenerating before client compilation
+  // is required, while the committed fixture remains untouched.
+  await owner.query('ALTER TABLE api.notes ADD COLUMN description text')
+  assert.notEqual(generate(await inspect(loginURL.toString(), ['api'])), types)
+})

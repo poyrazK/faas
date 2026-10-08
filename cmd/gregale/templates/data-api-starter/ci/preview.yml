@@ -1,0 +1,50 @@
+name: Data API preview contract
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: data-api-preview-contract
+  cancel-in-progress: false
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: data-api-preview
+    steps:
+      - name: Require the trusted main branch
+        run: test "$GITHUB_REF" = refs/heads/main
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - run: npm ci --prefix client --ignore-scripts --no-audit --no-fund
+      - run: npm run typecheck --prefix client
+      - run: npm test --prefix client
+      - name: Install the pinned Gregale CLI
+        env:
+          CLI_VERSION: ${{ vars.GREGALE_CLI_VERSION }}
+        run: |
+          test -n "$CLI_VERSION" || { echo 'Set GREGALE_CLI_VERSION to a release with Data API commands.'; exit 1; }
+          curl -fsSL https://get.gregale.dev -o "$RUNNER_TEMP/install-gregale.sh"
+          sh "$RUNNER_TEMP/install-gregale.sh" --version "$CLI_VERSION" --dir "$RUNNER_TEMP/gregale-bin"
+      - name: Detect database type drift without migrations or refresh
+        env:
+          FAAS_API: ${{ vars.GREGALE_API }}
+          FAAS_TOKEN: ${{ secrets.GREGALE_OWNER_TOKEN }}
+          DATA_API_APP: ${{ vars.DATA_API_APP }}
+        run: |
+          test -n "$FAAS_API" && test -n "$FAAS_TOKEN" && test -n "$DATA_API_APP" || {
+            echo 'Configure the preview API, owner token and Data API app.'; exit 1;
+          }
+          "$RUNNER_TEMP/gregale-bin/gregale" data-api types "$DATA_API_APP" --output client/src/database.types.ts --check
+      - name: Test two-user authorization with application JWTs
+        env:
+          DATA_API_URL: ${{ vars.DATA_API_URL }}
+          DATA_API_USER_A_SUBJECT: ${{ vars.DATA_API_USER_A_SUBJECT }}
+          DATA_API_USER_B_SUBJECT: ${{ vars.DATA_API_USER_B_SUBJECT }}
+          DATA_API_USER_A_TOKEN: ${{ secrets.DATA_API_USER_A_TOKEN }}
+          DATA_API_USER_B_TOKEN: ${{ secrets.DATA_API_USER_B_TOKEN }}
+        run: npm run test:authorization --prefix client

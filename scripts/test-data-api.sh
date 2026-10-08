@@ -17,7 +17,16 @@ npm ci --prefix "$runtime_dir" --ignore-scripts
 npm test --prefix "$runtime_dir"
 npm ci --prefix sdk/data --ignore-scripts
 npm test --prefix sdk/data
+starter_dir="$runtime_dir/starter"
+cp -R cmd/gregale/templates/data-api-starter "$starter_dir"
+npm ci --prefix "$starter_dir" --ignore-scripts
+package_file="$(cd sdk/data && npm pack --silent --pack-destination "$starter_dir")"
+node "$starter_dir/tools/install-sdk.mjs" "$starter_dir/$package_file"
+npm test --prefix "$starter_dir"
+node --test tests/data-api/install-sdk.test.mjs
 node --test tests/data-api/staging/canary.test.mjs
 if [[ "${1:-}" == "--integration" ]]; then
-  DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/integration.test.mjs
+  DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" node --test tests/data-api/integration.test.mjs tests/data-api/starter.test.mjs
 fi
+npm run typecheck --prefix "$starter_dir/client"
+npm test --prefix "$starter_dir/client"

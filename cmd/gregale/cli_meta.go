@@ -234,7 +234,7 @@ type cliFlag struct {
 
 // templateNames13 is the canonical template catalog. The historical name is
 // retained because tests and completion metadata refer to this package-local
-// symbol; it now contains all 19 embedded templates. Mirrors
+// symbol; it contains all embedded templates. Mirrors
 // cmd/gregale/templates/embed.go::Names verbatim; the ClosedSet literals
 // in deploy/init reference this const so goconst stops flagging the
 // duplicated 13-name lists. Kept in sync with the embed FS by the
@@ -272,6 +272,7 @@ var templateNames13 = []string{
 	"customer-platform",
 	"mcp-node",
 	"data-api",
+	"data-api-starter",
 }
 
 // cliCommands is the manifest. One entry per top-level command in

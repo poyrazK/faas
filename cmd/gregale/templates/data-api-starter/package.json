@@ -1,0 +1,9 @@
+{
+  "name": "gregale-data-api-starter-migrations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22"},
+  "scripts": {"start": "node server.mjs", "migrate": "node migrations/migrate.mjs", "test": "node --test test/*.test.mjs"},
+  "dependencies": {"pg": "8.23.1"}
+}

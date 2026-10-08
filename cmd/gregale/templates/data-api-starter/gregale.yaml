@@ -1,0 +1,6 @@
+hosting:
+  start: npm start
+  port: 8080
+  health: /healthz
+release:
+  command: node migrations/migrate.mjs

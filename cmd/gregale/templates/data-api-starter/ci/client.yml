@@ -1,0 +1,30 @@
+name: Data API client
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - name: Verify SDK artifact is present
+        run: |
+          test -f client/vendor/gregale-data.tgz || {
+            echo 'Install and commit the approved SDK tarball with tools/install-sdk.mjs before running client CI.'
+            exit 1
+          }
+      - run: npm ci --prefix client --ignore-scripts --no-audit --no-fund
+      - run: npm run typecheck --prefix client
+      - run: npm test --prefix client
