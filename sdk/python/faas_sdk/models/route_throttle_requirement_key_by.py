@@ -1,10 +1,12 @@
 from typing import Literal
 
-RouteThrottleRequirementKeyBy = Literal["api_key", "consumer_id", "jwt_subject", "none"]
+RouteThrottleRequirementKeyBy = Literal["api_key", "consumer_id", "country", "ip", "jwt_subject", "none"]
 
 ROUTE_THROTTLE_REQUIREMENT_KEY_BY_VALUES: set[RouteThrottleRequirementKeyBy] = {
     "api_key",
     "consumer_id",
+    "country",
+    "ip",
     "jwt_subject",
     "none",
 }

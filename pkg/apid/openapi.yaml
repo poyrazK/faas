@@ -33071,7 +33071,7 @@ components:
       additionalProperties: false
       required: [key_by]
       properties:
-        key_by: { type: string, enum: [none, api_key, consumer_id, jwt_subject] }
+        key_by: { type: string, enum: [none, api_key, consumer_id, jwt_subject, country, ip] }
         max_rps: { type: number, exclusiveMinimum: 0 }
         missing_key_policy: { type: string, enum: [shared, reject] }
     RouteBudgetRequirement:
