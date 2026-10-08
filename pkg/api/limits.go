@@ -7934,11 +7934,14 @@ func BillableRAMMBWithSidecars(ramMB int, sidecarMBs []int) int {
 }
 
 // MeterCatchUpWindow bounds how far back meterd's sampler re-rolls closed
-// minutes that a restart or a failed tick left unrolled (H5-55). A fresh
-// meterd process re-rolls the whole window once; re-rolling a complete
-// minute is a no-op because usage_minutes keeps the first positive
-// mb_seconds per (instance, minute).
-const MeterCatchUpWindow = 30 * time.Minute
+// minutes that were never recorded compute-complete, after a restart, a
+// failed tick or an outage (H5-55, ADR-790). Re-rolling a complete minute is
+// a no-op because usage_minutes keeps the first positive mb_seconds per
+// (instance, minute). MeterCatchUpMinutesPerTick bounds the extra work one
+// sample tick takes on, so a long backlog drains over several ticks instead
+// of starving the control plane.
+const MeterCatchUpWindow = 24 * time.Hour
+const MeterCatchUpMinutesPerTick = 15
 
 // IdleTimeoutBounds returns the [floor, ceiling] seconds a customer may configure
 // their idle timeout to for this plan (spec §4.3).

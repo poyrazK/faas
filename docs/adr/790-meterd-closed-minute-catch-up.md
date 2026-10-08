@@ -23,39 +23,50 @@ within +0.11–0.33 % per hour.
 
 ## Decision
 
-1. **Catch-up.** With the instance-billing ledger, a sample tick first rolls
-   every closed minute after the newest one the sampler rolled in full, oldest
-   first, then the newest closed minute. A tick that fails stops there and the
-   next tick resumes from the last fully rolled minute. The app and job
-   samplers keep separate progress.
-2. **Bounded window.** Catch-up never reaches further back than
-   `api.MeterCatchUpWindow` (30 min) before the newest closed minute. A fresh
-   meterd process has no progress, so its first tick re-rolls the whole window
-   once.
-3. **Idempotent re-roll.** `usage_minutes` keeps the first positive
+1. **Durable record of complete minutes.** meterd already writes one
+   `financial_sampling_windows` row per closed minute whose sample tick
+   succeeded (`compute_complete`). That record is the catch-up watermark:
+   `FinancialCompletedComputeMinutes` lists the complete minutes of a window.
+2. **Catch-up.** With the instance-billing ledger, a sample tick first rolls
+   the closed minutes of the last `api.MeterCatchUpWindow` (24 h) that are not
+   recorded complete and that this process has not rolled, oldest first and
+   at most `api.MeterCatchUpMinutesPerTick` (15) per tick, then the newest
+   closed minute. A tick that fails stops there; the next tick resumes. The
+   app and job samplers keep separate in-process progress.
+3. **Never twice per process.** A minute this process rolled in full is not
+   re-rolled even if writing its record failed, so a persistent record or
+   pricing failure cannot turn every tick into a 15-minute replay.
+4. **Idempotent re-roll.** `usage_minutes` keeps the first positive
    `mb_seconds` per `(instance_id, minute)` (and synthetic floor rows use the
    deterministic ADR-060 IDs), so re-rolling a minute that is already complete
    writes nothing new; a missing or zero row is filled from the ledger.
-4. **No live counters in caught-up minutes.** CPU, gateway request and
+5. **No live counters in caught-up minutes.** CPU, gateway request and
    egress deltas, and tail seconds are drained only for the newest minute.
    They accumulate at their sources while a minute is missed and land in the
    next newest minute, as before; they are not billing inputs.
-5. **Metrics and coverage.** Caught-up rows are marked `CatchUp` and are not
+6. **Metrics and coverage.** Caught-up rows are marked `CatchUp` and are not
    added to `metered_mb_seconds_total` or `meterd_floor_applied_total` (the
    failed tick may already have counted them). A minute that both the app and
-   job samplers caught up in full is recorded `compute_complete` in
-   `financial_sampling_windows`, whose flag only ever turns true.
+   job samplers caught up in full is recorded `compute_complete`, whose flag
+   only ever turns true.
 
 ## Consequences
 
-- A meterd outage or crash loop shorter than 30 minutes no longer loses
-  billable usage. Longer gaps still need an operator replay; the window keeps
-  a restart on a starved host from re-walking hours of history.
-- Every meterd start re-walks up to 29 minutes once (about 150 queries per
-  minute on production-us today). This runs in the sample loop after
-  readiness, never in the start path.
+- A meterd outage, crash loop or skipped tick within the last 24 hours no
+  longer loses billable usage. On production-us the first tick after this
+  ships recovers 02:52–03:00 of 2026-10-08 if it runs before 02:52 the next
+  day; older gaps (2026-10-04, before deleted-app billing in #4194) need an
+  operator replay.
+- A restart re-rolls only minutes the record lacks; on production-us every
+  other minute is recorded, so steady-state cost is one indexed range read
+  of at most 1,440 rows per tick.
+- A new environment with no record catches up its window at 15 minutes per
+  tick; the work runs in the sample loop after readiness, never in the start
+  path.
 - A caught-up minute is billed from the ledger's current state, which is at
   least as accurate as the original tick: intervals closed late are included.
+  A row written partially but positive by an interrupted tick keeps its first
+  value; production-us showed only missing or zero rows.
 - The app's current status and floor policy decide a caught-up minute's
-  synthetic floor; a policy change inside the 30-minute window applies to the
-  minutes caught up after it.
+  synthetic floor; a policy change inside the window applies to minutes
+  caught up after it.

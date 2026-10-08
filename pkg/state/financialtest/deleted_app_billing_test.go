@@ -60,8 +60,9 @@ func TestFinancialPostgresDeletedAppResidency(t *testing.T) {
 	if err != nil || len(members) != 1 || members[0].ID != app.ID || members[0].Status != state.AppDeleted {
 		t.Fatalf("retained billing membership: %+v, %v", members, err)
 	}
-	// A restarted sampler catches up the closed minute again (H5-55): it
-	// may re-roll it, but must not bill the deleted app anything new.
+	// A restarted sampler catches up closed minutes that were never recorded
+	// complete (H5-55): it may re-roll this one, but must not bill the deleted
+	// app anything new.
 	later := meter.NewSampler(store, nil, func() time.Time { return minute.Add(150 * time.Second) })
 	laterRows, err := later.SampleAndRoll(ctx)
 	if err != nil {

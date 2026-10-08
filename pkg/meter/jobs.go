@@ -168,7 +168,7 @@ func (m *JobMetrics) Registry() *prometheus.Registry { return m.reg }
 // operator can alert on.
 //
 // Like SampleAndRoll, a tick with the instance-billing ledger first catches
-// up the closed minutes after the newest one it rolled in full (H5-55).
+// up closed minutes that were never recorded compute-complete (H5-55).
 func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error) {
 	observedAt := s.now().UTC()
 	s.jobCaughtUp = s.jobCaughtUp[:0]
@@ -176,14 +176,19 @@ func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error)
 		return s.rollJobs(ctx, MinuteKey(observedAt), false)
 	}
 	newest := observedAt.Truncate(time.Minute).Add(-time.Minute)
+	pending, rolled, err := s.minutesToCatchUp(ctx, s.jobRolled, newest)
+	s.jobRolled = rolled
+	if err != nil {
+		return nil, err
+	}
 	var out []JobRolledRow
-	for _, minute := range catchUpMinutes(s.jobRolledThrough, newest) {
+	for _, minute := range pending {
 		rows, err := s.rollJobs(ctx, minute, true)
 		out = append(out, rows...)
 		if err != nil {
 			return out, fmt.Errorf("meter: catch up job minute %s: %w", minute.Format(time.RFC3339), err)
 		}
-		s.jobRolledThrough = minute
+		s.jobRolled[minute] = true
 		s.jobCaughtUp = append(s.jobCaughtUp, minute)
 	}
 	rows, err := s.rollJobs(ctx, newest, true)
@@ -191,7 +196,7 @@ func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error)
 	if err != nil {
 		return out, err
 	}
-	s.jobRolledThrough = newest
+	s.jobRolled[newest] = true
 	return out, nil
 }
 
