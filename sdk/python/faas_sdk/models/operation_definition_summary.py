@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.operation_definition_summary_http_transaction_version import (
+    OperationDefinitionSummaryHttpTransactionVersion,
+    check_operation_definition_summary_http_transaction_version,
+)
 from ..models.operation_definition_summary_method import (
     OperationDefinitionSummaryMethod,
     check_operation_definition_summary_method,
@@ -25,6 +29,11 @@ from ..models.operation_definition_summary_transaction_receipt import (
     check_operation_definition_summary_transaction_receipt,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_subject_spec import OperationSubjectSpec
+    from ..models.operation_workflow_step import OperationWorkflowStep
+
 
 T = TypeVar("T", bound="OperationDefinitionSummary")
 
@@ -45,6 +54,15 @@ class OperationDefinitionSummary:
     recovery: OperationDefinitionSummaryRecovery
     progress_stages: list[str]
     created_at: datetime.datetime
+    milestones: list[str] | Unset = UNSET
+    """Declared milestone names; schema documents are available on the full definition."""
+    workflow_steps: list[OperationWorkflowStep] | Unset = UNSET
+    """Resolved app-declared read-only workflow steps mapped to this definition's transaction-backed milestones."""
+    subject: OperationSubjectSpec | Unset = UNSET
+    """Optional public business reference extracted once from validated input on new admission. This metadata does
+    not authorize access to the business entity."""
+    http_transaction_version: OperationDefinitionSummaryHttpTransactionVersion | Unset = UNSET
+    """Opt-in customer-owned HTTP transaction protocol. Absence means ordinary HTTP execution."""
     release_id: UUID | Unset = UNSET
     job: str | Unset = UNSET
     """Discovered account-owned single-task batch Job; accepted work retains its execution snapshot."""
@@ -80,6 +98,25 @@ class OperationDefinitionSummary:
 
         created_at = self.created_at.isoformat()
 
+        milestones: list[str] | Unset = UNSET
+        if not isinstance(self.milestones, Unset):
+            milestones = self.milestones
+
+        workflow_steps: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.workflow_steps, Unset):
+            workflow_steps = []
+            for workflow_steps_item_data in self.workflow_steps:
+                workflow_steps_item = workflow_steps_item_data.to_dict()
+                workflow_steps.append(workflow_steps_item)
+
+        subject: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.subject, Unset):
+            subject = self.subject.to_dict()
+
+        http_transaction_version: int | Unset = UNSET
+        if not isinstance(self.http_transaction_version, Unset):
+            http_transaction_version = self.http_transaction_version
+
         release_id: str | Unset = UNSET
         if not isinstance(self.release_id, Unset):
             release_id = str(self.release_id)
@@ -114,6 +151,14 @@ class OperationDefinitionSummary:
                 "created_at": created_at,
             }
         )
+        if milestones is not UNSET:
+            field_dict["milestones"] = milestones
+        if workflow_steps is not UNSET:
+            field_dict["workflow_steps"] = workflow_steps
+        if subject is not UNSET:
+            field_dict["subject"] = subject
+        if http_transaction_version is not UNSET:
+            field_dict["http_transaction_version"] = http_transaction_version
         if release_id is not UNSET:
             field_dict["release_id"] = release_id
         if job is not UNSET:
@@ -129,6 +174,9 @@ class OperationDefinitionSummary:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_subject_spec import OperationSubjectSpec
+        from ..models.operation_workflow_step import OperationWorkflowStep
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -153,6 +201,33 @@ class OperationDefinitionSummary:
         progress_stages = cast(list[str], d.pop("progress_stages"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        milestones = cast(list[str], d.pop("milestones", UNSET))
+
+        _workflow_steps = d.pop("workflow_steps", UNSET)
+        workflow_steps: list[OperationWorkflowStep] | Unset = UNSET
+        if _workflow_steps is not UNSET:
+            workflow_steps = []
+            for workflow_steps_item_data in _workflow_steps:
+                workflow_steps_item = OperationWorkflowStep.from_dict(workflow_steps_item_data)
+
+                workflow_steps.append(workflow_steps_item)
+
+        _subject = d.pop("subject", UNSET)
+        subject: OperationSubjectSpec | Unset
+        if isinstance(_subject, Unset):
+            subject = UNSET
+        else:
+            subject = OperationSubjectSpec.from_dict(_subject)
+
+        _http_transaction_version = d.pop("http_transaction_version", UNSET)
+        http_transaction_version: OperationDefinitionSummaryHttpTransactionVersion | Unset
+        if isinstance(_http_transaction_version, Unset):
+            http_transaction_version = UNSET
+        else:
+            http_transaction_version = check_operation_definition_summary_http_transaction_version(
+                _http_transaction_version
+            )
 
         _release_id = d.pop("release_id", UNSET)
         release_id: UUID | Unset
@@ -192,6 +267,10 @@ class OperationDefinitionSummary:
             recovery=recovery,
             progress_stages=progress_stages,
             created_at=created_at,
+            milestones=milestones,
+            workflow_steps=workflow_steps,
+            subject=subject,
+            http_transaction_version=http_transaction_version,
             release_id=release_id,
             job=job,
             workflow=workflow,

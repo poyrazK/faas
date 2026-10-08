@@ -113,6 +113,27 @@ func TestOperationTransactionReceiptContract(t *testing.T) {
 	}
 }
 
+// adr: 638
+func TestOperationHTTPTransactionVersionIsExplicitAndImmutable(t *testing.T) {
+	limits := api.MustLimitsFor(api.PlanPro).Operations
+	spec := testSpec()
+	ordinary, err := Compile(spec, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.HTTPTransactionVersion = api.OperationHTTPTransactionVersion
+	transaction, err := Compile(spec, limits)
+	if err != nil || transaction.Revision == ordinary.Revision {
+		t.Fatalf("transaction negotiation was not pinned in definition revision: %v", err)
+	}
+	for _, version := range []int{-1, 2} {
+		spec.HTTPTransactionVersion = version
+		if _, err := Compile(spec, limits); err == nil {
+			t.Fatalf("unsupported version %d compiled", version)
+		}
+	}
+}
+
 func TestOperationDefinitionAndIdentityAreStable(t *testing.T) {
 	spec := testSpec()
 	limits := api.MustLimitsFor(api.PlanHobby).Operations

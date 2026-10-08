@@ -159,6 +159,24 @@ with the same selectors. Cursors cannot be reused across an account operator and
 customer view. Summaries omit original input, results, artifact locations, runtime
 capabilities and notification errors. Only operator summaries contain tenant IDs.
 
+Read workflow changes from a business-reference timeline by selecting one run:
+
+```sh
+gregale customer-operations milestones --app orders --scope production \
+  --subject-type order --subject-id ORDER_ID \
+  --workflow order-lifecycle --workflow-instance-id RUN_ID
+```
+
+The response prints changes in app revision order with their Operation IDs.
+Current-state rows include `status=active` or `status=terminal`, based on the
+workflow's pinned `terminal_states` declaration. Use `--workflow-state-cursor`
+for the next state-history page; it is independent of the milestone `--cursor`.
+The dashboard also links each observed run to this history.
+
+Add `--stale-only` to a business-reference milestones read to list only current
+workflow states beyond their app-declared `state_stale_after` threshold. The
+filter does not change the included milestone facts or state history.
+
 `events` returns a bounded JSON page. Continue from the last event sequence using
 `--after`. If `resync_required` is true, fetch `get` and resume from its
 `latest_sequence`. `executions` returns retained execution generations ordered

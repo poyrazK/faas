@@ -293,6 +293,10 @@ func (s *PgStore) AdmitOperation(ctx context.Context, admission OperationAdmissi
 	if err := validateNewOperationInput(def, admission.Input, limits); err != nil {
 		return Operation{}, false, err
 	}
+	op.Subject, err = operations.ExtractOperationSubject(def.Spec.Subject, inv.Payload)
+	if err != nil {
+		return Operation{}, false, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
 	pending, err := q.CountPendingCustomerOperations(ctx, tx, account)
 	if err != nil {
 		return Operation{}, false, err

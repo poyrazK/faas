@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/google/uuid"
@@ -32,7 +33,7 @@ func TestSynthAdapterOperationProofAndPrivateRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	def, err := store.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: acct.ID, OperationDefinitionResponse: api.OperationDefinitionResponse{AppID: app.ID, DeploymentID: dep.ID, Scope: dep.Scope, Spec: api.OperationDefinitionSpec{Name: "export", TransactionReceipt: api.OperationTransactionPostgres, Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant, InputSchema: []byte(`true`), OutputSchema: []byte(`true`), ProgressStages: []string{"generating"}}}})
+	def, err := store.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: acct.ID, OperationDefinitionResponse: api.OperationDefinitionResponse{AppID: app.ID, DeploymentID: dep.ID, Scope: dep.Scope, Spec: api.OperationDefinitionSpec{Name: "export", TransactionReceipt: api.OperationTransactionPostgres, Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant, InputSchema: []byte(`true`), OutputSchema: []byte(`true`), ProgressStages: []string{"generating"}, HTTPTransactionVersion: api.OperationHTTPTransactionVersion, Milestones: map[string]json.RawMessage{"paid": []byte(`true`)}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +60,9 @@ func TestSynthAdapterOperationProofAndPrivateRevision(t *testing.T) {
 			}
 			if r.Header.Get(api.OperationReceiptVersionHeader) != "1" || len(r.Header.Get(api.OperationReceiptBindingHeader)) != 64 || r.Header.Get(api.OperationReceiptBindingHeader) != proof[api.OperationReceiptBindingHeader] || r.Header.Get(api.ManagedOperationResultVersionHeader) != "" || r.Header.Get(api.ExclusiveOperationIDHeader) != "" {
 				t.Fatalf("negotiated customer receipt context: %v", r.Header)
+			}
+			if r.Header.Get(api.OperationTransactionVersionHeader) != "1" || r.Header.Get(api.OperationMilestoneVersionHeader) != "1" || r.Header.Get(api.OperationResultMaxBytesHeader) != strconv.Itoa(op.ValueMaxBytes) || r.Header.Get(api.ExclusiveOperationIDHeader) != "" || r.Header.Get(api.ManagedOperationResultVersionHeader) != "" {
+				t.Fatalf("customer transaction negotiation: %v", r.Header)
 			}
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		})

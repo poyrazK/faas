@@ -1567,11 +1567,14 @@ from .operation_artifact_upload_response import OperationArtifactUploadResponse
 from .operation_cancellation_request import OperationCancellationRequest
 from .operation_definition_response import OperationDefinitionResponse
 from .operation_definition_spec import OperationDefinitionSpec
+from .operation_definition_spec_http_transaction_version import OperationDefinitionSpecHttpTransactionVersion
 from .operation_definition_spec_method import OperationDefinitionSpecMethod
+from .operation_definition_spec_milestones import OperationDefinitionSpecMilestones
 from .operation_definition_spec_owner import OperationDefinitionSpecOwner
 from .operation_definition_spec_recovery import OperationDefinitionSpecRecovery
 from .operation_definition_spec_transaction_receipt import OperationDefinitionSpecTransactionReceipt
 from .operation_definition_summary import OperationDefinitionSummary
+from .operation_definition_summary_http_transaction_version import OperationDefinitionSummaryHttpTransactionVersion
 from .operation_definition_summary_method import OperationDefinitionSummaryMethod
 from .operation_definition_summary_owner import OperationDefinitionSummaryOwner
 from .operation_definition_summary_recovery import OperationDefinitionSummaryRecovery
@@ -1610,6 +1613,11 @@ from .operation_job_artifact_response import OperationJobArtifactResponse
 from .operation_job_control_response import OperationJobControlResponse
 from .operation_job_report_request import OperationJobReportRequest
 from .operation_list_response import OperationListResponse
+from .operation_milestone import OperationMilestone
+from .operation_milestone_request import OperationMilestoneRequest
+from .operation_milestone_validation_request import OperationMilestoneValidationRequest
+from .operation_milestone_validation_response import OperationMilestoneValidationResponse
+from .operation_milestones_response import OperationMilestonesResponse
 from .operation_progress import OperationProgress
 from .operation_recovery_artifact import OperationRecoveryArtifact
 from .operation_recovery_artifact_state import OperationRecoveryArtifactState
@@ -1631,6 +1639,8 @@ from .operation_response import OperationResponse
 from .operation_response_state import OperationResponseState
 from .operation_result_artifact import OperationResultArtifact
 from .operation_start_request import OperationStartRequest
+from .operation_subject import OperationSubject
+from .operation_subject_spec import OperationSubjectSpec
 from .operation_submission_lookup_request import OperationSubmissionLookupRequest
 from .operation_submission_lookup_response import OperationSubmissionLookupResponse
 from .operation_submission_lookup_response_state import OperationSubmissionLookupResponseState
@@ -1640,6 +1650,15 @@ from .operation_summary_state import OperationSummaryState
 from .operation_tenant_identity import OperationTenantIdentity
 from .operation_workflow_artifact_response import OperationWorkflowArtifactResponse
 from .operation_workflow_control_response import OperationWorkflowControlResponse
+from .operation_workflow_state import OperationWorkflowState
+from .operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
+from .operation_workflow_state_report import OperationWorkflowStateReport
+from .operation_workflow_state_report_response import OperationWorkflowStateReportResponse
+from .operation_workflow_state_validation_request import OperationWorkflowStateValidationRequest
+from .operation_workflow_state_validation_response import OperationWorkflowStateValidationResponse
+from .operation_workflow_step import OperationWorkflowStep
+from .operation_workflow_step_state_stale_after_seconds import OperationWorkflowStepStateStaleAfterSeconds
+from .operation_workflow_transition import OperationWorkflowTransition
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -2061,6 +2080,7 @@ from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
 from .publish_event_response import PublishEventResponse
+from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .put_app_env_request import PutAppEnvRequest
@@ -4312,12 +4332,15 @@ __all__ = (
     "OperationCancellationRequest",
     "OperationDefinitionResponse",
     "OperationDefinitionSpec",
+    "OperationDefinitionSpecHttpTransactionVersion",
     "OperationDefinitionSpecMethod",
+    "OperationDefinitionSpecMilestones",
     "OperationDefinitionSpecOwner",
     "OperationDefinitionSpecRecovery",
     "OperationDefinitionSpecTransactionReceipt",
     "OperationDefinitionsResponse",
     "OperationDefinitionSummary",
+    "OperationDefinitionSummaryHttpTransactionVersion",
     "OperationDefinitionSummaryMethod",
     "OperationDefinitionSummaryOwner",
     "OperationDefinitionSummaryRecovery",
@@ -4355,6 +4378,11 @@ __all__ = (
     "OperationJobControlResponse",
     "OperationJobReportRequest",
     "OperationListResponse",
+    "OperationMilestone",
+    "OperationMilestoneRequest",
+    "OperationMilestonesResponse",
+    "OperationMilestoneValidationRequest",
+    "OperationMilestoneValidationResponse",
     "OperationProgress",
     "OperationRecoveryArtifact",
     "OperationRecoveryArtifactState",
@@ -4376,6 +4404,8 @@ __all__ = (
     "OperationResponseState",
     "OperationResultArtifact",
     "OperationStartRequest",
+    "OperationSubject",
+    "OperationSubjectSpec",
     "OperationSubmissionLookupRequest",
     "OperationSubmissionLookupResponse",
     "OperationSubmissionLookupResponseState",
@@ -4385,6 +4415,15 @@ __all__ = (
     "OperationTenantIdentity",
     "OperationWorkflowArtifactResponse",
     "OperationWorkflowControlResponse",
+    "OperationWorkflowState",
+    "OperationWorkflowStateHistoryEntry",
+    "OperationWorkflowStateReport",
+    "OperationWorkflowStateReportResponse",
+    "OperationWorkflowStateValidationRequest",
+    "OperationWorkflowStateValidationResponse",
+    "OperationWorkflowStep",
+    "OperationWorkflowStepStateStaleAfterSeconds",
+    "OperationWorkflowTransition",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",
@@ -4760,6 +4799,7 @@ __all__ = (
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishManagedRealtimeChannelDelivery",
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
     "PutAppEnvRequest",

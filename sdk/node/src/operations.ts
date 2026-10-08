@@ -1,5 +1,7 @@
 // ADR-586: customer PostgreSQL business writes and replayable handler responses.
 import { createHash } from "node:crypto";
+import { OperationConflictError, OperationCommitUnknownError, type OperationPool, type OperationTransaction, type OperationTransactionResult } from './operation-receipt.js';
+export { OperationConflictError, OperationCommitUnknownError, type OperationPool, type OperationTransaction, type OperationConnection, type OperationTransactionResult } from './operation-receipt.js';
 import type { ManagedOperationEffect } from "./generated/models/ManagedOperationEffect.js";
 import {
   OPERATION_REQUEST_BYTES, OPERATION_IDENTITY_BYTES, OPERATION_RESPONSE_BYTES,
@@ -25,33 +27,6 @@ export interface OperationRequest {
 export interface OperationOutcome {
   result: unknown;
   effects?: readonly ManagedOperationEffect[];
-}
-
-export interface OperationTransaction {
-  query(sql: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
-}
-export interface OperationConnection extends OperationTransaction {
-  release(discard?: boolean): void;
-}
-export interface OperationPool {
-  connect(): Promise<OperationConnection>;
-}
-export interface OperationTransactionResult {
-  /** Send these exact JSON bytes using res.type('application/json').send(body). */
-  body: string;
-  replayed: boolean;
-}
-
-export class OperationConflictError extends Error {
-  readonly code = "operation_receipt_conflict";
-  constructor() { super("operation receipt scope or input differs"); this.name = "OperationConflictError"; }
-}
-export class OperationCommitUnknownError extends Error {
-  readonly code = "operation_commit_unknown";
-  constructor(cause: unknown) {
-    super("operation commit outcome unknown; retry with the same operation identity", { cause });
-    this.name = "OperationCommitUnknownError";
-  }
 }
 
 function uuid(value: string): string {

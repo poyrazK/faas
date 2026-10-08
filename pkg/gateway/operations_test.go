@@ -141,7 +141,7 @@ func TestHTTPRouteEntersOperationBeforeWake(t *testing.T) {
 	if err != nil || retained.CurrentInvocationID != inv.ID || retained.State != api.OperationAccepted {
 		t.Fatal("cohort rollback altered admitted execution", err)
 	}
-	for _, header := range []string{api.OperationCapabilityHeader, api.OperationIDHeader, api.OperationReceiptVersionHeader, api.OperationReceiptBindingHeader, "X-Gregale-Operation-Execution-Kind", "X-Gregale-Customer-Operation-Unknown"} {
+	for _, header := range []string{api.OperationCapabilityHeader, api.OperationIDHeader, api.OperationReceiptVersionHeader, api.OperationReceiptBindingHeader, api.OperationTransactionVersionHeader, api.OperationResultMaxBytesHeader, api.OperationMilestoneVersionHeader, "X-Gregale-Operation-Execution-Kind", "X-Gregale-Customer-Operation-Unknown"} {
 		if forged := asyncRouteHeaders(http.Header{header: []string{"forged"}, "X-Export-Format": []string{"csv"}}); len(forged) != 1 || forged["X-Export-Format"] != "csv" {
 			t.Fatalf("reserved header %s survived public async envelope: %v", header, forged)
 		}

@@ -130,14 +130,14 @@ use the Customer Operations factory and helper. In Node:
 
 ```ts
 import {
-  customerOperationRequestFromHeaders,
-  withCustomerOperationTransaction,
+  customerOperationReceiptRequestFromHeaders,
+  withCustomerOperationReceiptTransaction,
 } from '@gregale/sdk-node';
 
-const request = customerOperationRequestFromHeaders(
+const request = customerOperationReceiptRequestFromHeaders(
   req.headers, req.method, req.originalUrl, req.rawBody,
 );
-const response = await withCustomerOperationTransaction(pool, request, async tx => {
+const response = await withCustomerOperationReceiptTransaction(pool, request, async tx => {
   await tx.query('INSERT INTO exports(id, customer_id) VALUES ($1, $2)',
     [exportId, authorizedCustomerId]);
   return { export_id: exportId }; // ordinary JSON matching the output schema

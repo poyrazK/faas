@@ -86,7 +86,7 @@ func operationSaveTx(ctx context.Context, tx pgx.Tx, op Operation, event api.Ope
 }
 
 func operationClaimTx(ctx context.Context, tx pgx.Tx, inv Invocation) (Invocation, error) {
-	op, _, _, exists, err := operationForInvocationTx(ctx, tx, inv.ID)
+	op, def, _, exists, err := operationForInvocationTx(ctx, tx, inv.ID)
 	if err != nil || !exists {
 		return inv, err
 	}
@@ -97,7 +97,7 @@ func operationClaimTx(ctx context.Context, tx pgx.Tx, inv Invocation) (Invocatio
 	if err := operationSaveTx(ctx, tx, op, event); err != nil {
 		return Invocation{}, err
 	}
-	return operationExecutionHeaders(inv, op, capability), nil
+	return operationExecutionHeaders(inv, op, def, capability), nil
 }
 
 func operationTransitionTx(ctx context.Context, tx pgx.Tx, inv Invocation, uncertain bool) error {

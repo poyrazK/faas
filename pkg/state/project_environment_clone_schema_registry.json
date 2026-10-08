@@ -1720,6 +1720,20 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_milestones",
+    "columns": [
+      "created_at",
+      "event_sequence",
+      "fingerprint",
+      "id",
+      "name",
+      "occurred_at",
+      "operation_id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_recoveries",
     "columns": [
       "created_at",
@@ -1816,6 +1830,41 @@
       "step_attempt",
       "step_name",
       "workflow_run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_operation_workflow_state_reports",
+    "columns": [
+      "created_at",
+      "fingerprint",
+      "from_state",
+      "id",
+      "instance_id",
+      "occurred_at",
+      "operation_id",
+      "revision",
+      "state",
+      "workflow"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_operation_workflow_states",
+    "columns": [
+      "account_id",
+      "app_id",
+      "instance_id",
+      "operation_id",
+      "platform_tenant_id",
+      "report_id",
+      "revision",
+      "scope",
+      "state",
+      "subject_id",
+      "subject_type",
+      "updated_at",
+      "workflow"
     ],
     "kind": "operational"
   },

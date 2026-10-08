@@ -14,8 +14,16 @@ import httpx
 
 from .models.operation_artifact_request import OperationArtifactRequest
 from .models.operation_execution_control_response import OperationExecutionControlResponse
+from .models.operation_milestone import OperationMilestone
+from .models.operation_milestone_request import OperationMilestoneRequest
+from .models.operation_milestone_validation_request import OperationMilestoneValidationRequest
+from .models.operation_milestone_validation_response import OperationMilestoneValidationResponse
 from .models.operation_report_request import OperationReportRequest
 from .models.operation_response import OperationResponse
+from .models.operation_workflow_state_report import OperationWorkflowStateReport
+from .models.operation_workflow_state_report_response import OperationWorkflowStateReportResponse
+from .models.operation_workflow_state_validation_request import OperationWorkflowStateValidationRequest
+from .models.operation_workflow_state_validation_response import OperationWorkflowStateValidationResponse
 
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 
@@ -93,7 +101,9 @@ class GregaleOperations:
             capability = normalized.get("x-gregale-operation-capability", "")
             if (
                 not _UUID.fullmatch(operation_id)
+                or operation_id == "00000000-0000-0000-0000-000000000000"
                 or not _UUID.fullmatch(invocation)
+                or invocation == "00000000-0000-0000-0000-000000000000"
                 or not re.fullmatch(r"[1-9][0-9]{0,9}", attempt)
                 or int(attempt) > 2_147_483_647
                 or not re.fullmatch(r"[0-9a-f]{64}", capability)
@@ -116,10 +126,24 @@ class GregaleOperations:
         return execution.context if execution else None
 
     async def progress(self, report: OperationReportRequest) -> OperationResponse:
-        return await self._report("progress", report.to_dict())
+        return OperationResponse.from_dict(await self._report_json("progress", report.to_dict()))
 
     async def artifact(self, report: OperationArtifactRequest) -> OperationResponse:
-        return await self._report("artifacts", report.to_dict())
+        return OperationResponse.from_dict(await self._report_json("artifacts", report.to_dict()))
+
+    async def milestone(self, report: OperationMilestoneRequest) -> OperationMilestone:
+        """Publish an already committed fact using its saved ID and occurrence time."""
+        return OperationMilestone.from_dict(await self._report_json("milestones", report.to_dict()))
+
+    async def validate_milestones(self, batch: OperationMilestoneValidationRequest) -> OperationMilestoneValidationResponse:
+        return OperationMilestoneValidationResponse.from_dict(await self._report_json("milestones/validate", batch.to_dict()))
+
+    async def workflow_state(self, report: OperationWorkflowStateReport) -> OperationWorkflowStateReportResponse:
+        """Publish an app transaction's committed workflow state snapshot."""
+        return OperationWorkflowStateReportResponse.from_dict(await self._report_json("workflow-states", report.to_dict()))
+
+    async def validate_workflow_states(self, batch: OperationWorkflowStateValidationRequest) -> OperationWorkflowStateValidationResponse:
+        return OperationWorkflowStateValidationResponse.from_dict(await self._report_json("workflow-states/validate", batch.to_dict()))
 
     async def control(self) -> OperationExecutionControlResponse:
         """Observe cancellation and time bounds without renewing or settling work.
@@ -148,10 +172,7 @@ class GregaleOperations:
         control.additional_properties.clear()
         return control
 
-    async def _report(self, suffix: str, body: dict) -> OperationResponse:
-        return OperationResponse.from_dict(await self._request(suffix, body))
-
-    async def _request(self, suffix: str, body: dict | None = None) -> dict:
+    async def _report_json(self, suffix: str, body: dict | None = None) -> dict:
         execution = self._execution.get()
         if execution is None:
             raise ValueError("Reporting requires an operation execution")
@@ -173,6 +194,9 @@ class GregaleOperations:
             },
             **({"json": body} if body is not None else {}),
         )
+
+    async def _request(self, suffix: str, body: dict | None = None) -> dict:
+        return await self._report_json(suffix, body)
 
     async def _json(self, method: str, url: str, **kwargs) -> dict:
         async with self._client.stream(

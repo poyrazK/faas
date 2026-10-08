@@ -10,26 +10,29 @@ import (
 )
 
 type operationMemory struct {
-	deliveryRetries    map[string]api.OperationDeliveryRetryResponse
-	definitions        map[string]OperationDefinition
-	operations         map[string]Operation
-	events             map[string][]api.OperationEvent
-	receipts           map[string]operationIdentityReceipt
-	executions         map[string]string
-	generations        map[string]int
-	reports            map[string]string
-	recoveries         map[string]string
-	recoveryDecisions  map[string]api.OperationRecoveryDecision
-	streams            map[string]operationStreamLease
-	jobOwners          map[string]string
-	jobExecutions      map[string]map[int]api.OperationExecution
-	workflowExecutions map[string]map[int]api.OperationExecution
-	blobs              map[string]OperationResultBlob
+	deliveryRetries      map[string]api.OperationDeliveryRetryResponse
+	definitions          map[string]OperationDefinition
+	operations           map[string]Operation
+	events               map[string][]api.OperationEvent
+	receipts             map[string]operationIdentityReceipt
+	executions           map[string]string
+	generations          map[string]int
+	reports              map[string]string
+	recoveries           map[string]string
+	recoveryDecisions    map[string]api.OperationRecoveryDecision
+	streams              map[string]operationStreamLease
+	jobOwners            map[string]string
+	jobExecutions        map[string]map[int]api.OperationExecution
+	workflowExecutions   map[string]map[int]api.OperationExecution
+	blobs                map[string]OperationResultBlob
+	milestones           map[string]map[string]operationMilestoneReceipt
+	workflowStates       map[string]operationWorkflowStateRecord
+	workflowStateReports map[string]operationWorkflowStateReceipt
 }
 
 func (m *MemStore) operationMemoryLocked() *operationMemory {
 	if m.operationData == nil {
-		m.operationData = &operationMemory{definitions: map[string]OperationDefinition{}, operations: map[string]Operation{}, events: map[string][]api.OperationEvent{}, receipts: map[string]operationIdentityReceipt{}, executions: map[string]string{}, generations: map[string]int{}, reports: map[string]string{}, recoveries: map[string]string{}, blobs: map[string]OperationResultBlob{}}
+		m.operationData = &operationMemory{milestones: map[string]map[string]operationMilestoneReceipt{}, workflowStates: map[string]operationWorkflowStateRecord{}, workflowStateReports: map[string]operationWorkflowStateReceipt{}, definitions: map[string]OperationDefinition{}, operations: map[string]Operation{}, events: map[string][]api.OperationEvent{}, receipts: map[string]operationIdentityReceipt{}, executions: map[string]string{}, generations: map[string]int{}, reports: map[string]string{}, recoveries: map[string]string{}, blobs: map[string]OperationResultBlob{}}
 	}
 	return m.operationData
 }
@@ -189,6 +192,10 @@ func (m *MemStore) AdmitOperation(ctx context.Context, admission OperationAdmiss
 	}
 	if err := validateNewOperationInput(def, admission.Input, limits); err != nil {
 		return Operation{}, false, err
+	}
+	op.Subject, err = operations.ExtractOperationSubject(def.Spec.Subject, inv.Payload)
+	if err != nil {
+		return Operation{}, false, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	pending := 0
 	for _, existing := range data.operations {

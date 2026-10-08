@@ -56,6 +56,7 @@ type Operation struct {
 	ArtifactStorageKeys       map[string]string                           `json:"artifact_storage_keys,omitempty"`
 	WorkflowArtifactReceipts  map[string]OperationWorkflowArtifactReceipt `json:"workflow_artifact_receipts,omitempty"`
 	JobArtifactReceipts       map[string]OperationJobArtifactReceipt      `json:"job_artifact_receipts,omitempty"`
+	MilestoneCount            int                                         `json:"milestone_count,omitempty"`
 }
 
 // operationRecordJSON adds the normalized backend identity consumed by the

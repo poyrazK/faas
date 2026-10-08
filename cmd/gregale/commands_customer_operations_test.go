@@ -170,7 +170,7 @@ func TestCustomerOperationCLIRecoveryAndRoutes(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /v1/apps/exports/operations":
 			q := r.URL.Query()
-			if q.Get("scope") != "production" || q.Get("tenant_id") != "tenant" || q.Has("app_id") {
+			if q.Get("subject_type") != "order" || q.Get("subject_id") != "ord/42&é" || q.Get("scope") != "production" || q.Get("tenant_id") != "tenant" || q.Has("app_id") {
 				t.Errorf("selectors %s", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(api.OperationListResponse{Operations: []api.OperationSummary{}, NextCursor: "cursor"})
@@ -200,7 +200,7 @@ func TestCustomerOperationCLIRecoveryAndRoutes(t *testing.T) {
 	osStdout, jsonOutput = &out, true
 	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
 	recover := []string{"recover", "op", "--app", "exports", "--expected-generation", "1", "--recovery-id", "decision-1", "--resolution", "safe_to_retry", "--evidence-file", evidence}
-	for _, args := range [][]string{{"list", "--app", "exports", "--scope", "production", "--tenant", "tenant"}, {"events", "op", "--app", "exports"}, {"executions", "op", "--app", "exports"}, recover, recover} {
+	for _, args := range [][]string{{"list", "--app", "exports", "--scope", "production", "--tenant", "tenant", "--subject-type", "order", "--subject-id", "ord/42&é"}, {"events", "op", "--app", "exports"}, {"executions", "op", "--app", "exports"}, recover, recover} {
 		if code := cmdCustomerOperations(args); code != 0 {
 			t.Fatalf("%v exit=%d", args, code)
 		}
@@ -226,7 +226,7 @@ func TestCustomerOperationCLIRecoveryAndRoutes(t *testing.T) {
 }
 
 func TestCustomerOperationCLIRejectsUnfencedOrAmbiguousCommands(t *testing.T) {
-	for _, args := range [][]string{nil, {"list", "--app", "exports"}, {"list", "--app", "exports", "--scope", "production", "--limit", "101"}, {"get", "op"}, {"get", "op", "extra", "--app", "exports"}, {"watch", "op", "--app", "exports", "--interval", "0s"}, {"download", "op", "--app", "exports"}, {"recover", "op", "--app", "exports"}, {"cancel", "op", "--app", "exports"}, {"retry-delivery", "op", "--app", "exports", "--resolution", "safe_to_retry"}} {
+	for _, args := range [][]string{{"list", "--app", "exports", "--scope", "production", "--subject-type", "order"}, {"list", "--app", "exports", "--scope", "production", "--subject-id", "42"}, nil, {"list", "--app", "exports"}, {"list", "--app", "exports", "--scope", "production", "--limit", "101"}, {"get", "op"}, {"get", "op", "extra", "--app", "exports"}, {"watch", "op", "--app", "exports", "--interval", "0s"}, {"download", "op", "--app", "exports"}, {"recover", "op", "--app", "exports"}, {"cancel", "op", "--app", "exports"}, {"retry-delivery", "op", "--app", "exports", "--resolution", "safe_to_retry"}} {
 		if _, err := parseCustomerOperationCommand(args); err == nil {
 			t.Fatalf("accepted %v", args)
 		}

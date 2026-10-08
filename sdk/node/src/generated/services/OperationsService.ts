@@ -22,6 +22,11 @@ import type { OperationJobArtifactResponse } from '../models/OperationJobArtifac
 import type { OperationJobControlResponse } from '../models/OperationJobControlResponse.js';
 import type { OperationJobReportRequest } from '../models/OperationJobReportRequest.js';
 import type { OperationListResponse } from '../models/OperationListResponse.js';
+import type { OperationMilestone } from '../models/OperationMilestone.js';
+import type { OperationMilestoneRequest } from '../models/OperationMilestoneRequest.js';
+import type { OperationMilestonesResponse } from '../models/OperationMilestonesResponse.js';
+import type { OperationMilestoneValidationRequest } from '../models/OperationMilestoneValidationRequest.js';
+import type { OperationMilestoneValidationResponse } from '../models/OperationMilestoneValidationResponse.js';
 import type { OperationRecoveryDecision } from '../models/OperationRecoveryDecision.js';
 import type { OperationRecoveryInspection } from '../models/OperationRecoveryInspection.js';
 import type { OperationRecoveryPreview } from '../models/OperationRecoveryPreview.js';
@@ -35,6 +40,10 @@ import type { OperationSubmissionLookupResponse } from '../models/OperationSubmi
 import type { OperationTenantIdentity } from '../models/OperationTenantIdentity.js';
 import type { OperationWorkflowArtifactResponse } from '../models/OperationWorkflowArtifactResponse.js';
 import type { OperationWorkflowControlResponse } from '../models/OperationWorkflowControlResponse.js';
+import type { OperationWorkflowStateReport } from '../models/OperationWorkflowStateReport.js';
+import type { OperationWorkflowStateReportResponse } from '../models/OperationWorkflowStateReportResponse.js';
+import type { OperationWorkflowStateValidationRequest } from '../models/OperationWorkflowStateValidationRequest.js';
+import type { OperationWorkflowStateValidationResponse } from '../models/OperationWorkflowStateValidationResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -522,6 +531,528 @@ export class OperationsService {
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read retained business milestones for an account-owned Operation.
+   * Requires account read scope and MFA. The app and Operation bind ownership; customer credentials cannot access this operator feed.
+   * @returns OperationMilestonesResponse Account app Operation facts with retained page continuation.
+   * @throws ApiError
+   */
+  public static getAccountOperationMilestones({
+    slug,
+    id,
+    limit = 20,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    /**
+     * Maximum retained public facts in a milestone page.
+     */
+    limit?: number,
+    /**
+     * Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+     */
+    cursor?: string,
+  }): CancelablePromise<OperationMilestonesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/operations/{id}/milestones',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        410: `The retained result expired; its identity remains reserved for the deduplication window.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read this customer's retained Operation milestones.
+   * Requires platform_tenant:operations:read. The authenticated customer must own the Operation. Retention follows business results, independently of generic event history.
+   * @returns OperationMilestonesResponse Authenticated customer Operation facts and page continuation.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfOperationMilestones({
+    id,
+    limit = 20,
+    cursor,
+  }: {
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    /**
+     * Maximum retained public facts in a milestone page.
+     */
+    limit?: number,
+    /**
+     * Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+     */
+    cursor?: string,
+  }): CancelablePromise<OperationMilestonesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/customer-operations/{id}/milestones',
+      path: {
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        410: `The retained result expired; its identity remains reserved for the deduplication window.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read a business entity timeline across related Operations.
+   * Requires account read scope and MFA. Explicit app/environment/reference selectors and optional customer selection remain within account ownership. Paired workflow and workflow-instance selectors narrow the feed to one run. Facts are ordered by first platform publication time, not inferred business causality.
+   * @returns OperationMilestonesResponse Account environment business-reference milestone feed.
+   * @throws ApiError
+   */
+  public static listAccountBusinessMilestones({
+    slug,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    workflowInstanceId,
+    tenantId,
+    limit = 20,
+    cursor,
+    workflowStateCursor,
+    staleOnly = false,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Business reference type for a timeline spanning related Operations.
+     */
+    subjectType: string,
+    /**
+     * Exact public business identifier for this timeline; maximum 256 UTF-8 bytes.
+     */
+    subjectId: string,
+    /**
+     * Optional workflow name. Supply with workflow_instance_id to read one workflow instance.
+     */
+    workflow?: string,
+    /**
+     * Optional app-provided workflow instance ID. Supply with workflow; the pair is bound into pagination.
+     */
+    workflowInstanceId?: string,
+    /**
+     * Optional account-owned customer selector on an operator milestone timeline.
+     */
+    tenantId?: string,
+    /**
+     * Maximum retained public facts in a milestone page.
+     */
+    limit?: number,
+    /**
+     * Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+     */
+    cursor?: string,
+    /**
+     * Independent continuation for retained state changes. Requires the paired workflow and workflow_instance_id selectors.
+     */
+    workflowStateCursor?: string,
+    /**
+     * When true, return only current workflow states that have passed an app-declared state_stale_after threshold. Applies only to workflow_states; milestone facts and state history are unchanged.
+     */
+    staleOnly?: boolean,
+  }): CancelablePromise<OperationMilestonesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/operation-milestones',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'workflow_instance_id': workflowInstanceId,
+        'tenant_id': tenantId,
+        'limit': limit,
+        'cursor': cursor,
+        'workflow_state_cursor': workflowStateCursor,
+        'stale_only': staleOnly,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        410: `The retained result expired; its identity remains reserved for the deduplication window.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read a business entity timeline for the authenticated customer.
+   * Requires platform_tenant:operations:read. Identity comes only from credentials. The app, environment, and paired public reference select related retained work. Paired workflow and workflow-instance selectors narrow the feed to one run. Opaque pagination binds all selectors; other customers with the same entity ID remain isolated.
+   * @returns OperationMilestonesResponse Authenticated customer business-reference milestone feed.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfBusinessMilestones({
+    appId,
+    scope,
+    subjectType,
+    subjectId,
+    workflow,
+    workflowInstanceId,
+    limit = 20,
+    cursor,
+    workflowStateCursor,
+    staleOnly = false,
+  }: {
+    /**
+     * App selected within the authenticated customer's milestone feed.
+     */
+    appId: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Business reference type for a timeline spanning related Operations.
+     */
+    subjectType: string,
+    /**
+     * Exact public business identifier for this timeline; maximum 256 UTF-8 bytes.
+     */
+    subjectId: string,
+    /**
+     * Optional workflow name. Supply with workflow_instance_id to read one workflow instance.
+     */
+    workflow?: string,
+    /**
+     * Optional app-provided workflow instance ID. Supply with workflow; the pair is bound into pagination.
+     */
+    workflowInstanceId?: string,
+    /**
+     * Maximum retained public facts in a milestone page.
+     */
+    limit?: number,
+    /**
+     * Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+     */
+    cursor?: string,
+    /**
+     * Independent continuation for retained state changes. Requires the paired workflow and workflow_instance_id selectors.
+     */
+    workflowStateCursor?: string,
+    /**
+     * When true, return only current workflow states that have passed an app-declared state_stale_after threshold. Applies only to workflow_states; milestone facts and state history are unchanged.
+     */
+    staleOnly?: boolean,
+  }): CancelablePromise<OperationMilestonesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/customer-operation-milestones',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
+        'workflow': workflow,
+        'workflow_instance_id': workflowInstanceId,
+        'limit': limit,
+        'cursor': cursor,
+        'workflow_state_cursor': workflowStateCursor,
+        'stale_only': staleOnly,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        410: `The retained result expired; its identity remains reserved for the deduplication window.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Publish a committed public business milestone.
+   * Requires a current workload assertion and invocation attempt/capability. Validates the pinned schema, then deduplicates by logical Operation and milestone ID across recovery. Identical retries return the original fact; changed identity content conflicts. Publication never changes business completion or delivery state.
+   * @returns OperationMilestone Committed business fact published or its original acknowledgement replayed.
+   * @throws ApiError
+   */
+  public static reportOperationMilestone({
+    id,
+    xFaasInvocationId,
+    xGregaleOperationAttempt,
+    xGregaleOperationCapability,
+    requestBody,
+  }: {
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    /**
+     * Current invocation UUID supplied by trusted dispatch.
+     */
+    xFaasInvocationId: string,
+    /**
+     * Current fenced claim attempt.
+     */
+    xGregaleOperationAttempt: number,
+    /**
+     * Ephemeral 256-bit claim capability supplied only to the active handler.
+     */
+    xGregaleOperationCapability: string,
+    requestBody: OperationMilestoneRequest,
+  }): CancelablePromise<OperationMilestone> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/operations/{id}/milestones',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'X-Faas-Invocation-Id': xFaasInvocationId,
+        'X-Gregale-Operation-Attempt': xGregaleOperationAttempt,
+        'X-Gregale-Operation-Capability': xGregaleOperationCapability,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Validate public milestones before the application transaction commits.
+   * Requires the active workload and invocation claim. This bounded, read-only check validates pinned declarations, payload schemas, duplicate identity and remaining milestone capacity. Failure allows the SDK to roll back business writes; success does not publish or reserve capacity.
+   * @returns OperationMilestoneValidationResponse Submitted milestone contracts validated under the current execution claim.
+   * @throws ApiError
+   */
+  public static validateOperationMilestones({
+    id,
+    xFaasInvocationId,
+    xGregaleOperationAttempt,
+    xGregaleOperationCapability,
+    requestBody,
+  }: {
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    /**
+     * Current invocation UUID supplied by trusted dispatch.
+     */
+    xFaasInvocationId: string,
+    /**
+     * Current fenced claim attempt.
+     */
+    xGregaleOperationAttempt: number,
+    /**
+     * Ephemeral 256-bit claim capability supplied only to the active handler.
+     */
+    xGregaleOperationCapability: string,
+    requestBody: OperationMilestoneValidationRequest,
+  }): CancelablePromise<OperationMilestoneValidationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/operations/{id}/milestones/validate',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'X-Faas-Invocation-Id': xFaasInvocationId,
+        'X-Gregale-Operation-Attempt': xGregaleOperationAttempt,
+        'X-Gregale-Operation-Capability': xGregaleOperationCapability,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Publish an app-reported business workflow state.
+   * Requires the current workload and invocation claim. The state name must be declared by the pinned workflow definition. Revisions assigned inside the application transaction prevent late older publications from replacing a newer state.
+   * @returns OperationWorkflowStateReportResponse State update accepted idempotently, even when a newer revision is already current.
+   * @throws ApiError
+   */
+  public static reportOperationWorkflowState({
+    id,
+    xFaasInvocationId,
+    xGregaleOperationAttempt,
+    xGregaleOperationCapability,
+    requestBody,
+  }: {
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    /**
+     * Current invocation UUID supplied by trusted dispatch.
+     */
+    xFaasInvocationId: string,
+    /**
+     * Current fenced claim attempt.
+     */
+    xGregaleOperationAttempt: number,
+    /**
+     * Ephemeral 256-bit claim capability supplied only to the active handler.
+     */
+    xGregaleOperationCapability: string,
+    requestBody: OperationWorkflowStateReport,
+  }): CancelablePromise<OperationWorkflowStateReportResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/operations/{id}/workflow-states',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'X-Faas-Invocation-Id': xFaasInvocationId,
+        'X-Gregale-Operation-Attempt': xGregaleOperationAttempt,
+        'X-Gregale-Operation-Capability': xGregaleOperationCapability,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Validate app-reported workflow states before transaction commit.
+   * Requires the active workload and invocation claim. Validates the declared workflow/state vocabulary, business reference, instance ID and positive transaction-assigned revisions without publishing or reserving capacity.
+   * @returns OperationWorkflowStateValidationResponse All candidate state updates passed validation under the current execution claim.
+   * @throws ApiError
+   */
+  public static validateOperationWorkflowStates({
+    id,
+    xFaasInvocationId,
+    xGregaleOperationAttempt,
+    xGregaleOperationCapability,
+    requestBody,
+  }: {
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    /**
+     * Current invocation UUID supplied by trusted dispatch.
+     */
+    xFaasInvocationId: string,
+    /**
+     * Current fenced claim attempt.
+     */
+    xGregaleOperationAttempt: number,
+    /**
+     * Ephemeral 256-bit claim capability supplied only to the active handler.
+     */
+    xGregaleOperationCapability: string,
+    requestBody: OperationWorkflowStateValidationRequest,
+  }): CancelablePromise<OperationWorkflowStateValidationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/operations/{id}/workflow-states/validate',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'X-Faas-Invocation-Id': xFaasInvocationId,
+        'X-Gregale-Operation-Attempt': xGregaleOperationAttempt,
+        'X-Gregale-Operation-Capability': xGregaleOperationCapability,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
@@ -1706,6 +2237,8 @@ export class OperationsService {
     tenantId,
     name,
     state,
+    subjectType,
+    subjectId,
     limit = 20,
     cursor,
   }: {
@@ -1730,6 +2263,14 @@ export class OperationsService {
      */
     state?: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation',
     /**
+     * Business reference type for this account-owned app. Requires subject_id; supply both selectors together.
+     */
+    subjectType?: string,
+    /**
+     * Exact public entity identifier within the account app and environment. Requires subject_type. Maximum 256 UTF-8 bytes; ASCII controls are rejected.
+     */
+    subjectId?: string,
+    /**
      * Number of account-owned operation summaries to include.
      */
     limit?: number,
@@ -1749,6 +2290,8 @@ export class OperationsService {
         'tenant_id': tenantId,
         'name': name,
         'state': state,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
         'limit': limit,
         'cursor': cursor,
       },
@@ -2231,6 +2774,8 @@ export class OperationsService {
     appId,
     scope,
     name,
+    subjectType,
+    subjectId,
     state,
     limit = 20,
     cursor,
@@ -2247,6 +2792,14 @@ export class OperationsService {
      * Stable operation name across definition revisions.
      */
     name?: string,
+    /**
+     * Exact business reference type. Requires subject_id; both must be supplied together.
+     */
+    subjectType?: string,
+    /**
+     * Exact business reference ID, within the authenticated owner/app/environment. Requires subject_type. Maximum 256 UTF-8 bytes; ASCII controls are rejected.
+     */
+    subjectId?: string,
     /**
      * Current business state filter, independent of delivery.
      */
@@ -2267,6 +2820,8 @@ export class OperationsService {
         'app_id': appId,
         'scope': scope,
         'name': name,
+        'subject_type': subjectType,
+        'subject_id': subjectId,
         'state': state,
         'limit': limit,
         'cursor': cursor,

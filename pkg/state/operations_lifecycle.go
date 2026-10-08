@@ -35,12 +35,17 @@ func operationCapabilityDigest(token string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func operationExecutionHeaders(inv Invocation, op Operation, capability string) Invocation {
+func operationExecutionHeaders(inv Invocation, op Operation, def OperationDefinition, capability string) Invocation {
 	inv.OperationID = op.ID
 	headers := map[string]string{}
 	_ = json.Unmarshal(inv.Headers, &headers)
 	if headers == nil {
 		headers = map[string]string{}
+	}
+	for name := range headers {
+		if api.IsReservedOperationHeader(name) {
+			delete(headers, name)
+		}
 	}
 	headers[api.OperationIDHeader] = op.ID
 	headers[api.OperationAttemptHeader] = strconv.Itoa(inv.Attempts)
@@ -51,6 +56,13 @@ func operationExecutionHeaders(inv Invocation, op Operation, capability string) 
 		binding, _ := json.Marshal([]string{op.AccountID, op.AppID, op.PlatformTenantID, op.Scope, op.DefinitionRevision, op.DeploymentID, op.ReleaseID})
 		digest := sha256.Sum256(binding)
 		headers[api.OperationReceiptBindingHeader] = hex.EncodeToString(digest[:])
+	}
+	if def.Spec.HTTPTransactionVersion == api.OperationHTTPTransactionVersion {
+		headers[api.OperationTransactionVersionHeader] = strconv.Itoa(api.OperationHTTPTransactionVersion)
+		headers[api.OperationResultMaxBytesHeader] = strconv.Itoa(op.ValueMaxBytes)
+	}
+	if len(def.Spec.Milestones) != 0 {
+		headers[api.OperationMilestoneVersionHeader] = "1"
 	}
 	inv.Headers, _ = json.Marshal(headers)
 	return inv

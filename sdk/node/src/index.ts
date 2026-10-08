@@ -169,8 +169,8 @@ export {
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
 
-export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport } from './customer-operations.js';
-export { GregaleOperations, OperationStoppedError, type OperationStopCode, type OperationHandlerScope, type GregaleOperationsOptions, type OperationExecutionContext,
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationSubject, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport, type OperationMilestoneReport, type OperationMilestone, type OperationWorkflowState, type OperationWorkflowStateHistoryEntry, type OperationMilestones, type OperationMilestonePageOptions, type OperationBusinessMilestoneOptions } from './customer-operations.js';
+export { GregaleOperations, OperationStoppedError, type OperationStopCode, type OperationHandlerScope, type GregaleOperationsOptions, type OperationExecutionContext, type OperationRequestHeaders,
   type OperationArtifactInput, type OperationArtifactUpload, type PreparedOperationArtifact } from './operations-runtime.js';
 export { GregaleOperationSession, type OperationSessionOptions, type OperationSessionClient, type OperationSessionUpdate } from './operation-session.js';
 export { CustomerOperationAuth, type CustomerOperationAuthOptions, type CustomerOperationAuthProvider } from './operation-auth.js';
@@ -178,15 +178,15 @@ export { CustomerOperationFeature, type CustomerOperationFeatureConnection, type
 
 export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
 
-export { operationReceiptSchema } from "./operation-contract.js";
+export { operationReceiptSchema, customerOperationReceiptSchema } from "./operation-contract.js";
+export { customerOperationRequestFromHeaders, customerOperationRequestDigest, withCustomerOperationTransaction,
+  type CustomerOperationHTTPRequest, type CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
+export { customerOperationRequestFromHeaders as customerOperationReceiptRequestFromHeaders, customerOperationRequestDigest as customerOperationReceiptRequestDigest,
+  withCustomerOperationTransaction as withCustomerOperationReceiptTransaction, type CustomerOperationRequest as CustomerOperationReceiptRequest } from './operations.js';
 export {
   operationRequestFromHeaders,
   operationRequestDigest,
   withOperationTransaction,
-  customerOperationRequestFromHeaders,
-  customerOperationRequestDigest,
-  withCustomerOperationTransaction,
-  type CustomerOperationRequest,
   OperationConflictError,
   OperationCommitUnknownError,
   type OperationRequest,
@@ -203,3 +203,6 @@ export type { OperationTenantIdentity, OperationSubmissionScope, OperationSubmis
 export { runJobOperation, type JobOperationContext, type JobOperationScope, type JobOperationOptions, type JobOperationArtifactUploadInput } from './job-operations-runtime.js';
 
 export type { OperationDirectUploadInput } from './operation-upload.js';
+
+export { OperationMilestonePublicationError, type CustomerOperationTransaction } from './customer-operation-milestones.js';
+export { OperationWorkflowStatePublicationError, type OperationWorkflowStateReport, type OperationWorkflowStateReceipt } from './customer-operation-workflow-states.js';

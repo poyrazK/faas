@@ -619,7 +619,7 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	// Echo the post-dispatch state + result back so the drain can
 	// call CompleteInvocation(result) on the same transaction.
 	encoder := json.NewEncoder(w)
-	if (req.ExclusiveClaim != nil || inv.ManagedOperationID != "") && req.OperationResultVersion == api.ManagedOperationResultVersion {
+	if state.InvocationHasOperation(out) || ((req.ExclusiveClaim != nil || inv.ManagedOperationID != "") && req.OperationResultVersion == api.ManagedOperationResultVersion) {
 		// This authenticated JSON transport is not an HTML context. Preserve
 		// the handler's byte budget: HTML escaping could expand a valid 1 MiB
 		// result beyond the scheduler's bounded response envelope.
