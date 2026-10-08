@@ -34017,6 +34017,43 @@ components:
         accrued: { $ref: '#/components/schemas/FinancialContractCosts' }
         forecast: { $ref: '#/components/schemas/FinancialForecast' }
         price_contracts: { type: array, items: { $ref: '#/components/schemas/FinancialPriceContract' } }
+    FinancialAppCostAllocation:
+      type: object
+      description: Workload share of a meter cost attributed to one application.
+      required: [attribution, unit, quantity, net_millicents]
+      properties:
+        attribution: { $ref: '#/components/schemas/FinancialAttribution' }
+        unit: { type: string }
+        quantity: { type: integer, format: int64 }
+        net_millicents: { type: integer, format: int64 }
+    FinancialAppMeterCosts:
+      type: object
+      description: Application-attributed meter costs with source coverage and workload allocations.
+      required: [meter, coverage, quantity, net_millicents, allocations]
+      properties:
+        meter: { type: string }
+        coverage: { $ref: '#/components/schemas/FinancialMeterCoverage' }
+        unit: { type: string }
+        quantity: { type: integer, format: int64 }
+        net_millicents: { type: integer, format: int64 }
+        allocations: { type: array, items: { $ref: '#/components/schemas/FinancialAppCostAllocation' } }
+    FinancialAppCostsResponse:
+      type: object
+      description: Retained usage costs directly attributed to one application; invoice and forecast amounts remain account scoped.
+      required: [app_id, app_slug, currency, period_start, period_end, as_of, known_usage_millicents, meters, scope, scope_description, bill_estimate_available, missing_bill_components]
+      properties:
+        app_id: { type: string }
+        app_slug: { type: string }
+        currency: { type: string, enum: [EUR] }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        known_usage_millicents: { type: integer, format: int64 }
+        meters: { type: array, items: { $ref: '#/components/schemas/FinancialAppMeterCosts' } }
+        scope: { type: string }
+        scope_description: { type: string }
+        bill_estimate_available: { type: boolean }
+        missing_bill_components: { type: array, items: { type: string } }
     FinancialCostsResponse:
       type: object
       description: Account usage costs for a UTC period; invoice facts remain separate.
