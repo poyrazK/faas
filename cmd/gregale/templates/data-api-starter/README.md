@@ -166,7 +166,7 @@ they do not silently skip it.
 
 ## Evolve the schema
 
-Add `migrations/sql/0006_description.sql` and run sync again. Numbered SQL files
+Add `migrations/sql/0007_description.sql` and run sync again. Numbered SQL files
 are applied under a transaction and database advisory lock. The private
 `gregale_migrations.applied` ledger records versions and SHA-256 checksums;
 already-applied SQL cannot be edited, renamed, removed or inserted out of order.
@@ -270,3 +270,28 @@ Each request sees current data: this is not a snapshot. Inserts behind the
 cursor may appear, deleted rows disappear, and changing `created_at` can move
 rows across the boundary. Applications needing immutable ordering should
 prevent edits to that column through their database privileges or policies.
+
+The starter's `0006_query_indexes.sql` adds ownership-prefixed indexes for
+`(subject, created_at DESC, id DESC)` pagination and
+`(subject, priority, created_at DESC, id DESC)` filtered pagination. A
+`(subject, note_id)` index supports comment embeds and cascading note deletion.
+Junction primary keys already support note-to-tag traversal; extra
+`(subject, tag_id, note_id)` indexes support reverse tag-to-note traversal and
+cascading tag deletion for both paths. Indexes do not change generated types
+or the schema fingerprint. This migration uses transactional `CREATE INDEX`,
+which can block writes while building indexes on populated tables; plan its
+application window accordingly.
+
+Application schemas need indexes matching their RLS predicates, filters and
+ordering; foreign keys do not automatically create indexes on referencing
+columns. Keep statistics current and inspect `EXPLAIN (ANALYZE, BUFFERS)` as the
+restricted API role with representative JWT claims. Running as the table owner
+can bypass RLS and produce misleading evidence. The local acceptance fixture
+checks 30,000 notes across 200 owners, comments, and both junction paths. It
+verifies ordered index scans for ordinary pagination and indexed joins. A
+selective filtered cursor may use a bitmap index scan plus a sort bounded to
+the owner's matching rows. These checks run without
+disabling sequential scans or imposing machine-specific timing thresholds.
+These are PostgreSQL query-plan checks, not an HTTP throughput benchmark or
+production latency guarantee. Exact counts still scan matching visible rows;
+deep offset pages still discard earlier rows. Use cursor pages for continuation.

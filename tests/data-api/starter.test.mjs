@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { readFile, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { verifyQueryPlans } from './query-plans.mjs'
 import { command } from './staging/canary.mjs'
 
 const enabled = Boolean(process.env.DATA_API_TEST_DATABASE_URL && process.env.DATA_API_POSTGREST_BIN && process.env.DATA_API_STARTER_DIR)
@@ -67,17 +68,17 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   // Exercise exactly the stable-owner migration session and restricted API role.
   await migrate(migrationURL.toString())
   await migrate(migrationURL.toString())
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 5)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 6)
   const firstSQL = join(root, 'migrations/sql/0001_notes.sql')
   const originalSQL = await readFile(firstSQL, 'utf8')
   await writeFile(firstSQL, originalSQL + '\n-- changed after deployment\n')
   try { await assert.rejects(migrate(migrationURL.toString()), /changed or removed/) }
   finally { await writeFile(firstSQL, originalSQL) }
-  const failedSQL = join(root, 'migrations/sql/0006_failure.sql')
+  const failedSQL = join(root, 'migrations/sql/0007_failure.sql')
   await writeFile(failedSQL, 'ALTER TABLE api.notes ADD COLUMN rolled_back text; SELECT 1/0;')
   try { await assert.rejects(migrate(migrationURL.toString())) }
   finally { await rm(failedSQL) }
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 5)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 6)
   assert.equal((await owner.query("SELECT count(*)::integer AS count FROM information_schema.columns WHERE table_schema='api' AND column_name='rolled_back'")).rows[0].count, 0)
   const snapshot = await inspect(loginURL.toString(), ['api'])
   assert.deepEqual(snapshot.tables.find(table => table.name === 'comments').relationships[0].referencedColumns, ['subject', 'id'])
@@ -96,6 +97,8 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   } else {
     assert.equal(types, await readFile(fixture, 'utf8'), 'starter types must match its migrations')
   }
+  await verifyQueryPlans({ owner, loginURL: loginURL.toString(), pg })
+  assert.equal(generate(await inspect(loginURL.toString(), ['api'])), types, 'indexes must not change the generated contract')
   // Actual constraint changes must update cardinality and the fingerprint.
   await owner.query('ALTER TABLE api.note_details DROP CONSTRAINT note_details_pkey')
   const many = generate(await inspect(loginURL.toString(), ['api']))
