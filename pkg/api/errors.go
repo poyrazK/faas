@@ -759,6 +759,10 @@ const (
 	// CodeBeforeCheckpointFailed identifies an application callback that
 	// rejected a terminal init snapshot, distinct from storage or VM failures.
 	CodeBeforeCheckpointFailed = "before_checkpoint_failed"
+	// CodeDevSourceDiverged (ADR-740) is vmmd's refusal to snapshot an
+	// instance that was served a developer live patch. The VM is destroyed
+	// instead, and the next wake restores the unpatched artifact.
+	CodeDevSourceDiverged = "dev_source_diverged"
 	// CodeDeploymentCancelLiveForbidden (ADR-124) is returned by
 	// POST /v1/apps/{slug}/deployments/{id}/cancel when the row
 	// is already in DeployLive. Cancel of a live row would
@@ -1952,7 +1956,7 @@ func StatusForCode(code string) int {
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
-		CodeSecurityQuarantineRecoveryBlocked:
+		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged:
 		return http.StatusConflict
 	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected

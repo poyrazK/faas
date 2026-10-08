@@ -249,6 +249,9 @@ type Server struct {
 	ops   *wire.OpsMetrics
 	fcVer string
 	log   *slog.Logger
+	// diverged (ADR-740) lists instances that were served a developer live
+	// patch; their snapshot captures are refused. nil disables the guard.
+	diverged *DivergedInstances
 	// events (issue #517 / PR-C / ADR-064) is the wake-timeline
 	// fan-out. vmmd is the corroborating-observation source for
 	// wake.boot_observed at the gRPC server boundary and
@@ -396,6 +399,15 @@ func (s *Server) WithMigrationStore(store state.Store) *Server {
 // WithNodeID wires the local compute-node identity used by migration
 // lease-expiry reconciliation. It is optional for legacy single-box and
 // unit-test fixtures that do not have a compute_nodes row.
+// WithDivergedInstances shares the ADR-740 live-patch registry with the
+// runtime-config receiver so snapshot captures can refuse patched instances.
+func (s *Server) WithDivergedInstances(diverged *DivergedInstances) *Server {
+	if s != nil {
+		s.diverged = diverged
+	}
+	return s
+}
+
 func (s *Server) WithNodeID(nodeID string) *Server {
 	if s != nil {
 		s.nodeID = strings.TrimSpace(nodeID)
@@ -863,6 +875,13 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	if s.diverged.Has(req.GetInstance()) {
+		// The caller expects the VM to be gone after PauseAndSnapshot; destroy
+		// it instead of capturing a snapshot of patched, non-artifact source.
+		err := s.destroyDiverged(ctx, req.GetInstance())
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
 	info, err := s.vmm.Park(ctx, req.GetInstance(), fcvm.SnapshotSpec{
 		VMStatePath:       req.GetVmstatePath(),
 		StorageKey:        req.GetStorageKey(),
@@ -913,6 +932,13 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 			"Missing storage keys",
 			"storage_key and vmstate_storage_key are required on WarmSnapshot (warm captures are storage-backend-only)").
 			WithDocs(wire.DocsBaseURL + "/vmmd#warm-snapshot")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	if s.diverged.Has(req.GetInstance()) {
+		// Refuse before pausing. The scheduler's warm-capture failure path
+		// destroys the VM, and the next wake restores the unpatched artifact.
+		err := devSourceDivergedProblem(req.GetInstance())
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -1130,6 +1156,7 @@ func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmd
 	s.ForgetCPU(req.GetInstance())
 	s.ForgetNet(req.GetInstance())
 	s.ForgetActivity(req.GetInstance())
+	s.diverged.Forget(req.GetInstance())
 	s.ops.Observe(op, time.Since(start), nil)
 	return &vmmdpb.DestroyResponse{Instance: req.GetInstance(), ExitCode: int32(code)}, nil
 }
