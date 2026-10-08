@@ -230,9 +230,22 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		t.Helper()
 		old := bindings[mp.CredentialReadWrite]
 		oldURI := uri(old)
+		if !parked {
+			// Manual tasks may outlast the serving guest's idle window. Issue
+			// real SQL immediately before rotating and require a running guest.
+			last = probe(t, old, "")
+		}
 		instances, err := store.ListInstancesForApp(t.Context(), appID)
 		if err != nil {
 			t.Fatal(err)
+		}
+		running, parkedGuest := false, false
+		for _, instance := range instances {
+			running = running || state.State(instance.State) == state.StateRunning
+			parkedGuest = parkedGuest || state.State(instance.State) == state.StateParked
+		}
+		if (!parked && !running) || (parked && (!parkedGuest || running)) {
+			t.Fatal("SQL rotation did not begin in its required guest state")
 		}
 		rotated, err := fixture.Bindings.Rotate(t.Context(), account, old.ID)
 		if err != nil {
