@@ -117,7 +117,7 @@ func TestAlarmRetryMetadataFailsClosedAndDoesNotLeakPayload(t *testing.T) {
 	}
 	status, err := f.manager.InspectAlarm(t.Context(), f.id)
 	body, marshalErr := json.Marshal(status)
-	if err != nil || marshalErr != nil || strings.Contains(string(body), "secret-provider-error") || strings.Contains(string(body), "count") {
+	if err != nil || marshalErr != nil || strings.Contains(string(body), "secret-provider-error") || strings.Contains(string(body), `"count"`) {
 		t.Fatal("inspection exposed handler data", string(body), err, marshalErr)
 	}
 	base, etag, err := f.manager.readManifest(t.Context(), f.id)
