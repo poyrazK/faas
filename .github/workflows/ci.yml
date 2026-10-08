@@ -1136,7 +1136,9 @@ jobs:
   container-contract:
     name: portable container contracts (strict)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Cold race builds compile the large APID and state packages serially;
+    # reserve time for them under the memory cap. Warm cache runs are faster.
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
