@@ -6910,6 +6910,37 @@
     "kind": "operational"
   },
   {
+    "table": "request_telemetry_app_gaps",
+    "columns": [
+      "app_id",
+      "dropped_total",
+      "last_gap_at",
+      "node_name",
+      "pending_count",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_telemetry_coverage",
+    "columns": [
+      "app_scoped",
+      "boot_id",
+      "dropped_total",
+      "enabled",
+      "healthy_since",
+      "node_name",
+      "pending_count",
+      "received_at",
+      "sampling_basis_points",
+      "sequence",
+      "source_at",
+      "unattributed_dropped_total",
+      "unattributed_pending_count"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "reserved_ip_inventory",
     "columns": [
       "address",
