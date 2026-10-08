@@ -194,5 +194,35 @@ func TestMemStore_EdgeRuleSetVersions_RecordAndRestore(t *testing.T) {
 	v3, err := m.GetEdgeRuleSetVersion(ctx, app, 3)
 	if err != nil || v3.RulesSHA256 != v1.RulesSHA256 {
 		t.Fatalf("restore version digest mismatch: %v", err)
+// TestMemStore_EdgeRule_ListOrderMatchesGatewayOrder pins the tie order:
+// rules default to priority 100, so ties are the common case, and the
+// listing the dashboard presents as the match order must be the order the
+// gateway read evaluates (oldest first).
+func TestMemStore_EdgeRule_ListOrderMatchesGatewayOrder(t *testing.T) {
+	m, ctx := state.NewMemStore(), context.Background()
+	acct, app := memEdgeRuleSeedAccount(t, m, ctx, api.PlanPro, "tie-order")
+	for range 5 {
+		if _, err := m.CreateEdgeRule(ctx, memSampleValidateRuleParams(acct, app, "tie.example.com", "block")); err != nil {
+			t.Fatalf("CreateEdgeRule: %v", err)
+		}
+	}
+	listed, err := m.ListEdgeRulesForApp(ctx, app)
+	if err != nil {
+		t.Fatalf("ListEdgeRulesForApp: %v", err)
+	}
+	matched, err := m.MatchEdgeRulesForHost(ctx, "tie.example.com")
+	if err != nil {
+		t.Fatalf("MatchEdgeRulesForHost: %v", err)
+	}
+	if len(listed) != 5 || len(matched) != 5 {
+		t.Fatalf("got %d listed, %d matched; want 5", len(listed), len(matched))
+	}
+	for i := range listed {
+		if listed[i].ID != matched[i].ID {
+			t.Fatalf("position %d: listing has %s, gateway read has %s", i, listed[i].ID, matched[i].ID)
+		}
+		if i > 0 && listed[i].CreatedAt.Before(listed[i-1].CreatedAt) {
+			t.Fatalf("position %d: listing is not oldest first", i)
+		}
 	}
 }

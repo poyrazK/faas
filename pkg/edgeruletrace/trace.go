@@ -551,7 +551,10 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		if sorted[i].Priority != sorted[j].Priority {
 			return sorted[i].Priority < sorted[j].Priority
 		}
-		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
+		if !sorted[i].CreatedAt.Equal(sorted[j].CreatedAt) {
+			return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
+		}
+		return sorted[i].ID < sorted[j].ID
 	})
 	// The gateway does not load expired rules; evaluate them as disabled
 	// (the per-rule row still reports the expiry as the skip reason).

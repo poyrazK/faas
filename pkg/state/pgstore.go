@@ -9291,7 +9291,7 @@ func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx
 	rows, err := tx.Query(ctx,
 		`select `+edgeRuleSelectCols+` from edge_rules
 		 where app_id = $1::uuid
-		 order by priority asc, created_at desc`, dep.AppID)
+		 order by priority asc, created_at asc, id asc`, dep.AppID)
 	if err != nil {
 		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: read edge rules for snapshot: %w", err)
 	}
@@ -14007,7 +14007,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 func (s *PgStore) ListEdgeRulesForAccount(ctx context.Context, accountID string) ([]EdgeRule, error) {
 	rows, err := s.pool.Query(ctx,
 		`select `+edgeRuleSelectCols+` from edge_rules
-		 where account_id = $1 order by priority asc, created_at desc`, accountID)
+		 where account_id = $1 order by priority asc, created_at asc, id asc`, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -14018,7 +14018,7 @@ func (s *PgStore) ListEdgeRulesForAccount(ctx context.Context, accountID string)
 func (s *PgStore) ListEdgeRulesForApp(ctx context.Context, appID string) ([]EdgeRule, error) {
 	rows, err := s.pool.Query(ctx,
 		`select `+edgeRuleSelectCols+` from edge_rules
-		 where app_id = $1 order by priority asc, created_at desc`, appID)
+		 where app_id = $1 order by priority asc, created_at asc, id asc`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -14909,7 +14909,7 @@ func (s *PgStore) MatchEdgeRulesForHost(ctx context.Context, host string) ([]Edg
 		   	or match_host = '*'
 		   	or $1 like replace(replace(match_host, '*', '%'), '?', '_')
 		   )
-		 order by priority asc, created_at asc
+		 order by priority asc, created_at asc, id asc
 	`, host)
 	if err != nil {
 		return nil, err

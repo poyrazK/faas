@@ -957,7 +957,7 @@ func compileRouteRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleResolved,
 			TargetAppSlug:     r.Action.Route.TargetAppSlug,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -999,7 +999,7 @@ func compileRewriteRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRewrite
 			To:                r.Action.Rewrite.To,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -1046,7 +1046,7 @@ func compileRedirectRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRedire
 			Headers:           r.Action.Redirect.Headers,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -1088,7 +1088,7 @@ func compileHeadersRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleHeaders
 			ResponseHeaders:   convertHeaderOps(r.Action.Headers.ResponseHeaders),
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -1210,7 +1210,7 @@ func (g *gatewaydEdgeRules) compileCORSRules(ctx context.Context, storeRules []s
 			PresetID:          merged.PresetID,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -1289,7 +1289,7 @@ func compileJWTRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleJWTResolved
 			RequireExp:                     action.RequireExp,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -1341,7 +1341,7 @@ func compileIPRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleIPResolved, 
 			Deny:              deny,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -1396,7 +1396,7 @@ func compileGeoRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleGeoResolved
 			Deny:              deny,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -1528,7 +1528,7 @@ func compileLimitRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleLimitReso
 			MaxBodyBytesStreaming: maxBodyStream,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -1601,7 +1601,7 @@ func compileMaintenanceRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleMai
 			Message:           r.Action.Maintenance.Message,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -1643,7 +1643,7 @@ func compileRespondRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRespond
 			Body:              append([]byte(nil), a.Body...),
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -1680,7 +1680,7 @@ func compileAsyncRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleAsyncReso
 			MatchHeaders: buildMatchHeadersMap(rule.MatchHeaders),
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -1802,7 +1802,7 @@ func compileThrottleRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleThrott
 			}(),
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -1859,7 +1859,7 @@ func compileBudgetRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleBudgetRe
 			AllowOverrideHeader: r.Action.Budget.AllowOverrideHeader,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -1949,7 +1949,7 @@ func compileCacheRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleCacheReso
 			VaryOn:                      r.Action.Cache.VaryOn,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
@@ -2079,7 +2079,7 @@ func (g *gatewaydEdgeRules) compileValidateRules(storeRules []state.EdgeRule) ([
 			ValidateMode:        mode,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
 }
 
