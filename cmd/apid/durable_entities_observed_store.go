@@ -51,6 +51,8 @@ func durableEntityObjectKind(key string) string {
 	switch {
 	case strings.Contains(key, "/probes/"):
 		return "probe"
+	case strings.Contains(key, "/alarm-index/"):
+		return "alarm_index"
 	case strings.Contains(key, "/maintenance/") || strings.HasSuffix(key, "/maintenance.json") || strings.HasSuffix(key, "/inventory.json"):
 		return "maintenance"
 	case strings.HasSuffix(key, "/manifest.json"):

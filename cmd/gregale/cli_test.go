@@ -1329,7 +1329,7 @@ func TestRenderAPIError_TTYGatedGlyph(t *testing.T) {
 
 // TestCmdApp_Min1_EchoesResidentCost pins the legacy flag form
 // `gregale app <slug> --min 1` echoes the same always-resident cost as
-// the subcommand form. Pro plan, 512 MB, min=1 → ~15.2 GB-h/mo.
+// the subcommand form. Pro plan, 512 MB, min=1 → ~365.6 GB-h/mo.
 func TestCmdApp_Min1_EchoesResidentCost(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1358,7 +1358,7 @@ func TestCmdApp_Min1_EchoesResidentCost(t *testing.T) {
 	for _, want := range []string{
 		"✓ Updated",
 		"1 instance of 512 MB kept warm",
-		"~15.2 GB-h/mo",
+		"~365.6 GB-h/mo",
 		"1000 millicent/GB-h overage",
 	} {
 		if !strings.Contains(out, want) {

@@ -320,8 +320,8 @@ func (s *server) sendPasswordResetEmail(ctx context.Context, r *http.Request, ac
 		scheme = schemeHTTPS
 	}
 	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, resetTokenPath, base64.RawURLEncoding.EncodeToString(raw))
-	body := "Hi,\n\nReset your faas password by clicking the link below (valid for 15 minutes):\n\n  " + link + "\n\nIf you did not request this, you can ignore this email.\n"
-	subject := "Reset your faas password"
+	body := "Hi,\n\nReset your Gregale password by clicking the link below (valid for 15 minutes):\n\n  " + link + "\n\nIf you did not request this, you can ignore this email.\n"
+	subject := "Reset your Gregale password"
 	if err := s.mailer.Send(ctx, Message{
 		To:       []string{email},
 		Subject:  subject,
@@ -1102,7 +1102,7 @@ func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct s
 	body := fmt.Sprintf(
 		"Hi,\n\nWelcome to faas. Confirm your email by clicking the link below (valid for 15 minutes):\n\n  %s\n\nIf you did not request this, you can ignore this email.\n",
 		link)
-	subject := "Confirm your faas account"
+	subject := "Confirm your Gregale account"
 	if err := s.mailer.Send(ctx, Message{
 		To:       []string{email},
 		Subject:  subject,

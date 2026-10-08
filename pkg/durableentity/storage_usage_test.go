@@ -94,7 +94,7 @@ func TestStorageAccountingMatchesReachableBodiesAcrossPathCopiesAndCleanup(t *te
 			t.Fatal(err)
 		}
 		base, _, err := f.manager.readManifest(t.Context(), f.id)
-		if err != nil || base.Schema != 3 || base.StorageUsage == nil || !sameUsage(*base.StorageUsage, reachableUsage(t, f)) {
+		if err != nil || base.Schema != 4 || base.StorageUsage == nil || !sameUsage(*base.StorageUsage, reachableUsage(t, f)) {
 			t.Fatal(i, base.StorageUsage, err)
 		}
 	}

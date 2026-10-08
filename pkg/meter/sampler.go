@@ -185,6 +185,18 @@ type Sampler struct {
 	// owns its own concurrency).
 	cpuBaselineMu sync.Mutex
 	cpuBaseline   map[string]cpuBaseline
+
+	// appRolled and jobRolled are the closed minutes this process rolled in
+	// full, within api.MeterCatchUpWindow. A minute is caught up only if it
+	// is in neither the store's compute-complete record nor this set, so a
+	// record write that failed never makes a minute roll twice (H5-55).
+	appRolled map[time.Time]bool
+	jobRolled map[time.Time]bool
+	// caughtUp and jobCaughtUp list the earlier closed minutes the latest
+	// SampleAndRoll and SampleJobsAndRoll calls rolled in full, oldest
+	// first.
+	caughtUp    []time.Time
+	jobCaughtUp []time.Time
 }
 
 // cpuBaseline is the per-instance baseline the sampler retains
@@ -333,6 +345,10 @@ type RolledRow struct {
 	// the in-memory marker. Not persisted as a separate
 	// column — the synthetic identity is the UUID v5.
 	SyntheticFloor bool
+	// CatchUp marks a row for an earlier closed minute that a missed or
+	// failed tick left unrolled (H5-55). The row may already have been
+	// written by the tick that failed, so metrics must not count it again.
+	CatchUp bool
 }
 
 // SampleAndRoll walks every app's live instances and appends one minute of
@@ -349,23 +365,118 @@ type RolledRow struct {
 //     second; NOT changed by this PR).
 //   - the per-minute CPU-µs delta (issue #279 / PR-B; informational
 //     only — billing is on RAM).
+//
+// With the instance-billing ledger only closed minutes are rolled, and a
+// tick first catches up (H5-55, ADR-790): closed minutes of the last
+// api.MeterCatchUpWindow that meterd never recorded as compute-complete
+// (financial_sampling_windows) and this process has not rolled are rolled
+// from the ledger, oldest first and at most api.MeterCatchUpMinutesPerTick
+// per tick, before the newest closed minute. A minute used to be rolled by
+// exactly one tick, so a meterd that restarted or whose tick was cancelled
+// mid-walk lost it for good: production-us under-billed 02:52-03:00 by up to
+// 100% per minute while meterd crash-looped through the rc.246 rollback.
+// Re-rolling is safe because usage_minutes keeps the first positive
+// mb_seconds per (instance, minute), and a caught-up minute carries no live
+// counters (CPU, gateway and egress deltas, tail seconds): those accumulate
+// at their sources and land in the newest minute.
 func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 	observedAt := s.now().UTC()
-	minute := MinuteKey(observedAt)
+	s.caughtUp = s.caughtUp[:0]
+	if _, ok := s.store.(instanceBillingSecondsStore); !ok {
+		return s.rollApps(ctx, observedAt, MinuteKey(observedAt), false, false)
+	}
+	newest := observedAt.Truncate(time.Minute).Add(-time.Minute)
+	pending, rolled, err := s.minutesToCatchUp(ctx, s.appRolled, newest)
+	s.appRolled = rolled
+	if err != nil {
+		return nil, err
+	}
+	var out []RolledRow
+	for _, minute := range pending {
+		rows, err := s.rollApps(ctx, minute.Add(time.Minute), minute, true, true)
+		for i := range rows {
+			rows[i].CatchUp = true
+		}
+		out = append(out, rows...)
+		if err != nil {
+			return out, fmt.Errorf("meter: catch up minute %s: %w", minute.Format(time.RFC3339), err)
+		}
+		s.appRolled[minute] = true
+		s.caughtUp = append(s.caughtUp, minute)
+	}
+	rows, err := s.rollApps(ctx, observedAt, newest, true, false)
+	out = append(out, rows...)
+	if err != nil {
+		return out, err
+	}
+	s.appRolled[newest] = true
+	return out, nil
+}
+
+// CaughtUpMinutes returns the earlier closed minutes that the latest
+// SampleAndRoll and SampleJobsAndRoll calls both rolled in full, oldest
+// first.
+func (s *Sampler) CaughtUpMinutes() []time.Time {
+	jobs := make(map[time.Time]bool, len(s.jobCaughtUp))
+	for _, m := range s.jobCaughtUp {
+		jobs[m] = true
+	}
+	var out []time.Time
+	for _, m := range s.caughtUp {
+		if jobs[m] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// minutesToCatchUp returns the closed minutes before newest, within
+// api.MeterCatchUpWindow, that the store has no compute-complete record for
+// and rolled does not hold, oldest first and at most
+// api.MeterCatchUpMinutesPerTick. It also returns rolled pruned to the
+// window. A store without the record catches up every minute this process
+// has not rolled.
+func (s *Sampler) minutesToCatchUp(ctx context.Context, rolled map[time.Time]bool, newest time.Time) ([]time.Time, map[time.Time]bool, error) {
+	start := newest.Add(-api.MeterCatchUpWindow)
+	if rolled == nil {
+		rolled = map[time.Time]bool{}
+	}
+	for minute := range rolled {
+		if minute.Before(start) {
+			delete(rolled, minute)
+		}
+	}
+	complete := map[time.Time]bool{}
+	if record, ok := s.store.(state.FinancialStore); ok {
+		minutes, err := record.FinancialCompletedComputeMinutes(ctx, start, newest)
+		if err != nil {
+			return nil, rolled, fmt.Errorf("meter: read completed minutes: %w", err)
+		}
+		for _, minute := range minutes {
+			complete[minute.UTC()] = true
+		}
+	}
+	var out []time.Time
+	for minute := start; minute.Before(newest) && len(out) < api.MeterCatchUpMinutesPerTick; minute = minute.Add(time.Minute) {
+		if !complete[minute] && !rolled[minute] {
+			out = append(out, minute)
+		}
+	}
+	return out, rolled, nil
+}
+
+// rollApps rolls one minute of app usage. exactResidency reads the minute's
+// residency from the instance-billing ledger; catchUp rolls an earlier
+// closed minute without draining any live counter.
+func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, exactResidency, catchUp bool) ([]RolledRow, error) {
 	residentSeconds := map[string]int64(nil)
-	exactResidency := false
-	if residencyStore, ok := s.store.(instanceBillingSecondsStore); ok {
-		// Only closed minutes are materialised. This prevents an early tick
-		// from locking a partial value behind usage_minutes' first-write-wins
-		// idempotency key.
-		windowEnd := observedAt.Truncate(time.Minute)
-		minute = windowEnd.Add(-time.Minute)
+	if exactResidency {
+		residencyStore := s.store.(instanceBillingSecondsStore)
 		var err error
-		residentSeconds, err = residencyStore.InstanceBillingSeconds(ctx, minute, windowEnd)
+		residentSeconds, err = residencyStore.InstanceBillingSeconds(ctx, minute, minute.Add(time.Minute))
 		if err != nil {
 			return nil, fmt.Errorf("meter: load instance billing residency: %w", err)
 		}
-		exactResidency = true
 	}
 	apps, err := s.store.ListAllApps(ctx)
 	if err != nil {
@@ -456,7 +567,11 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			if state.IsMeteredSkippableMode(ins.Mode) {
 				continue
 			}
-			usage, usageOK := s.usageDeltas(ins.ID)
+			var usage UsageDeltas
+			var usageOK bool
+			if !catchUp {
+				usage, usageOK = s.usageDeltas(ins.ID)
+			}
 			seconds := int64(60)
 			if exactResidency {
 				seconds = residentSeconds[ins.ID]
@@ -520,7 +635,9 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 				}
 				requests = int64(invocationRequests)
 			}
-			row.CPUUsec = s.cpuDeltaForMinute(ins.ID, minute)
+			if !catchUp {
+				row.CPUUsec = s.cpuDeltaForMinute(ins.ID, minute)
+			}
 			// PR 2 (ADR-046): wire EgressSource so this row
 			// carries tx_bytes (gateway response bytes) and
 			// net_tx_bytes (root-side vethHost.rx_bytes
@@ -545,8 +662,10 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			// writes 0 (the additive-merge contract makes a
 			// redelivered AppendUsage with 0 safe — same shape as
 			// the cpu_usec / tx_bytes nil-source handling).
-			if tailSec, ok := s.tailSecondsFor(ins.ID); ok {
-				row.TailSeconds = tailSec
+			if !catchUp {
+				if tailSec, ok := s.tailSecondsFor(ins.ID); ok {
+					row.TailSeconds = tailSec
+				}
 			}
 			if err := s.appendRolledRow(ctx, &row, requests, usage); err != nil {
 				return out, err
