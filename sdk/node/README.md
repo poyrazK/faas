@@ -130,31 +130,30 @@ the endpoint's OIDC bearer token. For example, with the separate `ws` package
 
 ```ts
 import WebSocket from 'ws';
-import { consumeRealtimeChannel, RealtimeResyncRequiredError } from '@gregale/sdk-node';
+import { consumeRealtimeChannel } from '@gregale/sdk-node';
 
-try {
-  await consumeRealtimeChannel({
-    url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
-    channel: 'notifications',
-    cursorStore: {
-      load: async () => Number(await cursorDB.get('notifications') ?? 0),
-      save: async (sequence) => { await cursorDB.set('notifications', sequence); },
-    },
-    onMessage: async ({ sequence, data }) => {
-      await processNotification(sequence, data); // make this idempotent by sequence
-    },
-    webSocketFactory: async (url, protocols) => new WebSocket(url, protocols, {
-      headers: { Authorization: `Bearer ${await getFreshOidcToken()}` },
-    }),
-  });
-} catch (error) {
-  if (error instanceof RealtimeResyncRequiredError) {
-    // Rebuild application state, then save a new cursor before consuming again.
-    console.log(error.oldestSequence, error.latestSequence);
-  } else {
-    throw error;
-  }
-}
+await consumeRealtimeChannel({
+  url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+  channel: 'notifications',
+  cursorStore: {
+    load: async () => Number(await cursorDB.get('notifications') ?? 0),
+    save: async (sequence) => { await cursorDB.set('notifications', sequence); },
+  },
+  onMessage: async ({ sequence, data }) => {
+    await processNotification(sequence, data); // make this idempotent by sequence
+  },
+  onResync: async (gap) => {
+    const snapshot = await rebuildNotificationState({
+      channel: gap.channel,
+      throughSequence: gap.latestSequence,
+    });
+    await replaceNotificationState(snapshot.state);
+    return snapshot.sequence; // fully represented by the rebuilt state
+  },
+  webSocketFactory: async (url, protocols) => new WebSocket(url, protocols, {
+    headers: { Authorization: `Bearer ${await getFreshOidcToken()}` },
+  }),
+});
 ```
 
 The helper calls `onMessage`, saves its cursor, then sends the ack. If
@@ -162,10 +161,90 @@ processing or saving fails it stops without advancing. A crash between the
 application side effect and cursor save can cause redelivery, so deduplicate
 using the channel and sequence. When possible, store that deduplication key
 with the application side effect in one transaction.
-An expired cursor raises `RealtimeResyncRequiredError`; the helper never skips
-missing history. Cancel with an `AbortSignal` to stop reconnecting. This preview
-requires both server preview flags and the endpoint's channel authorization
-callback described in [managed realtime operations](../../docs/ops/realtime.md).
+An expired cursor calls `onResync` with the channel, stale cursor, and retained
+history bounds. Return a cursor between `oldestSequence - 1` and
+`latestSequence` that the rebuilt state fully represents; the helper saves it
+before reconnecting. Omit `onResync` to receive `RealtimeResyncRequiredError`
+and perform recovery outside the consumer. Cancel with an `AbortSignal` to
+stop reconnecting. This preview requires both server preview flags and the
+endpoint's channel authorization callback described in
+[managed realtime operations](../../docs/ops/realtime.md).
+
+Use `consumeRealtimeChannels` to multiplex up to eight channels on one
+WebSocket. Each channel has its own cursor store, message handler, and optional
+resync callback; the connection URL, token factory, retry policy, and abort
+signal are shared:
+
+```ts
+import WebSocket from 'ws';
+import { consumeRealtimeChannels } from '@gregale/sdk-node';
+
+await consumeRealtimeChannels({
+  url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+  channels: [
+    {
+      channel: 'jobs',
+      cursorStore: jobCursorStore,
+      onMessage: async (message) => updateJobProgress(message),
+    },
+    {
+      channel: 'notifications',
+      cursorStore: notificationCursorStore,
+      onMessage: async (message) => processNotification(message),
+    },
+  ],
+  webSocketFactory: async (url, protocols) => new WebSocket(url, protocols, {
+    headers: { Authorization: `Bearer ${await getFreshOidcToken()}` },
+  }),
+});
+```
+
+Handlers run sequentially in received frame order, so slow processing applies
+backpressure to every channel on that socket. A resync on one channel saves
+that channel's rebuilt cursor and reconnects the shared socket; the other
+channels resume from their own saved cursors and can receive duplicates under
+the at-least-once delivery model. `consumeRealtimeChannel` remains available
+for a single channel and uses the same implementation.
+
+Backend publishers can pass a stable key to the generated API service. Derive
+it once from the logical event or outbox row, and reuse it only when retrying
+that exact payload:
+
+```ts
+import { RealtimeService } from '@gregale/sdk-node';
+
+const payload = Buffer.from(JSON.stringify(event));
+const outcome = await RealtimeService.publishManagedRealtimeChannel({
+  slug: 'my-app',
+  id: 'ENDPOINT_ID',
+  channel: 'jobs',
+  idempotencyKey: `job-event:${event.id}`,
+  requestBody: { data_base64: payload.toString('base64') },
+});
+```
+
+The server replays the original outcome for 24 hours. A replay of a partial
+publish does not retry subscribers that missed it; use a new key for a new
+attempt only when possible duplicates are acceptable. A key reused with a
+different payload or delivery mode returns `409`.
+
+To make a message resumable, opt into retained delivery. It requires the apid
+retained-history preview flag, the realtimed resume preview flag, a stable key,
+and a payload no larger than 4 KiB. The response includes the durable channel
+sequence; v2 subscribers read messages in that order, while raw-frame clients
+receive the normal live publish:
+
+```ts
+const retained = await RealtimeService.publishManagedRealtimeChannel({
+  slug: 'my-app',
+  id: 'ENDPOINT_ID',
+  channel: 'jobs',
+  delivery: 'retained',
+  idempotencyKey: `job-event:${event.id}:retained`,
+  requestBody: { data_base64: payload.toString('base64') },
+});
+console.log(retained.sequence, retained.durable);
+```
 
 Browser clients import from the browser subpath. The server accepts a bounded
 OIDC JWT in a reserved WebSocket subprotocol when the endpoint has an explicit

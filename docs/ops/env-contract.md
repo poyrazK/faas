@@ -281,7 +281,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MIGRATING_WATCHDOG_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_MIGRATING_WATCHDOG_TICK_LIMIT` | schedd | `default` |  |  | `` |  |
 | `FAAS_NODE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
-| `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, schedd, vmmd, shared | `dropin` |  |  | `` |  |
+| `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, realtimed, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` | meterd | `default` |  |  | `` |  |
 | `FAAS_OBJECT_STORAGE_CONFIG` | apid, gatewayd-public, s3-gatewayd, shared | `unit` |  |  | `` | gatewayd-public and s3-gatewayd read /etc/faas/object-storage.json; apid uses the same optional drop-in; s3_enabled runtime config separately defaults off |
@@ -373,6 +373,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_OUTBOUND_QUEUE` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_OUTBOUND_QUEUE_BYTES` | realtimed | `default` |  | 4194304 | `` | per-connection outbound payload budget, including a frame being written |
 | `FAAS_REALTIME_PONG_WAIT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_RESUME_PREVIEW_ENABLED` | realtimed | `default` |  | 0 | `` | operator-only v2 WebSocket resume preview; requires apid history reader and OIDC endpoint authentication |
 | `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED` | apid | `default` |  | 0 | `` | operator-only retained outbound history preview; off pending plan entitlements and fleet qualification |

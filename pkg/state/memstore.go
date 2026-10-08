@@ -1043,9 +1043,10 @@ type registryCredKey struct {
 }
 
 type idemEntry struct {
-	status  int
-	body    []byte
-	created time.Time
+	status        int
+	body          []byte
+	requestDigest []byte
+	created       time.Time
 }
 
 // usageMinute mirrors the production schema (PK (instance_id, minute)).
@@ -19097,6 +19098,59 @@ func (m *MemStore) ReserveIdempotent(_ context.Context, accountID, key string, a
 	return IdempotencyReservation{Status: e.status, Body: append([]byte(nil), e.body...)}, nil
 }
 
+// ReserveManagedRealtimePublish binds one live publish key to a payload for
+// the normal 24-hour idempotency window. In-flight publishes are never
+// reclaimed early: their delivery outcome may be unknown after a crash.
+func (m *MemStore) ReserveManagedRealtimePublish(_ context.Context, accountID, key string, requestDigest []byte) (ManagedRealtimePublishReservation, error) {
+	if len(requestDigest) != sha256.Size {
+		return ManagedRealtimePublishReservation{}, errors.New("state: managed realtime publish digest must be SHA-256")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := accountID + "\x00" + key
+	e, ok := m.idem[id]
+	if !ok || time.Since(e.created) > 24*time.Hour {
+		m.idem[id] = idemEntry{created: time.Now(), requestDigest: append([]byte(nil), requestDigest...)}
+		return ManagedRealtimePublishReservation{Reserved: true}, nil
+	}
+	if !bytes.Equal(e.requestDigest, requestDigest) {
+		return ManagedRealtimePublishReservation{Conflict: true}, nil
+	}
+	if e.status == 0 {
+		return ManagedRealtimePublishReservation{InFlight: true}, nil
+	}
+	return ManagedRealtimePublishReservation{Status: e.status, Body: append([]byte(nil), e.body...)}, nil
+}
+
+// ReapManagedRealtimePublishIdempotency removes expired payload-bound publish
+// receipts in oldest-first order, matching the production retention window.
+func (m *MemStore) ReapManagedRealtimePublishIdempotency(_ context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().Add(-24 * time.Hour)
+	type expiredEntry struct {
+		id      string
+		created time.Time
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expired := make([]expiredEntry, 0)
+	for id, entry := range m.idem {
+		if len(entry.requestDigest) == sha256.Size && !entry.created.After(cutoff) {
+			expired = append(expired, expiredEntry{id: id, created: entry.created})
+		}
+	}
+	sort.Slice(expired, func(i, j int) bool { return expired[i].created.Before(expired[j].created) })
+	if len(expired) > limit {
+		expired = expired[:limit]
+	}
+	for _, entry := range expired {
+		delete(m.idem, entry.id)
+	}
+	return len(expired), nil
+}
+
 // ReclaimIdempotent mirrors PgStore: turn the completed response back into
 // an in-flight reservation only while it still holds status and body.
 func (m *MemStore) ReclaimIdempotent(_ context.Context, accountID, key string, status int, body []byte) (bool, error) {
@@ -19107,7 +19161,8 @@ func (m *MemStore) ReclaimIdempotent(_ context.Context, accountID, key string, s
 	if !ok || e.status == 0 || e.status != status || !bytes.Equal(e.body, body) {
 		return false, nil
 	}
-	m.idem[id] = idemEntry{created: time.Now()}
+	fingerprint := append([]byte(nil), e.requestDigest...)
+	m.idem[id] = idemEntry{created: time.Now(), requestDigest: fingerprint}
 	return true, nil
 }
 
@@ -19125,7 +19180,9 @@ func (m *MemStore) ReleaseIdempotent(_ context.Context, accountID, key string) e
 func (m *MemStore) PutIdempotent(_ context.Context, accountID, key string, status int, body []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.idem[accountID+"\x00"+key] = idemEntry{status: status, body: append([]byte(nil), body...), created: time.Now()}
+	id := accountID + "\x00" + key
+	fingerprint := append([]byte(nil), m.idem[id].requestDigest...)
+	m.idem[id] = idemEntry{status: status, body: append([]byte(nil), body...), requestDigest: fingerprint, created: time.Now()}
 	return nil
 }
 

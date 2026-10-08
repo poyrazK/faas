@@ -52,6 +52,14 @@ type realtimeRouteAwareUnsubscriber interface {
 	UnsubscribeWithRouteState(context.Context, string, string, string) (hasSubscribers bool, known bool, err error)
 }
 
+type realtimeNodePublishStatus interface {
+	PublishWithStatus(context.Context, string, string, realtime.Message) (realtime.PublishStatus, error)
+}
+
+type realtimeNodeRetainedPublishStatus interface {
+	PublishRetainedWithStatus(context.Context, string, string, realtime.Message, int64) (realtime.PublishStatus, error)
+}
+
 type localRealtimeNodeOperator struct {
 	owner  realtimeOwner
 	client *realtime.Client
@@ -77,6 +85,27 @@ func (o localRealtimeNodeOperator) UnsubscribeWithRouteState(ctx context.Context
 }
 func (o localRealtimeNodeOperator) Publish(ctx context.Context, endpointID, channel string, message realtime.Message) (int, error) {
 	return o.owner.Publish(ctx, endpointID, channel, message)
+}
+func (o localRealtimeNodeOperator) PublishWithStatus(ctx context.Context, endpointID, channel string, message realtime.Message) (realtime.PublishStatus, error) {
+	if publisher, ok := o.owner.(realtimeNodePublishStatus); ok {
+		return publisher.PublishWithStatus(ctx, endpointID, channel, message)
+	}
+	queued, err := o.owner.Publish(ctx, endpointID, channel, message)
+	return realtime.PublishStatus{Subscribers: queued, Queued: queued}, err
+}
+func (o localRealtimeNodeOperator) PublishRetainedWithStatus(ctx context.Context, endpointID, channel string, message realtime.Message, sequence int64) (realtime.PublishStatus, error) {
+	if publisher, ok := o.owner.(realtimeRetainedPublishStatus); ok {
+		response, err := publisher.PublishRetainedWithStatus(ctx, endpointID, channel, message, sequence)
+		var managementErr *realtime.ManagementError
+		if errors.As(err, &managementErr) && (managementErr.StatusCode == http.StatusBadRequest || managementErr.StatusCode == http.StatusNotFound) {
+			return o.PublishWithStatus(ctx, endpointID, channel, message)
+		}
+		return realtime.PublishStatus{
+			Queued: response.Queued, Subscribers: response.Subscribers,
+			QueueFull: response.QueueFull, Failed: response.Failed,
+		}, err
+	}
+	return o.PublishWithStatus(ctx, endpointID, channel, message)
 }
 func (o localRealtimeNodeOperator) Connections(ctx context.Context) ([]realtime.ConnectionInfo, error) {
 	return o.client.Connections(ctx)
@@ -127,6 +156,17 @@ func (o remoteRealtimeNodeOperator) UnsubscribeWithRouteState(ctx context.Contex
 }
 func (o remoteRealtimeNodeOperator) Publish(ctx context.Context, endpointID, channel string, message realtime.Message) (int, error) {
 	return o.client.Publish(ctx, endpointID, channel, message)
+}
+func (o remoteRealtimeNodeOperator) PublishWithStatus(ctx context.Context, endpointID, channel string, message realtime.Message) (realtime.PublishStatus, error) {
+	return o.client.PublishWithStatus(ctx, endpointID, channel, message)
+}
+func (o remoteRealtimeNodeOperator) PublishRetainedWithStatus(ctx context.Context, endpointID, channel string, message realtime.Message, sequence int64) (realtime.PublishStatus, error) {
+	status, err := o.client.PublishRetainedWithStatus(ctx, endpointID, channel, message, sequence)
+	var managementErr *realtime.ManagementError
+	if errors.As(err, &managementErr) && (managementErr.StatusCode == http.StatusBadRequest || managementErr.StatusCode == http.StatusNotFound) {
+		return o.client.PublishWithStatus(ctx, endpointID, channel, message)
+	}
+	return status, err
 }
 func (o remoteRealtimeNodeOperator) Connections(ctx context.Context) ([]realtime.ConnectionInfo, error) {
 	return o.client.Connections(ctx)
@@ -544,11 +584,10 @@ func (o *leasedRealtimeOwner) Publish(ctx context.Context, endpointID, channel s
 // have queued messages even when another is unavailable, so returning only
 // an error would invite duplicate sends on a blind retry.
 func (o *leasedRealtimeOwner) PublishWithStatus(ctx context.Context, endpointID, channel string, message realtime.Message) (api.ManagedRealtimePublishResponse, error) {
-	var result api.ManagedRealtimePublishResponse
 	started := time.Now()
 	if o.nodes == nil {
 		o.observePublish("unavailable", started)
-		return result, errManagedRealtimeOwnerUnavailable
+		return api.ManagedRealtimePublishResponse{}, errManagedRealtimeOwnerUnavailable
 	}
 	nodes, noSubscribers, err := o.publishTargetNodes(ctx, endpointID, channel)
 	if err != nil {
@@ -557,17 +596,54 @@ func (o *leasedRealtimeOwner) PublishWithStatus(ctx context.Context, endpointID,
 			outcome = "canceled"
 		}
 		o.observePublish(outcome, started)
-		return result, fmt.Errorf("%w: list active nodes: %w", errManagedRealtimeOwnerUnavailable, err)
+		return api.ManagedRealtimePublishResponse{}, fmt.Errorf("%w: list active nodes: %w", errManagedRealtimeOwnerUnavailable, err)
 	}
 	if noSubscribers {
 		o.observePublish("no_subscribers", started)
-		return result, nil
+		return api.ManagedRealtimePublishResponse{}, nil
 	}
+	return o.publishNodesWithStatus(ctx, nodes, endpointID, channel, message, 0, started)
+}
+
+// PublishRetainedWithStatus routes a committed retained message through the
+// existing channel-target index. Directory errors and disabled route snapshots
+// use full-fleet fallback, and nodes without a ready snapshot remain targets.
+// A recent resumable route can be absent until revision reconciliation; the
+// durable history poll can catch up while the message remains retained if that
+// delays its best-effort wake.
+func (o *leasedRealtimeOwner) PublishRetainedWithStatus(ctx context.Context, endpointID, channel string, message realtime.Message, sequence int64) (api.ManagedRealtimePublishResponse, error) {
+	started := time.Now()
+	if o.nodes == nil {
+		o.observePublish("unavailable", started)
+		return api.ManagedRealtimePublishResponse{NodesUnavailable: 1, Partial: true}, errManagedRealtimeOwnerUnavailable
+	}
+	nodes, noSubscribers, err := o.publishTargetNodes(ctx, endpointID, channel)
+	if err != nil {
+		outcome := "unavailable"
+		if ctx.Err() != nil {
+			outcome = "canceled"
+		}
+		o.observePublish(outcome, started)
+		return api.ManagedRealtimePublishResponse{NodesUnavailable: 1, Partial: true}, fmt.Errorf("%w: resolve publish targets: %w", errManagedRealtimeOwnerUnavailable, err)
+	}
+	if noSubscribers {
+		o.observePublish("no_subscribers", started)
+		return api.ManagedRealtimePublishResponse{}, nil
+	}
+	if len(nodes) == 0 {
+		o.observePublish("unavailable", started)
+		return api.ManagedRealtimePublishResponse{NodesUnavailable: 1, Partial: true}, errManagedRealtimeOwnerUnavailable
+	}
+	return o.publishNodesWithStatus(ctx, nodes, endpointID, channel, message, sequence, started)
+}
+
+func (o *leasedRealtimeOwner) publishNodesWithStatus(ctx context.Context, nodes []state.ComputeNode, endpointID, channel string, message realtime.Message, retainedSequence int64, started time.Time) (api.ManagedRealtimePublishResponse, error) {
+	var result api.ManagedRealtimePublishResponse
 	// Keep one result per node so aggregation and error selection stay in
 	// fleet order even when node requests finish in a different order.
 	type publishResult struct {
 		attempted bool
-		count     int
+		status    realtime.PublishStatus
 		err       error
 		duration  time.Duration
 	}
@@ -592,7 +668,21 @@ func (o *leasedRealtimeOwner) PublishWithStatus(ctx context.Context, endpointID,
 					results[i].duration = time.Since(nodeStarted)
 					continue
 				}
-				results[i].count, results[i].err = op.Publish(ctx, endpointID, channel, message)
+				if retainedSequence > 0 {
+					if publisher, ok := op.(realtimeNodeRetainedPublishStatus); ok {
+						results[i].status, results[i].err = publisher.PublishRetainedWithStatus(ctx, endpointID, channel, message, retainedSequence)
+					} else if publisher, ok := op.(realtimeNodePublishStatus); ok {
+						results[i].status, results[i].err = publisher.PublishWithStatus(ctx, endpointID, channel, message)
+					} else {
+						results[i].status.Queued, results[i].err = op.Publish(ctx, endpointID, channel, message)
+						results[i].status.Subscribers = results[i].status.Queued
+					}
+				} else if publisher, ok := op.(realtimeNodePublishStatus); ok {
+					results[i].status, results[i].err = publisher.PublishWithStatus(ctx, endpointID, channel, message)
+				} else {
+					results[i].status.Queued, results[i].err = op.Publish(ctx, endpointID, channel, message)
+					results[i].status.Subscribers = results[i].status.Queued
+				}
 				results[i].duration = time.Since(nodeStarted)
 			}
 		}()
@@ -639,14 +729,17 @@ dispatch:
 			continue
 		}
 		result.NodesQueried++
-		result.Queued += outcome.count
+		result.Subscribers += outcome.status.Subscribers
+		result.Queued += outcome.status.Queued
+		result.QueueFull += outcome.status.QueueFull
+		result.Failed += outcome.status.Failed
 	}
-	result.Partial = result.NodesUnavailable > 0
+	result.Partial = result.NodesUnavailable > 0 || result.QueueFull > 0 || result.Failed > 0
 	if result.NodesQueried > 0 {
 		outcome := "ok"
-		if attempted < len(nodes) || endpointMissing > 0 || failed > 0 || canceled > 0 {
+		if attempted < len(nodes) || endpointMissing > 0 || failed > 0 || canceled > 0 || result.QueueFull > 0 || result.Failed > 0 {
 			outcome = "partial"
-			o.warnPartialPublish(len(nodes), attempted, result.NodesQueried, endpointMissing, failed, canceled, result.Queued, time.Since(started))
+			o.warnPartialPublish(len(nodes), attempted, result.NodesQueried, endpointMissing, failed, canceled, result.Subscribers, result.Queued, result.QueueFull, result.Failed, time.Since(started))
 		}
 		o.observePublish(outcome, started)
 		return result, nil
@@ -664,8 +757,9 @@ dispatch:
 }
 
 // publishRecipients narrows fanout only for nodes whose shared connection
-// snapshot is current. An unready node is always sent the message, while
-// stale positive route rows merely cause extra publishes.
+// snapshot is current. An unready node remains in the target set. Stale
+// positive rows add extra publishes; a recent resumable route may delay its
+// best-effort wake until reconciliation, with history polling as recovery.
 func (o *leasedRealtimeOwner) publishRecipients(ctx context.Context, endpointID, channel string, active []state.ComputeNode) []state.ComputeNode {
 	if !o.channelRoutingEnabled {
 		o.channelRouteMetrics.publish("routing_disabled", len(active))
@@ -734,7 +828,7 @@ func (o *leasedRealtimeOwner) observePublish(outcome string, started time.Time) 
 	}
 }
 
-func (o *leasedRealtimeOwner) warnPartialPublish(total, attempted, accepted, endpointMissing, failed, canceled, queued int, duration time.Duration) {
+func (o *leasedRealtimeOwner) warnPartialPublish(total, attempted, accepted, endpointMissing, failed, canceled, subscribers, queued, queueFull, recipientFailed int, duration time.Duration) {
 	now := time.Now()
 	o.publishWarnMu.Lock()
 	if now.Sub(o.lastPartialPublishWarning) < managedRealtimePartialPublishLogInterval {
@@ -751,7 +845,10 @@ func (o *leasedRealtimeOwner) warnPartialPublish(total, attempted, accepted, end
 		"nodes_endpoint_missing", endpointMissing,
 		"nodes_failed", failed,
 		"nodes_canceled", canceled,
+		"subscribers", subscribers,
 		"queued", queued,
+		"queue_full", queueFull,
+		"recipient_failed", recipientFailed,
 		"duration", duration,
 	)
 }

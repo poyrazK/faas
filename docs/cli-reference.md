@@ -7024,13 +7024,15 @@ Remove one live connection from a channel
 
 Publish a message to a channel
 
-`gregale realtime publish [--data <DATA>] [--data-stdin] [--binary] <app> <endpoint-id> <channel>`
+`gregale realtime publish [--data <DATA>] [--data-stdin] [--binary] [--delivery <MODE>] [--idempotency-key <KEY>] <app> <endpoint-id> <channel>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--data <DATA>` | message text (or --data-stdin) |  |
 | `--data-stdin` | read the message from stdin |  |
 | `--binary` | send as a binary frame |  |
+| `--delivery <MODE>` | live by default or preview-only retained (up to 4 KiB) | one of `live` · `retained` |
+| `--idempotency-key <KEY>` | stable retry key; required for retained delivery |  |
 
 ### realtime auth
 

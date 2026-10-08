@@ -22,8 +22,10 @@
 //     header (UUIDv4) on the way out when the caller didn't supply one.
 //     The server's replay middleware (apid/server.go::idempotent) keeps
 //     responses for 24h; SDK callers who want deterministic retry
-//     semantics should pass their own key. DeleteAccount accepts an
-//     explicit key argument for this reason.
+//     semantics should pass their own key. Live realtime channel publishes
+//     are high volume and opt in with ContextWithIdempotencyKey or the
+//     explicit PublishManagedRealtimeChannelWithIdempotencyKey method.
+//     DeleteAccount accepts an explicit key argument for this reason.
 //
 //   - Errors — every 4xx/5xx with a Problem-shaped body returns an
 //     *APIError wrapping the canonical Problem. Bodies that fail JSON
@@ -252,6 +254,14 @@ func (c *Client) doWithClientAndIdempotencyKey(ctx context.Context, cli *http.Cl
 }
 
 func (c *Client) doWithClientAndHeadersAndIdempotencyKey(ctx context.Context, cli *http.Client, method, path string, body, out any, idempotencyKey string, headers http.Header) error {
+	return c.doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx, cli, method, path, body, out, idempotencyKey, headers, true)
+}
+
+func (c *Client) doWithoutIdempotencyKey(ctx context.Context, method, path string, body, out any) error {
+	return c.doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx, c.http, method, path, body, out, "", nil, false)
+}
+
+func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Context, cli *http.Client, method, path string, body, out any, idempotencyKey string, headers http.Header, addDefaultIdempotencyKey bool) error {
 	// Cookie-only-route guard — reject paths the bearer-key CLI cannot
 	// reach before allocating anything. The regex matches the closed
 	// set /v1/auth/sessions and /v1/auth/capabilities (with optional
@@ -294,11 +304,11 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKey(ctx context.Context, cl
 	// so a retried deploy/park/wake/rollback/etc. never double-charges
 	// or double-creates. We never override an explicit key the caller
 	// already set.
-	if method != http.MethodGet && method != http.MethodHead {
-		if idempotencyKey == "" {
+	if method != http.MethodGet && method != http.MethodHead && (idempotencyKey != "" || addDefaultIdempotencyKey) {
+		if idempotencyKey == "" && addDefaultIdempotencyKey {
 			idempotencyKey = IdempotencyKeyFromContext(ctx)
 		}
-		if idempotencyKey == "" {
+		if idempotencyKey == "" && addDefaultIdempotencyKey {
 			idempotencyKey = newUUIDv4()
 		}
 		req.Header.Set("Idempotency-Key", idempotencyKey)
@@ -6014,11 +6024,45 @@ func (c *Client) UnsubscribeManagedRealtimeConnection(ctx context.Context, slug,
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/subscriptions/"+channel, nil, nil)
 }
 
-// PublishManagedRealtimeChannel publishes a message to subscribed live
-// connections on an endpoint channel.
+// PublishManagedRealtimeChannel publishes a live-only message to subscribed
+// raw-frame connections on an endpoint channel. Supply a stable key with
+// ContextWithIdempotencyKey or PublishManagedRealtimeChannelWithIdempotencyKey
+// when retries must replay the original queue outcome. Unkeyed publishes avoid
+// creating one durable idempotency receipt per high-volume event.
 func (c *Client) PublishManagedRealtimeChannel(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeMessageRequest) (ManagedRealtimePublishResponse, error) {
+	return c.PublishManagedRealtimeChannelWithIdempotencyKey(ctx, slug, endpointID, channel, req, IdempotencyKeyFromContext(ctx))
+}
+
+// PublishManagedRealtimeChannelWithIdempotencyKey publishes a live-only
+// message using a caller-stable key. Reuse the key only for the same decoded
+// payload and binary flag; the server replays the original queue outcome for
+// 24 hours.
+func (c *Client) PublishManagedRealtimeChannelWithIdempotencyKey(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeMessageRequest, idempotencyKey string) (ManagedRealtimePublishResponse, error) {
+	return c.PublishManagedRealtimeChannelWithDelivery(ctx, slug, endpointID, channel, req, ManagedRealtimeDeliveryLive, idempotencyKey)
+}
+
+// PublishManagedRealtimeChannelWithDelivery publishes a live-only message or
+// commits a retained message before fan-out. Retained delivery requires a
+// stable Idempotency-Key because it assigns a durable channel sequence.
+func (c *Client) PublishManagedRealtimeChannelWithDelivery(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeMessageRequest, delivery ManagedRealtimeDelivery, idempotencyKey string) (ManagedRealtimePublishResponse, error) {
 	var out ManagedRealtimePublishResponse
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/channels/"+channel+"/publish", req, &out)
+	path := "/v1/apps/" + slug + "/realtime/endpoints/" + endpointID + "/channels/" + channel + "/publish"
+	switch delivery {
+	case "", ManagedRealtimeDeliveryLive:
+	case ManagedRealtimeDeliveryRetained:
+		query := url.Values{"delivery": {string(ManagedRealtimeDeliveryRetained)}}
+		path += "?" + query.Encode()
+	default:
+		return out, fmt.Errorf("unsupported managed realtime delivery mode %q", delivery)
+	}
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if delivery == ManagedRealtimeDeliveryRetained && idempotencyKey == "" {
+		return out, fmt.Errorf("retained realtime publishing requires an Idempotency-Key")
+	}
+	if idempotencyKey == "" {
+		return out, c.doWithoutIdempotencyKey(ctx, http.MethodPost, path, req, &out)
+	}
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, req, &out, idempotencyKey)
 }
 
 // AppendManagedRealtimeRetainedMessage commits a message to ordered channel

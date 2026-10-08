@@ -12,10 +12,16 @@ export {
 
 export {
   consumeRealtimeChannel,
+  consumeRealtimeChannels,
+  REALTIME_MAX_CHANNELS_PER_CONNECTION,
   REALTIME_RESUME_SUBPROTOCOL,
+  RealtimeConfigurationError,
   RealtimeProtocolError,
   RealtimeResyncRequiredError,
   type ConsumeRealtimeChannelOptions,
+  type ConsumeRealtimeChannelsOptions,
+  type RealtimeChannelConsumerOptions,
+  type RealtimeConnectionOptions,
   type RealtimeCursorStore,
   type RealtimeMessage,
   type RealtimeSocket,

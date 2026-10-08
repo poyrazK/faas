@@ -89,23 +89,26 @@ PostgreSQL channel-to-node hints while routing is disabled. After every apid
 replica has been upgraded, set
 `FAAS_REALTIME_CHANNEL_ROUTING_ENABLED=1` on all replicas to publish only to
 nodes with subscribers. Each apid seeds readiness from node-local snapshots of
-the endpoint/channel subscriber index; during rolling upgrades it falls back
-to the per-connection inventory when an older realtime node lacks the compact
-snapshot endpoint. A new or unready node receives full-fleet fallback traffic
-until its snapshot succeeds. Explicit unsubscriptions remove a route hint as
-soon as the node confirms that its last local subscriber has left. Realtime
-nodes expose a lightweight process-scoped route revision; apid polls it on its
-30-second reconcile pass and refreshes a node snapshot when a channel loses
-its last local subscriber or the realtime process restarts. The last applied
-process and revision are stored with the shared node snapshot so any apid
-replica can continue from the same checkpoint. Ready snapshots still refresh
-every five minutes as a recovery path for older nodes and missed revisions.
+the endpoint/channel subscriber index, including legacy and resumable
+subscriptions; during rolling upgrades it falls back to the per-connection
+inventory when an older realtime node lacks the compact snapshot endpoint. A
+new or unready node stays in the publish set until its snapshot succeeds.
+Legacy subscribe/unsubscribe operations update route hints synchronously.
+After channel authorization, realtimed reports resumable route transitions to
+apid over the existing private history connection, so channel targeting can
+update before the subscription acknowledgement. Failed reports are logged and
+repaired when apid polls the process-scoped route revision on its 30-second
+reconcile pass. That pass refreshes a node snapshot when a route appears or
+disappears or the realtime process restarts. The last applied process and
+revision are stored with the shared node snapshot so any apid replica can
+continue from the same checkpoint. Ready snapshots still refresh every five
+minutes as a recovery path for older nodes and missed revisions.
 Directory read errors fall back to full broadcast. The route directory caps each
 endpoint at 10,000 rows by isolating the channels with the largest route sets;
 after node snapshots are ready, those channels use full broadcast while
 unrelated indexed channels remain targeted. The reconciler retries isolated
-channels every five minutes. Stale route rows can add an unneeded node request,
-but cannot exclude a subscriber. The
+channels every five minutes. A missed resumable route wake can be recovered by
+the subscriber's bounded history poll while the message remains retained. The
 daemon-socket example below remains useful for node-local bootstrap and
 recovery tooling.
 
@@ -236,26 +239,53 @@ with a bounded backoff before reporting a callback error. In multi-node mode, ap
 leases the connection owner, renews the lease for the operation, and retries a
 stale owner once. Endpoint registration must be able to reach each node's
 private `gateway_target_url`; missing or unreachable nodes remain fail-closed
-for connection operations (`503`). If another node accepts a publish, the
-response includes `partial: true`, `nodes_queried`, and `nodes_unavailable`
-when some nodes did not accept it. `queued` counts in-memory output queues,
-not client acknowledgements; retrying a partial publish may duplicate a
-message on nodes that already accepted it.
+for connection operations (`503`). The publish response reports `subscribers`,
+`queued`, `queue_full`, and `failed` across reachable nodes. For live delivery,
+`queued` means admission to an in-memory output queue; retained delivery also
+counts accepted resume-worker wake-ups. Neither means client acknowledgement.
+`partial` is true when a node or target subscriber could not accept the
+publish. Retrying a partial publish without an idempotency key may duplicate
+messages already queued elsewhere. Supply a stable `Idempotency-Key` to bind
+retries to the delivery mode, decoded payload, and binary flag for 24 hours. The same key
+replays the original queue outcome without retrying recipients that missed a
+partial publish, while reuse with a different mode or payload returns `409`. An
+in-flight or uncertain reservation also returns `409` and is not run again while
+the key is active. If
+the original outcome could not be recorded, that reservation expires after 24
+hours; retrying then may publish again and could duplicate a message accepted
+by the first attempt. Owner failures are replayed too when their delivery
+result may be ambiguous. Queue admission still does not confirm client receipt.
 
-The retained-message management API is an early storage surface for resumable
-channels. It is disabled by default; set `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1`
-on apid to exercise it in a controlled environment. It has no finalized plan
-entitlement or storage pricing. `POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages`
-commits a payload and returns its channel sequence. `GET` on the same path
-with `after=<last sequence>` returns a page and the current retention bounds;
-an expired cursor returns `410 history_unavailable` so a caller can rebuild its
-state. Retained writes reach only opt-in v2 WebSocket subscriptions when the
-resume preview is enabled; existing raw-frame clients and `:publish` remain
-live-only. Do not use the preview as a production reconnect contract until
-plan entitlements, billing rules, and fleet qualification are complete.
-The storage window is capped at 1,024 messages of 4 KiB each per channel and
-32 channels per endpoint. Messages remain available for up to 24 hours; idempotency keys
-only deduplicate while their messages remain retained.
+The retained-message management API and resumable publish path are an early
+preview. They are disabled by default; set
+`FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1` on apid and
+`FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1` on realtimed to exercise live resume
+delivery in a controlled environment. This feature has no finalized plan
+entitlement or storage pricing. A normal `:publish` stays live-only. Add
+`?delivery=retained` to that publish route to commit the message before live
+fan-out; retained publishes require an `Idempotency-Key`, accept at most 4 KiB,
+and return `durable: true` with the channel `sequence`. A best-effort wake
+promptly advances v2 subscribers from their last sent sequence; bounded history
+polling recovers if a wake is missed. Legacy raw-frame subscribers still receive
+the usual live message. Retained publishes use the channel target index to
+reach nodes holding legacy or resumable subscribers. Route lookup errors and
+overflow use fleet-wide fallback, while nodes with unready snapshots remain in
+the target set. If a direct route report fails, the 30-second revision pass
+repairs the index; bounded history polling can catch up while the message
+remains retained if that delays a wake. If live fan-out is partial, the
+committed sequence is still authoritative and resumable clients can catch up
+from history.
+
+`POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages`
+remains an append-only storage operation. `GET` on the same path with
+`after=<last sequence>` returns a page and the current retention bounds; an
+expired cursor returns `410 history_unavailable` so a caller can rebuild its
+state. The storage window is capped at 1,024 messages of 4 KiB each per channel
+and 32 channels per endpoint. Messages remain available for up to 24 hours.
+The publish API's idempotency response is retained for 24 hours; append-only
+message keys deduplicate only while their messages remain in history. Do not
+use this preview as a production reconnect contract until plan entitlements,
+billing rules, and fleet qualification are complete.
 
 Apid samples the physical PostgreSQL storage allocated to the history head
 and message relations after each one-minute expiry pass. The
@@ -334,7 +364,13 @@ sequence sent on this connection. The client must persist its last processed
 cursor and include it as `after` on reconnect. A lost acknowledgement can
 cause redelivery; processing is at least once, not exactly once. An expired
 cursor returns `resync_required` with `oldest_sequence` and `latest_sequence`
-and leaves the channel unsubscribed. While connected, realtimed polls the
+and leaves the channel unsubscribed. The Node SDK can handle this with an
+optional `onResync` callback: rebuild application state from a consistent
+snapshot or history reader, then return the highest sequence represented by
+that state within the reported retention bounds. The SDK persists that cursor
+before reconnecting. Without the callback, it raises
+`RealtimeResyncRequiredError` for application-managed recovery. While
+connected, realtimed polls the
 durable log every five seconds; retained writes may therefore arrive with
 that delay. The preview caps a node at 256 v2 subscriptions and a connection
 at eight. If retention advances past a connected subscriber, realtimed sends
@@ -344,7 +380,10 @@ fills before it can send a control frame, realtimed closes the connection so
 the client can reconnect from its saved cursor.
 The [SDK consumer](../../sdk/node/README.md#resumable-managed-realtime-preview)
 persists a processed cursor, acknowledges in order, and reconnects from that
-cursor. Server-side sockets add an OIDC bearer header. Browser sockets use
+cursor. `consumeRealtimeChannels` can multiplex up to eight independently
+checkpointed channels over one socket; a resync reconnects that socket and
+resumes every channel from its own cursor. Server-side sockets add an OIDC
+bearer header. Browser sockets use
 `gregale.realtime.bearer.<signed-JWT>` as a second requested subprotocol because
 native WebSockets cannot set that header. Browser credentials are accepted only
 for v2 endpoints with a matching non-empty `allowed_origins` policy and a
@@ -400,7 +439,13 @@ gregale realtime unsubscribe my-app ENDPOINT_ID CONNECTION_ID room-a
 gregale realtime close my-app ENDPOINT_ID CONNECTION_ID --reason 'client migrated'
 
 printf '{"event":"refresh"}' | \
-  gregale realtime publish my-app ENDPOINT_ID room-a --data-stdin
+  gregale realtime publish my-app ENDPOINT_ID room-a --data-stdin \
+    --idempotency-key refresh-event-42
+
+# Retain a sequenced event for v2 reconnect catch-up (preview flags required).
+printf '{"event":"job-progress","percent":80}' | \
+  gregale realtime publish my-app ENDPOINT_ID room-a --data-stdin \
+    --delivery retained --idempotency-key job-42-progress-80
 
 # Inspect active connections before targeting one for management.
 gregale realtime connections my-app ENDPOINT_ID --channel room-a --limit 100
@@ -431,17 +476,30 @@ single-box deployment. A compute-only deployment binds the same port on the
 private node address (restricted to control-plane CIDRs by nftables), or the
 value set by `FAAS_REALTIME_HEALTH_LISTEN`. The fixed-cardinality metrics include
 `realtimed_current_connections`, accepted/rejected connections, sent/received
-messages and bytes, dropped messages, and callback errors. In a split
-deployment, the control-plane Prometheus discovers active realtime owners from
-apid; sum counters across nodes and sum the current-connection gauge only when
-you want a fleet total.
+messages and bytes, dropped messages, and callback errors. Outbound pressure is
+reported by `realtimed_outbound_pending_bytes` and the per-connection
+`realtimed_outbound_queue_bytes_limit` gauge. Separate
+`realtimed_outbound_queue_count_limit_drops_total` and
+`realtimed_outbound_queue_byte_limit_drops_total` counters identify which
+bounded queue limit rejected a frame. In a split deployment, the control-plane
+Prometheus discovers active realtime owners from apid; sum counters across
+nodes and sum the pending-bytes gauge for fleet usage.
+
+```promql
+sum(rate(realtimed_outbound_queue_count_limit_drops_total[5m]))
+sum(rate(realtimed_outbound_queue_byte_limit_drops_total[5m]))
+sum(realtimed_outbound_pending_bytes)
+```
 
 Set `FAAS_REALTIME_MAX_CONNECTIONS`,
 `FAAS_REALTIME_MAX_MESSAGE_BYTES`, `FAAS_REALTIME_OUTBOUND_QUEUE`,
+`FAAS_REALTIME_OUTBOUND_QUEUE_BYTES`,
 `FAAS_REALTIME_HEARTBEAT`, `FAAS_REALTIME_PONG_WAIT`,
 `FAAS_REALTIME_WRITE_WAIT`, `FAAS_REALTIME_MAX_AGE`, and
 `FAAS_REALTIME_CALLBACK_TIMEOUT` in the realtimed environment file when
-adjusting limits. `FAAS_REALTIME_CALLBACK_OUTBOX` optionally overrides the
+adjusting limits. The outbound byte budget defaults to 4 MiB per connection
+and includes a frame currently being written; the message-count limit still
+applies independently. `FAAS_REALTIME_CALLBACK_OUTBOX` optionally overrides the
 node-local callback spool (default `/var/lib/faas/realtime-callbacks`).
 `FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` caps retained dead letters
 (default 64 MiB). The oldest dead letters are evicted first when the cap is
