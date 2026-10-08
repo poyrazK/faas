@@ -40,9 +40,15 @@ Use `gregale app <slug> security --posture` in CI before enabling enforcement.
 
 ## Optional pre-auth source limit
 
-Apps can opt into a gateway rate limit that runs after hostname routing and
-before consumer-key lookup, JWT verification, body admission, or VM wake. Set
-`pre_auth_rate_limit` when creating an app or through
+The gateway can rate-limit each client address after hostname routing and
+before consumer-key lookup, JWT verification, body admission, or VM wake.
+
+New apps start with this guard in `observe` mode at 10 requests/s and burst 20
+per source, clamped to the plan's request rate and burst
+([ADR-732](adr/732-default-pre-auth-observe.md)). Observe never rejects a
+request, so check the recorded would-block traffic before switching to
+`enforce`. To choose different values, or to opt out with `{"mode":"off"}`, set
+`pre_auth_rate_limit` when creating the app or through
 `PATCH /v1/apps/{slug}`:
 
 ```json
@@ -52,7 +58,8 @@ before consumer-key lookup, JWT verification, body admission, or VM wake. Set
 `observe` records requests that would exceed the source limit without
 rejecting them. Change `mode` to `enforce` to return `429` with
 `Retry-After: 1` and `x-faas-rate-limit-scope: pre-auth`. Set `mode` to `off`
-to disable the guard. The setting is absent and disabled on existing apps.
+to disable the guard. Apps created before ADR-732 keep their stored setting;
+on those apps the field is absent and the guard is disabled until set.
 The rate and burst must be positive and no greater than the app plan's
 request rate and burst.
 If the app moves to a lower plan, the gateway clamps an existing setting to

@@ -114,6 +114,14 @@ const RollbackOn5xxBatchSize = 100
 const SyncInvokeWaitSeconds = 25
 const SyncInvokeWaitSecondsFree = 5
 
+// New apps start with the pre-auth source limit in observe mode (ADR-732):
+// it records which sources would exceed this per-source rate without
+// rejecting anything. Values are clamped to the app's plan ceiling.
+const (
+	PreAuthDefaultRequestsPerSecond = 10
+	PreAuthDefaultBurst             = 20
+)
+
 const ServiceBindingCheckBatchSize = 32
 const ServiceBindingCheckIntervalSeconds = 2
 

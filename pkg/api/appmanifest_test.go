@@ -673,3 +673,23 @@ func TestPreAuthTargetObservationValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultPreAuthRateLimitObservesWithinEveryPlan(t *testing.T) {
+	for _, plan := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale} {
+		config := DefaultPreAuthRateLimit(plan)
+		limits, _ := LimitsFor(plan)
+		if config == nil || config.Mode != PreAuthRateLimitObserve || len(config.Routes) != 0 {
+			t.Fatalf("%s default = %+v, want observe-only app-wide guard", plan, config)
+		}
+		if config.RequestsPerSecond != min(PreAuthDefaultRequestsPerSecond, limits.RateLimitRPS) ||
+			config.Burst != min(PreAuthDefaultBurst, limits.RateLimitBurst) {
+			t.Fatalf("%s default = %+v, want plan-clamped defaults", plan, config)
+		}
+		if err := config.Validate(plan); err != nil {
+			t.Fatalf("%s default does not validate: %v", plan, err)
+		}
+	}
+	if DefaultPreAuthRateLimit(Plan("unknown")) != nil {
+		t.Fatal("unknown plan received a default guard")
+	}
+}

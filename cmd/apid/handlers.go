@@ -295,6 +295,11 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		mc = 1
 	}
 	lifecycle := lifecycleManifestFromCreate(req)
+	if lifecycle.PreAuthRateLimit == nil {
+		// ADR-732: protect new apps by default without changing behavior; an
+		// explicit config, including mode=off, is kept as sent.
+		lifecycle.PreAuthRateLimit = api.DefaultPreAuthRateLimit(acct.Plan)
+	}
 	// A service's desired replica count is its steady-state instance
 	// requirement. When max_concurrency is omitted, make the default large
 	// enough for that target; an explicit max_concurrency remains authoritative.
