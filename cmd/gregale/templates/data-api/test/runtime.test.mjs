@@ -30,6 +30,26 @@ test('generated types distinguish nullable, defaulted and generated columns', ()
   assert.notEqual(generate(normalize(columns.slice(1),types,[],['api'])),output)
 })
 
+test('relationship metadata preserves composite order and excludes inaccessible or cross-schema targets', () => {
+  const column = (schema, relation, name) => ({ schema, relation, name, kind: 'r', type: '1', required: true, identity: '', generated: '', defaulted: false, insertable: true, updatable: true })
+  const columns = [column('api', 'notes', 'subject'), column('api', 'notes', 'id'),
+    column('api', 'comments', 'subject'), column('api', 'comments', 'note_id'),
+    column('other', 'notes', 'subject'), column('other', 'notes', 'id')]
+  const fk = { schema: 'api', relation: 'comments', name: 'comments_note_fkey', referenced_schema: 'api', referenced_relation: 'notes', columns: ['subject', 'note_id'], referenced_columns: ['subject', 'id'], one_to_one: false }
+  const types = [{ id: '1', schema: 'pg_catalog', name: 'text', element: '0' }]
+  const snapshot = normalize(columns, types, [fk, { ...fk, name: 'other_notes_fkey', referenced_schema: 'other' },
+    { ...fk, name: 'hidden_column_fkey', referenced_columns: ['subject', 'secret'] }], ['api', 'other'])
+  assert.deepEqual(snapshot.tables.find(t => t.name === 'comments').relationships, [{
+    foreignKeyName: 'comments_note_fkey', columns: ['subject', 'note_id'], isOneToOne: false,
+    referencedRelation: 'notes', referencedColumns: ['subject', 'id'],
+  }])
+  const before = generate(snapshot)
+  const unique = generate(normalize(columns, types, [{ ...fk, one_to_one: true }], ['api', 'other']))
+  assert.notEqual(unique, before, 'cardinality changes must change the contract fingerprint')
+  assert.match(unique, /"isOneToOne":true/)
+  assert.notEqual(generate(normalize(columns, types, [{ ...fk, name: 'renamed_fkey' }], ['api', 'other'])), before)
+})
+
 test('proxy rejects unauthenticated requests and normalizes untrusted SQL roles', async t => {
   const config = runtimeConfig({ DATABASE_URL:'postgres://restricted:p@localhost/db',DATA_API_ISSUER:'https://issuer.example',DATA_API_JWKS_URL:'https://issuer.example/jwks',DATA_API_AUDIENCE:'notes',DATA_API_ALLOWED_ORIGINS:'https://app.example' })
   let received

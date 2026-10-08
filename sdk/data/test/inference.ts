@@ -31,3 +31,19 @@ if (result.data) {
   const wrong: number = result.data.body
   void [id,body,state,wrong]
 }
+const joined = await client.from('notes').select('id,comments(id,body)').single()
+if (joined.data) {
+  const replies: { id: number; body: string }[] = joined.data.comments
+  // @ts-expect-error reverse one-to-many relationships return arrays
+  const reply: { body: string } = joined.data.comments
+  // @ts-expect-error nested projections cannot invent unselected fields
+  const parentID = joined.data.comments[0].note_id
+  void [replies, reply, parentID]
+}
+const parent = await client.from('comments').select('id,notes(id,body)').single()
+if (parent.data) {
+  const note: { id: number; body: string } = parent.data.notes
+  // @ts-expect-error many-to-one relationships return an object, not an array
+  const array: { id: number; body: string }[] = parent.data.notes
+  void [note, array]
+}

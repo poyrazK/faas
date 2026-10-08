@@ -67,19 +67,23 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   // Exercise exactly the stable-owner migration session and restricted API role.
   await migrate(migrationURL.toString())
   await migrate(migrationURL.toString())
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 2)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 3)
   const firstSQL = join(root, 'migrations/sql/0001_notes.sql')
   const originalSQL = await readFile(firstSQL, 'utf8')
   await writeFile(firstSQL, originalSQL + '\n-- changed after deployment\n')
   try { await assert.rejects(migrate(migrationURL.toString()), /changed or removed/) }
   finally { await writeFile(firstSQL, originalSQL) }
-  const failedSQL = join(root, 'migrations/sql/0003_failure.sql')
+  const failedSQL = join(root, 'migrations/sql/0004_failure.sql')
   await writeFile(failedSQL, 'ALTER TABLE api.notes ADD COLUMN rolled_back text; SELECT 1/0;')
   try { await assert.rejects(migrate(migrationURL.toString())) }
   finally { await rm(failedSQL) }
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 2)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 3)
   assert.equal((await owner.query("SELECT count(*)::integer AS count FROM information_schema.columns WHERE table_schema='api' AND column_name='rolled_back'")).rows[0].count, 0)
-  const types = generate(await inspect(loginURL.toString(), ['api']))
+  const snapshot = await inspect(loginURL.toString(), ['api'])
+  assert.deepEqual(snapshot.tables.find(table => table.name === 'comments').relationships[0].referencedColumns, ['subject', 'id'])
+  const types = generate(snapshot)
+  assert.match(types, /"foreignKeyName":"comments_note_fkey","columns":\["subject","note_id"\],"isOneToOne":false/)
+  assert.match(types, /"foreignKeyName":"note_details_note_fkey","columns":\["subject","note_id"\],"isOneToOne":true/)
   assert.doesNotMatch(types, /gregale_migrations|test-only|starter_api/)
   const fixture = new URL('../../cmd/gregale/templates/data-api-starter/client/src/database.types.ts', import.meta.url)
   if (process.env.DATA_API_STARTER_UPDATE_FIXTURE === '1') {
@@ -88,6 +92,26 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   } else {
     assert.equal(types, await readFile(fixture, 'utf8'), 'starter types must match its migrations')
   }
+  // Actual constraint changes must update cardinality and the fingerprint.
+  await owner.query('ALTER TABLE api.note_details DROP CONSTRAINT note_details_pkey')
+  const many = generate(await inspect(loginURL.toString(), ['api']))
+  assert.notEqual(many, types)
+  assert.match(many, /"foreignKeyName":"note_details_note_fkey","columns":\["subject","note_id"\],"isOneToOne":false/)
+  await owner.query('CREATE UNIQUE INDEX details_unique_index ON api.note_details (subject, note_id)')
+  assert.equal(generate(await inspect(loginURL.toString(), ['api'])), many, 'standalone unique indexes must match PostgREST cardinality')
+  await owner.query('DROP INDEX api.details_unique_index; ALTER TABLE api.note_details ADD CONSTRAINT details_unique UNIQUE (subject, note_id)')
+  assert.equal(generate(await inspect(loginURL.toString(), ['api'])), types)
+  await owner.query('ALTER TABLE api.note_details DROP CONSTRAINT details_unique')
+  await owner.query('ALTER TABLE api.note_details ADD PRIMARY KEY (subject, note_id)')
+  assert.equal(generate(await inspect(loginURL.toString(), ['api'])), types)
+  // Both schemas are readable, but postgrest-js would resolve the other schema's
+  // same-named target against api.notes and infer the wrong nested body type.
+  await owner.query(`CREATE SCHEMA other; CREATE TABLE other.notes (id integer PRIMARY KEY, body integer);
+    CREATE TABLE api.cross_refs (id integer PRIMARY KEY, note_id integer REFERENCES other.notes(id));
+    GRANT USAGE ON SCHEMA other TO "${role}"; GRANT SELECT ON other.notes TO "${role}";`)
+  const cross = await inspect(loginURL.toString(), ['api', 'other'])
+  assert.deepEqual(cross.tables.find(table => table.schema === 'api' && table.name === 'cross_refs').relationships, [])
+  await owner.query('DROP TABLE api.cross_refs; DROP SCHEMA other CASCADE')
   await command('npm', ['run', 'typecheck'], { cwd: join(root, 'client'), env: process.env })
   await command('npm', ['run', 'build'], { cwd: join(root, 'client'), env: process.env })
   const restricted = new pg.Client({ connectionString: loginURL.toString() }); await restricted.connect()
@@ -116,7 +140,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const userB = { subject: 'identity|bob', token: await sign('identity|bob') }
   const { verifyAuthorization } = await import(pathToFileURL(join(root, 'client/test/authorization.mjs')))
   await verifyAuthorization({ url, userA, userB })
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM api.notes')).rows[0].count, 0)
+  for (const table of ['notes', 'comments', 'note_details']) assert.equal((await owner.query(`SELECT count(*)::integer AS count FROM api.${table}`)).rows[0].count, 0)
   await assert.rejects(verifyAuthorization({ url, userA, userB: userA }), /subjects_must_differ/)
   const publicRequest = token => fetch(url + '/rest/v1/notes', { headers: token ? { Authorization: `Bearer ${token}` } : {} })
   assert.equal((await publicRequest()).status, 401)

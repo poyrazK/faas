@@ -145,6 +145,36 @@ successful refresh, then run your application's type checks. Keep
 application CI to detect schema drift. Type generation and `--check` read the
 current database; neither command refreshes a live PostgREST cache.
 
+## Typed relationships
+
+Type export includes declared foreign keys between readable tables in the same
+exported schema, with ordered composite columns and one-to-one metadata. The
+typed client uses these to infer nested PostgREST projections. In the starter:
+
+```ts
+const notes = await db.from('notes')
+  .select('id,body,comments(id,body),note_details(summary)')
+const comments = await db.from('comments').select('id,body,notes(id,body)')
+```
+
+`comments` is an array. A reverse one-to-one `note_details` embed is an object
+or null. A comment's nullable `note_id` makes its parent `notes` embed nullable;
+`notes!inner(id,body)` removes rows without a visible parent. Matching
+primary-key or unique **constraints** determine one-to-one cardinality, following
+PostgREST; a standalone unique index does not set that metadata. Constraint
+changes affect the schema fingerprint and are detected by `types --check`.
+
+Cross-schema foreign keys are omitted from generated relationship metadata:
+the client resolves embedded types within the selected schema, so exporting
+such a relationship could infer a same-named, unrelated local table. View-inferred
+and computed relationships are not emitted; many-to-many junction joins are
+outside this preview's acceptance coverage. Each joined table needs its own RLS
+policy. RLS can hide a parent even
+when its FK column is NOT NULL, so handle missing embeds at runtime or use
+`!inner` when a visible parent is required; static nullability follows the FK
+columns. The starter uses subject-bound composite FKs to prevent cross-user
+attachments as well as subject RLS on every table.
+
 ## Automate migrations and client validation
 
 Commit a `data-api.json` workflow alongside your application:

@@ -87,6 +87,9 @@ export function normalize(columns, types, relationships, schemas) {
     tables.set(key, table)
   }
   for (const r of relationships) {
+    // postgrest-js resolves a relationship in the selected schema's type map.
+    // A cross-schema FK could otherwise falsely target a same-named local table.
+    if (r.schema !== r.referenced_schema) continue
     const table = tables.get(`${r.schema}.${r.relation}`)
     const target = tables.get(`${r.referenced_schema}.${r.referenced_relation}`)
     if (!table || !target || !r.columns.every(n => table.columns.some(c => c.name === n)) || !r.referenced_columns.every(n => target.columns.some(c => c.name === n))) continue

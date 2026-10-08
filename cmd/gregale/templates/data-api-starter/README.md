@@ -114,6 +114,31 @@ await notes.create('Hello', 1)
 const { data, error } = await notes.list()
 ```
 
+The third migration adds comments and one-to-one note details. The client also
+supports typed nested queries:
+
+```ts
+await notes.reply(noteID, 'A reply')
+const joined = await notes.listWithReplies()
+// Each row has comments: { id: number; body: string }[]
+// and note_details: { summary: string } | null.
+const comments = await notes.listComments()
+// Each comment has notes: { id: number; body: string } | null.
+```
+
+The generator preserves composite foreign-key column order and detects
+one-to-one relationships from matching primary-key/unique constraints.
+`comments.note_id` is nullable; unattached comments have a null parent embed.
+An absent details row yields null, and notes without replies return an empty
+array. Add `!inner` to an embed to omit rows without a visible match. Nested
+projection types only expose the selected columns.
+
+Both child tables enforce their own subject RLS. Their composite foreign keys
+include the same subject as the parent, so a user cannot attach a comment or
+details to another user's note. Deleting a note cascades to its children. The
+two-user authorization check covers these joins and attachment restrictions,
+and cleans up its own unattached test comments.
+
 The token getter runs on every request. Use the identity provider's exact `sub`
 as `subject`. PostgreSQL checks the token subject on every read and write;
 supplying a different subject cannot grant access to someone else's data. API
@@ -141,7 +166,7 @@ they do not silently skip it.
 
 ## Evolve the schema
 
-Add `migrations/sql/0003_description.sql` and run sync again. Numbered SQL files
+Add `migrations/sql/0004_description.sql` and run sync again. Numbered SQL files
 are applied under a transaction and database advisory lock. The private
 `gregale_migrations.applied` ledger records versions and SHA-256 checksums;
 already-applied SQL cannot be edited, renamed, removed or inserted out of order.
