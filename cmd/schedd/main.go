@@ -832,7 +832,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	engine.WithVerifier(verifier)
 	attestationWarmCtx, cancelAttestationWarm := context.WithCancel(ctx)
 	defer cancelAttestationWarm()
-	startLayerAttestationWarm(attestationWarmCtx, store, verifier, log)
+	startLayerAttestationWarm(attestationWarmCtx, store, verifier, func(appID string) bool {
+		app, err := store.AppByID(attestationWarmCtx, appID)
+		return err == nil && engine.OwnsApp(app)
+	}, log)
 	// Issue #561 — wire the spend-cap pause-workload seam. Engine
 	// consults the checker inside admitGate AFTER the existing
 	// min-floor branch; a cap-reached app refuses new wakes with
