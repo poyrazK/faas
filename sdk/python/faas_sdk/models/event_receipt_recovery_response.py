@@ -25,7 +25,7 @@ class EventReceiptRecoveryResponse:
     """Current retained invocation state. The recipient execution is the original deterministic invocation;
     recovery and history contain trusted generic replay invocations."""
     history_url: str
-    """Account-authenticated paginated replay history for this captured recipient."""
+    """Account-authenticated paginated replay history for this recipient."""
 
     def to_dict(self) -> dict[str, Any]:
         retained_replay_count = self.retained_replay_count

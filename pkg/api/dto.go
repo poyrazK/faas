@@ -11856,24 +11856,29 @@ const EventReceiptPageMax = 200
 
 // EventReceiptResponse separates acceptance, routing, and handler execution.
 type EventReceiptResponse struct {
-	EventID          string                          `json:"event_id"`
-	ClientEventID    string                          `json:"client_event_id,omitempty"`
-	EventSource      string                          `json:"event_source"`
-	EventType        string                          `json:"event_type"`
-	SchemaVersion    string                          `json:"schema_version,omitempty"`
-	AcceptedAt       time.Time                       `json:"accepted_at"`
-	RoutingSettledAt *time.Time                      `json:"routing_settled_at,omitempty"`
-	RetainUntil      *time.Time                      `json:"retain_until,omitempty"`
-	SnapshotCaptured bool                            `json:"snapshot_captured"`
-	RoutingMode      string                          `json:"routing_mode"`
-	RecipientCount   int                             `json:"recipient_count"`
-	RoutingSummary   map[string]int                  `json:"routing_summary"`
-	Recipients       []EventReceiptRecipientResponse `json:"recipients"`
-	NextAfter        string                          `json:"next_after,omitempty"`
+	EventID                string                          `json:"event_id"`
+	ClientEventID          string                          `json:"client_event_id,omitempty"`
+	EventSource            string                          `json:"event_source"`
+	EventType              string                          `json:"event_type"`
+	SchemaVersion          string                          `json:"schema_version,omitempty"`
+	AcceptedAt             time.Time                       `json:"accepted_at"`
+	RoutingSettledAt       *time.Time                      `json:"routing_settled_at,omitempty"`
+	RetainUntil            *time.Time                      `json:"retain_until,omitempty"`
+	SnapshotCaptured       bool                            `json:"snapshot_captured"`
+	RoutingMode            string                          `json:"routing_mode"`
+	RecipientCount         int                             `json:"recipient_count"`
+	RoutingSummary         map[string]int                  `json:"routing_summary"`
+	BackfillRecipientCount int                             `json:"backfill_recipient_count,omitempty"`
+	BackfillRoutingSummary map[string]int                  `json:"backfill_routing_summary,omitempty"`
+	Recipients             []EventReceiptRecipientResponse `json:"recipients"`
+	NextAfter              string                          `json:"next_after,omitempty"`
 }
 
 type EventReceiptRecipientResponse struct {
 	SubscriptionID       string                            `json:"subscription_id"`
+	Origin               string                            `json:"origin,omitempty"`
+	BackfillJobID        string                            `json:"backfill_job_id,omitempty"`
+	BackfillJobURL       string                            `json:"backfill_job_url,omitempty"`
 	WorkflowName         string                            `json:"workflow_name,omitempty"`
 	WorkflowRunID        string                            `json:"workflow_run_id,omitempty"`
 	WorkflowRunStatus    string                            `json:"workflow_run_status,omitempty"`

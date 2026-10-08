@@ -3714,8 +3714,9 @@ paths:
       summary: Inspect acceptance, routing, and execution for one event.
       description: |
         Requires apps:read or admin. Reads the retained account/source/id receipt
-        and a bounded page of immutable acceptance-time recipients. Routing
-        counts cover the entire snapshot, including recipients without invocations.
+        and a bounded page of captured and backfilled recipients. recipient_count
+        and routing_summary cover the immutable acceptance snapshot; separate
+        backfill counts cover added consumers, including those without invocations.
         Enqueued routing does not imply handler success: keyed cancellation can
         produce a cancellation receipt instead. The original deterministic
         invocation is shown when retained; trusted generic replay lineage adds
@@ -3724,7 +3725,9 @@ paths:
         when present. Recovery actions require their existing
         write scopes and are revalidated when called. Legacy receipts without
         snapshots report snapshot_captured=false and cannot reconstruct recipients.
-        Pages follow acceptance order while outcomes may change between requests.
+        Pages follow acceptance order then append-only backfill positions, which
+        survive job pruning. Inspection order does not imply delivery order;
+        outcomes may change between requests.
       security: [{ bearerAuth: [] }]
       parameters:
         - { name: source, in: query, required: true, description: Published event source paired with the required ID for this receipt lookup., schema: { type: string, minLength: 1, maxLength: 256 } }
@@ -3748,7 +3751,7 @@ paths:
     get:
       tags: [events]
       operationId: getEventReceiptReplays
-      summary: Inspect retained handler replay history for one captured recipient.
+      summary: Inspect retained handler replay history for one captured or backfilled recipient.
       description: |
         Requires apps:read or admin. Returns generic invocation replays linked by
         ledger-owned parent/root identity, newest first by created_at and ID.
@@ -3783,7 +3786,7 @@ paths:
     get:
       tags: [events]
       operationId: getEventReceiptAttempts
-      summary: Inspect retained handler delivery attempts for one captured recipient.
+      summary: Inspect retained handler delivery attempts for one captured or backfilled recipient.
       description: |
         Requires apps:read or admin. Includes the original async invocation and
         trusted child replays, ordered by descending attempt history ID. Each
@@ -3794,7 +3797,7 @@ paths:
         Closed attempts expire after at most 30 days, earlier when result retention
         expires or their invocation is deleted. Running attempts are not pruned.
         Missing history does not establish that no delivery occurred. Unknown or
-        foreign receipts, captured recipients and current app owners return 404.
+        foreign receipts, recipients and current app owners return 404.
         Cursors bind account, source, event ID, recipient and retained receipt;
         stale or mismatched cursors return 400. New claims do not reorder older
         pages; a running outcome may settle between reads.
@@ -24127,6 +24130,85 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '504': { $ref: '#/components/responses/LongPollTimeout' }
 
+  /v1/apps/{slug}/entities/invoke:
+    post:
+      tags: [invocations]
+      operationId: invokeDurableEntity
+      summary: Invoke an object-storage-backed entity in the operator preview.
+      description: |
+        Disabled unless the operator configures a private bucket and explicitly
+        enables this app. Account authentication, deploy-write scopes and MFA
+        apply. A selected customer must belong to the account and be active;
+        customer self-service tokens are not accepted on this surface.
+        Entity identity includes the app, immutable environment identity,
+        optional verified customer, namespace and key. The deployed handler
+        receives state at POST /__gregale/entities and returns data, result and
+        an optional alarm_at. Handlers must compute transitions without external
+        side effects. Alarm delivery requires a separate operator opt-in and
+        private delimiter listing. Due alarms use the same scheduler path with
+        event=alarm. Clearing or replacing the deadline invalidates stale work;
+        a failed handler leaves the alarm due. Attempts may repeat, while state,
+        the alarm receipt and its next deadline publish atomically. Alarm timing
+        depends on bounded entity sweeps and has no production latency guarantee.
+        State and replay receipts commit in object storage; the existing SQL
+        invocation ledger is used only to schedule and observe guest execution.
+        Keep request_id and exact payload bytes for retries, including after an
+        uncertain response. HTTP Idempotency-Key does not identify entity work.
+        Request IDs starting with __gregale_alarm/ are reserved for delivery.
+        Replays return the original result and version without executing code.
+        Calls have a 25 second budget. Owners expire after at most five minutes.
+        An immutable receipt index preserves original results without a receipt
+        count ceiling. Encoded snapshots and individual receipts remain bounded
+        to 1 MiB. Operator cleanup can reclaim superseded snapshots and index
+        nodes after a fenced generation barrier; it never expires replay receipts.
+        An explicit operator per-entity byte cap can limit the current snapshot
+        and its reachable immutable receipts/index/archive. It excludes metadata,
+        abandoned uploads and provider history; it is not a plan billing quota.
+        Over-cap new work returns 409 durable_entity_storage_limit with limit and
+        observed projected bytes. Existing receipts replay at capacity. Legacy
+        entities under a cap return 503 durable_entity_inventory_pending for new
+        work until bounded verified accounting completes. Handler computation
+        can run before quota rejection. Entity deletion is not available yet.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DurableEntityInvokeRequest' }
+      responses:
+        '200':
+          description: Committed or replayed entity result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityInvokeResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanFeatureGated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Request identity conflict, object budget or committed storage cap exceeded, or deployment unavailable. Storage limits include limit and observed projected bytes.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/PlanSourceBytes' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: Handler failed without publishing entity state.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Preview disabled, owner busy, legacy accounting pending, storage unavailable or commit outcome uncertain; retry the same request identity.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Request budget elapsed; retry the same request identity and payload.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/invoke/async:
     post:
       tags: [invocations]
@@ -25298,8 +25380,10 @@ paths:
       operationId: replayEventFanoutFailure
       summary: Retry one terminal event recipient routing failure.
       description: |
-        Requeues only the named failed recipient from the immutable recipient
-        snapshot captured when the event was accepted. Other recipients and
+        Requeues only the named failed recipient captured at acceptance or
+        added by a retained historical backfill. Backfill failures must be
+        retryable and have a running or completed-with-failures job; reopening
+        a completed job observes active-job limits. Other recipients and
         their outcomes are left untouched. With independent recipient routing,
         a terminal recipient can be replayed while siblings are active and gets
         a fresh routing retry budget. Legacy receipts must settle first.
@@ -43702,6 +43786,8 @@ components:
         details_truncated: { type: boolean, description: Whether the failure code or routing diagnostic was clipped. }
         retryable: { type: boolean }
         updated_at: { type: string, format: date-time }
+        receipt_url: { type: string, format: uri-reference, description: Account-authenticated receipt inspection; omitted after the original receipt expires. }
+        attempt_history_url: { type: string, format: uri-reference, description: Handler attempt history for this consumer; omitted when retained delivery provenance or current app ownership is unavailable. }
     EventReplayBackfillItemsResponse:
       description: Stable acceptance-ordered page of per-envelope outcomes for one backfill job.
       type: object
@@ -43913,7 +43999,7 @@ components:
         retained_bytes: { type: integer, format: int64, minimum: 0, description: Logical detail bytes including a fixed per-row allowance; excludes physical storage and indexes. }
 
     EventReceiptResponse:
-      description: Acceptance and routing evidence with a bounded recipient page; execution is a separate lifecycle.
+      description: Acceptance and routing evidence with a bounded page of captured and backfilled consumers; execution is a separate lifecycle.
       type: object
       additionalProperties: false
       required: [event_id, event_source, event_type, accepted_at, snapshot_captured, routing_mode, recipient_count, routing_summary, recipients]
@@ -43933,18 +44019,26 @@ components:
           description: Counts across all captured recipients by current routing checkpoint state.
           type: object
           additionalProperties: { type: integer, minimum: 0 }
+        backfill_recipient_count: { type: integer, minimum: 0, description: Additional backfilled consumers across all pages; excluded from recipient_count. }
+        backfill_routing_summary:
+          description: Counts across added backfill consumers, separate from the immutable acceptance snapshot.
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
         recipients:
           type: array
           maxItems: 200
           items: { $ref: '#/components/schemas/EventReceiptRecipientResponse' }
-        next_after: { type: string, description: Opaque cursor for the next acceptance-ordered recipient page. }
+        next_after: { type: string, description: Opaque cursor for captured recipients followed by append-only backfill additions. Delivery order is not guaranteed. }
 
     EventReceiptRecipientResponse:
-      description: One captured recipient with independent routing, original execution or cancellation evidence, and retained generic replay recovery.
+      description: One captured or backfilled recipient with independent routing, original execution or cancellation evidence, and retained generic replay recovery.
       type: object
       additionalProperties: false
       required: [subscription_id, app_id, routing, recovery_actions]
       properties:
+        origin: { type: string, enum: [acceptance, backfill], description: Captured at acceptance or added by a historical backfill. }
+        backfill_job_id: { type: string, format: uuid, description: Originating backfill job while its metadata is retained. }
+        backfill_job_url: { type: string, format: uri-reference, description: Account-authenticated backfill job inspection while the job and current target are available. }
         subscription_id: { type: string, description: Immutable captured subscription or notification identifier. }
         workflow_name: { type: string, description: Published workflow captured as an event recipient. }
         workflow_run_id: { type: string, format: uuid, description: Durable run id after event-trigger admission. }
@@ -44013,7 +44107,7 @@ components:
       properties:
         retained_replay_count: { type: integer, format: int64, minimum: 1 }
         latest_replay: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
-        history_url: { type: string, format: uri-reference, description: Account-authenticated paginated replay history for this captured recipient. }
+        history_url: { type: string, format: uri-reference, description: Account-authenticated paginated replay history for this recipient. }
 
     EventReceiptReplayHistoryResponse:
       description: A page of retained generic replay executions for one captured event consumer.
@@ -44061,7 +44155,7 @@ components:
         attempts:
           type: array
           items: { $ref: '#/components/schemas/InvocationAttemptResponse' }
-        next_after: { type: string, description: Opaque cursor for the next page of older dispatch attempts for this captured recipient. }
+        next_after: { type: string, description: Opaque cursor for the next page of older dispatch attempts for this recipient. }
 
     EventReceiptCancellationResponse:
       description: Durable work-policy cancel_pending operation receipt, which creates no handler invocation.
@@ -53407,6 +53501,28 @@ components:
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         status_url: { type: string, example: "/v1/invocations/0123456789abcdef0123456789abcdef" }
+
+    DurableEntityInvokeRequest:
+      description: "Preview entity invocation; request_id and payload identify durable retries."
+      type: object
+      additionalProperties: false
+      required: [namespace, key, request_id, payload]
+      properties:
+        namespace: { type: string, minLength: 1, maxLength: 256 }
+        key: { type: string, minLength: 1, maxLength: 256 }
+        request_id: { type: string, minLength: 1, maxLength: 256 }
+        payload: { description: "JSON payload; replay fingerprints the exact decoded JSON bytes." }
+        environment: { type: string, description: "Registered project environment; defaults to production. Standalone apps use their default scope." }
+        platform_tenant_id: { type: string, format: uuid, description: "Optional active customer owned by the authenticated account." }
+
+    DurableEntityInvokeResponse:
+      description: "The acknowledged entity result. Replay returns the original value and version."
+      type: object
+      required: [value, version, replayed]
+      properties:
+        value: { description: "JSON result from the committed transition." }
+        version: { type: integer, minimum: 1, description: "Committed transition version, or original version on replay." }
+        replayed: { type: boolean, description: "True when an existing receipt supplied the result." }
 
     InvokeResponse:
       description: "Sync-invoke result. Status is the drain-driven terminal state (`completed` | `failed` | `cancelled`). Result is the handler response. Error contains the terminal delivery error when status is failed."

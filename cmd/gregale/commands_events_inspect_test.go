@@ -1,11 +1,54 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// ADR-648: workflow admission evidence is distinct from handler replay evidence.
+func TestCmdEventsInspectWorkflowAdmission(t *testing.T) {
+	for _, state := range []string{"pending", "failed", "enqueued"} {
+		t.Run(state, func(t *testing.T) {
+			resetJSONOut(t)
+			entry := api.EventReceiptRecipientResponse{AppSlug: "consumer", SubscriptionID: "workflow-sub", WorkflowName: "paid",
+				Routing: api.EventReceiptRoutingResponse{State: state}}
+			if state == "enqueued" {
+				entry.WorkflowRunID, entry.WorkflowRunStatus = recoveryInvocationID, "failed"
+			} else if state == "failed" {
+				entry.RecoveryActions = []api.EventReceiptRecoveryAction{{Kind: "routing_replay"}}
+			}
+			body, err := json.Marshal(api.EventReceiptResponse{EventSource: "orders", EventID: "evt", SnapshotCaptured: true,
+				RecipientCount: 1, Recipients: []api.EventReceiptRecipientResponse{entry}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			authedFakeAPI(t, string(body), http.StatusOK)
+			stdout, restore := swapStdout(t)
+			defer restore()
+			if code := cmdEventsInspect([]string{"--source", "orders", "--id", "evt"}); code != 0 {
+				t.Fatalf("exit=%d", code)
+			}
+			if !strings.Contains(stdout.String(), "Workflow: paid") {
+				t.Fatalf("workflow is missing: %s", stdout)
+			}
+			if state == "enqueued" {
+				if !strings.Contains(stdout.String(), "Workflow run: "+recoveryInvocationID+" | status: failed") || strings.Contains(stdout.String(), "Recover:") {
+					t.Fatalf("admitted workflow evidence=%s", stdout)
+				}
+			} else if strings.Contains(stdout.String(), "Workflow run:") {
+				t.Fatalf("unadmitted workflow has run evidence=%s", stdout)
+			}
+			if state == "failed" && !strings.Contains(stdout.String(), "Recover: gregale events recover") {
+				t.Fatalf("routing recovery hint is missing: %s", stdout)
+			}
+		})
+	}
+}
 
 // ADR-607: text inspection reports routing and execution independently.
 func TestCmdEventsInspectMixedOutcomes(t *testing.T) {
@@ -28,6 +71,21 @@ func TestCmdEventsInspectMixedOutcomes(t *testing.T) {
 		t.Fatalf("request: %s %v", fake.sawPath, fake.sawQuery)
 	}
 	for _, want := range []string{"Recipients: 3", "completed", "routing_replay", "cancel_pending (2 cancelled)", "Next page: --after erc1.next"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("missing %q: %s", want, stdout)
+		}
+	}
+}
+
+func TestCmdEventsInspectBackfillOutcomes(t *testing.T) {
+	resetJSONOut(t)
+	authedFakeAPI(t, `{"event_id":"evt","event_source":"orders","snapshot_captured":true,"recipient_count":1,"routing_summary":{"enqueued":1},"backfill_recipient_count":1,"backfill_routing_summary":{"enqueued":1},"recipients":[{"subscription_id":"added","app_slug":"consumer","origin":"backfill","backfill_job_id":"job-1","backfill_job_url":"/v1/event-replays/job-1","routing":{"state":"enqueued","attempts":1},"execution":{"state":"failed","last_error":"handler failure"},"recovery_actions":[{"kind":"handler_replay"}]}]}`, http.StatusOK)
+	stdout, restore := swapStdout(t)
+	defer restore()
+	if code := cmdEventsInspect([]string{"--source", "orders", "--id", "evt"}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	for _, want := range []string{"Recipients: 1", "Backfill recipients: 1", "Origin: backfill", "gregale events backfill-status job-1", "failed", "handler failure", "handler_replay"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("missing %q: %s", want, stdout)
 		}

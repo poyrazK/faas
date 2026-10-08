@@ -2643,7 +2643,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Count of successful instance evictions or parks, labelled by tenant_tier and reason. tenant_tier is one of {free,hobby,pro,scale,unknown}; reason is one of {idle,eviction_aggressive,ram_pressure,unknown}.",
 	}, []string{"tenant_tier", "reason"})
 	for _, tier := range []string{"free", "hobby", "pro", "scale", "unknown"} {
-		for _, reason := range []string{"idle", "eviction_aggressive", "ram_pressure", "unknown"} {
+		for _, reason := range []string{"idle", "eviction_aggressive", "ram_pressure", "wake_pressure", "unknown"} {
 			evictionFiredTotal.WithLabelValues(tier, reason)
 		}
 	}
@@ -6454,7 +6454,7 @@ func (m *OpsMetrics) EvictionFired(tenantTier, reason string) prometheus.Counter
 		tenantTier = "unknown"
 	}
 	switch reason {
-	case "idle", "eviction_aggressive", "ram_pressure":
+	case "idle", "eviction_aggressive", "ram_pressure", "wake_pressure":
 	default:
 		reason = "unknown"
 	}
