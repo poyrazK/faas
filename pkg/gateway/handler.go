@@ -6673,7 +6673,11 @@ haveApp:
 			)
 			if admitErr != nil || atCapacity {
 				if admitErr == nil {
-					admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, backendCapacityCount(h.backend, app.ID))
+					if notServing := h.pinnedDeploymentNotServing(r.Context(), app, exactDeploymentID); notServing != nil {
+						admitErr = notServing
+					} else {
+						admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, backendCapacityCount(h.backend, app.ID))
+					}
 				}
 				h.logFleetCapacityRefusal(app.ID, admitErr)
 				writeWakeError(w, admitErr)
@@ -6706,6 +6710,11 @@ haveApp:
 		}
 	}
 	if exactDeployment && !pick.OK {
+		if notServing := h.pinnedDeploymentNotServing(r.Context(), app, exactDeploymentID); notServing != nil {
+			api.WriteProblem(w, notServing)
+			h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
+			return
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			exactUnavailableTitle, exactUnavailableDetail))
 		h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
@@ -8854,6 +8863,33 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 		return false, "", WakeMethodUnspecified, werr
 	}
 	return cold, admittedWakeID, method, nil
+}
+
+// pinnedDeploymentStatusReader reads an alias-pinned deployment's lifecycle
+// state. It is consulted only on the refusal path, never per request.
+type pinnedDeploymentStatusReader interface {
+	PinnedDeploymentStatus(ctx context.Context, deploymentID string) (serving bool, label, status string, ok bool)
+}
+
+// pinnedDeploymentNotServing explains a refused deployment-alias request
+// whose deployment no longer serves. production-us hunt #8: after a rollback
+// superseded v2, its alias answered "App concurrency reached: max_concurrency
+// is 3; 1 already live" - schedd refuses wakes of non-live deployments as
+// at-capacity, and the gateway rendered that as a concurrency limit.
+func (h *Handler) pinnedDeploymentNotServing(ctx context.Context, app App, deploymentID string) *api.Problem {
+	if deploymentID == "" || app.PinnedDeploymentID != deploymentID {
+		return nil
+	}
+	reader, ok := h.backend.(pinnedDeploymentStatusReader)
+	if !ok {
+		return nil
+	}
+	serving, label, status, found := reader.PinnedDeploymentStatus(ctx, deploymentID)
+	if !found || serving {
+		return nil
+	}
+	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Deployment not serving",
+		fmt.Sprintf("deployment %s is %s and no longer serves traffic; point the alias at a live revision with `gregale deployments alias set`", label, status))
 }
 
 func writeWakeError(w http.ResponseWriter, err error) {

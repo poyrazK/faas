@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -1374,6 +1375,27 @@ func pickDeploymentLocked(picker *appPicker, chosen, warmHint, preferredInstance
 // PickForDeployment selects only from deploymentID's routable target set.
 // It is intentionally separate from the weighted customer picker: an
 // authenticated promotion smoke must never verify a stable sibling by chance.
+// PinnedDeploymentStatus reports whether an alias-pinned deployment still
+// serves (status live), with a vN label and its status for the refusal
+// message. ok is false when the store cannot answer.
+func (b *PGBackend) PinnedDeploymentStatus(ctx context.Context, deploymentID string) (bool, string, string, bool) {
+	reader, isReader := b.store.(interface {
+		DeploymentByID(context.Context, string) (state.Deployment, error)
+	})
+	if !isReader {
+		return false, "", "", false
+	}
+	dep, err := reader.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		return false, "", "", false
+	}
+	label := dep.ID
+	if dep.Revision > 0 {
+		label = fmt.Sprintf("v%d", dep.Revision)
+	}
+	return dep.Status == state.DeployLive, label, string(dep.Status), true
+}
+
 func (b *PGBackend) PickForDeployment(appID, deploymentID string) PickResult {
 	if b == nil || appID == "" || deploymentID == "" {
 		return PickResult{}
