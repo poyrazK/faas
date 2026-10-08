@@ -120,4 +120,5 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Portable API server MCP contracts
-        run: go test -race -v -p=1 ./cmd/apid -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
+        # The main CI API shard retains race coverage; keep this cold contract build parallel and non-race.
+        run: go test -v -p=2 ./cmd/apid -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
