@@ -70,7 +70,11 @@ func mcpCLICommand() cliCommand {
 		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp task-get --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
 		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
-		{Name: "tasks", Short: "Configure and inspect durable task worker scaling", Subcommands: []cliSub{
+		{Name: "tasks", Short: "Configure, release and inspect durable task workers", Subcommands: []cliSub{
+			{Name: "release", Short: "Deploy and resume a gated web and worker release", Positionals: []string{"[run|status]"}, Flags: []cliFlag{
+				{Name: "plan", Short: "native deployment plan JSON", Value: "PATH", Req: true},
+				{Name: "state", Short: "persistent release journal outside source directories", Value: "PATH", Req: true},
+			}, Examples: []string{"gregale mcp tasks release --plan release.json --state ./release-state.json", "gregale mcp tasks release status --plan release.json --state ./release-state.json"}},
 			{Name: "setup", Short: "Preview or apply the task-backlog scaling policy", Flags: []cliFlag{
 				{Name: "app", Short: "worker app slug (defaults to the linked project app)", Value: "SLUG"},
 				{Name: "min", Short: "minimum replicas (default 1; use 0 with an always-on observer)", Value: "N"},

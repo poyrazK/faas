@@ -632,8 +632,12 @@ func runMCPDeploy(o mcpDeployOptions) int {
 }
 
 func quietMCPDeploy(args []string, execution deployExecution) int {
+	return quietMCPDeployContext(context.Background(), args, execution)
+}
+
+func quietMCPDeployContext(ctx context.Context, args []string, execution deployExecution) int {
 	old := osStdout
 	osStdout = io.Discard
 	defer func() { osStdout = old }()
-	return cmdDeployTarballToExisting(context.Background(), args, false, execution)
+	return cmdDeployTarballToExisting(ctx, args, false, execution)
 }

@@ -542,3 +542,15 @@ future uptime, or observer health. The deployment adapter must verify the
 candidate artifact and external endpoints before reporting start success. A
 worker that exceeds its shutdown deadline retains its registration until expiry;
 the gate fails rather than promoting prematurely.
+
+Gregale also provides a native deployment adapter:
+`gregale mcp tasks release --plan release.json --state release-state.json`.
+Its plan names the web app/source, an empty candidate worker app/source, previous
+worker apps, and the always-on observer and its metric destination. It deploys
+candidates, verifies endpoint/observer health, captures worker IDs from runtime
+logs, promotes web traffic with a serving-revision guard, and parks old worker
+apps after Task readiness. Use separate worker apps to prevent early retirement
+by the worker scheduler. Configure previous worker stop grace longer than the
+Task shutdown deadline. See `docs/mcp.md`'s native adapter section for the full
+plan and recovery contract. Keep the journal and `.gate` checkpoint outside
+source directories; rerunning unchanged sources resumes recorded deployments.

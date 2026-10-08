@@ -1323,7 +1323,7 @@ test('release CLI executes bounded adapters without migration credentials', post
   const root = dirname(dirname(fileURLToPath(import.meta.url)));
   const fixture = await mkdtemp(join(root, 'release-fixture-'));
   t.after(() => rm(fixture, { recursive: true, force: true }));
-  for (const file of ['task-release.js', 'tasks-release.js', 'task-compatibility.js', 'tasks.js', 'task-runtime.js', 'task-store.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
+  for (const file of ['task-release.js', 'tasks-release.js', 'tasks-release-readiness.js', 'task-compatibility.js', 'tasks.js', 'task-runtime.js', 'task-store.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
   await writeFile(join(fixture, 'package.json'), '{"type":"module"}');
   await writeFile(join(fixture, 'gregale-mcp.json'), JSON.stringify({ tasks: { enabled: true, database_url_env: 'RELEASE_DATABASE', owner_key_env: 'RELEASE_OWNER' } }));
   // Default candidate supports version 1; disable version 2 before retiring its workers.
@@ -1352,6 +1352,9 @@ test('release CLI executes bounded adapters without migration credentials', post
   url.searchParams.set('options', `-c search_path=${schema}`);
   const result = await promisify(execFile)(process.execPath, ['tasks-release.js', 'plan.json'], { cwd: fixture, timeout: 15000, env: { ...process.env, RELEASE_DATABASE: url.href, RELEASE_OWNER: ownerKey, MCP_TASK_NAMESPACE: namespace, MCP_TASK_MIGRATION_DATABASE_URL: url.href } });
   assert.equal(JSON.parse(result.stdout).ok, true);
+  const replacementWorkerIDs = JSON.parse(result.stdout).replacementWorkerIDs;
+  const readiness = await promisify(execFile)(process.execPath, ['tasks-release-readiness.js'], { cwd: fixture, timeout: 15000, env: { ...process.env, RELEASE_DATABASE: url.href, RELEASE_OWNER: '', MCP_TASK_NAMESPACE: namespace, MCP_TASK_RELEASE_INPUT: JSON.stringify({ replacementWorkerIDs }) } });
+  assert.deepEqual(JSON.parse(readiness.stdout), { ok: true });
   assert.equal((await pool.query('SELECT 1 FROM gregale_mcp_task_workers WHERE worker_id=$1', [previous])).rowCount, 0);
   await writeFile(join(fixture, 'plan.json'), JSON.stringify({ timeoutMs: 1000, start: [process.execPath, '-e', "console.log('private-hook-output'); setInterval(() => {}, 1000)"], drain: [process.execPath, '-e', "throw new Error('must not drain')"] }));
   await assert.rejects(promisify(execFile)(process.execPath, ['tasks-release.js', 'plan.json'], { cwd: fixture, timeout: 15000, env: { ...process.env, RELEASE_DATABASE: url.href, RELEASE_OWNER: ownerKey, MCP_TASK_NAMESPACE: namespace, MCP_TASK_MIGRATION_DATABASE_URL: url.href } }), error => {
@@ -1360,4 +1363,49 @@ test('release CLI executes bounded adapters without migration credentials', post
     assert.equal(error.stdout.includes('private-hook-output'), false);
     return true;
   });
+});
+
+test('release checkpoint resumes after drain failure without treating replacements as old workers', postgresOnly, async t => {
+  const { releaseMcpTasks } = await import('../task-release.js');
+  const { pool, namespace, store } = await harness(t);
+  const handlers = { build_report: { version: '2', previousVersions: { '1': async () => ({}) }, execute: async () => ({}) } };
+  const inventory = [{ name: 'build_report', version: '1' }, { name: 'build_report', version: '2' }];
+  const previous = randomUUID(), replacement = randomUUID();
+  await store.workerHeartbeat(previous, inventory);
+  let checkpoint;
+  const base = { pool, namespace, store, handlers, timeoutMs: 1000, migrate: async () => {}, saveCheckpoint: async value => { checkpoint = value; }, start: async input => {
+    assert.deepEqual(input.previousWorkerIDs, [previous]);
+    await store.workerHeartbeat(replacement, inventory);
+    return [replacement];
+  } };
+  const interrupted = await releaseMcpTasks({ ...base, drain: async () => { throw new Error('interrupted drain'); } });
+  assert.deepEqual(interrupted, { ok: false, stage: 'drain_previous' });
+  assert.equal(checkpoint.namespace, namespace);
+  const originalTimestamp = checkpoint.startedAt;
+  const resumed = await releaseMcpTasks({ ...base, checkpoint, drain: async ({ previousWorkerIDs }) => {
+    assert.deepEqual(previousWorkerIDs, [previous]);
+    await store.workerStopped(previous);
+  } });
+  assert.equal(resumed.ok, true);
+  assert.equal(checkpoint.startedAt, originalTimestamp);
+  const mismatch = await releaseMcpTasks({ ...base, checkpoint: { ...checkpoint, namespace: 'other-namespace' }, drain: async () => assert.fail('must not drain') });
+  assert.equal(mismatch.ok, false);
+});
+
+test('native replacement recheck rejects stale, draining and unsupported registrations', postgresOnly, async t => {
+  const { checkMcpTaskReplacementReadiness } = await import('../task-release.js');
+  const { pool, namespace, store } = await harness(t);
+  const handlers = { build_report: { version: '1', execute: async () => ({}) } };
+  const id = randomUUID();
+  const check = () => checkMcpTaskReplacementReadiness({ pool, namespace, handlers, workerIDs: [id] });
+  assert.equal(await check(), false);
+  await store.workerHeartbeat(id, [{ name: 'build_report', version: '1' }]);
+  assert.equal(await check(), true);
+  await store.workerDraining(id);
+  assert.equal(await check(), false);
+  await store.workerHeartbeat(id, [{ name: 'build_report', version: '2' }]);
+  assert.equal(await check(), false);
+  await store.workerHeartbeat(id, [{ name: 'build_report', version: '1' }]);
+  await pool.query("UPDATE gregale_mcp_task_workers SET heartbeat_at=clock_timestamp()-interval '50 seconds' WHERE namespace=$1 AND worker_id=$2", [namespace, id]);
+  assert.equal(await check(), false);
 });

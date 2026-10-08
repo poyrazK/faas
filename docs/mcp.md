@@ -1038,3 +1038,68 @@ readiness and observer health in the start adapter. Namespace release locks
 serialize cooperating gate invocations; coordinate independent policy changes
 and all key-writing processes during rollout. No automatic cleanup follows a
 failed release; inspect the reported stage and reconcile candidate processes.
+
+#### Native deployment adapter and recovery
+
+Use `gregale mcp tasks release --plan release.json --state release-state.json`
+to run the Task gate through Gregale's deployment APIs without custom hooks.
+The plan is JSON; source and policy paths are relative to the plan file:
+
+```json
+{
+  "web_app": "my-mcp",
+  "web_path": "./web",
+  "worker_app": "mcp-worker-next",
+  "worker_path": "./worker",
+  "previous_worker_apps": ["mcp-worker-current"],
+  "observer_app": "mcp-observer",
+  "observer_metric_app": "mcp-worker-current",
+  "timeout_seconds": 300
+}
+```
+
+Provision the named apps and their runtime bindings first. The candidate worker
+app must have no instances or live deployment, and a worker replica minimum of
+at least one during rollout. The observer must also have a minimum of one and
+publish `mcp_tasks_observer_heartbeat` to `observer_metric_app` using its
+`MCP_TASKS_SCALING_APP_SLUG` binding. Web, observer, candidate and previous worker
+apps must be distinct. The worker source must start `npm run start:tasks-worker`
+and use a worker manifest; the web source must use the web-only Task role.
+All apps and local migration/runtime bindings must share the same Task namespace,
+database schema, ownership secret and required key ring. Previous worker stop
+grace must exceed the Task shutdown deadline (30 seconds by default).
+
+The adapter deploys candidate workers into a separate app because an in-place
+worker deployment can retire the previous generation before readiness is checked.
+It deploys the web candidate with zero production traffic, checks MCP discovery,
+Origin rejection and optional role catalog baselines (`release_policy`), and
+requires a running observer plus a fresh server-reported observer heartbeat.
+Worker IDs come from deployment-filtered runtime startup logs for every running
+candidate instance; their database heartbeats are independently checked by the
+Task gate. Old namespace worker IDs must belong to the listed previous apps.
+Promotion compares the captured serving revision before switching traffic; the
+adapter rechecks the canonical MCP endpoint after promotion, then parks the
+previous worker apps and the gate verifies registrations
+have disappeared. The adapter never parks the web or observer apps.
+
+Keep the journal and its `.gate` checkpoint outside both source directories.
+They contain deployment/worker IDs and progress, never credentials. Use
+`gregale mcp tasks release status --plan release.json --state release-state.json`
+to inspect progress; rerun the same release command with the same source files,
+plan and journal to resume. Known candidate deployment IDs are reused; a
+promotion committed before its response was lost is reconciled against the
+actual serving revision. A submission interrupted before its ID was recorded
+stops with an unknown outcome for manual reconciliation. Independently verify the
+submission in deployment history before recording its ID and clearing the pending
+submission in the stopped journal; never substitute another artifact. Changed source or policy
+content and namespace/API environment changes block resume. Do not edit or remove
+the journals while a release process is running.
+
+Coordinate other deployments and app-wide operations during rollout: generation
+checks and web promotion compare-and-swap detect changes, but app park is an
+app-wide API without a deployment comparison guard. There is no automatic
+rollback; a failure after promotion may leave the new web revision serving while
+worker draining is incomplete. Check both journals and the recorded deployments,
+restore health, and resume. Log retention must include worker startup records;
+missing records fail readiness. No production deployment is performed by local
+verification tests.

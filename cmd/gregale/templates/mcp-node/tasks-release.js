@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import pg from 'pg';
@@ -26,7 +26,14 @@ try {
     const { stdout } = await promisify(execFile)(command[0], command.slice(1), { env, timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 65536 });
     return stdout;
   };
-  const report = await releaseMcpTasks({ pool, namespace: settings.namespace, handlers: mcpTaskHandlers,
+  const checkpoint = plan.checkpointPath && existsSync(plan.checkpointPath) ? JSON.parse(readFileSync(plan.checkpointPath, 'utf8')) : undefined;
+  const saveCheckpoint = async value => {
+    if (!plan.checkpointPath) return;
+    const temporary = `${plan.checkpointPath}.${process.pid}.tmp`;
+    writeFileSync(temporary, JSON.stringify(value), { mode: 0o600, flag: 'wx' });
+    renameSync(temporary, plan.checkpointPath);
+  };
+  const report = await releaseMcpTasks({ checkpoint, saveCheckpoint, pool, namespace: settings.namespace, handlers: mcpTaskHandlers,
     store: createPostgresMcpTaskStore({ pool, ...settings }), timeoutMs,
     migrate: () => createPostgresMcpTaskStore({ pool: migrationPool, ...settings }).migrate({ admissionHandlers: Object.entries(mcpTaskHandlers).map(([name, handler]) => ({ name, version: handler.version })) }),
     start: async input => JSON.parse(await run(plan.start, input)).workerIDs,

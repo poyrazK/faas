@@ -3,7 +3,7 @@ import { checkMcpTaskCompatibility, mcpTaskHandlerInventory } from './task-compa
 import { createMcpTaskAdmissionController } from './task-admission.js';
 
 // Hooks manage deployment processes; database registration alone never stops a worker.
-export async function releaseMcpTasks({ pool, namespace, store, handlers, migrate, start, drain, timeoutMs = 60000 }) {
+export async function releaseMcpTasks({ pool, namespace, store, handlers, migrate, start, drain, timeoutMs = 60000, checkpoint, saveCheckpoint = async () => {} }) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 600000 || ![migrate, start, drain].every(fn => typeof fn === 'function')) throw new Error('Invalid release settings');
   const inventory = mcpTaskHandlerInventory(handlers);
   const lock = await pool.connect();
@@ -26,8 +26,10 @@ export async function releaseMcpTasks({ pool, namespace, store, handlers, migrat
     };
     await preflight();
     const workers = async () => (await pool.query(`SELECT worker_id::text, handlers, draining, heartbeat_at, heartbeat_at > clock_timestamp() - interval '45 seconds' AS fresh FROM gregale_mcp_task_workers WHERE namespace = $1 AND expires_at > clock_timestamp()`, [namespace])).rows;
-    const previous = (await workers()).map(row => row.worker_id);
-    const since = (await pool.query('SELECT clock_timestamp() AS now')).rows[0].now;
+    if (checkpoint && (checkpoint.namespace !== namespace || !Array.isArray(checkpoint.previousWorkerIDs) || !Number.isFinite(Date.parse(checkpoint.startedAt)))) throw new Error('Invalid release checkpoint');
+    const previous = checkpoint?.previousWorkerIDs ?? (await workers()).map(row => row.worker_id);
+    const since = checkpoint ? new Date(checkpoint.startedAt) : (await pool.query('SELECT clock_timestamp() AS now')).rows[0].now;
+    await saveCheckpoint({ namespace, previousWorkerIDs: previous, startedAt: since.toISOString() });
     report.stage = 'start_replacements';
     const ids = await start({ previousWorkerIDs: previous, timeoutMs });
     if (!Array.isArray(ids) || !ids.length || ids.length > 4096 || new Set(ids).size !== ids.length || ids.some(id => typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) || previous.includes(id))) throw new Error('Invalid replacement worker IDs');
@@ -65,4 +67,14 @@ export async function releaseMcpTasks({ pool, namespace, store, handlers, migrat
       if (locked) await lock.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [`gregale_mcp_release:${namespace}`]);
     } finally { lock.release(); }
   }
+}
+
+// Reused by native deployment adapters immediately before promotion and each park.
+export async function checkMcpTaskReplacementReadiness({ pool, namespace, handlers, workerIDs }) {
+  if (!Array.isArray(workerIDs) || !workerIDs.length || workerIDs.length > 4096 || new Set(workerIDs).size !== workerIDs.length || workerIDs.some(id => typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))) throw new Error('Invalid replacement IDs');
+  const inventory = mcpTaskHandlerInventory(handlers);
+  const result = await pool.query(`SELECT worker_id::text, handlers FROM gregale_mcp_task_workers
+    WHERE namespace = $1 AND worker_id = ANY($2::uuid[]) AND NOT draining
+      AND expires_at > clock_timestamp() AND heartbeat_at > clock_timestamp() - interval '45 seconds'`, [namespace, workerIDs]);
+  return workerIDs.every(id => result.rows.some(row => row.worker_id === id && inventory.every(handler => row.handlers.some(item => item.name === handler.name && item.version === handler.version))));
 }

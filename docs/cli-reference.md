@@ -495,7 +495,25 @@ gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe
 
 ### mcp tasks
 
-Configure and inspect durable task worker scaling
+Configure, release and inspect durable task workers
+
+#### mcp tasks release
+
+Deploy and resume a gated web and worker release
+
+`gregale mcp tasks release --plan <PATH> --state <PATH> [run|status]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | native deployment plan JSON | required |
+| `--state <PATH>` | persistent release journal outside source directories | required |
+
+Examples:
+
+```sh
+gregale mcp tasks release --plan release.json --state ./release-state.json
+gregale mcp tasks release status --plan release.json --state ./release-state.json
+```
 
 #### mcp tasks setup
 
