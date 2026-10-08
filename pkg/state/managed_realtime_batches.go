@@ -188,7 +188,7 @@ func (s *PgStore) AppendManagedRealtimeBatchConditional(ctx context.Context, ep,
 	defer func() { _ = tx.Rollback(ctx) }()
 	var locked string
 	if err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for update`, ep).Scan(&locked); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			err = ErrNotFound
 		}
 		return nil, err
@@ -206,7 +206,7 @@ func (s *PgStore) AppendManagedRealtimeBatchConditional(ctx context.Context, ep,
 		}
 		return batchMessages(ep, ch, id, items, old.First, old.CreatedAt), tx.Commit(ctx)
 	}
-	if err != pgx.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 	var count int

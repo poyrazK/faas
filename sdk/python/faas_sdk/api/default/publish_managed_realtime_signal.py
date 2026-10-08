@@ -115,7 +115,8 @@ def sync_detailed(
         slug (str):
         id (UUID):
         channel (str):
-        body (ManagedRealtimeSignalRequest):
+        body (ManagedRealtimeSignalRequest): Ephemeral backend signal payload with optional name
+            and expiration.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -160,7 +161,8 @@ def sync(
         slug (str):
         id (UUID):
         channel (str):
-        body (ManagedRealtimeSignalRequest):
+        body (ManagedRealtimeSignalRequest): Ephemeral backend signal payload with optional name
+            and expiration.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -200,7 +202,8 @@ async def asyncio_detailed(
         slug (str):
         id (UUID):
         channel (str):
-        body (ManagedRealtimeSignalRequest):
+        body (ManagedRealtimeSignalRequest): Ephemeral backend signal payload with optional name
+            and expiration.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -243,7 +246,8 @@ async def asyncio(
         slug (str):
         id (UUID):
         channel (str):
-        body (ManagedRealtimeSignalRequest):
+        body (ManagedRealtimeSignalRequest): Ephemeral backend signal payload with optional name
+            and expiration.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

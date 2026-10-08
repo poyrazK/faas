@@ -22,6 +22,8 @@ T = TypeVar("T", bound="ManagedRealtimeScheduleRequest")
 
 @_attrs_define
 class ManagedRealtimeScheduleRequest:
+    """Scheduled channel publish payload with recurrence and retry settings."""
+
     data_base64: str
     """At most 4096 decoded bytes."""
     deliver_at: datetime.datetime

@@ -1289,7 +1289,6 @@ from .list_job_runs_response import ListJobRunsResponse
 from .list_job_task_attempts_response import ListJobTaskAttemptsResponse
 from .list_job_tasks_response import ListJobTasksResponse
 from .list_jobs_response import ListJobsResponse
-from .list_managed_realtime_schedules_response_200 import ListManagedRealtimeSchedulesResponse200
 from .list_managed_realtime_schedules_status import ListManagedRealtimeSchedulesStatus
 from .list_object_write_receipts_status import ListObjectWriteReceiptsStatus
 from .list_operator_runtime_config_response_200 import ListOperatorRuntimeConfigResponse200
@@ -1374,6 +1373,13 @@ from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperat
 from .managed_postgres_usage_operator_response_guardrail_state import ManagedPostgresUsageOperatorResponseGuardrailState
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
+from .managed_realtime_channel_batch_request import ManagedRealtimeChannelBatchRequest
+from .managed_realtime_channel_batch_request_messages_item import ManagedRealtimeChannelBatchRequestMessagesItem
+from .managed_realtime_channel_batch_request_messages_item_metadata import (
+    ManagedRealtimeChannelBatchRequestMessagesItemMetadata,
+)
+from .managed_realtime_channel_batch_response import ManagedRealtimeChannelBatchResponse
+from .managed_realtime_channel_snapshot_request import ManagedRealtimeChannelSnapshotRequest
 from .managed_realtime_channel_snapshot_response import ManagedRealtimeChannelSnapshotResponse
 from .managed_realtime_channel_snapshot_response_entity_expirations import (
     ManagedRealtimeChannelSnapshotResponseEntityExpirations,
@@ -1397,13 +1403,28 @@ from .managed_realtime_endpoint_response_auth_token_masked import ManagedRealtim
 from .managed_realtime_endpoint_response_callback_auth_token_masked import (
     ManagedRealtimeEndpointResponseCallbackAuthTokenMasked,
 )
+from .managed_realtime_event_schema_request import ManagedRealtimeEventSchemaRequest
+from .managed_realtime_event_schema_request_schema_type_0 import ManagedRealtimeEventSchemaRequestSchemaType0
 from .managed_realtime_event_schema_response import ManagedRealtimeEventSchemaResponse
 from .managed_realtime_event_schema_response_schema_type_0 import ManagedRealtimeEventSchemaResponseSchemaType0
 from .managed_realtime_history_usage_response import ManagedRealtimeHistoryUsageResponse
+from .managed_realtime_inbox_message_response import ManagedRealtimeInboxMessageResponse
+from .managed_realtime_inbox_response import ManagedRealtimeInboxResponse
+from .managed_realtime_message_mutation_request import ManagedRealtimeMessageMutationRequest
+from .managed_realtime_message_mutation_response import ManagedRealtimeMessageMutationResponse
 from .managed_realtime_message_request import ManagedRealtimeMessageRequest
 from .managed_realtime_message_request_metadata import ManagedRealtimeMessageRequestMetadata
 from .managed_realtime_notification_control_response import ManagedRealtimeNotificationControlResponse
+from .managed_realtime_notification_reschedule_request import ManagedRealtimeNotificationRescheduleRequest
 from .managed_realtime_notification_timeline_event import ManagedRealtimeNotificationTimelineEvent
+from .managed_realtime_principal_message_request import ManagedRealtimePrincipalMessageRequest
+from .managed_realtime_principal_message_request_delivery import ManagedRealtimePrincipalMessageRequestDelivery
+from .managed_realtime_principal_message_request_notification_priority import (
+    ManagedRealtimePrincipalMessageRequestNotificationPriority,
+)
+from .managed_realtime_principal_receipt_delivery import ManagedRealtimePrincipalReceiptDelivery
+from .managed_realtime_principal_receipt_response import ManagedRealtimePrincipalReceiptResponse
+from .managed_realtime_principal_send_response import ManagedRealtimePrincipalSendResponse
 from .managed_realtime_publish_response import ManagedRealtimePublishResponse
 from .managed_realtime_push_delivery import ManagedRealtimePushDelivery
 from .managed_realtime_push_delivery_priority import ManagedRealtimePushDeliveryPriority
@@ -1422,6 +1443,13 @@ from .managed_realtime_push_provider_request_config_service_account_json import 
 from .managed_realtime_push_registration import ManagedRealtimePushRegistration
 from .managed_realtime_push_registration_provider import ManagedRealtimePushRegistrationProvider
 from .managed_realtime_push_registration_target import ManagedRealtimePushRegistrationTarget
+from .managed_realtime_read_progress_request import ManagedRealtimeReadProgressRequest
+from .managed_realtime_read_progress_response import ManagedRealtimeReadProgressResponse
+from .managed_realtime_reducer_request import ManagedRealtimeReducerRequest
+from .managed_realtime_reducer_request_entities import ManagedRealtimeReducerRequestEntities
+from .managed_realtime_reducer_request_entities_additional_property import (
+    ManagedRealtimeReducerRequestEntitiesAdditionalProperty,
+)
 from .managed_realtime_reducer_response import ManagedRealtimeReducerResponse
 from .managed_realtime_reducer_response_entities import ManagedRealtimeReducerResponseEntities
 from .managed_realtime_reducer_response_entities_additional_property import (
@@ -1442,12 +1470,16 @@ from .managed_realtime_schedule_history_event import ManagedRealtimeScheduleHist
 from .managed_realtime_schedule_history_event_event import ManagedRealtimeScheduleHistoryEventEvent
 from .managed_realtime_schedule_history_event_status import ManagedRealtimeScheduleHistoryEventStatus
 from .managed_realtime_schedule_history_response import ManagedRealtimeScheduleHistoryResponse
+from .managed_realtime_schedule_pause_request import ManagedRealtimeSchedulePauseRequest
 from .managed_realtime_schedule_request import ManagedRealtimeScheduleRequest
 from .managed_realtime_schedule_request_metadata import ManagedRealtimeScheduleRequestMetadata
 from .managed_realtime_schedule_request_on_condition_failure import ManagedRealtimeScheduleRequestOnConditionFailure
 from .managed_realtime_schedule_response import ManagedRealtimeScheduleResponse
 from .managed_realtime_schedule_response_status import ManagedRealtimeScheduleResponseStatus
+from .managed_realtime_schedule_retry_request import ManagedRealtimeScheduleRetryRequest
 from .managed_realtime_schedule_totals import ManagedRealtimeScheduleTotals
+from .managed_realtime_schedule_update import ManagedRealtimeScheduleUpdate
+from .managed_realtime_schedules_response import ManagedRealtimeSchedulesResponse
 from .managed_realtime_signal_request import ManagedRealtimeSignalRequest
 from .managed_realtime_signal_response import ManagedRealtimeSignalResponse
 from .managed_realtime_signal_response_member_id import ManagedRealtimeSignalResponseMemberId
@@ -1754,7 +1786,6 @@ from .password_reset_request import PasswordResetRequest
 from .password_signup_request import PasswordSignupRequest
 from .patch_org_request import PatchOrgRequest
 from .patch_org_request_plan import PatchOrgRequestPlan
-from .pause_managed_realtime_schedule_body import PauseManagedRealtimeScheduleBody
 from .payment_method_summary import PaymentMethodSummary
 from .plan_affected_app import PlanAffectedApp
 from .plan_affected_app_action import PlanAffectedAppAction
@@ -2115,14 +2146,6 @@ from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
 from .publish_event_response import PublishEventResponse
-from .publish_managed_realtime_channel_batch_body import PublishManagedRealtimeChannelBatchBody
-from .publish_managed_realtime_channel_batch_body_messages_item import (
-    PublishManagedRealtimeChannelBatchBodyMessagesItem,
-)
-from .publish_managed_realtime_channel_batch_body_messages_item_metadata import (
-    PublishManagedRealtimeChannelBatchBodyMessagesItemMetadata,
-)
-from .publish_managed_realtime_channel_batch_response_200 import PublishManagedRealtimeChannelBatchResponse200
 from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
@@ -2135,14 +2158,6 @@ from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
-from .put_managed_realtime_channel_snapshot_body import PutManagedRealtimeChannelSnapshotBody
-from .put_managed_realtime_event_schema_body import PutManagedRealtimeEventSchemaBody
-from .put_managed_realtime_event_schema_body_schema_type_0 import PutManagedRealtimeEventSchemaBodySchemaType0
-from .put_managed_realtime_reducer_body import PutManagedRealtimeReducerBody
-from .put_managed_realtime_reducer_body_entities import PutManagedRealtimeReducerBodyEntities
-from .put_managed_realtime_reducer_body_entities_additional_property import (
-    PutManagedRealtimeReducerBodyEntitiesAdditionalProperty,
-)
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
 from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
@@ -2180,11 +2195,9 @@ from .realtime_notification_preferences_categories_type_0 import RealtimeNotific
 from .realtime_notification_preferences_digest_interval_seconds import (
     RealtimeNotificationPreferencesDigestIntervalSeconds,
 )
-from .realtime_notification_preferences_quiet_hours_type_0 import RealtimeNotificationPreferencesQuietHoursType0
-from .realtime_notification_preferences_rate_limit_type_0 import RealtimeNotificationPreferencesRateLimitType0
-from .realtime_notification_preferences_rate_limit_type_0_window_seconds import (
-    RealtimeNotificationPreferencesRateLimitType0WindowSeconds,
-)
+from .realtime_notification_rate_limit import RealtimeNotificationRateLimit
+from .realtime_notification_rate_limit_window_seconds import RealtimeNotificationRateLimitWindowSeconds
+from .realtime_quiet_hours import RealtimeQuietHours
 from .realtime_schedule_completion_webhook_payload import RealtimeScheduleCompletionWebhookPayload
 from .realtime_schedule_completion_webhook_payload_outcome import RealtimeScheduleCompletionWebhookPayloadOutcome
 from .rebind_environment_git_source_request import RebindEnvironmentGitSourceRequest
@@ -2238,21 +2251,17 @@ from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSerie
 from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
 from .request_audit_list_response import RequestAuditListResponse
 from .request_audit_record import RequestAuditRecord
-from .reschedule_managed_realtime_notification_body import RescheduleManagedRealtimeNotificationBody
-from .reschedule_managed_realtime_schedule_body import RescheduleManagedRealtimeScheduleBody
 from .resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
 from .restore_automation_revision_request import RestoreAutomationRevisionRequest
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
-from .resume_managed_realtime_schedule_body import ResumeManagedRealtimeScheduleBody
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
 from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
-from .retry_managed_realtime_schedule_body import RetryManagedRealtimeScheduleBody
 from .retry_policy_dto import RetryPolicyDTO
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
@@ -2536,12 +2545,6 @@ from .send_app_message_request_data_content_type import SendAppMessageRequestDat
 from .send_app_message_request_datacontenttype import SendAppMessageRequestDatacontenttype
 from .send_app_message_response import SendAppMessageResponse
 from .send_app_message_response_status import SendAppMessageResponseStatus
-from .send_managed_realtime_principal_body import SendManagedRealtimePrincipalBody
-from .send_managed_realtime_principal_body_delivery import SendManagedRealtimePrincipalBodyDelivery
-from .send_managed_realtime_principal_body_notification_priority import (
-    SendManagedRealtimePrincipalBodyNotificationPriority,
-)
-from .send_managed_realtime_principal_response_202 import SendManagedRealtimePrincipalResponse202
 from .service_binding_policy import ServiceBindingPolicy
 from .service_binding_transport import ServiceBindingTransport
 from .service_call_scope import ServiceCallScope
@@ -4137,7 +4140,6 @@ __all__ = (
     "ListJobsResponse",
     "ListJobTaskAttemptsResponse",
     "ListJobTasksResponse",
-    "ListManagedRealtimeSchedulesResponse200",
     "ListManagedRealtimeSchedulesStatus",
     "ListObjectWriteReceiptsStatus",
     "ListOperatorRuntimeConfigResponse200",
@@ -4222,6 +4224,11 @@ __all__ = (
     "ManagedPostgresUsageOperatorResponseGuardrailState",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseGuardrailState",
+    "ManagedRealtimeChannelBatchRequest",
+    "ManagedRealtimeChannelBatchRequestMessagesItem",
+    "ManagedRealtimeChannelBatchRequestMessagesItemMetadata",
+    "ManagedRealtimeChannelBatchResponse",
+    "ManagedRealtimeChannelSnapshotRequest",
     "ManagedRealtimeChannelSnapshotResponse",
     "ManagedRealtimeChannelSnapshotResponseEntityExpirations",
     "ManagedRealtimeChannelSnapshotResponseEntityVersions",
@@ -4239,13 +4246,26 @@ __all__ = (
     "ManagedRealtimeEndpointResponseAuthRequiredClaims",
     "ManagedRealtimeEndpointResponseAuthTokenMasked",
     "ManagedRealtimeEndpointResponseCallbackAuthTokenMasked",
+    "ManagedRealtimeEventSchemaRequest",
+    "ManagedRealtimeEventSchemaRequestSchemaType0",
     "ManagedRealtimeEventSchemaResponse",
     "ManagedRealtimeEventSchemaResponseSchemaType0",
     "ManagedRealtimeHistoryUsageResponse",
+    "ManagedRealtimeInboxMessageResponse",
+    "ManagedRealtimeInboxResponse",
+    "ManagedRealtimeMessageMutationRequest",
+    "ManagedRealtimeMessageMutationResponse",
     "ManagedRealtimeMessageRequest",
     "ManagedRealtimeMessageRequestMetadata",
     "ManagedRealtimeNotificationControlResponse",
+    "ManagedRealtimeNotificationRescheduleRequest",
     "ManagedRealtimeNotificationTimelineEvent",
+    "ManagedRealtimePrincipalMessageRequest",
+    "ManagedRealtimePrincipalMessageRequestDelivery",
+    "ManagedRealtimePrincipalMessageRequestNotificationPriority",
+    "ManagedRealtimePrincipalReceiptDelivery",
+    "ManagedRealtimePrincipalReceiptResponse",
+    "ManagedRealtimePrincipalSendResponse",
     "ManagedRealtimePublishResponse",
     "ManagedRealtimePushDelivery",
     "ManagedRealtimePushDeliveryPriority",
@@ -4262,6 +4282,11 @@ __all__ = (
     "ManagedRealtimePushRegistration",
     "ManagedRealtimePushRegistrationProvider",
     "ManagedRealtimePushRegistrationTarget",
+    "ManagedRealtimeReadProgressRequest",
+    "ManagedRealtimeReadProgressResponse",
+    "ManagedRealtimeReducerRequest",
+    "ManagedRealtimeReducerRequestEntities",
+    "ManagedRealtimeReducerRequestEntitiesAdditionalProperty",
     "ManagedRealtimeReducerResponse",
     "ManagedRealtimeReducerResponseEntities",
     "ManagedRealtimeReducerResponseEntitiesAdditionalProperty",
@@ -4278,12 +4303,16 @@ __all__ = (
     "ManagedRealtimeScheduleHistoryEventEvent",
     "ManagedRealtimeScheduleHistoryEventStatus",
     "ManagedRealtimeScheduleHistoryResponse",
+    "ManagedRealtimeSchedulePauseRequest",
     "ManagedRealtimeScheduleRequest",
     "ManagedRealtimeScheduleRequestMetadata",
     "ManagedRealtimeScheduleRequestOnConditionFailure",
     "ManagedRealtimeScheduleResponse",
     "ManagedRealtimeScheduleResponseStatus",
+    "ManagedRealtimeScheduleRetryRequest",
+    "ManagedRealtimeSchedulesResponse",
     "ManagedRealtimeScheduleTotals",
+    "ManagedRealtimeScheduleUpdate",
     "ManagedRealtimeSignalRequest",
     "ManagedRealtimeSignalResponse",
     "ManagedRealtimeSignalResponseMemberId",
@@ -4588,7 +4617,6 @@ __all__ = (
     "PasswordSignupRequest",
     "PatchOrgRequest",
     "PatchOrgRequestPlan",
-    "PauseManagedRealtimeScheduleBody",
     "PaymentMethodSummary",
     "PlanAffectedApp",
     "PlanAffectedAppAction",
@@ -4905,10 +4933,6 @@ __all__ = (
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
-    "PublishManagedRealtimeChannelBatchBody",
-    "PublishManagedRealtimeChannelBatchBodyMessagesItem",
-    "PublishManagedRealtimeChannelBatchBodyMessagesItemMetadata",
-    "PublishManagedRealtimeChannelBatchResponse200",
     "PublishManagedRealtimeChannelDelivery",
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
@@ -4921,12 +4945,6 @@ __all__ = (
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
-    "PutManagedRealtimeChannelSnapshotBody",
-    "PutManagedRealtimeEventSchemaBody",
-    "PutManagedRealtimeEventSchemaBodySchemaType0",
-    "PutManagedRealtimeReducerBody",
-    "PutManagedRealtimeReducerBodyEntities",
-    "PutManagedRealtimeReducerBodyEntitiesAdditionalProperty",
     "PutOutboundBindingDailyRequestBudgetRequest",
     "PutOutboundCredentialRequest",
     "PutOutboundDailyRequestBudgetRequest",
@@ -4962,9 +4980,9 @@ __all__ = (
     "RealtimeNotificationPreferences",
     "RealtimeNotificationPreferencesCategoriesType0",
     "RealtimeNotificationPreferencesDigestIntervalSeconds",
-    "RealtimeNotificationPreferencesQuietHoursType0",
-    "RealtimeNotificationPreferencesRateLimitType0",
-    "RealtimeNotificationPreferencesRateLimitType0WindowSeconds",
+    "RealtimeNotificationRateLimit",
+    "RealtimeNotificationRateLimitWindowSeconds",
+    "RealtimeQuietHours",
     "RealtimeScheduleCompletionWebhookPayload",
     "RealtimeScheduleCompletionWebhookPayloadOutcome",
     "RebindEnvironmentGitSourceRequest",
@@ -5018,21 +5036,17 @@ __all__ = (
     "RequestAnalyticsTimeseriesSeriesMethod",
     "RequestAuditListResponse",
     "RequestAuditRecord",
-    "RescheduleManagedRealtimeNotificationBody",
-    "RescheduleManagedRealtimeScheduleBody",
     "ResizeManagedPostgresDatabaseRequest",
     "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResolvedExecutionLimits",
     "ResourceProfile",
     "RestoreAutomationRevisionRequest",
     "RestoreManagedPostgresDatabaseRequest",
-    "ResumeManagedRealtimeScheduleBody",
     "ResumeWorkflowRunRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryGithubCheckUpdateConfirm",
     "RetryGithubWebhookDeliveryConfirm",
-    "RetryManagedRealtimeScheduleBody",
     "RetryPolicyDTO",
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
@@ -5310,10 +5324,6 @@ __all__ = (
     "SendAppMessageRequestDataContentType",
     "SendAppMessageResponse",
     "SendAppMessageResponseStatus",
-    "SendManagedRealtimePrincipalBody",
-    "SendManagedRealtimePrincipalBodyDelivery",
-    "SendManagedRealtimePrincipalBodyNotificationPriority",
-    "SendManagedRealtimePrincipalResponse202",
     "ServiceBindingPolicy",
     "ServiceBindingTransport",
     "ServiceCallerJWK",

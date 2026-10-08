@@ -7,10 +7,10 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.list_managed_realtime_schedules_response_200 import ListManagedRealtimeSchedulesResponse200
 from ...models.list_managed_realtime_schedules_status import (
     ListManagedRealtimeSchedulesStatus,
 )
+from ...models.managed_realtime_schedules_response import ManagedRealtimeSchedulesResponse
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -51,9 +51,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ListManagedRealtimeSchedulesResponse200 | Problem | None:
+) -> ManagedRealtimeSchedulesResponse | Problem | None:
     if response.status_code == 200:
-        response_200 = ListManagedRealtimeSchedulesResponse200.from_dict(response.json())
+        response_200 = ManagedRealtimeSchedulesResponse.from_dict(response.json())
 
         return response_200
 
@@ -75,7 +75,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ListManagedRealtimeSchedulesResponse200 | Problem]:
+) -> Response[ManagedRealtimeSchedulesResponse | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -92,7 +92,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     group: str | Unset = UNSET,
     status: ListManagedRealtimeSchedulesStatus | Unset = UNSET,
-) -> Response[ListManagedRealtimeSchedulesResponse200 | Problem]:
+) -> Response[ManagedRealtimeSchedulesResponse | Problem]:
     """List pending and recent terminal retained-event schedules
 
     Args:
@@ -107,7 +107,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ListManagedRealtimeSchedulesResponse200 | Problem]
+        Response[ManagedRealtimeSchedulesResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -133,7 +133,7 @@ def sync(
     client: AuthenticatedClient | Client,
     group: str | Unset = UNSET,
     status: ListManagedRealtimeSchedulesStatus | Unset = UNSET,
-) -> ListManagedRealtimeSchedulesResponse200 | Problem | None:
+) -> ManagedRealtimeSchedulesResponse | Problem | None:
     """List pending and recent terminal retained-event schedules
 
     Args:
@@ -148,7 +148,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ListManagedRealtimeSchedulesResponse200 | Problem
+        ManagedRealtimeSchedulesResponse | Problem
     """
 
     return sync_detailed(
@@ -169,7 +169,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     group: str | Unset = UNSET,
     status: ListManagedRealtimeSchedulesStatus | Unset = UNSET,
-) -> Response[ListManagedRealtimeSchedulesResponse200 | Problem]:
+) -> Response[ManagedRealtimeSchedulesResponse | Problem]:
     """List pending and recent terminal retained-event schedules
 
     Args:
@@ -184,7 +184,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ListManagedRealtimeSchedulesResponse200 | Problem]
+        Response[ManagedRealtimeSchedulesResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -208,7 +208,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     group: str | Unset = UNSET,
     status: ListManagedRealtimeSchedulesStatus | Unset = UNSET,
-) -> ListManagedRealtimeSchedulesResponse200 | Problem | None:
+) -> ManagedRealtimeSchedulesResponse | Problem | None:
     """List pending and recent terminal retained-event schedules
 
     Args:
@@ -223,7 +223,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ListManagedRealtimeSchedulesResponse200 | Problem
+        ManagedRealtimeSchedulesResponse | Problem
     """
 
     return (

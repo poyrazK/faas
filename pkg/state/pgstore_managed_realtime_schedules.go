@@ -110,7 +110,7 @@ func (s *PgStore) UpdateManagedRealtimeSchedule(ctx context.Context, ep, ch, id 
 	if deadline == nil && row.Status == "canceled" {
 		return row, tx.Commit(ctx)
 	}
-	if (row.Status != "pending" && !(deadline == nil && row.Status == "paused")) || row.Version != version || row.Version >= managedRealtimeMaxEntityVersion-1 {
+	if (row.Status != "pending" && (deadline != nil || row.Status != "paused")) || row.Version != version || row.Version >= managedRealtimeMaxEntityVersion-1 {
 		return row, ErrConflict
 	}
 	if deadline != nil {

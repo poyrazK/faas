@@ -105,9 +105,8 @@ def sync_detailed(
 ) -> Response[Problem | list[ManagedRealtimePushDevice]]:
     """List realtime push devices.
 
-     Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery
-    history includes the latest 100 records for the principal; sent means provider acceptance, not user
-    delivery.
+     Lists registered devices under the retained-history preview gate. Device tokens and provider
+    credentials are omitted.
 
     Args:
         slug (str):
@@ -144,9 +143,8 @@ def sync(
 ) -> Problem | list[ManagedRealtimePushDevice] | None:
     """List realtime push devices.
 
-     Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery
-    history includes the latest 100 records for the principal; sent means provider acceptance, not user
-    delivery.
+     Lists registered devices under the retained-history preview gate. Device tokens and provider
+    credentials are omitted.
 
     Args:
         slug (str):
@@ -178,9 +176,8 @@ async def asyncio_detailed(
 ) -> Response[Problem | list[ManagedRealtimePushDevice]]:
     """List realtime push devices.
 
-     Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery
-    history includes the latest 100 records for the principal; sent means provider acceptance, not user
-    delivery.
+     Lists registered devices under the retained-history preview gate. Device tokens and provider
+    credentials are omitted.
 
     Args:
         slug (str):
@@ -215,9 +212,8 @@ async def asyncio(
 ) -> Problem | list[ManagedRealtimePushDevice] | None:
     """List realtime push devices.
 
-     Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery
-    history includes the latest 100 records for the principal; sent means provider acceptance, not user
-    delivery.
+     Lists registered devices under the retained-history preview gate. Device tokens and provider
+    credentials are omitted.
 
     Args:
         slug (str):

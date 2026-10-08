@@ -11,7 +11,7 @@ T = TypeVar("T", bound="ManagedRealtimeRetainedMessageRequestMetadata")
 
 @_attrs_define
 class ManagedRealtimeRetainedMessageRequestMetadata:
-    """Exact-match routing metadata; at most 4096 encoded JSON bytes. Retained channel publishing only."""
+    """Routing metadata attached to this retained publish; at most 4096 encoded JSON bytes."""
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 

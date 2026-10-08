@@ -44,7 +44,7 @@ func ValidateRealtimeNotificationCategory(category string) error {
 		return errors.New("invalid notification category")
 	}
 	for _, r := range category {
-		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' || r == '.') {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' && r != '-' && r != '.' {
 			return errors.New("invalid notification category")
 		}
 	}
@@ -246,7 +246,7 @@ func ValidateRealtimeMetadata(values map[string]string) error {
 			return errors.New("invalid metadata")
 		}
 		for _, r := range key {
-			if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' || r == '.') {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' && r != '-' && r != '.' {
 				return errors.New("invalid metadata key")
 			}
 		}

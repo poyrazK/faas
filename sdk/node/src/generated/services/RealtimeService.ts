@@ -10,13 +10,21 @@ import type { ManagedRealtimeDrainRequest } from '../models/ManagedRealtimeDrain
 import type { ManagedRealtimeDrainResponse } from '../models/ManagedRealtimeDrainResponse.js';
 import type { ManagedRealtimeEndpointResponse } from '../models/ManagedRealtimeEndpointResponse.js';
 import type { ManagedRealtimeHistoryUsageResponse } from '../models/ManagedRealtimeHistoryUsageResponse.js';
+import type { ManagedRealtimeInboxResponse } from '../models/ManagedRealtimeInboxResponse.js';
+import type { ManagedRealtimeMessageMutationRequest } from '../models/ManagedRealtimeMessageMutationRequest.js';
+import type { ManagedRealtimeMessageMutationResponse } from '../models/ManagedRealtimeMessageMutationResponse.js';
 import type { ManagedRealtimeMessageRequest } from '../models/ManagedRealtimeMessageRequest.js';
+import type { ManagedRealtimePrincipalMessageRequest } from '../models/ManagedRealtimePrincipalMessageRequest.js';
+import type { ManagedRealtimePrincipalReceiptResponse } from '../models/ManagedRealtimePrincipalReceiptResponse.js';
+import type { ManagedRealtimePrincipalSendResponse } from '../models/ManagedRealtimePrincipalSendResponse.js';
 import type { ManagedRealtimePublishResponse } from '../models/ManagedRealtimePublishResponse.js';
 import type { ManagedRealtimePushDelivery } from '../models/ManagedRealtimePushDelivery.js';
 import type { ManagedRealtimePushDevice } from '../models/ManagedRealtimePushDevice.js';
 import type { ManagedRealtimePushProvider } from '../models/ManagedRealtimePushProvider.js';
 import type { ManagedRealtimePushProviderRequest } from '../models/ManagedRealtimePushProviderRequest.js';
 import type { ManagedRealtimePushRegistration } from '../models/ManagedRealtimePushRegistration.js';
+import type { ManagedRealtimeReadProgressRequest } from '../models/ManagedRealtimeReadProgressRequest.js';
+import type { ManagedRealtimeReadProgressResponse } from '../models/ManagedRealtimeReadProgressResponse.js';
 import type { ManagedRealtimeRetainedHistoryResponse } from '../models/ManagedRealtimeRetainedHistoryResponse.js';
 import type { ManagedRealtimeRetainedMessageRequest } from '../models/ManagedRealtimeRetainedMessageRequest.js';
 import type { ManagedRealtimeRetainedMessageResponse } from '../models/ManagedRealtimeRetainedMessageResponse.js';
@@ -885,7 +893,7 @@ export class RealtimeService {
   /**
    * Send to a verified principal, optionally retaining a notification with push fallback.
    * Retained sends require the retained-history preview gate and a stable message ID. Notification category is part of deduplication and defaults to notifications. Push preferences are evaluated before provider delivery; ACKs cancel queued fallback. Live sends can request receipts instead of retention.
-   * @returns any Accepted; durable reports storage acceptance and queued reports live connection queueing.
+   * @returns ManagedRealtimePrincipalSendResponse Accepted; durable reports storage acceptance and queued reports live connection queueing.
    * @throws ApiError
    */
   public static sendManagedRealtimePrincipal({
@@ -901,68 +909,8 @@ export class RealtimeService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
-    requestBody: {
-      principal: string;
-      /**
-       * Standard base64; at most 4096 decoded bytes.
-       */
-      data_base64: string;
-      binary?: boolean;
-      delivery?: 'live' | 'retained';
-      message_id?: string;
-      request_receipt?: boolean;
-      /**
-       * Requires retained delivery; zero disables fallback.
-       */
-      fallback_after_seconds?: number;
-      /**
-       * Stable conversation, job or project key; requires a fallback.
-       */
-      notification_group_key?: string;
-      /**
-       * Earliest built-in push delivery time; RFC3339 with timezone, at most 48 hours ahead. Requires fallback; explicit TTL must extend past this instant.
-       */
-      notification_not_before?: string;
-      /**
-       * Requires fallback. Newer queued alerts supersede older alerts for the same recipient, device, category, priority and collapse key.
-       */
-      notification_collapse_key?: string;
-      /**
-       * Push lifetime in seconds from publication. Positive values require fallback and must exceed its deadline. Zero or omission keeps default expiration.
-       */
-      notification_ttl_seconds?: number;
-      /**
-       * Defaults to normal when omitted; requires retained fallback. Urgent bypass requires user opt-in.
-       */
-      notification_priority?: 'low' | 'normal' | 'urgent';
-      /**
-       * Display name for summaries; requires a group key.
-       */
-      notification_group_label?: string;
-      /**
-       * Requires a nonzero fallback deadline; omitted values use notifications for push preferences.
-       */
-      notification_category?: string;
-    },
-  }): CancelablePromise<{
-    message_id?: string;
-    sequence?: number;
-    durable?: boolean;
-    fallback_deadline?: string;
-    recipients?: number;
-    queued?: number;
-    unsupported?: number;
-    queue_full?: number;
-    failed?: number;
-    nodes_queried?: number;
-    nodes_unavailable?: number;
-    partial?: boolean;
-    receipt_requested?: boolean;
-    receipt_status?: string;
-    acknowledged?: number;
-    pending?: number;
-    timed_out?: number;
-  }> {
+    requestBody: ManagedRealtimePrincipalMessageRequest,
+  }): CancelablePromise<ManagedRealtimePrincipalSendResponse> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals:send',
@@ -1008,6 +956,9 @@ export class RealtimeService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
+    /**
+     * Verified push principal ID
+     */
     principal: string,
   }): CancelablePromise<RealtimeNotificationPreferences> {
     return __request(OpenAPI, {
@@ -1038,8 +989,8 @@ export class RealtimeService {
   }
   /**
    * Replace notification preferences across user devices.
-   * Requires the retained-history preview gate. Defaults enable all categories and devices. Preferences apply to built-in push; inbox retention and ACKs remain independent. Quiet-hour deferrals do not consume attempts. At most 256 preference documents per endpoint.
-   * @returns RealtimeNotificationPreferences Current preference document.
+   * Replaces the principal preference document under the retained-history preview gate. Built-in push uses these preferences independently of inbox retention and ACKs. Quiet-hour deferrals consume no attempts. Each endpoint retains at most 256 documents.
+   * @returns RealtimeNotificationPreferences Saved notification preference document.
    * @throws ApiError
    */
   public static putManagedRealtimeNotificationPreferences({
@@ -1056,6 +1007,9 @@ export class RealtimeService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
+    /**
+     * Verified push principal ID
+     */
     principal: string,
     requestBody: RealtimeNotificationPreferences,
   }): CancelablePromise<RealtimeNotificationPreferences> {
@@ -1131,8 +1085,8 @@ export class RealtimeService {
   }
   /**
    * List realtime push devices.
-   * Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery history includes the latest 100 records for the principal; sent means provider acceptance, not user delivery.
-   * @returns ManagedRealtimePushDevice Push metadata.
+   * Lists registered devices under the retained-history preview gate. Device tokens and provider credentials are omitted.
+   * @returns ManagedRealtimePushDevice Registered push device metadata.
    * @throws ApiError
    */
   public static listManagedRealtimePushDevices({
@@ -1148,6 +1102,9 @@ export class RealtimeService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
+    /**
+     * Verified push principal ID
+     */
     principal: string,
   }): CancelablePromise<Array<ManagedRealtimePushDevice>> {
     return __request(OpenAPI, {
@@ -1178,8 +1135,8 @@ export class RealtimeService {
   }
   /**
    * List realtime push deliveries.
-   * Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery history includes the latest 100 records for the principal; sent means provider acceptance, not user delivery.
-   * @returns ManagedRealtimePushDelivery Push metadata.
+   * Lists the latest 100 push delivery records for the principal under the retained-history preview gate. Provider acceptance does not confirm delivery to the user. Tokens and credentials are omitted.
+   * @returns ManagedRealtimePushDelivery Recent push delivery attempt metadata.
    * @throws ApiError
    */
   public static listManagedRealtimePushDeliveries({
@@ -1195,6 +1152,9 @@ export class RealtimeService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
+    /**
+     * Verified push principal ID
+     */
     principal: string,
   }): CancelablePromise<Array<ManagedRealtimePushDelivery>> {
     return __request(OpenAPI, {
@@ -1243,6 +1203,9 @@ export class RealtimeService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
+    /**
+     * Push provider name
+     */
     provider: 'fcm' | 'apns' | 'webpush',
     requestBody: ManagedRealtimePushProviderRequest,
   }): CancelablePromise<{
@@ -1296,7 +1259,13 @@ export class RealtimeService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
+    /**
+     * Verified push principal ID
+     */
     principal: string,
+    /**
+     * Registered device ID
+     */
     device: string,
     requestBody: ManagedRealtimePushRegistration,
   }): CancelablePromise<{
@@ -1333,8 +1302,8 @@ export class RealtimeService {
   }
   /**
    * Remove a push registration and cancel its queued work.
-   * Requires the retained-history preview gate. Registration is limited to 16 devices per principal and 1024 per endpoint. A provider must be enabled before registration. Identical registrations preserve pending deliveries; changed tokens cancel old work.
-   * @returns any Registration updated; token is omitted.
+   * Removes a device registration under the retained-history preview gate and cancels its queued push deliveries.
+   * @returns any Device registration removed and pending work canceled.
    * @throws ApiError
    */
   public static unregisterManagedRealtimePushDevice({
@@ -1351,7 +1320,13 @@ export class RealtimeService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
+    /**
+     * Verified push principal ID
+     */
     principal: string,
+    /**
+     * Registered device ID
+     */
     device: string,
   }): CancelablePromise<{
     ok: boolean;
@@ -1379,6 +1354,528 @@ export class RealtimeService {
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Update a retained channel message
+   * @returns ManagedRealtimeMessageMutationResponse Update a retained channel message result.
+   * @throws ApiError
+   */
+  public static updateManagedRealtimeChannelMessage({
+    slug,
+    id,
+    channel,
+    messageId,
+    requestBody,
+  }: {
+    /**
+     * Application slug
+     */
+    slug: string,
+    /**
+     * Realtime endpoint ID
+     */
+    id: string,
+    /**
+     * Channel name
+     */
+    channel: string,
+    /**
+     * Notification message ID
+     */
+    messageId: string,
+    requestBody: ManagedRealtimeMessageMutationRequest,
+  }): CancelablePromise<ManagedRealtimeMessageMutationResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages/{message_id}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'channel': channel,
+        'message_id': messageId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a retained channel message
+   * @returns ManagedRealtimeMessageMutationResponse Delete a retained channel message result.
+   * @throws ApiError
+   */
+  public static deleteManagedRealtimeChannelMessage({
+    slug,
+    id,
+    channel,
+    messageId,
+    requestBody,
+  }: {
+    /**
+     * Application slug
+     */
+    slug: string,
+    /**
+     * Realtime endpoint ID
+     */
+    id: string,
+    /**
+     * Channel name
+     */
+    channel: string,
+    /**
+     * Notification message ID
+     */
+    messageId: string,
+    requestBody: ManagedRealtimeMessageMutationRequest,
+  }): CancelablePromise<ManagedRealtimeMessageMutationResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages/{message_id}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'channel': channel,
+        'message_id': messageId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read principal channel read progress
+   * @returns ManagedRealtimeReadProgressResponse Read principal channel read progress result.
+   * @throws ApiError
+   */
+  public static getManagedRealtimeChannelReadProgress({
+    slug,
+    id,
+    channel,
+    principal,
+  }: {
+    /**
+     * Application slug
+     */
+    slug: string,
+    /**
+     * Realtime endpoint ID
+     */
+    id: string,
+    /**
+     * Channel name
+     */
+    channel: string,
+    /**
+     * Verified principal ID
+     */
+    principal: string,
+  }): CancelablePromise<ManagedRealtimeReadProgressResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/read-progress',
+      path: {
+        'slug': slug,
+        'id': id,
+        'channel': channel,
+      },
+      query: {
+        'principal': principal,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Advance principal channel read progress
+   * @returns ManagedRealtimeReadProgressResponse Advance principal channel read progress result.
+   * @throws ApiError
+   */
+  public static advanceManagedRealtimeChannelReadProgress({
+    slug,
+    id,
+    channel,
+    principal,
+    requestBody,
+  }: {
+    /**
+     * Application slug
+     */
+    slug: string,
+    /**
+     * Realtime endpoint ID
+     */
+    id: string,
+    /**
+     * Channel name
+     */
+    channel: string,
+    /**
+     * Verified principal ID
+     */
+    principal: string,
+    requestBody: ManagedRealtimeReadProgressRequest,
+  }): CancelablePromise<ManagedRealtimeReadProgressResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/read-progress',
+      path: {
+        'slug': slug,
+        'id': id,
+        'channel': channel,
+      },
+      query: {
+        'principal': principal,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Update a retained inbox message
+   * @returns ManagedRealtimeMessageMutationResponse Update a retained inbox message result.
+   * @throws ApiError
+   */
+  public static updateManagedRealtimeInboxMessage({
+    slug,
+    id,
+    principal,
+    messageId,
+    requestBody,
+  }: {
+    /**
+     * Application slug
+     */
+    slug: string,
+    /**
+     * Realtime endpoint ID
+     */
+    id: string,
+    /**
+     * Verified principal ID
+     */
+    principal: string,
+    /**
+     * Notification message ID
+     */
+    messageId: string,
+    requestBody: ManagedRealtimeMessageMutationRequest,
+  }): CancelablePromise<ManagedRealtimeMessageMutationResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/{message_id}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'message_id': messageId,
+      },
+      query: {
+        'principal': principal,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a retained inbox message
+   * @returns ManagedRealtimeMessageMutationResponse Delete a retained inbox message result.
+   * @throws ApiError
+   */
+  public static deleteManagedRealtimeInboxMessage({
+    slug,
+    id,
+    principal,
+    messageId,
+    requestBody,
+  }: {
+    /**
+     * Application slug
+     */
+    slug: string,
+    /**
+     * Realtime endpoint ID
+     */
+    id: string,
+    /**
+     * Verified principal ID
+     */
+    principal: string,
+    /**
+     * Notification message ID
+     */
+    messageId: string,
+    requestBody: ManagedRealtimeMessageMutationRequest,
+  }): CancelablePromise<ManagedRealtimeMessageMutationResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/{message_id}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'message_id': messageId,
+      },
+      query: {
+        'principal': principal,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read principal inbox read progress
+   * @returns ManagedRealtimeReadProgressResponse Read principal inbox read progress result.
+   * @throws ApiError
+   */
+  public static getManagedRealtimeInboxReadProgress({
+    slug,
+    id,
+    principal,
+  }: {
+    /**
+     * Application slug
+     */
+    slug: string,
+    /**
+     * Realtime endpoint ID
+     */
+    id: string,
+    /**
+     * Verified principal ID
+     */
+    principal: string,
+  }): CancelablePromise<ManagedRealtimeReadProgressResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/read-progress',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'principal': principal,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Advance principal inbox read progress
+   * @returns ManagedRealtimeReadProgressResponse Advance principal inbox read progress result.
+   * @throws ApiError
+   */
+  public static advanceManagedRealtimeInboxReadProgress({
+    slug,
+    id,
+    principal,
+    requestBody,
+  }: {
+    /**
+     * Application slug
+     */
+    slug: string,
+    /**
+     * Realtime endpoint ID
+     */
+    id: string,
+    /**
+     * Verified principal ID
+     */
+    principal: string,
+    requestBody: ManagedRealtimeReadProgressRequest,
+  }): CancelablePromise<ManagedRealtimeReadProgressResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/read-progress',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'principal': principal,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read retained principal inbox messages
+   * @returns ManagedRealtimeInboxResponse Read retained principal inbox messages result.
+   * @throws ApiError
+   */
+  public static readManagedRealtimeInbox({
+    slug,
+    id,
+    principal,
+    after,
+    limit = 100,
+    consumer,
+  }: {
+    /**
+     * Application slug
+     */
+    slug: string,
+    /**
+     * Realtime endpoint ID
+     */
+    id: string,
+    /**
+     * Verified principal ID
+     */
+    principal: string,
+    /**
+     * Exclusive inbox sequence cursor
+     */
+    after?: number,
+    /**
+     * Maximum inbox messages per page
+     */
+    limit?: number,
+    /**
+     * Durable inbox consumer name
+     */
+    consumer?: string,
+  }): CancelablePromise<ManagedRealtimeInboxResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'principal': principal,
+        'after': after,
+        'limit': limit,
+        'consumer': consumer,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get principal message receipt state
+   * @returns ManagedRealtimePrincipalReceiptResponse Get principal message receipt state result.
+   * @throws ApiError
+   */
+  public static getManagedRealtimePrincipalReceipt({
+    slug,
+    id,
+    messageId,
+  }: {
+    /**
+     * Application slug
+     */
+    slug: string,
+    /**
+     * Realtime endpoint ID
+     */
+    id: string,
+    /**
+     * Notification message ID
+     */
+    messageId: string,
+  }): CancelablePromise<ManagedRealtimePrincipalReceiptResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/messages/{message_id}/receipt',
+      path: {
+        'slug': slug,
+        'id': id,
+        'message_id': messageId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });

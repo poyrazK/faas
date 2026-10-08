@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ManagedRealtimeScheduleGroupRequest")
 
 @_attrs_define
 class ManagedRealtimeScheduleGroupRequest:
+    """Bulk action and version preconditions for a named schedule group."""
+
     expected_versions: ManagedRealtimeScheduleGroupRequestExpectedVersions
     """Exact schedule ID/version map of all pending or paused group members; terminal members excluded."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

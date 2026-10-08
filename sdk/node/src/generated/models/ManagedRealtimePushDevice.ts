@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Registered device metadata with delivery tokens omitted.
+ */
 export type ManagedRealtimePushDevice = {
   device: string;
   provider: 'fcm' | 'apns' | 'webpush';

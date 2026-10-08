@@ -24,10 +24,9 @@ class ManagedRealtimeRetainedMessageRequest:
     data_base64: str
     """Standard base64 for at most 4096 decoded bytes."""
     expected_sequence: int | None | Unset = UNSET
-    """Optional current channel sequence precondition; zero requires an empty channel. Retained channel writes
-    only."""
+    """Optional channel head sequence required before this retained publish; zero requires an empty channel."""
     metadata: ManagedRealtimeRetainedMessageRequestMetadata | Unset = UNSET
-    """Exact-match routing metadata; at most 4096 encoded JSON bytes. Retained channel publishing only."""
+    """Routing metadata attached to this retained publish; at most 4096 encoded JSON bytes."""
     binary: bool | Unset = False
     idempotency_key: str | Unset = UNSET
     """Deduplicates identical writes while retained."""

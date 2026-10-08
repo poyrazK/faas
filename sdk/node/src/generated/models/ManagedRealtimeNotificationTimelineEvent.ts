@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Recorded notification delivery or lifecycle change for a principal.
+ */
 export type ManagedRealtimeNotificationTimelineEvent = {
   id: number;
   message_id: string;

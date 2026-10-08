@@ -22,6 +22,8 @@ T = TypeVar("T", bound="ManagedRealtimeReducerResponse")
 
 @_attrs_define
 class ManagedRealtimeReducerResponse:
+    """Configured channel state reducer and its current version."""
+
     channel: str
     sequence: int
     entities: ManagedRealtimeReducerResponseEntities

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Recorded execution or lifecycle event for a channel publish schedule.
+ */
 export type ManagedRealtimeScheduleHistoryEvent = {
   skipped_occurrences: number;
   skip_reason?: string;

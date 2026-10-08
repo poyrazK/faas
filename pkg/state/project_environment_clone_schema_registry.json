@@ -4287,6 +4287,19 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_realtime_channel_batches",
+    "columns": [
+      "batch_id",
+      "channel",
+      "created_at",
+      "endpoint_id",
+      "first_sequence",
+      "message_count",
+      "payload_hash"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_channel_heads",
     "columns": [
       "channel",
@@ -4302,10 +4315,29 @@
       "channel",
       "created_at",
       "data",
+      "deleted",
       "endpoint_id",
       "idempotency_key",
       "is_binary",
-      "sequence"
+      "message_event",
+      "metadata",
+      "sequence",
+      "target_message_id",
+      "version"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_channel_reducers",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "entities",
+      "entity_expirations",
+      "entity_versions",
+      "next_expiry",
+      "sequence",
+      "updated_at"
     ],
     "kind": "customer_data"
   },
@@ -4360,6 +4392,19 @@
     "kind": "configuration"
   },
   {
+    "table": "managed_realtime_channel_snapshots",
+    "columns": [
+      "channel",
+      "data",
+      "endpoint_id",
+      "expires_at",
+      "is_binary",
+      "sequence",
+      "updated_at"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_connection_owners",
     "columns": [
       "connection_id",
@@ -4368,6 +4413,35 @@
       "lease_token",
       "node_id",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_direct_message_deliveries",
+    "columns": [
+      "ack_supported",
+      "acknowledged_at",
+      "connection_id",
+      "created_at",
+      "endpoint_id",
+      "message_id",
+      "node_id",
+      "queue_status",
+      "queued_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_direct_message_receipts",
+    "columns": [
+      "created_at",
+      "dispatch_complete",
+      "dispatch_lease_until",
+      "endpoint_id",
+      "expires_at",
+      "message_id",
+      "payload_fingerprint",
+      "summary"
     ],
     "kind": "operational"
   },
@@ -4404,6 +4478,18 @@
     "kind": "operational"
   },
   {
+    "table": "managed_realtime_durable_cursors",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "principal",
+      "sequence",
+      "subscription",
+      "updated_at"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_endpoints",
     "columns": [
       "account_id",
@@ -4430,6 +4516,271 @@
       "max_message_bytes",
       "message_path",
       "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_event_schemas",
+    "columns": [
+      "channel",
+      "created_at",
+      "endpoint_id",
+      "event_type",
+      "schema",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_inbox_cursors",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "gap_reported",
+      "principal",
+      "sequence",
+      "subscription",
+      "updated_at"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_inbox_fallbacks",
+    "columns": [
+      "category",
+      "collapse_key",
+      "deadline",
+      "endpoint_id",
+      "expires_at",
+      "group_key",
+      "group_label",
+      "message_id",
+      "not_before",
+      "principal",
+      "priority",
+      "sequence"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_inbox_heads",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "next_sequence",
+      "oldest_sequence"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_inbox_messages",
+    "columns": [
+      "channel",
+      "created_at",
+      "data",
+      "deleted",
+      "endpoint_id",
+      "fallback_after_seconds",
+      "idempotency_key",
+      "is_binary",
+      "message_event",
+      "metadata",
+      "notification_category",
+      "notification_collapse_key",
+      "notification_group_key",
+      "notification_group_label",
+      "notification_not_before",
+      "notification_priority",
+      "notification_ttl_seconds",
+      "sequence",
+      "target_message_id",
+      "version"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_notification_timeline",
+    "columns": [
+      "attempts",
+      "delivery_id",
+      "device",
+      "endpoint_id",
+      "event",
+      "id",
+      "message_id",
+      "next_attempt",
+      "not_before",
+      "occurred_at",
+      "principal",
+      "reason",
+      "status_code"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_presence_leases",
+    "columns": [
+      "channel",
+      "connection_id",
+      "endpoint_id",
+      "expires_at",
+      "member_id",
+      "node_id",
+      "principal",
+      "state",
+      "state_updated_at",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_push_deliveries",
+    "columns": [
+      "attempts",
+      "category",
+      "code",
+      "collapse_key",
+      "created_at",
+      "device",
+      "digest_at",
+      "digest_count",
+      "digest_id",
+      "endpoint_id",
+      "expires_at",
+      "group_key",
+      "group_label",
+      "hard_expires_at",
+      "id",
+      "lease",
+      "lease_until",
+      "message_id",
+      "next_attempt",
+      "not_before",
+      "principal",
+      "priority",
+      "provider",
+      "sequence",
+      "status",
+      "status_code",
+      "updated_at",
+      "version"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_push_devices",
+    "columns": [
+      "device",
+      "enabled",
+      "endpoint_id",
+      "fingerprint",
+      "principal",
+      "provider",
+      "sealed",
+      "updated_at",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_push_preferences",
+    "columns": [
+      "endpoint_id",
+      "preferences",
+      "principal",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_push_providers",
+    "columns": [
+      "enabled",
+      "endpoint_id",
+      "provider",
+      "sealed",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_push_rate_reservations",
+    "columns": [
+      "digest_id",
+      "endpoint_id",
+      "principal",
+      "reserved_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_read_progress",
+    "columns": [
+      "endpoint_id",
+      "inbox",
+      "principal",
+      "sequence",
+      "stream",
+      "updated_at"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_schedule_history",
+    "columns": [
+      "attempts",
+      "channel",
+      "completed_occurrences",
+      "cycle_attempts",
+      "deliver_at",
+      "endpoint_id",
+      "event",
+      "failure_code",
+      "next_attempt_at",
+      "occurred_at",
+      "occurrence",
+      "schedule_id",
+      "sequence",
+      "skip_reason",
+      "skipped_occurrences",
+      "status",
+      "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_schedules",
+    "columns": [
+      "attempts",
+      "backoff_seconds",
+      "channel",
+      "completed_occurrences",
+      "conditions",
+      "created_at",
+      "cycle_attempts",
+      "data",
+      "deliver_at",
+      "end_at",
+      "endpoint_id",
+      "initial_deliver_at",
+      "interval_seconds",
+      "is_binary",
+      "last_attempt_at",
+      "last_error",
+      "max_attempts",
+      "max_occurrences",
+      "metadata",
+      "next_attempt_at",
+      "occurrence",
+      "on_condition_failure",
+      "schedule_group",
+      "schedule_id",
+      "sequence",
+      "skip_reason",
+      "skipped_occurrences",
+      "status",
+      "updated_at",
+      "version"
     ],
     "kind": "configuration"
   },

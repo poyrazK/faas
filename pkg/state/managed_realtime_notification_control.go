@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"time"
@@ -136,7 +137,7 @@ func (s *PgStore) ControlManagedRealtimeNotification(ctx context.Context, ep, pr
 	// Endpoint -> inbox -> fallback -> jobs matches append/ACK ordering.
 	var exists bool
 	if err = tx.QueryRow(ctx, `select enabled from managed_realtime_endpoints where id=$1 for update`, ep).Scan(&exists); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			err = ErrNotFound
 		}
 		return result, err
@@ -147,7 +148,7 @@ func (s *PgStore) ControlManagedRealtimeNotification(ctx context.Context, ep, pr
 	}
 	var deadline *time.Time
 	err = tx.QueryRow(ctx, `select expires_at from managed_realtime_inbox_fallbacks where endpoint_id=$1 and principal=$2 and message_id=$3 for update`, ep, pk, messageID).Scan(&deadline)
-	if err != nil && err != pgx.ErrNoRows {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
 	if at != nil && deadline != nil && (!deadline.After(time.Now().UTC()) || !at.Before(*deadline)) {

@@ -8,8 +8,8 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.managed_realtime_schedule_response import ManagedRealtimeScheduleResponse
+from ...models.managed_realtime_schedule_retry_request import ManagedRealtimeScheduleRetryRequest
 from ...models.problem import Problem
-from ...models.retry_managed_realtime_schedule_body import RetryManagedRealtimeScheduleBody
 from ...types import Response
 
 
@@ -19,7 +19,7 @@ def _get_kwargs(
     channel: str,
     schedule_id: str,
     *,
-    body: RetryManagedRealtimeScheduleBody,
+    body: ManagedRealtimeScheduleRetryRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -88,7 +88,7 @@ def sync_detailed(
     schedule_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RetryManagedRealtimeScheduleBody,
+    body: ManagedRealtimeScheduleRetryRequest,
 ) -> Response[ManagedRealtimeScheduleResponse | Problem]:
     """Retry a failed schedule using its existing ID and payload
 
@@ -100,7 +100,8 @@ def sync_detailed(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (RetryManagedRealtimeScheduleBody):
+        body (ManagedRealtimeScheduleRetryRequest): Version-checked manual retry with an optional
+            new delivery time.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -132,7 +133,7 @@ def sync(
     schedule_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RetryManagedRealtimeScheduleBody,
+    body: ManagedRealtimeScheduleRetryRequest,
 ) -> ManagedRealtimeScheduleResponse | Problem | None:
     """Retry a failed schedule using its existing ID and payload
 
@@ -144,7 +145,8 @@ def sync(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (RetryManagedRealtimeScheduleBody):
+        body (ManagedRealtimeScheduleRetryRequest): Version-checked manual retry with an optional
+            new delivery time.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -171,7 +173,7 @@ async def asyncio_detailed(
     schedule_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RetryManagedRealtimeScheduleBody,
+    body: ManagedRealtimeScheduleRetryRequest,
 ) -> Response[ManagedRealtimeScheduleResponse | Problem]:
     """Retry a failed schedule using its existing ID and payload
 
@@ -183,7 +185,8 @@ async def asyncio_detailed(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (RetryManagedRealtimeScheduleBody):
+        body (ManagedRealtimeScheduleRetryRequest): Version-checked manual retry with an optional
+            new delivery time.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -213,7 +216,7 @@ async def asyncio(
     schedule_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RetryManagedRealtimeScheduleBody,
+    body: ManagedRealtimeScheduleRetryRequest,
 ) -> ManagedRealtimeScheduleResponse | Problem | None:
     """Retry a failed schedule using its existing ID and payload
 
@@ -225,7 +228,8 @@ async def asyncio(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (RetryManagedRealtimeScheduleBody):
+        body (ManagedRealtimeScheduleRetryRequest): Version-checked manual retry with an optional
+            new delivery time.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

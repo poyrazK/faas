@@ -27,6 +27,8 @@ T = TypeVar("T", bound="ManagedRealtimePushDelivery")
 
 @_attrs_define
 class ManagedRealtimePushDelivery:
+    """Push delivery attempt metadata without provider credentials or device tokens."""
+
     priority: ManagedRealtimePushDeliveryPriority
     category: str
     expires_at: datetime.datetime

@@ -26,6 +26,8 @@ T = TypeVar("T", bound="ManagedRealtimeScheduleResponse")
 
 @_attrs_define
 class ManagedRealtimeScheduleResponse:
+    """Persisted channel publish schedule and current execution state."""
+
     data_base64: str
     """At most 4096 decoded bytes."""
     deliver_at: datetime.datetime

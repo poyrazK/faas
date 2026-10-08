@@ -3,17 +3,26 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { FireCronRequestResponse } from '../models/FireCronRequestResponse.js';
+import type { ManagedRealtimeChannelBatchRequest } from '../models/ManagedRealtimeChannelBatchRequest.js';
+import type { ManagedRealtimeChannelBatchResponse } from '../models/ManagedRealtimeChannelBatchResponse.js';
+import type { ManagedRealtimeChannelSnapshotRequest } from '../models/ManagedRealtimeChannelSnapshotRequest.js';
 import type { ManagedRealtimeChannelSnapshotResponse } from '../models/ManagedRealtimeChannelSnapshotResponse.js';
+import type { ManagedRealtimeEventSchemaRequest } from '../models/ManagedRealtimeEventSchemaRequest.js';
 import type { ManagedRealtimeEventSchemaResponse } from '../models/ManagedRealtimeEventSchemaResponse.js';
 import type { ManagedRealtimeNotificationControlResponse } from '../models/ManagedRealtimeNotificationControlResponse.js';
+import type { ManagedRealtimeNotificationRescheduleRequest } from '../models/ManagedRealtimeNotificationRescheduleRequest.js';
 import type { ManagedRealtimeNotificationTimelineEvent } from '../models/ManagedRealtimeNotificationTimelineEvent.js';
-import type { ManagedRealtimePublishResponse } from '../models/ManagedRealtimePublishResponse.js';
+import type { ManagedRealtimeReducerRequest } from '../models/ManagedRealtimeReducerRequest.js';
 import type { ManagedRealtimeReducerResponse } from '../models/ManagedRealtimeReducerResponse.js';
 import type { ManagedRealtimeScheduleGroupRequest } from '../models/ManagedRealtimeScheduleGroupRequest.js';
 import type { ManagedRealtimeScheduleHistoryResponse } from '../models/ManagedRealtimeScheduleHistoryResponse.js';
+import type { ManagedRealtimeSchedulePauseRequest } from '../models/ManagedRealtimeSchedulePauseRequest.js';
 import type { ManagedRealtimeScheduleRequest } from '../models/ManagedRealtimeScheduleRequest.js';
 import type { ManagedRealtimeScheduleResponse } from '../models/ManagedRealtimeScheduleResponse.js';
+import type { ManagedRealtimeScheduleRetryRequest } from '../models/ManagedRealtimeScheduleRetryRequest.js';
+import type { ManagedRealtimeSchedulesResponse } from '../models/ManagedRealtimeSchedulesResponse.js';
 import type { ManagedRealtimeScheduleTotals } from '../models/ManagedRealtimeScheduleTotals.js';
+import type { ManagedRealtimeScheduleUpdate } from '../models/ManagedRealtimeScheduleUpdate.js';
 import type { ManagedRealtimeSignalRequest } from '../models/ManagedRealtimeSignalRequest.js';
 import type { ManagedRealtimeSignalResponse } from '../models/ManagedRealtimeSignalResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -65,9 +74,21 @@ export class DefaultService {
     activityScope,
     requestBody,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
+    /**
+     * Private activity scope
+     */
     activityScope: string,
     requestBody: ManagedRealtimeSignalRequest,
   }): CancelablePromise<ManagedRealtimeSignalResponse> {
@@ -101,7 +122,7 @@ export class DefaultService {
   /**
    * Send an ephemeral backend signal to connected v2 channel subscribers
    * Best-effort live delivery with no retained history, sequence, replay, or idempotency receipt. Sender member_id is backend. JSON data is limited to 2048 encoded bytes and the endpoint payload limit; request body is limited to 4096 bytes. Rate limit is 20 requests per second per endpoint/channel per API process, in addition to normal auth limits. Named signals default to a 5000 ms expiry; ttl_ms 0 clears a named signal. Deploy-write scopes and MFA apply. Acceptance is not subscriber acknowledgement; failures may follow partial delivery.
-   * @returns ManagedRealtimeSignalResponse Best-effort fanout accepted, including when no subscribers exist
+   * @returns ManagedRealtimeSignalResponse Channel signal fanout accepted even when no subscribers exist.
    * @throws ApiError
    */
   public static publishManagedRealtimeSignal({
@@ -110,8 +131,17 @@ export class DefaultService {
     channel,
     requestBody,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
     requestBody: ManagedRealtimeSignalRequest,
   }): CancelablePromise<ManagedRealtimeSignalResponse> {
@@ -143,7 +173,7 @@ export class DefaultService {
   }
   /**
    * List pending and recent terminal retained-event schedules
-   * @returns any Schedules ordered by delivery time and ID
+   * @returns ManagedRealtimeSchedulesResponse Schedules ordered by delivery time and ID
    * @throws ApiError
    */
   public static listManagedRealtimeSchedules({
@@ -153,15 +183,27 @@ export class DefaultService {
     group,
     status,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
+    /**
+     * Schedule group filter
+     */
     group?: string,
+    /**
+     * Schedule status filter
+     */
     status?: 'pending' | 'paused' | 'published' | 'failed' | 'skipped' | 'canceled',
-  }): CancelablePromise<{
-    totals: ManagedRealtimeScheduleTotals;
-    schedules: Array<ManagedRealtimeScheduleResponse>;
-  }> {
+  }): CancelablePromise<ManagedRealtimeSchedulesResponse> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules',
@@ -194,10 +236,25 @@ export class DefaultService {
     groupAction,
     requestBody,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
+    /**
+     * Schedule group
+     */
     group: string,
+    /**
+     * Bulk schedule action
+     */
     groupAction: 'pause' | 'resume' | 'cancel',
     requestBody: ManagedRealtimeScheduleGroupRequest,
   }): CancelablePromise<{
@@ -247,9 +304,21 @@ export class DefaultService {
     scheduleId,
     requestBody,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
+    /**
+     * Bounded schedule identifier
+     */
     scheduleId: string,
     requestBody: ManagedRealtimeScheduleRequest,
   }): CancelablePromise<ManagedRealtimeScheduleResponse> {
@@ -283,14 +352,23 @@ export class DefaultService {
     scheduleId,
     requestBody,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
+    /**
+     * Bounded schedule identifier
+     */
     scheduleId: string,
-    requestBody: {
-      deliver_at: string;
-      expected_version: number;
-    },
+    requestBody: ManagedRealtimeScheduleUpdate,
   }): CancelablePromise<ManagedRealtimeScheduleResponse> {
     return __request(OpenAPI, {
       method: 'PATCH',
@@ -322,10 +400,25 @@ export class DefaultService {
     scheduleId,
     expectedVersion,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
+    /**
+     * Bounded schedule identifier
+     */
     scheduleId: string,
+    /**
+     * Required current schedule version
+     */
     expectedVersion: number,
   }): CancelablePromise<ManagedRealtimeScheduleResponse> {
     return __request(OpenAPI, {
@@ -359,13 +452,23 @@ export class DefaultService {
     scheduleId,
     requestBody,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
+    /**
+     * Schedule ID
+     */
     scheduleId: string,
-    requestBody: {
-      expected_version: number;
-    },
+    requestBody: ManagedRealtimeSchedulePauseRequest,
   }): CancelablePromise<ManagedRealtimeScheduleResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -387,7 +490,7 @@ export class DefaultService {
   }
   /**
    * Resume a recurring retained-event schedule
-   * @returns ManagedRealtimeScheduleResponse Schedule updated
+   * @returns ManagedRealtimeScheduleResponse Schedule resumed with its updated version.
    * @throws ApiError
    */
   public static resumeManagedRealtimeSchedule({
@@ -397,13 +500,23 @@ export class DefaultService {
     scheduleId,
     requestBody,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
+    /**
+     * Schedule ID
+     */
     scheduleId: string,
-    requestBody: {
-      expected_version: number;
-    },
+    requestBody: ManagedRealtimeSchedulePauseRequest,
   }): CancelablePromise<ManagedRealtimeScheduleResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -441,11 +554,29 @@ export class DefaultService {
     afterVersion,
     limit = 50,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
+    /**
+     * Bounded schedule identifier
+     */
     scheduleId: string,
+    /**
+     * Exclusive event version cursor
+     */
     afterVersion?: number,
+    /**
+     * Maximum history records
+     */
     limit?: number,
   }): CancelablePromise<ManagedRealtimeScheduleHistoryResponse> {
     return __request(OpenAPI, {
@@ -480,17 +611,23 @@ export class DefaultService {
     scheduleId,
     requestBody,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
+    /**
+     * Bounded schedule identifier
+     */
     scheduleId: string,
-    requestBody: {
-      expected_version: number;
-      /**
-       * Optional future retry time within 30 days; omit to retry on the next worker pass.
-       */
-      deliver_at?: string;
-    },
+    requestBody: ManagedRealtimeScheduleRetryRequest,
   }): CancelablePromise<ManagedRealtimeScheduleResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -540,16 +677,19 @@ export class DefaultService {
     channel,
     requestBody,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
-    requestBody: {
-      sequence: number;
-      /**
-       * Seed entities, at most 64 KiB encoded. Keys are 1..128 UTF-8 bytes.
-       */
-      entities: Record<string, Record<string, any>>;
-    },
+    requestBody: ManagedRealtimeReducerRequest,
   }): CancelablePromise<ManagedRealtimeReducerResponse> {
     return __request(OpenAPI, {
       method: 'PUT',
@@ -577,8 +717,17 @@ export class DefaultService {
     id,
     channel,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
   }): CancelablePromise<ManagedRealtimeReducerResponse> {
     return __request(OpenAPI, {
@@ -604,8 +753,17 @@ export class DefaultService {
     id,
     channel,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
   }): CancelablePromise<any> {
     return __request(OpenAPI, {
@@ -631,17 +789,27 @@ export class DefaultService {
     version,
     requestBody,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
+    /**
+     * Retained event type
+     */
     eventType: string,
+    /**
+     * Current schema version
+     */
     version: number,
-    requestBody: {
-      /**
-       * JSON Schema Draft 2020-12, at most 16384 encoded bytes; external resources are unsupported.
-       */
-      schema: any | boolean;
-    },
+    requestBody: ManagedRealtimeEventSchemaRequest,
   }): CancelablePromise<ManagedRealtimeEventSchemaResponse> {
     return __request(OpenAPI, {
       method: 'PUT',
@@ -674,10 +842,25 @@ export class DefaultService {
     eventType,
     version,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
+    /**
+     * Retained event type
+     */
     eventType: string,
+    /**
+     * Current schema version
+     */
     version: number,
   }): CancelablePromise<ManagedRealtimeEventSchemaResponse> {
     return __request(OpenAPI, {
@@ -697,7 +880,7 @@ export class DefaultService {
   }
   /**
    * Atomically retain a bounded batch, then attempt live delivery
-   * @returns any Durable batch, including per-message best-effort fanout outcomes
+   * @returns ManagedRealtimeChannelBatchResponse Durable batch, including per-message best-effort fanout outcomes
    * @throws ApiError
    */
   public static publishManagedRealtimeChannelBatch({
@@ -706,27 +889,20 @@ export class DefaultService {
     channel,
     requestBody,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
-    requestBody: {
-      /**
-       * Precondition for the channel head before the whole batch.
-       */
-      expected_sequence?: number | null;
-      batch_id: string;
-      messages: Array<{
-        data_base64: string;
-        metadata?: Record<string, string>;
-        binary?: boolean;
-      }>;
-    },
-  }): CancelablePromise<{
-    batch_id: string;
-    durable: boolean;
-    partial: boolean;
-    messages: Array<ManagedRealtimePublishResponse>;
-  }> {
+    requestBody: ManagedRealtimeChannelBatchRequest,
+  }): CancelablePromise<ManagedRealtimeChannelBatchResponse> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish-batch',
@@ -754,8 +930,17 @@ export class DefaultService {
     id,
     channel,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
   }): CancelablePromise<ManagedRealtimeChannelSnapshotResponse> {
     return __request(OpenAPI, {
@@ -783,14 +968,19 @@ export class DefaultService {
     channel,
     requestBody,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
-    requestBody: {
-      sequence: number;
-      data_base64: string;
-      binary?: boolean;
-    },
+    requestBody: ManagedRealtimeChannelSnapshotRequest,
   }): CancelablePromise<ManagedRealtimeChannelSnapshotResponse> {
     return __request(OpenAPI, {
       method: 'PUT',
@@ -819,8 +1009,17 @@ export class DefaultService {
     id,
     channel,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Channel name
+     */
     channel: string,
   }): CancelablePromise<any> {
     return __request(OpenAPI, {
@@ -845,9 +1044,21 @@ export class DefaultService {
     principal,
     before,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Notification message ID
+     */
     messageId: string,
+    /**
+     * Verified principal ID
+     */
     principal: string,
     /**
      * Exclusive event ID cursor. Omit or zero for the newest page.
@@ -883,9 +1094,21 @@ export class DefaultService {
     messageId,
     principal,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Notification message ID
+     */
     messageId: string,
+    /**
+     * Verified principal ID
+     */
     principal: string,
   }): CancelablePromise<ManagedRealtimeNotificationControlResponse> {
     return __request(OpenAPI, {
@@ -901,7 +1124,7 @@ export class DefaultService {
       },
       errors: {
         400: `Invalid principal or message ID`,
-        404: `Endpoint or preview unavailable`,
+        404: `Notification cancellation endpoint or preview unavailable.`,
       },
     });
   }
@@ -917,16 +1140,23 @@ export class DefaultService {
     principal,
     requestBody,
   }: {
+    /**
+     * Application slug
+     */
     slug: string,
+    /**
+     * Realtime endpoint ID
+     */
     id: string,
+    /**
+     * Notification message ID
+     */
     messageId: string,
+    /**
+     * Verified principal ID
+     */
     principal: string,
-    requestBody: {
-      /**
-       * RFC3339, up to 48 hours ahead; must precede expiration.
-       */
-      notification_not_before: string;
-    },
+    requestBody: ManagedRealtimeNotificationRescheduleRequest,
   }): CancelablePromise<ManagedRealtimeNotificationControlResponse> {
     return __request(OpenAPI, {
       method: 'PUT',
@@ -943,7 +1173,7 @@ export class DefaultService {
       mediaType: 'application/json',
       errors: {
         400: `Invalid schedule or schedule beyond expiration`,
-        404: `Endpoint or preview unavailable`,
+        404: `Notification rescheduling endpoint or preview unavailable.`,
       },
     });
   }

@@ -263,9 +263,10 @@ func digestLockKey(j ManagedRealtimePushDelivery) string {
 // Notification text is bounded and contains no inbox message bodies.
 func ManagedRealtimePushDigestBody(j ManagedRealtimePushDelivery) string {
 	noun := "new notifications"
-	if j.Category == "chat" {
+	switch j.Category {
+	case "chat":
 		noun = "new messages"
-	} else if j.Category == "jobs" {
+	case "jobs":
 		noun = "job updates"
 	}
 	body := fmt.Sprintf("%d %s", j.DigestCount, noun)

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -33,7 +34,7 @@ func (s *PgStore) UpsertManagedRealtimePresenceLease(ctx context.Context, lease 
 		order by updated_at desc
 		limit 1
 		`, lease.EndpointID, lease.Channel, lease.Principal).Scan(&lease.MemberID)
-		if err != nil && err != pgx.ErrNoRows {
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("state: find managed realtime principal presence: %w", err)
 		}
 	}

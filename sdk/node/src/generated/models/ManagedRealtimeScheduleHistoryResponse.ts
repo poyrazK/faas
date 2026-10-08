@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ManagedRealtimeScheduleHistoryEvent } from './ManagedRealtimeScheduleHistoryEvent.js';
+/**
+ * Retained execution history for a channel publish schedule.
+ */
 export type ManagedRealtimeScheduleHistoryResponse = {
   schedule_id: string;
   channel: string;

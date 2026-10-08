@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ManagedRealtimeScheduleHistoryResponse")
 
 @_attrs_define
 class ManagedRealtimeScheduleHistoryResponse:
+    """Retained execution history for a channel publish schedule."""
+
     schedule_id: str
     channel: str
     oldest_version: int

@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ManagedRealtimePushProviderRequest")
 
 @_attrs_define
 class ManagedRealtimePushProviderRequest:
+    """Provider credentials and enablement settings for realtime push delivery."""
+
     config: ManagedRealtimePushProviderRequestConfig
     enabled: bool | Unset = True
 

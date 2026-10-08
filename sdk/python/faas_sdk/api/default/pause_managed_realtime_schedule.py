@@ -7,8 +7,8 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.managed_realtime_schedule_pause_request import ManagedRealtimeSchedulePauseRequest
 from ...models.managed_realtime_schedule_response import ManagedRealtimeScheduleResponse
-from ...models.pause_managed_realtime_schedule_body import PauseManagedRealtimeScheduleBody
 from ...models.problem import Problem
 from ...types import Response
 
@@ -19,7 +19,7 @@ def _get_kwargs(
     channel: str,
     schedule_id: str,
     *,
-    body: PauseManagedRealtimeScheduleBody,
+    body: ManagedRealtimeSchedulePauseRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -88,7 +88,7 @@ def sync_detailed(
     schedule_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PauseManagedRealtimeScheduleBody,
+    body: ManagedRealtimeSchedulePauseRequest,
 ) -> Response[ManagedRealtimeScheduleResponse | Problem]:
     """Pause a recurring retained-event schedule
 
@@ -97,7 +97,8 @@ def sync_detailed(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (PauseManagedRealtimeScheduleBody):
+        body (ManagedRealtimeSchedulePauseRequest): Current schedule version required to pause or
+            resume recurrence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -129,7 +130,7 @@ def sync(
     schedule_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PauseManagedRealtimeScheduleBody,
+    body: ManagedRealtimeSchedulePauseRequest,
 ) -> ManagedRealtimeScheduleResponse | Problem | None:
     """Pause a recurring retained-event schedule
 
@@ -138,7 +139,8 @@ def sync(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (PauseManagedRealtimeScheduleBody):
+        body (ManagedRealtimeSchedulePauseRequest): Current schedule version required to pause or
+            resume recurrence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -165,7 +167,7 @@ async def asyncio_detailed(
     schedule_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PauseManagedRealtimeScheduleBody,
+    body: ManagedRealtimeSchedulePauseRequest,
 ) -> Response[ManagedRealtimeScheduleResponse | Problem]:
     """Pause a recurring retained-event schedule
 
@@ -174,7 +176,8 @@ async def asyncio_detailed(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (PauseManagedRealtimeScheduleBody):
+        body (ManagedRealtimeSchedulePauseRequest): Current schedule version required to pause or
+            resume recurrence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -204,7 +207,7 @@ async def asyncio(
     schedule_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PauseManagedRealtimeScheduleBody,
+    body: ManagedRealtimeSchedulePauseRequest,
 ) -> ManagedRealtimeScheduleResponse | Problem | None:
     """Pause a recurring retained-event schedule
 
@@ -213,7 +216,8 @@ async def asyncio(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (PauseManagedRealtimeScheduleBody):
+        body (ManagedRealtimeSchedulePauseRequest): Current schedule version required to pause or
+            resume recurrence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -1,12 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -46,12 +46,25 @@ func TestGregaleTail_ReconnectsWhenStreamEnds(t *testing.T) {
 	stdout, restore := captureStdout(t)
 	defer restore()
 	done := make(chan int, 1)
-	go func() { done <- cmdTail(nil) }()
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := false
+	defer func() {
+		cancel()
+		if !finished {
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Error("cmdTail did not stop during cleanup")
+			}
+		}
+	}()
+	go func() { done <- cmdTailContext(ctx, nil) }()
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && !strings.Contains(stdout.String(), "i-3 a1 completed") {
 		select {
 		case code := <-done:
+			finished = true
 			t.Fatalf("cmdTail exited with %d after the stream ended; want it to reconnect. stdout=%q", code, stdout.String())
 		case <-time.After(20 * time.Millisecond):
 		}
@@ -59,18 +72,14 @@ func TestGregaleTail_ReconnectsWhenStreamEnds(t *testing.T) {
 	if !strings.Contains(stdout.String(), "i-1 a1 completed") || !strings.Contains(stdout.String(), "i-3 a1 completed") {
 		t.Fatalf("frames across reconnects missing; stdout=%q", stdout.String())
 	}
-	for attempt := 0; attempt < 3; attempt++ {
-		if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
-			t.Fatal(err)
+	cancel()
+	select {
+	case code := <-done:
+		finished = true
+		if code != 130 {
+			t.Fatalf("cmdTail exit = %d, want 130", code)
 		}
-		select {
-		case code := <-done:
-			if code != 130 {
-				t.Fatalf("cmdTail exit = %d, want 130", code)
-			}
-			return
-		case <-time.After(200 * time.Millisecond):
-		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cmdTail did not exit on cancellation")
 	}
-	t.Fatal("cmdTail did not exit on SIGINT")
 }

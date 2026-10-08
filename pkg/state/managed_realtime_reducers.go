@@ -244,7 +244,7 @@ func (m *MemStore) saveReducerLocked(row *ManagedRealtimeReducerState) {
 func readReducerPG(ctx context.Context, tx pgx.Tx, ep, ch string) (*ManagedRealtimeReducerState, error) {
 	row := ManagedRealtimeReducerState{EndpointID: ep, Channel: ch}
 	err := tx.QueryRow(ctx, `select sequence,entities,entity_versions,entity_expirations,updated_at from managed_realtime_channel_reducers where endpoint_id=$1 and channel=$2`, ep, ch).Scan(&row.Sequence, &row.Entities, &row.EntityVersions, &row.EntityExpirations, &row.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	return &row, err
@@ -382,7 +382,7 @@ func (s *PgStore) PutManagedRealtimeReducer(ctx context.Context, row ManagedReal
 	defer func() { _ = tx.Rollback(ctx) }()
 	var id string
 	if err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for update`, row.EndpointID).Scan(&id); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			err = ErrNotFound
 		}
 		return row, err
@@ -436,7 +436,7 @@ func (s *PgStore) GetManagedRealtimeReducer(ctx context.Context, ep, ch string) 
 		return row, ErrManagedRealtimeHistoryInvalid
 	}
 	err := s.pool.QueryRow(ctx, `select sequence,entities,entity_versions,entity_expirations,updated_at from managed_realtime_channel_reducers where endpoint_id=$1 and channel=$2`, ep, ch).Scan(&row.Sequence, &row.Entities, &row.EntityVersions, &row.EntityExpirations, &row.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
 	return row, err

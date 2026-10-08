@@ -44,7 +44,7 @@ func cmdRealtimePush(args []string) int {
 			if e != nil {
 				return nil, e
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			reader = f
 		}
 		data, e := io.ReadAll(io.LimitReader(reader, 16385))

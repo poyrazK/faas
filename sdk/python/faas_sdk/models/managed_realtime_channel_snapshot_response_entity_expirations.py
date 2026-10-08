@@ -12,7 +12,7 @@ T = TypeVar("T", bound="ManagedRealtimeChannelSnapshotResponseEntityExpirations"
 
 @_attrs_define
 class ManagedRealtimeChannelSnapshotResponseEntityExpirations:
-    """Scheduled entity deadlines; cleanup is asynchronous."""
+    """Entity cleanup deadlines carried by this channel snapshot; cleanup runs asynchronously."""
 
     additional_properties: dict[str, datetime.datetime] = _attrs_field(init=False, factory=dict)
 

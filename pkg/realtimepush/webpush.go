@@ -6,7 +6,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
-	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -74,7 +73,7 @@ func webRequest(ctx context.Context, c Config, t Target, n Notification) (*http.
 	body, _ := json.Marshal(map[string]any{"title": c.Title, "body": c.Body, "tag": n.DeliveryID, "group_key": n.GroupKey, "message_count": n.MessageCount, "category": n.Category, "delivery_id": n.DeliveryID, "endpoint_id": n.EndpointID, "message_id": n.MessageID, "sequence": n.Sequence})
 	body = append(body, 2)
 	if len(body)+16 > 4096 {
-		return nil, errors.New("Web Push payload too large")
+		return nil, errors.New("web push payload too large")
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -109,7 +108,11 @@ func webRequest(ctx context.Context, c Config, t Target, n Notification) (*http.
 	if err != nil {
 		return nil, err
 	}
-	public := elliptic.Marshal(vapid.Curve, vapid.X, vapid.Y)
+	vapidPublic, err := vapid.PublicKey.ECDH()
+	if err != nil {
+		return nil, err
+	}
+	public := vapidPublic.Bytes()
 	request, err := http.NewRequestWithContext(ctx, "POST", t.Endpoint, bytes.NewReader(encoded))
 	if err != nil {
 		return nil, err

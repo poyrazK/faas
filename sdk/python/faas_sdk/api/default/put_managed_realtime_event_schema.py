@@ -7,8 +7,8 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.managed_realtime_event_schema_request import ManagedRealtimeEventSchemaRequest
 from ...models.managed_realtime_event_schema_response import ManagedRealtimeEventSchemaResponse
-from ...models.put_managed_realtime_event_schema_body import PutManagedRealtimeEventSchemaBody
 from ...types import Response
 
 
@@ -19,7 +19,7 @@ def _get_kwargs(
     event_type: str,
     version: int,
     *,
-    body: PutManagedRealtimeEventSchemaBody,
+    body: ManagedRealtimeEventSchemaRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -87,7 +87,7 @@ def sync_detailed(
     version: int,
     *,
     client: AuthenticatedClient | Client,
-    body: PutManagedRealtimeEventSchemaBody,
+    body: ManagedRealtimeEventSchemaRequest,
 ) -> Response[Any | ManagedRealtimeEventSchemaResponse]:
     """Register an immutable event schema version and enable channel enforcement
 
@@ -97,7 +97,8 @@ def sync_detailed(
         channel (str):
         event_type (str):
         version (int):
-        body (PutManagedRealtimeEventSchemaBody):
+        body (ManagedRealtimeEventSchemaRequest): JSON Schema document for one channel event type
+            and version.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -131,7 +132,7 @@ def sync(
     version: int,
     *,
     client: AuthenticatedClient | Client,
-    body: PutManagedRealtimeEventSchemaBody,
+    body: ManagedRealtimeEventSchemaRequest,
 ) -> Any | ManagedRealtimeEventSchemaResponse | None:
     """Register an immutable event schema version and enable channel enforcement
 
@@ -141,7 +142,8 @@ def sync(
         channel (str):
         event_type (str):
         version (int):
-        body (PutManagedRealtimeEventSchemaBody):
+        body (ManagedRealtimeEventSchemaRequest): JSON Schema document for one channel event type
+            and version.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,7 +172,7 @@ async def asyncio_detailed(
     version: int,
     *,
     client: AuthenticatedClient | Client,
-    body: PutManagedRealtimeEventSchemaBody,
+    body: ManagedRealtimeEventSchemaRequest,
 ) -> Response[Any | ManagedRealtimeEventSchemaResponse]:
     """Register an immutable event schema version and enable channel enforcement
 
@@ -180,7 +182,8 @@ async def asyncio_detailed(
         channel (str):
         event_type (str):
         version (int):
-        body (PutManagedRealtimeEventSchemaBody):
+        body (ManagedRealtimeEventSchemaRequest): JSON Schema document for one channel event type
+            and version.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -212,7 +215,7 @@ async def asyncio(
     version: int,
     *,
     client: AuthenticatedClient | Client,
-    body: PutManagedRealtimeEventSchemaBody,
+    body: ManagedRealtimeEventSchemaRequest,
 ) -> Any | ManagedRealtimeEventSchemaResponse | None:
     """Register an immutable event schema version and enable channel enforcement
 
@@ -222,7 +225,8 @@ async def asyncio(
         channel (str):
         event_type (str):
         version (int):
-        body (PutManagedRealtimeEventSchemaBody):
+        body (ManagedRealtimeEventSchemaRequest): JSON Schema document for one channel event type
+            and version.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

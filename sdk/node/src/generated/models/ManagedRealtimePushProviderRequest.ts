@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Provider credentials and enablement settings for realtime push delivery.
+ */
 export type ManagedRealtimePushProviderRequest = {
   enabled?: boolean;
   config: {

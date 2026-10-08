@@ -14,6 +14,8 @@ T = TypeVar("T", bound="ManagedRealtimeNotificationTimelineEvent")
 
 @_attrs_define
 class ManagedRealtimeNotificationTimelineEvent:
+    """Recorded notification delivery or lifecycle change for a principal."""
+
     id: int
     message_id: str
     event: str

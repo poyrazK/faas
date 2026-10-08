@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Ephemeral backend signal payload with optional name and expiration.
+ */
 export type ManagedRealtimeSignalRequest = {
   /**
    * Any JSON value, including null, within 2048 encoded UTF-8 bytes.

@@ -180,7 +180,7 @@ func validateManagedRealtimeDirectMessageResults(results []ManagedRealtimeDirect
 }
 
 func managedRealtimeDirectDeliveryProjection(state managedRealtimeDirectMessageDeliveryState, now time.Time) ManagedRealtimeDirectMessageDelivery {
-	status := state.queueStatus
+	var status string
 	switch {
 	case state.acknowledgedAt != nil:
 		status = ManagedRealtimeDirectStatusAcknowledged

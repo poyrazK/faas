@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Push delivery attempt metadata without provider credentials or device tokens.
+ */
 export type ManagedRealtimePushDelivery = {
   /**
    * Earliest scheduled delivery; epoch or zero time means no schedule.

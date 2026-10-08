@@ -105,9 +105,8 @@ def sync_detailed(
 ) -> Response[Problem | UnregisterManagedRealtimePushDeviceResponse200]:
     """Remove a push registration and cancel its queued work.
 
-     Requires the retained-history preview gate. Registration is limited to 16 devices per principal and
-    1024 per endpoint. A provider must be enabled before registration. Identical registrations preserve
-    pending deliveries; changed tokens cancel old work.
+     Removes a device registration under the retained-history preview gate and cancels its queued push
+    deliveries.
 
     Args:
         slug (str):
@@ -147,9 +146,8 @@ def sync(
 ) -> Problem | UnregisterManagedRealtimePushDeviceResponse200 | None:
     """Remove a push registration and cancel its queued work.
 
-     Requires the retained-history preview gate. Registration is limited to 16 devices per principal and
-    1024 per endpoint. A provider must be enabled before registration. Identical registrations preserve
-    pending deliveries; changed tokens cancel old work.
+     Removes a device registration under the retained-history preview gate and cancels its queued push
+    deliveries.
 
     Args:
         slug (str):
@@ -184,9 +182,8 @@ async def asyncio_detailed(
 ) -> Response[Problem | UnregisterManagedRealtimePushDeviceResponse200]:
     """Remove a push registration and cancel its queued work.
 
-     Requires the retained-history preview gate. Registration is limited to 16 devices per principal and
-    1024 per endpoint. A provider must be enabled before registration. Identical registrations preserve
-    pending deliveries; changed tokens cancel old work.
+     Removes a device registration under the retained-history preview gate and cancels its queued push
+    deliveries.
 
     Args:
         slug (str):
@@ -224,9 +221,8 @@ async def asyncio(
 ) -> Problem | UnregisterManagedRealtimePushDeviceResponse200 | None:
     """Remove a push registration and cancel its queued work.
 
-     Requires the retained-history preview gate. Registration is limited to 16 devices per principal and
-    1024 per endpoint. A provider must be enabled before registration. Identical registrations preserve
-    pending deliveries; changed tokens cancel old work.
+     Removes a device registration under the retained-history preview gate and cancels its queued push
+    deliveries.
 
     Args:
         slug (str):

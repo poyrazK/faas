@@ -1305,13 +1305,13 @@ func (m *Manager) Send(ctx context.Context, connectionID string, msg Message) er
 // unsupported and remain connected.
 func (m *Manager) SendToPrincipal(ctx context.Context, endpointID, principal, messageID string, requestReceipt bool, msg Message) (PrincipalSendStatus, error) {
 	if err := api.ValidateRealtimePrincipal(principal); err != nil {
-		return PrincipalSendStatus{}, fmt.Errorf("%w: %v", ErrInvalidPrincipal, err)
+		return PrincipalSendStatus{}, fmt.Errorf("%w: %w", ErrInvalidPrincipal, err)
 	}
 	if messageID == "" && !requestReceipt {
 		messageID = uuid.NewString()
 	}
 	if err := api.ValidateRealtimeDirectMessageID(messageID); err != nil {
-		return PrincipalSendStatus{}, fmt.Errorf("%w: %v", ErrInvalidDirectMessageID, err)
+		return PrincipalSendStatus{}, fmt.Errorf("%w: %w", ErrInvalidDirectMessageID, err)
 	}
 	value, ok := m.endpoints.Load(endpointID)
 	if !ok || value.(*endpointState).revoked.Load() {
@@ -1349,7 +1349,7 @@ func (m *Manager) SendToPrincipal(ctx context.Context, endpointID, principal, me
 		cancel()
 		if err != nil {
 			m.reportFleetFailure(err)
-			return status, fmt.Errorf("%w: %v", ErrDirectMessageReceiptsUnavailable, err)
+			return status, fmt.Errorf("%w: %w", ErrDirectMessageReceiptsUnavailable, err)
 		}
 		for _, connectionID := range created {
 			newTargets[connectionID] = struct{}{}

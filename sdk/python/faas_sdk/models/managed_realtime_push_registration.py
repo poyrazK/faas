@@ -19,6 +19,8 @@ T = TypeVar("T", bound="ManagedRealtimePushRegistration")
 
 @_attrs_define
 class ManagedRealtimePushRegistration:
+    """Device registration used to route push notifications to a principal."""
+
     provider: ManagedRealtimePushRegistrationProvider
     target: ManagedRealtimePushRegistrationTarget
     """FCM/APNs require token; Web Push requires endpoint, p256dh and auth."""

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Channel state snapshot with sequence and entity expiration metadata.
+ */
 export type ManagedRealtimeChannelSnapshotResponse = {
   channel: string;
   sequence: number;
@@ -9,7 +12,7 @@ export type ManagedRealtimeChannelSnapshotResponse = {
   data_base64: string;
   binary: boolean;
   /**
-   * Scheduled entity deadlines; cleanup is asynchronous.
+   * Entity cleanup deadlines carried by this channel snapshot; cleanup runs asynchronously.
    */
   entity_expirations?: Record<string, string>;
   /**

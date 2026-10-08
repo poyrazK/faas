@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Device registration used to route push notifications to a principal.
+ */
 export type ManagedRealtimePushRegistration = {
   provider: 'fcm' | 'apns' | 'webpush';
   /**

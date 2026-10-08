@@ -8,7 +8,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.managed_realtime_notification_control_response import ManagedRealtimeNotificationControlResponse
-from ...models.reschedule_managed_realtime_notification_body import RescheduleManagedRealtimeNotificationBody
+from ...models.managed_realtime_notification_reschedule_request import ManagedRealtimeNotificationRescheduleRequest
 from ...types import UNSET, Response
 
 
@@ -17,7 +17,7 @@ def _get_kwargs(
     id: UUID,
     message_id: str,
     *,
-    body: RescheduleManagedRealtimeNotificationBody,
+    body: ManagedRealtimeNotificationRescheduleRequest,
     principal: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -85,7 +85,7 @@ def sync_detailed(
     message_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RescheduleManagedRealtimeNotificationBody,
+    body: ManagedRealtimeNotificationRescheduleRequest,
     principal: str,
 ) -> Response[Any | ManagedRealtimeNotificationControlResponse]:
     """Reschedule active notifications across devices without reviving completed deliveries
@@ -95,7 +95,8 @@ def sync_detailed(
         id (UUID):
         message_id (str):
         principal (str):
-        body (RescheduleManagedRealtimeNotificationBody):
+        body (ManagedRealtimeNotificationRescheduleRequest): Replacement not-before instant for
+            pending notification delivery work.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -126,7 +127,7 @@ def sync(
     message_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RescheduleManagedRealtimeNotificationBody,
+    body: ManagedRealtimeNotificationRescheduleRequest,
     principal: str,
 ) -> Any | ManagedRealtimeNotificationControlResponse | None:
     """Reschedule active notifications across devices without reviving completed deliveries
@@ -136,7 +137,8 @@ def sync(
         id (UUID):
         message_id (str):
         principal (str):
-        body (RescheduleManagedRealtimeNotificationBody):
+        body (ManagedRealtimeNotificationRescheduleRequest): Replacement not-before instant for
+            pending notification delivery work.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -162,7 +164,7 @@ async def asyncio_detailed(
     message_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RescheduleManagedRealtimeNotificationBody,
+    body: ManagedRealtimeNotificationRescheduleRequest,
     principal: str,
 ) -> Response[Any | ManagedRealtimeNotificationControlResponse]:
     """Reschedule active notifications across devices without reviving completed deliveries
@@ -172,7 +174,8 @@ async def asyncio_detailed(
         id (UUID):
         message_id (str):
         principal (str):
-        body (RescheduleManagedRealtimeNotificationBody):
+        body (ManagedRealtimeNotificationRescheduleRequest): Replacement not-before instant for
+            pending notification delivery work.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -201,7 +204,7 @@ async def asyncio(
     message_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RescheduleManagedRealtimeNotificationBody,
+    body: ManagedRealtimeNotificationRescheduleRequest,
     principal: str,
 ) -> Any | ManagedRealtimeNotificationControlResponse | None:
     """Reschedule active notifications across devices without reviving completed deliveries
@@ -211,7 +214,8 @@ async def asyncio(
         id (UUID):
         message_id (str):
         principal (str):
-        body (RescheduleManagedRealtimeNotificationBody):
+        body (ManagedRealtimeNotificationRescheduleRequest): Replacement not-before instant for
+            pending notification delivery work.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

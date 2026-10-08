@@ -7,8 +7,8 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.managed_realtime_reducer_request import ManagedRealtimeReducerRequest
 from ...models.managed_realtime_reducer_response import ManagedRealtimeReducerResponse
-from ...models.put_managed_realtime_reducer_body import PutManagedRealtimeReducerBody
 from ...types import Response
 
 
@@ -17,7 +17,7 @@ def _get_kwargs(
     id: UUID,
     channel: str,
     *,
-    body: PutManagedRealtimeReducerBody,
+    body: ManagedRealtimeReducerRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -77,7 +77,7 @@ def sync_detailed(
     channel: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PutManagedRealtimeReducerBody,
+    body: ManagedRealtimeReducerRequest,
 ) -> Response[Any | ManagedRealtimeReducerResponse]:
     """Enable a channel reducer from a state baseline matching the current sequence
 
@@ -104,7 +104,8 @@ def sync_detailed(
         slug (str):
         id (UUID):
         channel (str):
-        body (PutManagedRealtimeReducerBody):
+        body (ManagedRealtimeReducerRequest): Initial entity state and sequence for the channel
+            reducer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -134,7 +135,7 @@ def sync(
     channel: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PutManagedRealtimeReducerBody,
+    body: ManagedRealtimeReducerRequest,
 ) -> Any | ManagedRealtimeReducerResponse | None:
     """Enable a channel reducer from a state baseline matching the current sequence
 
@@ -161,7 +162,8 @@ def sync(
         slug (str):
         id (UUID):
         channel (str):
-        body (PutManagedRealtimeReducerBody):
+        body (ManagedRealtimeReducerRequest): Initial entity state and sequence for the channel
+            reducer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -186,7 +188,7 @@ async def asyncio_detailed(
     channel: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PutManagedRealtimeReducerBody,
+    body: ManagedRealtimeReducerRequest,
 ) -> Response[Any | ManagedRealtimeReducerResponse]:
     """Enable a channel reducer from a state baseline matching the current sequence
 
@@ -213,7 +215,8 @@ async def asyncio_detailed(
         slug (str):
         id (UUID):
         channel (str):
-        body (PutManagedRealtimeReducerBody):
+        body (ManagedRealtimeReducerRequest): Initial entity state and sequence for the channel
+            reducer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -241,7 +244,7 @@ async def asyncio(
     channel: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PutManagedRealtimeReducerBody,
+    body: ManagedRealtimeReducerRequest,
 ) -> Any | ManagedRealtimeReducerResponse | None:
     """Enable a channel reducer from a state baseline matching the current sequence
 
@@ -268,7 +271,8 @@ async def asyncio(
         slug (str):
         id (UUID):
         channel (str):
-        body (PutManagedRealtimeReducerBody):
+        body (ManagedRealtimeReducerRequest): Initial entity state and sequence for the channel
+            reducer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

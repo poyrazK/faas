@@ -224,7 +224,7 @@ func Send(ctx context.Context, client *http.Client, c Config, t Target, n Notifi
 	if err != nil {
 		return Result{Retry: true, Code: "provider_unreachable"}
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, 32769))
 	result := Result{StatusCode: response.StatusCode}
 	if response.StatusCode >= 200 && response.StatusCode < 300 {

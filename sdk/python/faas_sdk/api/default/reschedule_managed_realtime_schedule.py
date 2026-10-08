@@ -8,8 +8,8 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.managed_realtime_schedule_response import ManagedRealtimeScheduleResponse
+from ...models.managed_realtime_schedule_update import ManagedRealtimeScheduleUpdate
 from ...models.problem import Problem
-from ...models.reschedule_managed_realtime_schedule_body import RescheduleManagedRealtimeScheduleBody
 from ...types import Response
 
 
@@ -19,7 +19,7 @@ def _get_kwargs(
     channel: str,
     schedule_id: str,
     *,
-    body: RescheduleManagedRealtimeScheduleBody,
+    body: ManagedRealtimeScheduleUpdate,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -88,7 +88,7 @@ def sync_detailed(
     schedule_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RescheduleManagedRealtimeScheduleBody,
+    body: ManagedRealtimeScheduleUpdate,
 ) -> Response[ManagedRealtimeScheduleResponse | Problem]:
     """Change a pending schedule deadline with a version check
 
@@ -97,7 +97,8 @@ def sync_detailed(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (RescheduleManagedRealtimeScheduleBody):
+        body (ManagedRealtimeScheduleUpdate): Version-checked change to a scheduled channel
+            publication time.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -129,7 +130,7 @@ def sync(
     schedule_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RescheduleManagedRealtimeScheduleBody,
+    body: ManagedRealtimeScheduleUpdate,
 ) -> ManagedRealtimeScheduleResponse | Problem | None:
     """Change a pending schedule deadline with a version check
 
@@ -138,7 +139,8 @@ def sync(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (RescheduleManagedRealtimeScheduleBody):
+        body (ManagedRealtimeScheduleUpdate): Version-checked change to a scheduled channel
+            publication time.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -165,7 +167,7 @@ async def asyncio_detailed(
     schedule_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RescheduleManagedRealtimeScheduleBody,
+    body: ManagedRealtimeScheduleUpdate,
 ) -> Response[ManagedRealtimeScheduleResponse | Problem]:
     """Change a pending schedule deadline with a version check
 
@@ -174,7 +176,8 @@ async def asyncio_detailed(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (RescheduleManagedRealtimeScheduleBody):
+        body (ManagedRealtimeScheduleUpdate): Version-checked change to a scheduled channel
+            publication time.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -204,7 +207,7 @@ async def asyncio(
     schedule_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RescheduleManagedRealtimeScheduleBody,
+    body: ManagedRealtimeScheduleUpdate,
 ) -> ManagedRealtimeScheduleResponse | Problem | None:
     """Change a pending schedule deadline with a version check
 
@@ -213,7 +216,8 @@ async def asyncio(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (RescheduleManagedRealtimeScheduleBody):
+        body (ManagedRealtimeScheduleUpdate): Version-checked change to a scheduled channel
+            publication time.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

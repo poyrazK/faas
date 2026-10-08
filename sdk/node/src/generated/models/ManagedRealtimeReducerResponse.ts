@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Configured channel state reducer and its current version.
+ */
 export type ManagedRealtimeReducerResponse = {
   channel: string;
   sequence: number;

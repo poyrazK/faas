@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ManagedRealtimeNotificationControlResponse")
 
 @_attrs_define
 class ManagedRealtimeNotificationControlResponse:
+    """Notification cancellation or rescheduling result across devices."""
+
     fallbacks: int
     deliveries: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

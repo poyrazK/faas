@@ -2,11 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { RealtimeNotificationRateLimit } from './RealtimeNotificationRateLimit.js';
+import type { RealtimeQuietHours } from './RealtimeQuietHours.js';
+/**
+ * Push delivery preferences shared across devices for a verified principal.
+ */
 export type RealtimeNotificationPreferences = {
-  /**
-   * Shared per-principal provider-delivery quota across devices. Null or omission disables it. Digests consume one slot.
-   */
-  rate_limit?: any | null;
+  rate_limit?: (RealtimeNotificationRateLimit | null);
   /**
    * Allow urgent alerts to bypass quiet hours and digest delays; mute settings still apply.
    */
@@ -31,9 +33,6 @@ export type RealtimeNotificationPreferences = {
    * Null or omitted selects all registered devices; empty array selects none.
    */
   devices?: any[] | null;
-  /**
-   * Daily half-open quiet interval; start and end must differ. Omit or null to disable.
-   */
-  quiet_hours?: any | null;
+  quiet_hours?: (RealtimeQuietHours | null);
 };
 

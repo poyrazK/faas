@@ -18,6 +18,8 @@ T = TypeVar("T", bound="ManagedRealtimeSignalResponse")
 
 @_attrs_define
 class ManagedRealtimeSignalResponse:
+    """Best-effort signal fanout result for currently connected subscribers."""
+
     accepted: bool
     member_id: ManagedRealtimeSignalResponseMemberId
     expires_at: datetime.datetime | Unset = UNSET

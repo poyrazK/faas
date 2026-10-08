@@ -124,7 +124,8 @@ def sync_detailed(
         channel (str):
         group (str):
         group_action (ApplyManagedRealtimeScheduleGroupGroupAction):
-        body (ManagedRealtimeScheduleGroupRequest):
+        body (ManagedRealtimeScheduleGroupRequest): Bulk action and version preconditions for a
+            named schedule group.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,7 +174,8 @@ def sync(
         channel (str):
         group (str):
         group_action (ApplyManagedRealtimeScheduleGroupGroupAction):
-        body (ManagedRealtimeScheduleGroupRequest):
+        body (ManagedRealtimeScheduleGroupRequest): Bulk action and version preconditions for a
+            named schedule group.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -217,7 +219,8 @@ async def asyncio_detailed(
         channel (str):
         group (str):
         group_action (ApplyManagedRealtimeScheduleGroupGroupAction):
-        body (ManagedRealtimeScheduleGroupRequest):
+        body (ManagedRealtimeScheduleGroupRequest): Bulk action and version preconditions for a
+            named schedule group.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -264,7 +267,8 @@ async def asyncio(
         channel (str):
         group (str):
         group_action (ApplyManagedRealtimeScheduleGroupGroupAction):
-        body (ManagedRealtimeScheduleGroupRequest):
+        body (ManagedRealtimeScheduleGroupRequest): Bulk action and version preconditions for a
+            named schedule group.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

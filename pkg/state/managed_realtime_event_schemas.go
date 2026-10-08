@@ -173,7 +173,7 @@ func validateEventSchemaPG(ctx context.Context, tx pgx.Tx, ep, ch string, data [
 	}
 	var raw json.RawMessage
 	err = tx.QueryRow(ctx, `select schema from managed_realtime_event_schemas where endpoint_id=$1 and channel=$2 and event_type=$3 and version=$4`, ep, ch, event, version).Scan(&raw)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return &ManagedRealtimeEventSchemaError{Item: -1, Path: "/metadata/schema_version", Reason: "event schema version is not registered"}
 	}
 	if err != nil {
@@ -252,7 +252,7 @@ func (s *PgStore) PutManagedRealtimeEventSchema(ctx context.Context, row Managed
 	defer func() { _ = tx.Rollback(ctx) }()
 	var id string
 	if err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for update`, row.EndpointID).Scan(&id); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			err = ErrNotFound
 		}
 		return row, err
@@ -270,7 +270,7 @@ func (s *PgStore) PutManagedRealtimeEventSchema(ctx context.Context, row Managed
 		row.Schema = old
 		return row, tx.Commit(ctx)
 	}
-	if err != pgx.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return row, err
 	}
 	var count int
@@ -293,7 +293,7 @@ func (s *PgStore) GetManagedRealtimeEventSchema(ctx context.Context, ep, ch, eve
 		return row, err
 	}
 	err := s.pool.QueryRow(ctx, `select schema,created_at from managed_realtime_event_schemas where endpoint_id=$1 and channel=$2 and event_type=$3 and version=$4`, ep, ch, event, version).Scan(&row.Schema, &row.CreatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
 	return row, err

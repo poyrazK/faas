@@ -108,15 +108,16 @@ def sync_detailed(
 ) -> Response[Problem | RealtimeNotificationPreferences]:
     """Replace notification preferences across user devices.
 
-     Requires the retained-history preview gate. Defaults enable all categories and devices. Preferences
-    apply to built-in push; inbox retention and ACKs remain independent. Quiet-hour deferrals do not
-    consume attempts. At most 256 preference documents per endpoint.
+     Replaces the principal preference document under the retained-history preview gate. Built-in push
+    uses these preferences independently of inbox retention and ACKs. Quiet-hour deferrals consume no
+    attempts. Each endpoint retains at most 256 documents.
 
     Args:
         slug (str):
         id (str):
         principal (str):
-        body (RealtimeNotificationPreferences):
+        body (RealtimeNotificationPreferences): Push delivery preferences shared across devices
+            for a verified principal.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,15 +151,16 @@ def sync(
 ) -> Problem | RealtimeNotificationPreferences | None:
     """Replace notification preferences across user devices.
 
-     Requires the retained-history preview gate. Defaults enable all categories and devices. Preferences
-    apply to built-in push; inbox retention and ACKs remain independent. Quiet-hour deferrals do not
-    consume attempts. At most 256 preference documents per endpoint.
+     Replaces the principal preference document under the retained-history preview gate. Built-in push
+    uses these preferences independently of inbox retention and ACKs. Quiet-hour deferrals consume no
+    attempts. Each endpoint retains at most 256 documents.
 
     Args:
         slug (str):
         id (str):
         principal (str):
-        body (RealtimeNotificationPreferences):
+        body (RealtimeNotificationPreferences): Push delivery preferences shared across devices
+            for a verified principal.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -187,15 +189,16 @@ async def asyncio_detailed(
 ) -> Response[Problem | RealtimeNotificationPreferences]:
     """Replace notification preferences across user devices.
 
-     Requires the retained-history preview gate. Defaults enable all categories and devices. Preferences
-    apply to built-in push; inbox retention and ACKs remain independent. Quiet-hour deferrals do not
-    consume attempts. At most 256 preference documents per endpoint.
+     Replaces the principal preference document under the retained-history preview gate. Built-in push
+    uses these preferences independently of inbox retention and ACKs. Quiet-hour deferrals consume no
+    attempts. Each endpoint retains at most 256 documents.
 
     Args:
         slug (str):
         id (str):
         principal (str):
-        body (RealtimeNotificationPreferences):
+        body (RealtimeNotificationPreferences): Push delivery preferences shared across devices
+            for a verified principal.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -227,15 +230,16 @@ async def asyncio(
 ) -> Problem | RealtimeNotificationPreferences | None:
     """Replace notification preferences across user devices.
 
-     Requires the retained-history preview gate. Defaults enable all categories and devices. Preferences
-    apply to built-in push; inbox retention and ACKs remain independent. Quiet-hour deferrals do not
-    consume attempts. At most 256 preference documents per endpoint.
+     Replaces the principal preference document under the retained-history preview gate. Built-in push
+    uses these preferences independently of inbox retention and ACKs. Quiet-hour deferrals consume no
+    attempts. Each endpoint retains at most 256 documents.
 
     Args:
         slug (str):
         id (str):
         principal (str):
-        body (RealtimeNotificationPreferences):
+        body (RealtimeNotificationPreferences): Push delivery preferences shared across devices
+            for a verified principal.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

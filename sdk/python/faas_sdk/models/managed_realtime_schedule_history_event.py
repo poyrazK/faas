@@ -22,6 +22,8 @@ T = TypeVar("T", bound="ManagedRealtimeScheduleHistoryEvent")
 
 @_attrs_define
 class ManagedRealtimeScheduleHistoryEvent:
+    """Recorded execution or lifecycle event for a channel publish schedule."""
+
     skipped_occurrences: int
     occurrence: int
     completed_occurrences: int

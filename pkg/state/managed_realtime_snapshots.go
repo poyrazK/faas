@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"github.com/jackc/pgx/v5"
 	"time"
 )
@@ -126,7 +127,7 @@ func (s *PgStore) PutManagedRealtimeChannelSnapshot(ctx context.Context, j Manag
 	defer func() { _ = tx.Rollback(ctx) }()
 	var next, floor int64
 	err = tx.QueryRow(ctx, `select next_sequence,oldest_sequence from managed_realtime_channel_heads where endpoint_id=$1 and channel=$2 for update`, j.EndpointID, j.Channel).Scan(&next, &floor)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return j, ErrNotFound
 	}
 	if err != nil {
@@ -152,7 +153,7 @@ func (s *PgStore) PutManagedRealtimeChannelSnapshot(ctx context.Context, j Manag
 		return j, ErrManagedRealtimeDurableCursorExpired
 	}
 	err = tx.QueryRow(ctx, `insert into managed_realtime_channel_snapshots(endpoint_id,channel,sequence,data,is_binary) values($1,$2,$3,$4,$5) on conflict(endpoint_id,channel) do update set sequence=excluded.sequence,data=excluded.data,is_binary=excluded.is_binary,updated_at=clock_timestamp(),expires_at=clock_timestamp()+interval '24 hours' where managed_realtime_channel_snapshots.sequence<=excluded.sequence returning updated_at,expires_at`, j.EndpointID, j.Channel, j.Sequence, j.Data, j.Binary).Scan(&j.UpdatedAt, &j.ExpiresAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return j, ErrManagedRealtimeHistoryInvalid
 	}
 	if err != nil {
@@ -167,11 +168,11 @@ func (s *PgStore) GetManagedRealtimeChannelSnapshot(ctx context.Context, ep, ch 
 	}
 	if reducer, e := s.GetManagedRealtimeReducer(ctx, ep, ch); e == nil {
 		return reducerSnapshot(reducer, time.Now().UTC()), nil
-	} else if e != ErrNotFound {
+	} else if !errors.Is(e, ErrNotFound) {
 		return j, e
 	}
 	err := s.pool.QueryRow(ctx, `select sequence,data,is_binary,updated_at,expires_at from managed_realtime_channel_snapshots where endpoint_id=$1 and channel=$2`, ep, ch).Scan(&j.Sequence, &j.Data, &j.Binary, &j.UpdatedAt, &j.ExpiresAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return j, ErrNotFound
 	}
 	if err != nil {

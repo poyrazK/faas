@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ManagedRealtimeScheduleRequest } from './ManagedRealtimeScheduleRequest.js';
+/**
+ * Persisted channel publish schedule and current execution state.
+ */
 export type ManagedRealtimeScheduleResponse = (ManagedRealtimeScheduleRequest & {
   initial_deliver_at: string;
   skipped_occurrences: number;

@@ -6,9 +6,9 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.managed_realtime_principal_message_request import ManagedRealtimePrincipalMessageRequest
+from ...models.managed_realtime_principal_send_response import ManagedRealtimePrincipalSendResponse
 from ...models.problem import Problem
-from ...models.send_managed_realtime_principal_body import SendManagedRealtimePrincipalBody
-from ...models.send_managed_realtime_principal_response_202 import SendManagedRealtimePrincipalResponse202
 from ...types import Response
 
 
@@ -16,7 +16,7 @@ def _get_kwargs(
     slug: str,
     id: str,
     *,
-    body: SendManagedRealtimePrincipalBody,
+    body: ManagedRealtimePrincipalMessageRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -38,9 +38,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Problem | SendManagedRealtimePrincipalResponse202 | None:
+) -> ManagedRealtimePrincipalSendResponse | Problem | None:
     if response.status_code == 202:
-        response_202 = SendManagedRealtimePrincipalResponse202.from_dict(response.json())
+        response_202 = ManagedRealtimePrincipalSendResponse.from_dict(response.json())
 
         return response_202
 
@@ -87,7 +87,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Problem | SendManagedRealtimePrincipalResponse202]:
+) -> Response[ManagedRealtimePrincipalSendResponse | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -101,8 +101,8 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: SendManagedRealtimePrincipalBody,
-) -> Response[Problem | SendManagedRealtimePrincipalResponse202]:
+    body: ManagedRealtimePrincipalMessageRequest,
+) -> Response[ManagedRealtimePrincipalSendResponse | Problem]:
     """Send to a verified principal, optionally retaining a notification with push fallback.
 
      Retained sends require the retained-history preview gate and a stable message ID. Notification
@@ -113,14 +113,15 @@ def sync_detailed(
     Args:
         slug (str):
         id (str):
-        body (SendManagedRealtimePrincipalBody):
+        body (ManagedRealtimePrincipalMessageRequest): Principal message payload with optional
+            retained notification and push fallback settings.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem | SendManagedRealtimePrincipalResponse202]
+        Response[ManagedRealtimePrincipalSendResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -141,8 +142,8 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: SendManagedRealtimePrincipalBody,
-) -> Problem | SendManagedRealtimePrincipalResponse202 | None:
+    body: ManagedRealtimePrincipalMessageRequest,
+) -> ManagedRealtimePrincipalSendResponse | Problem | None:
     """Send to a verified principal, optionally retaining a notification with push fallback.
 
      Retained sends require the retained-history preview gate and a stable message ID. Notification
@@ -153,14 +154,15 @@ def sync(
     Args:
         slug (str):
         id (str):
-        body (SendManagedRealtimePrincipalBody):
+        body (ManagedRealtimePrincipalMessageRequest): Principal message payload with optional
+            retained notification and push fallback settings.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem | SendManagedRealtimePrincipalResponse202
+        ManagedRealtimePrincipalSendResponse | Problem
     """
 
     return sync_detailed(
@@ -176,8 +178,8 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: SendManagedRealtimePrincipalBody,
-) -> Response[Problem | SendManagedRealtimePrincipalResponse202]:
+    body: ManagedRealtimePrincipalMessageRequest,
+) -> Response[ManagedRealtimePrincipalSendResponse | Problem]:
     """Send to a verified principal, optionally retaining a notification with push fallback.
 
      Retained sends require the retained-history preview gate and a stable message ID. Notification
@@ -188,14 +190,15 @@ async def asyncio_detailed(
     Args:
         slug (str):
         id (str):
-        body (SendManagedRealtimePrincipalBody):
+        body (ManagedRealtimePrincipalMessageRequest): Principal message payload with optional
+            retained notification and push fallback settings.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem | SendManagedRealtimePrincipalResponse202]
+        Response[ManagedRealtimePrincipalSendResponse | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -214,8 +217,8 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: SendManagedRealtimePrincipalBody,
-) -> Problem | SendManagedRealtimePrincipalResponse202 | None:
+    body: ManagedRealtimePrincipalMessageRequest,
+) -> ManagedRealtimePrincipalSendResponse | Problem | None:
     """Send to a verified principal, optionally retaining a notification with push fallback.
 
      Retained sends require the retained-history preview gate and a stable message ID. Notification
@@ -226,14 +229,15 @@ async def asyncio(
     Args:
         slug (str):
         id (str):
-        body (SendManagedRealtimePrincipalBody):
+        body (ManagedRealtimePrincipalMessageRequest): Principal message payload with optional
+            retained notification and push fallback settings.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem | SendManagedRealtimePrincipalResponse202
+        ManagedRealtimePrincipalSendResponse | Problem
     """
 
     return (

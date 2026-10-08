@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ManagedRealtimePushProvider")
 
 @_attrs_define
 class ManagedRealtimePushProvider:
+    """Configured push provider metadata with credentials omitted."""
+
     provider: ManagedRealtimePushProviderProvider
     enabled: bool
     updated_at: datetime.datetime

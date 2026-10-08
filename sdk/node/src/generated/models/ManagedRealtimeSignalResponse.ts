@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Best-effort signal fanout result for currently connected subscribers.
+ */
 export type ManagedRealtimeSignalResponse = {
   accepted: boolean;
   member_id: 'backend';

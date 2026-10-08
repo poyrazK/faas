@@ -87,7 +87,7 @@ func validPushFingerprint(value string) bool {
 		return false
 	}
 	for _, r := range value {
-		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			return false
 		}
 	}

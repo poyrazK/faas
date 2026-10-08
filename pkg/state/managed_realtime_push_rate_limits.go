@@ -9,7 +9,7 @@ import (
 )
 
 func rateLimitApplies(p api.RealtimeNotificationPreferences, j ManagedRealtimePushDelivery) bool {
-	return p.RateLimit != nil && !(j.Priority == "urgent" && p.RateLimit.AllowUrgentBypass)
+	return p.RateLimit != nil && (j.Priority != "urgent" || !p.RateLimit.AllowUrgentBypass)
 }
 func pushRateKey(j ManagedRealtimePushDelivery) string {
 	raw, _ := json.Marshal([]string{j.EndpointID, j.Principal})

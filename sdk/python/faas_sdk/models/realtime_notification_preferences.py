@@ -15,12 +15,8 @@ if TYPE_CHECKING:
     from ..models.realtime_notification_preferences_categories_type_0 import (
         RealtimeNotificationPreferencesCategoriesType0,
     )
-    from ..models.realtime_notification_preferences_quiet_hours_type_0 import (
-        RealtimeNotificationPreferencesQuietHoursType0,
-    )
-    from ..models.realtime_notification_preferences_rate_limit_type_0 import (
-        RealtimeNotificationPreferencesRateLimitType0,
-    )
+    from ..models.realtime_notification_rate_limit import RealtimeNotificationRateLimit
+    from ..models.realtime_quiet_hours import RealtimeQuietHours
 
 
 T = TypeVar("T", bound="RealtimeNotificationPreferences")
@@ -28,11 +24,11 @@ T = TypeVar("T", bound="RealtimeNotificationPreferences")
 
 @_attrs_define
 class RealtimeNotificationPreferences:
+    """Push delivery preferences shared across devices for a verified principal."""
+
     enabled: bool
     """Master push switch for this principal."""
-    rate_limit: None | RealtimeNotificationPreferencesRateLimitType0 | Unset = UNSET
-    """Shared per-principal provider-delivery quota across devices. Null or omission disables it. Digests consume
-    one slot."""
+    rate_limit: None | RealtimeNotificationRateLimit | Unset = UNSET
     allow_urgent_bypass: bool | Unset = False
     """Allow urgent alerts to bypass quiet hours and digest delays; mute settings still apply."""
     digest_interval_seconds: RealtimeNotificationPreferencesDigestIntervalSeconds | Unset = 0
@@ -43,26 +39,21 @@ class RealtimeNotificationPreferences:
     """Unlisted categories are enabled. False cancels push for this category."""
     devices: list[str] | None | Unset = UNSET
     """Null or omitted selects all registered devices; empty array selects none."""
-    quiet_hours: None | RealtimeNotificationPreferencesQuietHoursType0 | Unset = UNSET
-    """Daily half-open quiet interval; start and end must differ. Omit or null to disable."""
+    quiet_hours: None | RealtimeQuietHours | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.realtime_notification_preferences_categories_type_0 import (
             RealtimeNotificationPreferencesCategoriesType0,
         )
-        from ..models.realtime_notification_preferences_quiet_hours_type_0 import (
-            RealtimeNotificationPreferencesQuietHoursType0,
-        )
-        from ..models.realtime_notification_preferences_rate_limit_type_0 import (
-            RealtimeNotificationPreferencesRateLimitType0,
-        )
+        from ..models.realtime_notification_rate_limit import RealtimeNotificationRateLimit
+        from ..models.realtime_quiet_hours import RealtimeQuietHours
 
         enabled = self.enabled
 
         rate_limit: dict[str, Any] | None | Unset
         if isinstance(self.rate_limit, Unset):
             rate_limit = UNSET
-        elif isinstance(self.rate_limit, RealtimeNotificationPreferencesRateLimitType0):
+        elif isinstance(self.rate_limit, RealtimeNotificationRateLimit):
             rate_limit = self.rate_limit.to_dict()
         else:
             rate_limit = self.rate_limit
@@ -99,7 +90,7 @@ class RealtimeNotificationPreferences:
         quiet_hours: dict[str, Any] | None | Unset
         if isinstance(self.quiet_hours, Unset):
             quiet_hours = UNSET
-        elif isinstance(self.quiet_hours, RealtimeNotificationPreferencesQuietHoursType0):
+        elif isinstance(self.quiet_hours, RealtimeQuietHours):
             quiet_hours = self.quiet_hours.to_dict()
         else:
             quiet_hours = self.quiet_hours
@@ -133,17 +124,13 @@ class RealtimeNotificationPreferences:
         from ..models.realtime_notification_preferences_categories_type_0 import (
             RealtimeNotificationPreferencesCategoriesType0,
         )
-        from ..models.realtime_notification_preferences_quiet_hours_type_0 import (
-            RealtimeNotificationPreferencesQuietHoursType0,
-        )
-        from ..models.realtime_notification_preferences_rate_limit_type_0 import (
-            RealtimeNotificationPreferencesRateLimitType0,
-        )
+        from ..models.realtime_notification_rate_limit import RealtimeNotificationRateLimit
+        from ..models.realtime_quiet_hours import RealtimeQuietHours
 
         d = dict(src_dict)
         enabled = d.pop("enabled")
 
-        def _parse_rate_limit(data: object) -> None | RealtimeNotificationPreferencesRateLimitType0 | Unset:
+        def _parse_rate_limit(data: object) -> None | RealtimeNotificationRateLimit | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -151,12 +138,12 @@ class RealtimeNotificationPreferences:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                rate_limit_type_0 = RealtimeNotificationPreferencesRateLimitType0.from_dict(data)
+                rate_limit_type_0 = RealtimeNotificationRateLimit.from_dict(data)
 
                 return rate_limit_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(None | RealtimeNotificationPreferencesRateLimitType0 | Unset, data)
+            return cast(None | RealtimeNotificationRateLimit | Unset, data)
 
         rate_limit = _parse_rate_limit(d.pop("rate_limit", UNSET))
 
@@ -214,7 +201,7 @@ class RealtimeNotificationPreferences:
 
         devices = _parse_devices(d.pop("devices", UNSET))
 
-        def _parse_quiet_hours(data: object) -> None | RealtimeNotificationPreferencesQuietHoursType0 | Unset:
+        def _parse_quiet_hours(data: object) -> None | RealtimeQuietHours | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -222,12 +209,12 @@ class RealtimeNotificationPreferences:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                quiet_hours_type_0 = RealtimeNotificationPreferencesQuietHoursType0.from_dict(data)
+                quiet_hours_type_0 = RealtimeQuietHours.from_dict(data)
 
                 return quiet_hours_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            return cast(None | RealtimeNotificationPreferencesQuietHoursType0 | Unset, data)
+            return cast(None | RealtimeQuietHours | Unset, data)
 
         quiet_hours = _parse_quiet_hours(d.pop("quiet_hours", UNSET))
 

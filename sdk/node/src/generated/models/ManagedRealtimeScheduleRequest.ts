@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Scheduled channel publish payload with recurrence and retry settings.
+ */
 export type ManagedRealtimeScheduleRequest = {
   /**
    * Optional immutable channel-scoped group label; at most 128 UTF-8 bytes.

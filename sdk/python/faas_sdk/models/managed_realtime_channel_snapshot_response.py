@@ -23,6 +23,8 @@ T = TypeVar("T", bound="ManagedRealtimeChannelSnapshotResponse")
 
 @_attrs_define
 class ManagedRealtimeChannelSnapshotResponse:
+    """Channel state snapshot with sequence and entity expiration metadata."""
+
     channel: str
     sequence: int
     resume_after_sequence: int
@@ -31,7 +33,7 @@ class ManagedRealtimeChannelSnapshotResponse:
     updated_at: datetime.datetime
     expires_at: datetime.datetime
     entity_expirations: ManagedRealtimeChannelSnapshotResponseEntityExpirations | Unset = UNSET
-    """Scheduled entity deadlines; cleanup is asynchronous."""
+    """Entity cleanup deadlines carried by this channel snapshot; cleanup runs asynchronously."""
     entity_versions: ManagedRealtimeChannelSnapshotResponseEntityVersions | Unset = UNSET
     """Entity versions, including deletion tombstones; reducer snapshots only."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

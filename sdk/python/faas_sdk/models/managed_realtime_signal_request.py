@@ -13,6 +13,8 @@ T = TypeVar("T", bound="ManagedRealtimeSignalRequest")
 
 @_attrs_define
 class ManagedRealtimeSignalRequest:
+    """Ephemeral backend signal payload with optional name and expiration."""
+
     data: Any
     """Any JSON value, including null, within 2048 encoded UTF-8 bytes."""
     name: str | Unset = UNSET

@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ManagedRealtimePushDevice")
 
 @_attrs_define
 class ManagedRealtimePushDevice:
+    """Registered device metadata with delivery tokens omitted."""
+
     device: str
     provider: ManagedRealtimePushDeviceProvider
     enabled: bool

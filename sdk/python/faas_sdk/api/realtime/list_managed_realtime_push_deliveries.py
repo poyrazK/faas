@@ -105,9 +105,8 @@ def sync_detailed(
 ) -> Response[Problem | list[ManagedRealtimePushDelivery]]:
     """List realtime push deliveries.
 
-     Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery
-    history includes the latest 100 records for the principal; sent means provider acceptance, not user
-    delivery.
+     Lists the latest 100 push delivery records for the principal under the retained-history preview
+    gate. Provider acceptance does not confirm delivery to the user. Tokens and credentials are omitted.
 
     Args:
         slug (str):
@@ -144,9 +143,8 @@ def sync(
 ) -> Problem | list[ManagedRealtimePushDelivery] | None:
     """List realtime push deliveries.
 
-     Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery
-    history includes the latest 100 records for the principal; sent means provider acceptance, not user
-    delivery.
+     Lists the latest 100 push delivery records for the principal under the retained-history preview
+    gate. Provider acceptance does not confirm delivery to the user. Tokens and credentials are omitted.
 
     Args:
         slug (str):
@@ -178,9 +176,8 @@ async def asyncio_detailed(
 ) -> Response[Problem | list[ManagedRealtimePushDelivery]]:
     """List realtime push deliveries.
 
-     Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery
-    history includes the latest 100 records for the principal; sent means provider acceptance, not user
-    delivery.
+     Lists the latest 100 push delivery records for the principal under the retained-history preview
+    gate. Provider acceptance does not confirm delivery to the user. Tokens and credentials are omitted.
 
     Args:
         slug (str):
@@ -215,9 +212,8 @@ async def asyncio(
 ) -> Problem | list[ManagedRealtimePushDelivery] | None:
     """List realtime push deliveries.
 
-     Requires the retained-history preview gate. Credentials and tokens are never returned. Delivery
-    history includes the latest 100 records for the principal; sent means provider acceptance, not user
-    delivery.
+     Lists the latest 100 push delivery records for the principal under the retained-history preview
+    gate. Provider acceptance does not confirm delivery to the user. Tokens and credentials are omitted.
 
     Args:
         slug (str):

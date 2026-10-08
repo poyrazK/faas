@@ -7,8 +7,8 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.managed_realtime_channel_snapshot_request import ManagedRealtimeChannelSnapshotRequest
 from ...models.managed_realtime_channel_snapshot_response import ManagedRealtimeChannelSnapshotResponse
-from ...models.put_managed_realtime_channel_snapshot_body import PutManagedRealtimeChannelSnapshotBody
 from ...types import Response
 
 
@@ -17,7 +17,7 @@ def _get_kwargs(
     id: UUID,
     channel: str,
     *,
-    body: PutManagedRealtimeChannelSnapshotBody,
+    body: ManagedRealtimeChannelSnapshotRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -81,7 +81,7 @@ def sync_detailed(
     channel: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PutManagedRealtimeChannelSnapshotBody,
+    body: ManagedRealtimeChannelSnapshotRequest,
 ) -> Response[Any | ManagedRealtimeChannelSnapshotResponse]:
     """Save state representing an explicit committed channel sequence
 
@@ -89,7 +89,8 @@ def sync_detailed(
         slug (str):
         id (UUID):
         channel (str):
-        body (PutManagedRealtimeChannelSnapshotBody):
+        body (ManagedRealtimeChannelSnapshotRequest): Encoded channel state representing an
+            explicit committed sequence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -119,7 +120,7 @@ def sync(
     channel: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PutManagedRealtimeChannelSnapshotBody,
+    body: ManagedRealtimeChannelSnapshotRequest,
 ) -> Any | ManagedRealtimeChannelSnapshotResponse | None:
     """Save state representing an explicit committed channel sequence
 
@@ -127,7 +128,8 @@ def sync(
         slug (str):
         id (UUID):
         channel (str):
-        body (PutManagedRealtimeChannelSnapshotBody):
+        body (ManagedRealtimeChannelSnapshotRequest): Encoded channel state representing an
+            explicit committed sequence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -152,7 +154,7 @@ async def asyncio_detailed(
     channel: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PutManagedRealtimeChannelSnapshotBody,
+    body: ManagedRealtimeChannelSnapshotRequest,
 ) -> Response[Any | ManagedRealtimeChannelSnapshotResponse]:
     """Save state representing an explicit committed channel sequence
 
@@ -160,7 +162,8 @@ async def asyncio_detailed(
         slug (str):
         id (UUID):
         channel (str):
-        body (PutManagedRealtimeChannelSnapshotBody):
+        body (ManagedRealtimeChannelSnapshotRequest): Encoded channel state representing an
+            explicit committed sequence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -188,7 +191,7 @@ async def asyncio(
     channel: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PutManagedRealtimeChannelSnapshotBody,
+    body: ManagedRealtimeChannelSnapshotRequest,
 ) -> Any | ManagedRealtimeChannelSnapshotResponse | None:
     """Save state representing an explicit committed channel sequence
 
@@ -196,7 +199,8 @@ async def asyncio(
         slug (str):
         id (UUID):
         channel (str):
-        body (PutManagedRealtimeChannelSnapshotBody):
+        body (ManagedRealtimeChannelSnapshotRequest): Encoded channel state representing an
+            explicit committed sequence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

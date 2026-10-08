@@ -18,6 +18,8 @@ T = TypeVar("T", bound="ManagedRealtimeEventSchemaResponse")
 
 @_attrs_define
 class ManagedRealtimeEventSchemaResponse:
+    """Stored JSON Schema used to validate retained channel events."""
+
     channel: str
     event_type: str
     version: int

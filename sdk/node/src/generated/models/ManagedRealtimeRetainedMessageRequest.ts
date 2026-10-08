@@ -7,11 +7,11 @@
  */
 export type ManagedRealtimeRetainedMessageRequest = {
   /**
-   * Optional current channel sequence precondition; zero requires an empty channel. Retained channel writes only.
+   * Optional channel head sequence required before this retained publish; zero requires an empty channel.
    */
   expected_sequence?: number | null;
   /**
-   * Exact-match routing metadata; at most 4096 encoded JSON bytes. Retained channel publishing only.
+   * Routing metadata attached to this retained publish; at most 4096 encoded JSON bytes.
    */
   metadata?: Record<string, string>;
   /**

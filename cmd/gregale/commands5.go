@@ -1740,6 +1740,12 @@ func indexByte(s string, c byte) int {
 // is watching invocations, and advisory frames are noisy (one per
 // debounce window per state-shaped path).
 func cmdTail(args []string) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	return cmdTailContext(ctx, args)
+}
+
+func cmdTailContext(ctx context.Context, args []string) int {
 	fs := newFlagSet("tail", flag.ContinueOnError)
 	onlySlug := fs.String("app", "", "filter to a single app slug (optional)")
 	includeStateless := fs.Bool("include-stateless", false, "also print stateless.advisory frames (default: hide)")
@@ -1760,9 +1766,6 @@ func cmdTail(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 
 	// Event frames carry app_id only. Resolve --app to its id so the filter
 	// matches, and keep an id→slug map so lines name the app.
@@ -1853,6 +1856,7 @@ func tailStreamOnce(ctx context.Context, client *Client, filter tailFilter) (att
 	dec := api.NewDecoder(body)
 	dec.SetCloseFn(body.Close)
 	defer func() { _ = dec.Close() }()
+	streamErrors := dec.Errors()
 	for {
 		select {
 		case <-ctx.Done():
@@ -1864,14 +1868,19 @@ func tailStreamOnce(ctx context.Context, client *Client, filter tailFilter) (att
 			if writeErr := writeTailFrame(e, filter); writeErr != nil {
 				return true, printErr("Could not write event", writeErr)
 			}
-		case err := <-dec.Errors():
+		case err, ok := <-streamErrors:
+			if !ok {
+				streamErrors = nil
+				continue
+			}
 			if err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
 				PrintWarn(os.Stderr, "stream closed: %v", err)
 			}
 			if ctx.Err() != nil {
 				return true, 130
 			}
-			return true, -1
+			// The decoder can report EOF while Events still holds buffered
+			// frames. Drain those frames before reconnecting.
 		}
 	}
 }

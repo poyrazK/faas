@@ -7,8 +7,8 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.publish_managed_realtime_channel_batch_body import PublishManagedRealtimeChannelBatchBody
-from ...models.publish_managed_realtime_channel_batch_response_200 import PublishManagedRealtimeChannelBatchResponse200
+from ...models.managed_realtime_channel_batch_request import ManagedRealtimeChannelBatchRequest
+from ...models.managed_realtime_channel_batch_response import ManagedRealtimeChannelBatchResponse
 from ...types import Response
 
 
@@ -17,7 +17,7 @@ def _get_kwargs(
     id: UUID,
     channel: str,
     *,
-    body: PublishManagedRealtimeChannelBatchBody,
+    body: ManagedRealtimeChannelBatchRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -40,9 +40,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Any | PublishManagedRealtimeChannelBatchResponse200 | None:
+) -> Any | ManagedRealtimeChannelBatchResponse | None:
     if response.status_code == 200:
-        response_200 = PublishManagedRealtimeChannelBatchResponse200.from_dict(response.json())
+        response_200 = ManagedRealtimeChannelBatchResponse.from_dict(response.json())
 
         return response_200
 
@@ -66,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Any | PublishManagedRealtimeChannelBatchResponse200]:
+) -> Response[Any | ManagedRealtimeChannelBatchResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -81,22 +81,23 @@ def sync_detailed(
     channel: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PublishManagedRealtimeChannelBatchBody,
-) -> Response[Any | PublishManagedRealtimeChannelBatchResponse200]:
+    body: ManagedRealtimeChannelBatchRequest,
+) -> Response[Any | ManagedRealtimeChannelBatchResponse]:
     """Atomically retain a bounded batch, then attempt live delivery
 
     Args:
         slug (str):
         id (UUID):
         channel (str):
-        body (PublishManagedRealtimeChannelBatchBody):
+        body (ManagedRealtimeChannelBatchRequest): Atomic batch of retained channel messages with
+            an optional sequence precondition.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | PublishManagedRealtimeChannelBatchResponse200]
+        Response[Any | ManagedRealtimeChannelBatchResponse]
     """
 
     kwargs = _get_kwargs(
@@ -119,22 +120,23 @@ def sync(
     channel: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PublishManagedRealtimeChannelBatchBody,
-) -> Any | PublishManagedRealtimeChannelBatchResponse200 | None:
+    body: ManagedRealtimeChannelBatchRequest,
+) -> Any | ManagedRealtimeChannelBatchResponse | None:
     """Atomically retain a bounded batch, then attempt live delivery
 
     Args:
         slug (str):
         id (UUID):
         channel (str):
-        body (PublishManagedRealtimeChannelBatchBody):
+        body (ManagedRealtimeChannelBatchRequest): Atomic batch of retained channel messages with
+            an optional sequence precondition.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | PublishManagedRealtimeChannelBatchResponse200
+        Any | ManagedRealtimeChannelBatchResponse
     """
 
     return sync_detailed(
@@ -152,22 +154,23 @@ async def asyncio_detailed(
     channel: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PublishManagedRealtimeChannelBatchBody,
-) -> Response[Any | PublishManagedRealtimeChannelBatchResponse200]:
+    body: ManagedRealtimeChannelBatchRequest,
+) -> Response[Any | ManagedRealtimeChannelBatchResponse]:
     """Atomically retain a bounded batch, then attempt live delivery
 
     Args:
         slug (str):
         id (UUID):
         channel (str):
-        body (PublishManagedRealtimeChannelBatchBody):
+        body (ManagedRealtimeChannelBatchRequest): Atomic batch of retained channel messages with
+            an optional sequence precondition.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | PublishManagedRealtimeChannelBatchResponse200]
+        Response[Any | ManagedRealtimeChannelBatchResponse]
     """
 
     kwargs = _get_kwargs(
@@ -188,22 +191,23 @@ async def asyncio(
     channel: str,
     *,
     client: AuthenticatedClient | Client,
-    body: PublishManagedRealtimeChannelBatchBody,
-) -> Any | PublishManagedRealtimeChannelBatchResponse200 | None:
+    body: ManagedRealtimeChannelBatchRequest,
+) -> Any | ManagedRealtimeChannelBatchResponse | None:
     """Atomically retain a bounded batch, then attempt live delivery
 
     Args:
         slug (str):
         id (UUID):
         channel (str):
-        body (PublishManagedRealtimeChannelBatchBody):
+        body (ManagedRealtimeChannelBatchRequest): Atomic batch of retained channel messages with
+            an optional sequence precondition.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | PublishManagedRealtimeChannelBatchResponse200
+        Any | ManagedRealtimeChannelBatchResponse
     """
 
     return (
