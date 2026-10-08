@@ -7795,7 +7795,7 @@ paths:
       tags: [operations]
       operationId: reportOperationWorkflowState
       summary: Publish an app-reported business workflow state.
-      description: Requires the current workload and invocation claim. The state name must be declared by the pinned workflow definition. Revisions assigned inside the application transaction prevent late older publications from replacing a newer state.
+      description: Requires the current workload and invocation claim. The state name and contract version must match the pinned workflow definition. A transition's referenced milestones must already be retained for the same Operation.
       parameters:
       - $ref: '#/components/parameters/OperationId'
       - $ref: '#/components/parameters/OperationXFaasInvocationId'
@@ -7825,7 +7825,7 @@ paths:
       tags: [operations]
       operationId: validateOperationWorkflowStates
       summary: Validate app-reported workflow states before transaction commit.
-      description: Requires the active workload and invocation claim. Validates the declared workflow/state vocabulary, business reference, instance ID and positive transaction-assigned revisions without publishing or reserving capacity.
+      description: Requires the active workload and invocation claim. Validates the workflow contract version, transition edge, required milestone evidence and transaction-assigned revisions before commit. Evidence IDs must refer to facts in the same submitted transaction batch. This does not publish facts or reserve capacity. Maximum request size is 131072 bytes.
       parameters:
       - $ref: '#/components/parameters/OperationId'
       - $ref: '#/components/parameters/OperationXFaasInvocationId'
@@ -31375,6 +31375,7 @@ components:
       properties:
         workflow: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
         title: {type: string, minLength: 1, maxLength: 128}
+        version: {type: integer, minimum: 1, maximum: 1000000, description: Explicit workflow contract version. Legacy definitions that omit it have effective version 1.}
         states:
           type: array
           maxItems: 32
@@ -31398,6 +31399,9 @@ components:
           maxItems: 128
           items: {$ref: '#/components/schemas/OperationWorkflowTransition'}
           description: App-declared allowed state edges pinned with this workflow mapping.
+        transitions_declared:
+          type: boolean
+          description: True when the workflow declares transitions, including when this Operation has no scoped edges.
         step: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
         label: {type: string, minLength: 1, maxLength: 128}
         milestone: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
@@ -31412,6 +31416,20 @@ components:
       properties:
         from: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
         to: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+        required_milestones:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
+          description: Milestone names that must be committed in the same application transaction as this transition.
+    OperationWorkflowEvidenceMilestone:
+      description: Reference to a retained milestone fact committed in the same application transaction as a workflow transition.
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
     OperationMilestonesResponse:
       description: Page of retained public milestone facts in the selected ownership and business-reference boundary.
       type: object
@@ -31434,7 +31452,7 @@ components:
       type: object
       additionalProperties: false
       required: [id, workflow, instance_id, state, revision, occurred_at]
-      description: Idempotent app-reported state update already committed with the business write. Revision is assigned transactionally by the application SDK.
+      description: Idempotent app-reported state update already committed with the business write. Revision is assigned transactionally by the application SDK. Contract version is filled from the pinned definition when omitted.
       properties:
         id: {type: string, format: uuid}
         workflow: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
@@ -31443,6 +31461,12 @@ components:
         state: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
         revision: {type: integer, format: int64, minimum: 1}
         occurred_at: {type: string, format: date-time}
+        contract_version: {type: integer, minimum: 1, maximum: 1000000, description: Optional version precondition; the server fills this from the immutable Operation definition.}
+        evidence_milestones:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/OperationWorkflowEvidenceMilestone'}
+          description: Facts committed in the same application transaction as this transition.
     OperationWorkflowStateValidationRequest:
       description: Batch of application-reported workflow updates to validate before their transaction commits.
       type: object
@@ -31450,6 +31474,11 @@ components:
       required: [workflow_states]
       properties:
         workflow_states: {type: array, minItems: 1, maxItems: 64, items: {$ref: '#/components/schemas/OperationWorkflowStateReport'}}
+        milestones:
+          type: array
+          maxItems: 64
+          items: {$ref: '#/components/schemas/OperationMilestoneRequest'}
+          description: Facts from the same application transaction, used to verify transition evidence before commit.
     OperationWorkflowStateValidationResponse:
       description: Validation outcome for an app-reported workflow-state batch.
       type: object
@@ -31461,7 +31490,7 @@ components:
       description: Acknowledgement returned after the platform records an app-reported workflow-state update.
       type: object
       additionalProperties: false
-      required: [id, operation_id, workflow, instance_id, state, revision]
+      required: [id, operation_id, workflow, instance_id, state, revision, contract_version]
       properties:
         id: {type: string, format: uuid}
         operation_id: {type: string, format: uuid}
@@ -31470,11 +31499,16 @@ components:
         from_state: {type: string, description: Previous app state when a declared transition was reported.}
         state: {type: string}
         revision: {type: integer, format: int64, minimum: 1}
+        contract_version: {type: integer, minimum: 1, maximum: 1000000}
+        evidence_milestones:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/OperationWorkflowEvidenceMilestone'}
     OperationWorkflowState:
       description: Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
       type: object
       additionalProperties: false
-      required: [workflow, instance_id, state, terminal, stale, occurred_at, revision, updated_at]
+      required: [workflow, instance_id, state, terminal, stale, occurred_at, revision, contract_version, updated_at]
       properties:
         workflow: {type: string}
         instance_id: {type: string}
@@ -31484,12 +31518,17 @@ components:
         occurred_at: {type: string, format: date-time, description: App-reported time when the current state became true; used for stale-state age.}
         stale_after_seconds: {type: integer, minimum: 1, maximum: 315360000, description: App-declared age threshold for the current state when one is configured.}
         revision: {type: integer, format: int64, minimum: 1}
+        contract_version: {type: integer, minimum: 1, maximum: 1000000}
+        evidence_milestones:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/OperationWorkflowEvidenceMilestone'}
         updated_at: {type: string, format: date-time}
         platform_tenant_id: {type: string, format: uuid, description: Included only for account operator feeds.}
     OperationWorkflowStateHistoryEntry:
       type: object
       additionalProperties: false
-      required: [id, operation_id, workflow, instance_id, state, revision, occurred_at, published_at]
+      required: [id, operation_id, workflow, instance_id, state, revision, contract_version, occurred_at, published_at]
       description: One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
       properties:
         id: {type: string, format: uuid}
@@ -31499,6 +31538,11 @@ components:
         from_state: {type: string, description: App state immediately before this retained revision, when the transition was declared.}
         state: {type: string}
         revision: {type: integer, format: int64, minimum: 1}
+        contract_version: {type: integer, minimum: 1, maximum: 1000000}
+        evidence_milestones:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/OperationWorkflowEvidenceMilestone'}
         occurred_at: {type: string, format: date-time}
         published_at: {type: string, format: date-time}
         platform_tenant_id: {type: string, format: uuid, description: Account-owner tenant identifier attached to this report in operator feeds.}

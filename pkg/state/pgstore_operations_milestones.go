@@ -145,7 +145,7 @@ func (s *PgStore) ReportOperationMilestone(ctx context.Context, id string, autho
 	return milestone, nil
 }
 
-func (s *PgStore) ValidateOperationWorkflowStates(ctx context.Context, id string, authority OperationExecutionAuthority, reports []api.OperationWorkflowStateReport) error {
+func (s *PgStore) ValidateOperationWorkflowStates(ctx context.Context, id string, authority OperationExecutionAuthority, reports []api.OperationWorkflowStateReport, milestones []api.OperationMilestoneRequest) error {
 	if _, err := operationUUID(authority.InvocationID); err != nil {
 		return err
 	}
@@ -158,7 +158,7 @@ func (s *PgStore) ValidateOperationWorkflowStates(ctx context.Context, id string
 	if err != nil {
 		return err
 	}
-	if err := validateOperationWorkflowStateBatch(op, def, reports); err != nil {
+	if err := validateOperationWorkflowStateBatch(op, def, reports, milestones); err != nil {
 		return err
 	}
 	q := sqlc.New()
@@ -202,6 +202,16 @@ func (s *PgStore) ReportOperationWorkflowState(ctx context.Context, id string, a
 	}
 	q := sqlc.New()
 	operationID, _ := operationUUID(id)
+	for _, evidence := range report.EvidenceMilestones {
+		milestoneID, _ := operationUUID(evidence.ID)
+		milestone, err := q.GetCustomerOperationMilestone(ctx, tx, sqlc.GetCustomerOperationMilestoneParams{OperationID: operationID, ID: milestoneID})
+		if errors.Is(err, pgx.ErrNoRows) || err == nil && milestone.Name != evidence.Name {
+			return api.OperationWorkflowStateReportResponse{}, fmt.Errorf("%w: workflow state evidence references an unpublished milestone", ErrInvalidArgument)
+		}
+		if err != nil {
+			return api.OperationWorkflowStateReportResponse{}, err
+		}
+	}
 	stateID, _ := operationUUID(report.ID)
 	prior, err := q.GetCustomerOperationWorkflowStateReport(ctx, tx, sqlc.GetCustomerOperationWorkflowStateReportParams{OperationID: operationID, ID: stateID})
 	if err == nil {
@@ -209,16 +219,25 @@ func (s *PgStore) ReportOperationWorkflowState(ctx context.Context, id string, a
 			return api.OperationWorkflowStateReportResponse{}, ErrOperationInputConflict
 		}
 		return api.OperationWorkflowStateReportResponse{ID: prior.ID, OperationID: id, Workflow: prior.Workflow, InstanceID: prior.InstanceID,
-			FromState: prior.FromState, State: prior.State, Revision: prior.Revision}, nil
+			FromState: prior.FromState, State: prior.State, Revision: prior.Revision,
+			ContractVersion: int(prior.ContractVersion), EvidenceMilestones: decodeWorkflowEvidence(prior.EvidenceMilestones)}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return api.OperationWorkflowStateReportResponse{}, err
+	}
+	evidenceJSON, err := json.Marshal(report.EvidenceMilestones)
+	if err != nil {
+		return api.OperationWorkflowStateReportResponse{}, err
+	}
+	if report.EvidenceMilestones == nil {
+		evidenceJSON = []byte("[]")
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if err := q.InsertCustomerOperationWorkflowStateReport(ctx, tx, sqlc.InsertCustomerOperationWorkflowStateReportParams{
 		OperationID: operationID, ID: stateID, Workflow: report.Workflow, InstanceID: report.InstanceID,
 		FromState: report.FromState, State: report.State, Revision: report.Revision, OccurredAt: pgtype.Timestamptz{Time: report.OccurredAt, Valid: true},
 		CreatedAt: pgtype.Timestamptz{Time: now, Valid: true}, Fingerprint: fingerprint,
+		ContractVersion: int32(report.ContractVersion), EvidenceMilestones: evidenceJSON,
 	}); err != nil {
 		return api.OperationWorkflowStateReportResponse{}, err
 	}
@@ -232,7 +251,19 @@ func (s *PgStore) ReportOperationWorkflowState(ctx context.Context, id string, a
 		return api.OperationWorkflowStateReportResponse{}, err
 	}
 	return api.OperationWorkflowStateReportResponse{ID: report.ID, OperationID: id, Workflow: report.Workflow,
-		InstanceID: report.InstanceID, FromState: report.FromState, State: report.State, Revision: report.Revision}, nil
+		InstanceID: report.InstanceID, FromState: report.FromState, State: report.State, Revision: report.Revision,
+		ContractVersion: report.ContractVersion, EvidenceMilestones: append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...)}, nil
+}
+
+func decodeWorkflowEvidence(raw []byte) []api.OperationWorkflowEvidenceMilestone {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var evidence []api.OperationWorkflowEvidenceMilestone
+	if json.Unmarshal(raw, &evidence) != nil {
+		return nil
+	}
+	return evidence
 }
 
 func (s *PgStore) ListPlatformTenantOperationMilestones(ctx context.Context, account, tenant string, opts api.OperationMilestoneListOptions) (api.OperationMilestonesResponse, error) {

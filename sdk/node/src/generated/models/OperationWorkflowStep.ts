@@ -10,6 +10,10 @@ export type OperationWorkflowStep = {
   workflow: string;
   title: string;
   /**
+   * Explicit workflow contract version. Legacy definitions that omit it have effective version 1.
+   */
+  version?: number;
+  /**
    * App-declared business state vocabulary pinned with this workflow mapping.
    */
   states?: Array<string>;
@@ -25,6 +29,10 @@ export type OperationWorkflowStep = {
    * App-declared allowed state edges pinned with this workflow mapping.
    */
   transitions?: Array<OperationWorkflowTransition>;
+  /**
+   * True when the workflow declares transitions, including when this Operation has no scoped edges.
+   */
+  transitions_declared?: boolean;
   step: string;
   label: string;
   milestone: string;

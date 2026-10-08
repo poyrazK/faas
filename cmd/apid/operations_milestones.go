@@ -70,7 +70,7 @@ func (s *server) reportOperationWorkflowState(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var report api.OperationWorkflowStateReport
-	if !decodeOperationBody(w, r, &report, 2048) {
+	if !decodeOperationBody(w, r, &report, 8192) {
 		return
 	}
 	response, err := store.ReportOperationWorkflowState(r.Context(), op.ID, authority, report)
@@ -91,10 +91,10 @@ func (s *server) validateOperationWorkflowStates(w http.ResponseWriter, r *http.
 		return
 	}
 	var batch api.OperationWorkflowStateValidationRequest
-	if !decodeOperationBody(w, r, &batch, api.OperationMilestoneBatchMaxBytes) {
+	if !decodeOperationBody(w, r, &batch, api.OperationWorkflowStateBatchMaxBytes) {
 		return
 	}
-	if err := store.ValidateOperationWorkflowStates(r.Context(), op.ID, authority, batch.WorkflowStates); err != nil {
+	if err := store.ValidateOperationWorkflowStates(r.Context(), op.ID, authority, batch.WorkflowStates, batch.Milestones); err != nil {
 		writeOperationError(w, err)
 		return
 	}

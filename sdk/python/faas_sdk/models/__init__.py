@@ -1619,6 +1619,7 @@ from .operation_subject_spec import OperationSubjectSpec
 from .operation_summary import OperationSummary
 from .operation_summary_state import OperationSummaryState
 from .operation_tenant_identity import OperationTenantIdentity
+from .operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
 from .operation_workflow_state import OperationWorkflowState
 from .operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
 from .operation_workflow_state_report import OperationWorkflowStateReport
@@ -2048,6 +2049,7 @@ from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
 from .publish_event_response import PublishEventResponse
+from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .put_app_env_request import PutAppEnvRequest
@@ -4357,6 +4359,7 @@ __all__ = (
     "OperationSummary",
     "OperationSummaryState",
     "OperationTenantIdentity",
+    "OperationWorkflowEvidenceMilestone",
     "OperationWorkflowState",
     "OperationWorkflowStateHistoryEntry",
     "OperationWorkflowStateReport",
@@ -4742,6 +4745,7 @@ __all__ = (
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishManagedRealtimeChannelDelivery",
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
     "PutAppEnvRequest",

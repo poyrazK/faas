@@ -737,7 +737,7 @@ export class OperationsService {
   }
   /**
    * Publish an app-reported business workflow state.
-   * Requires the current workload and invocation claim. The state name must be declared by the pinned workflow definition. Revisions assigned inside the application transaction prevent late older publications from replacing a newer state.
+   * Requires the current workload and invocation claim. The state name and contract version must match the pinned workflow definition. A transition's referenced milestones must already be retained for the same Operation.
    * @returns OperationWorkflowStateReportResponse State update accepted idempotently, even when a newer revision is already current.
    * @throws ApiError
    */
@@ -797,7 +797,7 @@ export class OperationsService {
   }
   /**
    * Validate app-reported workflow states before transaction commit.
-   * Requires the active workload and invocation claim. Validates the declared workflow/state vocabulary, business reference, instance ID and positive transaction-assigned revisions without publishing or reserving capacity.
+   * Requires the active workload and invocation claim. Validates the workflow contract version, transition edge, required milestone evidence and transaction-assigned revisions before commit. Evidence IDs must refer to facts in the same submitted transaction batch. This does not publish facts or reserve capacity. Maximum request size is 131072 bytes.
    * @returns OperationWorkflowStateValidationResponse All candidate state updates passed validation under the current execution claim.
    * @throws ApiError
    */

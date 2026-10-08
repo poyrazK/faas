@@ -392,6 +392,7 @@ Map milestones from one or more Operations into a named process in the source ma
 operation_workflows:
   - name: order-lifecycle
     title: Order lifecycle
+    version: 1
     steps:
       - {name: placed, label: Order placed, operation: place-order, milestone: order-placed, instance_id_from: /workflow_run_id, position: 1}
       - {name: paid, label: Payment authorized, operation: authorize-payment, milestone: payment-authorized, instance_id_from: /workflow_run_id, position: 2}
@@ -428,7 +429,7 @@ operation_workflows:
       fulfillment-in-progress: 2h
     transitions:
       - {from: awaiting-payment, to: fulfillment-in-progress}
-      - {from: fulfillment-in-progress, to: completed}
+      - {from: fulfillment-in-progress, to: completed, operation: fulfill-order, requires_milestones: [order-fulfilled]}
       - {from: awaiting-payment, to: cancelled}
     steps:
       - {name: fulfilled, label: Order fulfilled, operation: fulfill-order, milestone: order-fulfilled, instance_id_from: /workflow_run_id, position: 1}
@@ -444,6 +445,8 @@ await runtime.transaction(request, pool, async tx => {
 ```
 
 `terminal_states` is an optional subset of `states`. Mark each state that ends the business workflow, such as `completed` or `cancelled`; a terminal state cannot have an outgoing transition. A reported state outside this list is active. When the list is omitted, all reported states are active. Gregale pins this declaration with each workflow step and returns a `terminal` boolean on current workflow states, so the dashboard and CLI can label the application-reported state. This classification does not end an Operation, trigger cleanup, or infer completion from milestones or execution status.
+
+Set `version` when defining a workflow contract. Manifests that omit it resolve to version `1`; raise it when the business meaning or transition requirements change. A transition may target one Operation with `operation` and list `requires_milestones`. Every required milestone must be declared by that Operation and reported with the transition in the same application transaction. The Node SDK attaches that transaction's milestone references to each transition; Gregale validates the references before commit and verifies the retained facts again during publication. Current state and history reads include the pinned contract version and evidence references. See [ADR-725](adr/725-versioned-customer-workflow-contracts.md).
 
 `state_stale_after` optionally maps active states to Go duration strings, such as `30m` or `2h`. Each threshold must be between one second and ten years, in whole seconds. Gregale pins the threshold and returns `stale`, `stale_after_seconds`, and the app-reported `occurred_at` with each current state. Age is measured from `occurred_at`, so delayed publication does not extend or shorten the state deadline. Business-reference reads accept `stale_only=true` to return only stale entries in `workflow_states`; milestone facts and state history remain unchanged. The dashboard exposes this filter after a business reference is selected, and the CLI provides `--stale-only`. Gregale marks a run for attention and leaves state changes and recovery to the application. See [ADR-724](adr/724-customer-operation-workflow-stale-state-detection.md).
 

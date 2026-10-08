@@ -29,14 +29,14 @@ func (m *MemStore) milestoneAuthorityLocked(id string, authority OperationExecut
 	return cloneOperation(op), inv, data.definitions[op.DefinitionID], nil
 }
 
-func (m *MemStore) ValidateOperationWorkflowStates(_ context.Context, id string, authority OperationExecutionAuthority, reports []api.OperationWorkflowStateReport) error {
+func (m *MemStore) ValidateOperationWorkflowStates(_ context.Context, id string, authority OperationExecutionAuthority, reports []api.OperationWorkflowStateReport, milestones []api.OperationMilestoneRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	op, _, def, err := m.milestoneAuthorityLocked(id, authority)
 	if err != nil {
 		return err
 	}
-	if err := validateOperationWorkflowStateBatch(op, def, reports); err != nil {
+	if err := validateOperationWorkflowStateBatch(op, def, reports, milestones); err != nil {
 		return err
 	}
 	data := m.operationMemoryLocked()
@@ -65,6 +65,13 @@ func (m *MemStore) ReportOperationWorkflowState(_ context.Context, id string, au
 		return api.OperationWorkflowStateReportResponse{}, err
 	}
 	data := m.operationMemoryLocked()
+	milestoneNames := make(map[string]string, len(data.milestones[id]))
+	for milestoneID, receipt := range data.milestones[id] {
+		milestoneNames[milestoneID] = receipt.Milestone.Name
+	}
+	if err := validatePublishedWorkflowEvidence(report, milestoneNames); err != nil {
+		return api.OperationWorkflowStateReportResponse{}, err
+	}
 	reportKey := id + "/" + report.ID
 	if prior, exists := data.workflowStateReports[reportKey]; exists {
 		if prior.Fingerprint != fingerprint {
@@ -74,9 +81,11 @@ func (m *MemStore) ReportOperationWorkflowState(_ context.Context, id string, au
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	response := api.OperationWorkflowStateReportResponse{ID: report.ID, OperationID: id, Workflow: report.Workflow,
-		InstanceID: report.InstanceID, FromState: report.FromState, State: report.State, Revision: report.Revision}
+		InstanceID: report.InstanceID, FromState: report.FromState, State: report.State, Revision: report.Revision,
+		ContractVersion: report.ContractVersion, EvidenceMilestones: append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...)}
 	history := api.OperationWorkflowStateHistoryEntry{ID: report.ID, OperationID: id, Workflow: report.Workflow,
 		InstanceID: report.InstanceID, FromState: report.FromState, State: report.State, Revision: report.Revision,
+		ContractVersion: report.ContractVersion, EvidenceMilestones: append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...),
 		OccurredAt: report.OccurredAt, PublishedAt: now}
 	stateKey := operationWorkflowStateKey(op.AccountID, op.AppID, op.PlatformTenantID, op.Scope, op.Subject.Type, op.Subject.ID, report.Workflow, report.InstanceID)
 	prior, exists := data.workflowStates[stateKey]
@@ -85,7 +94,8 @@ func (m *MemStore) ReportOperationWorkflowState(_ context.Context, id string, au
 			State: api.OperationWorkflowState{Workflow: report.Workflow, InstanceID: report.InstanceID, State: report.State,
 				Terminal: operations.OperationWorkflowStateIsTerminal(def.Spec, report.Workflow, report.State), OccurredAt: report.OccurredAt,
 				StaleAfterSeconds: operations.OperationWorkflowStateStaleAfterSeconds(def.Spec, report.Workflow, report.State),
-				Revision:          report.Revision, UpdatedAt: now},
+				Revision:          report.Revision, ContractVersion: report.ContractVersion,
+				EvidenceMilestones: append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...), UpdatedAt: now},
 			ReportID: report.ID, AccountID: op.AccountID, AppID: op.AppID, TenantID: op.PlatformTenantID,
 			Scope: op.Scope, SubjectType: op.Subject.Type, SubjectID: op.Subject.ID,
 		}

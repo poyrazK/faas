@@ -12,6 +12,7 @@ NAMES = {
     "OperationMilestoneBatchMaxBytes": "MILESTONE_BATCH_BYTES",
     "OperationMilestonesMaxPerOperation": "MILESTONES",
     "OperationWorkflowStateReportsMaxPerTransaction": "WORKFLOW_STATE_REPORTS",
+    "OperationWorkflowStateBatchMaxBytes": "WORKFLOW_STATE_BATCH_BYTES",
     "OperationSubjectIDMaxBytes": "SUBJECT_ID_BYTES",
     "MaxExclusiveRequestBytes": "REQUEST_BYTES",
     "MaxExclusiveIdentityBytes": "IDENTITY_BYTES",

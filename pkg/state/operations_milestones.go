@@ -18,7 +18,7 @@ import (
 type OperationMilestoneStore interface {
 	ValidateOperationMilestones(context.Context, string, OperationExecutionAuthority, []api.OperationMilestoneRequest) error
 	ReportOperationMilestone(context.Context, string, OperationExecutionAuthority, api.OperationMilestoneRequest) (api.OperationMilestone, error)
-	ValidateOperationWorkflowStates(context.Context, string, OperationExecutionAuthority, []api.OperationWorkflowStateReport) error
+	ValidateOperationWorkflowStates(context.Context, string, OperationExecutionAuthority, []api.OperationWorkflowStateReport, []api.OperationMilestoneRequest) error
 	ReportOperationWorkflowState(context.Context, string, OperationExecutionAuthority, api.OperationWorkflowStateReport) (api.OperationWorkflowStateReportResponse, error)
 	ListPlatformTenantOperationMilestones(context.Context, string, string, api.OperationMilestoneListOptions) (api.OperationMilestonesResponse, error)
 	ListAccountOperationMilestones(context.Context, string, api.OperationMilestoneListOptions) (api.OperationMilestonesResponse, error)
@@ -103,10 +103,19 @@ func canonicalOperationWorkflowState(op Operation, def OperationDefinition, repo
 	return canonical, fingerprint, nil
 }
 
-func validateOperationWorkflowStateBatch(op Operation, def OperationDefinition, reports []api.OperationWorkflowStateReport) error {
-	raw, err := json.Marshal(api.OperationWorkflowStateValidationRequest{WorkflowStates: reports})
-	if err != nil || len(reports) == 0 || len(reports) > api.OperationWorkflowStateReportsMaxPerTransaction || len(raw) > api.OperationMilestoneBatchMaxBytes {
+func validateOperationWorkflowStateBatch(op Operation, def OperationDefinition, reports []api.OperationWorkflowStateReport, milestones []api.OperationMilestoneRequest) error {
+	raw, err := json.Marshal(api.OperationWorkflowStateValidationRequest{WorkflowStates: reports, Milestones: milestones})
+	if err != nil || len(reports) == 0 || len(reports) > api.OperationWorkflowStateReportsMaxPerTransaction || len(milestones) > api.OperationMilestonesMaxPerOperation || len(raw) > api.OperationWorkflowStateBatchMaxBytes {
 		return ErrInvalidArgument
+	}
+	milestonesByID := make(map[string]api.OperationMilestoneRequest, len(milestones))
+	if len(milestones) > 0 {
+		if err := validateOperationMilestoneBatch(op, def, milestones); err != nil {
+			return err
+		}
+		for _, milestone := range milestones {
+			milestonesByID[milestone.ID] = milestone
+		}
 	}
 	seen := make(map[string]bool, len(reports))
 	for _, report := range reports {
@@ -116,6 +125,21 @@ func validateOperationWorkflowStateBatch(op Operation, def OperationDefinition, 
 		seen[report.ID] = true
 		if _, _, err := canonicalOperationWorkflowState(op, def, report); err != nil {
 			return err
+		}
+		for _, evidence := range report.EvidenceMilestones {
+			milestone, exists := milestonesByID[evidence.ID]
+			if !exists || milestone.Name != evidence.Name {
+				return fmt.Errorf("%w: workflow state evidence must reference a milestone in the same transaction", ErrInvalidArgument)
+			}
+		}
+	}
+	return nil
+}
+
+func validatePublishedWorkflowEvidence(report api.OperationWorkflowStateReport, milestoneNames map[string]string) error {
+	for _, evidence := range report.EvidenceMilestones {
+		if name, exists := milestoneNames[evidence.ID]; !exists || name != evidence.Name {
+			return fmt.Errorf("%w: workflow state evidence references an unpublished milestone", ErrInvalidArgument)
 		}
 	}
 	return nil

@@ -8,5 +8,9 @@
 export type OperationWorkflowTransition = {
   from: string;
   to: string;
+  /**
+   * Milestone names that must be committed in the same application transaction as this transition.
+   */
+  required_milestones?: Array<string>;
 };
 

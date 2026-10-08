@@ -1,9 +1,12 @@
 // ADR-719/647: app-owned workflow state snapshots with transactional continuity.
 import { randomUUID } from 'node:crypto';
-import { OPERATION_MILESTONE_BATCH_BYTES, OPERATION_WORKFLOW_STATE_REPORTS } from './operation-contract.js';
+import { OPERATION_WORKFLOW_STATE_BATCH_BYTES, OPERATION_WORKFLOW_STATE_REPORTS } from './operation-contract.js';
 import type { CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
 import { customerOperationRequestDigest } from './customer-operation-transactions.js';
 import type { OperationPool, OperationTransaction } from './operation-receipt.js';
+import type { OperationMilestoneReport } from './customer-operations.js';
+
+export interface OperationWorkflowEvidenceMilestone { id: string; name: string }
 
 export interface OperationWorkflowStateReport {
   id: string;
@@ -13,10 +16,13 @@ export interface OperationWorkflowStateReport {
   state: string;
   revision: number;
   occurred_at: string;
+  evidence_milestones?: OperationWorkflowEvidenceMilestone[];
 }
 
-export interface OperationWorkflowStateReceipt extends Omit<OperationWorkflowStateReport, 'occurred_at'> {
+export interface OperationWorkflowStateReceipt extends Omit<OperationWorkflowStateReport, 'occurred_at' | 'evidence_milestones'> {
   operation_id: string;
+  contract_version: number;
+  evidence_milestones?: OperationWorkflowEvidenceMilestone[];
 }
 
 const WORKFLOW = /^[a-z][a-z0-9-]{0,62}$/;
@@ -44,7 +50,7 @@ export function workflowStateTransaction(
       id: randomUUID(), workflow, instance_id: instanceID, state, revision: 0, occurred_at: new Date().toISOString(),
     };
     if (fromState !== undefined) report.from_state = fromState;
-    if (Buffer.byteLength(JSON.stringify({workflow_states: [...reports, report]})) > OPERATION_MILESTONE_BATCH_BYTES) throw new TypeError('Workflow state batch exceeds its byte limit');
+    if (Buffer.byteLength(JSON.stringify({workflow_states: [...reports, report]})) > OPERATION_WORKFLOW_STATE_BATCH_BYTES) throw new TypeError('Workflow state batch exceeds its byte limit');
     reports.push(report);
   };
   return {
@@ -57,6 +63,7 @@ export async function saveCustomerWorkflowStates(
   tx: OperationTransaction,
   request: CustomerOperationTransactionRequest,
   reports: OperationWorkflowStateReport[],
+  milestones: OperationMilestoneReport[],
 ): Promise<OperationWorkflowStateReport[]> {
   const saved: OperationWorkflowStateReport[] = [];
   for (const report of reports) {
@@ -71,6 +78,13 @@ export async function saveCustomerWorkflowStates(
     const revision = Number(counter?.revision);
     if (!Number.isSafeInteger(revision) || revision < 1) throw new TypeError('Workflow state revision is unavailable');
     const value = {...report, revision};
+    if (value.from_state !== undefined && milestones.length > 0) {
+      const byName = new Map<string, OperationWorkflowEvidenceMilestone>();
+      for (const milestone of milestones) if (!byName.has(milestone.name)) byName.set(milestone.name, {id: milestone.id, name: milestone.name});
+      const evidence = [...byName.values()].sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+      if (evidence.length > 16) throw new TypeError('Workflow transition evidence exceeds its limit');
+      if (evidence.length > 0) value.evidence_milestones = evidence;
+    }
     // The counter upsert above serializes writers for this run until commit.
     // Its head survives receipt cleanup, so the check does not depend on old
     // outbox rows remaining in the application database.
@@ -88,9 +102,9 @@ export async function saveCustomerWorkflowStates(
       throw new TypeError('Workflow transition source does not match the latest app-reported state');
     }
     await tx.query(
-      `INSERT INTO public.gregale_customer_operation_workflow_states(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,occurred_at)
-       VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9::timestamptz)`,
-      [request.operationId, value.id, request.platformTenantId, value.workflow, value.instance_id, value.from_state ?? '', value.state, value.revision, value.occurred_at],
+      `INSERT INTO public.gregale_customer_operation_workflow_states(operation_id,id,platform_tenant_id,workflow,instance_id,from_state,state,revision,evidence_milestones,occurred_at)
+       VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9::jsonb,$10::timestamptz)`,
+      [request.operationId, value.id, request.platformTenantId, value.workflow, value.instance_id, value.from_state ?? '', value.state, value.revision, JSON.stringify(value.evidence_milestones ?? []), value.occurred_at],
     );
     const updatedHead = (await tx.query(
       `UPDATE public.gregale_customer_operation_workflow_state_counters SET last_state=$4
@@ -125,7 +139,7 @@ export async function publishCustomerWorkflowStates(
     const digest = Buffer.from(customerOperationRequestDigest(request));
     const values = [request.operationId, request.accountId, request.appId, request.platformTenantId, digest];
     const rows = (await connection.query(
-      `SELECT s.id::text,s.workflow,s.instance_id,s.from_state,s.state,s.revision,s.occurred_at FROM public.gregale_customer_operation_workflow_states s
+      `SELECT s.id::text,s.workflow,s.instance_id,s.from_state,s.state,s.revision,s.evidence_milestones,s.occurred_at FROM public.gregale_customer_operation_workflow_states s
        JOIN public.gregale_customer_operation_inbox r ON r.operation_id=s.operation_id
        WHERE r.operation_id=$1::uuid AND r.account_id=$2::uuid AND r.app_id=$3::uuid AND r.platform_tenant_id=$4::uuid
         AND r.request_digest=$5 AND s.acknowledged_at IS NULL ORDER BY s.revision,s.id LIMIT $6`, [...values, OPERATION_WORKFLOW_STATE_REPORTS + 1],
@@ -139,9 +153,15 @@ export async function publishCustomerWorkflowStates(
       if (!Number.isFinite(date.valueOf())) throw new TypeError('Invalid saved workflow state timestamp');
       const report: OperationWorkflowStateReport = {id: row.id, workflow: row.workflow, instance_id: row.instance_id, state: row.state, revision, occurred_at: date.toISOString()};
       if (row.from_state) report.from_state = row.from_state;
+      const evidence = typeof row.evidence_milestones === 'string' ? JSON.parse(row.evidence_milestones) as unknown : row.evidence_milestones;
+      if (!Array.isArray(evidence) || evidence.length > 16 || evidence.some(item => item === null || typeof item !== 'object'
+          || typeof (item as Record<string, unknown>).id !== 'string' || typeof (item as Record<string, unknown>).name !== 'string')) throw new TypeError('Invalid saved workflow state evidence');
+      if (evidence.length > 0) report.evidence_milestones = evidence as OperationWorkflowEvidenceMilestone[];
       const receipt = await publish(report);
       if (receipt?.id !== report.id || receipt.operation_id !== request.operationId || receipt.revision !== revision
-          || receipt.workflow !== report.workflow || receipt.instance_id !== report.instance_id || receipt.from_state !== report.from_state || receipt.state !== report.state) {
+          || !Number.isSafeInteger(receipt.contract_version) || receipt.contract_version < 1
+          || receipt.workflow !== report.workflow || receipt.instance_id !== report.instance_id || receipt.from_state !== report.from_state || receipt.state !== report.state
+          || JSON.stringify(receipt.evidence_milestones ?? []) !== JSON.stringify(report.evidence_milestones ?? [])) {
         throw new TypeError('Workflow state publication identity was not confirmed');
       }
       await connection.query(

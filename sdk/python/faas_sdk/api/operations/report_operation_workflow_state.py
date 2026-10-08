@@ -109,9 +109,9 @@ def sync_detailed(
 ) -> Response[OperationWorkflowStateReportResponse | Problem]:
     """Publish an app-reported business workflow state.
 
-     Requires the current workload and invocation claim. The state name must be declared by the pinned
-    workflow definition. Revisions assigned inside the application transaction prevent late older
-    publications from replacing a newer state.
+     Requires the current workload and invocation claim. The state name and contract version must match
+    the pinned workflow definition. A transition's referenced milestones must already be retained for
+    the same Operation.
 
     Args:
         id (UUID):
@@ -120,7 +120,7 @@ def sync_detailed(
         x_gregale_operation_capability (str):
         body (OperationWorkflowStateReport): Idempotent app-reported state update already
             committed with the business write. Revision is assigned transactionally by the application
-            SDK.
+            SDK. Contract version is filled from the pinned definition when omitted.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -156,9 +156,9 @@ def sync(
 ) -> OperationWorkflowStateReportResponse | Problem | None:
     """Publish an app-reported business workflow state.
 
-     Requires the current workload and invocation claim. The state name must be declared by the pinned
-    workflow definition. Revisions assigned inside the application transaction prevent late older
-    publications from replacing a newer state.
+     Requires the current workload and invocation claim. The state name and contract version must match
+    the pinned workflow definition. A transition's referenced milestones must already be retained for
+    the same Operation.
 
     Args:
         id (UUID):
@@ -167,7 +167,7 @@ def sync(
         x_gregale_operation_capability (str):
         body (OperationWorkflowStateReport): Idempotent app-reported state update already
             committed with the business write. Revision is assigned transactionally by the application
-            SDK.
+            SDK. Contract version is filled from the pinned definition when omitted.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -198,9 +198,9 @@ async def asyncio_detailed(
 ) -> Response[OperationWorkflowStateReportResponse | Problem]:
     """Publish an app-reported business workflow state.
 
-     Requires the current workload and invocation claim. The state name must be declared by the pinned
-    workflow definition. Revisions assigned inside the application transaction prevent late older
-    publications from replacing a newer state.
+     Requires the current workload and invocation claim. The state name and contract version must match
+    the pinned workflow definition. A transition's referenced milestones must already be retained for
+    the same Operation.
 
     Args:
         id (UUID):
@@ -209,7 +209,7 @@ async def asyncio_detailed(
         x_gregale_operation_capability (str):
         body (OperationWorkflowStateReport): Idempotent app-reported state update already
             committed with the business write. Revision is assigned transactionally by the application
-            SDK.
+            SDK. Contract version is filled from the pinned definition when omitted.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -243,9 +243,9 @@ async def asyncio(
 ) -> OperationWorkflowStateReportResponse | Problem | None:
     """Publish an app-reported business workflow state.
 
-     Requires the current workload and invocation claim. The state name must be declared by the pinned
-    workflow definition. Revisions assigned inside the application transaction prevent late older
-    publications from replacing a newer state.
+     Requires the current workload and invocation claim. The state name and contract version must match
+    the pinned workflow definition. A transition's referenced milestones must already be retained for
+    the same Operation.
 
     Args:
         id (UUID):
@@ -254,7 +254,7 @@ async def asyncio(
         x_gregale_operation_capability (str):
         body (OperationWorkflowStateReport): Idempotent app-reported state update already
             committed with the business write. Revision is assigned transactionally by the application
-            SDK.
+            SDK. Contract version is filled from the pinned definition when omitted.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

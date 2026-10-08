@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
 /**
  * Acknowledgement returned after the platform records an app-reported workflow-state update.
  */
@@ -16,5 +17,7 @@ export type OperationWorkflowStateReportResponse = {
   from_state?: string;
   state: string;
   revision: number;
+  contract_version: number;
+  evidence_milestones?: Array<OperationWorkflowEvidenceMilestone>;
 };
 

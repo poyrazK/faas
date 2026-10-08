@@ -48,8 +48,8 @@ export class GregaleOperations {
       const receipt = await withCustomerOperationTransaction(pool, input, handler, async reports => {
         const validation = await this.report<{valid: boolean}>('milestones/validate', {milestones: reports});
         if (validation?.valid !== true) throw new TypeError('Milestone validation was not confirmed');
-      }, async reports => {
-        const validation = await this.report<{valid: boolean}>('workflow-states/validate', {workflow_states: reports});
+      }, async (reports, milestones) => {
+        const validation = await this.report<{valid: boolean}>('workflow-states/validate', {workflow_states: reports, milestones});
         if (validation?.valid !== true) throw new TypeError('Workflow state validation was not confirmed');
       });
       await publishCustomerMilestones(pool, input, report => this.milestone(report));

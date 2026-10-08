@@ -868,6 +868,7 @@ export type { OperationSubject } from './OperationSubject.js';
 export type { OperationSubjectSpec } from './OperationSubjectSpec.js';
 export type { OperationSummary } from './OperationSummary.js';
 export type { OperationTenantIdentity } from './OperationTenantIdentity.js';
+export type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
 export type { OperationWorkflowStaleOnly } from './OperationWorkflowStaleOnly.js';
 export type { OperationWorkflowState } from './OperationWorkflowState.js';
 export type { OperationWorkflowStateCursor } from './OperationWorkflowStateCursor.js';

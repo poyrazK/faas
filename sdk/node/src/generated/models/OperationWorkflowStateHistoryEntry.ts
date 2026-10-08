@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
 /**
  * One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
  */
@@ -16,6 +17,8 @@ export type OperationWorkflowStateHistoryEntry = {
   from_state?: string;
   state: string;
   revision: number;
+  contract_version: number;
+  evidence_milestones?: Array<OperationWorkflowEvidenceMilestone>;
   occurred_at: string;
   published_at: string;
   /**

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GregaleOperationClient, OperationHTTPError, type Operation } from '../src/customer-operations.js';
 import { GregaleOperations } from '../src/operations-runtime.js';
+import { customerOperationRequestFromHeaders, withCustomerOperationTransaction } from '../src/customer-operation-transactions.js';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const invocation = '22222222-2222-4222-8222-222222222222';
@@ -80,6 +81,44 @@ test('transaction callback retains the runtime progress context and releases it 
   });
   assert.deepEqual(result, {body: '{"file":"committed.csv"}', replayed: false});
   assert.equal(released, true); assert.equal(runtime.context(), undefined);
+});
+
+test('workflow transition outbox links same-transaction milestone evidence', async () => {
+  const input = customerOperationRequestFromHeaders({
+    'X-Gregale-Customer-Operation-Transaction-Version': '1',
+    'X-Gregale-Customer-Operation-Milestone-Version': '1',
+    'X-Gregale-Customer-Operation-Result-Max-Bytes': '65536',
+    'X-Gregale-Customer-Operation-Id': id,
+    'X-Gregale-Operation-Attempt': '1', 'X-Gregale-Operation-Capability': 'a'.repeat(64),
+    'X-Faas-Invocation-Id': invocation, 'X-Faas-Tenant-Id': definition,
+    'X-Faas-App-Id': definition, 'X-Faas-Platform-Tenant-Id': definition,
+  }, 'POST', '/orders/fulfill', Buffer.from('{}'));
+  const statements: { sql: string; values?: unknown[] }[] = [];
+  const pool = {connect: async () => ({
+    query: async (sql: string, values?: unknown[]) => {
+      statements.push({sql, values});
+      if (sql.startsWith('INSERT INTO public.gregale_customer_operation_workflow_state_counters')) return {rows: [{revision: 1}]};
+      if (sql.includes('SELECT last_state FROM public.gregale_customer_operation_workflow_state_counters')) return {rows: [{last_state: null}]};
+      if (sql.startsWith('UPDATE public.gregale_customer_operation_workflow_state_counters SET last_state')) return {rows: [{revision: 1}]};
+      return {rows: []};
+    },
+    release: () => {},
+  })};
+  let validatedEvidence: unknown;
+  let validatedMilestones: unknown;
+  await withCustomerOperationTransaction(pool, input, async tx => {
+    tx.workflowTransition('order-lifecycle', 'run-1', 'pending', 'fulfilled');
+    tx.milestone('paid', {workflow_run_id: 'run-1'});
+    return {state: 'fulfilled'};
+  }, async () => {}, async (reports, milestones) => {
+    validatedEvidence = reports[0]?.evidence_milestones;
+    validatedMilestones = milestones;
+  });
+  const outbox = statements.find(statement => statement.sql.startsWith('INSERT INTO public.gregale_customer_operation_workflow_states'));
+  assert.ok(outbox);
+  assert.deepEqual(JSON.parse(String(outbox.values?.[8])), validatedEvidence);
+  assert.equal((validatedEvidence as {name: string}[])[0]?.name, 'paid');
+  assert.equal((validatedMilestones as {id: string}[])[0]?.id, (validatedEvidence as {id: string}[])[0]?.id);
 });
 
 test('stream refreshes credentials and resumes with the last applied durable cursor', async () => {

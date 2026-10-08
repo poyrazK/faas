@@ -2,8 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
 /**
- * Idempotent app-reported state update already committed with the business write. Revision is assigned transactionally by the application SDK.
+ * Idempotent app-reported state update already committed with the business write. Revision is assigned transactionally by the application SDK. Contract version is filled from the pinned definition when omitted.
  */
 export type OperationWorkflowStateReport = {
   id: string;
@@ -16,5 +17,13 @@ export type OperationWorkflowStateReport = {
   state: string;
   revision: number;
   occurred_at: string;
+  /**
+   * Optional version precondition; the server fills this from the immutable Operation definition.
+   */
+  contract_version?: number;
+  /**
+   * Facts committed in the same application transaction as this transition.
+   */
+  evidence_milestones?: Array<OperationWorkflowEvidenceMilestone>;
 };
 

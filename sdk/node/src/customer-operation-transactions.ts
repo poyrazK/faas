@@ -1,6 +1,6 @@
 // ADR-713: result-only receipts for customer Operation HTTP executions.
 import { createHash } from 'node:crypto';
-import { OPERATION_REQUEST_BYTES, OPERATION_IDENTITY_BYTES, OPERATION_RESPONSE_BYTES } from './operation-contract.js';
+import { OPERATION_REQUEST_BYTES, OPERATION_IDENTITY_BYTES, OPERATION_RESPONSE_BYTES, OPERATION_WORKFLOW_STATE_BATCH_BYTES } from './operation-contract.js';
 import { operationHeaders, operationExecutionContext, type OperationRequestHeaders } from './operation-execution-context.js';
 import { operationReceiptTransaction, type OperationPool, type OperationTransactionResult } from './operation-receipt.js';
 
@@ -80,7 +80,7 @@ export async function withCustomerOperationTransaction(
   pool: OperationPool, input: CustomerOperationTransactionRequest,
   handler: (transaction: CustomerOperationTransaction) => Promise<unknown>,
   validateMilestones?: (reports: OperationMilestoneReport[]) => Promise<unknown>,
-  validateWorkflowStates?: (reports: OperationWorkflowStateReport[]) => Promise<unknown>,
+  validateWorkflowStates?: (reports: OperationWorkflowStateReport[], milestones: OperationMilestoneReport[]) => Promise<unknown>,
 ): Promise<OperationTransactionResult> {
   const request = normalize(input);
   const digest = Buffer.from(customerOperationRequestDigest(request));
@@ -105,8 +105,9 @@ export async function withCustomerOperationTransaction(
     }
     if (workflowStates.length > 0) {
       if (!validateWorkflowStates) throw new TypeError('Workflow state validation is required before commit');
-      const saved = await saveCustomerWorkflowStates(tx, request, workflowStates);
-      await validateWorkflowStates(saved);
+      const saved = await saveCustomerWorkflowStates(tx, request, workflowStates, reports);
+      if (Buffer.byteLength(JSON.stringify({workflow_states: saved, milestones: reports})) > OPERATION_WORKFLOW_STATE_BATCH_BYTES) throw new TypeError('Workflow state validation batch exceeds its byte limit');
+      await validateWorkflowStates(saved, reports);
     }
     return body;
   }, body => validate(body, request.resultMaxBytes));

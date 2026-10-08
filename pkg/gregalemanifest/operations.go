@@ -37,6 +37,7 @@ type OperationWorkflow struct {
 	App             string                              `yaml:"app,omitempty" toml:"app"`
 	Name            string                              `yaml:"name" toml:"name"`
 	Title           string                              `yaml:"title" toml:"title"`
+	Version         int                                 `yaml:"version,omitempty" toml:"version"`
 	States          []string                            `yaml:"states,omitempty" toml:"states"`
 	TerminalStates  []string                            `yaml:"terminal_states,omitempty" toml:"terminal_states"`
 	StateStaleAfter map[string]string                   `yaml:"state_stale_after,omitempty" toml:"state_stale_after"`
@@ -45,8 +46,10 @@ type OperationWorkflow struct {
 }
 
 type OperationWorkflowTransitionSource struct {
-	From string `yaml:"from" toml:"from"`
-	To   string `yaml:"to" toml:"to"`
+	From               string   `yaml:"from" toml:"from"`
+	To                 string   `yaml:"to" toml:"to"`
+	Operation          string   `yaml:"operation,omitempty" toml:"operation"`
+	RequiresMilestones []string `yaml:"requires_milestones,omitempty" toml:"requires_milestones"`
 }
 
 type OperationWorkflowStepSource struct {
@@ -210,6 +213,14 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 		if !isDNSSafeSlug(workflow.Name) || !validWorkflowDisplayText(workflow.Title, api.OperationWorkflowTitleMaxBytes) || seenWorkflows[workflow.Name] {
 			return nil, fmt.Errorf("operation workflow name and title must be valid and unique within app %q", slug)
 		}
+		version := workflow.Version
+		if version == 0 {
+			// Existing manifests without a contract version are version 1.
+			version = 1
+		}
+		if version < 1 || version > api.OperationWorkflowContractVersionMax {
+			return nil, fmt.Errorf("operation workflow %q has an invalid contract version", workflow.Name)
+		}
 		seenWorkflows[workflow.Name] = true
 		if len(workflow.Steps) == 0 || len(workflow.Steps) > api.OperationWorkflowStepsMax {
 			return nil, fmt.Errorf("operation workflow %q must declare 1 to %d steps", workflow.Name, api.OperationWorkflowStepsMax)
@@ -253,16 +264,69 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 		if len(workflow.Transitions) > api.OperationWorkflowTransitionsMax {
 			return nil, fmt.Errorf("operation workflow %q declares too many transitions", workflow.Name)
 		}
-		transitions := make([]api.OperationWorkflowTransition, len(workflow.Transitions))
-		for i, transition := range workflow.Transitions {
-			transitions[i] = api.OperationWorkflowTransition{From: transition.From, To: transition.To}
+		stepOperations := make(map[string]bool)
+		for _, step := range workflow.Steps {
+			stepOperations[step.Operation] = true
 		}
-		sort.Slice(transitions, func(i, j int) bool {
-			if transitions[i].From != transitions[j].From {
-				return transitions[i].From < transitions[j].From
+		transitionTargets := make(map[string][]api.OperationWorkflowTransition)
+		for transitionIndex, transition := range workflow.Transitions {
+			if api.ValidateOperationWorkflowStateName(transition.From) != nil || api.ValidateOperationWorkflowStateName(transition.To) != nil ||
+				!stateSet[transition.From] || !stateSet[transition.To] || terminalSet[transition.From] {
+				return nil, fmt.Errorf("operation workflow %q has an invalid transition", workflow.Name)
 			}
-			return transitions[i].To < transitions[j].To
-		})
+			if transition.Operation != "" {
+				if !isDNSSafeSlug(transition.Operation) || !stepOperations[transition.Operation] {
+					return nil, fmt.Errorf("operation workflow %q transition references an operation outside its steps", workflow.Name)
+				}
+				if _, exists := operationsByName[transition.Operation]; !exists {
+					return nil, fmt.Errorf("operation workflow %q transition references unknown operation %q", workflow.Name, transition.Operation)
+				}
+			} else if len(transition.RequiresMilestones) > 0 {
+				return nil, fmt.Errorf("operation workflow %q transition evidence requires an operation target", workflow.Name)
+			}
+			if len(transition.RequiresMilestones) > api.OperationWorkflowTransitionEvidenceMax {
+				return nil, fmt.Errorf("operation workflow %q transition evidence list exceeds its limit", workflow.Name)
+			}
+			required := append([]string(nil), transition.RequiresMilestones...)
+			sort.Strings(required)
+			for i, name := range required {
+				if !isDNSSafeSlug(name) || i > 0 && required[i-1] == name {
+					return nil, fmt.Errorf("operation workflow %q transition has invalid or duplicate required milestones", workflow.Name)
+				}
+			}
+			if transition.Operation != "" {
+				operation := operationsByName[transition.Operation]
+				for _, name := range required {
+					if operation.HTTPTransactionVersion != api.OperationHTTPTransactionVersion || operation.Milestones[name] == "" {
+						return nil, fmt.Errorf("operation workflow %q transition requires an undeclared transaction-backed milestone", workflow.Name)
+					}
+				}
+			}
+			// A global edge applies to every participating Operation, so it may not
+			// overlap a scoped edge for the same pair.
+			for _, prior := range workflow.Transitions[:transitionIndex] {
+				if prior.From == transition.From && prior.To == transition.To &&
+					(prior.Operation == "" || transition.Operation == "" || prior.Operation == transition.Operation) {
+					return nil, fmt.Errorf("operation workflow %q has a duplicate transition", workflow.Name)
+				}
+			}
+			apiTransition := api.OperationWorkflowTransition{From: transition.From, To: transition.To, RequiredMilestones: required}
+			if transition.Operation == "" {
+				for operationName := range stepOperations {
+					transitionTargets[operationName] = append(transitionTargets[operationName], apiTransition)
+				}
+			} else {
+				transitionTargets[transition.Operation] = append(transitionTargets[transition.Operation], apiTransition)
+			}
+		}
+		for _, transitions := range transitionTargets {
+			sort.Slice(transitions, func(i, j int) bool {
+				if transitions[i].From != transitions[j].From {
+					return transitions[i].From < transitions[j].From
+				}
+				return transitions[i].To < transitions[j].To
+			})
+		}
 		seenNames, seenPositions, seenBindings := map[string]bool{}, map[int]bool{}, map[string]bool{}
 		for _, step := range workflow.Steps {
 			if !isDNSSafeSlug(step.Name) || !validWorkflowDisplayText(step.Label, api.OperationWorkflowLabelMaxBytes) ||
@@ -286,7 +350,8 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 			}
 			seenNames[step.Name], seenPositions[step.Position], seenBindings[binding] = true, true, true
 			result[step.Operation] = append(result[step.Operation], api.OperationWorkflowSpec{
-				Workflow: workflow.Name, Title: workflow.Title, States: states, TerminalStates: terminalStates, StateStaleAfterSeconds: stateStaleAfter, Transitions: transitions, Step: step.Name, Label: step.Label,
+				Workflow: workflow.Name, Title: workflow.Title, Version: workflow.Version, States: states, TerminalStates: terminalStates, StateStaleAfterSeconds: stateStaleAfter,
+				Transitions: transitionTargets[step.Operation], TransitionsDeclared: len(workflow.Transitions) > 0 && len(transitionTargets[step.Operation]) == 0, Step: step.Name, Label: step.Label,
 				Milestone: step.Milestone, InstanceIDFrom: step.InstanceIDFrom, Position: step.Position,
 			})
 		}

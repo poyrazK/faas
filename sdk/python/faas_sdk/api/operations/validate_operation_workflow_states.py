@@ -109,16 +109,18 @@ def sync_detailed(
 ) -> Response[OperationWorkflowStateValidationResponse | Problem]:
     """Validate app-reported workflow states before transaction commit.
 
-     Requires the active workload and invocation claim. Validates the declared workflow/state vocabulary,
-    business reference, instance ID and positive transaction-assigned revisions without publishing or
-    reserving capacity.
+     Requires the active workload and invocation claim. Validates the workflow contract version,
+    transition edge, required milestone evidence and transaction-assigned revisions before commit.
+    Evidence IDs must refer to facts in the same submitted transaction batch. This does not publish
+    facts or reserve capacity. Maximum request size is 131072 bytes.
 
     Args:
         id (UUID):
         x_faas_invocation_id (UUID):
         x_gregale_operation_attempt (int):
         x_gregale_operation_capability (str):
-        body (OperationWorkflowStateValidationRequest):
+        body (OperationWorkflowStateValidationRequest): Batch of application-reported workflow
+            updates to validate before their transaction commits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -154,16 +156,18 @@ def sync(
 ) -> OperationWorkflowStateValidationResponse | Problem | None:
     """Validate app-reported workflow states before transaction commit.
 
-     Requires the active workload and invocation claim. Validates the declared workflow/state vocabulary,
-    business reference, instance ID and positive transaction-assigned revisions without publishing or
-    reserving capacity.
+     Requires the active workload and invocation claim. Validates the workflow contract version,
+    transition edge, required milestone evidence and transaction-assigned revisions before commit.
+    Evidence IDs must refer to facts in the same submitted transaction batch. This does not publish
+    facts or reserve capacity. Maximum request size is 131072 bytes.
 
     Args:
         id (UUID):
         x_faas_invocation_id (UUID):
         x_gregale_operation_attempt (int):
         x_gregale_operation_capability (str):
-        body (OperationWorkflowStateValidationRequest):
+        body (OperationWorkflowStateValidationRequest): Batch of application-reported workflow
+            updates to validate before their transaction commits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,16 +198,18 @@ async def asyncio_detailed(
 ) -> Response[OperationWorkflowStateValidationResponse | Problem]:
     """Validate app-reported workflow states before transaction commit.
 
-     Requires the active workload and invocation claim. Validates the declared workflow/state vocabulary,
-    business reference, instance ID and positive transaction-assigned revisions without publishing or
-    reserving capacity.
+     Requires the active workload and invocation claim. Validates the workflow contract version,
+    transition edge, required milestone evidence and transaction-assigned revisions before commit.
+    Evidence IDs must refer to facts in the same submitted transaction batch. This does not publish
+    facts or reserve capacity. Maximum request size is 131072 bytes.
 
     Args:
         id (UUID):
         x_faas_invocation_id (UUID):
         x_gregale_operation_attempt (int):
         x_gregale_operation_capability (str):
-        body (OperationWorkflowStateValidationRequest):
+        body (OperationWorkflowStateValidationRequest): Batch of application-reported workflow
+            updates to validate before their transaction commits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -237,16 +243,18 @@ async def asyncio(
 ) -> OperationWorkflowStateValidationResponse | Problem | None:
     """Validate app-reported workflow states before transaction commit.
 
-     Requires the active workload and invocation claim. Validates the declared workflow/state vocabulary,
-    business reference, instance ID and positive transaction-assigned revisions without publishing or
-    reserving capacity.
+     Requires the active workload and invocation claim. Validates the workflow contract version,
+    transition edge, required milestone evidence and transaction-assigned revisions before commit.
+    Evidence IDs must refer to facts in the same submitted transaction batch. This does not publish
+    facts or reserve capacity. Maximum request size is 131072 bytes.
 
     Args:
         id (UUID):
         x_faas_invocation_id (UUID):
         x_gregale_operation_attempt (int):
         x_gregale_operation_capability (str):
-        body (OperationWorkflowStateValidationRequest):
+        body (OperationWorkflowStateValidationRequest): Batch of application-reported workflow
+            updates to validate before their transaction commits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

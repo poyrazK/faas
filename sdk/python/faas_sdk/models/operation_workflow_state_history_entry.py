@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+
 
 T = TypeVar("T", bound="OperationWorkflowStateHistoryEntry")
 
@@ -25,12 +29,14 @@ class OperationWorkflowStateHistoryEntry:
     instance_id: str
     state: str
     revision: int
+    contract_version: int
     occurred_at: datetime.datetime
     published_at: datetime.datetime
     from_state: str | Unset = UNSET
-    """Previous app state when a declared transition was reported."""
+    """App state immediately before this retained revision"""
+    evidence_milestones: list[OperationWorkflowEvidenceMilestone] | Unset = UNSET
     platform_tenant_id: UUID | Unset = UNSET
-    """Included only for account operator feeds."""
+    """Account-owner tenant identifier attached to this report in operator feeds."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)
@@ -45,11 +51,20 @@ class OperationWorkflowStateHistoryEntry:
 
         revision = self.revision
 
+        contract_version = self.contract_version
+
         occurred_at = self.occurred_at.isoformat()
 
         published_at = self.published_at.isoformat()
 
         from_state = self.from_state
+
+        evidence_milestones: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.evidence_milestones, Unset):
+            evidence_milestones = []
+            for evidence_milestones_item_data in self.evidence_milestones:
+                evidence_milestones_item = evidence_milestones_item_data.to_dict()
+                evidence_milestones.append(evidence_milestones_item)
 
         platform_tenant_id: str | Unset = UNSET
         if not isinstance(self.platform_tenant_id, Unset):
@@ -65,12 +80,15 @@ class OperationWorkflowStateHistoryEntry:
                 "instance_id": instance_id,
                 "state": state,
                 "revision": revision,
+                "contract_version": contract_version,
                 "occurred_at": occurred_at,
                 "published_at": published_at,
             }
         )
         if from_state is not UNSET:
             field_dict["from_state"] = from_state
+        if evidence_milestones is not UNSET:
+            field_dict["evidence_milestones"] = evidence_milestones
         if platform_tenant_id is not UNSET:
             field_dict["platform_tenant_id"] = platform_tenant_id
 
@@ -78,6 +96,8 @@ class OperationWorkflowStateHistoryEntry:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -91,11 +111,22 @@ class OperationWorkflowStateHistoryEntry:
 
         revision = d.pop("revision")
 
+        contract_version = d.pop("contract_version")
+
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
 
         published_at = datetime.datetime.fromisoformat(d.pop("published_at"))
 
         from_state = d.pop("from_state", UNSET)
+
+        _evidence_milestones = d.pop("evidence_milestones", UNSET)
+        evidence_milestones: list[OperationWorkflowEvidenceMilestone] | Unset = UNSET
+        if _evidence_milestones is not UNSET:
+            evidence_milestones = []
+            for evidence_milestones_item_data in _evidence_milestones:
+                evidence_milestones_item = OperationWorkflowEvidenceMilestone.from_dict(evidence_milestones_item_data)
+
+                evidence_milestones.append(evidence_milestones_item)
 
         _platform_tenant_id = d.pop("platform_tenant_id", UNSET)
         platform_tenant_id: UUID | Unset
@@ -111,9 +142,11 @@ class OperationWorkflowStateHistoryEntry:
             instance_id=instance_id,
             state=state,
             revision=revision,
+            contract_version=contract_version,
             occurred_at=occurred_at,
             published_at=published_at,
             from_state=from_state,
+            evidence_milestones=evidence_milestones,
             platform_tenant_id=platform_tenant_id,
         )
 

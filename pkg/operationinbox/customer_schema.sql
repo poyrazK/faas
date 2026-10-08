@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS public.gregale_customer_operation_workflow_states (
     from_state text NOT NULL DEFAULT '' CHECK (from_state = '' OR from_state ~ '^[a-z][a-z0-9-]{0,63}$'),
     state text NOT NULL CHECK (state ~ '^[a-z][a-z0-9-]{0,63}$'),
     revision bigint NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
+    evidence_milestones jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(evidence_milestones) = 'array' AND jsonb_array_length(evidence_milestones) <= 16),
     occurred_at timestamptz NOT NULL CHECK (isfinite(occurred_at)),
     acknowledged_at timestamptz CHECK (acknowledged_at IS NULL OR isfinite(acknowledged_at)),
     PRIMARY KEY (operation_id, id),
@@ -60,6 +61,10 @@ CREATE TABLE IF NOT EXISTS public.gregale_customer_operation_workflow_states (
 -- Upgrade installations created by the earlier workflow state snapshot schema.
 ALTER TABLE public.gregale_customer_operation_workflow_states
     ADD COLUMN IF NOT EXISTS from_state text NOT NULL DEFAULT '';
+
+ALTER TABLE public.gregale_customer_operation_workflow_states
+    ADD COLUMN IF NOT EXISTS evidence_milestones jsonb NOT NULL DEFAULT '[]'::jsonb
+        CHECK (jsonb_typeof(evidence_milestones) = 'array' AND jsonb_array_length(evidence_milestones) <= 16);
 
 -- Preserve the latest known app state on the counter, independently of
 -- per-Operation outbox rows that may be removed after their receipt expires.

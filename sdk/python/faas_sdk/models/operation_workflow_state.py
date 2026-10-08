@@ -2,18 +2,24 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
 
 from ..types import UNSET, Unset
 
+if TYPE_CHECKING:
+    from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+
+
 T = TypeVar("T", bound="OperationWorkflowState")
 
 
 @_attrs_define
 class OperationWorkflowState:
+    """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
+
     workflow: str
     instance_id: str
     state: str
@@ -25,9 +31,11 @@ class OperationWorkflowState:
     occurred_at: datetime.datetime
     """App-reported time when the current state became true; used for stale-state age."""
     revision: int
+    contract_version: int
     updated_at: datetime.datetime
     stale_after_seconds: int | Unset = UNSET
     """App-declared age threshold for the current state when one is configured."""
+    evidence_milestones: list[OperationWorkflowEvidenceMilestone] | Unset = UNSET
     platform_tenant_id: UUID | Unset = UNSET
     """Included only for account operator feeds."""
 
@@ -46,9 +54,18 @@ class OperationWorkflowState:
 
         revision = self.revision
 
+        contract_version = self.contract_version
+
         updated_at = self.updated_at.isoformat()
 
         stale_after_seconds = self.stale_after_seconds
+
+        evidence_milestones: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.evidence_milestones, Unset):
+            evidence_milestones = []
+            for evidence_milestones_item_data in self.evidence_milestones:
+                evidence_milestones_item = evidence_milestones_item_data.to_dict()
+                evidence_milestones.append(evidence_milestones_item)
 
         platform_tenant_id: str | Unset = UNSET
         if not isinstance(self.platform_tenant_id, Unset):
@@ -65,11 +82,14 @@ class OperationWorkflowState:
                 "stale": stale,
                 "occurred_at": occurred_at,
                 "revision": revision,
+                "contract_version": contract_version,
                 "updated_at": updated_at,
             }
         )
         if stale_after_seconds is not UNSET:
             field_dict["stale_after_seconds"] = stale_after_seconds
+        if evidence_milestones is not UNSET:
+            field_dict["evidence_milestones"] = evidence_milestones
         if platform_tenant_id is not UNSET:
             field_dict["platform_tenant_id"] = platform_tenant_id
 
@@ -77,6 +97,8 @@ class OperationWorkflowState:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+
         d = dict(src_dict)
         workflow = d.pop("workflow")
 
@@ -92,9 +114,20 @@ class OperationWorkflowState:
 
         revision = d.pop("revision")
 
+        contract_version = d.pop("contract_version")
+
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
         stale_after_seconds = d.pop("stale_after_seconds", UNSET)
+
+        _evidence_milestones = d.pop("evidence_milestones", UNSET)
+        evidence_milestones: list[OperationWorkflowEvidenceMilestone] | Unset = UNSET
+        if _evidence_milestones is not UNSET:
+            evidence_milestones = []
+            for evidence_milestones_item_data in _evidence_milestones:
+                evidence_milestones_item = OperationWorkflowEvidenceMilestone.from_dict(evidence_milestones_item_data)
+
+                evidence_milestones.append(evidence_milestones_item)
 
         _platform_tenant_id = d.pop("platform_tenant_id", UNSET)
         platform_tenant_id: UUID | Unset
@@ -111,8 +144,10 @@ class OperationWorkflowState:
             stale=stale,
             occurred_at=occurred_at,
             revision=revision,
+            contract_version=contract_version,
             updated_at=updated_at,
             stale_after_seconds=stale_after_seconds,
+            evidence_milestones=evidence_milestones,
             platform_tenant_id=platform_tenant_id,
         )
 

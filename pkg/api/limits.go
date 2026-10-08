@@ -285,6 +285,10 @@ const (
 	OperationWorkflowStepsMaxPerOperation                = 32
 	OperationWorkflowStatesMax                           = 32
 	OperationWorkflowTransitionsMax                      = 128
+	OperationWorkflowContractVersionMax                  = 1_000_000
+	OperationWorkflowTransitionEvidenceMax               = 16
+	OperationWorkflowStateEvidenceMax                    = 16
+	OperationWorkflowStateBatchMaxBytes                  = 131072
 	OperationWorkflowStateMaxBytes                       = 64
 	OperationWorkflowStateReportsMaxPerTransaction       = 64
 	OperationWorkflowTitleMaxBytes                       = 128

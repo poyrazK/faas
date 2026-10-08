@@ -10,8 +10,9 @@ export interface OperationArtifactReport { report_id: string; name: string; uri:
 export interface OperationSubject { type: string; id: string }
 export interface OperationMilestoneReport { id: string; name: string; payload: unknown; occurred_at: string }
 export interface OperationMilestone extends OperationMilestoneReport { operation_id: string; subject?: OperationSubject; platform_tenant_id?: string; workflow_steps?: OperationWorkflowStep[]; created_at: string; sequence: number }
-export interface OperationWorkflowState { workflow: string; instance_id: string; state: string; terminal: boolean; stale: boolean; occurred_at: string; stale_after_seconds?: number; revision: number; updated_at: string; platform_tenant_id?: string }
-export interface OperationWorkflowStateHistoryEntry { id: string; operation_id: string; workflow: string; instance_id: string; from_state?: string; state: string; revision: number; occurred_at: string; published_at: string; platform_tenant_id?: string }
+export interface OperationWorkflowEvidenceMilestone { id: string; name: string }
+export interface OperationWorkflowState { workflow: string; instance_id: string; state: string; terminal: boolean; stale: boolean; occurred_at: string; stale_after_seconds?: number; revision: number; contract_version: number; evidence_milestones?: OperationWorkflowEvidenceMilestone[]; updated_at: string; platform_tenant_id?: string }
+export interface OperationWorkflowStateHistoryEntry { id: string; operation_id: string; workflow: string; instance_id: string; from_state?: string; state: string; revision: number; contract_version: number; evidence_milestones?: OperationWorkflowEvidenceMilestone[]; occurred_at: string; published_at: string; platform_tenant_id?: string }
 export interface OperationMilestonePageOptions { limit?: number; cursor?: string }
 export interface OperationBusinessMilestoneOptions extends OperationMilestonePageOptions { appID: string; scope: string; subjectType: string; subjectID: string; workflow?: string; workflowInstanceID?: string; workflowStateCursor?: string; staleOnly?: boolean }
 export interface OperationMilestones { milestones: OperationMilestone[]; workflow_states?: OperationWorkflowState[]; workflow_state_history?: OperationWorkflowStateHistoryEntry[]; next_cursor?: string; next_workflow_state_cursor?: string }

@@ -191,7 +191,7 @@ operation_workflows:
 	}
 	revisions := map[string]string{}
 	for _, spec := range manifest.ResolvedOperations {
-		if len(spec.WorkflowSteps) != 1 || spec.WorkflowSteps[0].Workflow != "order-lifecycle" || spec.WorkflowSteps[0].Title != "Order lifecycle" {
+		if len(spec.WorkflowSteps) != 1 || spec.WorkflowSteps[0].Workflow != "order-lifecycle" || spec.WorkflowSteps[0].Title != "Order lifecycle" || spec.WorkflowSteps[0].Version != 1 {
 			t.Fatalf("workflow step was not pinned to %s: %+v", spec.Name, spec.WorkflowSteps)
 		}
 		revisions[spec.Name] = mustWorkflowRevision(t, spec)
@@ -211,6 +211,46 @@ operation_workflows:
 	reads = 0
 	if err := manifest.ResolveOperations("orders", api.PlanPro, read); err == nil || reads != 0 || len(manifest.ResolvedOperations) != 0 {
 		t.Fatalf("unknown workflow operation read schemas or retained stale bundle: reads=%d err=%v", reads, err)
+	}
+}
+
+func TestOperationWorkflowVersionAndScopedTransitionEvidence(t *testing.T) {
+	manifest := &Manifest{
+		Operations: []Operation{
+			{Name: "fulfill-order", Method: "POST", Path: "/orders/fulfill", Owner: api.OperationOwnerPlatformTenant,
+				InputSchema: "input.json", OutputSchema: "output.json", ProgressStages: []string{"complete"},
+				Milestones: map[string]string{"order-fulfilled": "fulfilled.json"}, HTTPTransactionVersion: api.OperationHTTPTransactionVersion},
+			{Name: "authorize-payment", Method: "POST", Path: "/payments/authorize", Owner: api.OperationOwnerPlatformTenant,
+				InputSchema: "input.json", OutputSchema: "output.json", ProgressStages: []string{"complete"},
+				Milestones: map[string]string{"payment-authorized": "paid.json"}, HTTPTransactionVersion: api.OperationHTTPTransactionVersion},
+		},
+		OperationWorkflows: []OperationWorkflow{{
+			Name: "order-fulfillment", Title: "Order fulfillment", Version: 2, States: []string{"pending", "fulfilled"},
+			Transitions: []OperationWorkflowTransitionSource{{From: "pending", To: "fulfilled", Operation: "fulfill-order", RequiresMilestones: []string{"order-fulfilled"}}},
+			Steps: []OperationWorkflowStepSource{
+				{Name: "paid", Label: "Payment authorized", Operation: "authorize-payment", Milestone: "payment-authorized", InstanceIDFrom: "/workflow_run_id", Position: 1},
+				{Name: "fulfilled", Label: "Order fulfilled", Operation: "fulfill-order", Milestone: "order-fulfilled", InstanceIDFrom: "/workflow_run_id", Position: 2},
+			},
+		}},
+	}
+	if err := manifest.ResolveOperations("orders", api.PlanPro, func(string, int) ([]byte, error) { return []byte(`true`), nil }); err != nil {
+		t.Fatal(err)
+	}
+	byName := make(map[string]api.OperationDefinitionSpec)
+	for _, spec := range manifest.ResolvedOperations {
+		byName[spec.Name] = spec
+	}
+	fulfill := byName["fulfill-order"].WorkflowSteps[0]
+	if fulfill.Version != 2 || !fulfill.TransitionsDeclared || len(fulfill.Transitions) != 1 || len(fulfill.Transitions[0].RequiredMilestones) != 1 || fulfill.Transitions[0].RequiredMilestones[0] != "order-fulfilled" {
+		t.Fatalf("transition contract was not pinned to its producer: %+v", fulfill)
+	}
+	payment := byName["authorize-payment"].WorkflowSteps[0]
+	if payment.Version != 2 || !payment.TransitionsDeclared || len(payment.Transitions) != 0 {
+		t.Fatalf("scoped edge leaked to an unrelated Operation: %+v", payment)
+	}
+	manifest.OperationWorkflows[0].Transitions[0].Operation = ""
+	if err := manifest.ResolveOperations("orders", api.PlanPro, func(string, int) ([]byte, error) { return []byte(`true`), nil }); err == nil {
+		t.Fatal("unscoped transition evidence was accepted")
 	}
 }
 

@@ -68,7 +68,12 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 	workflowTerminalStates := make(map[string][]string)
 	workflowStateStaleAfter := make(map[string]map[string]int64)
 	workflowTransitions := make(map[string][]api.OperationWorkflowTransition)
+	workflowTransitionsDeclared := make(map[string]bool)
+	workflowVersions := make(map[string]int)
 	for i := range spec.WorkflowSteps {
+		if spec.WorkflowSteps[i].Version < 0 || spec.WorkflowSteps[i].Version > api.OperationWorkflowContractVersionMax {
+			return fmt.Errorf("operation workflow contract version is invalid")
+		}
 		states := append([]string(nil), spec.WorkflowSteps[i].States...)
 		if len(states) > api.OperationWorkflowStatesMax {
 			return fmt.Errorf("operation workflow state list exceeds its limit")
@@ -116,6 +121,22 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 		if len(transitions) > api.OperationWorkflowTransitionsMax {
 			return fmt.Errorf("operation workflow transition list exceeds its limit")
 		}
+		for j := range transitions {
+			required := append([]string(nil), transitions[j].RequiredMilestones...)
+			if len(required) > api.OperationWorkflowTransitionEvidenceMax {
+				return fmt.Errorf("operation workflow transition evidence list exceeds its limit")
+			}
+			sort.Strings(required)
+			for k, name := range required {
+				if !operationName.MatchString(name) || spec.Milestones[name] == nil || k > 0 && required[k-1] == name {
+					return fmt.Errorf("operation workflow transition requires an invalid, duplicate, or undeclared milestone")
+				}
+			}
+			if len(required) == 0 {
+				required = nil
+			}
+			transitions[j].RequiredMilestones = required
+		}
 		sort.Slice(transitions, func(a, b int) bool {
 			if transitions[a].From != transitions[b].From {
 				return transitions[a].From < transitions[b].From
@@ -124,7 +145,7 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 		})
 		for j, transition := range transitions {
 			if api.ValidateOperationWorkflowStateName(transition.From) != nil || api.ValidateOperationWorkflowStateName(transition.To) != nil ||
-				!stateSet[transition.From] || !stateSet[transition.To] || j > 0 && transitions[j-1] == transition {
+				!stateSet[transition.From] || !stateSet[transition.To] || j > 0 && transitions[j-1].From == transition.From && transitions[j-1].To == transition.To {
 				return fmt.Errorf("operation workflow transition is invalid, duplicated, or references an undeclared state")
 			}
 			if terminalSet[transition.From] {
@@ -161,14 +182,28 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 		} else {
 			workflowStates[step.Workflow] = append([]string(nil), step.States...)
 		}
-		if prior, exists := workflowTransitions[step.Workflow]; exists {
-			if len(prior) != len(step.Transitions) {
+		version := step.Version
+		if version == 0 {
+			version = 1
+		}
+		if prior, exists := workflowVersions[step.Workflow]; exists {
+			if prior != version {
+				return fmt.Errorf("operation workflow contract versions must match across steps")
+			}
+		} else {
+			workflowVersions[step.Workflow] = version
+		}
+		transitionsDeclared := step.TransitionsDeclared || len(step.Transitions) > 0
+		if prior, exists := workflowTransitionsDeclared[step.Workflow]; exists {
+			if prior != transitionsDeclared {
 				return fmt.Errorf("operation workflow transition declarations must match across steps")
 			}
-			for i := range prior {
-				if prior[i] != step.Transitions[i] {
-					return fmt.Errorf("operation workflow transition declarations must match across steps")
-				}
+		} else {
+			workflowTransitionsDeclared[step.Workflow] = transitionsDeclared
+		}
+		if prior, exists := workflowTransitions[step.Workflow]; exists {
+			if !sameWorkflowTransitions(prior, step.Transitions) {
+				return fmt.Errorf("operation workflow transition declarations must match across steps")
 			}
 		} else {
 			workflowTransitions[step.Workflow] = append([]api.OperationWorkflowTransition(nil), step.Transitions...)
@@ -214,6 +249,23 @@ func compileWorkflowSteps(spec *api.OperationDefinitionSpec) error {
 		return left.Step < right.Step
 	})
 	return nil
+}
+
+func sameWorkflowTransitions(left, right []api.OperationWorkflowTransition) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i].From != right[i].From || left[i].To != right[i].To || len(left[i].RequiredMilestones) != len(right[i].RequiredMilestones) {
+			return false
+		}
+		for j := range left[i].RequiredMilestones {
+			if left[i].RequiredMilestones[j] != right[i].RequiredMilestones[j] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func cloneWorkflowStateStaleAfter(values map[string]int64) map[string]int64 {
@@ -345,6 +397,8 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 		return report, "", fmt.Errorf("workflow state requires a business reference and valid workflow, instance and state")
 	}
 	declared, transitionsDeclared, transitionAllowed := false, false, false
+	contractVersion := 0
+	var requiredMilestones []string
 	for _, step := range c.Spec.WorkflowSteps {
 		if step.Workflow != report.Workflow || step.InstanceIDFrom == "" {
 			continue
@@ -355,11 +409,18 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 				break
 			}
 		}
-		if len(step.Transitions) > 0 {
+		if contractVersion == 0 {
+			contractVersion = step.Version
+			if contractVersion == 0 {
+				contractVersion = 1
+			}
+		}
+		if step.TransitionsDeclared || len(step.Transitions) > 0 {
 			transitionsDeclared = true
 			for _, transition := range step.Transitions {
 				if transition.From == report.FromState && transition.To == report.State {
 					transitionAllowed = true
+					requiredMilestones = transition.RequiredMilestones
 					break
 				}
 			}
@@ -368,14 +429,51 @@ func (c *Contract) CanonicalWorkflowState(opHasSubject bool, report api.Operatio
 	if !declared {
 		return report, "", fmt.Errorf("workflow state is not declared for this Operation")
 	}
+	if contractVersion < 1 || report.ContractVersion != 0 && report.ContractVersion != contractVersion {
+		return report, "", fmt.Errorf("workflow state contract version does not match the pinned definition")
+	}
+	report.ContractVersion = contractVersion
 	if transitionsDeclared && (!transitionAllowed || report.FromState == "") {
 		return report, "", fmt.Errorf("workflow state transition is not declared for this Operation")
 	}
 	if !transitionsDeclared && report.FromState != "" {
 		return report, "", fmt.Errorf("workflow transition is not enabled for this Operation")
 	}
+	if len(report.EvidenceMilestones) > api.OperationWorkflowStateEvidenceMax {
+		return report, "", fmt.Errorf("workflow state evidence list exceeds its limit")
+	}
+	evidence := append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...)
+	seenEvidenceIDs := make(map[string]bool, len(evidence))
+	seenEvidenceNames := make(map[string]bool, len(evidence))
+	for _, milestone := range evidence {
+		id, parseErr := uuid.Parse(milestone.ID)
+		if parseErr != nil || id == uuid.Nil || id.String() != milestone.ID || len(milestone.Name) == 0 || len(milestone.Name) > api.OperationNameMaxBytes || !operationName.MatchString(milestone.Name) ||
+			seenEvidenceIDs[milestone.ID] || seenEvidenceNames[milestone.Name] {
+			return report, "", fmt.Errorf("workflow state evidence contains an invalid or duplicate milestone reference")
+		}
+		seenEvidenceIDs[milestone.ID], seenEvidenceNames[milestone.Name] = true, true
+	}
+	if report.FromState == "" && len(evidence) > 0 {
+		return report, "", fmt.Errorf("workflow state evidence is only valid for a declared transition")
+	}
+	sort.Slice(evidence, func(i, j int) bool {
+		if evidence[i].Name != evidence[j].Name {
+			return evidence[i].Name < evidence[j].Name
+		}
+		return evidence[i].ID < evidence[j].ID
+	})
+	report.EvidenceMilestones = evidence
+	for _, required := range requiredMilestones {
+		if !seenEvidenceNames[required] {
+			return report, "", fmt.Errorf("workflow transition is missing required milestone evidence %q", required)
+		}
+	}
 	report.OccurredAt = report.OccurredAt.Truncate(time.Microsecond)
-	raw, _ := json.Marshal(report)
+	// The resolved contract version is server-derived and must not invalidate
+	// idempotent replays created before this field existed.
+	fingerprintReport := report
+	fingerprintReport.ContractVersion = 0
+	raw, _ := json.Marshal(fingerprintReport)
 	fingerprint, err := InputFingerprint(raw)
 	return report, fingerprint, err
 }

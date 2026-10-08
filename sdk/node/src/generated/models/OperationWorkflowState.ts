@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
 /**
  * Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
  */
@@ -26,6 +27,8 @@ export type OperationWorkflowState = {
    */
   stale_after_seconds?: number;
   revision: number;
+  contract_version: number;
+  evidence_milestones?: Array<OperationWorkflowEvidenceMilestone>;
   updated_at: string;
   /**
    * Included only for account operator feeds.

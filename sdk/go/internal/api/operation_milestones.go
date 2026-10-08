@@ -22,17 +22,25 @@ type OperationMilestoneValidationResponse struct {
 }
 
 type OperationWorkflowStateReport struct {
-	ID         string    `json:"id"`
-	Workflow   string    `json:"workflow"`
-	InstanceID string    `json:"instance_id"`
-	FromState  string    `json:"from_state,omitempty"`
-	State      string    `json:"state"`
-	Revision   int64     `json:"revision"`
-	OccurredAt time.Time `json:"occurred_at"`
+	ID                 string                               `json:"id"`
+	Workflow           string                               `json:"workflow"`
+	InstanceID         string                               `json:"instance_id"`
+	FromState          string                               `json:"from_state,omitempty"`
+	State              string                               `json:"state"`
+	Revision           int64                                `json:"revision"`
+	OccurredAt         time.Time                            `json:"occurred_at"`
+	ContractVersion    int                                  `json:"contract_version,omitempty"`
+	EvidenceMilestones []OperationWorkflowEvidenceMilestone `json:"evidence_milestones,omitempty"`
+}
+
+type OperationWorkflowEvidenceMilestone struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type OperationWorkflowStateValidationRequest struct {
 	WorkflowStates []OperationWorkflowStateReport `json:"workflow_states"`
+	Milestones     []OperationMilestoneRequest    `json:"milestones,omitempty"`
 }
 
 type OperationWorkflowStateValidationResponse struct {
@@ -40,39 +48,45 @@ type OperationWorkflowStateValidationResponse struct {
 }
 
 type OperationWorkflowStateReportResponse struct {
-	ID          string `json:"id"`
-	OperationID string `json:"operation_id"`
-	Workflow    string `json:"workflow"`
-	InstanceID  string `json:"instance_id"`
-	FromState   string `json:"from_state,omitempty"`
-	State       string `json:"state"`
-	Revision    int64  `json:"revision"`
+	ID                 string                               `json:"id"`
+	OperationID        string                               `json:"operation_id"`
+	Workflow           string                               `json:"workflow"`
+	InstanceID         string                               `json:"instance_id"`
+	FromState          string                               `json:"from_state,omitempty"`
+	State              string                               `json:"state"`
+	Revision           int64                                `json:"revision"`
+	ContractVersion    int                                  `json:"contract_version"`
+	EvidenceMilestones []OperationWorkflowEvidenceMilestone `json:"evidence_milestones,omitempty"`
 }
 
 type OperationWorkflowState struct {
-	Workflow          string    `json:"workflow"`
-	InstanceID        string    `json:"instance_id"`
-	State             string    `json:"state"`
-	Terminal          bool      `json:"terminal"`
-	Stale             bool      `json:"stale"`
-	OccurredAt        time.Time `json:"occurred_at"`
-	StaleAfterSeconds int64     `json:"stale_after_seconds,omitempty"`
-	Revision          int64     `json:"revision"`
-	UpdatedAt         time.Time `json:"updated_at"`
-	PlatformTenantID  string    `json:"platform_tenant_id,omitempty"`
+	Workflow           string                               `json:"workflow"`
+	InstanceID         string                               `json:"instance_id"`
+	State              string                               `json:"state"`
+	Terminal           bool                                 `json:"terminal"`
+	Stale              bool                                 `json:"stale"`
+	OccurredAt         time.Time                            `json:"occurred_at"`
+	StaleAfterSeconds  int64                                `json:"stale_after_seconds,omitempty"`
+	Revision           int64                                `json:"revision"`
+	ContractVersion    int                                  `json:"contract_version"`
+	EvidenceMilestones []OperationWorkflowEvidenceMilestone `json:"evidence_milestones,omitempty"`
+	UpdatedAt          time.Time                            `json:"updated_at"`
+	PlatformTenantID   string                               `json:"platform_tenant_id,omitempty"`
 }
 
 type OperationWorkflowStateHistoryEntry struct {
-	ID               string    `json:"id"`
-	OperationID      string    `json:"operation_id"`
-	Workflow         string    `json:"workflow"`
-	InstanceID       string    `json:"instance_id"`
-	FromState        string    `json:"from_state,omitempty"`
-	State            string    `json:"state"`
-	Revision         int64     `json:"revision"`
-	OccurredAt       time.Time `json:"occurred_at"`
-	PublishedAt      time.Time `json:"published_at"`
-	PlatformTenantID string    `json:"platform_tenant_id,omitempty"`
+	ID                 string                               `json:"id"`
+	OperationID        string                               `json:"operation_id"`
+	Workflow           string                               `json:"workflow"`
+	InstanceID         string                               `json:"instance_id"`
+	FromState          string                               `json:"from_state,omitempty"`
+	State              string                               `json:"state"`
+	Revision           int64                                `json:"revision"`
+	ContractVersion    int                                  `json:"contract_version"`
+	EvidenceMilestones []OperationWorkflowEvidenceMilestone `json:"evidence_milestones,omitempty"`
+	OccurredAt         time.Time                            `json:"occurred_at"`
+	PublishedAt        time.Time                            `json:"published_at"`
+	PlatformTenantID   string                               `json:"platform_tenant_id,omitempty"`
 }
 
 type OperationMilestone struct {
