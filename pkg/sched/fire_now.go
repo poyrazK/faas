@@ -36,7 +36,7 @@ import (
 // fireNowSafetyTick is the recovery cadence for missed-notify scenarios.
 // When a NotifyCronRunNow delivery is dropped (Postgres bounce, network
 // blip, schedd restart), the pending rows in the table survive — the
-// safety tick re-claims them. 60s matches cronT's cadence; a customer
+// safety tick re-claims them. 60s matches the cron sweep's cadence; a customer
 // waiting on a fire-now that dropped during the blip waits up to 60s
 // for recovery. Acceptable for an operator-initiated action.
 const fireNowSafetyTick = 60 * time.Second

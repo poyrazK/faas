@@ -2133,6 +2133,11 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 		t.Fatalf("GetWorkflowSteps(recovered) = (%#v, %v), want first pending at attempt 1", steps, err)
 	}
 
+	// production-us hunt #5 (H5-45): cancelling while a step's handler runs
+	// must close that step's attempt, not leave it running forever.
+	if _, err := fx.Store.StartWorkflowStep(fx.Ctx, run.ID, "first", 1, []byte(`{}`)); err != nil {
+		t.Fatalf("StartWorkflowStep: %v", err)
+	}
 	const reason = "cancelled by conformance"
 	cancelled, err := fx.Store.CancelWorkflowRun(fx.Ctx, run.ID, reason)
 	if err != nil || cancelled.Status != state.WorkflowRunStatusFailed || cancelled.LastError == nil || *cancelled.LastError != reason || cancelled.FinishedAt == nil {
@@ -2141,6 +2146,10 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 	steps, err = fx.Store.GetWorkflowSteps(fx.Ctx, run.ID)
 	if err != nil || len(steps) != 2 || steps[0].Status != state.WorkflowStepStatusSkipped || steps[1].Status != state.WorkflowStepStatusSkipped {
 		t.Fatalf("GetWorkflowSteps(cancelled) = (%#v, %v), want both skipped", steps, err)
+	}
+	attempts, err := fx.Store.GetWorkflowStepAttempts(fx.Ctx, run.ID, "first")
+	if err != nil || len(attempts) != 1 || attempts[0].Status != state.WorkflowAttemptStatusFailed || attempts[0].FinishedAt == nil {
+		t.Fatalf("GetWorkflowStepAttempts(cancelled) = (%+v, %v), want the in-flight attempt failed and finished", attempts, err)
 	}
 	unchanged, err := fx.Store.CancelWorkflowRun(fx.Ctx, run.ID, "replacement reason")
 	if err != nil || unchanged.LastError == nil || *unchanged.LastError != reason {

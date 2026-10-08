@@ -90,7 +90,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
 | [`secrets`](#secrets) | Manage sealed secrets and environment secret references |
 | [`slo`](#slo) | Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]; slug defaults to linked context) |
-| [`status`](#status) | Personal SLO numbers (availability, wake p95, build success) |
+| [`status`](#status) | Platform status: API availability, wake p95 and deployment success (not account-specific) |
 | [`tail`](#tail) | Live tail of the unified event stream (app defaults to linked context) |
 | [`trusted-publishers`](#trusted-publishers) | Per-app cosign trusted-publisher list (admin; trusted-publishers add\|remove\|list) |
 | [`usage`](#usage) | Show this month&#39;s usage (gregale usage [--month YYYY-MM]\|daily [--day YYYY-MM-DD]\|storage [--day YYYY-MM-DD]\|summary) |
@@ -100,6 +100,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (available on every plan) |
+| [`log-drains`](#log-drains) | Ship app runtime logs to an HTTP JSON or OTLP endpoint |
 | [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only). Rules default to 5% and mirror only safe methods; bodies over 64 KiB are skipped, and raw bodies are never retained. |
 | [`cache`](#cache) | Declare or purge response caching (cache GET /path/:id for 30s) |
 | [`upload-cache`](#upload-cache) | Inspect or clean resumable source-upload recovery state |
@@ -155,7 +156,7 @@ gregale mcp deploy --path ./my-mcp --name my-mcp --profile small
 
 Check discovery, Origin rejection, compatibility and optional streaming
 
-`gregale mcp doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -183,7 +184,7 @@ gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo
 
 Discover tool schemas without invoking tools
 
-`gregale mcp tools [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp tools [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -211,7 +212,7 @@ gregale mcp tools --app my-mcp
 
 Discover resource and template definitions without reading contents
 
-`gregale mcp resources [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp resources [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -239,7 +240,7 @@ gregale mcp resources --app my-mcp
 
 Read one explicitly selected resource URI
 
-`gregale mcp resource-read [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp resource-read [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -288,7 +289,7 @@ gregale mcp resource-watch --app my-mcp --uri 'file:///reports/current'
 
 Discover prompt definitions without rendering them
 
-`gregale mcp prompts [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp prompts [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -316,7 +317,7 @@ gregale mcp prompts --app my-mcp
 
 Render one explicitly selected prompt
 
-`gregale mcp prompt-get [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp prompt-get [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -372,7 +373,7 @@ gregale mcp complete --app my-mcp --resource-template 'customer://records/{recor
 
 Execute one discovered tool; opt in to input requests or durable tasks
 
-`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>] [--tasks] [--wait]`
+`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>] [--tasks] [--wait] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -406,7 +407,7 @@ gregale mcp call --app my-mcp --tool report_preview --tasks
 
 Read the status or result of a previously returned task handle
 
-`gregale mcp task-get [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>]`
+`gregale mcp task-get [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -435,7 +436,7 @@ gregale mcp task-get --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
 
 Resume waiting for a task to finish
 
-`gregale mcp task-wait [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--interactive] [--input-responses-file <PATH>]`
+`gregale mcp task-wait [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--interactive] [--input-responses-file <PATH>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -467,7 +468,7 @@ gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe84
 
 Request cooperative cancellation of a previously returned task
 
-`gregale mcp task-cancel [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>]`
+`gregale mcp task-cancel [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -561,7 +562,7 @@ gregale mcp watch --app my-mcp --baseline gregale-mcp.lock.json
 
 Emit remote MCP connection JSON without credentials
 
-`gregale mcp config [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp config [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3268,7 +3269,11 @@ Cancel an active workflow run
 
 Send external event to a workflow run
 
-`gregale workflows events <run_id> <event_name>`
+`gregale workflows events [--payload <JSON>] <run_id> <event_name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--payload <JSON>` | JSON event payload (default {}) |  |
 
 
 ## dashboard
@@ -7663,7 +7668,7 @@ Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]; slug defaults to lin
 
 ## status
 
-Personal SLO numbers (availability, wake p95, build success)
+Platform status: API availability, wake p95 and deployment success (not account-specific)
 
 `gregale status`
 
@@ -7820,7 +7825,7 @@ Manage deployment traffic split (available on every plan)
 
 Set the traffic split for a deployment
 
-`gregale traffic set [--app <SLUG>] --deployment <ID> --percent <N>`
+`gregale traffic set [--app <SLUG>] --deployment <ID> --percent <N> [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7832,7 +7837,7 @@ Set the traffic split for a deployment
 
 Promote a live deployment to 100% production traffic
 
-`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack]`
+`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7849,6 +7854,103 @@ Promote a live deployment to 100% production traffic
 Show live deployment traffic weights for an app
 
 `gregale traffic status <slug>`
+
+
+## log-drains
+
+Ship app runtime logs to an HTTP JSON or OTLP endpoint
+
+`gregale log-drains [<subcommand>]`
+
+### log-drains list
+
+List an app&#39;s log drains
+
+`gregale log-drains list [--app <SLUG>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+
+Examples:
+
+```sh
+gregale log-drains list --app my-app
+```
+
+### log-drains add
+
+Add a log drain; the credential is read from an environment variable
+
+`gregale log-drains add [--app <SLUG>] --url <URL> [--kind <KIND>] [--auth-header-env <ENV>] [--disabled] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--url <URL>` | destination URL | required |
+| `--kind <KIND>` | destination format (default http_json) | one of `http_json` · `otlp` |
+| `--auth-header-env <ENV>` | environment variable holding the Authorization header value |  |
+| `--disabled` | create the drain disabled |  |
+
+Examples:
+
+```sh
+LOG_TOKEN='Bearer …' gregale log-drains add --app my-app --url https://logs.example.com/ingest --auth-header-env LOG_TOKEN
+```
+
+### log-drains get
+
+Show one log drain (credential masked)
+
+`gregale log-drains get [--app <SLUG>] --id <ID> [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--id <ID>` | log drain id | required |
+
+### log-drains health
+
+Show delivery health: queue, delivered, failed and last error
+
+`gregale log-drains health [--app <SLUG>] --id <ID> [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--id <ID>` | log drain id | required |
+
+Examples:
+
+```sh
+gregale log-drains health --app my-app --id <drain-id>
+```
+
+### log-drains update
+
+Change a drain&#39;s URL or credential, or pause and resume it
+
+`gregale log-drains update [--app <SLUG>] --id <ID> [--url <URL>] [--auth-header-env <ENV>] [--enable] [--disable] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--id <ID>` | log drain id | required |
+| `--url <URL>` | new destination URL |  |
+| `--auth-header-env <ENV>` | environment variable holding the new Authorization header value |  |
+| `--enable` | resume delivery |  |
+| `--disable` | pause delivery |  |
+
+### log-drains rm
+
+Delete a log drain
+
+`gregale log-drains rm [--app <SLUG>] --id <ID> [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--id <ID>` | log drain id | required |
 
 
 ## mirror

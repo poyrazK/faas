@@ -102,6 +102,7 @@ type multiSink struct {
 	onAccount  func(method string) (int, any)
 	onApps     func(method string, path string) (int, any)
 	onListApp  func(slug string) (int, any)
+	onGetApp   func(slug string) (int, any)
 	onRename   func(slug string) (int, any, []byte)
 	onScale    func(slug string, body []byte) (int, any)
 	onRestart  func(slug string) (int, any)
@@ -140,6 +141,9 @@ func (s *multiSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/v1/apps") && strings.HasSuffix(path, "/restart"):
 		slug := strings.TrimSuffix(strings.TrimPrefix(path, "/v1/apps/"), "/restart")
 		status, payload := s.onRestart(slug)
+		writeJSONTestStatus(w, status, payload)
+	case s.onGetApp != nil && r.Method == http.MethodGet && strings.HasPrefix(path, "/v1/apps/") && !strings.Contains(strings.TrimPrefix(path, "/v1/apps/"), "/"):
+		status, payload := s.onGetApp(strings.TrimPrefix(path, "/v1/apps/"))
 		writeJSONTestStatus(w, status, payload)
 	case strings.HasPrefix(path, "/v1/apps") && r.Method == "PATCH":
 		slug := strings.TrimPrefix(path, "/v1/apps/")
@@ -1307,6 +1311,8 @@ func TestCmdAppScale_RequireAuthnFalse(t *testing.T) {
 		return http.StatusOK, api.AppResponse{Slug: "jane-api"}
 	}, onAccount: func(string) (int, any) {
 		return http.StatusOK, api.AccountResponse{Plan: "pro"}
+	}, onGetApp: func(string) (int, any) {
+		return http.StatusOK, api.AppResponse{Slug: "jane-api", RequireAuthn: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeBearer}}
 	}}
 	srv := httptest.NewServer(sink)
 	defer srv.Close()
@@ -1324,6 +1330,35 @@ func TestCmdAppScale_RequireAuthnFalse(t *testing.T) {
 	}
 	if req.PublicAuth == nil || req.PublicAuth.Mode != api.AppPublicAuthModeOpen {
 		t.Errorf("public_auth = %+v, want mode=open", req.PublicAuth)
+	}
+}
+
+// production-us hunt #5 (H5-37): --no-require-authn reset an IP allowlist
+// to open, so an app restricted to one address answered every caller.
+func TestCmdAppScale_NoRequireAuthnKeepsOwnerChosenPublicAuth(t *testing.T) {
+	for _, mode := range []string{api.AppPublicAuthModeIPAllowlist, api.AppPublicAuthModeBasic, api.AppPublicAuthModeInternalOnly} {
+		sink := &multiSink{onScale: func(string, []byte) (int, any) {
+			return http.StatusOK, api.AppResponse{Slug: "jane-api"}
+		}, onAccount: func(string) (int, any) {
+			return http.StatusOK, api.AccountResponse{Plan: "pro"}
+		}, onGetApp: func(string) (int, any) {
+			return http.StatusOK, api.AppResponse{Slug: "jane-api", RequireAuthn: true, PublicAuth: api.PublicAuthStatus{Mode: mode}}
+		}}
+		srv := httptest.NewServer(sink)
+		t.Setenv("FAAS_API", srv.URL)
+		t.Setenv("FAAS_TOKEN", "fp_live_x")
+		if code := cmdAppScale("jane-api", []string{"--no-require-authn"}); code != 0 {
+			srv.Close()
+			t.Fatalf("%s: exit = %d", mode, code)
+		}
+		srv.Close()
+		var req api.UpdateAppRequest
+		if err := json.Unmarshal(sink.lastBody, &req); err != nil {
+			t.Fatalf("%s: decode body: %v", mode, err)
+		}
+		if req.RequireAuthn == nil || *req.RequireAuthn || req.PublicAuth != nil {
+			t.Fatalf("%s: require_authn=%v public_auth=%+v, want only the token requirement dropped", mode, req.RequireAuthn, req.PublicAuth)
+		}
 	}
 }
 

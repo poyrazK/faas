@@ -57,7 +57,13 @@ const (
 	InvocationIDHeader = "X-Faas-Invocation-Id"
 	// InvocationSourceHeader identifies the platform-authored source of a
 	// synthetic invocation; it must not be forwarded from customer requests.
-	InvocationSourceHeader             = "X-Faas-Invocation-Source"
+	InvocationSourceHeader = "X-Faas-Invocation-Source"
+	// Workflow step headers identify the run, step and attempt a workflow
+	// step request belongs to (docs/event-driven.md). Only scheduler-authored
+	// workflow invocations carry them to the guest.
+	WorkflowRunIDHeader                = "X-Faas-Workflow-Run-Id"
+	WorkflowStepHeader                 = "X-Faas-Workflow-Step"
+	WorkflowAttemptHeader              = "X-Faas-Workflow-Attempt"
 	ExclusiveOperationIDHeader         = "X-Gregale-Operation-Id"
 	ExclusiveOperationGenerationHeader = "X-Gregale-Operation-Generation"
 	// Advertised only for a managed request whose scheduler and gateway both
@@ -176,6 +182,12 @@ func ClearGuestIdentityHeaders(h http.Header) {
 // may cross the gateway→guest boundary. The handler overwrites these values
 // immediately before forwarding; keeping the allowlist here makes the same
 // trust policy apply to HTTP/1, streaming, and upgrade forwarding paths.
+// IsWorkflowStepHeader reports one of the workflow step headers.
+func IsWorkflowStepHeader(name string) bool {
+	return strings.EqualFold(name, WorkflowRunIDHeader) || strings.EqualFold(name, WorkflowStepHeader) ||
+		strings.EqualFold(name, WorkflowAttemptHeader)
+}
+
 func IsGuestIdentityHeader(name string) bool {
 	if IsReservedOperationHeader(name) {
 		return true

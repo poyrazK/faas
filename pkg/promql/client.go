@@ -12,6 +12,7 @@ package promql
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -21,6 +22,10 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrNoData is an instant query that matched no series: the metric has not
+// been emitted for the selector, which callers of counters may treat as zero.
+var ErrNoData = errors.New("no data")
 
 const (
 	// Prometheus is an internal dependency, but its responses still cross a
@@ -141,7 +146,7 @@ func (c *Client) QueryScalar(ctx context.Context, query string) (float64, error)
 		return 0, fmt.Errorf("unsupported resultType %q for query %q", pr.Data.ResultType, query)
 	}
 	if len(pr.Data.Result) == 0 {
-		return 0, fmt.Errorf("no data for query %q", query)
+		return 0, fmt.Errorf("%w for query %q", ErrNoData, query)
 	}
 	return parseSampleValue(pr.Data.Result[0].Value, query)
 }
