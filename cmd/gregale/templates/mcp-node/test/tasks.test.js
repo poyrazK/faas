@@ -305,6 +305,7 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
   let claimOrder = 0;
   const pool = { async query(sql, params) {
     calls.push({ sql, params });
+    if (sql.includes("AS trusted")) return { rows: [{ trusted: true }] };
     if (sql.includes('COUNT(*)::int AS total')) return { rows: [{ total: rows.size, owned: [...rows.values()].filter(row => row.owner_hash.equals(params[1])).length }] };
     if (sql.includes('INSERT INTO gregale_mcp_task_crypto_keys')) return { rows: [{ key_fingerprint: params[2] }] };
     if (sql.includes('INSERT INTO gregale_mcp_tasks')) {
@@ -351,7 +352,7 @@ test('PostgreSQL store encrypts task arguments and scopes records to the app and
     return { rows: [] };
   } };
   const store = createPostgresMcpTaskStore({ pool, namespace: 'app-123', ownerKey: 'x'.repeat(48), ttlMs: 3_600_000 });
-  await store.initialize();
+  await store.migrate();
   const authInfo = { resource: new URL('https://mcp.example/mcp'), extra: { subject: 'alice' }, clientId: 'client-a' };
   const record = await store.create({ toolName: 'build_report', handlerVersion: '1', args: { secret: 'private report input' }, authInfo, authMode: 'external-oauth' });
   const insert = calls.find(call => call.sql.includes('INSERT INTO gregale_mcp_tasks'));

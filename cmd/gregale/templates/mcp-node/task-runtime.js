@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { checkMcpTaskSchema } from './task-schema.js';
 import { parseMcpTaskEncryptionKeys } from './task-crypto.js';
 import { createPostgresMcpTaskStore, createMcpTaskQueueObserver } from './task-store.js';
 import { createMcpTaskRuntime, mcpTaskHandlers, validateMcpTaskRetryPolicy } from './tasks.js';
@@ -57,6 +58,7 @@ export async function startMcpTaskRuntime(config, {
   createPool = options => new pg.Pool(options),
   createStore = createPostgresMcpTaskStore,
   createObserver = createMcpTaskQueueObserver,
+  checkSchema = checkMcpTaskSchema,
   createRuntime = createMcpTaskRuntime,
   createMetricsPublisher = startMcpTaskMetricsPublisher,
   handlers = mcpTaskHandlers,
@@ -71,7 +73,10 @@ export async function startMcpTaskRuntime(config, {
   let metricsPublisher;
   try {
     const store = role === 'observer' ? createObserver({ pool, namespace: settings.namespace, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner }) : createStore({ pool, namespace: settings.namespace, ownerKey: settings.ownerKey, encryptionKeys: settings.encryptionKeys, ttlMs: settings.ttlMs, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner, maxOutstanding: settings.maxOutstanding, maxOutstandingPerOwner: settings.maxOutstandingPerOwner });
-    if (role === 'observer') await store.queueMetrics();
+    if (role === 'observer') {
+      await checkSchema({ pool, namespace: settings.namespace, role: 'observer' });
+      await store.queueMetrics();
+    }
     else taskRuntime = createRuntime({
       store,
       handlers,

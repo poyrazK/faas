@@ -121,10 +121,11 @@ them, attach a read/write PostgreSQL binding to the app, keep a stable
 }
 ```
 
-The starter creates and migrates its namespaced task table, queue and fairness
-indexes, owner-cursor table, claim-order sequence, notification and fairness
-functions, and their triggers in that database. The bound role must be able to
-create and alter tables, indexes, sequences, functions, and triggers. The store
+Run `npm run tasks:migrate -- apply` with a separate schema-owner binding in
+`MCP_TASK_MIGRATION_DATABASE_URL` before starting the app. This creates or upgrades
+the Task schema and prepares the namespace. The application binding uses the
+runtime role and needs Task DML and metadata SELECT privileges; startup performs
+read-only checks. The store
 hashes owner identity and encrypts arguments, results, and errors with AES-256-GCM
 before writing them. Workers rotate among active owner partitions and preserve
 FIFO order within each owner; open-mode callers share one partition.
@@ -374,7 +375,7 @@ withdrawn when a worker stops accepting work. Worker registrations describe
 availability to claim work; they are not a guarantee that a handler succeeds.
 Expired registrations do not participate in inventory and are pruned by workers.
 The observer reads this table without writing registrations or migrating schema.
-Initialize the updated schema through an upgraded web or worker process before
+Run `npm run tasks:migrate -- apply` with migration credentials before
 starting an upgraded observer. Include read access to the worker registry in any
 observer database grants, and upgrade every worker so the inventory is complete.
 
@@ -427,7 +428,8 @@ results, and errors for every unexpired Task, including terminal Tasks, and
 rejects missing keys. Reusing a key ID with a different secret is rejected even
 when old Tasks have expired. Payloads remain bound to namespace, Task ID and field.
 
-Rotate in phases: upgrade all web and worker processes with the complete union
+Rotate in phases: run the explicit migration with the complete union of keys
+to register their fingerprints, then upgrade all web and worker processes with the complete union
 of old and new keys first; then activate the new key. Retain old keys until every
 Task field using them has expired. Stop or reconfigure every writer still using
 the old active key before removing it from configuration. Startup validation is
@@ -438,7 +440,7 @@ the ownership secret. Observers remain read-only and require no encryption secre
 
 ### Read-only Task preflight
 
-After initializing the Task runtime, run `npm run doctor:tasks` with the worker's
+After migrating the Task namespace, run `npm run doctor:tasks` with the worker's
 bindings and `MCP_TASK_NAMESPACE`. The JSON report checks schema, runtime DML
 permissions, retained encryption keys, live workers and eligible handler coverage.
 Exit code 1 means failed or unknown readiness. No schema changes or Task claims
@@ -453,7 +455,7 @@ stop immediately; active handlers renew leases until completion or the deadline.
 At the deadline handlers receive an abort signal and leases expire naturally for
 recovery. Dedicated workers exit after cleanup even if a handler ignores abort.
 External effects must remain idempotent by Task ID. Available and draining
-workers publish separate aggregate gauges; initialize the updated worker schema
+workers publish separate aggregate gauges; migrate the updated worker schema
 before upgrading read-only observers.
 
 Before retiring a handler, run `npm run check:task-compatibility` with the candidate
@@ -465,11 +467,36 @@ doctor includes the same gate. Stop old-version producers before the final check
 this read-only snapshot does not fence future Task admission.
 
 Admission is now enforced by a shared database trigger, including for older
-producers. Runtime startup registers current versions but preserves disabled
-and retired entries. Use `npm run tasks:admission -- disable <tool> <version>`,
+producers. Explicit migrations register current versions and preserve disabled
+and retired entries. Runtime startup only checks the migrated state. Use `npm run tasks:admission -- disable <tool> <version>`,
 keep compatible workers to drain retained Tasks, then run `retire <tool> <version>`
 before removing handler code. `status` reports retained counts and `canRetire`;
 `audit` returns the latest 100 state changes. `allow` explicitly reopens a version.
 These commands use database/namespace bindings and need no payload secrets.
 Upgrade schema first, preserve registry tombstones, and keep the admission trigger
 enabled. Database owners can bypass enforcement; restrict policy administration.
+
+### Explicit migrations and role grants
+
+Before starting any Task process, run `npm run tasks:migrate -- apply` with
+`MCP_TASK_MIGRATION_DATABASE_URL`, `MCP_TASK_NAMESPACE`, the stable owner secret
+and candidate payload-key ring. The migration account must own the dedicated
+schema and existing objects. Configure the same `search_path` in every binding;
+commands use `current_schema()`. Schema version 1 consolidates the previous startup
+DDL. Migration is transactional and serialized; unknown future versions fail.
+Runtime startup is read-only and requires migrated schema, namespace, handler
+registrations and key fingerprints. Repeat migration before deploying new
+handlers, namespaces or keys. `tasks:migrate -- status` checks deployed schema.
+
+Use existing separate accounts with `npm run tasks:roles -- plan <profile> <role>`
+and `npm run tasks:roles -- grant <profile> <role>`; profiles are `runtime`,
+`observer` and `operator`. Granting requires migration credentials and adds only
+the profile's required privileges. It does not create accounts or remove prior
+privileges. Runtime roles have Task DML and policy/key SELECT, with no DDL or
+policy writes. Admission and audit triggers use the migration owner's permissions
+with a pinned trusted-schema search path. Keep CREATE away from PUBLIC and
+application roles. Grants cover the selected schema, not individual namespaces.
+
+`npm run doctor:tasks -- --role observer` and `--role operator` validate those
+role profiles without payload secrets. The default doctor checks the runtime
+profile, encryption keys, handler compatibility and operational signals.

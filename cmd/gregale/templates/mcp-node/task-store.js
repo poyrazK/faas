@@ -2,7 +2,8 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { createMcpTaskPayloadCipher } from './task-crypto.js';
-import { initializeMcpTaskAdmission } from './task-admission.js';
+import { initializeMcpTaskAdmission, validateMcpTaskAdmissionHandlers } from './task-admission.js';
+import { MCP_TASK_SCHEMA_VERSION, checkMcpTaskSchema, assertMcpTaskSchemaTrust } from './task-schema.js';
 import defaults from './task-limits.json' with { type: 'json' };
 
 const TABLE = 'gregale_mcp_tasks';
@@ -196,11 +197,11 @@ function outstandingRequests(state) {
   return Object.fromEntries(Object.entries(state.requests).filter(([key]) => !Object.hasOwn(state.responses, key)));
 }
 
-async function withTransaction(pool, callback) {
+async function withTransaction(pool, callback, { readOnly = false } = {}) {
   const client = typeof pool.connect === 'function' ? await pool.connect() : pool;
   let inTransaction = false;
   try {
-    await client.query('BEGIN');
+    await client.query(readOnly ? 'BEGIN READ ONLY' : 'BEGIN');
     inTransaction = true;
     const result = await callback(client, client !== pool);
     await client.query('COMMIT');
@@ -369,28 +370,75 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
 
   return {
     async initialize({ admissionHandlers = [] } = {}) {
-      await withTransaction(pool, async (client, dedicated) => {
+      validateMcpTaskAdmissionHandlers(admissionHandlers);
+      return withTransaction(pool, async client => {
+        await checkMcpTaskSchema({ pool: client, namespace, inTransaction: true });
+        const registered = await client.query('SELECT key_id, key_fingerprint FROM gregale_mcp_task_crypto_keys WHERE namespace = $1', [namespace]);
+        const known = new Map(registered.rows.map(row => [row.key_id, row.key_fingerprint]));
+        for (const [id, fingerprint] of payloadKey.fingerprints) {
+          if (!known.has(id)) throw new Error('MCP Task encryption keys are not registered; run tasks:migrate before startup');
+          if (!known.get(id).equals(fingerprint)) throw new Error('MCP task ownership secret and encryption key IDs must remain stable');
+        }
+        const required = await client.query(`
+          SELECT DISTINCT ON (key_id) key_id, task_id::text, field, payload
+            FROM (
+              SELECT task.task_id, encrypted.field, encrypted.payload,
+                     CASE WHEN get_byte(encrypted.payload, 0) = 1 THEN 'legacy'
+                          WHEN get_byte(encrypted.payload, 0) = 2 THEN convert_from(substring(encrypted.payload FROM 3 FOR get_byte(encrypted.payload, 1)), 'UTF8')
+                          ELSE '@invalid' END AS key_id
+                FROM ${TABLE} AS task
+                CROSS JOIN LATERAL (VALUES ('arguments', task.arguments_encrypted), ('result', task.result_encrypted), ('error', task.error_encrypted), ('input-state', task.input_state_encrypted)) AS encrypted(field, payload)
+               WHERE namespace = $1 AND expires_at > clock_timestamp() AND encrypted.payload IS NOT NULL
+            ) AS encrypted
+           ORDER BY key_id, task_id, field
+        `, [namespace]);
+        for (const row of required.rows) payloadKey.decrypt(row.payload, taskAAD(namespace, row.task_id, row.field));
+
+        for (const handler of admissionHandlers) {
+          const configured = await client.query('SELECT enabled FROM gregale_mcp_task_admission WHERE namespace = $1 AND tool_name = $2 AND handler_version = $3', [namespace, handler.name, handler.version]);
+          if (!configured.rows.length) throw new Error('MCP Task handler version is not registered; run tasks:migrate before startup');
+        }
+      }, { readOnly: true });
+    },
+    async migrate({ admissionHandlers = [] } = {}) {
+      return withTransaction(pool, async (client, dedicated) => {
         if (dedicated) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [TABLE]);
-        await client.query(CREATE_SCHEMA);
-        await client.query(`CREATE TABLE IF NOT EXISTS ${WORKER_TABLE} (
-          namespace text NOT NULL, worker_id uuid NOT NULL,
-          handlers jsonb NOT NULL CHECK (jsonb_typeof(handlers) = 'array'),
-          draining boolean NOT NULL DEFAULT false,
-          heartbeat_at timestamptz NOT NULL, expires_at timestamptz NOT NULL,
-          PRIMARY KEY (namespace, worker_id)
+        await client.query(`CREATE TABLE IF NOT EXISTS gregale_mcp_task_schema (
+          singleton boolean PRIMARY KEY CHECK (singleton), version integer NOT NULL CHECK (version > 0),
+          updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
         )`);
-        await client.query(`ALTER TABLE ${WORKER_TABLE} ADD COLUMN IF NOT EXISTS draining boolean NOT NULL DEFAULT false`);
-        await client.query(MIGRATE_SCHEMA);
-        await client.query(CREATE_QUEUE_INDEX);
-        await client.query(CREATE_ADMISSION_INDEX);
-        await client.query(`CREATE INDEX IF NOT EXISTS gregale_mcp_tasks_live_leases ON ${TABLE} (namespace, owner_hash, lease_expires_at) WHERE status = 'running'`);
-        await client.query(CREATE_FAIRNESS_SCHEMA);
-        await client.query(CREATE_FAIRNESS_SEQUENCE);
-        await client.query(CREATE_FAIRNESS_INDEX);
-        await client.query(CREATE_TASK_FAIRNESS_FUNCTION);
-        // Install the seed trigger before backfilling so an older app process
-        // cannot insert an owner between the backfill snapshot and trigger setup.
-        await client.query(CREATE_TASK_FAIRNESS_TRIGGER);
+        const recorded = await client.query('SELECT version FROM gregale_mcp_task_schema WHERE singleton = true');
+        const version = recorded.rows[0]?.version ?? 0;
+        await assertMcpTaskSchemaTrust(client);
+        if (!Number.isSafeInteger(version) || version < 0 || version > MCP_TASK_SCHEMA_VERSION) throw new Error('Unsupported MCP Task schema version; migrations cannot downgrade it');
+        if (version < 1) {
+          await client.query(CREATE_SCHEMA);
+          await client.query(`CREATE TABLE IF NOT EXISTS ${WORKER_TABLE} (
+            namespace text NOT NULL, worker_id uuid NOT NULL,
+            handlers jsonb NOT NULL CHECK (jsonb_typeof(handlers) = 'array'),
+            draining boolean NOT NULL DEFAULT false,
+            heartbeat_at timestamptz NOT NULL, expires_at timestamptz NOT NULL,
+            PRIMARY KEY (namespace, worker_id)
+          )`);
+          await client.query(`ALTER TABLE ${WORKER_TABLE} ADD COLUMN IF NOT EXISTS draining boolean NOT NULL DEFAULT false`);
+          await client.query(MIGRATE_SCHEMA);
+          await client.query(CREATE_QUEUE_INDEX);
+          await client.query(CREATE_ADMISSION_INDEX);
+          await client.query(`CREATE INDEX IF NOT EXISTS gregale_mcp_tasks_live_leases ON ${TABLE} (namespace, owner_hash, lease_expires_at) WHERE status = 'running'`);
+          await client.query(CREATE_FAIRNESS_SCHEMA);
+          await client.query(CREATE_FAIRNESS_SEQUENCE);
+          await client.query(CREATE_FAIRNESS_INDEX);
+          await client.query(CREATE_TASK_FAIRNESS_FUNCTION);
+          // Install the seed trigger before backfilling so an older app process
+          // cannot insert an owner between the backfill snapshot and trigger setup.
+          await client.query(CREATE_TASK_FAIRNESS_TRIGGER);
+          await client.query(CREATE_TASK_NOTIFY_FUNCTION);
+          await client.query(CREATE_TASK_NOTIFY_TRIGGER);
+          await client.query(`CREATE TABLE IF NOT EXISTS gregale_mcp_task_crypto_keys (
+            namespace text NOT NULL, key_id text NOT NULL, key_fingerprint bytea NOT NULL,
+            PRIMARY KEY (namespace, key_id)
+          )`);
+        }
         await client.query(`
           INSERT INTO ${FAIRNESS_TABLE} (namespace, owner_hash)
           SELECT namespace, owner_hash
@@ -400,9 +448,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
            GROUP BY namespace, owner_hash
           ON CONFLICT (namespace, owner_hash) DO NOTHING
         `, [namespace]);
-        await client.query(CREATE_TASK_NOTIFY_FUNCTION);
-        await client.query(CREATE_TASK_NOTIFY_TRIGGER);
-        await initializeMcpTaskAdmission(client, namespace, admissionHandlers);
+        await initializeMcpTaskAdmission(client, namespace, admissionHandlers, { schema: version < 1 });
         // Check key usage across every encrypted field still within TTL, and
         // authenticate a sample per key. Legacy data proves the initial owner key.
         const required = await client.query(`
@@ -419,10 +465,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
            ORDER BY key_id, task_id, field
         `, [namespace]);
         for (const row of required.rows) payloadKey.decrypt(row.payload, taskAAD(namespace, row.task_id, row.field));
-        await client.query(`CREATE TABLE IF NOT EXISTS gregale_mcp_task_crypto_keys (
-          namespace text NOT NULL, key_id text NOT NULL, key_fingerprint bytea NOT NULL,
-          PRIMARY KEY (namespace, key_id)
-        )`);
+
         for (const [id, fingerprint] of payloadKey.fingerprints) {
           const registered = await client.query(`INSERT INTO gregale_mcp_task_crypto_keys (namespace, key_id, key_fingerprint)
             VALUES ($1, $2, $3) ON CONFLICT (namespace, key_id)
@@ -431,6 +474,9 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
             RETURNING key_fingerprint`, [namespace, id, fingerprint]);
           if (!registered.rows?.length) throw new Error('MCP task ownership secret and encryption key IDs must remain stable');
         }
+        await client.query(`INSERT INTO gregale_mcp_task_schema (singleton, version) VALUES (true, $1)
+          ON CONFLICT (singleton) DO UPDATE SET version = EXCLUDED.version, updated_at = clock_timestamp() WHERE gregale_mcp_task_schema.version < EXCLUDED.version`, [MCP_TASK_SCHEMA_VERSION]);
+        return { schemaVersion: MCP_TASK_SCHEMA_VERSION, changed: version < MCP_TASK_SCHEMA_VERSION, namespacePrepared: true };
       });
     },
     async workerHeartbeat(workerID, handlers) {

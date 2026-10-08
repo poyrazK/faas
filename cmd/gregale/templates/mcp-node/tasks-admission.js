@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
+import { checkMcpTaskSchema } from './task-schema.js';
 import { resolveMcpTaskSettings } from './task-runtime.js';
 import { createMcpTaskAdmissionController } from './task-admission.js';
 
@@ -11,6 +12,7 @@ try {
   const config = JSON.parse(readFileSync(new URL('./gregale-mcp.json', import.meta.url)));
   const settings = resolveMcpTaskSettings(config, { role: 'observer' });
   pool = new pg.Pool({ connectionString: settings.databaseURL, max: 1, connectionTimeoutMillis: 5000, statement_timeout: 10000 });
+  await checkMcpTaskSchema({ pool, namespace: settings.namespace, role: 'operator' });
   const controller = createMcpTaskAdmissionController({ pool, namespace: settings.namespace });
   const result = action === 'status' ? await controller.status() : action === 'audit' ? await controller.audit() : await controller.change(action, name, version);
   console.log(JSON.stringify({ ok: true, ...result }));

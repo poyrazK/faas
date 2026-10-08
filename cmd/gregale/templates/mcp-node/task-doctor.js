@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
+import { checkMcpTaskSchema } from './task-schema.js';
 import { mcpTaskHandlers } from './tasks.js';
 import { createMcpTaskAdmissionController } from './task-admission.js';
 import { checkMcpTaskCompatibility } from './task-compatibility.js';
@@ -16,29 +17,22 @@ function add(name, status, detail) {
 let pool;
 let stage = 'configuration';
 try {
+  const args = process.argv.slice(2);
+  const role = args.length === 0 ? 'runtime' : args.length === 2 && args[0] === '--role' ? args[1] : '';
+  if (!['runtime', 'observer', 'operator'].includes(role)) throw new Error('Invalid Task doctor role');
   const config = JSON.parse(readFileSync(new URL('./gregale-mcp.json', import.meta.url)));
-  const settings = resolveMcpTaskSettings(config, { role: 'worker' });
-  const cipher = createMcpTaskPayloadCipher(settings.ownerKey, settings.encryptionKeys);
-  add('configuration', 'passed', 'Task bindings and key configuration are available');
+  const settings = resolveMcpTaskSettings(config, { role: role === 'runtime' ? 'worker' : 'observer' });
+  const cipher = role === 'runtime' ? createMcpTaskPayloadCipher(settings.ownerKey, settings.encryptionKeys) : undefined;
+  add('configuration', 'passed', 'Task bindings for the requested role are available');
   stage = 'database_schema_and_permissions';
   pool = new pg.Pool({ connectionString: settings.databaseURL, max: 1, connectionTimeoutMillis: 5000, statement_timeout: 10000 });
   const client = await pool.connect();
   try {
     await client.query('BEGIN READ ONLY');
-    const tables = ['gregale_mcp_tasks', 'gregale_mcp_task_fairness', 'gregale_mcp_task_workers', 'gregale_mcp_task_crypto_keys'];
-    for (const table of tables) {
-      const result = await client.query(`SELECT to_regclass($1) IS NOT NULL AS present`, [table]);
-      if (!result.rows[0].present) throw new Error('schema');
-      const permissions = await client.query(`SELECT has_table_privilege(current_user, $1, 'SELECT') AND has_table_privilege(current_user, $1, 'INSERT') AND has_table_privilege(current_user, $1, 'UPDATE') AND ($1 = 'gregale_mcp_task_crypto_keys' OR has_table_privilege(current_user, $1, 'DELETE')) AS allowed`, [table]);
-      if (!permissions.rows[0].allowed) throw new Error('permissions');
-    }
-    const registryAccess = await client.query("SELECT has_table_privilege(current_user, 'gregale_mcp_task_admission_namespaces', 'SELECT') AND has_table_privilege(current_user, 'gregale_mcp_task_admission', 'SELECT') AND has_table_privilege(current_user, 'gregale_mcp_task_admission', 'UPDATE') AS allowed");
-    if (!registryAccess.rows[0].allowed) throw new Error('permissions');
-    const sequence = await client.query("SELECT has_sequence_privilege(current_user, 'gregale_mcp_task_claim_order_seq', 'USAGE') AS allowed");
-    if (!sequence.rows[0].allowed) throw new Error('permissions');
-    // Resolve every column used by the runtime, without reading a Task payload.
-    await client.query('SELECT namespace, task_id, owner_hash, tool_name, handler_version, arguments_encrypted, result_encrypted, error_encrypted, input_state_encrypted, status, created_at, updated_at, expires_at, attempt_count, resume_pending, next_attempt_at, lease_token, lease_expires_at, cancel_requested_at, input_methods FROM gregale_mcp_tasks LIMIT 0');
-    add('database_schema_and_permissions', 'passed', 'Runtime tables, columns and DML/sequence privileges are available');
+    const schema = await checkMcpTaskSchema({ pool: client, namespace: settings.namespace, role, inTransaction: true });
+    report.schema = schema;
+    add('database_schema_and_permissions', 'passed', 'Supported schema version and runtime role privileges are available');
+    if (role === 'runtime') {
     stage = 'task_admission';
     const admission = await createMcpTaskAdmissionController({ pool: client, namespace: settings.namespace }).status();
     report.taskAdmission = admission;
@@ -65,11 +59,13 @@ try {
     ) AS encrypted ORDER BY key_id, task_id, field`, [settings.namespace]);
     for (const row of required.rows) cipher.decrypt(row.payload, `gregale-mcp-task:v1:${settings.namespace}:${row.task_id}:${row.field}`);
     add('encryption_keys', 'passed', 'Configured fingerprints match and retained payload key versions are readable');
+    }
     await client.query('ROLLBACK');
   } finally {
     await client.query('ROLLBACK').catch(() => {});
     client.release();
   }
+  if (role === 'runtime') {
   stage = 'worker_inventory';
   const metrics = await createMcpTaskQueueObserver({ pool, namespace: settings.namespace, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner }).queueMetrics();
   if (metrics.activeWorkers > 0) {
@@ -79,10 +75,11 @@ try {
     add('worker_inventory', 'unknown', 'No live worker registration; start a worker to verify handler coverage');
   }
   add('rollout_consistency', 'passed', 'This process matches persisted key fingerprints; run preflight on every writer during a coordinated rollout');
+  }
 } catch {
   const guidance = {
-    configuration: 'Provide enabled Task configuration, PostgreSQL binding, stable owner secret, valid key ring and MCP_TASK_NAMESPACE',
-    database_schema_and_permissions: 'Check PostgreSQL connectivity, initialized runtime schema and required table/sequence privileges',
+    configuration: 'Check enabled Task configuration, selected role and its database, namespace and secret bindings',
+    database_schema_and_permissions: 'Check PostgreSQL connectivity, migrated schema version, namespace and requested role privileges',
     task_admission: 'Check the admission registry, enforcement trigger and runtime registry permissions',
     retained_handler_coverage: 'Check candidate handler registry and retained Task schema; do not retire a handler while coverage is unknown',
     encryption_keys: 'Check the stable owner secret, registered key fingerprints and every retained payload key version',

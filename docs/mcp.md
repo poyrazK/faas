@@ -147,8 +147,9 @@ enabled. Other calls stay synchronous. The server returns the handle only
 after PostgreSQL can read the new row.
 
 Tasks are disabled by default. Enable them in `gregale-mcp.json` and bind a
-PostgreSQL URL whose database role can create and alter the task and owner-cursor
-tables, indexes, claim-order sequence, functions, and triggers. Keep a stable
+PostgreSQL runtime binding. Use a separate migration account to create and alter
+the task and owner-cursor tables, indexes, claim-order sequence, functions and
+triggers with `npm run tasks:migrate -- apply` before starting the runtime. Keep a stable
 32-byte-or-longer secret in `MCP_TASK_OWNER_KEY`:
 
 ```json
@@ -222,7 +223,7 @@ exhaustion, expiry cleanup, encrypted task input requests, partial
 restart. Run it locally against a disposable database with
 `MCP_TASKS_TEST_DATABASE_URL` and `npm run test:postgres`; it creates and removes
 its own schema. Before enabling Tasks on a managed database, also confirm the
-configured role has the required create/alter/index DDL privileges and that
+migration account owns the schema/objects and has DDL privileges and that
 provider connection and failover behavior meet the app-local worker contract.
 
 Custom task handlers can request client input with `requestInput(key, request)`
@@ -592,8 +593,8 @@ credentials, identifiers or task payloads; alert on recurring failures.
 For worker scale from zero, deploy `npm run start:tasks-observer` in a separate
 always-running app/process. Set the same `MCP_TASK_NAMESPACE`, a read-only
 `DATABASE_URL`, and the worker app's scoped `MCP_TASKS_SCALING_APP_SLUG` and
-`MCP_TASKS_SCALING_TOKEN`. Enable Tasks in its config. Initialize the schema first
-through a web/worker process. The observer only reads aggregate queue metrics,
+`MCP_TASKS_SCALING_TOKEN`. Enable Tasks in its config. Run the explicit Task
+migration before starting the observer. The observer only reads aggregate queue metrics,
 never migrates schema or claims tasks, and needs no `MCP_TASK_OWNER_KEY`. It
 publishes the existing custom metrics every 15 seconds. Configure the worker's
 custom scaling target and `worker.scale.min: 0`; keep the observer at a minimum of
@@ -721,7 +722,7 @@ withdrawn when a worker stops accepting work. Worker registrations describe
 availability to claim work; they are not a guarantee that a handler succeeds.
 Expired registrations do not participate in inventory and are pruned by workers.
 The observer reads this table without writing registrations or migrating schema.
-Initialize the updated schema through an upgraded web or worker process before
+Run `npm run tasks:migrate -- apply` with migration credentials before
 starting an upgraded observer. Include read access to the worker registry in any
 observer database grants, and upgrade every worker so the inventory is complete.
 
@@ -774,7 +775,8 @@ results, and errors for every unexpired Task, including terminal Tasks, and
 rejects missing keys. Reusing a key ID with a different secret is rejected even
 when old Tasks have expired. Payloads remain bound to namespace, Task ID and field.
 
-Rotate in phases: upgrade all web and worker processes with the complete union
+Rotate in phases: run the explicit migration with the complete union of keys
+to register their fingerprints, then upgrade all web and worker processes with the complete union
 of old and new keys first; then activate the new key. Retain old keys until every
 Task field using them has expired. Stop or reconfigure every writer still using
 the old active key before removing it from configuration. Startup validation is
@@ -803,8 +805,7 @@ the current environment. Install the starter dependencies first and provide its
 actual deployment bindings, including `MCP_TASK_NAMESPACE`. The standalone
 `npm run doctor:tasks` prints a JSON report and returns the same exit-code
 convention. It checks an already initialized database without creating schema,
-claiming Tasks, or exposing payloads or secrets. Initialize the schema through
-normal runtime startup before running this gate. It verifies runtime DML and
+claiming Tasks, or exposing payloads or secrets. Run `npm run tasks:migrate -- apply` before running this gate. It verifies runtime DML and
 sequence privileges, not privileges to perform future schema migrations.
 
 Without local preflight, database/key readiness stays unknown and the command
@@ -838,7 +839,7 @@ any drain. In-flight database operations can finish after the deadline; no lease
 is cleared early. Handlers must respect abort signals and use Task IDs for
 idempotent external effects because recovery remains at least once.
 
-Upgrade schema via worker startup before upgrading read-only observers: the
+Run the explicit migration before upgrading workers or read-only observers: the
 worker registry now includes a `draining` column. Older workers do not report
 draining state, so complete the rollout across workers before relying on this
 metric. Run replacement workers before draining the last compatible worker.
@@ -874,13 +875,13 @@ fleet-wide retirement.
 
 ### Enforcing handler admission and retirement
 
-Updated worker and web startup installs a database admission trigger on Task
+The explicit Task migration installs a database admission trigger on Task
 inserts and registers each current handler version. New current versions start
 allowed; existing disabled or retired entries are preserved. During the first
 namespace upgrade, versions used by retained Tasks and live worker registrations are seeded
 so older producers can keep using known versions. Versions without a registry
 entry are rejected in activated namespaces. Each namespace activates atomically
-with its first updated startup; other namespaces sharing the database keep their
+with its first explicit migration; other namespaces sharing the database keep their
 previous admission behavior until upgraded. Check `status.enforced` before
 relying on the gate. Initialize the namespace before retiring any version;
 older producers are then fenced by the trigger even without application changes.
@@ -915,12 +916,12 @@ prints JSON and exits nonzero on failure; it does not initialize schema itself.
 The hosting doctor checks current-version admission and the enabled trigger and
 includes registry status in its JSON report.
 
-Runtime Task insertion needs SELECT and UPDATE privileges on the admission table
-because the enforcement trigger takes a shared row lock. Runtime startup also
-needs INSERT for handler registration and INSERT on the audit table (plus its
-identity sequence privileges). Registry administration requires INSERT/UPDATE
-and audit INSERT; status requires registry and Task SELECT. Give runtime and
-operator roles the appropriate migration/DDL permissions separately. Keep the
+Runtime Task insertion uses a schema-pinned admission trigger running with the
+migration owner's permissions. Runtime accounts need policy SELECT, and cannot
+edit the policy or key registry. Operator accounts need policy SELECT/INSERT/UPDATE
+and audit SELECT; the audit trigger writes events with its owner's permissions
+while preserving the originating database role. The migration account owns the
+schema and objects. Keep the
 trigger enabled, registry tombstones intact, and registry administration limited
 to trusted operators. These are application coordination guarantees: privileged
 SQL that disables triggers, deletes policy rows, or rewrites Task version fields
@@ -928,8 +929,8 @@ can bypass them. Audit retention is operator-managed; startup never deletes
 policy tombstones, namespace activation records or audit history. Initialize the namespace with its existing current producer versions before
 introducing version changes in a split web/worker fleet. Explicitly allow idle
 producer versions absent from retained work or live worker inventory before
-routing traffic to them. The updated web runtime registers its
-current version automatically; a still-older idle producer with no known registry
+routing traffic to them. The migration command registers the candidate worker
+current versions; a still-older idle producer with no known registry
 entry may be rejected until its version is explicitly allowed.
 
 For activated namespaces, disable admission before taking the final compatibility
@@ -939,3 +940,78 @@ encoded in trigger definitions, so a transaction with an older snapshot cannot
 skip the check. Admission status reports `enforced=false` if the namespace
 trigger is absent or disabled, and policy changes fail until enforcement is
 available.
+
+### Explicit Task schema migrations and database roles
+
+Run migrations before starting updated web, worker or observer processes:
+
+```sh
+# Set MCP_TASK_NAMESPACE, the stable owner secret and the candidate key ring.
+# MCP_TASK_MIGRATION_DATABASE_URL uses the schema owner's account.
+npm run tasks:migrate -- apply
+npm run tasks:migrate -- status
+```
+
+`apply` requires the separate migration binding, acquires a database advisory
+lock, and applies the versioned baseline migration transactionally. It upgrades
+previous starter-owned schema, prepares the namespace and registers current
+handler versions and immutable encryption-key fingerprints. Repeated runs skip
+already applied global schema changes and preserve disabled/retired versions.
+A future schema version is rejected; downgrade is unsupported. Namespace
+activation and legacy-version seeding occur under a Task-table lock so older
+writers cannot slip an unregistered version between the seed and enforcement.
+
+Startup schema checks use a read-only transaction and shared migration lock to
+check schema version,
+namespace enforcement, required privileges, registered handler versions and
+payload keys. It never creates or alters database objects, registers handlers,
+or writes key fingerprints. Run migration again when adding a handler version,
+a namespace or a new payload key before deploying code that requires it.
+Workers can start with disabled current versions to finish retained work;
+admission remains disabled. The observer checks schema and SELECT privileges
+without needing payload secrets. The hosting doctor reports schema version and
+runtime privileges; standalone `npm run doctor:tasks -- --role observer` or
+`--role operator` checks those role profiles without decrypting payloads.
+
+Use a dedicated schema owned by the migration account and configure the same
+`search_path` in every database binding. Migration and grant commands target
+`current_schema()`. Runtime and operator
+accounts must not own that schema or its objects or have CREATE privileges there.
+The schema must not grant CREATE to PUBLIC. Admission and audit trigger functions
+run with the migration owner's permissions and pin their search path to this
+trusted schema. This permits Task insertion without policy UPDATE privileges,
+and operator policy changes without direct audit INSERT privileges.
+
+Create database accounts through your provider, then inspect or apply grants:
+
+```sh
+npm run tasks:roles -- plan runtime gregale_runtime
+npm run tasks:roles -- grant runtime gregale_runtime
+npm run tasks:roles -- grant observer gregale_observer
+npm run tasks:roles -- grant operator gregale_operator
+```
+
+`grant` uses migration credentials and applies the plan transactionally. It adds
+schema USAGE and profile-specific table, function and sequence grants; it does
+not create accounts, manage passwords, change ownership or revoke inherited
+privileges. Role profiles apply across the selected schema, so use separate
+schemas/accounts for separate trust boundaries. Provision accounts with no
+broader existing grants and use their bindings for the corresponding processes.
+
+| Account | Responsibilities |
+| --- | --- |
+| Migration | Own schema/objects; apply DDL, prepare namespaces, register handlers and keys, grant profiles |
+| Runtime | Read configuration metadata; create/execute/update/prune Tasks; manage fairness and worker heartbeats |
+| Observer | Read schema metadata, queue and worker inventory |
+| Operator | Read retained work and audit history; allow, disable and retire handler versions |
+
+Existing deployments must run `tasks:migrate apply` successfully before starting
+this runtime version. For an older installation, the migration account must own
+its existing tables, sequences and functions. Keep elevated migration credentials
+out of runtime, observer and operator environments.
+
+The initial migration can take table locks and validate retained rows. Schedule
+it before serving traffic or within a controlled release window. Upgrade all
+replicas that previously performed startup DDL before removing their elevated
+credentials; older binaries must not restart with schema-owner credentials and
+rewrite the migrated trigger definitions.

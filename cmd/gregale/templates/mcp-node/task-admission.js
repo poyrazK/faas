@@ -6,42 +6,45 @@ export function validateMcpTaskAdmissionHandlers(handlers) {
   return handlers;
 }
 
-export async function initializeMcpTaskAdmission(client, namespace, handlers = []) {
+export async function initializeMcpTaskAdmission(client, namespace, handlers = [], { schema = true } = {}) {
   validateMcpTaskAdmissionHandlers(handlers);
-  await client.query(`CREATE TABLE IF NOT EXISTS gregale_mcp_task_admission_namespaces (
-    namespace text PRIMARY KEY, activated_at timestamptz NOT NULL DEFAULT clock_timestamp()
-  )`);
-  await client.query(`CREATE TABLE IF NOT EXISTS ${TABLE} (
-    namespace text NOT NULL, tool_name text NOT NULL, handler_version text NOT NULL,
-    enabled boolean NOT NULL DEFAULT true, retired_at timestamptz,
-    updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    PRIMARY KEY (namespace, tool_name, handler_version),
-    CHECK (NOT enabled OR retired_at IS NULL)
-  )`);
-  await client.query(`CREATE TABLE IF NOT EXISTS gregale_mcp_task_admission_audit (
-    event_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    namespace text NOT NULL, tool_name text NOT NULL, handler_version text NOT NULL,
-    enabled boolean NOT NULL, retired_at timestamptz,
-    changed_at timestamptz NOT NULL DEFAULT clock_timestamp(), database_role text NOT NULL
-  )`);
-  await client.query(`CREATE OR REPLACE FUNCTION gregale_mcp_task_audit_admission() RETURNS trigger
-    LANGUAGE plpgsql AS $$ BEGIN
-      IF TG_OP = 'INSERT' OR NEW.enabled IS DISTINCT FROM OLD.enabled OR NEW.retired_at IS DISTINCT FROM OLD.retired_at THEN
-        INSERT INTO gregale_mcp_task_admission_audit (namespace, tool_name, handler_version, enabled, retired_at, database_role)
-        VALUES (NEW.namespace, NEW.tool_name, NEW.handler_version, NEW.enabled, NEW.retired_at, current_user);
+  if (schema) {
+    await client.query(`CREATE TABLE IF NOT EXISTS gregale_mcp_task_admission_namespaces (
+      namespace text PRIMARY KEY, activated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+    )`);
+    await client.query(`CREATE TABLE IF NOT EXISTS ${TABLE} (
+      namespace text NOT NULL, tool_name text NOT NULL, handler_version text NOT NULL,
+      enabled boolean NOT NULL DEFAULT true, retired_at timestamptz,
+      updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+      PRIMARY KEY (namespace, tool_name, handler_version),
+      CHECK (NOT enabled OR retired_at IS NULL)
+    )`);
+    await client.query(`CREATE TABLE IF NOT EXISTS gregale_mcp_task_admission_audit (
+      event_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      namespace text NOT NULL, tool_name text NOT NULL, handler_version text NOT NULL,
+      enabled boolean NOT NULL, retired_at timestamptz,
+      changed_at timestamptz NOT NULL DEFAULT clock_timestamp(), database_role text NOT NULL
+    )`);
+    await client.query(`CREATE OR REPLACE FUNCTION gregale_mcp_task_audit_admission() RETURNS trigger
+      LANGUAGE plpgsql AS $$ BEGIN
+        IF TG_OP = 'INSERT' OR NEW.enabled IS DISTINCT FROM OLD.enabled OR NEW.retired_at IS DISTINCT FROM OLD.retired_at THEN
+          INSERT INTO gregale_mcp_task_admission_audit (namespace, tool_name, handler_version, enabled, retired_at, database_role)
+          VALUES (NEW.namespace, NEW.tool_name, NEW.handler_version, NEW.enabled, NEW.retired_at, CASE WHEN current_setting('role', true) = 'none' THEN session_user ELSE current_setting('role', true) END);
+        END IF;
+        RETURN NEW;
+      END; $$`);
+    await client.query(`DO $body$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '${TABLE}'::regclass AND tgname = 'gregale_mcp_task_admission_audit' AND NOT tgisinternal) THEN
+        CREATE TRIGGER gregale_mcp_task_admission_audit AFTER INSERT OR UPDATE ON ${TABLE}
+        FOR EACH ROW EXECUTE FUNCTION gregale_mcp_task_audit_admission();
       END IF;
-      RETURN NEW;
-    END; $$`);
-  await client.query(`DO $body$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '${TABLE}'::regclass AND tgname = 'gregale_mcp_task_admission_audit' AND NOT tgisinternal) THEN
-      CREATE TRIGGER gregale_mcp_task_admission_audit AFTER INSERT OR UPDATE ON ${TABLE}
-      FOR EACH ROW EXECUTE FUNCTION gregale_mcp_task_audit_admission();
-    END IF;
-  END; $body$`);
+    END; $body$`);
+  }
   // Preserve existing versions when introducing the gate, and never reopen
   // operator-disabled rows. Activated namespaces require a registered row.
   const activated = await client.query('SELECT namespace FROM gregale_mcp_task_admission_namespaces WHERE namespace = $1', [namespace]);
   if (!activated.rows.length) {
+    await client.query('LOCK TABLE gregale_mcp_tasks IN SHARE ROW EXCLUSIVE MODE');
     await client.query(`INSERT INTO ${TABLE} (namespace, tool_name, handler_version)
       SELECT DISTINCT namespace, tool_name, handler_version FROM ${TASKS}
       WHERE namespace = $1 AND expires_at > clock_timestamp() ON CONFLICT DO NOTHING`, [namespace]);
@@ -54,17 +57,29 @@ export async function initializeMcpTaskAdmission(client, namespace, handlers = [
     await client.query(`INSERT INTO ${TABLE} (namespace, tool_name, handler_version)
       VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [namespace, handler.name, handler.version]);
   }
-  await client.query(`CREATE OR REPLACE FUNCTION gregale_mcp_task_check_admission() RETURNS trigger
-    LANGUAGE plpgsql AS $$ DECLARE permitted boolean; BEGIN
-      SELECT enabled INTO permitted FROM ${TABLE}
-      WHERE namespace = NEW.namespace AND tool_name = NEW.tool_name AND handler_version = NEW.handler_version
-      FOR SHARE;
-      IF permitted IS DISTINCT FROM true THEN
-        RAISE EXCEPTION 'MCP Task handler version is not accepting new Tasks'
-          USING ERRCODE = '23514', CONSTRAINT = 'gregale_mcp_task_admission';
+  if (schema) {
+    await client.query(`CREATE OR REPLACE FUNCTION gregale_mcp_task_check_admission() RETURNS trigger
+      LANGUAGE plpgsql AS $$ DECLARE permitted boolean; BEGIN
+        SELECT enabled INTO permitted FROM ${TABLE}
+        WHERE namespace = NEW.namespace AND tool_name = NEW.tool_name AND handler_version = NEW.handler_version
+        FOR SHARE;
+        IF permitted IS DISTINCT FROM true THEN
+          RAISE EXCEPTION 'MCP Task handler version is not accepting new Tasks'
+            USING ERRCODE = '23514', CONSTRAINT = 'gregale_mcp_task_admission';
+        END IF;
+        RETURN NEW;
+      END; $$`);
+    await client.query(`DO $body$ DECLARE trusted_schema text := current_schema(); BEGIN
+      IF EXISTS (SELECT 1 FROM pg_namespace CROSS JOIN LATERAL aclexplode(COALESCE(nspacl, acldefault('n', nspowner))) AS acl
+        WHERE nspname = trusted_schema AND acl.grantee = 0 AND acl.privilege_type = 'CREATE') THEN
+        RAISE EXCEPTION 'MCP Task schema must not grant CREATE to PUBLIC';
       END IF;
-      RETURN NEW;
-    END; $$`);
+      EXECUTE format('ALTER FUNCTION %I.gregale_mcp_task_check_admission() SECURITY DEFINER SET search_path = %I, pg_temp', trusted_schema, trusted_schema);
+      EXECUTE format('ALTER FUNCTION %I.gregale_mcp_task_audit_admission() SECURITY DEFINER SET search_path = %I, pg_temp', trusted_schema, trusted_schema);
+      EXECUTE format('REVOKE ALL ON FUNCTION %I.gregale_mcp_task_check_admission() FROM PUBLIC', trusted_schema);
+      EXECUTE format('REVOKE ALL ON FUNCTION %I.gregale_mcp_task_audit_admission() FROM PUBLIC', trusted_schema);
+    END; $body$`);
+  }
   // Use namespace-specific trigger WHEN clauses rather than a policy-table
   // lookup to decide enforcement. PostgreSQL refreshes trigger definitions even
   // for older transaction snapshots; a stale snapshot cannot skip activation.
