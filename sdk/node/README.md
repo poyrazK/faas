@@ -123,9 +123,11 @@ parsed RFC 7807 `Problem` envelope, the HTTP status, and the daemon's
 
 ### Resumable managed realtime preview
 
-`consumeRealtimeChannel` processes one v2 channel and reconnects with the last
-saved cursor. Supply a durable cursor store and a WebSocket factory that adds
-the endpoint's OIDC bearer token. For example, with the separate `ws` package
+`consumeRealtimeChannel` processes one v2 channel and reconnects from its
+cursor. Use `cursorStore` to keep that cursor in your application, or use
+`durableSubscription` to let Gregale persist it for a stable authenticated
+principal. Supply a WebSocket factory that adds the endpoint's OIDC bearer
+token. For example, with the separate `ws` package
 (`npm install ws` and `npm install -D @types/ws` for TypeScript):
 
 ```ts
@@ -156,24 +158,158 @@ await consumeRealtimeChannel({
 });
 ```
 
-The helper calls `onMessage`, saves its cursor, then sends the ack. If
-processing or saving fails it stops without advancing. A crash between the
-application side effect and cursor save can cause redelivery, so deduplicate
-using the channel and sequence. When possible, store that deduplication key
-with the application side effect in one transaction.
+For server-managed progress, replace `cursorStore` with a stable name for this
+logical consumer. Use a different name for each device that must receive every
+message independently:
+
+```ts
+await consumeRealtimeChannel({
+  url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+  channel: 'notifications',
+  durableSubscription: 'phone-install-7',
+  onMessage: async ({ messageId, data }) => {
+    await processNotificationOnce(messageId, data);
+  },
+  webSocketFactory: async (url, protocols) => new WebSocket(url, protocols, {
+    headers: { Authorization: `Bearer ${await getFreshOidcToken()}` },
+  }),
+});
+```
+
+For a newly named consumer that already has an application snapshot, set
+`initialSequence` to the snapshot's sequence so it starts after represented
+messages. Existing server checkpoints take precedence; an omitted baseline
+starts at sequence 0. If retained history no longer covers that baseline, the
+consumer requests a resync.
+
+The helper calls `onMessage`, then sends the ack. With `cursorStore`, it saves
+the cursor before sending the ack. With `durableSubscription`, Gregale stores
+the checkpoint after receiving the ack. If processing or cursor saving fails,
+it stops without advancing. A crash between the application side effect and
+acknowledgement can cause redelivery, so deduplicate using the channel and
+sequence. When possible, store that deduplication key with the application
+side effect in one transaction.
 An expired cursor calls `onResync` with the channel, stale cursor, and retained
 history bounds. Return a cursor between `oldestSequence - 1` and
 `latestSequence` that the rebuilt state fully represents; the helper saves it
-before reconnecting. Omit `onResync` to receive `RealtimeResyncRequiredError`
-and perform recovery outside the consumer. Cancel with an `AbortSignal` to
-stop reconnecting. This preview requires both server preview flags and the
-endpoint's channel authorization callback described in
+locally or asks Gregale to reset the named subscription before reconnecting.
+Omit `onResync` to receive `RealtimeResyncRequiredError`; the stored cursor
+remains unchanged until the consumer is restarted with a recovery callback.
+Cancel with an `AbortSignal` to stop reconnecting.
+Named subscriptions share progress when they use the same endpoint, principal,
+name, and channel, so use distinct names for devices that need independent
+delivery. Gregale allows 256 named cursor rows per endpoint and removes rows
+after 30 days without activity. The bounded message history can expire first.
+This preview requires both server preview flags and the endpoint's channel
+authorization callback described in
 [managed realtime operations](../../docs/ops/realtime.md).
 
-Use `consumeRealtimeChannels` to multiplex up to eight channels on one
-WebSocket. Each channel has its own cursor store, message handler, and optional
-resync callback; the connection URL, token factory, retry policy, and abort
-signal are shared:
+The v2 consumer can also maintain fleet-wide presence and send short-lived
+signals to authorized v2 clients in the channel. These events are not retained
+and do not advance the message cursor. `onSubscribed` runs after every
+reconnect and gives you actions for the current connection:
+
+```ts
+import WebSocket from 'ws';
+import { consumeRealtimeChannel, type RealtimeChannelActions } from '@gregale/sdk-node';
+
+let room: RealtimeChannelActions | undefined;
+function onTypingChanged(typing: boolean) {
+  room?.updatePresence({ status: typing ? 'typing' : 'online' });
+}
+function onCursorMove(x: number, y: number) {
+  room?.sendSignal({ kind: 'cursor', x, y });
+}
+
+const consumer = consumeRealtimeChannel({
+  url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+  channel: 'room-a',
+  cursorStore: roomCursorStore,
+  presence: { status: 'online' },
+  presenceScope: 'principal',
+  onMessage: async (message) => applyRoomEvent(message),
+  onSubscribed: (actions) => { room = actions; },
+  onPresence: (event) => updateRoomMembers(event),
+  onSignal: (signal) => handleRoomSignal(signal),
+  onDirectMessage: ({ data, binary }) => handleDirectNotification(data, binary),
+  webSocketFactory: async (url, protocols) => new WebSocket(url, protocols, {
+    headers: { Authorization: `Bearer ${await getFreshOidcToken()}` },
+  }),
+});
+
+// Wire these functions to UI events before awaiting the long-running consumer.
+await consumer; // runs until the supplied AbortSignal is aborted
+```
+
+Presence objects are limited to 512 UTF-8 bytes and 10 updates per second.
+Signals accept JSON up to 2 KiB and are limited to 20 per second. The channel
+limit is 50 per second per sending node. The `onPresence` snapshot can arrive
+in chunks; `complete: true` marks its final chunk. By default, presence
+membership uses one opaque `memberId` per connection. Set
+`presenceScope: 'principal'` to group connections that share the verified OIDC
+principal into one opaque member; `connectionCount` shows how many sockets it
+represents. The principal itself is never sent to clients. For grouped members,
+the most recently changed state wins across devices; keep the default connection
+scope when each device needs separate state. Principal scope requires a verified
+principal and fleet presence storage. Presence state is client supplied, not a
+verified identity. Presence leases expire after 45 seconds if a node fails and
+are renewed every 15 seconds, with a limit of 512 active connections per
+channel. Signal delivery is best-effort; the optional
+`onEphemeralRejected` callback reports rate limits and relay failures.
+
+`onDirectMessage` opts the connection into live-only backend messages addressed
+to its verified principal. The callback receives an optional `messageId`,
+binary-safe `Uint8Array` data, a `binary` flag, and `receiptRequested`. When a
+sender requested a receipt, the message ID is present and the SDK acknowledges
+after the callback resolves, so the callback should resolve only after the
+application has handled the message. These messages do not belong to a channel
+history and are not replayed after reconnect.
+
+For notifications that must survive a disconnect, have the backend use
+`send-principal --delivery retained --message-id ID` and consume the authenticated
+principal inbox. Give each independently consuming device a stable `consumerId`:
+
+```ts
+import { consumeRealtimeInbox, createBrowserRealtimeSocketFactory } from '@gregale/sdk-node/browser';
+
+await consumeRealtimeInbox({
+  url: realtimeEndpointURL,
+  webSocketFactory: createBrowserRealtimeSocketFactory(() => session.getOIDCToken()),
+  signal: abortController.signal,
+  inbox: {
+    consumerId: persistedDeviceID,
+    onMessage: async ({ messageId, sequence, data }) => {
+      await saveNotificationOnce(currentUserId, messageId, sequence, data);
+    },
+    onResync: async ({ latestSequence }) => {
+      await reloadNotificationsFromBackend();
+      return latestSequence;
+    },
+  },
+});
+```
+
+The inbox callback runs before the SDK sends an acknowledgement. Checkpoints
+are stored on the server per endpoint, principal, and consumer ID. On reconnect,
+the server checkpoint takes precedence over `initialSequence` (default zero for
+a new consumer). Delivery is at least once; a lost acknowledgement can replay a
+message, so commit side effects idempotently. Scope deduplication keys to the
+endpoint and authenticated principal. A device may share the same socket
+with channels by setting `inbox` on `consumeRealtimeChannels`; the inbox counts
+as one of the eight allowed subscriptions.
+
+Inbox messages are retained for up to 24 hours and the most recent 256 messages
+per principal. An expired cursor triggers `onResync` and an explicit checkpoint
+reset. Without that hook, the SDK throws `RealtimeInboxResyncRequiredError`.
+Device checkpoints expire after 30 days of inactivity. Use a distinct persistent
+consumer ID for each device that needs independent replay progress. These
+features require the retained-message API preview and realtime v2 preview.
+
+Use `consumeRealtimeChannels` to multiplex up to eight subscriptions on one
+WebSocket (including an optional inbox). Each channel has its own client cursor store or durable subscription
+name (with an optional initial sequence), message handler, and optional resync
+callback; the connection URL, token factory, retry policy, and abort signal
+are shared:
 
 ```ts
 import WebSocket from 'ws';
@@ -200,11 +336,11 @@ await consumeRealtimeChannels({
 ```
 
 Handlers run sequentially in received frame order, so slow processing applies
-backpressure to every channel on that socket. A resync on one channel saves
-that channel's rebuilt cursor and reconnects the shared socket; the other
-channels resume from their own saved cursors and can receive duplicates under
-the at-least-once delivery model. `consumeRealtimeChannel` remains available
-for a single channel and uses the same implementation.
+backpressure to every channel on that socket. A resync on one channel saves or
+resets that channel's cursor and reconnects the shared socket; the other
+channels resume from their own cursors and can receive duplicates under the
+at-least-once delivery model. `consumeRealtimeChannel` remains available for a
+single channel and uses the same implementation.
 
 Backend publishers can pass a stable key to the generated API service. Derive
 it once from the logical event or outbox row, and reuse it only when retrying
@@ -740,3 +876,863 @@ To report the current state of a workflow instance, declare its accepted values 
 Customer clients read `client.milestones(operationID, {limit, cursor})` and `client.businessMilestones({appID, scope, subjectType: 'order', subjectID: orderID})`. Add `workflow` and `workflowInstanceID` together to select one workflow run. That response includes its retained `workflow_state_history`; continue it with `workflowStateCursor`, separate from the milestone `cursor`. Business references preserve the existing customer boundary, and each cursor is bound to all filters. Milestone payloads must contain only schema-declared public JSON facts. See [the Operations guide](../../docs/operations.md) for limits and recovery semantics.
 
 Business-reference responses also include current workflow states where the application has reported one. Each entry has a workflow name, instance ID, state, terminal and stale classifications, the app-reported occurrence time, revision, and publication update time. Set `staleOnly: true` on `businessMilestones` to filter its current-state entries to runs beyond their app-declared `state_stale_after` threshold; milestone facts and state history remain unchanged.
+
+### Typing indicators and temporary client signals
+
+Named signals replace the sender's earlier value under the same name and
+expire automatically in `createRealtimeSignalTracker`. Use them for typing,
+cursors, or a short-lived "viewing" indicator:
+
+```ts
+import WebSocket from 'ws';
+import {
+  consumeRealtimeChannel, createRealtimeSignalTracker,
+  type RealtimeChannelActions,
+} from '@gregale/sdk-node';
+
+const tracker = createRealtimeSignalTracker((active) => renderRoomActivity(active));
+let room: RealtimeChannelActions | undefined;
+const stop = new AbortController();
+const consumer = consumeRealtimeChannel({
+  url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+  channel: 'room-a',
+  cursorStore: roomCursorStore,
+  signal: stop.signal,
+  onMessage: async (message) => applyRoomEvent(message),
+  onSubscribed: (actions) => { tracker.clear(); room = actions; },
+  onSignal: (signal) => { tracker.accept(signal); },
+  onPresence: (event) => {
+    if (event.event === 'left' && event.memberId) tracker.removeMember(event.channel, event.memberId);
+  },
+  webSocketFactory: async (url, protocols) => new WebSocket(url, protocols, {
+    headers: { Authorization: `Bearer ${await getFreshOidcToken()}` },
+  }),
+});
+
+// Call from UI events, throttled below the channel signal limits.
+function onTyping() { room?.sendTemporarySignal('typing', true, 5000); }
+function onTypingStopped() { room?.clearTemporarySignal('typing'); }
+function onCursorMove(x: number, y: number) { room?.sendTemporarySignal('cursor', { x, y }, 1000); }
+
+try { await consumer; } finally { tracker.dispose(); }
+```
+
+Browser applications use the same exports from `@gregale/sdk-node/browser`
+with `createBrowserRealtimeSocketFactory`. Temporary signals require upgraded
+apid and realtime nodes plus the existing resume preview flag. No migration is
+required. Channels still need a cursor store or durable subscription because
+signals share the established v2 channel subscription.
+
+`sendTemporarySignal(name, data, ttlMs)` defaults to 5000 ms, permits 0..30000
+ms, and accepts names of 1..64 ASCII letters, digits, underscores, hyphens,
+dots, or colons. Zero is an explicit clear. Payloads remain JSON bounded to
+2 KiB. Signals use the existing subscription permissions, 20-per-second
+connection limit, and 50-per-second channel limit on each sending node.
+They go to other currently connected v2 subscribers and are never retained,
+acknowledged, or replayed. A successful send does not guarantee delivery;
+`onEphemeralRejected` reports rate limits and relay failures.
+
+The node supplies `updatedAt` and `expiresAt` through `onSignal`, along with
+`name`, `channel`, `memberId`, and `data`. The tracker keys state by
+channel/member/name, ignores unnamed signals, drops older timestamps, and
+uses timers to notify `onChange` when a value expires without another incoming
+message. A clear removes state immediately. It retains brief tombstones to
+avoid undoing a clear with delayed older updates and caps tracked entries,
+including tombstones, at 256; excess entries evict the least recently applied.
+Expiry compares the local clock to server timestamps and is bounded to 30
+seconds after receipt even with clock skew. Keep client clocks reasonably in
+sync for accurate expiry, and dispose the tracker when the view closes.
+
+Clear the tracker on each subscription acknowledgement: temporary state has
+no reconnect snapshot. TTL handles disconnects or lost clear events; presence
+leave events can clear a member sooner. Default connection presence gives
+each device a separate member ID. With principal-grouped presence, devices
+share a member ID and can replace each other's named values. Applications
+should refresh active indicators before expiry and throttle cursor movement.
+
+### Applying retained message edits and deletions
+
+Channel and inbox `onMessage` callbacks now include `version`, `event`,
+`deleted`, and optional `targetMessageId`. Initial versions are 1. Mutations
+arrive as separate ordered messages and are ACKed only after your callback
+resolves, just like initial messages. Use the stable target ID for application
+records and the stream sequence for delivery progress:
+
+```ts
+async function applyVersionedMessage(message) {
+  const id = message.targetMessageId ?? message.messageId;
+  // Namespace the record by endpoint and channel, or by endpoint and principal.
+  await database.transaction(async (tx) => {
+    const current = await tx.lockMessage(roomKey, id);
+    if ((current?.version ?? 0) >= message.version) return;
+    if (message.deleted) {
+      // Keep the version even after removing content to prevent old replays.
+      await tx.redactMessage(roomKey, id, message.version);
+    } else {
+      await tx.upsertMessage(roomKey, id, message.version, message.data, message.binary);
+    }
+  });
+}
+```
+
+Use this as the channel or inbox `onMessage` handler. Earlier retained entries
+can carry a newer snapshot after an edit, and multiple entries may carry the
+same version, so the version guard is necessary even with ordered delivery.
+Channel `messageId` identifies the delivery sequence; `targetMessageId` is its
+publisher idempotency key. Inbox `messageId` is already the stable notification
+ID. A tombstone has `deleted: true` and empty payload bytes. The SDK still
+advances the cursor after a skipped duplicate-version projection.
+
+Backend edits and deletions use the API or `gregale realtime edit-message` /
+`delete-message`, with `--expected-version` and a stable publisher ID. See the
+[operations guide](../../docs/ops/realtime.md#editing-and-deleting-retained-messages).
+Upgrade apid, realtime nodes, the SDK, and application handlers after applying
+the mutation migration. Existing handlers that interpret every message as a
+new payload must be updated before using edits or deletion.
+
+### Read receipts
+
+Read receipts are explicit user actions. Processing a websocket message or
+saving its cursor does not mark it read. Channel actions now provide
+`markRead(sequence)` and `refreshReadProgress()`, with results delivered to
+`onReadProgress` and failures to `onReadError`.
+
+For an inbox, use `onReadActions` to obtain the same controls:
+
+```ts
+import WebSocket from 'ws';
+import { consumeRealtimeInbox, type RealtimeReadActions } from '@gregale/sdk-node';
+
+let reads: RealtimeReadActions | undefined;
+let processedThrough = 0;
+const consumer = consumeRealtimeInbox({
+  url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+  inbox: {
+    consumerId: persistedDeviceId,
+    onMessage: async (message) => {
+      await saveNotificationVersion(message);
+      processedThrough = message.sequence;
+      reads?.refreshReadProgress();
+    },
+    onReadActions: (actions) => { reads = actions; },
+    onReadProgress: (progress) => {
+      renderUnreadBadge(progress.unread, progress.historyUnavailable);
+    },
+    onReadError: (error) => showReadSyncStatus(error.code),
+  },
+  webSocketFactory: async (url, protocols) => new WebSocket(url, protocols, {
+    headers: { Authorization: `Bearer ${await getFreshOidcToken()}` },
+  }),
+});
+
+// Call from a user interaction after message processing has completed.
+function onNotificationsOpened() { reads?.markRead(processedThrough); }
+await consumer;
+```
+
+Throttle refresh calls for batches: the connection limit is 20 read requests
+per second. Browser apps use these exports from `@gregale/sdk-node/browser`.
+Channel consumers obtain read actions through their existing `onSubscribed`
+callback and supply `onReadProgress` / `onReadError` on the channel options.
+
+Progress is shared across the principal's devices and never moves backward.
+`RealtimeReadProgress` includes `readerId`, `inbox`, optional `channel`,
+`sequence`, `unread`, retained bounds, and `historyUnavailable`. Unread counts
+are distinct retained, undeleted messages after that watermark; an edit can
+make a message unread again. A retention gap means older unseen messages are
+missing from the count. The SDK reads the current state after each successful
+subscription when a progress callback is present, but it never marks a message
+read automatically. Channel receipts can describe other readers; distinguish
+reader IDs before updating a personal unread badge.
+
+`markRead` accepts only a nonnegative safe integer up to the last fully
+processed sequence for that subscription. It sends a request; confirmation is
+the progress callback, rather than the method returning. A disconnected action
+throws, and an unconfirmed request may need resending after reconnect.
+Storage is monotonic, so duplicate marks are safe. A persisted write can
+succeed even if fleet notification later fails; refresh state to reconcile.
+Reading does not change delivery ACKs or cancel notification fallback timers.
+
+Apply the read-progress migration and upgrade apid and realtime nodes before
+using these controls. Live events require the read opt-in that the SDK adds
+when callbacks are supplied; existing clients are not sent unknown read frames.
+[API, CLI, and webhook details](../../docs/ops/realtime.md#read-receipts-and-unread-counts)
+are in the operations guide.
+
+### Push notification registrations
+
+Configure FCM, APNs, or Web Push on the endpoint with the account API/CLI. A
+verified inbox consumer can then register a token over its current socket:
+
+```ts
+import { realtimeWebPushRegistration } from '@gregale/sdk-node/browser';
+
+await consumeRealtimeInbox({
+  // ...connection options...
+  inbox: {
+    consumerId: 'browser-main',
+    onMessage: async message => { await persist(message); },
+    onPushActions: actions => {
+      actions.registerPush(realtimeWebPushRegistration(subscription.toJSON()));
+      // Mobile: actions.registerPush({ provider: 'fcm', target: { token } });
+      // actions.unregisterPush() removes this consumer's registration.
+    },
+    onPushRegistered: registered => { /* registration confirmed */ },
+    onPushError: code => { /* handle an asynchronous registration error */ },
+  },
+});
+```
+
+Your app obtains permission and creates the browser PushSubscription using the
+configured VAPID public key. It also owns the service worker and notification
+click behavior. The SDK helper converts `PushSubscription.toJSON()` into the
+registration wire shape. Repeated registration with the same token preserves
+pending deliveries; changed tokens cancel work for the previous registration.
+Push actions belong to the current connection and are supplied again on reconnect.
+
+Push fallback requires retained inbox sends with `fallback_after_seconds`. Push
+payloads contain notification text and inbox identifiers, without message bodies.
+Fetch the inbox after a notification opens the app. Deduplicate by `delivery_id`:
+provider acceptance can be retried after a worker crash. ACKs cancel queued push,
+while read markers remain independent. See `docs/ops/realtime.md` for provider
+configuration, retry limits, and the delivery history API.
+
+### Notification preferences and quiet hours
+
+The `RealtimePushActions` supplied to an authenticated inbox consumer also expose
+`setNotificationPreferences()` and `refreshNotificationPreferences()`. Settings
+apply to the current verified user across registered devices on this endpoint.
+
+```ts
+onPushActions: actions => {
+  actions.setNotificationPreferences({
+    enabled: true,
+    categories: { chat: true, jobs: false },
+    devices: null,
+    quiet_hours: { timezone: 'Europe/Rome', start: '22:00', end: '07:00' },
+  });
+},
+onNotificationPreferences: preferences => { /* render settings */ },
+onNotificationPreferencesError: code => { /* report a rejected request */ },
+```
+
+`enabled` is required; the update replaces all prior settings. Unlisted
+categories remain enabled. Omit or set `devices` to `null` to select all devices;
+use `[]` to select none, or a list of inbox consumer IDs to choose devices.
+Omit or set `quiet_hours` to `null` to disable quiet hours. Times are daily
+`HH:MM` values in a named timezone; overnight intervals and daylight-saving
+changes are supported. Start and end must differ.
+
+A preference callback fetches current settings after every reconnect. Changes
+return through the same callback. Socket actions are bound to the current
+connection; supply them again after reconnect. The backend sets the notification
+category on retained sends using `notification_category` with a fallback deadline;
+the default category is `notifications`. Quiet-hour alerts remain pending until
+the window ends, and an inbox ACK cancels them in the meantime. Preferences
+control built-in push without affecting inbox retention or message consumption.
+
+### Grouped notification digests
+
+Notification preferences also accept `digest_interval_seconds` (0, 300, or 3600)
+and `summarize_quiet_hours` (default true). Use the existing authenticated inbox
+push actions to read or replace the complete preference document:
+
+```ts
+onPushActions: actions => {
+  actions.setNotificationPreferences({
+    enabled: true,
+    devices: null,
+    categories: { chat: true },
+    digest_interval_seconds: 300,
+    summarize_quiet_hours: true,
+    quiet_hours: { timezone: 'Europe/Rome', start: '22:00', end: '07:00' },
+  });
+},
+onNotificationPreferences: settings => { /* update the digest selector */ },
+```
+
+Backend retained sends can provide `notification_group_key` and
+`notification_group_label` along with category and fallback deadline, for example
+`project-alpha` / `Project Alpha`. The backend groups eligible events per user,
+device, category and key into fixed UTC delivery windows. Quiet-hour release can
+produce a summary even for immediate delivery; set `summarize_quiet_hours: false`
+to keep individual alerts when the digest interval is zero.
+
+The push payload includes `message_count`, `group_key`, and a stable
+`delivery_id` for the digest. Use that ID for deduplication and fetch the inbox
+on open. Web Push service workers should pass the provided `tag` into
+`showNotification()` to replace provider retries. Every individual inbox event
+keeps its own sequence and acknowledgement behavior; acknowledged events are
+excluded from a summary prepared afterward. Digests have at most 128 members,
+and later arrivals can produce another summary for the same group/window.
+
+### Urgent notification preference
+
+Users can explicitly allow urgent alerts to bypass quiet hours and digests:
+
+```ts
+onPushActions: actions => {
+  actions.setNotificationPreferences({
+    enabled: true,
+    allow_urgent_bypass: true,
+    digest_interval_seconds: 300,
+    quiet_hours: { timezone: 'Europe/Rome', start: '22:00', end: '07:00' },
+  });
+},
+```
+
+These actions replace the complete preference document; include any category and
+device restrictions you want to keep. The default `allow_urgent_bypass` is false.
+Your backend marks retained fallback sends with `notification_priority: 'urgent'`
+(or `low` / `normal`). Urgent alerts still respect mute settings and the fallback
+acknowledgement deadline. Inbox ACKs cancel queued alerts. Priority appears in
+provider payloads and delivery history, and digest groups never mix priorities.
+
+### Push rate limits
+
+The authenticated notification preference actions support a shared quota across
+a principal's devices within one endpoint:
+
+```ts
+onPushActions: actions => {
+  actions.setNotificationPreferences({
+    enabled: true,
+    rate_limit: {
+      max_notifications: 5,
+      window_seconds: 60,
+      allow_urgent_bypass: false,
+    },
+  });
+},
+```
+
+`max_notifications` accepts 1–100 and `window_seconds` accepts 60, 300 or 3600.
+Omit `rate_limit` or set it to null to disable it. Preference writes replace the
+whole document, so preserve any other settings you need. Each digest per device
+counts as one slot in a fixed UTC window. Compatible alerts can form summaries;
+overflow waits until the next window, still respecting expiration, ACKs and
+collapse keys. The nested urgent bypass is independent of the top-level bypass
+for quiet hours and digests. History exposes `rate_limited` and `next_attempt`.
+
+### Scheduled backend notifications
+
+Your backend can set `notification_not_before` on retained fallback sends, for
+example `"2026-10-09T09:00:00Z"`. It requires a fallback acknowledgement deadline
+and accepts RFC3339 timestamps up to 48 hours ahead. Inbox publication is
+immediate; built-in push waits for both the schedule and acknowledgement deadline.
+Clients can acknowledge the inbox message to cancel the scheduled alert.
+Quiet hours, digests and rate limits still apply afterward. Urgent opt-in cannot
+bypass this explicit schedule. If you set a notification TTL, it must extend past
+the schedule and still starts at publication. Delivery history exposes
+`not_before`, `scheduled` and `next_attempt`.
+
+### Recover from a channel snapshot
+
+Load snapshots through an application-authorized backend route, then commit state
+before returning the replay baseline:
+
+```ts
+import { recoverRealtimeChannelSnapshot } from '@gregale/sdk-node';
+
+const recover = () => recoverRealtimeChannelSnapshot(
+  'jobs',
+  async () => {
+    const response = await fetch('/api/jobs/snapshot');
+    if (!response.ok) throw new Error(`Snapshot unavailable: ${response.status}`);
+    return response.json();
+  },
+  snapshot => commitJobState(snapshot.data),
+);
+// Pass await recover() as initialSequence, or use onResync: recover.
+```
+
+Use your package's normal import path. The helper validates channel, sequence,
+expiration and the 64 KiB limit, decodes bytes, awaits your state commit, and
+returns `resume_after_sequence`. Snapshot expiration or a missing replay tail
+requires a fresh snapshot. Keep management credentials on the backend.
+
+### Atomic backend batches
+
+`publishRealtimeChannelBatch` prepares and validates a batch, calls your authorized
+transport, and validates the returned contiguous sequences:
+
+```ts
+import { publishRealtimeChannelBatch } from '@gregale/sdk-node';
+
+const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+const result = await publishRealtimeChannelBatch('job-123-completed', [
+  { data: encode({ progress: 100 }) },
+  { data: encode({ status: 'completed' }) },
+], async request => {
+  const response = await fetch('/api/jobs/publish-batch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) throw new Error(`Batch failed: ${response.status}`);
+  return response.json();
+});
+```
+
+Your backend submits the request to the channel's `publish-batch` management API.
+Reuse the same ID and content on retries. A batch supports 1–32 messages, 4 KiB
+each and 64 KiB total. A partial fanout result still means the batch is durably
+committed. Durable atomicity does not imply simultaneous UI delivery.
+
+### Filter retained channel events
+
+Set `filter: { project_id: 'alpha' }` on a channel consumer. Publish events with
+matching `metadata` through retained channel publishing or atomic batches.
+Filters use exact matches joined with AND. Missing metadata does not match.
+Received messages expose `metadata`; skipped events advance and acknowledge the
+cursor through checkpoint frames without invoking `onMessage`.
+
+Use distinct cursor stores or durable subscription names for different filters.
+Changing a filter on an existing cursor does not recover skipped historical
+messages. Channel authorization still controls access, and filters do not affect
+presence, signals or direct messages. Batch helper items accept `metadata` too.
+
+### Versioned event contracts
+
+Register immutable JSON Schema Draft 2020-12 versions through your backend's
+management API, then select them in publisher metadata:
+
+```ts
+import { realtimeEventSchemaMetadata } from '@gregale/sdk-node';
+
+const metadata = realtimeEventSchemaMetadata('job.progress', 1, { project_id: 'alpha' });
+// Supply this metadata on a retained publish or a batch item:
+const item = {
+  data: new TextEncoder().encode(JSON.stringify({ job_id: 'job-123', progress: 75 })),
+  metadata,
+};
+```
+
+The first registered schema enables enforcement for new retained events in its
+channel. Every event must then identify a registered type/version. Invalid events
+return field errors; one invalid batch item rejects the entire batch. Versions
+remain immutable, so register a new version when changing the contract.
+
+### Built-in channel reducers
+
+Enable a reducer through your backend management API using a seed entity map and
+its exact current channel sequence. Retained operation events then maintain state
+and channel snapshots atomically:
+
+```ts
+import { realtimeReducerEvent } from '@gregale/sdk-node';
+
+const data = realtimeReducerEvent({
+  op: 'merge',
+  key: 'job-123',
+  value: { progress: 75 },
+});
+// Publish data as a retained event, or pass { data } as a batch item.
+```
+
+`set` replaces an entity object; `merge` overwrites top-level fields; `delete`
+removes the entity. Limits are 128 entities and 64 KiB of state, with 4 KiB per
+event. Schema-enabled channels still require event schema metadata. Use the
+existing snapshot recovery helper to read reducer-generated snapshots through
+your authorized backend. Active reducers prohibit edits to historical events and
+manual snapshot writes; publish compensating operations instead.
+
+### Conditional channel publishing
+
+Use a channel head or reducer snapshot sequence to avoid overwriting newer state:
+
+```ts
+import { realtimeExpectedSequence } from '@gregale/sdk-node';
+
+const body = {
+  ...realtimeExpectedSequence(42),
+  data_base64: '...',
+};
+// Submit as a retained channel publish with a stable idempotency key.
+```
+
+For `publishRealtimeChannelBatch`, pass `{ expectedSequence: 42 }` as its fourth
+argument. Omission is unconditional; zero requires an empty channel. A stale
+precondition returns 409 with code `realtime_sequence_conflict` and the problem's
+`expected_sequence` / `current_sequence`. Reload and reconcile state before
+retrying. Matching idempotent retries return the original publication even if the
+head has advanced. The check applies to the whole channel, across all entities.
+
+Reducer operations support per-entity concurrency checks. Read `entity_versions`
+from reducer state or a reducer snapshot, then include the expected version:
+
+```ts
+const data = realtimeReducerEvent({
+  op: 'merge', key: 'job-123', value: { progress: 75 }, expected_version: 4,
+});
+```
+
+Use version 0 for a key that has never existed, or omit the field for an
+unconditional operation. Deleted keys retain their versions. A conflict returns
+409 `realtime_entity_version_conflict` with the key, current version, existence,
+and batch item index. Batch checks are atomic and observe earlier batch items.
+
+Temporary reducer entities can expire automatically:
+
+```ts
+const typingEvent = realtimeReducerEvent({
+  op: 'set', key: 'typing:user-123', value: { active: true },
+  expires_at: new Date(Date.now() + 10_000).toISOString(),
+});
+```
+
+Deadlines must be in the future and within 30 days according to the server.
+Set without a deadline clears it; merge without one preserves it. Supply
+`expires_at: null` on set/merge to clear a deadline. Reducer state and recovered
+snapshots expose `entity_expirations`. Cleanup runs asynchronously in bounded
+five-second passes and emits retained delete events with `reason: "expired"`
+and metadata `event_type: reducer.expired`; include that event type in filters.
+Entity version checks prevent old timers from deleting refreshed state.
+
+Atomic counters use the same retained publish or batch transport:
+
+```ts
+const data = realtimeReducerEvent({
+  op: 'increment', key: 'post-123', field: 'likes', delta: 1,
+  min: 0, max: 1_000_000,
+});
+```
+
+Missing fields start at zero. Negative deltas decrement; bounds reject updates
+instead of clamping. Existing values, deltas, bounds, and results must be safe
+integers. Optional `expected_version` checks and atomic batches work normally.
+Increment preserves an entity deadline unless `expires_at` replaces or clears it.
+
+Atomic arrays use the same reducer event helper:
+
+```ts
+const join = realtimeReducerEvent({
+  op: 'append', key: 'room-123', field: 'members',
+  items: ['user-1', 'user-2'], unique: true, max_length: 100,
+});
+const leave = realtimeReducerEvent({
+  op: 'remove', key: 'room-123', field: 'members', items: ['user-1'],
+});
+```
+
+Missing fields start as empty arrays. Append optionally skips structurally equal
+items; remove deletes all matches. Objects compare independently of key order,
+arrays compare in order, and numbers compare by exact numeric value. Supply
+1–32 JSON items; arrays are limited to 256 items, or a smaller `max_length` for
+that operation. Invalid values and length violations reject the whole batch.
+Entity version checks, idempotent retries, and optional deadlines work normally.
+
+Use atomic field conditions to claim a queued job safely:
+
+```ts
+const claim = realtimeReducerEvent({
+  op: 'merge', key: 'job-123', value: { status: 'running', worker: 'worker-1' },
+  conditions: [
+    { field: 'status', equals: 'queued' },
+    { field: 'worker', absent: true },
+  ],
+});
+```
+
+All 1–16 predicates must pass. Conditions support structural JSON equality or
+field absence; `equals: null` differs from absence. They work on every reducer
+operation and observe earlier batch updates. A failure rolls back the entire
+batch and returns 409 `realtime_condition_conflict`, with entity, field,
+condition/batch indices, current version, and existence flags.
+`RealtimeReducerCondition` is exported for both Node and browser clients.
+
+Prepare a scheduled retained event for your authorized backend transport:
+
+```ts
+const request = realtimeScheduledEvent(
+  new TextEncoder().encode(JSON.stringify({ kind: 'reminder' })),
+  new Date(Date.now() + 60_000).toISOString(),
+);
+// PUT the request to .../channels/{channel}/schedules/{schedule_id}.
+// Reuse the same schedule ID and request when retrying creation.
+```
+
+The server accepts future deadlines within 30 days and payloads up to 4 KiB.
+List schedules with GET `.../channels/{channel}/schedules`; PATCH a schedule with
+`deliver_at` and `expected_version`, or DELETE it with `?expected_version=...`.
+Only pending schedules can change; cancellation retries are idempotent.
+Schedules persist in PostgreSQL, publish to retained history atomically, and
+then attempt live fanout. Delivery failures follow the configured retry policy
+and expose `last_error`; exhausted schedules become `failed`. Cleanup
+runs in bounded five-second passes. Terminal receipts remain visible for
+24 hours; there are at most 256 pending/recent terminal schedules per endpoint.
+
+Enable bounded automatic retries when creating a schedule:
+
+```ts
+const request = realtimeScheduledEvent(data, deliverAt, {
+  maxAttempts: 5, backoffSeconds: 30,
+});
+const retry = realtimeScheduleRetry(failedSchedule.version);
+// POST retry to .../schedules/{schedule_id}/retry via your authorized backend.
+```
+
+`maxAttempts` includes the initial attempt (1–10, default 1); backoff doubles
+from `backoffSeconds` (5–3600, default 5), capped at one hour. Responses expose
+lifetime `attempts`, `cycle_attempts`, latest failure, and next/last attempt times.
+A manual retry starts a fresh cycle for a failed schedule with its existing ID
+and payload; optionally pass a future time as the second helper argument.
+Cancel with the latest schedule version to stop pending retries. Completed
+publication is atomic and is never retried because live fanout failed.
+
+Inspect a schedule with GET
+`.../channels/{channel}/schedules/{schedule_id}/history?after_version=0&limit=50`.
+The response implements `RealtimeScheduleHistory` in Node/browser exports.
+Events include creation, rescheduling, cancellation, manual retries, recorded
+failures with retry times, and publication with its committed channel sequence.
+
+History keeps the latest 128 entries and expires with terminal schedule receipts.
+Page using the last event's version and `has_more`; check `oldest_version` and
+`history_truncated` for unavailable earlier entries. Migrated schedules start
+with an incomplete `baseline`, rather than reconstructed historical attempts.
+
+Repeat a retained event after each successful occurrence:
+
+```ts
+const recurring = realtimeScheduledEvent(data, firstDeliverAt, {
+  intervalSeconds: 60, maxOccurrences: 100,
+  maxAttempts: 3, backoffSeconds: 5,
+});
+```
+
+Intervals use fixed delay after success, so outages/retries shift the series
+without catch-up bursts. Each occurrence resets its retry budget; exhausted
+failures stop the series for manual retry. Optional `endAt` limits new planned
+occurrences. Recurring events carry `schedule_id` and `schedule_occurrence`
+metadata, leaving room for six supplied metadata fields. State/history expose
+occurrence numbers and successful completion counts.
+
+POST `.../schedules/{schedule_id}/pause` or `/resume` with `expected_version`;
+cancel a pending or paused series with the existing DELETE API. Pausing preserves
+the deadline/budget, and resuming an overdue series makes its current occurrence
+due. Paused records remain until resumed or canceled. `sequence` refers to the
+latest successful publication, including when the next occurrence is pending.
+
+Condition scheduled events on their channel's reducer state:
+
+```ts
+const conditional = realtimeScheduledEvent(data, deliverAt, {
+  conditions: [
+    { key: 'job-123', exists: true },
+    { key: 'job-123', field: 'status', equals: 'pending' },
+  ],
+  onConditionFailure: 'skip',
+});
+```
+
+Predicates are ANDed (1–16, at most 4 KiB) and support entity existence, structural
+field equality, and safe-integer `lt`/`lte`/`gt`/`gte` comparisons. Checks use the
+same channel's active reducer and run atomically with publication. Passing events
+still undergo normal schema/reducer validation. `retry` is the default and uses
+the attempt budget; `skip` records the reason without a channel event, advancing
+recurring series if limits permit. Skips count toward the occurrence limit.
+State/history expose `skipped_occurrences` and `skip_reason`.
+
+Schedule completion app webhooks support event filters
+`realtime.schedule.published`, `realtime.schedule.failed`, and
+`realtime.schedule.skipped`. The exported
+`RealtimeScheduleCompletionWebhookPayload` type describes occurrence identity,
+outcome, counts, attempt information, and optional channel sequence/failure reason.
+Each recurring publication or skip emits independently; failures emit only after
+automatic retries are exhausted.
+
+Use `verifyWebhook(secret, headers, rawBody)` before parsing the JSON envelope's
+`payload` (or CloudEvents `data`). Store its returned `deliveryId` with receiver
+side effects to deduplicate retries. The payload's `event_id` identifies one
+outcome across webhook subscriptions. Existing webhook delivery/attempt APIs
+provide inspection, and the delivery retry API retries dead deliveries.
+
+Group schedules with `realtimeScheduledEvent(data, deliverAt, { group: 'campaign-123' })`.
+List `/schedules?group=campaign-123` through your authorized backend; optionally
+filter by `status`. `RealtimeScheduleList` includes status and occurrence totals
+for the retained, filtered records.
+
+```ts
+const body = realtimeScheduleGroupRequest('campaign-123', list.schedules);
+// Backend POST .../schedules/groups/campaign-123/pause (or resume/cancel), with body.
+```
+
+Build the body from a fresh group list without a status filter: it must include
+all pending and paused members' versions. The server commits the whole group
+action atomically or returns 409 if membership/versions changed. Relist before
+retrying a conflict. Both one-time and recurring schedules support group controls;
+terminal members are excluded. Totals are subject to the 24-hour terminal receipt
+retention window.
+
+Backends can publish transient signals using the channel `/signals` POST API.
+Build the request with the Node/browser helper, then send it through an authorized
+backend:
+
+```ts
+const request = realtimeBackendSignal({ active: true }, { name: 'typing', ttlMs: 5000 });
+// Backend POST .../channels/{channel}/signals with request.
+// Existing channel onSignal receives { memberId: 'backend', name, data, expiresAt, ... }.
+```
+
+Omit options for an unnamed signal. Use `realtimeBackendSignal(null,
+{ name: 'typing', ttlMs: 0 })` to clear temporary activity. Data is limited to
+2 KiB encoded JSON, and named signals expire within 30 seconds. Backend senders
+share the `backend` identity; use distinct names for independent activities.
+Signals are best effort, do not advance cursors, and are never replayed after
+reconnect. The API's 20-per-second endpoint/channel limit is per API process;
+429 responses include `Retry-After: 1`. A successful response does not acknowledge
+subscriber receipt.
+
+Throttle cursor/activity updates while keeping a final trailing value:
+
+```ts
+const cursor = createRealtimeSignalCoalescer(actions, 'cursor', {
+  intervalMs: 100,
+  ttlMs: 5000,
+  onError: error => console.error('Cursor signal failed', error),
+});
+cursor.send({ x: 10, y: 20 });
+cursor.send({ x: 15, y: 25 }); // replaces the pending value
+cursor.flush(); // send the final position immediately, e.g. on pointer release
+cursor.dispose(); // flush and stop; dispose(false) discards on disconnect
+```
+
+The helper snapshots JSON, sends a leading update, and schedules the latest
+trailing value. Timer errors reach `onError`; the value remains pending for
+explicit flush/retry. Direct send/flush errors throw. `cancel()` discards pending
+data without sending a clear frame. Use channel `clearTemporarySignal` separately
+when clearing receiver state. Server queues also coalesce named signals per
+channel/sender/name and discard expired pending values before socket delivery.
+Unnamed signals keep their existing behavior; publisher rate limits still apply.
+
+Track typing indicators, cursors, and other named activity without managing expiry
+timers:
+
+```ts
+const activity = createRealtimeActivityTracker({
+  onChange: entries => renderRemoteActivity(entries),
+});
+// In channel options: onSignal: signal => { activity.apply(signal); }
+const current = activity.snapshot();
+activity.reset('room-123'); // clear this channel on reconnect/unsubscribe
+activity.dispose(); // stop timers and clear activity on teardown
+```
+
+Entries are keyed by channel, sender member ID, and name. Newer updates replace
+activity; explicit clears and expired newer updates remove it. Unnamed signals,
+duplicates, and older timestamps are ignored. Snapshots and callback data are
+isolated JSON copies, so UI mutations cannot change tracker state. Each channel
+can share the tracker through its existing `onSignal` callback.
+
+The tracker uses server expiry timestamps and the client's clock. Updates more
+than 30 seconds in the future or past are ignored; keep clocks reasonably aligned.
+Sub-millisecond timestamps preserve ordering. Short-lived clear/expiry markers
+prevent older updates from restoring activity. `maxEntries` defaults to 1024
+(including those markers), accepts 1–8192, and throws on capacity without evicting
+active entries. Call `reset(channel)` when a live channel reconnects or leaves;
+signals have no reconnect replay. Reset also clears that channel's ordering memory.
+`dispose()` notifies with an empty snapshot when activity existed and rejects
+future updates. Callback exceptions propagate; expiry callbacks run from a timer.
+
+For automatic channel lifecycle management, set `onActivityChange` directly on
+`consumeRealtimeChannel` options or a channel in `consumeRealtimeConnection`:
+
+```ts
+await consumeRealtimeChannel({
+  url,
+  channel: 'room-123',
+  cursorStore,
+  webSocketFactory,
+  signal: abortController.signal,
+  onMessage: message => handleMessage(message),
+  onActivityChange: entries => renderRemoteActivity(entries),
+  activityMaxEntries: 1024, // optional; includes ordering markers
+});
+```
+
+The consumer owns one tracker per opted-in channel and feeds it named signals.
+Disconnect, abort, resync, and unsubscribe acknowledgements clear that channel's
+visible activity and ordering memory. Presence `left` removes the departed
+sender's existing activity immediately, keeping short-lived ordering markers.
+Raw `onSignal` and `onPresence` still run after the tracker update. Backend activity
+has no presence membership and clears through expiry or explicit signals.
+
+Activity callbacks are synchronous, including timer expiry notifications; handle
+UI errors within the callback. `activityMaxEntries` requires `onActivityChange`
+and accepts 1–8192. Activity is empty after reconnect and is rebuilt from new live
+signals. Standalone trackers also expose `removeMember(channel, memberId)`.
+
+Build UI-ready activity summaries by combining tracker snapshots with presence:
+
+```ts
+let latestActivity: RealtimeActivity[] = [];
+const refresh = () => {
+  const summary = aggregateRealtimeActivity(latestActivity, presence.snapshot('room-123'), {
+    channel: 'room-123',
+    names: ['typing', 'cursor'],
+    label: member => typeof member.state.displayName === 'string'
+      ? member.state.displayName : member.memberId,
+  });
+  renderTyping(formatRealtimeTypingSummary(summary)); // e.g. Alice and 2 others are typing.
+  renderViewers(summary.viewers, summary.connectionCount);
+  renderCursors(summary.active.flatMap(member => member.activities
+    .filter(activity => activity.name === 'cursor')
+    .map(activity => ({ memberId: member.memberId, label: member.label, state: member.state, data: activity.data }))));
+};
+const presence = createRealtimePresenceDirectory({ onChange: () => refresh() });
+// Channel options:
+// presenceScope: 'principal',
+// onPresence: event => presence.apply(event),
+// onActivityChange: entries => { latestActivity = entries; refresh(); },
+// On connection teardown, clear presence.reset('room-123') as well.
+```
+
+`viewers` contains presence members regardless of activity; `active` contains
+members with matching unexpired named signals. `viewerCount` counts member IDs,
+while `connectionCount` sums represented connections. Set `presenceScope:
+'principal'` consistently to let Gregale group connections by verified principal;
+helpers never infer verified identity from presence state. Labels are untrusted
+presentation data: render them as text. Cursor data remains application-defined.
+
+Options support `names` (empty means no activity), `excludeMemberId`, and
+`includeUnknownMembers` for senders such as `backend`. Unknown senders have zero
+connections and are excluded from viewer counts. Results clone presence and
+activity data. Members sort by ID for stable output. Typing text is an English
+convenience helper (`maxLabels` 1–10, default 1); use `summary.active` for localized
+text. A live named `typing` signal indicates typing regardless of its data shape;
+clear it explicitly or allow expiry to end the indicator.
+
+The presence directory accumulates snapshot chunks and publishes only complete
+snapshots, while applying live joined/updated/left events. Call `reset(channel)`
+on reconnect, unsubscribe, or teardown: activity lifecycle cleanup does not reset
+this separately owned directory. Its `maxMembers` defaults to 1024, accepts
+1–8192, and counts staged plus visible entries. Capacity rejection leaves state
+unchanged; reset before a new snapshot when replacement staging would exceed the
+limit. Helpers require no server migration.
+
+Isolate activity for a backend-authorized audience:
+
+```ts
+const scopeChannel = realtimeActivityScopeChannel('document-123', 'section-2');
+// Subscribe using channel: scopeChannel and the existing consumer options.
+// onSubscribed receives actions that send signals only within this scope.
+// onActivityChange receives only this scope's activity.
+// Aggregate with channel: scopeChannel and presence.snapshot(scopeChannel).
+```
+
+The backend channel authorization callback receives `permission: 'read_activity'`,
+`activity_parent_channel: 'document-123'`, `activity_scope: 'section-2'`, and the
+canonical channel. Grant based on the verified principal's audience membership;
+parent read access does not substitute for this separate authorization request.
+Configure the callback before using scopes. Revoke/disconnect existing connections
+when access changes; membership is checked again on reconnect.
+
+Backend signals can use POST
+`.../channels/document-123/activity-scopes/section-2/signals` with the normal
+`realtimeBackendSignal` request. Scopes isolate signals and presence using separate
+subscription channels, count toward the eight-channel connection limit, and use
+existing activity lifecycle cleanup. Reset any independently owned presence
+directory when leaving. Scope labels allow 1–64 UTF-8 bytes; the canonical encoded
+channel must fit 256 bytes, so long parent names may need shortening. The
+`__activity.` namespace is reserved and cannot be nested. Verified principal
+grouping still uses `presenceScope: 'principal'` within each scope independently.

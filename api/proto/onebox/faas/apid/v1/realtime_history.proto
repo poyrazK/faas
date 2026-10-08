@@ -10,6 +10,9 @@ option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;a
 // HTTP route.
 service RealtimeHistory {
   rpc ReadChannelHistory(ReadChannelHistoryRequest) returns (ReadChannelHistoryResponse);
+  rpc GetDurableCursor(DurableCursorRequest) returns (DurableCursorResponse);
+  rpc AdvanceDurableCursor(AdvanceDurableCursorRequest) returns (DurableCursorResponse);
+  rpc ResetDurableCursor(AdvanceDurableCursorRequest) returns (DurableCursorResponse);
   rpc ReportChannelRoute(ReportChannelRouteRequest) returns (ReportChannelRouteResponse);
 }
 
@@ -33,6 +36,7 @@ message RetainedChannelMessage {
   bytes data = 2;
   bool binary = 3;
   int64 created_at_unix_nano = 4;
+  bytes metadata_json = 5;
 }
 
 message ReportChannelRouteRequest {
@@ -44,4 +48,25 @@ message ReportChannelRouteRequest {
 
 message ReportChannelRouteResponse {
   bool applied = 1;
+}
+
+message DurableCursorRequest {
+  string endpoint_id = 1;
+  string principal = 2;
+  string subscription = 3;
+  string channel = 4;
+  // Used only when creating a new named subscription; existing cursors win.
+  int64 initial_sequence = 5;
+}
+
+message AdvanceDurableCursorRequest {
+  string endpoint_id = 1;
+  string principal = 2;
+  string subscription = 3;
+  string channel = 4;
+  int64 sequence = 5;
+}
+
+message DurableCursorResponse {
+  int64 sequence = 1;
 }

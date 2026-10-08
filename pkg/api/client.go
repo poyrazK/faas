@@ -6000,6 +6000,24 @@ func (c *Client) SendManagedRealtimeConnection(ctx context.Context, slug, endpoi
 	return c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/send", req, nil)
 }
 
+// SendManagedRealtimePrincipal sends a live-only message to active connections
+// for one verified OIDC principal on the endpoint.
+func (c *Client) SendManagedRealtimePrincipal(ctx context.Context, slug, endpointID string, req ManagedRealtimePrincipalMessageRequest) (ManagedRealtimePrincipalSendResponse, error) {
+	var out ManagedRealtimePrincipalSendResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/principals:send"
+	err := c.do(ctx, "POST", path, req, &out)
+	return out, err
+}
+
+// GetManagedRealtimePrincipalReceipt returns the per-connection queue and
+// acknowledgement state for a receipt-enabled principal message.
+func (c *Client) GetManagedRealtimePrincipalReceipt(ctx context.Context, slug, endpointID, messageID string) (ManagedRealtimePrincipalReceiptResponse, error) {
+	var out ManagedRealtimePrincipalReceiptResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/principals/messages/" + url.PathEscape(messageID) + "/receipt"
+	err := c.do(ctx, "GET", path, nil, &out)
+	return out, err
+}
+
 // CloseManagedRealtimeConnection asks the realtime owner to close one live
 // connection. A missing or already-closed connection returns an API 410.
 func (c *Client) CloseManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID string, req ManagedRealtimeCloseRequest) error {
@@ -7338,5 +7356,24 @@ func (c *Client) GetEventReceiptAttempts(ctx context.Context, source, id, subscr
 func (c *Client) GetEventStorageUsage(ctx context.Context) (EventStorageUsageResponse, error) {
 	var out EventStorageUsageResponse
 	err := c.do(ctx, http.MethodGet, "/v1/events/storage", nil, &out)
+	return out, err
+}
+
+// ReadManagedRealtimeInbox inspects retained principal messages and, optionally,
+// a device checkpoint. A negative after uses the checkpoint (or zero).
+func (c *Client) ReadManagedRealtimeInbox(ctx context.Context, slug, endpointID, principal, consumer string, after int64, limit int) (ManagedRealtimeInboxResponse, error) {
+	var out ManagedRealtimeInboxResponse
+	query := url.Values{"principal": {principal}}
+	if consumer != "" {
+		query.Set("consumer", consumer)
+	}
+	if after >= 0 {
+		query.Set("after", fmt.Sprint(after))
+	}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	path := "/v1/apps/" + url.PathEscape(slug) + "/realtime/endpoints/" + url.PathEscape(endpointID) + "/principals/inbox?" + query.Encode()
+	err := c.do(ctx, "GET", path, nil, &out)
 	return out, err
 }

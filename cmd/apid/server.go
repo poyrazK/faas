@@ -156,7 +156,8 @@ type server struct {
 	// realtimeOwner routes customer-facing connection operations to the node
 	// that owns a live socket. Production wires a leased cross-node resolver;
 	// the local Unix client remains the same-box fast path.
-	realtimeOwner realtimeOwner
+	realtimeOwner          realtimeOwner
+	realtimeBackendSignals realtimeBackendSignalLimiter
 	// realtimeDrainWake nudges the durable drain worker after a new operation
 	// is committed; the ticker remains the restart/recovery backstop.
 	realtimeDrainWake chan struct{}
@@ -2634,9 +2635,59 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.drainManagedRealtimeConnections)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain/{drain_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getManagedRealtimeDrainOperation))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sendManagedRealtimeConnection))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/principals:send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sendManagedRealtimePrincipal))))
+	for _, route := range []string{
+		"PATCH /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages/{message_id}",
+		"DELETE /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages/{message_id}",
+		"PATCH /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/{message_id}",
+		"DELETE /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/{message_id}",
+	} {
+		mux.HandleFunc(route, s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.mutateManagedRealtimeMessage))))
+	}
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}/timeline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeNotificationTimeline))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeNotificationControl))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeNotificationControl))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/push/preferences", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimePushPreferences))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/push/preferences", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimePushPreferences))))
+	for _, route := range []string{"GET /v1/apps/{slug}/realtime/endpoints/{id}/push/{push_collection}"} {
+		mux.HandleFunc(route, s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimePush))))
+	}
+	for _, route := range []string{"PUT /v1/apps/{slug}/realtime/endpoints/{id}/push/providers/{provider}", "PUT /v1/apps/{slug}/realtime/endpoints/{id}/push/devices/{device}", "DELETE /v1/apps/{slug}/realtime/endpoints/{id}/push/devices/{device}"} {
+		mux.HandleFunc(route, s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimePush))))
+	}
+
+	for _, route := range []string{"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/read-progress", "GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/read-progress"} {
+		mux.HandleFunc(route, s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeReadProgress))))
+	}
+	for _, route := range []string{"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/read-progress", "POST /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/read-progress"} {
+		mux.HandleFunc(route, s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeReadProgress))))
+	}
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.readManagedRealtimeInbox))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/messages/{message_id}/receipt", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getManagedRealtimePrincipalReceipt))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.closeManagedRealtimeConnection))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.subscribeManagedRealtimeConnection))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.unsubscribeManagedRealtimeConnection))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/snapshot", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeChannelSnapshot))))
+	for _, method := range []string{"PUT", "DELETE"} {
+		mux.HandleFunc(method+" /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/snapshot", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeChannelSnapshot))))
+	}
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeSchedules))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/{recurrence_action}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeSchedules))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeSchedules))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/groups/{group}/{group_action}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeScheduleGroup))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeSchedules))))
+	for _, method := range []string{"PUT", "PATCH", "DELETE"} {
+		mux.HandleFunc(method+" /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeSchedules))))
+	}
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/reducer", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeReducer))))
+	for _, method := range []string{"PUT", "DELETE"} {
+		mux.HandleFunc(method+" /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/reducer", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeReducer))))
+	}
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schemas/{event_type}/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.managedRealtimeEventSchema))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schemas/{event_type}/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.managedRealtimeEventSchema))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish-batch", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishManagedRealtimeChannelBatch))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/activity-scopes/{activity_scope}/signals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishManagedRealtimeSignal))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/signals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishManagedRealtimeSignal))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotentManagedRealtimePublish(s.publishManagedRealtimeChannel)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appendManagedRealtimeRetainedMessage))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.readManagedRealtimeRetainedMessages))))

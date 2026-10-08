@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"sync/atomic"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -28,6 +29,29 @@ const (
 
 var authMetricOutcomeLabels = [...]string{"accepted", "rejected"}
 
+type resumeHistoryReadResult uint8
+
+const (
+	resumeHistoryReadSuccess resumeHistoryReadResult = iota
+	resumeHistoryReadUnavailable
+	resumeHistoryReadError
+	resumeHistoryReadCanceled
+	resumeHistoryReadResultCount
+)
+
+var resumeHistoryReadResultLabels = [...]string{"success", "history_unavailable", "error", "canceled"}
+
+type resumeResyncReason uint8
+
+const (
+	resumeResyncCursorExpired resumeResyncReason = iota
+	resumeResyncRetentionAdvanced
+	resumeResyncSequenceGap
+	resumeResyncReasonCount
+)
+
+var resumeResyncReasonLabels = [...]string{"cursor_expired", "retention_advanced", "sequence_gap"}
+
 // StatsCollector exposes the bounded, process-local realtime counters from a
 // Manager on an operator-owned Prometheus registry. The counters deliberately
 // retain the process-local scope of Manager. Fleet dashboards should sum them
@@ -38,6 +62,12 @@ type StatsCollector struct {
 
 	currentConnections              *prometheus.Desc
 	currentResumeSubscriptions      *prometheus.Desc
+	resumeHistoryReads              *prometheus.Desc
+	resumeHistoryReadDuration       prometheus.Histogram
+	resumeReplayedMessages          *prometheus.Desc
+	resumeReplayedPayloadBytes      *prometheus.Desc
+	resumeResyncRequired            *prometheus.Desc
+	resumeSlowConsumerDisconnects   *prometheus.Desc
 	acceptedConnections             *prometheus.Desc
 	rejectedConnections             *prometheus.Desc
 	receivedMessages                *prometheus.Desc
@@ -75,6 +105,47 @@ type StatsCollector struct {
 // never create a new Prometheus series.
 type authOutcomeCounters [authMetricModeCount][authMetricOutcomeCount]atomic.Uint64
 
+type resumeMetrics struct {
+	historyReads            [resumeHistoryReadResultCount]atomic.Uint64
+	historyReadDuration     prometheus.Histogram
+	replayedMessages        atomic.Uint64
+	replayedPayloadBytes    atomic.Uint64
+	resyncRequired          [resumeResyncReasonCount]atomic.Uint64
+	slowConsumerDisconnects atomic.Uint64
+}
+
+func newResumeMetrics() *resumeMetrics {
+	return &resumeMetrics{
+		historyReadDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "realtimed_resume_history_read_duration_seconds",
+			Help:    "Latency of retained-history reads used by resumable subscriptions.",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+		}),
+	}
+}
+
+func (m *Manager) recordResumeHistoryRead(duration time.Duration, result resumeHistoryReadResult) {
+	if m == nil || result >= resumeHistoryReadResultCount {
+		return
+	}
+	m.resumeMetrics.historyReads[result].Add(1)
+	m.resumeMetrics.historyReadDuration.Observe(duration.Seconds())
+}
+
+func (m *Manager) recordResumeResync(reason resumeResyncReason) {
+	if m != nil && reason < resumeResyncReasonCount {
+		m.resumeMetrics.resyncRequired[reason].Add(1)
+	}
+}
+
+func (m *Manager) recordResumeMessageQueued(payloadBytes int) {
+	if m == nil || payloadBytes < 0 {
+		return
+	}
+	m.resumeMetrics.replayedMessages.Add(1)
+	m.resumeMetrics.replayedPayloadBytes.Add(uint64(payloadBytes))
+}
+
 func authMetricModeForEndpoint(endpoint Endpoint) authMetricMode {
 	// A custom authorizer is the effective gate when present. This keeps one
 	// request represented by one outcome even when it also has a client-auth
@@ -108,6 +179,12 @@ func NewStatsCollector(manager *Manager) prometheus.Collector {
 		manager:                         manager,
 		currentConnections:              prometheus.NewDesc(subsystem+"_current_connections", "Current managed realtime connections.", nil, nil),
 		currentResumeSubscriptions:      prometheus.NewDesc(subsystem+"_current_resume_subscriptions", "Current v2 retained-channel subscriptions on this realtime node.", nil, nil),
+		resumeHistoryReads:              prometheus.NewDesc(subsystem+"_resume_history_reads_total", "Retained-history reads used by resumable subscriptions.", []string{"result"}, nil),
+		resumeHistoryReadDuration:       manager.resumeMetrics.historyReadDuration,
+		resumeReplayedMessages:          prometheus.NewDesc(subsystem+"_resume_replayed_messages_total", "Retained messages queued for delivery by resumable subscriptions; queue admission does not confirm client receipt.", nil, nil),
+		resumeReplayedPayloadBytes:      prometheus.NewDesc(subsystem+"_resume_replayed_payload_bytes_total", "Decoded retained payload bytes queued for delivery by resumable subscriptions.", nil, nil),
+		resumeResyncRequired:            prometheus.NewDesc(subsystem+"_resume_resync_required_total", "Resumable subscriptions that reached a cursor or sequence requiring client resynchronization.", []string{"reason"}, nil),
+		resumeSlowConsumerDisconnects:   prometheus.NewDesc(subsystem+"_resume_slow_consumer_disconnects_total", "V2 connections closed because their outbound queue could not accept a resume frame.", nil, nil),
 		acceptedConnections:             prometheus.NewDesc(subsystem+"_accepted_connections_total", "Managed realtime connections accepted since process start.", nil, nil),
 		rejectedConnections:             prometheus.NewDesc(subsystem+"_rejected_connections_total", "Managed realtime connections rejected since process start.", nil, nil),
 		receivedMessages:                prometheus.NewDesc(subsystem+"_received_messages_total", "Realtime messages received since process start.", nil, nil),
@@ -159,6 +236,21 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 	stats := c.manager.Stats()
 	ch <- prometheus.MustNewConstMetric(c.currentConnections, prometheus.GaugeValue, float64(stats.CurrentConnections))
 	ch <- prometheus.MustNewConstMetric(c.currentResumeSubscriptions, prometheus.GaugeValue, float64(stats.CurrentResumeSubscriptions))
+	for result := resumeHistoryReadResult(0); result < resumeHistoryReadResultCount; result++ {
+		ch <- prometheus.MustNewConstMetric(c.resumeHistoryReads, prometheus.CounterValue,
+			float64(c.manager.resumeMetrics.historyReads[result].Load()), resumeHistoryReadResultLabels[result])
+	}
+	c.resumeHistoryReadDuration.Collect(ch)
+	ch <- prometheus.MustNewConstMetric(c.resumeReplayedMessages, prometheus.CounterValue,
+		float64(c.manager.resumeMetrics.replayedMessages.Load()))
+	ch <- prometheus.MustNewConstMetric(c.resumeReplayedPayloadBytes, prometheus.CounterValue,
+		float64(c.manager.resumeMetrics.replayedPayloadBytes.Load()))
+	for reason := resumeResyncReason(0); reason < resumeResyncReasonCount; reason++ {
+		ch <- prometheus.MustNewConstMetric(c.resumeResyncRequired, prometheus.CounterValue,
+			float64(c.manager.resumeMetrics.resyncRequired[reason].Load()), resumeResyncReasonLabels[reason])
+	}
+	ch <- prometheus.MustNewConstMetric(c.resumeSlowConsumerDisconnects, prometheus.CounterValue,
+		float64(c.manager.resumeMetrics.slowConsumerDisconnects.Load()))
 	ch <- prometheus.MustNewConstMetric(c.acceptedConnections, prometheus.CounterValue, float64(stats.AcceptedConnections))
 	ch <- prometheus.MustNewConstMetric(c.rejectedConnections, prometheus.CounterValue, float64(stats.RejectedConnections))
 	ch <- prometheus.MustNewConstMetric(c.receivedMessages, prometheus.CounterValue, float64(stats.ReceivedMessages))
@@ -200,6 +292,12 @@ func (c *StatsCollector) descs() []*prometheus.Desc {
 	return []*prometheus.Desc{
 		c.currentConnections,
 		c.currentResumeSubscriptions,
+		c.resumeHistoryReads,
+		c.resumeHistoryReadDuration.Desc(),
+		c.resumeReplayedMessages,
+		c.resumeReplayedPayloadBytes,
+		c.resumeResyncRequired,
+		c.resumeSlowConsumerDisconnects,
 		c.acceptedConnections,
 		c.rejectedConnections,
 		c.receivedMessages,

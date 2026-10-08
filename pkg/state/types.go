@@ -3472,6 +3472,18 @@ func (e *AlertRuleQuotaError) Error() string {
 type AppWebhookEvent string
 
 const (
+	AppWebhookEventRealtimeSchedulePublished        AppWebhookEvent = "realtime.schedule.published"
+	AppWebhookEventRealtimeScheduleFailed           AppWebhookEvent = "realtime.schedule.failed"
+	AppWebhookEventRealtimeScheduleSkipped          AppWebhookEvent = "realtime.schedule.skipped"
+	AppWebhookEventRealtimeNotificationSent         AppWebhookEvent = "realtime.notification.sent"
+	AppWebhookEventRealtimeNotificationFailed       AppWebhookEvent = "realtime.notification.failed"
+	AppWebhookEventRealtimeNotificationExpired      AppWebhookEvent = "realtime.notification.expired"
+	AppWebhookEventRealtimeNotificationCancelled    AppWebhookEvent = "realtime.notification.cancelled"
+	AppWebhookEventRealtimeNotificationSuperseded   AppWebhookEvent = "realtime.notification.superseded"
+	AppWebhookEventRealtimeMessageRead              AppWebhookEvent = "realtime.message.read"
+	AppWebhookEventRealtimeInboxFallbackRequired    AppWebhookEvent = "realtime.inbox.fallback_required"
+	AppWebhookEventRealtimeInboxAcknowledged        AppWebhookEvent = "realtime.inbox.acknowledged"
+	AppWebhookEventRealtimeInboxGap                 AppWebhookEvent = "realtime.inbox.gap"
 	AppWebhookEventCronFired                        AppWebhookEvent = "cron.fired"
 	AppWebhookEventCronFiredManually                AppWebhookEvent = "cron.fired.manually"
 	AppWebhookEventAppCreated                       AppWebhookEvent = "app.created"
@@ -3518,6 +3530,17 @@ const (
 // emitters, tests, and adapters. Keep the order stable: it is also the
 // order used in validation error messages and generated documentation.
 var AllAppWebhookEvents = []AppWebhookEvent{
+	AppWebhookEventRealtimeSchedulePublished, AppWebhookEventRealtimeScheduleFailed, AppWebhookEventRealtimeScheduleSkipped,
+	AppWebhookEventRealtimeNotificationSent,
+	AppWebhookEventRealtimeNotificationFailed,
+	AppWebhookEventRealtimeNotificationExpired,
+	AppWebhookEventRealtimeNotificationCancelled,
+	AppWebhookEventRealtimeNotificationSuperseded,
+
+	AppWebhookEventRealtimeMessageRead,
+	AppWebhookEventRealtimeInboxFallbackRequired,
+	AppWebhookEventRealtimeInboxAcknowledged,
+	AppWebhookEventRealtimeInboxGap,
 	AppWebhookEventCronFired,
 	AppWebhookEventCronFiredManually,
 	AppWebhookEventAppCreated,
