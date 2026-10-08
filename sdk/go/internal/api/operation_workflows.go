@@ -3,6 +3,7 @@ package api
 const OperationWorkflowStateStaleAfterMaxSeconds int64 = 10 * 365 * 24 * 60 * 60
 
 type OperationWorkflowSpec struct {
+	AllowReconciliation    bool                          `json:"allow_reconciliation,omitempty"`
 	Workflow               string                        `json:"workflow"`
 	Title                  string                        `json:"title"`
 	Version                int                           `json:"version,omitempty"`
@@ -20,7 +21,11 @@ type OperationWorkflowSpec struct {
 }
 
 type OperationWorkflowTransition struct {
-	From               string   `json:"from"`
-	To                 string   `json:"to"`
-	RequiredMilestones []string `json:"required_milestones,omitempty"`
+	From                        string                                  `json:"from"`
+	To                          string                                  `json:"to"`
+	RequiredDependencyWorkflows *[]string                               `json:"required_dependency_workflows,omitempty"`
+	RequiredEffects             []OperationWorkflowEffectRequirement    `json:"required_effects,omitempty"`
+	RequiredInvariants          []OperationWorkflowInvariantRequirement `json:"required_invariants,omitempty"`
+	RequiredPolicies            []OperationWorkflowPolicyRequirement    `json:"required_policies,omitempty"`
+	RequiredMilestones          []string                                `json:"required_milestones,omitempty"`
 }

@@ -18,6 +18,7 @@ const OperationWorkflowStateStaleAfterMaxSeconds int64 = 10 * 365 * 24 * 60 * 60
 // name matches. Source manifests pin the milestone and instance ID pointer;
 // reads populate InstanceID from the retained public payload.
 type OperationWorkflowSpec struct {
+	AllowReconciliation    bool                          `json:"allow_reconciliation,omitempty"`
 	Workflow               string                        `json:"workflow"`
 	Title                  string                        `json:"title"`
 	Version                int                           `json:"version,omitempty"`
@@ -37,9 +38,13 @@ type OperationWorkflowSpec struct {
 // OperationWorkflowTransition is an app-declared allowed state edge. The
 // application still checks the current business row while holding its lock.
 type OperationWorkflowTransition struct {
-	From               string   `json:"from"`
-	To                 string   `json:"to"`
-	RequiredMilestones []string `json:"required_milestones,omitempty"`
+	From                        string                                  `json:"from"`
+	To                          string                                  `json:"to"`
+	RequiredDependencyWorkflows *[]string                               `json:"required_dependency_workflows,omitempty"`
+	RequiredEffects             []OperationWorkflowEffectRequirement    `json:"required_effects,omitempty"`
+	RequiredInvariants          []OperationWorkflowInvariantRequirement `json:"required_invariants,omitempty"`
+	RequiredPolicies            []OperationWorkflowPolicyRequirement    `json:"required_policies,omitempty"`
+	RequiredMilestones          []string                                `json:"required_milestones,omitempty"`
 }
 
 var operationWorkflowStateName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)

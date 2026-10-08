@@ -1,3 +1,5 @@
+export interface OperationWorkflowPolicyRequirement { milestone: string; rule_id: string; rule_version: string; code: string }
+export interface OperationWorkflowPlannedDecision { milestone: string; decision: import('./customer-operation-decisions.js').OperationBusinessDecision }
 import { OPERATION_SUBJECT_ID_BYTES } from './operation-contract.js';
 import { parseFrame } from './sse.js';
 import type { OperationWorkflowStep } from './generated/models/OperationWorkflowStep.js';
@@ -10,12 +12,34 @@ export interface OperationArtifactReport { report_id: string; name: string; uri:
 export interface OperationSubject { type: string; id: string }
 export interface OperationMilestoneReport { id: string; name: string; payload: unknown; occurred_at: string }
 export interface OperationMilestone extends OperationMilestoneReport { operation_id: string; subject?: OperationSubject; platform_tenant_id?: string; workflow_steps?: OperationWorkflowStep[]; created_at: string; sequence: number }
+export interface OperationWorkflowBlockerResolution { code: string; operation: string; description: string; blocker_operation_id: string; blocker_report_id: string; blocker_revision: number }
+export interface OperationWorkflowBlocker { first_observed_at?: string; code: string; description: string; operation: string }
 export interface OperationWorkflowEvidenceMilestone { id: string; name: string }
-export interface OperationWorkflowState { workflow: string; instance_id: string; state: string; terminal: boolean; stale: boolean; occurred_at: string; stale_after_seconds?: number; revision: number; contract_version: number; evidence_milestones?: OperationWorkflowEvidenceMilestone[]; updated_at: string; platform_tenant_id?: string }
-export interface OperationWorkflowStateHistoryEntry { id: string; operation_id: string; workflow: string; instance_id: string; from_state?: string; state: string; revision: number; contract_version: number; evidence_milestones?: OperationWorkflowEvidenceMilestone[]; occurred_at: string; published_at: string; platform_tenant_id?: string }
+export interface OperationWorkflowDependency { subject_type: string; subject_id: string; workflow: string; instance_id: string; required_outcome_code?: string }
+export interface OperationWorkflowRelatedInstance { dependency: OperationWorkflowDependency; status: 'unknown' | 'waiting' | 'terminal' | 'satisfied' | 'outcome_mismatch'; state?: OperationWorkflowState }
+export interface OperationWorkflowState { depends_on?: OperationWorkflowDependency[]; dependencies_only?: boolean; outcome_code?: string; outcome_description?: string; outcome_only?: boolean; deadline_at?: string; deadline_only?: boolean; overdue: boolean; overdue_seconds?: number; report_id?: string; operation_id?: string; blocker_resolutions?: OperationWorkflowBlockerResolution[]; blockers?: OperationWorkflowBlocker[]; blockers_only?: boolean; workflow: string; instance_id: string; state: string; terminal: boolean; stale: boolean; occurred_at: string; stale_after_seconds?: number; revision: number; contract_version: number; evidence_milestones?: OperationWorkflowEvidenceMilestone[]; updated_at: string; platform_tenant_id?: string }
+export interface OperationWorkflowStateHistoryEntry { depends_on?: OperationWorkflowDependency[]; dependencies_only?: boolean; outcome_code?: string; outcome_description?: string; outcome_only?: boolean; deadline_at?: string; deadline_only?: boolean; blocker_resolutions?: OperationWorkflowBlockerResolution[]; blockers?: OperationWorkflowBlocker[]; blockers_only?: boolean; id: string; operation_id: string; workflow: string; instance_id: string; from_state?: string; state: string; revision: number; contract_version: number; evidence_milestones?: OperationWorkflowEvidenceMilestone[]; occurred_at: string; published_at: string; platform_tenant_id?: string }
+export interface OperationWorkflowInstanceMilestoneRef { id: string; operation_id: string; occurred_at: string; published_at: string }
+export interface OperationWorkflowInstanceStep { step: string; label: string; operation?: string; operation_id?: string; milestone: string; position: number; observed: boolean; milestones_in_page: number; latest_milestone?: OperationWorkflowInstanceMilestoneRef; observed_in_retention: boolean; milestones_in_retention: number; latest_retained_milestone?: OperationWorkflowInstanceMilestoneRef }
+export interface OperationWorkflowInstanceTransition { from: string; to: string; operation: string; required_dependency_workflows?: string[]; required_effects?: OperationWorkflowEffectRequirement[]; required_invariants?: OperationWorkflowInvariantRequirement[]; required_policies?: OperationWorkflowPolicyRequirement[]; required_milestones?: string[] }
+export interface OperationWorkflowDecision { blockers?: OperationWorkflowBlocker[]; reason: 'state_unknown' | 'terminal' | 'no_declared_transition' | 'transitions_available' | 'state_stale' | 'application_blocked' | 'deadline_overdue' | 'dependency_waiting'; explanation: string; needs_attention: boolean; state_revision?: number; next_actions: OperationWorkflowInstanceTransition[] }
+export interface OperationWorkflowInstanceSnapshot { readiness?: OperationWorkflowReadinessOverview; dependency_trace?: OperationWorkflowDependencyTrace; dependency_impact?: OperationWorkflowDependencyImpact; related_workflows?: OperationWorkflowRelatedInstance[]; decision?: OperationWorkflowDecision; workflow: string; instance_id: string; contract_version: number; state?: OperationWorkflowState; steps: OperationWorkflowInstanceStep[]; allowed_transitions?: OperationWorkflowInstanceTransition[]; transitions: OperationWorkflowStateHistoryEntry[]; has_more: boolean; next_milestone_cursor?: string; next_transition_cursor?: string }
+export interface OperationWorkflowOutcomeEntry { app_id: string; scope: string; platform_tenant_id?: string; subject: OperationSubject; operation_id: string; state: OperationWorkflowState }
+export interface OperationWorkflowOutcomesResponse { items: OperationWorkflowOutcomeEntry[]; evaluated_at: string; next_cursor?: string }
+export interface OperationWorkflowOutcomeGroup { value: string; workflow_count: number }
+export interface OperationWorkflowOutcomeSummary { group_by: 'outcome' | 'workflow' | 'customer'; evaluated_at: string; workflow_count: number; groups: OperationWorkflowOutcomeGroup[]; next_cursor?: string }
+export interface OperationWorkflowOutcomeOptions { appID: string; scope: string; workflow?: string; code?: string; limit?: number; cursor?: string }
+export interface OperationWorkflowOutcomeSummaryOptions extends OperationWorkflowOutcomeOptions { groupBy?: 'outcome' | 'workflow' }
+export interface OperationWorkflowAttentionEntry { dependency_attention?: OperationWorkflowRelatedInstance[]; app_id: string; scope: string; platform_tenant_id?: string; subject: OperationSubject; operation_id: string; state: OperationWorkflowState; reasons: Array<'blocked' | 'stale' | 'overdue' | 'dependency'> }
+export interface OperationWorkflowAttentionResponse { items: OperationWorkflowAttentionEntry[]; evaluated_at: string; next_cursor?: string }
+export interface OperationWorkflowAttentionStats { dependency_workflow_count: number; dependency_count: number; overdue_workflow_count: number; earliest_overdue_deadline_at?: string; longest_overdue_seconds?: number; workflow_count: number; blocked_workflow_count: number; stale_workflow_count: number; blocker_count: number; unknown_age_blockers: number; oldest_blocker_at?: string; oldest_blocker_age_seconds?: number }
+export interface OperationWorkflowAttentionGroup { value: string; stats: OperationWorkflowAttentionStats }
+export interface OperationWorkflowAttentionSummary { group_by: 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code' | 'customer'; evaluated_at: string; totals: OperationWorkflowAttentionStats; groups: OperationWorkflowAttentionGroup[]; next_cursor?: string }
+export interface OperationWorkflowAttentionSummaryOptions extends OperationWorkflowAttentionOptions { groupBy?: 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code' }
+export interface OperationWorkflowAttentionOptions { dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch'; requiredOutcomeCode?: string; blockerCode?: string; appID: string; scope: string; workflow?: string; targetOperation?: string; reason?: 'blocked' | 'stale' | 'overdue' | 'dependency'; limit?: number; cursor?: string }
 export interface OperationMilestonePageOptions { limit?: number; cursor?: string }
 export interface OperationBusinessMilestoneOptions extends OperationMilestonePageOptions { appID: string; scope: string; subjectType: string; subjectID: string; workflow?: string; workflowInstanceID?: string; workflowStateCursor?: string; staleOnly?: boolean }
-export interface OperationMilestones { milestones: OperationMilestone[]; workflow_states?: OperationWorkflowState[]; workflow_state_history?: OperationWorkflowStateHistoryEntry[]; next_cursor?: string; next_workflow_state_cursor?: string }
+export interface OperationMilestones { milestones: OperationMilestone[]; workflow_states?: OperationWorkflowState[]; workflow_state_history?: OperationWorkflowStateHistoryEntry[]; workflow_instance?: OperationWorkflowInstanceSnapshot; next_cursor?: string; next_workflow_state_cursor?: string }
 export interface Operation<T = unknown> {
   subject?: OperationSubject;
   id: string; name: string; generation: number; state: OperationState;
@@ -118,6 +142,77 @@ export class GregaleOperationClient {
   milestones(id: string, options: OperationMilestonePageOptions = {}, signal?: AbortSignal): Promise<OperationMilestones> {
     return this.request(operationPath(id) + '/milestones?' + milestonePageQuery(options), 'GET', undefined, undefined, signal);
   }
+  workflowAttention(options: OperationWorkflowAttentionOptions, signal?: AbortSignal): Promise<OperationWorkflowAttentionResponse> {
+    if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
+    if (options.workflow !== undefined && !/^[a-z][a-z0-9-]{0,62}$/.test(options.workflow)) throw new Error('Invalid workflow name');
+    if (options.targetOperation !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.targetOperation)) throw new Error('Invalid target Operation');
+    if (options.blockerCode !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.blockerCode)) throw new Error('Invalid blocker code');
+    if (options.dependencyStatus !== undefined && !['waiting','unknown','outcome_mismatch'].includes(options.dependencyStatus)) throw new Error('Invalid dependency status');
+    if (options.requiredOutcomeCode !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.requiredOutcomeCode)) throw new Error('Invalid required outcome');
+    if (options.reason !== undefined && !['blocked', 'stale', 'overdue', 'dependency'].includes(options.reason)) throw new Error('Invalid attention reason');
+    const query = milestonePageQuery(options);
+    query.set('app_id', options.appID); query.set('scope', options.scope);
+    if (options.workflow !== undefined) query.set('workflow', options.workflow);
+    if (options.targetOperation !== undefined) query.set('target_operation', options.targetOperation);
+    if (options.blockerCode !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.blockerCode)) throw new Error('Invalid blocker code');
+    if (options.blockerCode !== undefined) query.set('blocker_code', options.blockerCode);
+    if (options.dependencyStatus !== undefined) query.set('dependency_status', options.dependencyStatus);
+    if (options.requiredOutcomeCode !== undefined) query.set('required_outcome_code', options.requiredOutcomeCode);
+    if (options.reason !== undefined) query.set('reason', options.reason);
+    return this.request('/v1/platform-tenant-self/workflow-attention?' + query, 'GET', undefined, undefined, signal);
+  }
+  workflowAttentionSummary(options: OperationWorkflowAttentionSummaryOptions, signal?: AbortSignal): Promise<OperationWorkflowAttentionSummary> {
+    if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
+    if (options.workflow !== undefined && !/^[a-z][a-z0-9-]{0,62}$/.test(options.workflow)) throw new Error('Invalid workflow name');
+    if (options.targetOperation !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.targetOperation)) throw new Error('Invalid target Operation');
+    if (options.blockerCode !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.blockerCode)) throw new Error('Invalid blocker code');
+    if (options.dependencyStatus !== undefined && !['waiting','unknown','outcome_mismatch'].includes(options.dependencyStatus)) throw new Error('Invalid dependency status');
+    if (options.requiredOutcomeCode !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.requiredOutcomeCode)) throw new Error('Invalid required outcome');
+    if (options.reason !== undefined && !['blocked', 'stale', 'overdue', 'dependency'].includes(options.reason)) throw new Error('Invalid attention reason');
+    if (options.groupBy !== undefined && !['workflow','blocker_code','target_operation','dependency_status','required_outcome_code'].includes(options.groupBy)) throw new Error('Invalid summary grouping');
+    const query = milestonePageQuery(options);
+    query.set('app_id', options.appID); query.set('scope', options.scope);
+    if (options.workflow !== undefined) query.set('workflow', options.workflow);
+    if (options.targetOperation !== undefined) query.set('target_operation', options.targetOperation);
+    if (options.blockerCode !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.blockerCode)) throw new Error('Invalid blocker code');
+    if (options.blockerCode !== undefined) query.set('blocker_code', options.blockerCode);
+    if (options.dependencyStatus !== undefined) query.set('dependency_status', options.dependencyStatus);
+    if (options.requiredOutcomeCode !== undefined) query.set('required_outcome_code', options.requiredOutcomeCode);
+    if (options.reason !== undefined) query.set('reason', options.reason);
+    if (options.groupBy !== undefined) query.set('group_by', options.groupBy);
+    return this.request('/v1/platform-tenant-self/workflow-attention/summary?' + query, 'GET', undefined, undefined, signal);
+  }
+  workflowOutcomes(options: OperationWorkflowOutcomeOptions, signal?: AbortSignal): Promise<OperationWorkflowOutcomesResponse> {
+    if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
+    if (options.workflow !== undefined && !/^[a-z][a-z0-9-]{0,62}$/.test(options.workflow)) throw new Error('Invalid workflow name');
+    if (options.code !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.code)) throw new Error('Invalid outcome code');
+    const query = milestonePageQuery(options);
+    query.set('app_id', options.appID); query.set('scope', options.scope);
+    if (options.workflow !== undefined) query.set('workflow', options.workflow);
+    if (options.code !== undefined) query.set('code', options.code);
+    return this.request('/v1/platform-tenant-self/workflow-outcomes?' + query, 'GET', undefined, undefined, signal);
+  }
+  workflowOutcomeSummary(options: OperationWorkflowOutcomeSummaryOptions, signal?: AbortSignal): Promise<OperationWorkflowOutcomeSummary> {
+    if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
+    if (options.workflow !== undefined && !/^[a-z][a-z0-9-]{0,62}$/.test(options.workflow)) throw new Error('Invalid workflow name');
+    if (options.code !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.code)) throw new Error('Invalid outcome code');
+    const query = milestonePageQuery(options);
+    query.set('app_id', options.appID); query.set('scope', options.scope);
+    if (options.workflow !== undefined) query.set('workflow', options.workflow);
+    if (options.code !== undefined) query.set('code', options.code);
+    if (options.groupBy !== undefined) { if (!['outcome','workflow'].includes(options.groupBy)) throw new Error('Invalid outcome grouping'); query.set('group_by',options.groupBy); }
+    return this.request('/v1/platform-tenant-self/workflow-outcomes/summary?' + query, 'GET', undefined, undefined, signal);
+  }
+  workflowActionPreview(body: OperationWorkflowActionPreviewRequest, signal?: AbortSignal): Promise<OperationWorkflowActionPreviewResponse> {
+    if (!UUID.test(body.app_id ?? '') || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(body.scope)) throw new Error('Explicit app and environment required');
+    if (body.tenant_id !== undefined) throw new Error('Customer ownership comes from authentication');
+    return this.request('/v1/platform-tenant-self/workflow-actions/preview', 'POST', body, undefined, signal);
+  }
+  workflowReadiness(body: OperationWorkflowReadinessRequest, signal?: AbortSignal): Promise<OperationWorkflowReadinessResponse> {
+    if (!UUID.test(body.app_id ?? '') || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(body.scope)) throw new Error('Explicit app and environment required');
+    if (body.tenant_id !== undefined) throw new Error('Customer ownership comes from authentication');
+    return this.request('/v1/platform-tenant-self/workflow-readiness', 'POST', body, undefined, signal);
+  }
   businessMilestones(options: OperationBusinessMilestoneOptions, signal?: AbortSignal): Promise<OperationMilestones> {
     if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(options.subjectType) || !options.subjectID || new TextEncoder().encode(options.subjectID).length > OPERATION_SUBJECT_ID_BYTES || /[\x00-\x1f\x7f]/.test(options.subjectID) || /[\uD800-\uDFFF]/u.test(options.subjectID)) throw new Error('Valid paired business reference required');
@@ -204,3 +299,77 @@ export class GregaleOperationClient {
     }
   }
 }
+
+export interface OperationWorkflowDependentInstance {
+  subject: OperationSubject;
+  state: OperationWorkflowState;
+  required_outcome_code?: string;
+  dependency_status: 'unknown' | 'waiting' | 'terminal' | 'satisfied' | 'outcome_mismatch';
+  needs_attention: boolean;
+}
+export interface OperationWorkflowDependencyImpact {
+  items: OperationWorkflowDependentInstance[];
+  workflow_count: number;
+  impacted_workflow_count: number;
+  has_more: boolean;
+}
+
+export interface OperationWorkflowDependencyFinding {
+  kind: 'reported_blockers' | 'state_unknown' | 'outcome_unknown' | 'outcome_mismatch' | 'awaiting_application' | 'state_stale' | 'deadline_overdue' | 'cycle' | 'trace_limit';
+  path: OperationWorkflowDependency[];
+  explanation: string;
+  state?: OperationWorkflowState;
+  limit?: 'depth' | 'workflows' | 'findings' | 'dependencies';
+}
+export interface OperationWorkflowDependencyTrace {
+  findings: OperationWorkflowDependencyFinding[];
+  visited_workflow_count: number;
+  examined_dependency_count: number;
+  depth_limit: number;
+  workflow_limit: number;
+  finding_limit: number;
+  dependency_limit: number;
+  truncated: boolean;
+  limits_reached?: Array<'depth' | 'workflows' | 'findings' | 'dependencies'>;
+}
+
+export interface OperationWorkflowReadinessRequest {
+ effects?: OperationWorkflowPlannedEffect[]; invariants?: OperationWorkflowPlannedInvariant[]; decisions?: OperationWorkflowPlannedDecision[];
+ app_id?: string; tenant_id?: string; scope: string; subject: OperationSubject;
+ workflow: string; instance_id: string; operation: string; from_state: string; to_state: string;
+ milestones?: string[]; state_revision?: number; contract_version?: number;
+}
+export interface OperationWorkflowTransitionReadiness {
+ unmet_effects?: OperationWorkflowUnmetEffect[]; unmet_invariants?: OperationWorkflowUnmetInvariant[]; invariant_blockers?: OperationWorkflowBlocker[]; missing_dependency_workflows?: string[]; missing_policies?: OperationWorkflowPolicyRequirement[];
+ transition: OperationWorkflowInstanceTransition; declared: boolean; ready: boolean;
+ reasons: Array<'state_unknown'|'terminal'|'transition_undeclared'|'from_state_mismatch'|'revision_mismatch'|'contract_version_mismatch'|'application_blocked'|'dependency_unmet'|'milestone_required'|'policy_evidence_required'|'dependency_required'|'invariant_evidence_required'|'effect_evidence_required'>;
+ advisories: Array<'state_stale'|'deadline_overdue'>;
+ state_revision?: number; contract_version: number; blockers: OperationWorkflowBlocker[];
+ unmet_dependencies: OperationWorkflowRelatedInstance[]; missing_milestones: string[];
+}
+export interface OperationWorkflowReadinessResponse {
+ subject: OperationSubject; workflow: string; instance_id: string; evaluated_at: string;
+ readiness: OperationWorkflowTransitionReadiness;
+}
+export interface OperationWorkflowReadinessOverview {
+ items: OperationWorkflowTransitionReadiness[]; transition_count: number; has_more: boolean;
+}
+
+export interface OperationWorkflowActionPreviewRequest {
+ app_id?: string; tenant_id?: string; scope: string; subject: OperationSubject;
+ workflow: string; instance_id: string; operation?: string; state_revision?: number; contract_version?: number;
+}
+export interface OperationWorkflowActionPreviewResponse {
+ subject: OperationSubject; workflow: string; instance_id: string; evaluated_at: string;
+ state?: OperationWorkflowState; state_revision?: number; contract_version: number;
+ reason: 'state_unknown'|'terminal'|'no_declared_transition'|'actions_available';
+ actions: OperationWorkflowTransitionReadiness[]; action_count: number; has_more: boolean;
+}
+
+export interface OperationWorkflowInvariantRequirement {milestone: string; code: string; version: string}
+export interface OperationWorkflowPlannedInvariant {milestone: string; invariant: import('./customer-operation-invariants.js').OperationBusinessInvariant}
+export interface OperationWorkflowUnmetInvariant {requirement: OperationWorkflowInvariantRequirement; reason: 'missing'|'mismatched'|'failed'|'unknown'}
+
+export interface OperationWorkflowEffectRequirement {milestone: string; code: string; version: string}
+export interface OperationWorkflowPlannedEffect {milestone: string; effect: import('./customer-operation-effects.js').OperationBusinessEffect}
+export interface OperationWorkflowUnmetEffect {requirement: OperationWorkflowEffectRequirement; reason: 'missing'|'mismatched'|'pending'|'failed'}

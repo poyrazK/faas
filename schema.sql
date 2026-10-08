@@ -12064,6 +12064,11 @@ CREATE TABLE public.customer_operation_workflow_state_reports (
     fingerprint text NOT NULL,
     contract_version integer DEFAULT 1 NOT NULL,
     evidence_milestones jsonb DEFAULT '[]'::jsonb NOT NULL,
+    blockers jsonb DEFAULT '[]'::jsonb NOT NULL,
+    blockers_only boolean DEFAULT false NOT NULL,
+    blocker_resolutions jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT customer_operation_workflow_state_reports_blocker_resolutions_check CHECK (((jsonb_typeof(blocker_resolutions) = 'array'::text) AND (jsonb_array_length(blocker_resolutions) <= 16))),
+    CONSTRAINT customer_operation_workflow_state_reports_blockers_check CHECK (((jsonb_typeof(blockers) = 'array'::text) AND (jsonb_array_length(blockers) <= 16))),
     CONSTRAINT customer_operation_workflow_state_reports_created_at_check CHECK (isfinite(created_at)),
     CONSTRAINT customer_operation_workflow_state_reports_contract_version_check CHECK (((contract_version >= 1) AND (contract_version <= 1000000))),
     CONSTRAINT customer_operation_workflow_state_reports_evidence_check CHECK (((jsonb_typeof(evidence_milestones) = 'array'::text) AND (jsonb_array_length(evidence_milestones) <= 16))),
@@ -28066,6 +28071,8 @@ CREATE INDEX customer_operation_idempotency_retention_idx ON public.customer_ope
 
 CREATE INDEX customer_operation_milestones_history_idx ON public.customer_operation_milestones USING btree (operation_id, created_at DESC, id DESC);
 
+CREATE INDEX customer_operation_workflow_states_attention_idx ON public.customer_operation_workflow_states USING btree (account_id, app_id, scope, updated_at DESC);
+
 CREATE INDEX customer_operation_workflow_states_subject_idx ON public.customer_operation_workflow_states USING btree (account_id, app_id, platform_tenant_id, scope, subject_type, subject_id, updated_at DESC);
 
 
@@ -42985,3 +42992,21 @@ END;
 $$;
 CREATE TRIGGER deployment_dependency_release_check BEFORE UPDATE OF status ON deployments
 FOR EACH ROW EXECUTE FUNCTION check_project_dependency_release();
+
+ALTER TABLE customer_operation_workflow_state_reports
+ ADD COLUMN deadline_at text NOT NULL DEFAULT '',
+ ADD COLUMN deadline_only boolean NOT NULL DEFAULT false;
+
+ALTER TABLE customer_operation_workflow_state_reports
+ ADD COLUMN outcome_code text NOT NULL DEFAULT '',
+ ADD COLUMN outcome_description text NOT NULL DEFAULT '',
+ ADD COLUMN outcome_only boolean NOT NULL DEFAULT false;
+
+ALTER TABLE customer_operation_workflow_state_reports
+ ADD COLUMN depends_on jsonb NOT NULL DEFAULT '[]'::jsonb
+  CHECK (jsonb_typeof(depends_on)='array' AND jsonb_array_length(depends_on)<=16),
+ ADD COLUMN dependencies_only boolean NOT NULL DEFAULT false;
+
+CREATE INDEX customer_operation_workflow_dependency_lookup
+ ON customer_operation_workflow_state_reports USING gin (depends_on jsonb_path_ops)
+ WHERE jsonb_array_length(depends_on)>0;

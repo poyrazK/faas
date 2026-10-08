@@ -1,3 +1,11 @@
+import type { OperationWorkflowActionPreviewRequest } from '../models/OperationWorkflowActionPreviewRequest.js';
+import type { OperationWorkflowActionPreviewResponse } from '../models/OperationWorkflowActionPreviewResponse.js';
+import type { OperationWorkflowReadinessRequest } from '../models/OperationWorkflowReadinessRequest.js';
+import type { OperationWorkflowReadinessResponse } from '../models/OperationWorkflowReadinessResponse.js';
+import type {OperationWorkflowOutcomesResponse} from '../models/OperationWorkflowOutcomesResponse.js';
+import type {OperationWorkflowOutcomeSummary} from '../models/OperationWorkflowOutcomeSummary.js';
+import type {OperationWorkflowAttentionSummary} from '../models/OperationWorkflowAttentionSummary.js';
+import type { OperationWorkflowAttentionResponse } from '../models/OperationWorkflowAttentionResponse.js';
 /* generated using openapi-typescript-codegen -- do not edit */
 /* istanbul ignore file */
 /* tslint:disable */
@@ -435,7 +443,7 @@ export class OperationsService {
   }
   /**
    * Read a business entity timeline across related Operations.
-   * Requires account read scope and MFA. Explicit app/environment/reference selectors and optional customer selection remain within account ownership. Paired workflow and workflow-instance selectors narrow the feed to one run. Facts are ordered by first platform publication time, not inferred business causality.
+   * Requires account read scope and MFA. Explicit app/environment/reference selectors and optional customer selection remain within account ownership. Paired workflow and workflow-instance selectors narrow the feed to one run and include a grouped workflow_instance view with ordered declared steps, latest matching facts, current state, and independently paginated transition history. Facts are ordered by first platform publication time, not inferred business causality.
    * @returns OperationMilestonesResponse Account environment business-reference milestone feed.
    * @throws ApiError
    */
@@ -530,7 +538,7 @@ export class OperationsService {
   }
   /**
    * Read a business entity timeline for the authenticated customer.
-   * Requires platform_tenant:operations:read. Identity comes only from credentials. The app, environment, and paired public reference select related retained work. Paired workflow and workflow-instance selectors narrow the feed to one run. Opaque pagination binds all selectors; other customers with the same entity ID remain isolated.
+   * Requires platform_tenant:operations:read. Identity comes only from credentials. The app, environment, and paired public reference select related retained work. Paired workflow and workflow-instance selectors narrow the feed to one run and include a grouped workflow_instance view with ordered declared steps, latest matching facts, current state, and independently paginated transition history. Opaque pagination binds all selectors; other customers with the same entity ID remain isolated.
    * @returns OperationMilestonesResponse Authenticated customer business-reference milestone feed.
    * @throws ApiError
    */
@@ -1799,5 +1807,58 @@ export class OperationsService {
         `,
       },
     });
+  }
+  /** Account-owned, MFA-protected queue of blocked or stale workflow instances. */
+  public static listAccountWorkflowAttention({slug, scope, workflow, targetOperation, reason, tenantId, limit, cursor, dependencyStatus, requiredOutcomeCode, blockerCode}: {
+    slug: string; scope: string; workflow?: string; targetOperation?: string; reason?: 'blocked' | 'stale' | 'overdue' | 'dependency'; tenantId?: string; limit?: number; cursor?: string; dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch'; requiredOutcomeCode?: string; blockerCode?: string;
+  }): CancelablePromise<OperationWorkflowAttentionResponse> {
+    return __request(OpenAPI, {method: 'GET', url: '/v1/apps/{slug}/workflow-attention', path: {'slug': slug},
+      query: {scope, workflow, target_operation: targetOperation, reason, tenant_id: tenantId, limit, cursor, dependency_status: dependencyStatus, required_outcome_code: requiredOutcomeCode, blocker_code: blockerCode},
+      errors: {400: 'Invalid selectors or cursor', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not found', 503: 'Unavailable'}});
+  }
+  /** Queue restricted to the customer identity from credentials. */
+  public static listPlatformTenantSelfWorkflowAttention({appId, scope, workflow, targetOperation, reason, limit, cursor, dependencyStatus, requiredOutcomeCode, blockerCode}: {
+    appId: string; scope: string; workflow?: string; targetOperation?: string; reason?: 'blocked' | 'stale' | 'overdue' | 'dependency'; limit?: number; cursor?: string; dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch'; requiredOutcomeCode?: string; blockerCode?: string;
+  }): CancelablePromise<OperationWorkflowAttentionResponse> {
+    return __request(OpenAPI, {method: 'GET', url: '/v1/platform-tenant-self/workflow-attention',
+      query: {app_id: appId, scope, workflow, target_operation: targetOperation, reason, limit, cursor, dependency_status: dependencyStatus, required_outcome_code: requiredOutcomeCode, blocker_code: blockerCode},
+      errors: {400: 'Invalid selectors or cursor', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not found', 503: 'Unavailable'}});
+  }
+  /** Account-owned, MFA-protected queue of blocked or stale workflow instances. */
+  public static summarizeAccountWorkflowAttention({slug, scope, workflow, targetOperation, reason, tenantId, limit, cursor, dependencyStatus, requiredOutcomeCode, blockerCode, groupBy}: {
+    slug: string; scope: string; workflow?: string; targetOperation?: string; reason?: 'blocked' | 'stale' | 'overdue' | 'dependency'; tenantId?: string; limit?: number; cursor?: string; dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch'; requiredOutcomeCode?: string; blockerCode?: string; groupBy?: 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code' | 'customer';
+  }): CancelablePromise<OperationWorkflowAttentionSummary> {
+    return __request(OpenAPI, {method: 'GET', url: '/v1/apps/{slug}/workflow-attention/summary', path: {'slug': slug},
+      query: {scope, workflow, target_operation: targetOperation, reason, tenant_id: tenantId, limit, cursor, dependency_status: dependencyStatus, required_outcome_code: requiredOutcomeCode, blocker_code: blockerCode, group_by: groupBy},
+      errors: {400: 'Invalid selectors or cursor', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not found', 503: 'Unavailable'}});
+  }
+  /** Queue restricted to the customer identity from credentials. */
+  public static summarizePlatformTenantSelfWorkflowAttention({appId, scope, workflow, targetOperation, reason, limit, cursor, dependencyStatus, requiredOutcomeCode, blockerCode, groupBy}: {
+    appId: string; scope: string; workflow?: string; targetOperation?: string; reason?: 'blocked' | 'stale' | 'overdue' | 'dependency'; limit?: number; cursor?: string; dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch'; requiredOutcomeCode?: string; blockerCode?: string; groupBy?: 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code';
+  }): CancelablePromise<OperationWorkflowAttentionSummary> {
+    return __request(OpenAPI, {method: 'GET', url: '/v1/platform-tenant-self/workflow-attention/summary',
+      query: {app_id: appId, scope, workflow, target_operation: targetOperation, reason, limit, cursor, dependency_status: dependencyStatus, required_outcome_code: requiredOutcomeCode, blocker_code: blockerCode, group_by: groupBy},
+      errors: {400: 'Invalid selectors or cursor', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not found', 503: 'Unavailable'}});
+  }
+
+ public static listAccountWorkflowOutcomes({slug, scope, workflow, code, limit, cursor, tenantId}:{slug: string; scope: string; workflow?: string; code?: string; limit?: number; cursor?: string; tenantId?: string;}): CancelablePromise<OperationWorkflowOutcomesResponse> {return __request(OpenAPI,{method:'GET',url:'/v1/apps/{slug}/workflow-outcomes',path:{slug},query:{tenant_id: tenantId, scope, workflow, code, limit, cursor},errors:{400:'Invalid selectors or cursor',401:'Unauthorized',403:'Forbidden',404:'Not found',503:'Unavailable'}});}
+
+ public static summarizeAccountWorkflowOutcomes({slug, scope, workflow, code, limit, cursor, groupBy, tenantId}:{slug: string; scope: string; workflow?: string; code?: string; limit?: number; cursor?: string; groupBy?: 'outcome' | 'workflow' | 'customer'; tenantId?: string;}): CancelablePromise<OperationWorkflowOutcomeSummary> {return __request(OpenAPI,{method:'GET',url:'/v1/apps/{slug}/workflow-outcomes/summary',path:{slug},query:{tenant_id: tenantId, scope, workflow, code, limit, cursor, group_by: groupBy},errors:{400:'Invalid selectors or cursor',401:'Unauthorized',403:'Forbidden',404:'Not found',503:'Unavailable'}});}
+
+ public static listPlatformTenantSelfWorkflowOutcomes({appId, scope, workflow, code, limit, cursor}:{appId: string; scope: string; workflow?: string; code?: string; limit?: number; cursor?: string;}): CancelablePromise<OperationWorkflowOutcomesResponse> {return __request(OpenAPI,{method:'GET',url:'/v1/platform-tenant-self/workflow-outcomes',query:{app_id: appId, scope, workflow, code, limit, cursor},errors:{400:'Invalid selectors or cursor',401:'Unauthorized',403:'Forbidden',404:'Not found',503:'Unavailable'}});}
+
+ public static summarizePlatformTenantSelfWorkflowOutcomes({appId, scope, workflow, code, limit, cursor, groupBy}:{appId: string; scope: string; workflow?: string; code?: string; limit?: number; cursor?: string; groupBy?: 'outcome' | 'workflow';}): CancelablePromise<OperationWorkflowOutcomeSummary> {return __request(OpenAPI,{method:'GET',url:'/v1/platform-tenant-self/workflow-outcomes/summary',query:{app_id: appId, scope, workflow, code, limit, cursor, group_by: groupBy},errors:{400:'Invalid selectors or cursor',401:'Unauthorized',403:'Forbidden',404:'Not found',503:'Unavailable'}});}
+
+  public static checkAccountWorkflowReadiness({slug, requestBody}: {slug: string; requestBody: OperationWorkflowReadinessRequest}): CancelablePromise<OperationWorkflowReadinessResponse> {
+    return __request(OpenAPI, {method: 'POST', url: '/v1/apps/{slug}/workflow-readiness', path: {slug}, body: requestBody, mediaType: 'application/json'});
+  }
+  public static checkPlatformTenantSelfWorkflowReadiness({requestBody}: {requestBody: OperationWorkflowReadinessRequest}): CancelablePromise<OperationWorkflowReadinessResponse> {
+    return __request(OpenAPI, {method: 'POST', url: '/v1/platform-tenant-self/workflow-readiness', body: requestBody, mediaType: 'application/json'});
+  }
+  public static previewAccountWorkflowActions({slug, requestBody}: {slug: string; requestBody: OperationWorkflowActionPreviewRequest}): CancelablePromise<OperationWorkflowActionPreviewResponse> {
+    return __request(OpenAPI, {method: 'POST', url: '/v1/apps/{slug}/workflow-actions/preview', path: {slug}, body: requestBody, mediaType: 'application/json'});
+  }
+  public static previewPlatformTenantSelfWorkflowActions({requestBody}: {requestBody: OperationWorkflowActionPreviewRequest}): CancelablePromise<OperationWorkflowActionPreviewResponse> {
+    return __request(OpenAPI, {method: 'POST', url: '/v1/platform-tenant-self/workflow-actions/preview', body: requestBody, mediaType: 'application/json'});
   }
 }

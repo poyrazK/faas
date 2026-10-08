@@ -89,9 +89,26 @@ export async function withCustomerOperationTransaction(
     const workflowStates: OperationWorkflowStateReport[] = [];
     if (request.milestonesSupported) await tx.query("SELECT 1 FROM public.gregale_customer_operation_milestones LIMIT 0");
     let open = true;
+    let pendingGuards = 0;
+    let guardFailed = false;
+    let guardError: unknown;
     let result: unknown;
-    try { result = await handler(milestoneTransaction(tx, request, reports, workflowStates, () => open)); }
+    const transaction = milestoneTransaction(tx, request, reports, workflowStates, () => open, error => { guardFailed = true; guardError = error; });
+    const guard = transaction.guardedWorkflowTransition;
+    transaction.guardedWorkflowTransition = async (...args) => {
+      pendingGuards++;
+      try { return await guard(...args); }
+      finally { pendingGuards--; }
+    };
+    const reconcile=transaction.reconcileWorkflowState;
+    transaction.reconcileWorkflowState=async (...args)=>{
+      pendingGuards++;
+      try {return await reconcile(...args);} finally {pendingGuards--;}
+    };
+    try { result = await handler(transaction); }
     finally { open = false; }
+    if (pendingGuards) throw new TypeError("Readiness guards must be awaited before the callback returns");
+    if (guardFailed) throw guardError;
     const body = JSON.stringify(result, (_key, value: unknown) => {
       if (value === undefined || typeof value === 'function' || typeof value === 'symbol' || typeof value === 'bigint'
           || (typeof value === 'number' && !Number.isFinite(value))) throw new TypeError('customer Operation result must contain JSON values');

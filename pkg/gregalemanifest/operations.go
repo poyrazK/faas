@@ -46,13 +46,18 @@ type OperationWorkflow struct {
 }
 
 type OperationWorkflowTransitionSource struct {
-	From               string   `yaml:"from" toml:"from"`
-	To                 string   `yaml:"to" toml:"to"`
-	Operation          string   `yaml:"operation,omitempty" toml:"operation"`
-	RequiresMilestones []string `yaml:"requires_milestones,omitempty" toml:"requires_milestones"`
+	From                 string                                      `yaml:"from" toml:"from"`
+	To                   string                                      `yaml:"to" toml:"to"`
+	Operation            string                                      `yaml:"operation,omitempty" toml:"operation"`
+	RequiresDependencies *[]string                                   `yaml:"requires_dependencies,omitempty" toml:"requires_dependencies"`
+	RequiresEffects      []api.OperationWorkflowEffectRequirement    `yaml:"requires_effects,omitempty" toml:"requires_effects"`
+	RequiresInvariants   []api.OperationWorkflowInvariantRequirement `yaml:"requires_invariants,omitempty" toml:"requires_invariants"`
+	RequiresPolicies     []api.OperationWorkflowPolicyRequirement    `yaml:"requires_policies,omitempty" toml:"requires_policies"`
+	RequiresMilestones   []string                                    `yaml:"requires_milestones,omitempty" toml:"requires_milestones"`
 }
 
 type OperationWorkflowStepSource struct {
+	Reconciliation bool   `yaml:"reconciliation,omitempty" toml:"reconciliation"`
 	Name           string `yaml:"name" toml:"name"`
 	Label          string `yaml:"label" toml:"label"`
 	Operation      string `yaml:"operation" toml:"operation"`
@@ -281,7 +286,7 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 				if _, exists := operationsByName[transition.Operation]; !exists {
 					return nil, fmt.Errorf("operation workflow %q transition references unknown operation %q", workflow.Name, transition.Operation)
 				}
-			} else if len(transition.RequiresMilestones) > 0 {
+			} else if len(transition.RequiresMilestones) > 0 || len(transition.RequiresPolicies) > 0 || transition.RequiresDependencies != nil || len(transition.RequiresInvariants) > 0 || len(transition.RequiresEffects) > 0 {
 				return nil, fmt.Errorf("operation workflow %q transition evidence requires an operation target", workflow.Name)
 			}
 			if len(transition.RequiresMilestones) > api.OperationWorkflowTransitionEvidenceMax {
@@ -310,7 +315,7 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 					return nil, fmt.Errorf("operation workflow %q has a duplicate transition", workflow.Name)
 				}
 			}
-			apiTransition := api.OperationWorkflowTransition{From: transition.From, To: transition.To, RequiredMilestones: required}
+			apiTransition := api.OperationWorkflowTransition{From: transition.From, To: transition.To, RequiredMilestones: required, RequiredPolicies: transition.RequiresPolicies, RequiredInvariants: transition.RequiresInvariants, RequiredEffects: transition.RequiresEffects, RequiredDependencyWorkflows: transition.RequiresDependencies}
 			if transition.Operation == "" {
 				for operationName := range stepOperations {
 					transitionTargets[operationName] = append(transitionTargets[operationName], apiTransition)
@@ -352,7 +357,7 @@ func (m *Manifest) resolveOperationWorkflowSteps(slug string) (map[string][]api.
 			result[step.Operation] = append(result[step.Operation], api.OperationWorkflowSpec{
 				Workflow: workflow.Name, Title: workflow.Title, Version: workflow.Version, States: states, TerminalStates: terminalStates, StateStaleAfterSeconds: stateStaleAfter,
 				Transitions: transitionTargets[step.Operation], TransitionsDeclared: len(workflow.Transitions) > 0 && len(transitionTargets[step.Operation]) == 0, Step: step.Name, Label: step.Label,
-				Milestone: step.Milestone, InstanceIDFrom: step.InstanceIDFrom, Position: step.Position,
+				AllowReconciliation: step.Reconciliation, Milestone: step.Milestone, InstanceIDFrom: step.InstanceIDFrom, Position: step.Position,
 			})
 		}
 	}

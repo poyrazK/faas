@@ -28,6 +28,7 @@ class OperationWorkflowStep:
     label: str
     milestone: str
     position: int
+    allow_reconciliation: bool | Unset = UNSET
     version: int | Unset = UNSET
     """Explicit workflow contract version. Legacy definitions that omit it have effective version 1."""
     states: list[str] | Unset = UNSET
@@ -114,6 +115,7 @@ class OperationWorkflowStep:
         if instance_id is not UNSET:
             field_dict["instance_id"] = instance_id
 
+        if self.allow_reconciliation is not UNSET: field_dict["allow_reconciliation"]=self.allow_reconciliation
         return field_dict
 
     @classmethod
@@ -168,6 +170,7 @@ class OperationWorkflowStep:
 
         operation_workflow_step = cls(
             workflow=workflow,
+            allow_reconciliation=d.pop("allow_reconciliation",UNSET),
             title=title,
             step=step,
             label=label,

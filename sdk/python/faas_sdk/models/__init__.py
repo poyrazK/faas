@@ -1620,6 +1620,10 @@ from .operation_summary import OperationSummary
 from .operation_summary_state import OperationSummaryState
 from .operation_tenant_identity import OperationTenantIdentity
 from .operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+from .operation_workflow_instance_milestone_ref import OperationWorkflowInstanceMilestoneRef
+from .operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
+from .operation_workflow_instance_step import OperationWorkflowInstanceStep
+from .operation_workflow_instance_transition import OperationWorkflowInstanceTransition
 from .operation_workflow_state import OperationWorkflowState
 from .operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
 from .operation_workflow_state_report import OperationWorkflowStateReport
@@ -4360,6 +4364,15 @@ __all__ = (
     "OperationSummaryState",
     "OperationTenantIdentity",
     "OperationWorkflowEvidenceMilestone",
+    "OperationWorkflowInstanceMilestoneRef",
+    "OperationWorkflowInstanceSnapshot",
+    "OperationWorkflowInstanceStep",
+    "OperationWorkflowAttentionEntry",
+    "OperationWorkflowAttentionResponse",
+    "OperationWorkflowBlockerResolution",
+    "OperationWorkflowBlocker",
+    "OperationWorkflowDecision",
+    "OperationWorkflowInstanceTransition",
     "OperationWorkflowState",
     "OperationWorkflowStateHistoryEntry",
     "OperationWorkflowStateReport",
@@ -5441,3 +5454,72 @@ __all__ = (
     "WorkPolicyResponseMaxRunningPerKey",
     "WorkPolicyResponsePendingUpdates",
 )
+
+from .operation_workflow_decision import OperationWorkflowDecision
+
+from .operation_workflow_blocker import OperationWorkflowBlocker
+
+from .operation_workflow_attention_entry import OperationWorkflowAttentionEntry
+
+from .operation_workflow_attention_response import OperationWorkflowAttentionResponse
+
+from .operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
+
+from .operation_workflow_attention_stats import OperationWorkflowAttentionStats
+
+from .operation_workflow_attention_group import OperationWorkflowAttentionGroup
+
+from .operation_workflow_attention_summary import OperationWorkflowAttentionSummary
+
+__all__ += ("OperationWorkflowAttentionStats", "OperationWorkflowAttentionGroup", "OperationWorkflowAttentionSummary")
+
+from .operation_workflow_outcome_entry import OperationWorkflowOutcomeEntry
+__all__ += ("OperationWorkflowOutcomeEntry",)
+
+from .operation_workflow_outcomes_response import OperationWorkflowOutcomesResponse
+__all__ += ("OperationWorkflowOutcomesResponse",)
+
+from .operation_workflow_outcome_group import OperationWorkflowOutcomeGroup
+__all__ += ("OperationWorkflowOutcomeGroup",)
+
+from .operation_workflow_outcome_summary import OperationWorkflowOutcomeSummary
+__all__ += ("OperationWorkflowOutcomeSummary",)
+
+from .operation_workflow_dependency import OperationWorkflowDependency
+__all__ += ("OperationWorkflowDependency",)
+
+from .operation_workflow_related_instance import OperationWorkflowRelatedInstance
+__all__ += ("OperationWorkflowRelatedInstance",)
+
+from .operation_workflow_dependency_impact import OperationWorkflowDependencyImpact
+from .operation_workflow_dependent_instance import OperationWorkflowDependentInstance
+__all__ += ("OperationWorkflowDependencyImpact", "OperationWorkflowDependentInstance")
+
+from .operation_workflow_dependency_trace import OperationWorkflowDependencyTrace
+from .operation_workflow_dependency_finding import OperationWorkflowDependencyFinding
+__all__ += ("OperationWorkflowDependencyTrace", "OperationWorkflowDependencyFinding")
+
+from .operation_workflow_readiness_request import OperationWorkflowReadinessRequest
+from .operation_workflow_readiness_response import OperationWorkflowReadinessResponse
+from .operation_workflow_transition_readiness import OperationWorkflowTransitionReadiness
+from .operation_workflow_readiness_overview import OperationWorkflowReadinessOverview
+__all__ += ("OperationWorkflowReadinessRequest", "OperationWorkflowReadinessResponse", "OperationWorkflowTransitionReadiness", "OperationWorkflowReadinessOverview")
+
+from .operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
+from .operation_workflow_planned_decision import OperationWorkflowPlannedDecision
+
+__all__ += ["OperationWorkflowPolicyRequirement", "OperationWorkflowPlannedDecision"]
+
+from .operation_workflow_action_preview_request import OperationWorkflowActionPreviewRequest
+from .operation_workflow_action_preview_response import OperationWorkflowActionPreviewResponse
+__all__ += ["OperationWorkflowActionPreviewRequest", "OperationWorkflowActionPreviewResponse"]
+
+from .operation_workflow_invariant_requirement import OperationWorkflowInvariantRequirement
+from .operation_workflow_planned_invariant import OperationWorkflowPlannedInvariant
+from .operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
+__all__ += ['OperationWorkflowInvariantRequirement', 'OperationWorkflowPlannedInvariant', 'OperationWorkflowUnmetInvariant']
+
+from .operation_workflow_effect_requirement import OperationWorkflowEffectRequirement
+from .operation_workflow_planned_effect import OperationWorkflowPlannedEffect
+from .operation_workflow_unmet_effect import OperationWorkflowUnmetEffect
+__all__ += ['OperationWorkflowEffectRequirement', 'OperationWorkflowPlannedEffect', 'OperationWorkflowUnmetEffect']

@@ -83,6 +83,9 @@ func (s *PgStore) ValidateOperationMilestones(ctx context.Context, id string, au
 		milestoneID, _ := operationUUID(report.ID)
 		prior, err := q.GetCustomerOperationMilestone(ctx, tx, sqlc.GetCustomerOperationMilestoneParams{OperationID: operationID, ID: milestoneID})
 		if errors.Is(err, pgx.ErrNoRows) {
+			if err := validateCompensationSourceTx(ctx, tx, op, report); err != nil {
+				return err
+			}
 			fresh++
 			continue
 		}
@@ -129,6 +132,9 @@ func (s *PgStore) ReportOperationMilestone(ctx context.Context, id string, autho
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return api.OperationMilestone{}, err
 	}
+	if err := validateCompensationSourceTx(ctx, tx, op, report); err != nil {
+		return api.OperationMilestone{}, err
+	}
 	milestone, event, err := newOperationMilestone(&op, inv, def, report, time.Now().UTC())
 	if err != nil {
 		return milestone, err
@@ -158,19 +164,38 @@ func (s *PgStore) ValidateOperationWorkflowStates(ctx context.Context, id string
 	if err != nil {
 		return err
 	}
+	for _, fact := range milestones {
+		if err := validateCompensationSourceTx(ctx, tx, op, fact); err != nil {
+			return err
+		}
+	}
 	if err := validateOperationWorkflowStateBatch(op, def, reports, milestones); err != nil {
 		return err
 	}
 	q := sqlc.New()
 	operationID, _ := operationUUID(id)
 	for _, report := range reports {
-		_, fingerprint, err := canonicalOperationWorkflowState(op, def, report)
+		canonical, fingerprint, err := canonicalOperationWorkflowState(op, def, report)
 		if err != nil {
 			return err
+		}
+		for _, evidenceID := range requiredWorkflowEvidenceIDs(def, report) {
+			milestoneID, _ := operationUUID(evidenceID)
+			reportID, _ := operationUUID(report.ID)
+			used, err := q.CustomerOperationWorkflowEvidenceAlreadyUsed(ctx, tx, sqlc.CustomerOperationWorkflowEvidenceAlreadyUsedParams{OperationID: operationID, StateReportID: reportID, MilestoneID: milestoneID})
+			if err != nil {
+				return err
+			}
+			if used {
+				return fmt.Errorf("%w: required business evidence already used by another report", ErrInvalidArgument)
+			}
 		}
 		stateID, _ := operationUUID(report.ID)
 		prior, err := q.GetCustomerOperationWorkflowStateReport(ctx, tx, sqlc.GetCustomerOperationWorkflowStateReportParams{OperationID: operationID, ID: stateID})
 		if errors.Is(err, pgx.ErrNoRows) {
+			if err := validateWorkflowResolutionSourcesTx(ctx, tx, op, canonical); err != nil {
+				return err
+			}
 			continue
 		}
 		if err != nil {
@@ -202,6 +227,7 @@ func (s *PgStore) ReportOperationWorkflowState(ctx context.Context, id string, a
 	}
 	q := sqlc.New()
 	operationID, _ := operationUUID(id)
+	payloads := map[string][]byte{}
 	for _, evidence := range report.EvidenceMilestones {
 		milestoneID, _ := operationUUID(evidence.ID)
 		milestone, err := q.GetCustomerOperationMilestone(ctx, tx, sqlc.GetCustomerOperationMilestoneParams{OperationID: operationID, ID: milestoneID})
@@ -210,6 +236,21 @@ func (s *PgStore) ReportOperationWorkflowState(ctx context.Context, id string, a
 		}
 		if err != nil {
 			return api.OperationWorkflowStateReportResponse{}, err
+		}
+		payloads[evidence.ID] = milestone.Payload
+	}
+	if err := validateWorkflowPolicyEvidence(def, report, payloads); err != nil {
+		return api.OperationWorkflowStateReportResponse{}, err
+	}
+	for _, evidenceID := range requiredWorkflowEvidenceIDs(def, report) {
+		milestoneID, _ := operationUUID(evidenceID)
+		reportID, _ := operationUUID(report.ID)
+		used, err := q.CustomerOperationWorkflowEvidenceAlreadyUsed(ctx, tx, sqlc.CustomerOperationWorkflowEvidenceAlreadyUsedParams{OperationID: operationID, StateReportID: reportID, MilestoneID: milestoneID})
+		if err != nil {
+			return api.OperationWorkflowStateReportResponse{}, err
+		}
+		if used {
+			return api.OperationWorkflowStateReportResponse{}, fmt.Errorf("%w: required business evidence already used by another report", ErrInvalidArgument)
 		}
 	}
 	stateID, _ := operationUUID(report.ID)
@@ -220,7 +261,7 @@ func (s *PgStore) ReportOperationWorkflowState(ctx context.Context, id string, a
 		}
 		return api.OperationWorkflowStateReportResponse{ID: prior.ID, OperationID: id, Workflow: prior.Workflow, InstanceID: prior.InstanceID,
 			FromState: prior.FromState, State: prior.State, Revision: prior.Revision,
-			ContractVersion: int(prior.ContractVersion), EvidenceMilestones: decodeWorkflowEvidence(prior.EvidenceMilestones)}, nil
+			Blockers: decodeWorkflowBlockers(prior.Blockers), BlockerResolutions: decodeWorkflowResolutions(prior.BlockerResolutions), DependsOn: decodeWorkflowDependencies(prior.DependsOn), DependenciesOnly: prior.DependenciesOnly, OutcomeCode: prior.OutcomeCode, OutcomeDescription: prior.OutcomeDescription, OutcomeOnly: prior.OutcomeOnly, DeadlineAt: prior.DeadlineAt, DeadlineOnly: prior.DeadlineOnly, BlockersOnly: prior.BlockersOnly, ContractVersion: int(prior.ContractVersion), EvidenceMilestones: decodeWorkflowEvidence(prior.EvidenceMilestones)}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return api.OperationWorkflowStateReportResponse{}, err
@@ -232,12 +273,27 @@ func (s *PgStore) ReportOperationWorkflowState(ctx context.Context, id string, a
 	if report.EvidenceMilestones == nil {
 		evidenceJSON = []byte("[]")
 	}
+	if err := validateWorkflowResolutionSourcesTx(ctx, tx, op, report); err != nil {
+		return api.OperationWorkflowStateReportResponse{}, err
+	}
+	dependenciesJSON, _ := json.Marshal(report.DependsOn)
+	if report.DependsOn == nil {
+		dependenciesJSON = []byte("[]")
+	}
+	resolutionsJSON, _ := json.Marshal(report.BlockerResolutions)
+	if report.BlockerResolutions == nil {
+		resolutionsJSON = []byte("[]")
+	}
+	blockersJSON, _ := json.Marshal(report.Blockers)
+	if report.Blockers == nil {
+		blockersJSON = []byte("[]")
+	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if err := q.InsertCustomerOperationWorkflowStateReport(ctx, tx, sqlc.InsertCustomerOperationWorkflowStateReportParams{
 		OperationID: operationID, ID: stateID, Workflow: report.Workflow, InstanceID: report.InstanceID,
 		FromState: report.FromState, State: report.State, Revision: report.Revision, OccurredAt: pgtype.Timestamptz{Time: report.OccurredAt, Valid: true},
 		CreatedAt: pgtype.Timestamptz{Time: now, Valid: true}, Fingerprint: fingerprint,
-		ContractVersion: int32(report.ContractVersion), EvidenceMilestones: evidenceJSON,
+		ContractVersion: int32(report.ContractVersion), EvidenceMilestones: evidenceJSON, Blockers: blockersJSON, BlockerResolutions: resolutionsJSON, DependsOn: dependenciesJSON, DependenciesOnly: report.DependenciesOnly, OutcomeCode: report.OutcomeCode, OutcomeDescription: report.OutcomeDescription, OutcomeOnly: report.OutcomeOnly, DeadlineAt: report.DeadlineAt, DeadlineOnly: report.DeadlineOnly, BlockersOnly: report.BlockersOnly,
 	}); err != nil {
 		return api.OperationWorkflowStateReportResponse{}, err
 	}
@@ -252,7 +308,7 @@ func (s *PgStore) ReportOperationWorkflowState(ctx context.Context, id string, a
 	}
 	return api.OperationWorkflowStateReportResponse{ID: report.ID, OperationID: id, Workflow: report.Workflow,
 		InstanceID: report.InstanceID, FromState: report.FromState, State: report.State, Revision: report.Revision,
-		ContractVersion: report.ContractVersion, EvidenceMilestones: append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...)}, nil
+		Blockers: append([]api.OperationWorkflowBlocker(nil), report.Blockers...), BlockerResolutions: append([]api.OperationWorkflowBlockerResolution(nil), report.BlockerResolutions...), DependsOn: append([]api.OperationWorkflowDependency(nil), report.DependsOn...), DependenciesOnly: report.DependenciesOnly, OutcomeCode: report.OutcomeCode, OutcomeDescription: report.OutcomeDescription, OutcomeOnly: report.OutcomeOnly, DeadlineAt: report.DeadlineAt, DeadlineOnly: report.DeadlineOnly, BlockersOnly: report.BlockersOnly, ContractVersion: report.ContractVersion, EvidenceMilestones: append([]api.OperationWorkflowEvidenceMilestone(nil), report.EvidenceMilestones...)}, nil
 }
 
 func decodeWorkflowEvidence(raw []byte) []api.OperationWorkflowEvidenceMilestone {
@@ -332,18 +388,19 @@ func (s *PgStore) listOperationMilestones(ctx context.Context, account, tenant s
 		rows = append(rows, row)
 	}
 	page := operationMilestonePage(rows, opts.Limit, cursor)
+	var workflowInstanceState *api.OperationWorkflowState
 	if opts.SubjectType != "" {
 		var stateRows [][]byte
 		if operator {
 			stateRows, err = q.ListAccountCustomerOperationWorkflowStatesBySubject(ctx, s.pool, sqlc.ListAccountCustomerOperationWorkflowStatesBySubjectParams{
 				AccountID: accountID, AppID: appID, TenantID: opts.TenantID, Scope: opts.Scope, SubjectType: opts.SubjectType, SubjectID: opts.SubjectID,
-				WorkflowName: opts.Workflow, WorkflowInstanceID: opts.WorkflowInstanceID, StaleOnly: opts.WorkflowStaleOnly, Now: now, PageLimit: statePageLimit,
+				WorkflowName: opts.Workflow, WorkflowInstanceID: opts.WorkflowInstanceID, StaleOnly: opts.WorkflowStaleOnly && opts.Workflow == "", Now: now, PageLimit: statePageLimit,
 			})
 		} else {
 			tenantID, _ := operationUUID(tenant)
 			stateRows, err = q.ListPlatformTenantCustomerOperationWorkflowStatesBySubject(ctx, s.pool, sqlc.ListPlatformTenantCustomerOperationWorkflowStatesBySubjectParams{
 				AccountID: accountID, AppID: appID, TenantID: tenantID, Scope: opts.Scope, SubjectType: opts.SubjectType, SubjectID: opts.SubjectID,
-				WorkflowName: opts.Workflow, WorkflowInstanceID: opts.WorkflowInstanceID, StaleOnly: opts.WorkflowStaleOnly, Now: now, PageLimit: statePageLimit,
+				WorkflowName: opts.Workflow, WorkflowInstanceID: opts.WorkflowInstanceID, StaleOnly: opts.WorkflowStaleOnly && opts.Workflow == "", Now: now, PageLimit: statePageLimit,
 			})
 		}
 		if err != nil {
@@ -356,6 +413,11 @@ func (s *PgStore) listOperationMilestones(ctx context.Context, account, tenant s
 				return api.OperationMilestonesResponse{}, fmt.Errorf("state: decode workflow state: %w", err)
 			}
 			state.Stale = operationWorkflowStateIsStale(now.Time, state)
+			evaluateOperationWorkflowDeadline(now.Time, &state)
+			if opts.Workflow != "" && state.Workflow == opts.Workflow && state.InstanceID == opts.WorkflowInstanceID {
+				copy := state
+				workflowInstanceState = &copy
+			}
 			if opts.WorkflowStaleOnly && !state.Stale {
 				continue
 			}
@@ -398,6 +460,111 @@ func (s *PgStore) listOperationMilestones(ctx context.Context, account, tenant s
 			entries = append(entries, entry)
 		}
 		page.WorkflowStateHistory, page.NextWorkflowStateCursor = operationWorkflowStateHistoryPage(entries, opts.Limit, stateHistoryCursor)
+		declarationRows, err := q.ListCustomerOperationWorkflowStepDeclarations(ctx, s.pool, sqlc.ListCustomerOperationWorkflowStepDeclarationsParams{
+			AccountID: accountID, AppID: appID, Scope: opts.Scope, WorkflowName: opts.Workflow,
+		})
+		if err != nil {
+			return api.OperationMilestonesResponse{}, fmt.Errorf("state: read workflow step declarations: %w", mapErr(err))
+		}
+		declarations := make([]operationWorkflowStepDeclaration, 0, len(declarationRows))
+		for _, row := range declarationRows {
+			var spec api.OperationWorkflowSpec
+			if err := json.Unmarshal([]byte(row.DeclaredStep), &spec); err != nil {
+				return api.OperationMilestonesResponse{}, fmt.Errorf("state: decode workflow step declaration: %w", err)
+			}
+			declarations = append(declarations, operationWorkflowStepDeclaration{Operation: row.Name, Spec: spec, Active: row.Active.Valid && row.Active.Bool})
+		}
+		contractVersion := int32(0)
+		if workflowInstanceState != nil {
+			contractVersion = int32(effectiveWorkflowContractVersion(workflowInstanceState.ContractVersion))
+		} else if n := len(page.WorkflowStateHistory); n > 0 {
+			contractVersion = int32(effectiveWorkflowContractVersion(page.WorkflowStateHistory[n-1].ContractVersion))
+		}
+		if operator {
+			accountRows, err := q.ListAccountCustomerOperationWorkflowStepFactsBySubject(ctx, s.pool, sqlc.ListAccountCustomerOperationWorkflowStepFactsBySubjectParams{
+				AccountID: accountID, AppID: appID, TenantID: opts.TenantID, Scope: opts.Scope, SubjectType: opts.SubjectType, SubjectID: opts.SubjectID,
+				WorkflowName: opts.Workflow, WorkflowInstanceID: opts.WorkflowInstanceID, Now: now, ContractVersion: contractVersion,
+			})
+			if err != nil {
+				return api.OperationMilestonesResponse{}, fmt.Errorf("state: read retained workflow step facts: %w", mapErr(err))
+			}
+			retainedFacts := make([]operationWorkflowStepFactSummary, 0, len(accountRows))
+			for _, row := range accountRows {
+				retainedFacts = append(retainedFacts, operationWorkflowStepFactSummary{ContractVersion: int(row.ContractVersion), Step: row.Step,
+					Label: row.Label, Operation: row.Operation, Milestone: row.Milestone, Position: int(row.Position),
+					MilestonesInRetention: row.MilestonesInRetention, Latest: api.OperationWorkflowInstanceMilestoneRef{ID: row.ID,
+						OperationID: row.OperationID, OccurredAt: row.OccurredAt.Time, PublishedAt: row.CreatedAt.Time}})
+			}
+			page = projectOperationWorkflowInstance(page, opts.Workflow, opts.WorkflowInstanceID, declarations, workflowInstanceState, retainedFacts)
+		} else {
+			tenantID, _ := operationUUID(tenant)
+			retainedFactRows, err := q.ListPlatformTenantCustomerOperationWorkflowStepFactsBySubject(ctx, s.pool, sqlc.ListPlatformTenantCustomerOperationWorkflowStepFactsBySubjectParams{
+				AccountID: accountID, AppID: appID, TenantID: tenantID, Scope: opts.Scope, SubjectType: opts.SubjectType, SubjectID: opts.SubjectID,
+				WorkflowName: opts.Workflow, WorkflowInstanceID: opts.WorkflowInstanceID, Now: now, ContractVersion: contractVersion,
+			})
+			if err != nil {
+				return api.OperationMilestonesResponse{}, fmt.Errorf("state: read retained workflow step facts: %w", mapErr(err))
+			}
+			retainedFacts := make([]operationWorkflowStepFactSummary, 0, len(retainedFactRows))
+			for _, row := range retainedFactRows {
+				retainedFacts = append(retainedFacts, operationWorkflowStepFactSummary{ContractVersion: int(row.ContractVersion), Step: row.Step,
+					Label: row.Label, Operation: row.Operation, Milestone: row.Milestone, Position: int(row.Position),
+					MilestonesInRetention: row.MilestonesInRetention, Latest: api.OperationWorkflowInstanceMilestoneRef{ID: row.ID,
+						OperationID: row.OperationID, OccurredAt: row.OccurredAt.Time, PublishedAt: row.CreatedAt.Time}})
+			}
+			page = projectOperationWorkflowInstance(page, opts.Workflow, opts.WorkflowInstanceID, declarations, workflowInstanceState, retainedFacts)
+		}
+	}
+	if err := s.projectRelatedWorkflows(ctx, &page, account, tenant, opts, operator, now.Time); err != nil {
+		return api.OperationMilestonesResponse{}, err
+	}
+	if !opts.ReadinessOnly {
+		if err := s.projectDependencyImpact(ctx, &page, account, tenant, opts, operator, now.Time); err != nil {
+			return api.OperationMilestonesResponse{}, err
+		}
+		if err := s.projectDependencyTrace(ctx, &page, account, tenant, opts, operator, now.Time); err != nil {
+			return api.OperationMilestonesResponse{}, err
+		}
+		projectOperationWorkflowReadiness(&page)
 	}
 	return page, nil
+}
+
+func decodeWorkflowBlockers(raw []byte) []api.OperationWorkflowBlocker {
+	var blockers []api.OperationWorkflowBlocker
+	_ = json.Unmarshal(raw, &blockers)
+	return blockers
+}
+
+func decodeWorkflowResolutions(raw []byte) []api.OperationWorkflowBlockerResolution {
+	var resolutions []api.OperationWorkflowBlockerResolution
+	_ = json.Unmarshal(raw, &resolutions)
+	return resolutions
+}
+func validateWorkflowResolutionSourcesTx(ctx context.Context, tx pgx.Tx, op Operation, report api.OperationWorkflowStateReport) error {
+	accountID, _ := operationUUID(op.AccountID)
+	appID, _ := operationUUID(op.AppID)
+	tenantID, _ := operationUUID(op.PlatformTenantID)
+	for _, resolution := range report.BlockerResolutions {
+		if op.Subject == nil {
+			return ErrInvalidArgument
+		}
+		sourceOperationID, _ := operationUUID(resolution.BlockerOperationID)
+		sourceReportID, _ := operationUUID(resolution.BlockerReportID)
+		raw, err := sqlc.New().GetCustomerOperationWorkflowResolutionSource(ctx, tx, sqlc.GetCustomerOperationWorkflowResolutionSourceParams{
+			SourceOperationID: sourceOperationID, SourceReportID: sourceReportID, AccountID: accountID, AppID: appID, TenantID: tenantID,
+			Scope: op.Scope, SubjectType: op.Subject.Type, SubjectID: op.Subject.ID, WorkflowName: report.Workflow, InstanceID: report.InstanceID,
+			ContractVersion: int32(report.ContractVersion), SourceRevision: resolution.BlockerRevision, Now: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("%w: workflow resolution source report is not retained in this workflow and owner boundary", ErrInvalidArgument)
+		}
+		if err != nil {
+			return err
+		}
+		if !workflowResolutionBlockerExists(decodeWorkflowBlockers(raw), resolution) {
+			return fmt.Errorf("%w: referenced report did not contain this blocker", ErrInvalidArgument)
+		}
+	}
+	return nil
 }

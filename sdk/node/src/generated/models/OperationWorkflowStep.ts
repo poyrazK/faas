@@ -7,6 +7,7 @@ import type { OperationWorkflowTransition } from './OperationWorkflowTransition.
  * App-declared read-only workflow step represented by an observed milestone. New declarations select the instance ID from the validated public milestone payload using the pinned JSON Pointer.
  */
 export type OperationWorkflowStep = {
+ allow_reconciliation?: boolean;
   workflow: string;
   title: string;
   /**

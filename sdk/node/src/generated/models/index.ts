@@ -869,6 +869,10 @@ export type { OperationSubjectSpec } from './OperationSubjectSpec.js';
 export type { OperationSummary } from './OperationSummary.js';
 export type { OperationTenantIdentity } from './OperationTenantIdentity.js';
 export type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
+export type { OperationWorkflowInstanceMilestoneRef } from './OperationWorkflowInstanceMilestoneRef.js';
+export type { OperationWorkflowInstanceSnapshot } from './OperationWorkflowInstanceSnapshot.js';
+export type { OperationWorkflowInstanceStep } from './OperationWorkflowInstanceStep.js';
+export type { OperationWorkflowInstanceTransition } from './OperationWorkflowInstanceTransition.js';
 export type { OperationWorkflowStaleOnly } from './OperationWorkflowStaleOnly.js';
 export type { OperationWorkflowState } from './OperationWorkflowState.js';
 export type { OperationWorkflowStateCursor } from './OperationWorkflowStateCursor.js';
@@ -1452,3 +1456,31 @@ export type { WorkflowStepSpec } from './WorkflowStepSpec.js';
 export type { WorkflowTriggerSpec } from './WorkflowTriggerSpec.js';
 export type { WorkloadDependency } from './WorkloadDependency.js';
 export type { WorkloadPort } from './WorkloadPort.js';
+
+export type { OperationWorkflowDecision } from './OperationWorkflowDecision.js';
+
+export type { OperationWorkflowBlocker } from './OperationWorkflowBlocker.js';
+
+export type { OperationWorkflowAttentionEntry } from './OperationWorkflowAttentionEntry.js';
+
+export type { OperationWorkflowAttentionResponse } from './OperationWorkflowAttentionResponse.js';
+
+export type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
+
+export type { OperationWorkflowAttentionStats } from './OperationWorkflowAttentionStats.js';
+
+export type { OperationWorkflowAttentionGroup } from './OperationWorkflowAttentionGroup.js';
+
+export type { OperationWorkflowAttentionSummary } from './OperationWorkflowAttentionSummary.js';
+
+export type {OperationWorkflowOutcomeEntry} from './OperationWorkflowOutcomeEntry.js';
+
+export type {OperationWorkflowOutcomesResponse} from './OperationWorkflowOutcomesResponse.js';
+
+export type {OperationWorkflowOutcomeGroup} from './OperationWorkflowOutcomeGroup.js';
+
+export type {OperationWorkflowOutcomeSummary} from './OperationWorkflowOutcomeSummary.js';
+
+export type {OperationWorkflowDependency} from './OperationWorkflowDependency.js';
+
+export type {OperationWorkflowRelatedInstance} from './OperationWorkflowRelatedInstance.js';

@@ -5713,6 +5713,104 @@ gregale customer-operations list --app exports --scope production
 gregale customer-operations watch <id> --app exports --timeout 5m --json
 ```
 
+### customer-operations outcomes
+
+List completed workflows with explicit business outcomes
+
+`gregale customer-operations outcomes [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--code <CODE>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned app |  |
+| `--self` | authenticated customer |  |
+| `--app-id <UUID>` | required with --self |  |
+| `--scope <SCOPE>` | explicit environment | required |
+| `--tenant <UUID>` | account customer filter |  |
+| `--workflow <NAME>` | workflow filter |  |
+| `--code <CODE>` | outcome code filter |  |
+| `--limit <N>` | page size 1–100 |  |
+| `--cursor <CURSOR>` | continuation cursor |  |
+
+### customer-operations outcome-summary
+
+Summarize explicit business outcomes
+
+`gregale customer-operations outcome-summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--code <CODE>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--group-by <DIMENSION>` | summary grouping | one of `outcome` · `workflow` · `customer` |
+| `--app <SLUG>` | owned app |  |
+| `--self` | authenticated customer |  |
+| `--app-id <UUID>` | required with --self |  |
+| `--scope <SCOPE>` | explicit environment | required |
+| `--tenant <UUID>` | account customer filter |  |
+| `--workflow <NAME>` | workflow filter |  |
+| `--code <CODE>` | outcome code filter |  |
+| `--limit <N>` | page size 1–100 |  |
+| `--cursor <CURSOR>` | continuation cursor |  |
+
+### customer-operations attention
+
+List workflows needing attention
+
+`gregale customer-operations attention [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned app in account mode |  |
+| `--self` | authenticated customer queue |  |
+| `--app-id <UUID>` | required with --self |  |
+| `--scope <SCOPE>` | explicit environment | required |
+| `--tenant <UUID>` | account customer filter |  |
+| `--workflow <NAME>` | workflow filter |  |
+| `--target-operation <NAME>` | target Operation filter |  |
+| `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
+| `--required-outcome-code <CODE>` | required prerequisite outcome |  |
+| `--blocker-code <CODE>` | blocker code filter |  |
+| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` |
+| `--limit <N>` | page size, 1–100 |  |
+| `--cursor <CURSOR>` | continuation cursor |  |
+
+### customer-operations attention-summary
+
+Summarize workflows needing attention
+
+`gregale customer-operations attention-summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--group-by <DIMENSION>` | summary grouping | one of `workflow` · `blocker_code` · `target_operation` · `customer` · `dependency_status` · `required_outcome_code` |
+| `--app <SLUG>` | owned app in account mode |  |
+| `--self` | authenticated customer queue |  |
+| `--app-id <UUID>` | required with --self |  |
+| `--scope <SCOPE>` | explicit environment | required |
+| `--tenant <UUID>` | account customer filter |  |
+| `--workflow <NAME>` | workflow filter |  |
+| `--target-operation <NAME>` | target Operation filter |  |
+| `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
+| `--required-outcome-code <CODE>` | required prerequisite outcome |  |
+| `--blocker-code <CODE>` | blocker code filter |  |
+| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` |
+| `--limit <N>` | page size, 1–100 |  |
+| `--cursor <CURSOR>` | continuation cursor |  |
+
+### customer-operations bindings
+
+Generate typed application workflow bindings without credentials
+
+`gregale customer-operations bindings --app <SLUG> --plan <PLAN> [--dir <PATH>] --language <LANGUAGE> --output <PATH> [--package <NAME>] [--check]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | selected manifest app | required |
+| `--plan <PLAN>` | explicit target plan | required; one of `free` · `hobby` · `pro` · `scale` |
+| `--dir <PATH>` | source directory, default current directory |  |
+| `--language <LANGUAGE>` | application language | required; one of `typescript` · `javascript` · `go` · `python` |
+| `--output <PATH>` | generated module | required |
+| `--package <NAME>` | Go package name, default workflowbindings |  |
+| `--check` | fail on stale bindings without writing |  |
+
 ### customer-operations doctor
 
 Observe submission blockers, delivery warnings and unverified qualification

@@ -169,7 +169,7 @@ export {
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
 
-export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationSubject, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport, type OperationMilestoneReport, type OperationMilestone, type OperationWorkflowState, type OperationMilestones, type OperationMilestonePageOptions, type OperationBusinessMilestoneOptions } from './customer-operations.js';
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationSubject, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport, type OperationMilestoneReport, type OperationMilestone, type OperationWorkflowState, type OperationWorkflowOutcomeEntry, type OperationWorkflowOutcomesResponse, type OperationWorkflowOutcomeGroup, type OperationWorkflowOutcomeSummary, type OperationWorkflowOutcomeOptions, type OperationWorkflowOutcomeSummaryOptions, type OperationWorkflowDependency, type OperationWorkflowRelatedInstance, type OperationWorkflowDependencyImpact, type OperationWorkflowDependencyTrace, type OperationWorkflowReadinessRequest, type OperationWorkflowTransitionReadiness, type OperationWorkflowReadinessResponse, type OperationWorkflowReadinessOverview,  type OperationWorkflowDependencyFinding, type OperationWorkflowDependentInstance, type OperationWorkflowAttentionEntry, type OperationWorkflowAttentionResponse, type OperationWorkflowAttentionOptions, type OperationWorkflowAttentionStats, type OperationWorkflowAttentionGroup, type OperationWorkflowAttentionSummary, type OperationWorkflowAttentionSummaryOptions, type OperationWorkflowBlockerResolution, type OperationWorkflowBlocker, type OperationWorkflowDecision, type OperationWorkflowInstanceSnapshot, type OperationWorkflowInstanceTransition, type OperationWorkflowInstanceStep, type OperationWorkflowInstanceMilestoneRef, type OperationMilestones, type OperationMilestonePageOptions, type OperationBusinessMilestoneOptions } from './customer-operations.js';
 export { GregaleOperations, type GregaleOperationsOptions, type OperationExecutionContext } from './operations-runtime.js';
 
 export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
@@ -193,3 +193,35 @@ export {
 
 export { OperationMilestonePublicationError, type CustomerOperationTransaction } from './customer-operation-milestones.js';
 export { OperationWorkflowStatePublicationError, type OperationWorkflowStateReport, type OperationWorkflowStateReceipt } from './customer-operation-workflow-states.js';
+
+export { CustomerOperationReadinessError, type CustomerOperationReadinessGuard } from './customer-operation-readiness.js';
+
+export { businessDecisionPayload, type OperationBusinessDecision, type OperationBusinessDecisionPayload } from './customer-operation-decisions.js';
+
+export type { OperationWorkflowPolicyRequirement } from './customer-operations.js';
+
+export type { OperationWorkflowPlannedDecision } from './customer-operations.js';
+
+export type { OperationWorkflowReconciliationInput, OperationWorkflowReconciliation, OperationWorkflowReconciliationPayload, CustomerOperationReconciliationHelper } from './customer-operation-reconciliation.js';
+
+export type { OperationWorkflowActionPreviewRequest } from './generated/models/OperationWorkflowActionPreviewRequest.js';
+
+export type { OperationWorkflowActionPreviewResponse } from './generated/models/OperationWorkflowActionPreviewResponse.js';
+
+export { businessInvariantPayload, applyBusinessInvariant, type OperationBusinessInvariant, type OperationBusinessInvariantPayload } from './customer-operation-invariants.js';
+
+export type { OperationWorkflowInvariantRequirement } from './generated/models/OperationWorkflowInvariantRequirement.js';
+
+export type { OperationWorkflowPlannedInvariant } from './generated/models/OperationWorkflowPlannedInvariant.js';
+
+export type { OperationWorkflowUnmetInvariant } from './generated/models/OperationWorkflowUnmetInvariant.js';
+
+export { businessEffectPayload, type OperationBusinessEffect, type OperationBusinessEffectPayload } from './customer-operation-effects.js';
+
+export type { OperationWorkflowEffectRequirement } from './generated/models/OperationWorkflowEffectRequirement.js';
+
+export type { OperationWorkflowPlannedEffect } from './generated/models/OperationWorkflowPlannedEffect.js';
+
+export type { OperationWorkflowUnmetEffect } from './generated/models/OperationWorkflowUnmetEffect.js';
+
+export { businessCompensationPayload, type OperationBusinessEffectReference, type OperationBusinessCompensation, type OperationBusinessCompensationPayload } from './customer-operation-compensation.js';

@@ -137,6 +137,72 @@ Install `operation_receipt_schema` explicitly as the database owner. Send
 recovery. See the [transactional handler guide](../../docs/operation-transactions.md)
 for synchronous and async examples, retention, and uncertain commit handling.
 
+### Customer Operation workflows
+
+For customer Operations, install `customer_operation_receipt_schema` explicitly
+as the database owner. The schema includes the response receipt, milestone
+outbox, and workflow-state revision tables. Use an idle, exclusively leased
+psycopg `AsyncConnection` configured with `autocommit=True`; construct
+`GregaleOperations` once with an `httpx.AsyncClient` that the application owns.
+
+Authorize the request before calling `transaction`, because receipt replay
+skips the callback. Preserve the raw request target and body before framework
+parsing. This FastAPI-style example uses the request's ASGI scope for the exact
+path and query bytes:
+
+```python
+from fastapi import HTTPException, Request, Response
+from faas_sdk import CustomerOperationPublicationError
+
+
+async def fulfill_order(request: Request, connection, operations):
+    raw_body = await request.body()
+    raw_target = request.scope["raw_path"].decode("ascii")
+    query = request.scope.get("query_string", b"")
+    if query:
+        raw_target += "?" + query.decode("ascii")
+    order_id = request.path_params["id"]
+    await authorize_order(request, order_id)
+
+    async def apply(tx):
+        await tx.execute("SELECT status, workflow_instance_id FROM orders WHERE id = %s FOR UPDATE", (order_id,))
+        row = await tx.fetchone()
+        if row is None or row[0] != "fulfillment-in-progress":
+            raise ValueError("order is not ready for fulfillment")
+        workflow_run_id = row[1]
+        await tx.execute("UPDATE orders SET status = %s WHERE id = %s", ("fulfilled", order_id))
+        tx.milestone("order-fulfilled", {"order_id": order_id})
+        tx.workflow_transition(
+            "order-lifecycle", workflow_run_id, "fulfillment-in-progress", "completed"
+        )
+        return {"order_id": order_id, "status": "fulfilled"}
+
+    try:
+        receipt = await operations.transaction(
+            connection, request.headers, request.method, raw_target, raw_body, apply
+        )
+    except CustomerOperationPublicationError as error:
+        # The write committed. A retry with this same Operation identity
+        # replays the saved result and attempts publication again.
+        raise HTTPException(status_code=503, detail="retry the same Operation") from error
+    return Response(receipt.body, media_type="application/json")
+```
+
+Use this path only for requests from Gregale's guest listener; reserved headers
+carry execution context and are not authentication. The SDK validates queued
+facts and transitions before commit, assigns workflow revisions in the same
+transaction, and publishes each saved report under the current request's proof.
+`receipt.replayed` is true when the saved result was returned without running
+the callback. See the [operations guide](../../docs/operations.md) for workflow
+contracts, evidence, and recovery behavior.
+
+Generate typed workflow names and transition helpers directly from your manifest:
+`gregale customer-operations bindings --app orders --plan pro --language python --output workflow_bindings.py`.
+Import the generated helper into the async transaction callback, pass the state
+from the locked business row and its required milestone payloads, and let it
+queue the facts and transition. Add `--check` in CI to reject stale bindings.
+See the [binding guide](../../docs/operations.md#generate-application-workflow-bindings).
+
 ## Login-target observation
 
 For a `POST` login route configured with `failed_responses`, central
@@ -334,3 +400,172 @@ and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
 holds are supported. Event-hold changes and governance bypass are unsupported.
 See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
+
+### Workflow blockers
+
+Inside the customer Operation transaction callback, use `tx.workflow_blockers(workflow, instance_id, locked_row_state, [OperationWorkflowBlocker(code="payment-pending", description="Payment confirmation is pending.", operation="fulfill-order")])` to replace
+the public blockers while preserving the current state. Check customer authorization
+and read that state from the locked business row. An empty list clears blockers;
+a later normal state report without blockers also clears them. Propagate errors
+out of the callback. `workflow_instance.decision.blockers` exposes the latest
+reported list alongside declared next actions. These reports do not enforce
+business rules or grant execution authority.
+
+Before upgrading, reinstall the SDK's additive customer Operation database schema
+to add the blocker outbox columns. See [the Operations guide](../../docs/operations.md#report-workflow-blockers)
+for bounds, replacement, revision, and publication semantics.
+
+### Workflow attention queue
+
+Use `list_account_workflow_attention.asyncio("orders", client=client, scope="production", reason="blocked")` from `faas_sdk.api.operations` to read one page of current retained blocked or stale workflows.
+The response includes public business references, workflow snapshots, blocker
+reasons and a continuation cursor. Workflow and target Operation filters narrow
+the queue; customer routes use identity from credentials. Continue with the same
+filters and `next_cursor`; refresh the first page for the latest view. See
+[the Operations guide](../../docs/operations.md#find-workflows-needing-attention).
+
+### Explain a cleared blocker
+
+Use `tx.workflow_blockers(workflow, instance_id, locked_state, remaining_blockers, resolutions=[resolution])` to attach an explicit public resolution fact to the transactional
+blocker replacement. `OperationWorkflowBlockerResolution` includes the target
+Operation, blocker code, explanation, and exact source Operation/report IDs and
+revision. Current snapshots expose `operation_id`, `report_id`, and `revision`
+for these references. The source must be a retained report within the same
+customer, business reference, workflow run, environment and contract version;
+it must contain the named blocker, which cannot remain in the replacement list.
+
+Resolution facts survive outbox replay and remain in retained state history even
+after a later snapshot replaces them. Reinstall the SDK's additive customer
+Operation database schema before upgrading the adapter. See
+[the Operations guide](../../docs/operations.md#explain-blocker-resolutions)
+for bounds, source retention, publication recovery, and history reads.
+
+#### Attention summaries and blocker age
+
+```python
+from faas_sdk.api.operations import summarize_platform_tenant_self_workflow_attention
+summary = await summarize_platform_tenant_self_workflow_attention.asyncio(
+    client=client, app_id=app_id, scope="production", group_by="blocker_code",
+)
+```
+
+`summarize_account_workflow_attention` also offers sync/async methods.
+Group by `workflow`, `blocker_code`, `target_operation`, or account-only `customer`.
+Both queues and summaries accept `blocker_code`. Totals cover all matching
+workflows independently of group pagination.
+
+Install the updated `customer_operation_receipt_schema` before upgrading writers.
+`OperationWorkflowBlocker.first_observed_at` is an optional RFC3339 string.
+Transactional writers preserve it across repeats until the target/code clears.
+Legacy or unobserved continuity retains unknown age. Applications may supply
+a known original observation timestamp; upgrade all writers for reliable
+continuity. Summary models expose oldest known ages and unknown-age counts.
+
+#### Business deadlines
+
+Call `tx.workflow_deadline(workflow, instance_id, state, due_at)` inside the
+business transaction. A finite RFC3339 string sets/updates it; `""` clears.
+The SDK preserves current blockers and inherits due times on subsequent state,
+transition, and blocker reports. Install the updated application receipt schema
+and upgrade every writer. Attention queue and summary endpoints accept
+`reason="overdue"`; state models expose due times and overdue duration.
+Terminal workflows do not count as overdue.
+
+#### Explicit business outcomes
+
+Call `tx.workflow_outcome(workflow, instance_id, terminal_state, code, description)`
+after the terminal transition and required milestones inside the business
+transaction. The SDK preserves blockers and deadline. Subsequent reports of the
+same state inherit the outcome; state changes remove it. Install the updated
+receipt schema and upgrade every writer.
+
+The `list_account_workflow_outcomes`, `list_platform_tenant_self_workflow_outcomes`,
+`summarize_account_workflow_outcomes`, and
+`summarize_platform_tenant_self_workflow_outcomes` endpoint modules offer sync and
+async methods. Filter by `workflow` or `code`; summary `group_by` supports
+`outcome`, `workflow`, or account-only `customer`. Counts cover latest retained
+terminal instances with explicit outcomes once each, independently of pagination.
+
+### Workflow prerequisites
+
+Use `tx.workflow_dependencies(workflow, instance_id, state, [OperationWorkflowDependency(...)])` inside the business transaction to replace up to 16 direct workflow dependencies. Pass an empty list to clear them. Links stay within the same customer/application/environment; an optional required outcome distinguishes successful prerequisites from other terminal results. Other reports inherit current links. Apply the updated customer schema and upgrade all writers first. The existing workflow instance response includes `related_workflows` with retained states and explicit resolution statuses. See [workflow dependencies](../../docs/operations.md#workflow-dependencies) for complete examples and retention semantics.
+
+### Dependency attention
+
+Attention requests support `dependency_status="waiting", required_outcome_code="paid"` and the `dependency` reason. The response includes `dependency_attention` references/statuses and summary counts `dependency_workflow_count` / `dependency_count`. Summaries also support `dependency_status` and `required_outcome_code` grouping. Both dependency filters must match the same unresolved reference. See [dependency-aware attention](../../docs/operations.md#dependency-aware-attention).
+
+### Reverse dependency impact
+
+Existing business milestones responses now include typed `workflow_instance.dependency_impact`: retained dependent workflows, required outcomes, prerequisite statuses, and affected-workflow counts. The list shows up to 100 items, affected sources first; counts cover all matches and `has_more` signals truncation. Unknown account-side prerequisites require an explicit customer; self reads always use the authenticated customer. See [reverse dependency impact](../../docs/operations.md#reverse-dependency-impact).
+
+### Dependency root-cause tracing
+
+Business milestones responses include typed `workflow_instance.dependency_trace` findings with linked reference paths and observed states. The trace follows unmet prerequisites, distinguishes cycles from shared workflows, and exposes missing reports, blockers, mismatched outcomes, staleness, and missed deadlines. Traversal is bounded; inspect `truncated` / `limits_reached` before treating coverage as complete. See [dependency root-cause tracing](../../docs/operations.md#dependency-root-cause-tracing).
+
+### Workflow transition readiness
+
+Use an authenticated operations reader to check a proposed transition:
+
+```python
+from faas_sdk.api.operations import check_platform_tenant_self_workflow_readiness
+from faas_sdk.models import OperationWorkflowReadinessRequest, OperationSubject
+result = check_platform_tenant_self_workflow_readiness.sync(client=client, body=OperationWorkflowReadinessRequest(
+    app_id=app_id, scope="production", subject=OperationSubject(type_="order", id=order_id),
+    workflow="fulfillment", instance_id=run_id, operation="ship-order",
+    from_state="waiting", to_state="shipping", milestones=["shipment-created"],
+    state_revision=revision, contract_version=1,
+))
+```
+
+Inspect `readiness.ready`, denial reasons, missing milestones, unmet prerequisites, and advisories. Account readers use the account readiness endpoint with an explicit customer selector. Planned names are not committed evidence; business-row checks, authorization, and transaction-time workflow/milestone validation still apply. See [workflow transition readiness](../../docs/operations.md#workflow-transition-readiness).
+
+### Guard a transition inside the business transaction
+
+After locking the business row, call
+`await tx.guarded_workflow_transition(request, [("approved", payload)], check)`
+before writing. `request` is an `OperationWorkflowReadinessRequest` with the matching
+app, scope, subject, operation, workflow instance, locked source state, proposed
+state, positive locked state revision, and contract version. `check` is an async
+callable returning `OperationWorkflowReadinessResponse` through the self readiness
+endpoint, authenticated as the transaction's customer.
+
+`CustomerOperationReadinessError` from `faas_sdk.customer_operations` exposes
+`.response`. All guard failures prevent commit even if caught. Await guards
+sequentially in the callback. Existing contract and actual payload validation still
+runs before commit.
+
+### Business decision evidence
+
+`tx.business_decision("approval-decided", OperationBusinessDecision(workflow="order-approval", instance_id=run_id, code="manual-review-approved", description="An authorized reviewer approved the order.", rule_id="manual-approval", rule_version="2026-10"))` (import the model from `faas_sdk.business_decisions`) queues a bounded explanation with the business transaction. Declare the milestone payload schema and bind its workflow step to `/decision/instance_id`. It uses existing precommit validation and outbox replay; no schema installation is needed. See [business decision evidence](../../docs/operations.md#business-decision-evidence) for declaration and history details.
+
+### Versioned policy requirements
+
+Workflow transitions can declare `requires_policies` with a milestone, rule ID, exact rule version, and decision code. Transactional readiness guards derive planned decisions from actual milestone payloads, and precommit validation requires matching evidence for the same workflow instance. See [policy requirements](../../docs/operations.md#versioned-business-policy-requirements).
+
+### Business state reconciliation
+
+Reconciliation transaction helpers compare the locked application row with customer-scoped workflow history and queue a fresh explicit snapshot plus discrepancy evidence when needed. Business revisions stay separate from SDK report counters. Ahead/version conflicts record diagnostics without refreshing state. Declare the reconciliation milestone schema and bind its step to `/reconciliation/instance_id`. See [reconciliation usage](../../docs/operations.md#business-state-reconciliation).
+
+### Transition-specific prerequisites
+
+Declare `requires_dependencies` on a transition to select workflow names from the current instance's reported links. Omitted selects all links; `[]` selects none. Missing required links are structured readiness failures. SDK guards apply the selected edge's requirements. See [prerequisite usage](../../docs/operations.md#transition-specific-business-prerequisites).
+
+### Business action previews
+
+Read-only action preview helpers return current-state candidates with revision/version and all transition requirements. Candidates use an empty evidence plan. Use the transaction readiness guard with actual facts and locked business rows before performing an action. See [preview usage](../../docs/operations.md#business-action-previews).
+
+### Business invariant reports
+
+Invariant helpers queue a typed check fact and targeted blocker update with the business transaction. Failed and unknown checks block their target Operations; passed checks clear only their stable invariant code. Supply the complete locked blocker head and chain returned blockers for multiple checks. Guards also consider pending invariant blockers. See [invariant usage](../../docs/operations.md#business-invariant-reports).
+
+### Required invariant evidence
+
+Transitions may declare `requires_invariants` with a milestone, stable code, and exact version. Guards derive check plans from actual invariant payloads. Passing evidence must match the source state, instance, and target action and accompany the transaction. See [required invariants](../../docs/operations.md#required-invariant-evidence-per-transition).
+
+### Business effect evidence
+
+Effect helpers record pending, failed, or confirmed business facts with a reference and optional amount/currency. Transition `requires_effects` requirements need matching confirmed evidence. Guards derive plans from actual effect payloads. External effects still need application idempotency and verified confirmation. See [effect usage](../../docs/operations.md#business-effect-evidence).
+
+### Compensation workflows
+
+Compensation helpers record required, pending, failed, or confirmed reversal observations linked to a retained confirmed effect. Source ownership/app/environment are checked before commit and publication. Applications execute reversals and report workflow state explicitly. See [compensation usage](../../docs/operations.md#compensation-workflows).

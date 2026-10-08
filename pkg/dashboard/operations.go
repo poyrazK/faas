@@ -27,39 +27,91 @@ type CustomerOperationsData struct {
 	Detail               *CustomerOperationDetail
 }
 
+type CustomerOperationWorkflowRelation struct {
+	api.OperationWorkflowRelatedInstance
+	URL string
+}
+
+type CustomerOperationDependentWorkflow struct {
+	api.OperationWorkflowDependentInstance
+	URL string
+}
+
+type CustomerOperationDependencyTraceStep struct {
+	api.OperationWorkflowDependency
+	URL string
+}
+
+type CustomerOperationDependencyFinding struct {
+	Title string
+	api.OperationWorkflowDependencyFinding
+	Steps []CustomerOperationDependencyTraceStep
+}
+
+type CustomerOperationTransitionReadiness struct {
+	api.OperationWorkflowTransitionReadiness
+	ReasonLabels []string
+}
+
 type CustomerOperationWorkflow struct {
-	Name            string
-	Title           string
-	InstanceID      string
-	State           string
-	Terminal        bool
-	Stale           bool
-	StateOccurredAt string
-	StateStaleAfter string
-	StateUpdatedAt  string
-	StateRevision   int64
-	HistoryURL      string
-	Selected        bool
-	StateHistory    []CustomerOperationWorkflowStateHistory
-	Steps           []CustomerOperationWorkflowStep
+	Readiness                       *api.OperationWorkflowReadinessOverview
+	ReadinessItems                  []CustomerOperationTransitionReadiness
+	DependencyTrace                 *api.OperationWorkflowDependencyTrace
+	DependencyFindings              []CustomerOperationDependencyFinding
+	DependencyImpact                *api.OperationWorkflowDependencyImpact
+	DependentWorkflows              []CustomerOperationDependentWorkflow
+	RelatedWorkflows                []CustomerOperationWorkflowRelation
+	OutcomeCode, OutcomeDescription string
+	Decision                        *api.OperationWorkflowDecision
+	Name                            string
+	Title                           string
+	InstanceID                      string
+	DeadlineAt                      string
+	Overdue                         bool
+	OverdueSeconds                  int64
+	State                           string
+	Terminal                        bool
+	Stale                           bool
+	StateOccurredAt                 string
+	StateStaleAfter                 string
+	StateUpdatedAt                  string
+	StateRevision                   int64
+	HistoryURL                      string
+	Selected                        bool
+	StateHistory                    []CustomerOperationWorkflowStateHistory
+	Steps                           []CustomerOperationWorkflowStep
 }
 
 type CustomerOperationWorkflowStateHistory struct {
-	ID, OperationID, OperationURL string
-	FromState, State              string
-	Revision                      int64
-	OccurredAt, PublishedAt       string
+	DependenciesOnly                bool
+	DependsOn                       []api.OperationWorkflowDependency
+	OutcomeCode, OutcomeDescription string
+	OutcomeOnly                     bool
+	BlockerResolutions              []api.OperationWorkflowBlockerResolution
+	DeadlineAt                      string
+	DeadlineOnly                    bool
+	BlockersOnly                    bool
+	ID, OperationID, OperationURL   string
+	FromState, State                string
+	Revision                        int64
+	OccurredAt, PublishedAt         string
 }
 
 type CustomerOperationWorkflowStep struct {
-	Position     int
-	Label        string
-	MilestoneID  string
-	OperationID  string
-	OperationURL string
-	Payload      string
-	OccurredAt   string
-	PublishedAt  string
+	Compensation    *api.OperationBusinessCompensation
+	SourceEffectURL string
+	Effect          *api.OperationBusinessEffect
+	Invariant       *api.OperationBusinessInvariant
+	Reconciliation  *api.OperationWorkflowReconciliation
+	Decision        *api.OperationBusinessDecision
+	Position        int
+	Label           string
+	MilestoneID     string
+	OperationID     string
+	OperationURL    string
+	Payload         string
+	OccurredAt      string
+	PublishedAt     string
 }
 
 type CustomerOperationItem struct {
@@ -133,6 +185,12 @@ type CustomerOperationArtifact struct {
 
 // Payload contains only explicitly declared, schema-validated public facts.
 type CustomerOperationMilestone struct {
+	Compensation                                                        *api.OperationBusinessCompensation
+	SourceEffectURL                                                     string
+	Effect                                                              *api.OperationBusinessEffect
+	Invariant                                                           *api.OperationBusinessInvariant
+	Reconciliation                                                      *api.OperationWorkflowReconciliation
+	Decision                                                            *api.OperationBusinessDecision
 	ID, Name, OperationID, OperationURL, Payload, OccurredAt, CreatedAt string
 	WorkflowMapped                                                      bool
 }

@@ -70,7 +70,7 @@ func (s *server) reportOperationWorkflowState(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var report api.OperationWorkflowStateReport
-	if !decodeOperationBody(w, r, &report, 8192) {
+	if !decodeOperationBody(w, r, &report, api.OperationWorkflowStateBatchMaxBytes) {
 		return
 	}
 	response, err := store.ReportOperationWorkflowState(r.Context(), op.ID, authority, report)

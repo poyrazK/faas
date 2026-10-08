@@ -1,3 +1,6 @@
+import type {OperationWorkflowDependency} from './OperationWorkflowDependency.js';
+import type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
+import type { OperationWorkflowBlocker } from './OperationWorkflowBlocker.js';
 /* generated using openapi-typescript-codegen -- do not edit */
 /* istanbul ignore file */
 /* tslint:disable */
@@ -7,6 +10,13 @@ import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvid
  * One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
  */
 export type OperationWorkflowStateHistoryEntry = {
+ depends_on?: OperationWorkflowDependency[]; dependencies_only?: boolean;
+ outcome_code?: string; outcome_description?: string; outcome_only?: boolean;
+ deadline_at?: string;
+ deadline_only?: boolean;
+  blocker_resolutions?: OperationWorkflowBlockerResolution[];
+  blockers?: OperationWorkflowBlocker[];
+  blockers_only?: boolean;
   id: string;
   operation_id: string;
   workflow: string;

@@ -48,7 +48,15 @@ it locally for the selected app and plan:
 
 ```sh
 gregale customer-operations validate --app orders --plan pro --dir .
+npm run bindings:check
 ```
+
+`workflow-bindings.mjs` is generated from that validated manifest. The handler
+uses its transition helper with the state read under the order-row lock; the
+helper queues the required `order-fulfilled` payload and the declared edge.
+After changing contracts or schemas, run `npm run bindings:generate` and review
+the generated diff. `bindings:check` compares the module with the current
+contracts without writing, so it can run in CI before packaging.
 
 The internal SDK is not published. Package this example with the built SDK in
 a fresh temporary source directory; the bundle contains no database credentials
