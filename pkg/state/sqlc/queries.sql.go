@@ -2590,6 +2590,40 @@ func (q *Queries) ClaimCloneCheckpointPostgresIsolation(ctx context.Context, db 
 	return i, err
 }
 
+const claimCloneCheckpointPostgresVerification = `-- name: ClaimCloneCheckpointPostgresVerification :one
+UPDATE project_environment_clone_checkpoint_postgres_verification i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_database_id=$2::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_database_id, i.plan, i.state, i.requested_at, i.observation_sha256, i.verified_at
+`
+
+type ClaimCloneCheckpointPostgresVerificationParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointPostgresVerification,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
 const claimCloneCheckpointRelease = `-- name: ClaimCloneCheckpointRelease :one
 UPDATE project_environment_clone_checkpoint_releases r SET state='requested',requested_at=clock_timestamp()
 WHERE r.operation_id=$1::uuid AND r.state='planned'
@@ -12997,6 +13031,35 @@ func (q *Queries) FinishCloneCheckpointPostgresIsolation(ctx context.Context, db
 	return result.RowsAffected(), nil
 }
 
+const finishCloneCheckpointPostgresVerification = `-- name: FinishCloneCheckpointPostgresVerification :execrows
+UPDATE project_environment_clone_checkpoint_postgres_verification i SET state='verified',observation_sha256=$1::text,verified_at=clock_timestamp()
+WHERE i.operation_id=$2::uuid AND i.source_database_id=$3::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointPostgresVerificationParams struct {
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresVerificationParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPostgresVerification,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishCloneCheckpointRelease = `-- name: FinishCloneCheckpointRelease :execrows
 UPDATE project_environment_clone_operations o SET resources=$1::jsonb,revision=o.revision+1,updated_at=clock_timestamp()
 WHERE o.id=$2::uuid AND o.account_id=$3::uuid AND o.project_id=$4::uuid
@@ -16528,6 +16591,42 @@ func (q *Queries) InsertCloneCheckpointPostgresIsolation(ctx context.Context, db
 		&i.ObservationSha256,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPostgresVerification = `-- name: InsertCloneCheckpointPostgresVerification :one
+INSERT INTO project_environment_clone_checkpoint_postgres_verification(operation_id,source_database_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_database_id, plan, state, requested_at, observation_sha256, verified_at
+`
+
+type InsertCloneCheckpointPostgresVerificationParams struct {
+	SourceDatabaseID pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPostgresVerification,
+		arg.SourceDatabaseID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.VerifiedAt,
 	)
 	return i, err
 }
@@ -46348,6 +46447,30 @@ func (q *Queries) ReadCloneCheckpointPostgresIsolation(ctx context.Context, db D
 		&i.ObservationSha256,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointPostgresVerification = `-- name: ReadCloneCheckpointPostgresVerification :one
+SELECT operation_id, source_database_id, plan, state, requested_at, observation_sha256, verified_at FROM project_environment_clone_checkpoint_postgres_verification WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointPostgresVerificationParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPostgresVerification, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentCloneCheckpointPostgresVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.VerifiedAt,
 	)
 	return i, err
 }

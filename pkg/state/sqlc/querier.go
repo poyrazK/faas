@@ -151,6 +151,7 @@ type Querier interface {
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
 	ClaimCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
 	ClaimCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error)
+	ClaimCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error)
 	ClaimCloneCheckpointRelease(ctx context.Context, db DBTX, arg ClaimCloneCheckpointReleaseParams) (ProjectEnvironmentCloneCheckpointRelease, error)
 	ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db DBTX, arg ClaimClonePostgresMaintenanceDispatchParams) (ManagedPostgresCheckpointMaintenance, error)
 	ClaimCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg ClaimCustomerOperationBlobCleanupParams) (CustomerOperationResultBlob, error)
@@ -671,6 +672,7 @@ type Querier interface {
 	FindManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg FindManagedPostgresLifecycleDatabaseParams) (ManagedPostgresDatabase, error)
 	FinishCloneCheckpointObjectTargetBucket(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectTargetBucketParams) (int64, error)
 	FinishCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresIsolationParams) (int64, error)
+	FinishCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresVerificationParams) (int64, error)
 	FinishCloneCheckpointRelease(ctx context.Context, db DBTX, arg FinishCloneCheckpointReleaseParams) (int64, error)
 	FinishClonePostgresWriteFenceAbandonment(ctx context.Context, db DBTX, arg FinishClonePostgresWriteFenceAbandonmentParams) (ProjectEnvironmentClonePostgresWriteFence, error)
 	FinishDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg FinishDevBridgeWebhookReplayParams) (int64, error)
@@ -855,6 +857,7 @@ type Querier interface {
 	InsertCheckedRollback(ctx context.Context, db DBTX, arg InsertCheckedRollbackParams) error
 	InsertCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
 	InsertCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error)
+	InsertCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error)
 	InsertCloneCheckpointRelease(ctx context.Context, db DBTX, arg InsertCloneCheckpointReleaseParams) (ProjectEnvironmentCloneCheckpointRelease, error)
 	InsertClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg InsertClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error)
 	InsertClonePostgresMaintenance(ctx context.Context, db DBTX, arg InsertClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error)
@@ -2181,6 +2184,7 @@ type Querier interface {
 	ReadCheckedRollback(ctx context.Context, db DBTX, arg ReadCheckedRollbackParams) ([]byte, error)
 	ReadCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
 	ReadCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error)
+	ReadCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error)
 	// ADR-590: once-only successful release, using the original durable plan.
 	ReadCloneCheckpointRelease(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointRelease, error)
 	// ADR-531: private original selection precedes a coordinated capture point.

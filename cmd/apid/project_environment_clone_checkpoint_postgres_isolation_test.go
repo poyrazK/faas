@@ -310,6 +310,15 @@ func TestPGCloneCheckpointPostgresIsolationMigrationRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(t.Context()) }()
+	// The later verification journal owns a restrictive FK to this table.
+	// Retire its empty authority first when exercising the predecessor round trip.
+	verification, err := migrations.FS.ReadFile("20261008110000001_clone_checkpoint_postgres_verification.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), strings.SplitN(string(verification), "-- +goose Down", 2)[1]); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(t.Context(), parts[1]); err != nil {
 		t.Fatal(err)
 	}

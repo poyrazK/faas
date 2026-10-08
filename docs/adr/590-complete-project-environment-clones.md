@@ -7960,3 +7960,52 @@ pass, as do SQLC parity, encoding, shell quoting and ADR numbering checks.
 These tests exercise private test drivers; native provider qualification was
 not run.
 Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+## Original checkpoint PostgreSQL data verification
+
+A private verification journal binds the original retained snapshot and capture
+point, exact isolated fork owner/backend, immutable isolation digest and existing
+PostgreSQL copy byte cap. It requires catalogue adoption before reservation and
+fresh original retention and SQL closure before dispatch. Only a known committing
+claim may issue the bounded comparison. Lost claim/native/commit replies and
+worker handoff observe the original native request without repeating data reads,
+recapturing current source or restoring a replacement fork.
+
+Qualified comparators must compare the complete canonical logical inventory and
+contents of the retained snapshot and original fork, including schemas, empty
+objects, table contents, sequences and large objects. Unsupported objects must
+fail qualification or comparison, never be silently omitted. The driver must
+use pre-existing operator-only read access, enforce the immutable per-side read
+cap and worker deadline, and supply its qualified shared memory, spool and
+account admission bounds. It may not alter data, authentication or SQL closure.
+There is no built-in qualified native comparator. This seam does not substitute
+provider restore success or a physical page checksum for data verification.
+
+The terminal receipt requires an exact request/plan digest, complete equal
+canonical content digests, read-only evidence, absent unsupported objects,
+bounded per-side read counts and an original UTC comparison time. Recording it
+rechecks the original checkpoint retention and the independently current
+isolation proof through the work lease. Changed rosters, reopened writers,
+expired retention, altered equal digests or substituted owners fail closed.
+The immutable terminal digest prevents replacement proof on replay; final-write
+failure leaves the requested owner available for observation-only recovery.
+
+Verification remains private and does not change operation inventory, catalogue
+readiness, credentials, publication authority or the original released checkpoint
+proof. Downgrade refuses any owned verification journal, and its restrictive
+foreign key retains the isolation authority. Usable stage database preparation,
+credentials, complete publication and terminal retirement remain outstanding.
+Live R2/OVH qualification remains deferred.
+
+Validation: real-PostgreSQL control-plane tests with private test drivers pass
+for lost native/claim/commit replies, observation-only worker handoff, substituted
+owners, missing/unequal/incomplete/unsupported or over-budget data evidence,
+changed terminal proof, reopened SQL writers, changed rosters, retention loss,
+late-write rollback and private unready catalogue visibility. Verification and
+predecessor isolation migration round trips and owned-journal downgrade refusal
+pass. Existing checkpoint restore/isolation and state-layer native restore,
+adoption, quota, cleanup and schema-registry regressions pass. SQLC parity,
+encoding, shell quoting and ADR numbering checks pass. These tests authenticate
+the protocol; they do not qualify a native comparator or perform live R2/OVH
+qualification.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.

@@ -5079,6 +5079,16 @@ type ProjectEnvironmentCloneCheckpointPostgresIsolation struct {
 	AdoptedAt         pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneCheckpointPostgresVerification struct {
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	Plan              []byte
+	State             string
+	RequestedAt       pgtype.Timestamptz
+	ObservationSha256 pgtype.Text
+	VerifiedAt        pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneCheckpointRelease struct {
 	OperationID       pgtype.UUID
 	Plan              []byte
