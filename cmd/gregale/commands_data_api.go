@@ -17,7 +17,7 @@ import (
 
 func cmdDataAPI(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api <create|types|refresh>", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api <create|types|refresh|sync>", "data-api")
 		return 1
 	}
 	switch args[0] {
@@ -27,8 +27,10 @@ func cmdDataAPI(args []string) int {
 		return cmdDataAPITypes(args[1:])
 	case "refresh":
 		return cmdDataAPIRefresh(args[1:])
+	case "sync":
+		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, types or refresh"))
+		return printErr("Unknown Data API command", fmt.Errorf("use create, types, refresh or sync"))
 	}
 }
 
@@ -208,11 +210,7 @@ func cmdDataAPITypes(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	task, err := client.CreateAppTask(ctx, fs.Arg(0), api.CreateAppTaskRequest{Command: []string{"node", "/app/types.mjs"}, TimeoutSeconds: 60, MaxOutputBytes: api.AppTaskDefaultMaxOutputBytes})
-	if err != nil {
-		return printErr("Could not start schema generation", err)
-	}
-	task, err = waitDataAPITypeTask(ctx, client, fs.Arg(0), task)
+	task, err := generateDataAPITypes(ctx, client, fs.Arg(0))
 	if err != nil {
 		return printErr("Schema generation failed", err)
 	}
@@ -231,6 +229,14 @@ func cmdDataAPITypes(args []string) int {
 		PrintOK(osStdout, "Database types %s: %s", map[bool]string{true: "match", false: "written"}[*check], *output)
 	}
 	return 0
+}
+
+func generateDataAPITypes(ctx context.Context, client *api.Client, slug string) (api.AppTaskResponse, error) {
+	task, err := client.CreateAppTask(ctx, slug, api.CreateAppTaskRequest{Command: []string{"node", "/app/types.mjs"}, TimeoutSeconds: 60, MaxOutputBytes: api.AppTaskDefaultMaxOutputBytes})
+	if err != nil {
+		return task, fmt.Errorf("start schema generation: %w", err)
+	}
+	return waitDataAPITypeTask(ctx, client, slug, task)
 }
 
 // --check is a boolean; the positional normalizer for PostgreSQL flags would

@@ -136,6 +136,69 @@ successful refresh, then run your application's type checks. Keep
 application CI to detect schema drift. Type generation and `--check` read the
 current database; neither command refreshes a live PostgREST cache.
 
+## Automate migrations and client validation
+
+Commit a `data-api.json` workflow alongside your application:
+
+```json
+{
+  "output": "web/src/database.types.ts",
+  "migrate": {
+    "directory": "migrations",
+    "command": ["gregale", "deploy", "--name", "notes-migrations", "--wait", "--timeout", "15m"]
+  },
+  "check": {
+    "directory": "web",
+    "command": ["npm", "run", "typecheck"]
+  }
+}
+```
+
+The migration app must already have a ready `migration` binding and a Procfile
+`release:` command or manifest `release.command`. `gregale deploy --wait`
+returns success only after the release task succeeds and the deployment becomes
+ready. Configure PostgreSQL egress on that app as described in the
+[migration setup](managed-postgres.md#safety-boundary). The Data API app and its
+restricted binding must also be deployed first. Install the client project's
+dependencies and create the output directory before running the workflow.
+
+```sh
+gregale data-api sync notes-data --config data-api.json --timeout 20m
+```
+
+Sync validates the complete configuration and resolves the Data API's HTTPS
+health URL, then runs four steps in order: the migration command, a fresh restart
+with completion and readiness checks, private type generation with an atomic
+file write, and the client check. A failed step exits nonzero and prevents later
+steps. Invalid or truncated type output leaves the existing file intact. A
+failed client check retains the new types so you can fix the application.
+
+Commands are explicit argument arrays, executed locally with your environment
+and no implicit shell. Use your existing migration tool or a deployment script;
+the migration command must wait for successful completion, rather than return
+after queueing background work. Managed migration credentials stay inside the
+release task. Keep credentials out of the workflow file and command arguments.
+All relative paths resolve from the workflow file's directory; each command's
+optional `directory` defaults to that directory. A relative executable path
+resolves from its command's directory. Unknown JSON fields, missing commands,
+unavailable executables and invalid directories fail before migrations start.
+
+One deadline covers the workflow, defaulting to 20 minutes with a maximum of
+one hour. Interrupting or timing out stops the local wait and commands; accepted
+remote deployments, restarts or tasks may continue. On Unix, local command
+descendants are terminated as well. Sync does not undo committed migrations or
+completed steps. Use replay-safe, backward-compatible migrations. Serialize
+workflow runs for each database so another migration cannot change the schema
+between refresh and export. If a later step fails, inspect the reported
+wake/task IDs and use the individual refresh, types and client-check commands
+to continue, or rerun a replay-safe workflow.
+
+Command output goes to stderr. `--json` writes a single success receipt to
+stdout only after the client check passes, including the app, wake ID, type
+task/deployment IDs, schema fingerprint and output path. Use sync in migration
+jobs. Keep `data-api types --check` in application CI as the read-only drift
+check; it never runs the migration or refresh steps.
+
 ## HTTP contract and bounds
 
 Relation CRUD lives at `/rest/v1/TABLE`. Supply `Authorization: Bearer JWT`.

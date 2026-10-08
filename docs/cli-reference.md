@@ -6632,6 +6632,23 @@ Examples:
 gregale data-api refresh notes-data --wait --timeout 5m
 ```
 
+### data-api sync
+
+Run migrations, refresh the API, export types and check the client
+
+`gregale data-api sync --config <FILE> [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--config <FILE>` | JSON workflow with output, migrate and check argument arrays | required |
+| `--timeout <DURATION>` | entire workflow deadline (default 20m, maximum 1h) |  |
+
+Examples:
+
+```sh
+gregale data-api sync notes-data --config data-api.json
+```
+
 
 ## ps
 

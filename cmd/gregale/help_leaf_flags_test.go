@@ -27,6 +27,7 @@ func TestLeafHelpDocumentsRequiredArguments(t *testing.T) {
 		{"queue send", []string{"gregale queue send <slug>"}},
 		{"jobs run", []string{"gregale jobs run <job-name>"}},
 		{"data-api refresh", []string{"gregale data-api refresh <name>", "--wait", "--timeout <DURATION>"}},
+		{"data-api sync", []string{"gregale data-api sync --config <FILE> <name>", "--config <FILE>", "--timeout <DURATION>"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
