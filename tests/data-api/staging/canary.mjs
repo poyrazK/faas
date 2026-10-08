@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-export class CanaryFailure extends Error {
-  constructor(code) { super(code); this.code = code }
-}
-export const requireValue = (condition, code) => { if (!condition) throw new CanaryFailure(code) }
+import { CanaryFailure, requireValue } from './checks.mjs'
+import { verifiedSync, verifiedContract, matchingRuntimeLog, verifiedDiagnostic } from './workflow.mjs'
+export { CanaryFailure, requireValue } from './checks.mjs'
+
 export function httpsOrigin(value) {
   let url
   try { url = new URL(value) } catch { throw new CanaryFailure('invalid_https_origin') }
@@ -60,11 +60,11 @@ export async function apiRequest(config, path, { method = 'GET', body, fetchImpl
 }
 
 export class Canary {
-  constructor(config, { evidence, cli, sdkTarball, repoRoot, runCommand = command, request, signal } ) {
-    Object.assign(this, { config, evidence, cli, sdkTarball, repoRoot, runCommand, signal })
+  constructor(config, { evidence, cli, sdkTarball, repoRoot, runCommand = command, request, signal, loadModule = path => import(pathToFileURL(path)) } ) {
+    Object.assign(this, { config, evidence, cli, sdkTarball, repoRoot, runCommand, signal, loadModule })
     this.request = request || ((path, options) => apiRequest(config, path, { ...options, signal: this.signal }))
     this.prefix = `dapi-${randomBytes(8).toString('hex')}`
-    this.report = { schema_version: 1, scope: 'staging-canary', run_id: this.prefix, source_commit: config.sourceCommit, target: { api: config.api, account_id: config.account_id, region: config.region }, result: 'running', checks: [], resources: [], deployments: [], instances: [], cleanup: { result: 'pending', pending: [] } }
+    this.report = { schema_version: 1, scope: 'staging-canary', run_id: this.prefix, source_commit: config.sourceCommit, target: { api: config.api, account_id: config.account_id, region: config.region }, result: 'running', checks: [], resources: [], deployments: [], instances: [], syncs: [], requests: [], cleanup: { result: 'pending', pending: [] } }
     this.deadline = Date.now() + 60 * 60_000
   }
   async save() {
@@ -80,10 +80,10 @@ export class Canary {
     this.report.checks.push(name); await this.save()
     return value
   }
-  async exec(args, cwd = this.workspace, stdin = '') {
+  async exec(args, cwd = this.workspace, stdin = '', applicationToken) {
     const stdout = await this.runCommand(this.cli, ['--json', ...args], {
       cwd, stdin, signal: this.signal, timeout: Math.min(1_200_000, Math.max(1, this.deadline - Date.now())),
-      env: { ...process.env, FAAS_API: this.config.api, FAAS_TOKEN: this.config.token },
+      env: { ...process.env, FAAS_API: this.config.api, FAAS_TOKEN: this.config.token, ...(applicationToken ? { GREGALE_DATA_API_ACCESS_TOKEN: applicationToken } : {}) },
     })
     try { return JSON.parse(stdout) } catch { throw new CanaryFailure('invalid_cli_receipt') }
   }
@@ -136,6 +136,47 @@ export class Canary {
   }
   publicFetch(input, init = {}) {
     return fetch(input, { ...init, redirect: 'error', signal: this.signal ? AbortSignal.any([this.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) })
+  }
+  async sync(app, migrator, migrationDir, clientDir, applicationToken) {
+    const compiler = join(this.repoRoot, 'sdk/data/node_modules/.bin/tsc')
+    const workflow = {
+      output: 'database.types.ts',
+      migrate: { directory: migrationDir, command: [this.cli, 'deploy', '--name', migrator.slug, '--dockerfile', '--source', 'worktree', '--wait', '--timeout', '15m', '--healthcheck-path', '/healthz', '--no-doctor', '--no-require-authn'] },
+      check: { directory: '.', command: [compiler, '--strict', '--skipLibCheck', '--target', 'ES2022', '--module', 'NodeNext', '--outDir', 'dist', 'client.ts', 'workflow-client.ts'] },
+    }
+    if ((await readFile(join(migrationDir, 'version'), 'utf8')).trim() === '2') {
+      await writeFile(join(clientDir, 'priority.ts'), 'import {createDataClient} from "@gregale/data"; import type {Database} from "./database.types.js"; const db=createDataClient<Database>({url:"https://unused.example",accessToken:"unused"}).schema("api"); db.from("notes").insert({subject:"alice",body:"new",priority:1});')
+      workflow.check.command.push('priority.ts')
+    }
+    const configPath = join(clientDir, 'data-api.json')
+    await writeFile(configPath, JSON.stringify(workflow))
+    const receipt = await this.exec(['data-api', 'sync', app.slug, '--config', configPath, '--timeout', '20m'], clientDir, '', applicationToken)
+    const verified = verifiedSync(receipt, app, await readFile(join(clientDir, 'database.types.ts'), 'utf8'))
+    requireValue(this.report.deployments.some(x => x.app === app.slug && x.deployment_id === verified.deployment_id), 'sync_serving_deployment_changed')
+    this.report.syncs.push(verified); await this.save()
+    const history = await this.request(`/v1/apps/${migrator.slug}/deployments`)
+    const fresh = history.items?.filter(x => x.status === 'live' && !this.report.deployments.some(saved => saved.deployment_id === x.id))
+    requireValue(fresh?.length === 1, 'sync_migration_deployment_ambiguous')
+    await this.deployed(await this.request(`/v1/deployments/${fresh[0].id}`), migrator)
+    return verified
+  }
+  async contract(url, token, expected) {
+    const response = await this.publicFetch(url + '/__gregale/schema', { headers: { Authorization: `Bearer ${token}` } })
+    requireValue(response.ok, 'serving_contract_unavailable')
+    verifiedContract(await response.json(), expected)
+  }
+  async correlate(app, info, method, route) {
+    // Logs are NDJSON envelopes, not a single CLI receipt. Keep raw lines out
+    // of evidence, and query only a newly observed, validated request UUID.
+    verifiedDiagnostic(info)
+    const deployment = this.report.deployments.find(x => x.app === app.slug)?.deployment_id
+    const record = await this.wait(async () => {
+      const output = await this.runCommand(this.cli, ['--json', 'logs', app.slug, '--source', 'runtime', '--grep', info.requestId], {
+        cwd: this.workspace, env: { ...process.env, FAAS_API: this.config.api, FAAS_TOKEN: this.config.token }, signal: this.signal, timeout: 30_000,
+      })
+      return matchingRuntimeLog(output, info, deployment, method, route)
+    }, value => value !== null, 30_000)
+    this.report.requests.push(record); await this.save()
   }
   async cleanup() {
     this.signal = undefined
@@ -197,10 +238,10 @@ export class Canary {
       const issuerURL = this.appURL(issuer)
       const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
       const jwk = { ...publicKey.export({ format: 'jwk' }), kid: this.prefix, alg: 'ES256', use: 'sig' }
-      const jwt = (sub, audience = this.prefix) => {
+      const jwt = (sub, audience = this.prefix, lifetime = 300) => {
         const enc = value => Buffer.from(JSON.stringify(value)).toString('base64url')
         const now = Math.floor(Date.now() / 1000)
-        const data = `${enc({ alg: 'ES256', kid: this.prefix })}.${enc({ sub, iss: issuerURL, aud: audience, exp: now + 300, iat: now, role: 'postgres' })}`
+        const data = `${enc({ alg: 'ES256', kid: this.prefix })}.${enc({ sub, iss: issuerURL, aud: audience, exp: now + lifetime, iat: now, role: 'postgres' })}`
         return `${data}.${sign('sha256', Buffer.from(data), { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`
       }
       const issuerDir = join(this.workspace, 'issuer'); await mkdir(issuerDir)
@@ -214,6 +255,10 @@ export class Canary {
       const migrationDir = join(this.workspace, 'migration'); await mkdir(migrationDir)
       for (const file of ['package.json', 'package-lock.json']) await cp(join(this.repoRoot, 'cmd/gregale/templates/data-api', file), join(migrationDir, file))
       for (const file of ['migrate.mjs', 'migration-server.mjs']) await cp(join(this.repoRoot, 'tests/data-api/staging', file), join(migrationDir, file))
+      await mkdir(join(migrationDir, 'rpc-runtime'))
+      for (const file of ['types.mjs', 'config.mjs']) await cp(join(this.repoRoot, 'cmd/gregale/templates/data-api', file), join(migrationDir, 'rpc-runtime', file))
+      for (const [source, target] of [['release.mjs', 'release.mjs'], ['rpc-permissions.mjs', 'rpc-permissions.mjs']])
+        await cp(join(this.repoRoot, 'cmd/gregale/templates/data-api-starter/migrations', source), join(migrationDir, target))
       await writeFile(join(migrationDir, 'version'), '1')
       await writeFile(join(migrationDir, 'gregale.yaml'), 'release:\n  command: node migrate.mjs\n')
       await writeFile(join(migrationDir, 'Dockerfile'), 'FROM node:22-bookworm-slim\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --omit=dev --ignore-scripts\nCOPY . .\nEXPOSE 8080\nCMD ["node","migration-server.mjs"]\n')
@@ -228,21 +273,43 @@ export class Canary {
       const clientDir = join(this.workspace, 'client'); await mkdir(clientDir)
       await writeFile(join(clientDir, 'package.json'), '{"type":"module"}')
       await this.runCommand('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', this.sdkTarball], { cwd: clientDir, env: process.env, signal: this.signal })
-      await cp(join(this.repoRoot, 'tests/data-api/staging/client.ts'), join(clientDir, 'client.ts'))
-      await this.exec(['data-api', 'types', app.slug, '--output', join(clientDir, 'database.types.ts')])
+      for (const file of ['client.ts', 'workflow-client.ts']) await cp(join(this.repoRoot, 'tests/data-api/staging', file), join(clientDir, file))
+      await this.check('rpc_denied_before_permission_setup', async () => {
+        const response = await this.publicFetch(url + '/rest/v1/rpc/create_note', { method: 'POST', headers: { Authorization: `Bearer ${jwt('alice')}`, 'Content-Type': 'application/json' }, body: '{"note_body":"must not execute"}' })
+        requireValue(response.status === 404, 'rpc_exposed_without_grant')
+      })
+      await writeFile(join(migrationDir, 'gregale.yaml'), 'release:\n  command: node release.mjs\n')
+      await this.check('rpc_permissions_sync_native_build', () => this.sync(app, migrator, migrationDir, clientDir, jwt('alice', this.prefix, 1800)))
+      await this.check('serving_fingerprint_agreement', () => this.contract(url, jwt('alice'), this.report.syncs.at(-1).fingerprint))
       await this.exec(['data-api', 'types', app.slug, '--output', join(clientDir, 'database.types.ts'), '--check'])
-      const compile = () => this.runCommand(join(this.repoRoot, 'sdk/data/node_modules/.bin/tsc'), ['--strict', '--skipLibCheck', '--target', 'ES2022', '--module', 'NodeNext', '--outDir', 'dist', 'client.ts'], { cwd: clientDir, env: process.env, signal: this.signal })
-      await this.check('generated_types_editor_contract', compile)
-      const client = await import(pathToFileURL(join(clientDir, 'dist/client.js')))
+      const client = await this.loadModule(join(clientDir, 'dist/client.js'))
+      const workflowClient = await this.loadModule(join(clientDir, 'dist/workflow-client.js'))
       const clientFetch = (input, init) => this.publicFetch(input, init)
       const id = await this.check('typed_crud_and_subject_isolation', () => client.exercise(url, jwt('alice'), jwt('bob'), clientFetch))
-      const { createDataClient } = await import(pathToFileURL(join(clientDir, 'node_modules/@gregale/data/dist/index.js')))
+      const { createDataClient } = await this.loadModule(join(clientDir, 'node_modules/@gregale/data/dist/index.js'))
       const alice = createDataClient({ url, accessToken: () => jwt('alice'), fetch: clientFetch }).schema('api')
+      const rpcCheck = async () => {
+        const observations = []
+        await workflowClient.exerciseRPC(url, jwt('alice'), jwt('bob'), clientFetch, info => { observations.push(info) })
+        requireValue(observations.length > 0, 'rpc_diagnostics_missing')
+        await this.correlate(app, observations[0], 'POST', 'rpc')
+      }
+      await this.check('typed_rpc_subject_isolation_and_logs', rpcCheck)
+      await this.check('sdk_request_id_runtime_log_correlation', async () => {
+        const observations = []
+        const probe = createDataClient({ url, accessToken: () => jwt('alice'), fetch: clientFetch, onResponse: info => { observations.push(info) } }).schema('api')
+        const response = await probe.from('notes').select('id').eq('id', id).single().retry(false)
+        requireValue(!response.error && response.data.id === id && observations.length === 1, 'sdk_probe_failed')
+        await this.correlate(app, observations[0], 'GET', 'rest')
+      })
       await this.check('jwt_audience_and_openapi', async () => {
         const bad = await this.publicFetch(url + '/rest/v1/notes', { headers: { Authorization: `Bearer ${jwt('alice', 'wrong')}` } })
         requireValue(bad.status === 401, 'wrong_audience_accepted')
+        requireValue((await this.publicFetch(url + '/__gregale/schema')).status === 401, 'serving_contract_auth_missing')
+        requireValue((await this.publicFetch(url + '/rest/v1/rpc/private_note', { method: 'POST', headers: { Authorization: `Bearer ${jwt('alice')}`, 'Content-Type': 'application/json' }, body: '{}' })).status === 404, 'unapproved_rpc_exposed')
         const openapi = await this.publicFetch(url + '/openapi.json', { headers: { Authorization: `Bearer ${jwt('alice')}` } })
-        requireValue(openapi.ok && (await openapi.json()).paths?.['/notes'], 'public_openapi_missing')
+        const document = await openapi.json()
+        requireValue(openapi.ok && document.paths?.['/notes'] && document.paths?.['/rpc/create_note']?.post && !document.paths?.['/rpc/create_note']?.get && !document.paths?.['/rpc/private_note'], 'public_openapi_missing')
       })
       await this.check('park_and_authenticated_wake', async () => {
         const deployment = this.report.deployments.find(x => x.app === app.slug).deployment_id
@@ -257,15 +324,12 @@ export class Canary {
         this.report.instances.push(...record(running))
       })
       await writeFile(join(migrationDir, 'version'), '2')
-      await this.check('schema_migration_native_build', () => this.deploy(migrator, migrationDir))
-      await this.check('schema_refresh_completion', () => this.refresh(app))
-      await this.exec(['data-api', 'types', app.slug, '--output', join(clientDir, 'database.types.ts')])
+      const beforeMigration = this.report.syncs.at(-1).fingerprint
+      await this.check('schema_migration_sync_native_build', () => this.sync(app, migrator, migrationDir, clientDir, jwt('alice', this.prefix, 1800)))
       await this.check('migrated_type_and_rest_contract', async () => {
         const types = await readFile(join(clientDir, 'database.types.ts'), 'utf8')
-        requireValue(types.includes('"priority"'), 'migrated_type_missing')
-        await compile()
-        await writeFile(join(clientDir, 'priority.ts'), 'import {createDataClient} from "@gregale/data"; import type {Database} from "./database.types.js"; const db=createDataClient<Database>({url:"https://unused.example",accessToken:"unused"}).schema("api"); db.from("notes").insert({subject:"alice",body:"new",priority:1});')
-        await this.runCommand(join(this.repoRoot, 'sdk/data/node_modules/.bin/tsc'), ['--strict', '--skipLibCheck', '--noEmit', '--target', 'ES2022', '--module', 'NodeNext', 'priority.ts'], { cwd: clientDir, env: process.env, signal: this.signal })
+        requireValue(types.includes('"priority"') && this.report.syncs.at(-1).fingerprint !== beforeMigration, 'migrated_type_missing')
+        await this.contract(url, jwt('alice'), this.report.syncs.at(-1).fingerprint)
         const result = await alice.from('notes').select('priority').eq('id', id).single()
         requireValue(!result.error && result.data.priority === 0, 'migrated_rest_contract_missing')
       })
@@ -273,8 +337,13 @@ export class Canary {
         const bindings = await this.exec(['postgres', 'bindings', 'list', db.id])
         const binding = bindings.items.filter(x => x.app_id === app.id && x.access === 'data_api')
         requireValue(binding.length === 1, 'data_api_binding_missing')
-        await this.exec(['postgres', 'bindings', 'rotate', binding[0].id, '--wait', '--wait-timeout', '5m'])
-        await this.refresh(app)
+        requireValue(Number.isSafeInteger(binding[0].credential_generation) && binding[0].credential_generation > 0, 'rotation_generation_missing')
+        const replacement = await this.exec(['postgres', 'bindings', 'rotate', binding[0].id, '--wait', '--wait-timeout', '5m'])
+        requireValue(replacement.id === binding[0].id && replacement.app_id === app.id && replacement.access === 'data_api' && replacement.state === 'ready' && replacement.rotation_pending === false && replacement.credential_generation === binding[0].credential_generation + 1, 'rotation_not_completed')
+        this.report.rotation = { binding_id: replacement.id, previous_generation: binding[0].credential_generation, current_generation: replacement.credential_generation, completed: true }; await this.save()
+        await this.sync(app, migrator, migrationDir, clientDir, jwt('alice', this.prefix, 1800))
+        await this.contract(url, jwt('alice'), this.report.syncs.at(-1).fingerprint)
+        await rpcCheck()
         const result = await alice.from('notes').select('id,body,priority').eq('id', id).single()
         requireValue(!result.error && result.data.body === 'updated' && result.data.priority === 0, 'rotated_credential_data_lost')
         const bob = createDataClient({ url, accessToken: () => jwt('bob'), fetch: clientFetch }).schema('api')

@@ -57,10 +57,11 @@ exported through the CLI task path and compiled with positive and negative
 TypeScript examples against an installed SDK tarball.
 
 Checks cover typed CRUD, signed SQL-role override, two-subject RLS reads/writes,
-wrong-audience rejection, authenticated OpenAPI, observed parking followed by an
-authenticated wake, a second schema migration, completed fresh restart, updated
-type/REST contracts, and credential rotation preserving data.
-Refresh completion and readiness are verified by `gregale data-api refresh --wait`.
+wrong-audience rejection, authenticated OpenAPI and serving metadata, observed
+parking followed by an authenticated wake, RPC permissions and subject isolation,
+three sync runs, updated type/REST contracts, SDK/runtime-log correlation, and
+credential rotation preserving data and RPC access. Sync verifies fresh restart
+completion, readiness and serving/exported fingerprint agreement.
 
 Evidence is atomically written with mode 0600 and contains stable check names,
 deployment/build/source and parked/running instance identities, and cleanup
@@ -87,3 +88,42 @@ reviewing the target manifest and the existing qualification evidence.
 `make data-api-staging-check` exercises the harness refusal, credential handling,
 restart completion, ownership and cleanup contracts without staging access.
 Portable CI results are not live canary evidence.
+
+## Complete workflow coverage
+
+The fixture bootstraps notes and an opted-in `create_note` RPC through a migration
+release before the serving binding exists. RPC execution is revoked from PUBLIC.
+After creating the Data API, the gate verifies the RPC returns 404, then changes
+the migration release to the starter's canonical owner permission workflow.
+The shared catalog/signature parser is copied from the runtime, not maintained
+as a second implementation. An unannotated `private_note` function remains
+ungranted and absent from RPC routes, generated types and OpenAPI.
+
+The gate runs `data-api sync` three times: initial RPC permission setup, the
+priority-column migration, and permission setup for the replacement serving
+role after `rotate --wait` completes. Every sync must return a completed wake,
+type task/deployment identifiers, a fingerprint matching the generated file and
+`contract_verified: true`. The canary also probes the authenticated startup
+fingerprint directly, rejects an unauthenticated probe, compiles positive and
+negative RPC examples, and exercises RPC-derived subjects and two-user isolation
+both before and after rotation. A 30-minute application JWT is supplied only in
+the child sync environment for its 20-minute deadline; values never appear in
+workflow JSON, argv or evidence. Regular HTTP calls use freshly minted tokens.
+
+Each sync's migration deployment is checked against native builder/source
+provenance, even though its deploy receipt is nested inside the workflow. SDK
+`onResponse` IDs from an actual read and RPC calls must match safe JSON runtime
+records obtained through the normal runtime-log command. Records must belong to
+the acknowledged serving deployment and match method, route and status. Logs are
+polled briefly for delivery. Missing IDs/records, mismatched metadata, extra
+log fields, stale fingerprints and post-rotation RPC failures cannot pass.
+
+Completed rotation must increment the acknowledged binding's credential generation
+and retire its pending state; the generations are recorded in `rotation`.
+Evidence adds `syncs` (identifiers and fingerprints) and `requests` (request,
+deployment and instance identifiers plus method/route/status). Raw runtime lines,
+client bodies, tokens and SQL-role names are never persisted. Existing cleanup
+and unknown-outcome rules still apply. The harness's simulated complete journey
+and its failure tests verify ordering and cleanup locally; real PostgreSQL tests
+verify fixture migrations, grants, generated RPC types and replacement roles.
+Neither portable result counts as live staging or native provider qualification.

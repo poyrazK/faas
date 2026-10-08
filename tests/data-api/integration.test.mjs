@@ -3,10 +3,11 @@ import assert from 'node:assert/strict'
 import net from 'node:net'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { writeFile, readFile, mkdtemp, cp, rm } from 'node:fs/promises'
+import { writeFile, readFile, mkdtemp, mkdir, cp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 const runtime = process.env.DATA_API_RUNTIME_DIR ? pathToFileURL(process.env.DATA_API_RUNTIME_DIR + '/') : new URL('../../cmd/gregale/templates/data-api/',import.meta.url)
 const runtimeRequire = createRequire(new URL('package.json',runtime))
@@ -20,7 +21,7 @@ import { command } from './staging/canary.mjs'
 
 const enabled = Boolean(process.env.DATA_API_TEST_DATABASE_URL && process.env.DATA_API_POSTGREST_BIN)
 const repoRoot = new URL('../../', import.meta.url).pathname
-async function stagingClient(t, types) {
+async function stagingClient(t, types, withRPC = false) {
   const directory = await mkdtemp(join(tmpdir(), 'data-api-staging-client-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   await writeFile(join(directory, 'package.json'), '{"type":"module"}')
@@ -30,7 +31,8 @@ async function stagingClient(t, types) {
   await command('npm', ['install', '--prefer-offline', '--ignore-scripts', '--no-audit', '--no-fund', join(directory, receipt[0].filename)], { cwd: directory, env: process.env })
   await writeFile(join(directory, 'database.types.ts'), types)
   await cp(new URL('./staging/client.ts', import.meta.url), join(directory, 'client.ts'))
-  await command(join(repoRoot, 'sdk/data/node_modules/.bin/tsc'), ['--strict', '--skipLibCheck', '--target', 'ES2022', '--module', 'NodeNext', '--outDir', 'dist', 'client.ts'], { cwd: directory, env: process.env })
+  if (withRPC) await cp(new URL('./staging/workflow-client.ts', import.meta.url), join(directory, 'workflow-client.ts'))
+  await command(join(repoRoot, 'sdk/data/node_modules/.bin/tsc'), ['--strict', '--skipLibCheck', '--target', 'ES2022', '--module', 'NodeNext', '--outDir', 'dist', 'client.ts', ...(withRPC ? ['workflow-client.ts'] : [])], { cwd: directory, env: process.env })
   return import(pathToFileURL(join(directory, 'dist/client.js')))
 }
 const port = async () => {
@@ -162,32 +164,84 @@ test('real PostgREST, restricted SQL, JWT RLS, typed client and schema refresh',
   assert.equal((await client(alice).from('notes').select()).data.length,0)
 })
 
-test('staging release migrations replay and generate the typed client contract', {skip: !enabled, timeout: 60000}, async t => {
-  const database = `staging_fixture_${process.pid}_${Date.now()}`
+test('staging owner release grants RPCs, compiles contracts and survives role replacement', {skip: !enabled, timeout: 60000}, async t => {
+  const suffix = `${process.pid}_${Date.now()}`
+  const database = `staging_fixture_${suffix}`
+  const schemaOwner = `canary_owner_${suffix}`, migrator = `canary_migrator_${suffix}`
+  const role = `canary_api_${suffix}`, rotated = `${role}_new`
+  const scope = createHash('sha256').update(database).digest('hex').slice(0,40)
   const admin = new pg.Client({ connectionString: process.env.DATA_API_TEST_DATABASE_URL })
   await admin.connect()
-  await admin.query(`CREATE DATABASE "${database}"`)
   const directory = await mkdtemp(join(tmpdir(), 'data-api-staging-migration-'))
+  let owner, login
   t.after(async () => {
+    await login?.end(); await owner?.end()
     await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`)
-    await admin.end()
-    await rm(directory, { recursive: true, force: true })
+    for (const name of [rotated, role, migrator, schemaOwner]) await admin.query(`DROP ROLE IF EXISTS "${name}"`)
+    await admin.end(); await rm(directory, { recursive: true, force: true })
   })
+  await admin.query(`CREATE ROLE "${schemaOwner}" NOLOGIN NOBYPASSRLS;
+    CREATE ROLE "${migrator}" LOGIN NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD 'test-only';
+    GRANT "${schemaOwner}" TO "${migrator}";
+    ALTER ROLE "${migrator}" SET role TO "${schemaOwner}";
+    COMMENT ON ROLE "${migrator}" IS 'gregale:credential:v1:${scope}:migration';
+    CREATE ROLE "${role}" LOGIN NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD 'test-only';
+    ALTER ROLE "${role}" SET statement_timeout=15000;
+    COMMENT ON ROLE "${role}" IS 'gregale:credential:v1:${scope}:data_api'`)
+  await admin.query(`CREATE DATABASE "${database}"`)
   const url = new URL(process.env.DATA_API_TEST_DATABASE_URL); url.pathname = `/${database}`
+  owner = new pg.Client({ connectionString: url.toString() }); await owner.connect()
+  await owner.query(`REVOKE ALL ON DATABASE "${database}" FROM PUBLIC;
+    GRANT CONNECT ON DATABASE "${database}" TO "${migrator}", "${role}";
+    GRANT CONNECT, CREATE ON DATABASE "${database}" TO "${schemaOwner}";
+    REVOKE ALL ON SCHEMA public FROM PUBLIC;
+    SET ROLE "${schemaOwner}"; CREATE SCHEMA api;
+    GRANT USAGE ON SCHEMA api TO "${role}";
+    ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO "${role}";
+    ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT SELECT,USAGE ON SEQUENCES TO "${role}"`)
+  const migrationURL = new URL(url); migrationURL.username = migrator; migrationURL.password = 'test-only'
+  const loginURL = new URL(url); loginURL.username = role; loginURL.password = 'test-only'
   await cp(new URL('./staging/migrate.mjs', import.meta.url), join(directory, 'migrate.mjs'))
-  // Install the same locked dependencies used by the deployed migration app.
+  for (const file of ['release.mjs', 'rpc-permissions.mjs']) await cp(join(repoRoot, 'cmd/gregale/templates/data-api-starter/migrations', file), join(directory, file))
+  await mkdir(join(directory, 'rpc-runtime'))
+  for (const file of ['types.mjs', 'config.mjs']) await cp(new URL(file, runtime), join(directory, 'rpc-runtime', file))
   for (const file of ['package.json', 'package-lock.json']) await cp(new URL(file, runtime), join(directory, file))
   await command('npm', ['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: directory, env: process.env })
-  const migrate = () => command(process.execPath, [join(directory, 'migrate.mjs')], { cwd: directory, env: { ...process.env, MIGRATION_DATABASE_URL: url.toString() } })
-  await writeFile(join(directory, 'version'), '1')
-  await migrate(); await migrate()
-  const before = generate(await inspect(url.toString(), ['api']))
-  await stagingClient(t, before)
-  assert.doesNotMatch(before, /"priority"/)
-  await writeFile(join(directory, 'version'), '2')
-  await migrate(); await migrate()
-  const after = generate(await inspect(url.toString(), ['api']))
-  assert.match(after, /"priority"\?: number/)
-  assert.notEqual(before, after)
-  await stagingClient(t, after)
+  const migrate = () => command(process.execPath, [join(directory, 'migrate.mjs')], { cwd: directory, env: { ...process.env, MIGRATION_DATABASE_URL: migrationURL.toString() } })
+  const release = () => command(process.execPath, [join(directory, 'release.mjs')], { cwd: directory, env: { ...process.env, MIGRATION_DATABASE_URL: migrationURL.toString() } })
+  await writeFile(join(directory, 'version'), '1'); await migrate(); await migrate()
+  const ungranted = generate(await inspect(loginURL.toString(), ['api']))
+  assert.doesNotMatch(ungranted, /"create_note"/)
+  await release(); await release()
+  const before = generate(await inspect(loginURL.toString(), ['api']))
+  assert.match(before, /"create_note"/); assert.doesNotMatch(before, /"priority"/)
+  await stagingClient(t, before, true)
+  login = new pg.Client({ connectionString: loginURL.toString() }); await login.connect()
+  await login.query("SELECT set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: 'alice' })])
+  const created = (await login.query("SELECT * FROM api.create_note('atomic')")).rows[0]
+  assert.equal(created.subject, 'alice')
+  await login.query("SELECT set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: 'bob' })])
+  assert.equal((await login.query('SELECT * FROM api.notes WHERE id=$1',[created.id])).rowCount, 0)
+  assert.equal((await login.query("SELECT * FROM api.create_note('private')")).rows[0].subject, 'bob')
+  await login.end(); login = undefined
+  await writeFile(join(directory, 'version'), '2'); await release(); await release()
+  const after = generate(await inspect(loginURL.toString(), ['api']))
+  assert.match(after, /"priority"\?: number/); assert.notEqual(before, after)
+  await stagingClient(t, after, true)
+  await admin.query(`CREATE ROLE "${rotated}" LOGIN NOINHERIT NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD 'test-only';
+    ALTER ROLE "${rotated}" SET statement_timeout=15000;
+    COMMENT ON ROLE "${rotated}" IS 'gregale:credential:v1:${scope}:data_api';
+    GRANT CONNECT ON DATABASE "${database}" TO "${rotated}"; ALTER ROLE "${role}" NOLOGIN`)
+  await owner.query(`GRANT USAGE ON SCHEMA api TO "${rotated}";
+    GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA api TO "${rotated}";
+    GRANT SELECT,USAGE ON ALL SEQUENCES IN SCHEMA api TO "${rotated}";
+    ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO "${rotated}";
+    ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT SELECT,USAGE ON SEQUENCES TO "${rotated}"`)
+  await release()
+  loginURL.username = rotated
+  assert.equal(generate(await inspect(loginURL.toString(), ['api'])), after)
+  login = new pg.Client({ connectionString: loginURL.toString() }); await login.connect()
+  await login.query("SELECT set_config('request.jwt.claims',$1,false)", [JSON.stringify({ sub: 'alice' })])
+  assert.equal((await login.query('SELECT priority FROM api.notes WHERE id=$1',[created.id])).rows[0].priority, 0)
+  assert.equal((await login.query("SELECT * FROM api.create_note('rotated')")).rows[0].subject, 'alice')
 })

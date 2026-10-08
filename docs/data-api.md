@@ -861,3 +861,12 @@ Body parsing, counts, errors, retry behavior and generated type inference are
 unchanged. Callback exceptions and rejected promises are isolated; asynchronous
 callbacks are not awaited. Keep synchronous callbacks short and handle telemetry
 retention and delivery in the application.
+
+The [staging canary](../tests/data-api/staging/README.md#complete-workflow-coverage)
+now checks the integrated development loop: owner-managed RPC grants, three sync
+runs (initial setup, schema change and credential replacement), serving/exported
+fingerprint agreement, typed CRUD/RPC subject isolation, and SDK IDs matching
+runtime logs. Its evidence contains identifiers and verification results rather
+than raw logs or credentials. The local harness tests include a simulated full
+journey and failure cleanup; a live qualified staging target is still required
+before this can provide release evidence.
