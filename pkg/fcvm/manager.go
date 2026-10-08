@@ -549,6 +549,10 @@ type Instance struct {
 	// StartupDeadlineS is the per-app readiness budget from the lifecycle
 	// contract. 0 preserves the vmmd default for legacy callers.
 	StartupDeadlineS int
+	// ExecutionMode is the declared ADR-137 lifecycle mode from WakeRequest.
+	// Worker and job instances have no HTTP contract, so the plan-default
+	// /healthz liveness probe does not apply to them.
+	ExecutionMode string
 
 	// WorkloadNames (issue #463 / ADR-069 / PR-B) is the set of
 	// workload names whose cgroup child scopes vmmd wrote under
@@ -2199,6 +2203,19 @@ func (m *Manager) WithLivenessProbes(reg *LivenessRegistry, defaultCfg LivenessP
 // returns its cancel func for the registry. We don't
 // construct the loop here because the loop body binds cmd-level
 // types (slog, vsock, wire envelope).
+// instanceHasNoHTTPContract reports whether the instance is a declared
+// worker/job (ADR-137), or a legacy undeclared app the guest characterized
+// as a worker, so no port answers the plan-default HTTP liveness probe.
+func instanceHasNoHTTPContract(inst *Instance) bool {
+	switch inst.ExecutionMode {
+	case api.ExecutionModeWorker, api.ExecutionModeJob:
+		return true
+	case "":
+		return inst.Characterization.ObservedClass == api.ExecutionModeWorker
+	}
+	return false
+}
+
 func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot int, override json.RawMessage) {
 	if m.livenessRegistry == nil {
 		return
@@ -2251,15 +2268,24 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 			}
 		}
 	}
+	noHTTPContract := false
 	m.mu.Lock()
 	if inst := m.live[instance]; inst != nil {
 		cfg.ImageHealthcheckRequired = inst.ImageHealthcheckRequired
+		noHTTPContract = instanceHasNoHTTPContract(inst)
 	}
 	m.mu.Unlock()
 	// A declared image command is its liveness contract. Do not invent the
 	// plan-default /healthz endpoint for that image; explicit HTTP/gRPC
 	// liveness overrides remain additional independent probes.
 	if cfg.ImageHealthcheckRequired && len(override) == 0 {
+		cfg.PeriodSeconds = 0
+	}
+	// A worker never listens, so the plan-default /healthz probe fails three
+	// times and destroys a healthy worker ~10 s after every boot (H8-16).
+	// Process exit still reports through ProcessExited, and an explicit
+	// override or image HEALTHCHECK remains the worker's liveness contract.
+	if noHTTPContract && len(override) == 0 {
 		cfg.PeriodSeconds = 0
 	}
 	if cfg.PeriodSeconds <= 0 && !cfg.ImageHealthcheckRequired {
@@ -4587,6 +4613,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
 		StartupDeadlineS:         req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
+		ExecutionMode:    req.ExecutionMode,
 		Characterization: report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
