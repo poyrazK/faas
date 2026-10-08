@@ -8403,6 +8403,42 @@ func (q *Queries) DecrementInstanceTailCount(ctx context.Context, db DBTX, arg D
 	return err
 }
 
+const deferNotificationClaim = `-- name: DeferNotificationClaim :execrows
+WITH owned AS MATERIALIZED (
+    SELECT id, lease_until FROM notification_outbox
+    WHERE id = $3::bigint AND state = 'processing'
+      AND claimed_by = $4::text AND attempts > 0
+    FOR UPDATE
+)
+UPDATE notification_outbox o
+SET state = 'pending', attempts = o.attempts - 1,
+    available_at = clock_timestamp() + $1::bigint * interval '1 millisecond',
+    claimed_by = NULL, claimed_at = NULL, lease_until = NULL,
+    last_error = $2::text
+FROM owned
+WHERE o.id = owned.id AND owned.lease_until > clock_timestamp()
+`
+
+type DeferNotificationClaimParams struct {
+	DelayMilliseconds int64
+	Message           string
+	ID                int64
+	ClaimToken        string
+}
+
+func (q *Queries) DeferNotificationClaim(ctx context.Context, db DBTX, arg DeferNotificationClaimParams) (int64, error) {
+	result, err := db.Exec(ctx, deferNotificationClaim,
+		arg.DelayMilliseconds,
+		arg.Message,
+		arg.ID,
+		arg.ClaimToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deferRouteMonitor = `-- name: DeferRouteMonitor :exec
 UPDATE route_monitors SET next_check_at=$1::timestamptz
 WHERE app_id=$2::text::uuid AND account_id=$3::text::uuid
@@ -16407,6 +16443,27 @@ func (q *Queries) HasManagedPostgresReconciliationIdentity(ctx context.Context, 
 	var claimed pgtype.Bool
 	err := row.Scan(&claimed)
 	return claimed, err
+}
+
+const hasNewerDeploymentRevision = `-- name: HasNewerDeploymentRevision :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments
+    WHERE app_id = $1::uuid AND scope = $2::text
+      AND revision > $3::bigint
+)
+`
+
+type HasNewerDeploymentRevisionParams struct {
+	AppID    pgtype.UUID
+	Scope    string
+	Revision int64
+}
+
+func (q *Queries) HasNewerDeploymentRevision(ctx context.Context, db DBTX, arg HasNewerDeploymentRevisionParams) (bool, error) {
+	row := db.QueryRow(ctx, hasNewerDeploymentRevision, arg.AppID, arg.Scope, arg.Revision)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const hasPendingEnvironmentGitOpsEffects = `-- name: HasPendingEnvironmentGitOpsEffects :one
@@ -60937,6 +60994,32 @@ func (q *Queries) SetDeploymentFailed(ctx context.Context, db DBTX, arg SetDeplo
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const setDeploymentRuntimeProfile = `-- name: SetDeploymentRuntimeProfile :execrows
+UPDATE deployments
+SET inferred_profile = ($1::jsonb - 'image_command' - 'image_healthcheck') ||
+    CASE WHEN inferred_profile ? 'image_command'
+         THEN jsonb_build_object('image_command', inferred_profile -> 'image_command')
+         ELSE '{}'::jsonb END ||
+    CASE WHEN inferred_profile ? 'image_healthcheck'
+         THEN jsonb_build_object('image_healthcheck', inferred_profile -> 'image_healthcheck')
+         ELSE '{}'::jsonb END
+WHERE id = $2::uuid AND kind = 'image'
+  AND status IN ('pending', 'building', 'imaging')
+`
+
+type SetDeploymentRuntimeProfileParams struct {
+	Profile      []byte
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) SetDeploymentRuntimeProfile(ctx context.Context, db DBTX, arg SetDeploymentRuntimeProfileParams) (int64, error) {
+	result, err := db.Exec(ctx, setDeploymentRuntimeProfile, arg.Profile, arg.DeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setDeploymentSecretReloadSignal = `-- name: SetDeploymentSecretReloadSignal :execrows

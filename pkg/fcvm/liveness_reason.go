@@ -1,5 +1,10 @@
 package fcvm
 
+// LivenessReasonImageHealthcheck is confirmed command failure after the
+// effective image's consecutive retry threshold. It uses ordinary restart
+// accounting and invalidates snapshots through scheduler-owned recovery.
+const LivenessReasonImageHealthcheck = "image_healthcheck_unhealthy"
+
 // LivenessReasonInfrastructure is emitted when the host has evidence that a
 // liveness probe failed because the request/bridge path was under pressure,
 // rather than because the guest reported an unhealthy workload. The schedd

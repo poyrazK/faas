@@ -26,6 +26,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"alert_historical_rollback_claims":        CloneSchemaOperational,
 		"deployment_recovery_lineage":             CloneSchemaOperational,
 		"deployment_rollback_operations":          CloneSchemaOperational,
+		"deployment_dependency_gates":             CloneSchemaOperational,
 		"app_environment_secret_refs":             CloneSchemaConfiguration,
 		"app_environment_secret_ref_suppressions": CloneSchemaConfiguration,
 		"app_environment_workload_intents":        CloneSchemaConfiguration,

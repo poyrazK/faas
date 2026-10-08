@@ -213,6 +213,7 @@ export type { CommitRouting } from './CommitRouting.js';
 export type { CommitSourceResponse } from './CommitSourceResponse.js';
 export type { CompleteObjectMultipartUploadRequest } from './CompleteObjectMultipartUploadRequest.js';
 export type { CompleteWorkflowCallbackResponse } from './CompleteWorkflowCallbackResponse.js';
+export type { ComposeHealthcheck } from './ComposeHealthcheck.js';
 export type { ConsumeInvoiceResponse } from './ConsumeInvoiceResponse.js';
 export type { ConsumedCreditRow } from './ConsumedCreditRow.js';
 export type { ConsumerKeyListResponse } from './ConsumerKeyListResponse.js';

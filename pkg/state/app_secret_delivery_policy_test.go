@@ -5,9 +5,15 @@ package state
 import "testing"
 
 func TestManagedPostgresSecretDeliveryPolicy(t *testing.T) {
+	for _, access := range []string{"read_write", "data_api"} {
+		t.Run(access, func(t *testing.T) { testManagedPostgresSecretDeliveryPolicy(t, access) })
+	}
+}
+
+func testManagedPostgresSecretDeliveryPolicy(t *testing.T, access string) {
 	rows := []AppSecret{
 		{Key: "TOKEN"},
-		{Key: "DATABASE_URL", ManagedPostgresBindingID: "runtime", ManagedPostgresAccess: "read_write"},
+		{Key: "DATABASE_URL", ManagedPostgresBindingID: "runtime", ManagedPostgresAccess: access},
 		// Use an arbitrary key: access comes from the binding, not its name.
 		{Key: "SCHEMA_DSN", ManagedPostgresBindingID: "ddl", ManagedPostgresAccess: "migration"},
 	}

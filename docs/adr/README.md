@@ -56,11 +56,21 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
 | 635 | [Authenticated tenant workflow continuations](635-tenant-workflow-continuations.md) | accepted | Tenant-authenticated event and callback continuation routes with atomic live-link checks |
 | 636 | [Tenant-scoped scheduled workflow starts](636-tenant-scheduled-workflow-starts.md) | accepted | Per-tenant schedule cursors and atomic tenant-bound run admission |
 | 637 | [Tenant-configurable workflow schedules](637-tenant-configurable-workflow-schedules.md) | accepted | Explicitly opt in to tenant-owned cadence, overlap, and enablement settings |
+| 680 | [Restored processes reseed their userspace random generators before serving](680-restore-userspace-rng-reseed.md) | accepted | guest-init reseed barrier with Node (N-API RAND_poll addon) and Python preloads; fails closed to cold boot; GHSA-24j2-p895-mwc9 |
 | 644 | [Verified MCP promotion and resource policy](644-mcp-verified-promotion-and-resource-policy.md) | accepted | Verify zero-traffic candidates, gate caller catalogs, and reuse gateway JWT resource authorization |
+| 678 | [Compose prebuilt image workloads](678-compose-prebuilt-image-workloads.md) | accepted | Deploy stateless image services through imaged with immutable resolution and existing project dependency policies |
+| 679 | [Image-published deployment trigger](679-image-published-deployment-trigger.md) | accepted | CI publishes an immutable image, then hands it to existing deployment admission with durable workload/scope/digest deduplication |
+| 686 | [Freeze Compose commands per image deployment](686-frozen-project-image-commands.md) | accepted | Capture Compose CMD in the deployment profile and preserve it through app edits, image processing, retries, and runtime port updates |
+| 681 | [Image deployment promotion ordering](681-image-deployment-promotion-ordering.md) | accepted | Atomically reject older same-scope image candidates at cutover and recheck recorded GitHub branches while preserving explicit rollback |
+| 682 | [Compose image healthchecks](682-compose-image-healthchecks.md) | accepted | Validate and freeze partial Compose healthcheck overrides for prebuilt image workloads, preserving artifact inheritance and existing guest execution |
+| 683 | [Fresh image healthchecks gate readiness](683-image-healthcheck-readiness.md) | implemented; native qualification pending | Require fresh command proof before serving boot, restore, warm resume, or migration |
+| 684 | [Image healthchecks drive runtime recovery](684-image-healthcheck-runtime-recovery.md) | implemented; native qualification pending | Recover serving images after declared command failures using existing scheduler ownership and restart limits |
+| 685 | [Compose dependency readiness gates](685-compose-dependency-release-gates.md) | implemented | Hold dependent project releases against exact dependency deployments with durable waits and atomic promotion checks |
 | 622 | [Event protection for new object versions](622-event-protection-for-new-object-versions.md) | accepted | Captured event defaults, enrolled creation headers and strict exact-version policy proof |
 | 621 | [Durable object event holds](621-durable-object-event-holds.md) | accepted | Exact-version variable retention, immutable native policy snapshots and single-dispatch release recovery |
 | 620 | [Protection-aware object lifecycle deletion](620-protection-aware-object-lifecycle.md) | accepted | Fresh native retention/hold checks, bounded scan deferrals and exact absence proof before settlement |

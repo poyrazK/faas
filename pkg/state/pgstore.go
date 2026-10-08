@@ -34,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -7115,6 +7116,9 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 			return Deployment{}, 0, mapErr(err)
 		}
 	}
+	if err := captureDeploymentDependenciesTx(ctx, tx, created); err != nil {
+		return Deployment{}, 0, err
+	}
 	var outboxID int64
 	if activity != nil {
 		deploymentID, err := uuid.Parse(created.ID)
@@ -9299,10 +9303,35 @@ func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
 }
 
 func (s *PgStore) MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id string) error {
+	return s.MarkDeploymentLiveIfLatest(ctx, id)
+}
+
+func (s *PgStore) MarkDeploymentLiveIfLatest(ctx context.Context, id string) error {
 	return s.markDeploymentLive(ctx, id, true)
 }
 
-func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDriven bool) error {
+// A dependency or admission writer may commit after the traffic snapshot
+// starts. A serialization failure has aborted the complete attempt; its
+// deferred rollback releases every row/session lock and pool connection.
+// Retry only that failure with a fresh snapshot and the same original guards.
+func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest bool) error {
+	for {
+		err := s.markDeploymentLiveOnce(ctx, id, fenceLatest)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.SerializationFailure {
+			return err
+		}
+		timer := time.NewTimer(api.TrafficPolicyMutationLockRetry)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLatest bool) error {
 	tx, err := s.beginDeploymentTrafficMutation(ctx, id)
 	if err != nil {
 		return fmt.Errorf("state: mark deployment live begin: %w", err)
@@ -9346,6 +9375,9 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 		return err
 	}
 	if r, readErr := s.CheckedRollbackForTarget(ctx, id); readErr == nil && r.Status == "preparing" {
+		if _, gateErr := checkDeploymentDependenciesTx(ctx, tx, dep, time.Now().UTC(), false); gateErr != nil {
+			return gateErr
+		}
 		if err := s.markCheckedRollbackReadyTx(ctx, tx, dep, r); err != nil {
 			return err
 		}
@@ -9366,8 +9398,8 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 	if err := requireDeploymentLayerArtifactsTx(ctx, tx, dep.ID); err != nil {
 		return err
 	}
-	if fenceGitDriven {
-		if (dep.Kind != DeploymentKindGitHub && dep.Kind != DeploymentKindPreview) || dep.Revision <= 0 {
+	if fenceLatest {
+		if !dep.Kind.RequiresLatestRevision() || dep.Revision <= 0 {
 			return ErrInvalidStateTransition
 		}
 		if dep.Status == DeploySuperseded {
@@ -9377,22 +9409,25 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 			return ErrInvalidStateTransition
 		}
 		if dep.Status != DeployLive {
-			var newer bool
-			if err := tx.QueryRow(ctx, `select exists (
-				select 1 from deployments where app_id = $1 and scope = $2 and revision > $3
-			)`, dep.AppID, normalizedDeploymentScope(dep.Scope), dep.Revision).Scan(&newer); err != nil {
+			newer, err := sqlc.New().HasNewerDeploymentRevision(ctx, tx, sqlc.HasNewerDeploymentRevisionParams{
+				AppID: mustPgUUID(dep.AppID), Scope: normalizedDeploymentScope(dep.Scope), Revision: int64(dep.Revision),
+			})
+			if err != nil {
 				return fmt.Errorf("state: check newer deployment revision: %w", err)
 			}
 			if newer {
 				if _, err := tx.Exec(ctx, `update deployments set status = 'superseded', traffic_percent = 0 where id = $1`, id); err != nil {
-					return fmt.Errorf("state: supersede stale Git-driven deployment: %w", err)
+					return fmt.Errorf("state: supersede stale deployment: %w", err)
 				}
 				if err := tx.Commit(ctx); err != nil {
-					return fmt.Errorf("state: commit stale Git-driven deployment: %w", err)
+					return fmt.Errorf("state: commit stale deployment: %w", err)
 				}
 				return ErrDeploymentSuperseded
 			}
 		}
+	}
+	if _, gateErr := checkDeploymentDependenciesTx(ctx, tx, dep, time.Now().UTC(), false); gateErr != nil {
+		return gateErr
 	}
 	if _, err := tx.Exec(ctx, `
 		update crons
@@ -10505,6 +10540,11 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	if err != nil {
 		return Deployment{}, err
 	}
+	if err := sqlc.New().RetryDeploymentDependencyGate(ctx, tx, sqlc.RetryDeploymentDependencyGateParams{
+		DeploymentID: mustPgUUID(created.ID), SourceDeploymentID: mustPgUUID(failedID),
+	}); err != nil {
+		return Deployment{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, err
 	}
@@ -10805,14 +10845,21 @@ func (s *PgStore) SetDeploymentRuntimeProfile(ctx context.Context, id string, pr
 	if !json.Valid(profile) {
 		return errors.New("state: deployment runtime profile must be valid JSON")
 	}
-	tag, err := s.pool.Exec(ctx,
-		`update deployments set inferred_profile = $2::jsonb
-		  where id = $1 and kind = 'image'
-		    and status in ('pending', 'building', 'imaging')`, id, profile)
+	updated, err := frameworkprofile.PreserveImageRuntime(nil, profile)
 	if err != nil {
-		return err
+		return fmt.Errorf("state: update image runtime profile: %w", err)
 	}
-	if tag.RowsAffected() == 1 {
+	var deploymentID pgtype.UUID
+	if err := deploymentID.Scan(id); err != nil {
+		return fmt.Errorf("state: image runtime profile deployment id: %w", err)
+	}
+	rows, err := sqlc.New().SetDeploymentRuntimeProfile(ctx, s.pool, sqlc.SetDeploymentRuntimeProfileParams{
+		DeploymentID: deploymentID, Profile: updated,
+	})
+	if err != nil {
+		return fmt.Errorf("state: persist image runtime profile: %w", err)
+	}
+	if rows == 1 {
 		return nil
 	}
 	var status DeploymentStatus

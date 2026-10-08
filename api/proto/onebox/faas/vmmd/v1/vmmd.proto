@@ -586,6 +586,8 @@ message AppSpec {
   // A separate bool distinguishes an enabled probe with the default
   // empty service (overall server health) from the disabled state.
   bool healthcheck_grpc = 25;
+  // ADR-683: require a fresh command check from this boot/restore.
+  bool image_healthcheck_required = 30;
   // healthcheck_grpc_service is the optional service name sent in the
   // health.v1 Check request; empty checks overall server health.
   string healthcheck_grpc_service = 26;
@@ -915,6 +917,10 @@ message WakeResponse {
   string restore_fallback_reason = 14;
   // ADR-423: the serving handler understands source_key alias delivery.
   bool supports_secret_aliases = 15;
+  // A fresh command check passed in this serving boot, never in a paused reservation.
+  bool image_healthcheck_verified = 16;
+  bool supports_image_healthcheck = 17;
+  bool supports_image_healthcheck_monitoring = 18;
 }
 
 // WakeMethod is whether a wake was a snapshot restore or a cold boot.
@@ -1415,6 +1421,8 @@ message PingResponse {
   google.protobuf.Timestamp server_time = 2;
   // Callers require this before sending source_key aliases to this node.
   bool supports_secret_aliases = 3;
+  bool supports_image_healthcheck = 4;
+  bool supports_image_healthcheck_monitoring = 5;
 }
 
 // ForwardHTTPRequest and ForwardHTTPResponse were removed in PR-D
@@ -2011,6 +2019,8 @@ message AdoptMigratedInstanceResponse {
   WakeMethod method = 4;
   string wake_id = 5;
   bool supports_secret_aliases = 6;
+  bool image_healthcheck_verified = 7;
+  bool supports_image_healthcheck_monitoring = 8;
 }
 
 // AcknowledgeMigrationRequest (Tier A5 / ADR-065) is the input
@@ -2372,11 +2382,14 @@ message PrivateNetworkFirewallRule {
 // ResumeWarmInstanceRequest identifies a paused warm-pool VM by instance id.
 message ResumeWarmInstanceRequest {
   string instance = 1;
+  bool image_healthcheck_required = 2;
 }
 
 // ResumeWarmInstanceResponse acknowledges the in-place resume.
 message ResumeWarmInstanceResponse {
   string instance = 1;
+  bool image_healthcheck_verified = 2;
+  bool supports_image_healthcheck_monitoring = 3;
 }
 
 // RestoreAppTaskRequest is the command-free preparation envelope for a

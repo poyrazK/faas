@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/devbridge"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/openapiimport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
@@ -140,6 +141,7 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	trafficAppsSuffix           string
+	deploymentDependencyGates   map[string]DeploymentDependencyGate
 	invocationAttemptHistory    map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID     int64
 	checkedRollbacks            map[string]api.RollbackOperation
@@ -1151,6 +1153,7 @@ type builderVMCleanupRow struct {
 func NewMemStore(options ...StoreOption) *MemStore {
 	m := &MemStore{
 		trafficAppsSuffix:           configuredTrafficAppsSuffix(options),
+		deploymentDependencyGates:   map[string]DeploymentDependencyGate{},
 		qualificationExecutions:     map[string]EnvironmentQualificationExecutionStatus{},
 		financialRetainedFrom:       time.Now().UTC(),
 		revisionPins:                map[string]time.Time{},
@@ -7037,6 +7040,10 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
 		return Deployment{}, 0, err
 	}
+	dependencyGate, err := m.captureDeploymentDependenciesLocked(app, d)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
 	if d.ID != "" {
 		if _, exists := m.deployments[d.ID]; exists {
 			return Deployment{}, 0, ErrConflict
@@ -7187,6 +7194,9 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	m.recordRecoveryPredecessorLocked(d)
 	for id, row := range proposed {
 		m.putDeploymentLocked(id, row)
+	}
+	if dependencyGate != nil {
+		m.deploymentDependencyGates[d.ID] = *dependencyGate
 	}
 	if len(cloneInputs) > 0 {
 		m.attachCloneDeploymentLocked(*cloneInputs[0], cloneRecord, d)
@@ -8404,6 +8414,11 @@ func (m *MemStore) UpdateDeploymentStatus(ctx context.Context, id string, status
 	if d.Status == DeployCancelled && status != DeployCancelled {
 		return ErrInvalidStateTransition
 	}
+	if status == DeployLive {
+		if _, err := m.checkDeploymentDependenciesLocked(id, time.Now().UTC(), false); err != nil {
+			return err
+		}
+	}
 	proposal := d
 	proposal.Status = status
 	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
@@ -8537,10 +8552,14 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 }
 
 func (m *MemStore) MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id string) error {
+	return m.MarkDeploymentLiveIfLatest(ctx, id)
+}
+
+func (m *MemStore) MarkDeploymentLiveIfLatest(ctx context.Context, id string) error {
 	return m.markDeploymentLive(ctx, id, true)
 }
 
-func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDriven bool) (err error) {
+func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLatest bool) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
@@ -8592,8 +8611,8 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {
 		return err
 	}
-	if fenceGitDriven {
-		if (d.Kind != DeploymentKindGitHub && d.Kind != DeploymentKindPreview) || d.Revision <= 0 {
+	if fenceLatest {
+		if !d.Kind.RequiresLatestRevision() || d.Revision <= 0 {
 			return ErrInvalidStateTransition
 		}
 		if d.Status == DeploySuperseded {
@@ -8620,6 +8639,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 		return err
 	}
 
+	if _, gateErr := m.checkDeploymentDependenciesLocked(id, time.Now().UTC(), false); gateErr != nil {
+		return gateErr
+	}
 	// Build the post-transition rows locally first. The callback can fail
 	// (for example, if the canonical spec cannot be loaded); keeping all
 	// mutations local until it succeeds gives MemStore the same atomic
@@ -9249,6 +9271,9 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	// builds a fresh struct and never copies Revision, so this is always
 	// a fresh assignment; mirrors the subselect in PgStore's retry INSERT.
 	newDep.Revision = m.nextDeploymentRevisionLocked(newDep.AppID)
+	if gate, exists := m.deploymentDependencyGates[failedID]; exists {
+		m.deploymentDependencyGates[newDep.ID] = cloneDeploymentDependencyGate(gate)
+	}
 	m.putDeploymentLocked(newDep.ID, newDep)
 	return newDep, nil
 }
@@ -9361,6 +9386,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	if targetID == "" {
 		// No rollback target — succeed as a no-op (mirrors PG path).
 		return "", nil
+	}
+	if _, err := m.checkDeploymentDependenciesLocked(targetID, time.Now().UTC(), false); err != nil {
+		return "", err
 	}
 	if err := m.rejectUncheckedBindingReleaseLocked(cur.AppID, cur.Scope); err != nil {
 		return "", err
@@ -9536,7 +9564,11 @@ func (m *MemStore) SetDeploymentRuntimeProfile(_ context.Context, id string, pro
 		(d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging) {
 		return ErrInvalidStateTransition
 	}
-	d.InferredProfile = append(json.RawMessage(nil), profile...)
+	updated, err := frameworkprofile.PreserveImageRuntime(d.InferredProfile, profile)
+	if err != nil {
+		return fmt.Errorf("state: update image runtime profile: %w", err)
+	}
+	d.InferredProfile = updated
 	m.putDeploymentLocked(id, d)
 	return nil
 }
@@ -19930,7 +19962,7 @@ func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret)
 		secret.ManagedCredentialRef == "" || secret.ManagedCredentialGeneration < 1 {
 		return ErrInvalidArgument
 	}
-	if secret.ManagedPostgresAccess != "read_write" && secret.ManagedPostgresAccess != "read_only" && secret.ManagedPostgresAccess != "migration" {
+	if secret.ManagedPostgresAccess != "read_write" && secret.ManagedPostgresAccess != "read_only" && secret.ManagedPostgresAccess != "migration" && secret.ManagedPostgresAccess != "data_api" {
 		return ErrInvalidArgument
 	}
 	m.mu.Lock()

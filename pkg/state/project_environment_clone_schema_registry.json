@@ -1946,6 +1946,18 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_dependency_gates",
+    "columns": [
+      "blocker",
+      "deadline_at",
+      "deployment_id",
+      "pins",
+      "started_at",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_image_preparations",
     "columns": [
       "claim_token",

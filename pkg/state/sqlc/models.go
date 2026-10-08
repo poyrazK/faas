@@ -1826,6 +1826,15 @@ type DeploymentCodePinDeadline struct {
 	ExpiresAt    interface{}
 }
 
+type DeploymentDependencyGate struct {
+	DeploymentID pgtype.UUID
+	Pins         []byte
+	StartedAt    pgtype.Timestamptz
+	DeadlineAt   pgtype.Timestamptz
+	Status       string
+	Blocker      string
+}
+
 type DeploymentImagePreparation struct {
 	DeploymentID pgtype.UUID
 	NodeName     string

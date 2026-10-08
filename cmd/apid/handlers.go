@@ -613,9 +613,38 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	s.createImageDeployment(w, r, acct, app, limits, req, false)
+}
+
+// createImageDeployment keeps published-image triggers on normal deployment
+// admission and notification behavior. Only triggers assign a durable identity.
+func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, limits api.Limits, req api.CreateDeploymentRequest, published bool) {
 	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, &req); p != nil {
 		api.WriteProblem(w, p)
 		return
+	}
+	var publishedPrevious state.Deployment
+	if published {
+		image, p := validatePublishedImage(app, req.Image)
+		if p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+		req.Image = image
+		if req.Scope != "" {
+			if p := api.ValidateScope(req.Scope); p != nil {
+				api.WriteProblem(w, p)
+				return
+			}
+		}
+		if s.replyPublishedImageReplay(w, r, app, req) {
+			return
+		}
+		publishedPrevious, p = s.preparePublishedImage(r.Context(), app, &req)
+		if p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
 	}
 	if len(req.Workflows) > 0 {
 		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan); p != nil {
@@ -691,12 +720,20 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, sErr)
 		return
 	}
+	if published {
+		dep.ID = publishedImageDeploymentID(app.ID, dep.Scope, req.Image)
+		dep.ReleaseCommand = append([]string(nil), publishedPrevious.ReleaseCommand...)
+		dep.ReleaseCommandShell = publishedPrevious.ReleaseCommandShell
+	}
 	if !s.admitCanaryDeployment(w, r, dep) {
 		return
 	}
 	// Capture the current predecessor for audit. It remains live until the
 	// replacement passes readiness and MarkDeploymentLive cuts traffic over.
 	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
+	if published {
+		prev = publishedPrevious
+	}
 	// Issue #606 / SAFE-RELEASES-E.1: server-side actor
 	// attribution. Stamped AFTER buildDeploymentForInsert so the
 	// pure-struct helper stays free of HTTP context (the helper
@@ -727,6 +764,9 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		d, err = s.store.CreateDeployment(r.Context(), dep)
 	}
 	if err != nil {
+		if published && errors.Is(err, state.ErrConflict) && s.replyPublishedImageReplay(w, r, app, req) {
+			return
+		}
 		// ADR-091 / PR-D: per-deployment scope collision. mapErr
 		// wraps state.ErrConflict with the constraint name —
 		// detect deployments_app_scope_live_uniq here and surface a

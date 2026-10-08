@@ -54,6 +54,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/healthcheckproto"
+
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -180,7 +182,7 @@ func listenLivenessHook(log *slog.Logger) error {
 // not back up the listener. Mirrors acceptResumeConns.
 func acceptLivenessConns(fd int, log *slog.Logger) {
 	for {
-		raw, _, err := unix.Accept(fd)
+		raw, _, err := unix.Accept4(fd, unix.SOCK_CLOEXEC)
 		if err != nil {
 			log.Debug("vsock liveness accept ended", "err", err)
 			return
@@ -220,6 +222,14 @@ func handleLivenessConn(f *os.File, log *slog.Logger) {
 		return
 	}
 	msgType := binary.BigEndian.Uint32(hdr[:4])
+	if msgType == healthcheckproto.Probe {
+		handleImageReadinessConn(f, binary.BigEndian.Uint32(hdr[4:]), log)
+		return
+	}
+	if msgType == healthcheckproto.ConfigProbe || msgType == healthcheckproto.CheckOnce {
+		handleImageHealthcheckMonitorConn(f, msgType, binary.BigEndian.Uint32(hdr[4:]), log)
+		return
+	}
 	if msgType != VsockLivenessMsgProbe {
 		log.Warn("vsock liveness unknown msg type", "type", msgType)
 		// Fail-closed: a wrong msg-type (the host-side message

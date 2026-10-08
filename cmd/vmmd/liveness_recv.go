@@ -41,6 +41,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -640,7 +641,24 @@ func startLivenessLoopHelper(parent context.Context, mgr *fcvm.Manager, log *slo
 	loopCtx, cancel := context.WithCancel(parent)
 	go func() {
 		defer mgr.FinishLivenessLoop(instance, loopCtx)
-		loop.run(loopCtx)
+		defer cancel()
+		var probes sync.WaitGroup
+		if cfg.PeriodSeconds > 0 {
+			probes.Go(func() { defer cancel(); loop.run(loopCtx) })
+		}
+		if cfg.ImageHealthcheckRequired {
+			probes.Go(func() {
+				defer cancel()
+				reason := fcvm.RunImageHealthcheckMonitor(loopCtx, socketPath, func(outcome string, _ int, elapsed time.Duration) {
+					mgr.ObserveLivenessProbe("image_"+outcome, elapsed.Seconds())
+				})
+				if reason != "" && loopCtx.Err() == nil {
+					log.Warn("image healthcheck triggered recovery", "instance", instance, "reason", reason)
+					mgr.ReportLivenessFailed(loopCtx, instance, reason)
+				}
+			})
+		}
+		probes.Wait()
 	}()
 	return cancel
 }

@@ -54,6 +54,15 @@ const (
 	// A configured application after_restore callback failed or timed out.
 	VsockResumeAckAfterRestore     = 13
 	VsockResumeAckBeforeCheckpoint = 14
+	// VsockResumeAckUserspaceReseed: a registered Node or Python process did
+	// not confirm its userspace RNG reseed (ADR-680). vmmd cold-boots instead
+	// of serving a process that may replay the snapshot's random values.
+	VsockResumeAckUserspaceReseed = 15
+	// VsockResumeCapUserspaceReseed follows an OK ack when the reseed
+	// barrier ran (ADR-680). vmmd refuses a restore without it, which is how
+	// snapshots taken by an older guest-init retire themselves. Hosts that
+	// read one byte ignore it.
+	VsockResumeCapUserspaceReseed = 0x01
 	// VsockResumeMaxEntropyBytes is the upper bound on the entropy payload
 	// the guest will accept. Mirrors pkg/fcvm/vmm.go::resumeHookEntropyBytes
 	// (256); we keep the host's constant in sync via the V6 metal test. If
@@ -215,6 +224,10 @@ func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, i
 // length + JSON body {"hostTimeUnixNano": N} + 1-byte ack. The length prefix
 // keeps the guest off EOF-watching — some AF_VSOCK proxies don't propagate
 // CloseWrite promptly through to the guest side.
+// runResumeHookFn is RunResumeHook behind a seam: the kernel reseed and clock
+// step need root, but the userspace reseed barrier after them does not.
+var runResumeHookFn = RunResumeHook
+
 func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
 	handleResumeConnWithExtension(f, log, func() {
 		for _, callback := range onResume {
@@ -301,7 +314,7 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		entropy = decoded
 	}
 
-	if err := RunResumeHook(req.HostTimeUnixNano, entropy); err != nil {
+	if err := runResumeHookFn(req.HostTimeUnixNano, entropy); err != nil {
 		// Keep ACK=1 as the generic NACK for malformed/unknown failures, but
 		// preserve the failing stage on the wire for vmmd diagnostics. Every
 		// non-zero value remains a fail-closed NACK to older hosts.
@@ -326,7 +339,17 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	// goroutine — the resume hook doesn't return a value, and the
 	// runner env can't be threaded back through the supervisor
 	// without a refactor that breaks the test fixture.
+	// ADR-680: the kernel is reseeded; now every registered workload process
+	// must reseed its userspace generators before the instance can serve.
+	if err := reseedRestoredWorkloads(); err != nil {
+		log.Error("vsock resume: userspace reseed failed", "err", err)
+		resumeDiag(fmt.Sprintf("resume: userspace reseed err=%v", err))
+		_, _ = f.Write([]byte{VsockResumeAckUserspaceReseed})
+		return
+	}
 	SetResumeTraceparent(req.Traceparent)
+	// The userspace reseed above runs first, so an application
+	// after_restore callback never sees the snapshot's random state.
 	if onCritical != nil {
 		if err := onCritical(); err != nil {
 			log.Warn("application after_restore hook failed", "err", err)
@@ -334,7 +357,11 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 			return
 		}
 	}
-	_, _ = f.Write([]byte{VsockResumeAckOK})
+	ackFrame := []byte{VsockResumeAckOK}
+	if restoreReseedContractHolds() {
+		ackFrame = append(ackFrame, VsockResumeCapUserspaceReseed)
+	}
+	_, _ = f.Write(ackFrame)
 	if warmBuilderEnabled.Load() {
 		signalWarmBuilderResume()
 	}

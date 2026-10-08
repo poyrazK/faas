@@ -73,7 +73,7 @@ func cmdPostgresAttach(args []string) int {
 	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise production)")
 	environmentKey := fs.String("env", "DATABASE_URL", "environment variable name")
 	fs.Var(newStringAlias(environmentKey), "environment-key", "environment variable name")
-	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration")
+	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -87,7 +87,7 @@ func cmdPostgresAttach(args []string) int {
 	*scope = resolvedScope
 	if fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" ||
 		api.ValidateScope(*scope) != nil || api.ValidateEnvKey(*environmentKey) != nil || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only|migration]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only|migration|data_api]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -386,12 +386,12 @@ func cmdPostgresBindingsCreate(args []string) int {
 	app := fs.String("app", "", "app ID (required)")
 	scope := fs.String("scope", "", "environment scope (required)")
 	environmentKey := fs.String("environment-key", "", "environment variable name (required)")
-	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration")
+	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 || *app == "" || *scope == "" || *environmentKey == "" || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --scope SCOPE --environment-key KEY [--access read_write|read_only|migration]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --scope SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -529,7 +529,7 @@ func postgresAvailabilityOK(value string) bool {
 }
 
 func postgresAccessOK(value string) bool {
-	return value == "read_write" || value == "read_only" || value == "migration"
+	return value == "read_write" || value == "read_only" || value == "migration" || value == "data_api"
 }
 
 func formatPostgresStorage(bytes int64) string {
