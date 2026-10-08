@@ -450,8 +450,8 @@ func TestFloorNamespaceFrozen(t *testing.T) {
 // explicitly parked (evicted_cold) app parked instead of re-admitting its
 // floor. The sampler must not keep billing a floor schedd does not hold; an
 // active app with the same policy still pays for its gap.
+// adr: 060
 func TestSampler_MinInstancesFloorSkipsParkedApp(t *testing.T) {
-	ctx := context.Background()
 	at := func() time.Time { return time.Date(2026, 10, 8, 8, 5, 0, 0, time.UTC) }
 	for _, tc := range []struct {
 		status    state.AppStatus
@@ -465,10 +465,10 @@ func TestSampler_MinInstancesFloorSkipsParkedApp(t *testing.T) {
 			appID, _ := seedFloorApp(t, store, api.PlanScale, 1024)
 			setPolicy(t, store, appID, state.ScalingPolicy{MinInstances: 3})
 			status := tc.status
-			if _, err := store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &status}); err != nil {
+			if _, err := store.UpdateApp(context.Background(), appID, state.UpdateAppParams{Status: &status}); err != nil {
 				t.Fatalf("UpdateApp status: %v", err)
 			}
-			rows, err := NewSampler(store, nil, at).SampleAndRoll(ctx)
+			rows, err := NewSampler(store, nil, at).SampleAndRoll(context.Background())
 			if err != nil {
 				t.Fatalf("SampleAndRoll: %v", err)
 			}
