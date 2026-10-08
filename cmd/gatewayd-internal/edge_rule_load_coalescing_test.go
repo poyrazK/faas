@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -243,5 +244,33 @@ func TestEdgeLoadBacksOffColdHostFailures(t *testing.T) {
 	}
 	if got := s.calls.Load(); got != 1 {
 		t.Fatalf("store reads = %d, want 1 inside the backoff window", got)
+	}
+}
+
+// The loader drops rules already past expires_at (clock-skew guard behind the
+// store filter) and records the earliest future expiry so the compiled set is
+// reloaded the moment a time-boxed rule lapses.
+func TestActiveEdgeRulesDropsExpiredAndRecordsEarliestExpiry(t *testing.T) {
+	now := time.Unix(1_000, 0)
+	at := func(d time.Duration) *time.Time { t := now.Add(d); return &t }
+	rules := []state.EdgeRule{
+		{ID: "lapsed", ExpiresAt: at(-time.Second)},
+		{ID: "later", ExpiresAt: at(time.Hour)},
+		{ID: "forever"},
+		{ID: "soon", ExpiresAt: at(time.Minute)},
+	}
+	active, notAfter := activeEdgeRules(rules, now)
+	var ids []string
+	for _, r := range active {
+		ids = append(ids, r.ID)
+	}
+	if want := []string{"later", "forever", "soon"}; !slices.Equal(ids, want) {
+		t.Fatalf("active = %v, want %v", ids, want)
+	}
+	if !notAfter.Equal(now.Add(time.Minute)) {
+		t.Fatalf("notAfter = %v, want the earliest future expiry", notAfter)
+	}
+	if len(rules) != 4 || rules[0].ID != "lapsed" {
+		t.Fatal("activeEdgeRules mutated its input")
 	}
 }

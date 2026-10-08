@@ -43,5 +43,17 @@ export type CreateEdgeRuleRequest = {
    * Kind-tagged action body — shape depends on `kind`.
    */
   action: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction);
+  /**
+   * Operator-facing rule name.
+   */
+  name?: string;
+  /**
+   * Operator-facing description.
+   */
+  description?: string;
+  /**
+   * When the gateway stops applying the rule.
+   */
+  expires_at?: string;
 };
 

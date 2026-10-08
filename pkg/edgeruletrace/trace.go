@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgevalidate"
@@ -552,6 +553,14 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		}
 		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
 	})
+	// The gateway does not load expired rules; evaluate them as disabled
+	// (the per-rule row still reports the expiry as the skip reason).
+	now := time.Now()
+	for i := range sorted {
+		if sorted[i].ExpiresAt != nil && !now.Before(*sorted[i].ExpiresAt) {
+			sorted[i].Enabled = false
+		}
+	}
 	result := Result{
 		Project: input.Project, Environment: input.Environment,
 		App: input.App, Host: input.Host, Path: input.Path, Method: input.Method,
@@ -573,6 +582,8 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 			MatchMethods: rule.MatchMethods, MatchHeaders: cloneStringMap(rule.MatchHeaders),
 		}
 		switch {
+		case rule.ExpiresAt != nil && !time.Now().Before(*rule.ExpiresAt):
+			row.Status, row.Reason = "skipped", "rule expired at "+rule.ExpiresAt.UTC().Format(time.RFC3339)
 		case !rule.Enabled:
 			row.Status, row.Reason = "skipped", "rule is disabled"
 		case !HostMatches(rule.MatchHost, input.Host):

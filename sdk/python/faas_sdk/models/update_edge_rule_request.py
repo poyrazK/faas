@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -73,6 +74,14 @@ class UpdateEdgeRuleRequest:
         | Unset
     ) = UNSET
     """Replaces the jsonb column whole."""
+    name: str | Unset = UNSET
+    """Operator-facing rule name."""
+    description: str | Unset = UNSET
+    """Operator-facing description."""
+    expires_at: datetime.datetime | Unset = UNSET
+    """When the gateway stops applying the rule."""
+    clear_expires_at: bool | Unset = UNSET
+    """Remove the expiry so the rule applies indefinitely."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -151,6 +160,16 @@ class UpdateEdgeRuleRequest:
         else:
             action = self.action.to_dict()
 
+        name = self.name
+
+        description = self.description
+
+        expires_at: str | Unset = UNSET
+        if not isinstance(self.expires_at, Unset):
+            expires_at = self.expires_at.isoformat()
+
+        clear_expires_at = self.clear_expires_at
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -170,6 +189,14 @@ class UpdateEdgeRuleRequest:
             field_dict["validate_mode"] = validate_mode
         if action is not UNSET:
             field_dict["action"] = action
+        if name is not UNSET:
+            field_dict["name"] = name
+        if description is not UNSET:
+            field_dict["description"] = description
+        if expires_at is not UNSET:
+            field_dict["expires_at"] = expires_at
+        if clear_expires_at is not UNSET:
+            field_dict["clear_expires_at"] = clear_expires_at
 
         return field_dict
 
@@ -379,6 +406,19 @@ class UpdateEdgeRuleRequest:
 
         action = _parse_action(d.pop("action", UNSET))
 
+        name = d.pop("name", UNSET)
+
+        description = d.pop("description", UNSET)
+
+        _expires_at = d.pop("expires_at", UNSET)
+        expires_at: datetime.datetime | Unset
+        if isinstance(_expires_at, Unset):
+            expires_at = UNSET
+        else:
+            expires_at = datetime.datetime.fromisoformat(_expires_at)
+
+        clear_expires_at = d.pop("clear_expires_at", UNSET)
+
         update_edge_rule_request = cls(
             match_host=match_host,
             match_path=match_path,
@@ -388,6 +428,10 @@ class UpdateEdgeRuleRequest:
             enabled=enabled,
             validate_mode=validate_mode,
             action=action,
+            name=name,
+            description=description,
+            expires_at=expires_at,
+            clear_expires_at=clear_expires_at,
         )
 
         update_edge_rule_request.additional_properties = d

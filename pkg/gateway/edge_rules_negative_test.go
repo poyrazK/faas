@@ -89,6 +89,26 @@ func TestEdgeRuleCacheInvalidateHostsIsScopedToPatterns(t *testing.T) {
 	}
 }
 
+// A time-boxed rule must stop applying on schedule: the entry's NotAfter
+// (earliest rule expiry) caps its cache lifetime, and the outage fallback
+// never replays a set that contains an expired rule.
+func TestEdgeRuleEntryNotAfterBoundsCacheAndFallback(t *testing.T) {
+	c := NewEdgeRuleCache(2)
+	now := time.Unix(100, 0)
+	c.SetClock(func() time.Time { return now })
+	c.Put("host", &HostEntry{
+		NotAfter:    now.Add(5 * time.Second),
+		Maintenance: []EdgeRuleMaintenanceResolved{{ID: "window"}},
+	})
+	now = now.Add(5 * time.Second)
+	if _, hit := c.GetMaintenance("host"); hit {
+		t.Fatal("entry served past its earliest rule expiry")
+	}
+	if _, ok := c.GetLastKnownHost("host"); ok {
+		t.Fatal("outage fallback replayed an expired maintenance window")
+	}
+}
+
 // An expired entry is no longer served as current, but stays available as the
 // last-known-good set for loaders whose reload fails; Reset still drops it.
 func TestEdgeRuleExpiredEntryRemainsLastKnownUntilReset(t *testing.T) {

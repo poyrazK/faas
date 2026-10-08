@@ -259,6 +259,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	if err != nil {
 		return nil, err
 	}
+	storeRules, notAfter := activeEdgeRules(storeRules, g.now())
 	route, routeErrs := compileRouteRules(storeRules)
 	rewrite, rewriteErrs := compileRewriteRules(storeRules)
 	redirect, redirectErrs := compileRedirectRules(storeRules)
@@ -278,6 +279,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	retry, retryErrs := compileRetryRules(storeRules)
 	circuitBreaker, circuitBreakerErrs := compileCircuitBreakerRules(storeRules)
 	entry := &gateway.HostEntry{
+		NotAfter:       notAfter,
 		Route:          route,
 		Rewrite:        rewrite,
 		Redirect:       redirect,
@@ -379,6 +381,24 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 // owns that policy. A missing row preserves application-wide fallback. The
 // existing edge-rule convergence protocol invalidates this host's cache on
 // writes; clone creates a new host with no prior cache entry.
+// activeEdgeRules drops rules already past their expires_at (the store read
+// filters them too; this guards gateway/database clock skew) and returns the
+// earliest future expiry, which bounds how long the compiled set is cached.
+func activeEdgeRules(rules []state.EdgeRule, now time.Time) ([]state.EdgeRule, time.Time) {
+	var notAfter time.Time
+	out := rules[:0:0]
+	for _, rule := range rules {
+		if rule.EdgeRuleExpired(now) {
+			continue
+		}
+		if rule.ExpiresAt != nil && (notAfter.IsZero() || rule.ExpiresAt.Before(notAfter)) {
+			notAfter = *rule.ExpiresAt
+		}
+		out = append(out, rule)
+	}
+	return out, notAfter
+}
+
 func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host string, global []state.EdgeRule) ([]state.EdgeRule, error) {
 	environmentID, appID, matched := gateway.EnvironmentIDsFromHost(wire.DeployWildcardSuffix, host)
 	if !matched {

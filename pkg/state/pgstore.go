@@ -4305,6 +4305,15 @@ func derefString(s *string) string {
 	return *s
 }
 
+// derefTimePtr unwraps a tri-state **time.Time update field: the caller's
+// CASE guard decides whether the column is touched; nil inner means NULL.
+func derefTimePtr(t **time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	return *t
+}
+
 func appSecurityPolicyValue(p *api.AppSecurityPolicy) string {
 	if p == nil || !p.Valid() {
 		return string(api.AppSecurityPolicyOff)
@@ -13582,7 +13591,7 @@ func (s *PgStore) NextDeploymentRouteGeneration(ctx context.Context) (int64, err
 const edgeRuleSelectCols = `id, account_id, app_id, match_host, match_path,
        match_methods, priority, enabled, kind, action,
        cors_preset_id, validate_mode, created_at, updated_at, match_headers,
-       manifest_key`
+       manifest_key, name, description, expires_at`
 
 // scanEdgeRule reads a single row. ErrNotFound on no-rows; raw error
 // otherwise. The kind column comes back as text; Action comes back
@@ -13629,13 +13638,21 @@ func scanEdgeRuleCols(scan func(...any) error) (EdgeRule, error) {
 		matchHeadersBytes []byte
 		corsPresetID      *string
 		manifestKey       *string
+		name, description *string
 	)
 	if err := scan(
 		&r.ID, &r.AccountID, &r.AppID, &r.MatchHost, &r.MatchPath,
 		&matchMethods, &r.Priority, &r.Enabled, &kind, &actionBytes,
 		&corsPresetID, &r.ValidateMode, &r.CreatedAt, &r.UpdatedAt, &matchHeadersBytes, &manifestKey,
+		&name, &description, &r.ExpiresAt,
 	); err != nil {
 		return EdgeRule{}, err
+	}
+	if name != nil {
+		r.Name = *name
+	}
+	if description != nil {
+		r.Description = *description
 	}
 	r.Kind = EdgeRuleKind(kind)
 	r.MatchMethods = matchMethods
@@ -13691,11 +13708,13 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 		insert into edge_rules (
 			account_id, app_id, match_host, match_path,
 			match_methods, priority, enabled, kind, action,
-			cors_preset_id, validate_mode, match_headers, manifest_key
+			cors_preset_id, validate_mode, match_headers, manifest_key,
+			name, description, expires_at
 		) values (
 			$1, $2, $3, $4,
 			$5, $6, $7, $8, $9::jsonb,
-			$10::uuid, coalesce(nullif($11, ''), 'block'), $12::jsonb, nullif($13, '')
+			$10::uuid, coalesce(nullif($11, ''), 'block'), $12::jsonb, nullif($13, ''),
+			nullif(btrim($14), ''), nullif($15, ''), $16::timestamptz
 		)
 		returning `+edgeRuleSelectCols,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
@@ -13713,6 +13732,7 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 		in.ValidateMode,
 		matchHeadersBytes,
 		in.ManifestKey,
+		in.Name, in.Description, in.ExpiresAt,
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {
@@ -13844,11 +13864,13 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 		insert into edge_rules (
 			account_id, app_id, match_host, match_path,
 			match_methods, priority, enabled, kind, action,
-			validate_mode, match_headers, manifest_key
+			validate_mode, match_headers, manifest_key,
+			name, description, expires_at
 		) values (
 			$1, $2, $3, $4,
 			$5, $6, $7, $8, $9::jsonb,
-			coalesce(nullif($10, ''), 'block'), $11::jsonb, nullif($12, '')
+			coalesce(nullif($10, ''), 'block'), $11::jsonb, nullif($12, ''),
+			nullif(btrim($13), ''), nullif($14, ''), $15::timestamptz
 		)
 		returning `+edgeRuleSelectCols,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
@@ -13858,6 +13880,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 		in.ValidateMode,
 		matchHeadersBytes,
 		in.ManifestKey,
+		in.Name, in.Description, in.ExpiresAt,
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {
@@ -14679,7 +14702,10 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 			action        = case when $7 then $8::jsonb else action end,
 			cors_preset_id = case when $10 then $11::uuid else cors_preset_id end,
 			validate_mode = coalesce(nullif($9, ''), validate_mode),
-			match_headers = case when $12 then $13::jsonb else match_headers end
+			match_headers = case when $12 then $13::jsonb else match_headers end,
+			name          = case when $14 then nullif(btrim($15), '') else name end,
+			description   = case when $16 then nullif($17, '') else description end,
+			expires_at    = case when $18 then $19::timestamptz else expires_at end
 		where id = $1
 		returning `+edgeRuleSelectCols,
 		id, hostArg, pathArg, methodsArg, p.Priority, p.Enabled,
@@ -14698,6 +14724,8 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 		// the "customer cleared the preset" signal or
 		// a UUID for the "set preset" signal.
 		corsPresetSet, corsPresetValue, matchHeadersSet, matchHeadersArg,
+		p.Name != nil, derefString(p.Name), p.Description != nil, derefString(p.Description),
+		p.ExpiresAt != nil, derefTimePtr(p.ExpiresAt),
 	)
 	r, err := scanEdgeRule(row)
 	if err != nil {
@@ -14761,6 +14789,7 @@ func (s *PgStore) MatchEdgeRulesForHost(ctx context.Context, host string) ([]Edg
 	rows, err := s.pool.Query(ctx, `
 		select `+edgeRuleSelectCols+` from edge_rules
 		 where enabled = true
+		   and (expires_at is null or expires_at > now())
 		   and (
 		   	match_host = $1
 		   	or match_host = '*'

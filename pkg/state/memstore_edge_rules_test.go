@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -115,6 +116,38 @@ func TestMemStore_EdgeRule_ValidateModeEmptyStaysEmpty(t *testing.T) {
 	}
 	if created.ValidateMode != "" {
 		t.Errorf("empty ValidateMode stored as %q, want \"\" (memstore preserves verbatim; pgstore would coalesce to 'block')", created.ValidateMode)
+	}
+}
+
+// An expired rule stays listed (with its metadata) but is no longer returned
+// by the gateway read, so it stops applying without being deleted.
+func TestMemStore_EdgeRule_ExpiredRuleListedButNotServed(t *testing.T) {
+	m, ctx := state.NewMemStore(), context.Background()
+	acct, app := memEdgeRuleSeedAccount(t, m, ctx, api.PlanPro, "expiry")
+	past := time.Now().Add(-time.Minute)
+	params := memSampleValidateRuleParams(acct, app, "expiry.example.com", "block")
+	params.Name, params.Description, params.ExpiresAt = " Spring sale block ", "temporary", &past
+	created, err := m.CreateEdgeRule(ctx, params)
+	if err != nil {
+		t.Fatalf("CreateEdgeRule: %v", err)
+	}
+	if created.Name != "Spring sale block" || created.Description != "temporary" {
+		t.Fatalf("metadata = %q / %q", created.Name, created.Description)
+	}
+	listed, _ := m.ListEdgeRulesForApp(ctx, app)
+	if len(listed) != 1 || !listed[0].EdgeRuleExpired(time.Now()) {
+		t.Fatalf("expired rule not listed as expired: %+v", listed)
+	}
+	served, _ := m.MatchEdgeRulesForHost(ctx, "expiry.example.com")
+	if len(served) != 0 {
+		t.Fatalf("expired rule still served to the gateway: %+v", served)
+	}
+	var cleared *time.Time
+	if _, err := m.UpdateEdgeRule(ctx, created.ID, state.UpdateEdgeRuleParams{ExpiresAt: &cleared}); err != nil {
+		t.Fatalf("UpdateEdgeRule: %v", err)
+	}
+	if served, _ := m.MatchEdgeRulesForHost(ctx, "expiry.example.com"); len(served) != 1 {
+		t.Fatal("clearing the expiry did not re-activate the rule")
 	}
 }
 

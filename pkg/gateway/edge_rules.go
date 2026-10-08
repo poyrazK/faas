@@ -424,15 +424,20 @@ type EdgeRuleCache struct {
 // loadHost builds the entry. PR 5 widens with CORS / JWT / IP slots.
 type HostEntry struct {
 	expiresAt time.Time
-	Host      string
-	Route     []EdgeRuleResolved
-	Rewrite   []EdgeRuleRewriteResolved
-	Redirect  []EdgeRuleRedirectResolved
-	Headers   []EdgeRuleHeadersResolved
-	CORS      []EdgeRuleCORSResolved
-	JWT       []EdgeRuleJWTResolved
-	IP        []EdgeRuleIPResolved
-	Validate  []EdgeRuleValidateResolved
+	// NotAfter is the earliest expires_at among the loaded rules (zero when
+	// none expire). The entry is neither served as current nor used as the
+	// last-known fallback past it, so a time-boxed rule stops applying on
+	// schedule even while cached or while Postgres is unreachable.
+	NotAfter time.Time
+	Host     string
+	Route    []EdgeRuleResolved
+	Rewrite  []EdgeRuleRewriteResolved
+	Redirect []EdgeRuleRedirectResolved
+	Headers  []EdgeRuleHeadersResolved
+	CORS     []EdgeRuleCORSResolved
+	JWT      []EdgeRuleJWTResolved
+	IP       []EdgeRuleIPResolved
+	Validate []EdgeRuleValidateResolved
 	// Limit carries the kind=limit subset (ADR-091 D24). Same
 	// shape as Validate above; the applier
 	// (handler.go::applyEdgeRuleLimit) installs MaxBytesReader on
@@ -541,7 +546,13 @@ func (c *EdgeRuleCache) GetLastKnownHost(host string) (*HostEntry, bool) {
 	if !ok {
 		return nil, false
 	}
-	return cloneHostEntry(el.Value.(*HostEntry)), true
+	entry := el.Value.(*HostEntry)
+	if !entry.NotAfter.IsZero() && !c.now().Before(entry.NotAfter) {
+		// A rule in this set has expired: replaying it would keep a lapsed
+		// maintenance window or temporary block alive through the outage.
+		return nil, false
+	}
+	return cloneHostEntry(entry), true
 }
 
 func cloneHostEntry(entry *HostEntry) *HostEntry {
@@ -989,6 +1000,9 @@ func (c *EdgeRuleCache) putLocked(host string, entry *HostEntry) {
 	cached := *entry
 	cached.Host = host
 	cached.expiresAt = c.now().Add(edgeRuleCacheTTL)
+	if !cached.NotAfter.IsZero() && cached.NotAfter.Before(cached.expiresAt) {
+		cached.expiresAt = cached.NotAfter
+	}
 	if el, ok := c.byID[host]; ok {
 		el.Value = &cached
 		c.ll.MoveToFront(el)
