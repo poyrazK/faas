@@ -24,6 +24,8 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Generated from the CLI's command manifest by `gregale man --markdown`. Do not edit by hand.")
 	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.")
+	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "| Command | What it does |")
 	_, _ = fmt.Fprintln(w, "|---|---|")
 	for _, c := range cmds {

@@ -2,6 +2,8 @@
 
 Generated from the CLI's command manifest by `gregale man --markdown`. Do not edit by hand.
 
+Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
+
 | Command | What it does |
 |---|---|
 | [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
@@ -68,6 +70,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`link`](#link) | Link this checkout to a Gregale project |
 | [`logout`](#logout) | Revoke the managed CLI session and remove the stored token |
 | [`unlink`](#unlink) | Remove the linked project from this checkout |
+| [`profile`](#profile) | Manage named API connections and isolated credentials |
 | [`context`](#context) | Show the linked project and default app context |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
 | [`logs`](#logs) | Query runtime logs and HTTP request events |
@@ -6902,6 +6905,35 @@ Revoke the managed CLI session and remove the stored token
 Remove the linked project from this checkout
 
 `gregale unlink`
+
+
+## profile
+
+Manage named API connections and isolated credentials
+
+`gregale profile [<subcommand>]`
+
+### profile add
+
+Add a connection without changing the active profile
+
+`gregale profile add <name> <api-url>`
+
+### profile list
+
+List connections and the active profile
+
+### profile use
+
+Select the default connection
+
+`gregale profile use <name>`
+
+### profile remove
+
+Remove an inactive connection and its credentials
+
+`gregale profile remove <name>`
 
 
 ## context

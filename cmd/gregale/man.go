@@ -122,6 +122,9 @@ func renderManTop(w io.Writer) {
 	})
 	manSection(w, "GLOBAL FLAGS", func(w io.Writer) {
 		_, _ = fmt.Fprintln(w, ".TP")
+		_, _ = fmt.Fprintln(w, `.BR \-\-profile " NAME"`)
+		_, _ = fmt.Fprintln(w, "Select a named connection. Place before the command; command-local profile flags retain their meaning.")
+		_, _ = fmt.Fprintln(w, ".TP")
 		_, _ = fmt.Fprintln(w, ".BR \\-\\-json")
 		_, _ = fmt.Fprintln(w, `Machine-readable output. Equivalent to`)
 		_, _ = fmt.Fprintln(w, `.B FAAS_JSON=1`)

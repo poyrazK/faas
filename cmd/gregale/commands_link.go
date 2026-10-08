@@ -149,14 +149,20 @@ func cmdContext(args []string) int {
 	context, path, err := linkedProjectContext(cwd)
 	if err != nil {
 		if errors.Is(err, errProjectContextNotFound) {
-			return printErr("No linked project", errors.New("run `gregale link <project-slug>` in a project checkout"))
+			if jsonOutput {
+				return jsonOut(writeJSON(map[string]any{"connection": effectiveConnectionContext()}))
+			}
+			renderConnectionContext()
+			_, _ = fmt.Fprintln(osStdout, "No linked project. Run gregale link <project-slug> to link this checkout.")
+			return 0
 		}
 		return printErr("Could not read project context", err)
 	}
-	receipt := projectContextReceipt{Context: context, Path: displayProjectContextPath(cwd, path)}
+	receipt := projectContextReceipt{Context: context, Path: displayProjectContextPath(cwd, path), Connection: effectiveConnectionContext()}
 	if jsonOutput {
 		return jsonOut(writeJSON(receipt))
 	}
+	renderConnectionContext()
 	PrintOK(osStdout, "Linked project context")
 	renderProjectContext(osStdout, receipt)
 	return 0

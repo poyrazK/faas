@@ -39,3 +39,54 @@ with `124`, writes the last known status to stdout when available, and writes
 an `invocation_wait_timeout` Problem to stderr. Ctrl-C exits with `130`.
 Stopping the CLI wait leaves the invocation running; inspect it later with
 `gregale invocations get <id>`.
+
+## Connection profiles
+
+Use a named connection to keep API endpoints and login credentials separate:
+
+```bash
+gregale profile add staging https://staging.example.com
+gregale --profile staging login
+gregale profile use staging
+gregale context
+gregale --profile default apps
+gregale profile list --json
+gregale profile use default
+gregale profile remove staging
+```
+
+`profile add <name> <api-url>` creates an inactive connection. Names contain
+1–64 lowercase letters, digits, underscores, or hyphens. `default` is reserved:
+it uses your existing API setting, keychain entry, and fallback token file.
+Upgrading does not move or replace existing credentials.
+
+`profile use <name>` saves the active connection. The prefix option
+`gregale --profile <name> <command>` selects a connection for that command only.
+Put it **before the command**: some commands have their own `--profile` option
+for resource or test settings, and those options retain their meaning.
+Arguments after `--` are forwarded unchanged.
+
+`FAAS_API` and `FAAS_TOKEN` still override the selected connection's endpoint
+and credential. JSON preferences remain shared across connections.
+`gregale config set api-base <url>` updates the selected connection; changing
+its endpoint does not clear its stored credential, so log in again when changing
+to a different server. `gregale context` reports the effective profile and API
+URL, including where each came from, even outside a linked checkout.
+
+Named connections use separate OS keychain accounts. On headless hosts,
+tokens fall back to restricted files under
+`$XDG_CONFIG_HOME/gregale/profiles/<name>/token`. Managed login session
+metadata lives beside the token as `session.json`, so logging in or out of one
+connection preserves the other connections' revocation information. The default
+connection retains its existing `gregale/session.json` path. Tokens are never stored in
+`config.json` or printed by `profile list` or `context`.
+Completion caches are isolated by connection, endpoint, and credential.
+`FAAS_COMPLETION_CACHE_PATH` remains an explicit shared cache override.
+Regenerate installed shell completion scripts after upgrading to support the
+connection prefix option and configured names for `--profile`, `profile use`,
+and `profile remove`.
+
+`profile remove <name>` removes an inactive connection and clears its locally
+stored credentials, session metadata, and completion caches. Switch away from a connection before
+removing it. Removal does not revoke a server-side session; use
+`gregale --profile <name> logout` first when revocation is needed.

@@ -2824,6 +2824,13 @@ var cliCommands = []cliCommand{
 		DocSlug: "link",
 		Short:   "Remove the linked project from this checkout",
 	},
+	{Name: "profile", DocSlug: "config", Short: "Manage named API connections and isolated credentials", Subcommands: []cliSub{
+		{Name: "add", Short: "Add a connection without changing the active profile", Positionals: []string{"<name>", "<api-url>"}},
+		{Name: "list", Short: "List connections and the active profile"},
+		{Name: "use", Short: "Select the default connection", Positionals: []string{"<name>"}},
+		{Name: "remove", Short: "Remove an inactive connection and its credentials", Positionals: []string{"<name>"}},
+	}},
+
 	{
 		Name:    "context",
 		DocSlug: "link",

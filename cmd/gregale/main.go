@@ -50,6 +50,7 @@ func topLevelUsage(showAdvanced bool) string {
 	b.WriteString("                         NDJSON; scalars emit indented JSON; errors print\n")
 	b.WriteString("                         RFC 7807 to stderr. Equivalent env: FAAS_JSON=1.\n")
 	b.WriteString("                         Interactive-only commands retain human prompts.\n")
+	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
 	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
 	return b.String()
 }
@@ -107,6 +108,11 @@ func run(args []string) (status int) {
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
 	}()
+	previousProfile := profileOverride
+	defer func() { profileOverride = previousProfile }()
+	profileOverride = ""
+	var profileErr error
+	args, profileErr = extractConnectionProfile(args)
 	invalidJSON := invalidJSONFlagValue(args)
 	// Issue #64 D1: every command accepts --json (top-level). Strip
 	// it before dispatch and set jsonOutput so per-command printers
@@ -115,6 +121,9 @@ func run(args []string) (status int) {
 	if invalidJSON != "" {
 		PrintUsage(os.Stderr, "invalid --json value "+invalidJSON+"; use true or false", "cli")
 		return 1
+	}
+	if profileErr != nil {
+		return printErr("Invalid connection profile", profileErr)
 	}
 	jsonUsageHelp = hasHelpFlag(args)
 	invokedCommandPath = publicCommandPath(args)
@@ -131,7 +140,12 @@ func run(args []string) (status int) {
 			}
 		}
 	}
+	if err := validateSelectedProfile(); err != nil {
+		return printErr("Invalid connection profile", err)
+	}
 	switch args[0] {
+	case "profile":
+		return cmdProfile(args[1:])
 	case "version", "--version", "-v":
 		// `gregale version --help` prints usage + docs link; bare
 		// `gregale version foo` still prints the version string (POSIX

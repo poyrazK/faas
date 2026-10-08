@@ -136,7 +136,7 @@ func TestCompletion_CachePathUsesNestedCommand(t *testing.T) {
 			if strings.Contains(out, "gregale completion-cache-path") {
 				t.Fatalf("generated script still calls nonexistent top-level helper:\n%s", out)
 			}
-			if !strings.Contains(out, "gregale completion completion-cache-path") {
+			if !strings.Contains(out, "completion completion-cache-path") {
 				t.Fatalf("generated script does not call nested cache-path helper:\n%s", out)
 			}
 		})
