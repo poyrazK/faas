@@ -877,6 +877,7 @@ type Querier interface {
 	InsertCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectCopyParams) (ProjectEnvironmentCloneCheckpointObjectCopy, error)
 	InsertCloneCheckpointObjectCredentialReservation(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectCredentialReservationParams) (ProjectEnvironmentCloneCheckpointObjectCredentialID, error)
 	InsertCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
+	InsertCloneCheckpointObjectValues(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectValuesParams) (ProjectEnvironmentCloneCheckpointObjectValue, error)
 	InsertCloneCheckpointObjectVerification(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectVerificationParams) (ProjectEnvironmentCloneCheckpointObjectVerification, error)
 	InsertCloneCheckpointPgActivation(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgActivationParams) (ProjectEnvironmentCloneCheckpointPgActivation, error)
 	InsertCloneCheckpointPgAppSecret(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgAppSecretParams) error
@@ -2214,6 +2215,7 @@ type Querier interface {
 	ReadCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectCopyParams) (ProjectEnvironmentCloneCheckpointObjectCopy, error)
 	ReadCloneCheckpointObjectCredentialReservation(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointObjectCredentialID, error)
 	ReadCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
+	ReadCloneCheckpointObjectValues(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointObjectValue, error)
 	ReadCloneCheckpointObjectVerification(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectVerificationParams) (ProjectEnvironmentCloneCheckpointObjectVerification, error)
 	ReadCloneCheckpointPgActivation(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointPgActivation, error)
 	ReadCloneCheckpointPgConnectionValue(ctx context.Context, db DBTX, arg ReadCloneCheckpointPgConnectionValueParams) (ProjectEnvironmentCloneCheckpointPgConnectionValue, error)

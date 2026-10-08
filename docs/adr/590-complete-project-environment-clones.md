@@ -8612,3 +8612,41 @@ observe/revocation protocol, sealed target values, atomic object binding and gra
 publication, retirement and final stage publication remain outstanding. Native
 R2/OVH qualification and live provider tests remain deferred at the user's request;
 public full-stage cloning stays gated.
+
+### Private sealed object credential matrix
+
+After verified identity reservation, private checkpoint coordination now prepares
+fresh Gregale S3 gateway signing keys and all six managed runtime values. These
+are local gateway credentials; native grants used outside Gregale remain under
+the separate provider qualification/revocation protocol. Source signing material
+is never opened. Each preparation uses its committed fresh credential ID and
+preserves original labels, permissions, managed ownership, prefix and stage scope.
+Standalone credentials acquire no app-secret slots. Gateway endpoint and region
+are pinned with the sealed matrix; bucket values use the operation-owned deterministic stage name.
+
+An operation-owned journal commits the complete sealed matrix atomically under
+original retention, copy/verification, target privacy and worker proofs. The
+reservation digest binds every member to the full original grant and credential
+roster. Current target logical names and scopes are additionally authenticated
+against the original operation-owned reservation before any credential preparation/replay.
+The matrix digest covers credential ciphertext, public access-key IDs and every
+sealed runtime envelope and ownership field. Payloads use the existing 16 MiB
+checkpoint metadata bound; this preparation grants no secret-count or credential
+quota entitlement for later publication.
+
+Recovery reads the committed matrix before key generation, without decryption,
+recipient or HMAC-key availability. Concurrent proposals reuse the first committed
+matrix and cannot replace its keys. A failed transaction or late worker expiry
+returns no values and leaves no journal. No normal credential or app-secret rows
+are inserted, so the signing keys confer no usable gateway access. Owned sealed
+journals prevent downgrade. Empty credential matrices require no key material
+and confer no publication authority.
+
+Unit and database tests cover matrix completeness, sealed-envelope/identity
+linkage, metadata tampering, lost commit acknowledgement, first-writer recovery,
+worker handoff without encryption keys, late-expiry rollback, no premature
+publication, target-name changes and guarded migration round trips. Gateway
+credential and binding publication, API-key grant publication, native grant
+qualification/revocation, retirement and final stage publication remain separate
+steps. Live R2/OVH qualification remains deferred at the user's request; public
+full-stage cloning stays gated.

@@ -15259,3 +15259,12 @@ AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp
 
 -- name: CloneCheckpointObjectCredentialIdentityExists :one
 SELECT EXISTS(SELECT 1 FROM object_storage_s3_credentials WHERE id=sqlc.arg(credential_id)::uuid)::boolean;
+
+-- name: ReadCloneCheckpointObjectValues :one
+SELECT * FROM project_environment_clone_checkpoint_object_values WHERE operation_id=$1 FOR UPDATE;
+
+-- name: InsertCloneCheckpointObjectValues :one
+INSERT INTO project_environment_clone_checkpoint_object_values(operation_id,payload,payload_sha256)
+SELECT o.id,sqlc.arg(payload)::jsonb,sqlc.arg(payload_sha256)::text FROM project_environment_clone_operations o
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp() RETURNING *;

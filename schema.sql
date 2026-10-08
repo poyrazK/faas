@@ -42796,3 +42796,11 @@ CREATE TABLE project_environment_clone_checkpoint_object_credential_ids (
  plan_sha256 text NOT NULL CHECK(plan_sha256 ~ '^[a-f0-9]{64}$'),
  state text NOT NULL DEFAULT 'planned' CHECK(state='planned')
 );
+
+-- ADR-590: private sealed gateway credentials and runtime values, without publication.
+CREATE TABLE project_environment_clone_checkpoint_object_values (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_object_credential_ids(operation_id) ON DELETE RESTRICT,
+ payload jsonb NOT NULL CHECK(jsonb_typeof(payload)='object' AND octet_length(payload::text)<=16777216),
+ payload_sha256 text NOT NULL CHECK(payload_sha256 ~ '^[a-f0-9]{64}$'),
+ state text NOT NULL DEFAULT 'sealed' CHECK(state='sealed')
+);

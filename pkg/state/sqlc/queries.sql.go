@@ -17145,6 +17145,39 @@ func (q *Queries) InsertCloneCheckpointObjectTarget(ctx context.Context, db DBTX
 	return i, err
 }
 
+const insertCloneCheckpointObjectValues = `-- name: InsertCloneCheckpointObjectValues :one
+INSERT INTO project_environment_clone_checkpoint_object_values(operation_id,payload,payload_sha256)
+SELECT o.id,$1::jsonb,$2::text FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, payload, payload_sha256, state
+`
+
+type InsertCloneCheckpointObjectValuesParams struct {
+	Payload          []byte
+	PayloadSha256    string
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectValues(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectValuesParams) (ProjectEnvironmentCloneCheckpointObjectValue, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointObjectValues,
+		arg.Payload,
+		arg.PayloadSha256,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectValue
+	err := row.Scan(
+		&i.OperationID,
+		&i.Payload,
+		&i.PayloadSha256,
+		&i.State,
+	)
+	return i, err
+}
+
 const insertCloneCheckpointObjectVerification = `-- name: InsertCloneCheckpointObjectVerification :one
 INSERT INTO project_environment_clone_checkpoint_object_verification(operation_id,source_bucket_id,plan)
 SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
@@ -47345,6 +47378,22 @@ func (q *Queries) ReadCloneCheckpointObjectTarget(ctx context.Context, db DBTX, 
 		&i.RequestedAt,
 		&i.ObservationSha256,
 		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointObjectValues = `-- name: ReadCloneCheckpointObjectValues :one
+SELECT operation_id, payload, payload_sha256, state FROM project_environment_clone_checkpoint_object_values WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointObjectValues(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointObjectValue, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointObjectValues, operationID)
+	var i ProjectEnvironmentCloneCheckpointObjectValue
+	err := row.Scan(
+		&i.OperationID,
+		&i.Payload,
+		&i.PayloadSha256,
+		&i.State,
 	)
 	return i, err
 }

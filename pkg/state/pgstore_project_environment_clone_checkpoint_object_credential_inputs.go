@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ ProjectEnvironmentCloneCheckpointObjectCredentialInputStore = (*PgStore)(nil)
@@ -58,6 +59,14 @@ func checkpointObjectCredentialInputsTx(ctx context.Context, tx pgx.Tx, op Proje
 			}
 			if err = validateCheckpointObjectVerificationTx(ctx, tx, op, l, p, &retention); err != nil {
 				return ProjectEnvironmentCloneCheckpointObjectCredentialInputs{}, err
+			}
+			row, err := sqlc.New().ReadProjectEnvironmentCloneObjectBucket(ctx, tx, sqlc.ReadProjectEnvironmentCloneObjectBucketParams{AccountID: mustPgUUID(op.AccountID), AppID: mustPgUUID(v.AppID), ID: mustPgUUID(p.Plan.Target.TargetBucketID), EnvironmentCloneOperationID: mustPgUUID(op.ID)})
+			if err != nil {
+				return ProjectEnvironmentCloneCheckpointObjectCredentialInputs{}, mapErr(err)
+			}
+			bucket := objectBucketFromSQL(row)
+			if bucket.Name != ProjectEnvironmentCloneObjectBucketName(op, v.AppID, b.ID) || bucket.Scope != op.TargetEnvironment {
+				return ProjectEnvironmentCloneCheckpointObjectCredentialInputs{}, ErrConflict
 			}
 			proofs = append(proofs, p)
 		}

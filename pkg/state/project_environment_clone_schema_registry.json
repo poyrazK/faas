@@ -7892,5 +7892,15 @@
       "state"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_values",
+    "columns": [
+      "operation_id",
+      "payload",
+      "payload_sha256",
+      "state"
+    ],
+    "kind": "operational"
   }
 ]
