@@ -179,16 +179,16 @@ type RequestTelemetryServer interface {
 type UnimplementedRequestTelemetryServer struct{}
 
 func (UnimplementedRequestTelemetryServer) RecordTelemetryCoverage(context.Context, *TelemetryCoverage) (*TelemetryCoverageReceipt, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RecordTelemetryCoverage not implemented")
+	return nil, status.Error(codes.Unimplemented, "method RecordTelemetryCoverage not implemented")
 }
 func (UnimplementedRequestTelemetryServer) IncrementRequestTelemetry(grpc.BidiStreamingServer[IncrementRequestTelemetryRequest, IncrementRequestTelemetryResponse]) error {
-	return status.Errorf(codes.Unimplemented, "method IncrementRequestTelemetry not implemented")
+	return status.Error(codes.Unimplemented, "method IncrementRequestTelemetry not implemented")
 }
 func (UnimplementedRequestTelemetryServer) RecordConsumerUsage(context.Context, *ConsumerUsageEvent) (*ConsumerUsageReceipt, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RecordConsumerUsage not implemented")
+	return nil, status.Error(codes.Unimplemented, "method RecordConsumerUsage not implemented")
 }
 func (UnimplementedRequestTelemetryServer) RecordRequestIDJournal(context.Context, *RecordRequestIDJournalRequest) (*RecordRequestIDJournalResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RecordRequestIDJournal not implemented")
+	return nil, status.Error(codes.Unimplemented, "method RecordRequestIDJournal not implemented")
 }
 func (UnimplementedRequestTelemetryServer) mustEmbedUnimplementedRequestTelemetryServer() {}
 func (UnimplementedRequestTelemetryServer) testEmbeddedByValue()                          {}
@@ -201,7 +201,7 @@ type UnsafeRequestTelemetryServer interface {
 }
 
 func RegisterRequestTelemetryServer(s grpc.ServiceRegistrar, srv RequestTelemetryServer) {
-	// If the following call pancis, it indicates UnimplementedRequestTelemetryServer was
+	// If the following call panics, it indicates UnimplementedRequestTelemetryServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
