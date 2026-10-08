@@ -7610,11 +7610,12 @@ Replay one event or --all
 
 Purge one event or --all
 
-`gregale dlq purge [--all] [--limit <N>] <app> [<event-id>]`
+`gregale dlq purge [--all] [--yes] [--limit <N>] <app> [<event-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--all` | purge all events |  |
+| `--all` | purge all events (asks for typed confirmation) |  |
+| `--yes` | skip the --all confirmation (for scripts) |  |
 | `--limit <N>` | page size (1..200) |  |
 
 

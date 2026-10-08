@@ -3197,7 +3197,8 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "maximum events (1..200)", Value: "N"},
 			}},
 			{Name: "purge", Short: "Purge one event or --all", Positionals: []string{"<app>", "[<event-id>]"}, Flags: []cliFlag{
-				{Name: "all", Short: "purge all events"},
+				{Name: "all", Short: "purge all events (asks for typed confirmation)"},
+				{Name: "yes", Short: "skip the --all confirmation (for scripts)"},
 				{Name: "limit", Short: "page size (1..200)", Value: "N"},
 			}},
 		},
