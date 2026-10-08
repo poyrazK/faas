@@ -40,7 +40,7 @@ func cmdRealtimePush(args []string) int {
 	read := func() (json.RawMessage, error) {
 		var reader io.Reader = os.Stdin
 		if *file != "-" {
-			f, e := os.Open(*file)
+			f, e := openCustomerFile(*file)
 			if e != nil {
 				return nil, e
 			}
