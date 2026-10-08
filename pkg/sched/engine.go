@@ -3337,11 +3337,16 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// INSERT, and a rare concurrent wake sees NULL on the consult)
 	// is the SAFE direction: the wake-gate admitGate consults the
 	// stamp BEFORE the insert and bypasses cooldown on NULL.
+	//
+	// The stamp is a multi-statement transaction (15-64 ms against the
+	// control-plane Postgres in production) whose result nothing on this
+	// path reads, so it runs while vmmd boots and is joined before runtime
+	// publication, the first later step that locks the same rows.
+	joinScaleOutStamp := func() {}
 	if !bypassGates {
-		if err := e.store.StampDeploymentScaleOut(ctx, dep.ID); err != nil {
-			e.log.Warn("sched: stamp original environment scale-out failed", "app", appID, "err", err)
-		}
+		joinScaleOutStamp = e.startScaleOutStamp(ctx, appID, dep.ID)
 	}
+	defer joinScaleOutStamp()
 
 	// issue #517 / PR-C / ADR-064 — emit wake.queue_accepted at
 	// the Phase 2 admission gate boundary, BEFORE the structured
@@ -3889,6 +3894,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 
 	// ── Phase 4: re-acquire the lock for the post-vmmd commit ────
+	joinScaleOutStamp()
 	release2 := e.lockApp(bootInput.appID)
 	defer release2()
 
