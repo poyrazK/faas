@@ -251,6 +251,9 @@ func (s *PgStore) listOperationMilestones(ctx context.Context, account, tenant s
 	if err != nil {
 		return api.OperationMilestonesResponse{}, err
 	}
+	if opts.Limit < 1 || opts.Limit > api.OperationHistoryPageMax {
+		return api.OperationMilestonesResponse{}, ErrInvalidArgument
+	}
 	accountID, _ := operationUUID(account)
 	appID, _ := operationUUID(opts.AppID)
 	operationID, _ := operationUUID(opts.OperationID)
@@ -261,7 +264,8 @@ func (s *PgStore) listOperationMilestones(ctx context.Context, account, tenant s
 		beforeCreated = pgtype.Timestamptz{Time: cursor.CreatedAt, Valid: true}
 	}
 	now := pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
-	limit := int32(opts.Limit + 1)
+	statePageLimit := int32(opts.Limit)
+	limit := statePageLimit + 1
 	q := sqlc.New()
 	var raw [][]byte
 	if operator {
@@ -302,13 +306,13 @@ func (s *PgStore) listOperationMilestones(ctx context.Context, account, tenant s
 		if operator {
 			stateRows, err = q.ListAccountCustomerOperationWorkflowStatesBySubject(ctx, s.pool, sqlc.ListAccountCustomerOperationWorkflowStatesBySubjectParams{
 				AccountID: accountID, AppID: appID, TenantID: opts.TenantID, Scope: opts.Scope, SubjectType: opts.SubjectType, SubjectID: opts.SubjectID,
-				WorkflowName: opts.Workflow, WorkflowInstanceID: opts.WorkflowInstanceID, StaleOnly: opts.WorkflowStaleOnly, Now: now, PageLimit: int32(opts.Limit),
+				WorkflowName: opts.Workflow, WorkflowInstanceID: opts.WorkflowInstanceID, StaleOnly: opts.WorkflowStaleOnly, Now: now, PageLimit: statePageLimit,
 			})
 		} else {
 			tenantID, _ := operationUUID(tenant)
 			stateRows, err = q.ListPlatformTenantCustomerOperationWorkflowStatesBySubject(ctx, s.pool, sqlc.ListPlatformTenantCustomerOperationWorkflowStatesBySubjectParams{
 				AccountID: accountID, AppID: appID, TenantID: tenantID, Scope: opts.Scope, SubjectType: opts.SubjectType, SubjectID: opts.SubjectID,
-				WorkflowName: opts.Workflow, WorkflowInstanceID: opts.WorkflowInstanceID, StaleOnly: opts.WorkflowStaleOnly, Now: now, PageLimit: int32(opts.Limit),
+				WorkflowName: opts.Workflow, WorkflowInstanceID: opts.WorkflowInstanceID, StaleOnly: opts.WorkflowStaleOnly, Now: now, PageLimit: statePageLimit,
 			})
 		}
 		if err != nil {
