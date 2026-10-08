@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowStateReport } from './OperationWorkflowStateReport.js';
+/**
+ * Batch of application-reported workflow updates to validate before their transaction commits.
+ */
 export type OperationWorkflowStateValidationRequest = {
   workflow_states: Array<OperationWorkflowStateReport>;
 };

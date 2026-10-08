@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Acknowledgement returned after the platform records an app-reported workflow-state update.
+ */
 export type OperationWorkflowStateReportResponse = {
   id: string;
   operation_id: string;

@@ -11,7 +11,7 @@ export type OperationWorkflowStateHistoryEntry = {
   workflow: string;
   instance_id: string;
   /**
-   * Previous app state when a declared transition was reported.
+   * App state immediately before this retained revision
    */
   from_state?: string;
   state: string;
@@ -19,7 +19,7 @@ export type OperationWorkflowStateHistoryEntry = {
   occurred_at: string;
   published_at: string;
   /**
-   * Included only for account operator feeds.
+   * Account-owner tenant identifier attached to this report in operator feeds.
    */
   platform_tenant_id?: string;
 };

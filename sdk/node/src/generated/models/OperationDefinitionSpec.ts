@@ -13,7 +13,7 @@ export type OperationDefinitionSpec = {
    */
   milestones?: Record<string, any>;
   /**
-   * Resolved app-declared read-only workflow steps mapped to this definition's transaction-backed milestones.
+   * Materialized workflow step mappings included in this compact definition view.
    */
   workflow_steps?: Array<OperationWorkflowStep>;
   subject?: OperationSubjectSpec;

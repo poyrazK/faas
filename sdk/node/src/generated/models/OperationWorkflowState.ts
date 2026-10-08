@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
+ */
 export type OperationWorkflowState = {
   workflow: string;
   instance_id: string;
