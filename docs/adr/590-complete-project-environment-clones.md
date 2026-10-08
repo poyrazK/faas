@@ -7884,3 +7884,37 @@ configuration-fence and target-reservation regressions pass. SQLC parity and
 repository encoding, shell quoting and ADR numbering checks pass. These are
 private-driver tests with real PostgreSQL, not native provider qualification.
 Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+## Private restore from a released PostgreSQL checkpoint
+
+A qualified private driver can now restore the original retained PostgreSQL
+snapshot after successful source release. This path authenticates the original
+release/adoption journals and frozen bindings instead of rechecking mutable live
+source database state. It renews the worker lease and independently verifies all
+original capture retention before native dispatch and again before recording the
+restored fork. Pending release and insufficient quota authorize no native IO.
+
+The existing durable native restore owner remains the stable request identity.
+Only a known committing request claim dispatches restore; lost claim/native/local
+commit replies and worker handoff authorize observation of the original request.
+Independent evidence must bind its exact owner, original snapshot/data resource,
+capture point, creation times and stable target identity. Pending forks remain
+pending; replacement or foreign evidence cannot be adopted.
+
+Restored forks remain private native owners, without catalogue adoption or
+resource inventory changes. Legacy restore/adoption paths reject common
+checkpoint inventories so they cannot bypass retention checks or invalidate the
+original release proof. Auxiliary SQL isolation, target catalogue adoption,
+copy verification, publication and retirement remain separate requirements.
+There is no built-in qualified checkpoint restore driver. Live R2/OVH tests
+remain deferred.
+
+Validation: PostgreSQL checkpoint restore tests pass for lost native/claim/commit
+replies, source state changes, worker handoff, foreign owner/snapshot/source
+proof, retention loss after native IO, pending forks, quota before dispatch and
+unreleased checkpoints. Original operation inventory remains unchanged and
+legacy restore/adoption stay blocked. Existing restore-worker and state-layer
+quota, adoption, cleanup, substitution and lease-lock-wait regressions pass.
+SQLC parity and encoding, shell quoting and ADR numbering checks pass. These
+are private-driver tests against real PostgreSQL; native qualification was not run.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.

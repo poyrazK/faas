@@ -66,6 +66,9 @@ func (s *PgStore) AdoptProjectEnvironmentClonePostgresSnapshotRestore(ctx contex
 	if err != nil {
 		return ProjectEnvironmentCloneDatabaseTarget{}, false, err
 	}
+	if len(op.Resources) > 0 && op.Resources[0].Kind == "data_checkpoint" {
+		return ProjectEnvironmentCloneDatabaseTarget{}, false, ErrConflict
+	}
 	q := new(sqlc.Queries)
 	if _, err := q.LockProjectEnvironmentCloneDatabaseAccount(ctx, tx, mustPgUUID(op.AccountID)); err != nil {
 		return ProjectEnvironmentCloneDatabaseTarget{}, false, mapErr(err)
