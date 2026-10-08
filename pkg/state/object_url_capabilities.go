@@ -81,6 +81,9 @@ func (u *ObjectURLCapability) Clone() *ObjectURLCapability {
 }
 
 func validObjectURLRequest(r api.ObjectSignRequest) bool {
+	if r.VersionID != "" && (r.Method != http.MethodGet && r.Method != http.MethodHead || r.VersionID == "null" || !ValidObjectVersionID(r.VersionID)) {
+		return false
+	}
 	if r.ExpiresIn < 1 || r.ExpiresIn > int64(api.MaxObjectSignedURLTTL/time.Second) || r.Key == "" || len(r.Key) > 1024 || !utf8.ValidString(r.Key) || strings.ContainsAny(r.Key, "\x00\r\n") {
 		return false
 	}

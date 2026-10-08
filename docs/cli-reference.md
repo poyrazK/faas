@@ -779,25 +779,45 @@ List uploaded multipart parts
 
 ### bucket upload
 
-Upload a file, using multipart above the single PUT limit
+Upload a file with resumable multipart transfers
 
-`gregale bucket upload [--content-type <TYPE>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+`gregale bucket upload [--content-type <TYPE>] [--resume <UPLOAD-ID>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--content-type <TYPE>` | object MIME type |  |
+| `--resume <UPLOAD-ID>` | resume a multipart upload from its local checkpoint |  |
 | `--timeout <DURATION>` | transfer deadline (default 30m) |  |
 
 ### bucket download
 
 Download an object to a file after a complete transfer
 
-`gregale bucket download [--force] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+`gregale bucket download [--version-id <VERSION>] [--force] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--version-id <VERSION>` | download this owned immutable version |  |
 | `--force` | replace destination after a complete transfer |  |
 | `--timeout <DURATION>` | transfer deadline (default 30m) |  |
+
+### bucket versions
+
+Browse retained object versions and delete markers
+
+#### bucket versions list
+
+List a page of owned public versions
+
+`gregale bucket versions list [--prefix <PREFIX>] [--delimiter <DELIMITER>] [--limit <N>] [--key-marker <KEY>] [--version-id-marker <VERSION>] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--prefix <PREFIX>` | key prefix |  |
+| `--delimiter <DELIMITER>` | group matching keys |  |
+| `--limit <N>` | maximum items and prefixes (1-1000) |  |
+| `--key-marker <KEY>` | continuation key from the previous page |  |
+| `--version-id-marker <VERSION>` | public continuation version from the previous page |  |
 
 ### bucket copy-sources
 

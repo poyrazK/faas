@@ -17,7 +17,7 @@ func (s *server) issueSignedBucketObject(w http.ResponseWriter, r *http.Request,
 		bucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
-	b, _, _, ok := s.loadBucket(w, r, acct, true)
+	b, _, provider, ok := s.loadBucket(w, r, acct, true)
 	if !ok {
 		return
 	}
@@ -32,6 +32,21 @@ func (s *server) issueSignedBucketObject(w http.ResponseWriter, r *http.Request,
 	}
 	if !s.authorizeBucketData(w, r, b, permission) {
 		return
+	}
+	if req.VersionID != "" {
+		if _, capable := provider.(objectstorage.VersionReadPresigner); !capable {
+			bucketProblem(w, objectstorage.ErrUnsupported)
+			return
+		}
+		refs, capable := s.store.(state.ObjectVersionReferenceStore)
+		if !capable {
+			bucketProblem(w, objectstorage.ErrUnavailable)
+			return
+		}
+		if _, err := refs.ResolveObjectVersion(r.Context(), b.AccountID, b.ID, req.Key, req.VersionID); err != nil {
+			bucketProblem(w, err)
+			return
+		}
 	}
 	store, ok := s.store.(state.ObjectURLCapabilityStore)
 	if !ok {

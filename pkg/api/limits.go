@@ -615,9 +615,11 @@ const (
 	DefaultMultipartPartBytes           int64 = 64 << 20
 	MinMultipartPartBytes               int64 = 5 << 20
 	MaxMultipartParts                         = 10000
-	MaxObjectWriteETagBytes                   = 256
-	MaxActiveMultipartUploadsPerBucket        = 100
-	ObjectMultipartUploadTTL                  = 24 * time.Hour
+	// Local CLI checkpoints hold at most 10,000 part hashes and acknowledgments.
+	MaxObjectMultipartCheckpointBytes  = 4 << 20
+	MaxObjectWriteETagBytes            = 256
+	MaxActiveMultipartUploadsPerBucket = 100
+	ObjectMultipartUploadTTL           = 24 * time.Hour
 
 	// Admission bounds for brokered upload URLs. Expiry never drains active IO.
 	DefaultObjectSignedURLExpiresSeconds = 300
@@ -7951,6 +7953,16 @@ func BillableRAMMBWithSidecars(ramMB int, sidecarMBs []int) int {
 	}
 	return total
 }
+
+// MeterCatchUpWindow bounds how far back meterd's sampler re-rolls closed
+// minutes that were never recorded compute-complete, after a restart, a
+// failed tick or an outage (H5-55, ADR-790). Re-rolling a complete minute is
+// a no-op because usage_minutes keeps the first positive mb_seconds per
+// (instance, minute). MeterCatchUpMinutesPerTick bounds the extra work one
+// sample tick takes on, so a long backlog drains over several ticks instead
+// of starving the control plane.
+const MeterCatchUpWindow = 24 * time.Hour
+const MeterCatchUpMinutesPerTick = 15
 
 // IdleTimeoutBounds returns the [floor, ceiling] seconds a customer may configure
 // their idle timeout to for this plan (spec §4.3).
