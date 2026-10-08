@@ -11,6 +11,8 @@ For a complete application starting point, run
 versioned release migrations, two-user RLS, SDK tarball installation, a typed
 client, `data-api sync` and application CI. The migration app and generated API
 remain ordinary, separately deployed apps.
+Use [CLI/SDK bundles](data-api-packaging.md) to package a matching pair,
+pin their checksums in the application, and restore the SDK in client CI.
 
 ## Create an API
 

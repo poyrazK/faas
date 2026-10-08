@@ -5,6 +5,8 @@ The management SDK and account keys remain separate from application access.
 This package is not published to npm. From an authorized checkout, run
 `npm ci && npm run build && npm pack`, then install the produced tarball in
 your application. The repository's existing SDK license/publication policy applies.
+For a paired CLI/SDK artifact and a clean starter installation, use the
+[Data API bundle workflow](../../docs/data-api-packaging.md).
 
 ```ts
 import { createDataClient } from '@gregale/data'

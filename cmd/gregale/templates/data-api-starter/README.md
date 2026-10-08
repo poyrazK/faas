@@ -15,26 +15,50 @@ owner tools and CI files are excluded from the migration app's upload.
 
 ## Install the client
 
-Use Node.js 22 or newer. `@gregale/data` is not published to npm. Build its
-tarball from an authorized Gregale checkout:
+Use Node.js 22 or newer, npm, curl and tar. Obtain an approved Data API bundle,
+or build one from a committed, authorized Gregale checkout with its pinned Go
+toolchain:
 
 ```sh
-# In /path/to/faas/sdk/data:
-npm ci --ignore-scripts
-npm run build
-npm pack
+# In /path/to/faas (output must be a new directory outside the checkout):
+node scripts/build-data-api-bundle.mjs --version v0.0.0-data-api.local \
+  --out-dir /path/to/data-api-bundle
 # Back in the initialized notes directory:
-node tools/install-sdk.mjs /path/to/faas/sdk/data/gregale-data-0.1.0.tgz
+node tools/artifacts.mjs pin /path/to/data-api-bundle/data-api-bundle.json
 npm run typecheck --prefix client
 npm test --prefix client
 ```
 
-The installer copies the artifact to `client/vendor/gregale-data.tgz`, installs
-it without lifecycle scripts and updates the client lockfile. Include that
-authorized artifact and the lockfile in your application repository, or arrange
-for CI to fetch the same artifact before `npm ci`. Public SDK distribution
-remains subject to Gregale's SDK publishing policy. This starter does not
-publish a package. Root migration dependencies have their own lockfile.
+The bundle pairs a CLI and SDK from one source commit. The installer verifies
+their checksums, installs the CLI at `.gregale-tools/gregale`, installs the SDK
+without lifecycle scripts, and updates the client lockfile. Commit
+`data-api-artifacts.json` and `client/package-lock.json`. Use the paired CLI for
+the commands below, for example `./.gregale-tools/gregale data-api sync ...`.
+
+For automatic client CI, include the authorized SDK tarball at
+`client/vendor/gregale-data.tgz` in your application repository. Alternatively,
+pin an immutable HTTPS directory holding the bundle artifacts:
+
+```sh
+node tools/artifacts.mjs pin /path/to/data-api-bundle/data-api-bundle.json \
+  --base-url https://artifacts.example.com/approved/COMMIT/
+```
+
+The base URL must have a trailing slash and no embedded credentials, query or
+fragment. CI restores the exact SDK checksum and refuses a different lockfile.
+Automatic pull-request CI receives no artifact credentials: vendor the SDK
+when its download needs authentication. Protected preview CI can use the
+optional `GREGALE_ARTIFACT_TOKEN` secret to fetch the paired CLI and SDK. Downloads
+require HTTP 200, refuse redirects and never forward the artifact token to
+another origin. For a local bundle copy, use
+`node tools/artifacts.mjs restore --from /path/to/data-api-bundle --cli` before
+`npm ci --prefix client`.
+
+`@gregale/data` is not published to npm. Public SDK distribution remains subject
+to Gregale's SDK publishing policy. This workflow builds local files and does
+not publish a package. Root migration dependencies have their own lockfile.
+`tools/install-sdk.mjs` still accepts a standalone authorized SDK tarball for
+local use; bundle-based CI requires the committed bundle pin.
 
 ## Configure and deploy
 
@@ -150,19 +174,21 @@ deployment branches restricted to main. Add environment variables:
 
 | Variable | Value |
 | --- | --- |
-| `GREGALE_CLI_VERSION` | Pinned CLI release tag with Data API commands |
 | `GREGALE_API` | Preview management API URL |
 | `DATA_API_APP` | Data API app slug, such as `notes-data` |
 | `DATA_API_URL` | Public HTTPS Data API URL |
 | `DATA_API_USER_A_SUBJECT`, `DATA_API_USER_B_SUBJECT` | Two distinct JWT subjects |
 
 Add secrets `GREGALE_OWNER_TOKEN`, `DATA_API_USER_A_TOKEN` and
-`DATA_API_USER_B_TOKEN` to that protected environment. The owner key is passed
+`DATA_API_USER_B_TOKEN` to that protected environment. If the bundle location
+requires bearer authentication, also add `GREGALE_ARTIFACT_TOKEN`. Preview CI
+needs the pinned bundle's HTTPS base URL to restore its CLI. The owner key is passed
 only to the drift-check step; the RLS step receives application sessions. Keep
-sessions current and use an isolated preview database. The CLI installer pins
-the requested release and verifies its published archive checksum. If the
-needed CLI has not been released yet, run these commands with a locally built
-CLI until packaging is available.
+sessions current and use an isolated preview database. The CLI and SDK come
+from the committed bundle pin; preview CI verifies the CLI's embedded version,
+source commit and build timestamp before running its drift check.
+Include `linux/amd64` in the bundle's `--targets` for GitHub's Ubuntu runner,
+along with your local host target when building on another platform.
 
 The visible `ci/` files are the embedded workflow sources; the initialized
 `.github/workflows/` copies are your application workflows. See the

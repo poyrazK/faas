@@ -404,7 +404,7 @@ func nextStepsFor(tpl string) []string {
 	case "data-api-starter":
 		return []string{
 			"Read README.md to reserve the migration app and attach its managed migration binding.",
-			"Install the packed @gregale/data client with node tools/install-sdk.mjs /path/to/gregale-data.tgz.",
+			"Pin the paired CLI and SDK with node tools/artifacts.mjs pin /path/to/bundle/data-api-bundle.json.",
 			"Create the Data API with your application JWT issuer, then automate changes:",
 			"  gregale data-api sync notes-data --config data-api.json",
 			"The scaffold includes versioned migrations, two-user RLS checks and application CI.",

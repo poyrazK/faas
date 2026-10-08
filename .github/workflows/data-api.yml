@@ -13,6 +13,9 @@ on:
       - "sdk/data/**"
       - "tests/data-api/**"
       - "scripts/test-data-api.sh"
+      - "scripts/*data-api*bundle*"
+      - "scripts/test-data-api-packaging.sh"
+      - "scripts/archive-cli-binary.sh"
       - "scripts/ci/run-data-api-staging-canary.sh"
       - ".github/workflows/data-api-staging.yml"
       - ".github/workflows/data-api.yml"
@@ -20,6 +23,30 @@ on:
 permissions:
   contents: read
 jobs:
+  packaging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOGC: 30
+      GOMEMLIMIT: 2GiB
+      GOMAXPROCS: 2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Verify reproducible artifacts and clean starter installation
+        run: bash scripts/test-data-api-packaging.sh --out-dir "$RUNNER_TEMP/data-api-bundle"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gregale-data-api-${{ github.sha }}
+          path: ${{ runner.temp }}/data-api-bundle/
+          if-no-files-found: error
   acceptance:
     runs-on: ubuntu-latest
     timeout-minutes: 20

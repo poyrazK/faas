@@ -19,12 +19,8 @@ jobs:
           node-version: "22"
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
-      - name: Verify SDK artifact is present
-        run: |
-          test -f client/vendor/gregale-data.tgz || {
-            echo 'Install and commit the approved SDK tarball with tools/install-sdk.mjs before running client CI.'
-            exit 1
-          }
+      - name: Restore and verify the pinned SDK
+        run: node tools/artifacts.mjs restore
       - run: npm ci --prefix client --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck --prefix client
       - run: npm test --prefix client

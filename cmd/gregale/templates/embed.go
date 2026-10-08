@@ -80,8 +80,8 @@ var Names = []string{
 // writes them instead.
 var generatedDotfiles = map[string]map[string]string{
 	"data-api-starter": {
-		".gitignore":     "node_modules/\nclient/dist/\n.env\n.env.*\n",
-		".gregaleignore": "/client/\n/tools/\n/test/\n/ci/\n/.github/\n",
+		".gitignore":     "node_modules/\nclient/dist/\n.gregale-tools/\n.env\n.env.*\n",
+		".gregaleignore": "/client/\n/tools/\n/test/\n/ci/\n/.github/\n/.gregale-tools/\n/data-api-artifacts.json\n",
 	},
 	// production-us hunt #4: tools/ holds owner-machine scripts that need an
 	// account-owner FAAS_TOKEN. Without this file `gregale doctor` scanned
