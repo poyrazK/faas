@@ -131,7 +131,7 @@ func QuotaWarningHTMLBody(email, plan string, usedGB float64, quotaGB int, day s
 	return fmt.Sprintf(`<!doctype html>
 <html><body>
 <p>Hi,</p>
-<p>Your faas account (<code>%s</code>) crossed 100%% of its %s plan quota on %s.
+<p>Your Gregale account (<code>%s</code>) crossed 100%% of its %s plan quota on %s.
 You're now accruing overage at the rates listed in the dashboard.</p>
 <table>
   <tr><th>Used</th><td>%.2f GB-h</td></tr>
@@ -142,7 +142,7 @@ subscription item. To stop the overage, either upgrade your plan or
 reduce the running instances on your account.</p>
 <p>This is the only quota warning you'll get today; the next one
 arrives tomorrow if usage is still over the quota.</p>
-<p>&mdash; onebox faas</p>
+<p>&mdash; Gregale</p>
 </body></html>
 `, email, plan, day, usedGB, quotaGB)
 }
