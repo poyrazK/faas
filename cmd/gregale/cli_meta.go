@@ -2320,7 +2320,7 @@ var cliCommands = []cliCommand{
 				{Name: "enabled", Short: "whether the rule is enabled (default true)", Bool: true, ClosedSet: []string{"true", "false"}},
 				{Name: "throttle-requests-per-second", Short: "kind=throttle: refill rate in requests per second", Value: "RPS"},
 				{Name: "throttle-burst", Short: "kind=throttle: token-bucket burst", Value: "N"},
-				{Name: "throttle-key-by", Short: "kind=throttle: bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country)", Value: "KEY"},
+				{Name: "throttle-key-by", Short: "kind=throttle: bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country|ip)", Value: "KEY"},
 				{Name: "redirect-status", Short: "kind=redirect: 301|302|307|308", Value: "CODE"},
 				{Name: "redirect-to", Short: "kind=redirect: Location URL", Value: "URL"},
 				{Name: "rewrite-from", Short: "kind=rewrite: from path", Value: "PATH"},

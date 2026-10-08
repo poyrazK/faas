@@ -53421,6 +53421,9 @@ components:
           maxLength: 128
           pattern: '^[^\s]{1,128}$'
           description: Optional verified custom JWT claim name whose exact value resolves to a platform tenant external_ref in the app owner's account. Supports namespaced claims. When set, unknown, suspended, or unavailable tenants are rejected before the request reaches the guest.
+        require_exp:
+          type: boolean
+          description: 'Reject tokens that carry no `exp` claim. Off by default: `exp` is validated only when present, so a token minted without one never expires unless this is set.'
 
     EdgeRuleIPAction:
       description: 'CIDR allow/deny evaluator. Deny is checked AFTER allow so a single-IP deny wins.'
@@ -54021,7 +54024,7 @@ components:
           example: 200
         key_by:
           type: string
-          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"]
+          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country", "ip"]
           default: ""
           description: |
             Per-consumer keying dimension (ADR-104 / issue #881
@@ -54034,7 +54037,9 @@ components:
             When `"jwt_claim"`, one bucket per value of the
             claim named by `jwt_claim_name`. When `"country"`, one
             bucket per ISO 3166-1 alpha-2 country resolved from the
-            gateway's trusted client IP. Each non-empty
+            gateway's trusted client IP. When `"ip"`, one bucket per
+            trusted client IP (IPv6 clients keyed by their /64).
+            Each non-empty
             value activates the bounded design: when the
             per-rule consumer set exceeds
             `max_keys_per_rule`, all over-cap callers collapse

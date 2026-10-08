@@ -2844,6 +2844,12 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 		verifyRule = &cloned
 	}
 	claims, err := h.verifyJWTWithDeadline(r.Context(), raw, verifyRule)
+	if errors.Is(err, ErrJWTKeysUnavailable) {
+		// The IdP's keys could not be fetched: the token was never judged,
+		// so this is a dependency outage (503), not a client error (401).
+		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwks_unavailable")
+		return true
+	}
 	if err != nil {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="apps"`)
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
@@ -4383,12 +4389,12 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		if unavailableReason != "" {
 			if unavailableReason == "caller_ip_untrusted" {
 				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-					"Caller IP not in trusted set", "X-Forwarded-For did not contain exactly one trusted address; refusing to evaluate a country-keyed throttle"))
+					"Caller IP not in trusted set", fmt.Sprintf("X-Forwarded-For did not contain exactly one trusted address; refusing to evaluate a %s-keyed throttle", rule.KeyBy)))
 				if h.edgeRuleAudit != nil {
 					h.edgeRuleAudit.Emit(r.Context(), "edge_rule.caller_ip_forged", nil, map[string]any{
 						"rule_id": rule.ID, "from_host": r.Host,
 						"xff_count": len(r.Header.Values("X-Forwarded-For")),
-						"policy":    "throttle_country",
+						"policy":    "throttle_" + rule.KeyBy,
 					})
 				}
 				if h.metrics != nil {
@@ -4529,6 +4535,13 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 // configured GeoIP database. A missing database, forged XFF, lookup error, or
 // uncovered address is unavailable and fails closed.
 func (h *Handler) resolveThrottleDimension(r *http.Request, rule *EdgeRuleThrottleResolved) (string, bool, string) {
+	if rule.KeyBy == api.ThrottleKeyByIP {
+		clientIP, ok := clientIPFromTrustedXFF(r)
+		if !ok {
+			return "", false, "caller_ip_untrusted"
+		}
+		return throttleIPKey(clientIP), true, ""
+	}
 	if rule.KeyBy != api.ThrottleKeyByCountry {
 		value, ok := resolveConsumerKey(rule.KeyBy, rule.JWTClaimName, authenticatedFrom(r.Context()))
 		return value, ok, ""
@@ -4577,6 +4590,17 @@ func geoFailReason(lerr error, found bool) string {
 //
 // Returns (zero, false) on parse failure — the caller's deny
 // posture is enforced at the caller.
+// throttleIPKey is the key_by=ip bucket identity: the IPv4 address itself,
+// or the /64 an IPv6 client sits in. An IPv6 host usually controls a whole
+// /64, so keying on the full address would let it mint a fresh bucket per
+// request by rotating its interface identifier.
+func throttleIPKey(ip net.IP) string {
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return (&net.IPNet{IP: ip.Mask(net.CIDRMask(64, 128)), Mask: net.CIDRMask(64, 128)}).String()
+}
+
 func clientIPFromTrustedXFF(r *http.Request) (net.IP, bool) {
 	values := r.Header.Values("X-Forwarded-For")
 	if len(values) != 1 {

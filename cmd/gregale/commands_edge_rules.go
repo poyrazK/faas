@@ -228,6 +228,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	var jwtClaims multiFlag
 	fs.Var(&jwtClaims, "jwt-required-claim", "kind=jwt: required claim (Name=Value; repeat)")
 	jwtTenantExternalRefClaim := fs.String("jwt-platform-tenant-external-ref-claim", "", "kind=jwt: verified custom claim containing the platform tenant external_ref")
+	jwtRequireExp := fs.Bool("jwt-require-exp", false, "kind=jwt: reject tokens without an exp claim")
 
 	// ip
 	var ipAllow, ipDeny multiFlag
@@ -261,7 +262,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	// acct.Plan is the authoritative gate).
 	throttleRPS := fs.Float64("throttle-requests-per-second", 0, "kind=throttle: refill rate (req/s; >0; <=plan.RateLimitRPS)")
 	throttleBurst := fs.Int("throttle-burst", 0, "kind=throttle: token-bucket burst (>0; <=plan.RateLimitBurst)")
-	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country)")
+	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country|ip)")
 	throttleJWTClaim := fs.String("throttle-jwt-claim", "", "kind=throttle: JWT claim name when --throttle-key-by=jwt_claim")
 	throttleMaxKeys := fs.Int("throttle-max-keys-per-rule", 0, "kind=throttle: maximum distinct consumer buckets (0=plan default)")
 	throttleMissingKeyPolicy := fs.String("throttle-missing-key-policy", "", "kind=throttle: missing identity behavior (shared|reject; default shared)")
@@ -394,6 +395,7 @@ func cmdEdgeRulesCreate(args []string) int {
 		JWTAlgorithms:                     jwtAlgorithms,
 		JWTClaims:                         jwtClaims,
 		JWTPlatformTenantExternalRefClaim: *jwtTenantExternalRefClaim,
+		JWTRequireExp:                     *jwtRequireExp,
 		IPAllow:                           ipAllow,
 		IPDeny:                            ipDeny,
 		LimitMaxBodyBytes:                 *limitMaxBodyBytes,
@@ -521,7 +523,7 @@ func cmdEdgeRulesGet(args []string) int {
 // passed with empty value" (send zero value). The triple-state
 // enabled flag is tracked via an enabledSet boolean.
 func cmdEdgeRulesUpdate(args []string) int {
-	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent")
+	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent", "jwt-require-exp")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
 	matchHost := fs.String("match-host", "", "new host to match")
@@ -574,6 +576,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	var jwtClaims multiFlag
 	fs.Var(&jwtClaims, "jwt-required-claim", "kind=jwt: required claim")
 	jwtTenantExternalRefClaim := fs.String("jwt-platform-tenant-external-ref-claim", "", "kind=jwt: verified custom claim containing the platform tenant external_ref")
+	jwtRequireExp := fs.Bool("jwt-require-exp", false, "kind=jwt: reject tokens without an exp claim")
 	var ipAllow, ipDeny multiFlag
 	fs.Var(&ipAllow, "ip-allow", "kind=ip: allow CIDR")
 	fs.Var(&ipDeny, "ip-deny", "kind=ip: deny CIDR")
@@ -595,7 +598,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	// here AND the validator rejects it server-side.
 	throttleRPS := fs.Float64("throttle-requests-per-second", 0, "kind=throttle: new refill rate (req/s; >0; <=plan.RateLimitRPS)")
 	throttleBurst := fs.Int("throttle-burst", 0, "kind=throttle: new token-bucket burst (>0; <=plan.RateLimitBurst)")
-	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: new bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country)")
+	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: new bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country|ip)")
 	throttleJWTClaim := fs.String("throttle-jwt-claim", "", "kind=throttle: new JWT claim name when --throttle-key-by=jwt_claim")
 	throttleMaxKeys := fs.Int("throttle-max-keys-per-rule", 0, "kind=throttle: new maximum distinct consumer buckets (0=plan default)")
 	throttleMissingKeyPolicy := fs.String("throttle-missing-key-policy", "", "kind=throttle: new missing identity behavior (shared|reject)")
@@ -762,6 +765,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 			JWTAlgorithms:                     jwtAlgorithms,
 			JWTClaims:                         jwtClaims,
 			JWTPlatformTenantExternalRefClaim: *jwtTenantExternalRefClaim,
+			JWTRequireExp:                     *jwtRequireExp,
 			IPAllow:                           ipAllow,
 			IPDeny:                            ipDeny,
 			LimitMaxBodyBytes:                 *limitMaxBodyBytes,
@@ -906,6 +910,7 @@ type edgeRuleActionInputs struct {
 	JWTAudience, JWTAlgorithms        []string
 	JWTClaims                         []string
 	JWTPlatformTenantExternalRefClaim string
+	JWTRequireExp                     bool
 	// ip
 	IPAllow, IPDeny []string
 	// limit (ADR-091 D24). Both fields are int — pointer types
@@ -1061,6 +1066,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			Algorithms:                     in.JWTAlgorithms,
 			RequiredClaims:                 claims,
 			PlatformTenantExternalRefClaim: in.JWTPlatformTenantExternalRefClaim,
+			RequireExp:                     in.JWTRequireExp,
 		}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)
@@ -1553,7 +1559,7 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"headers-response-add", "headers-response-set", "headers-response-remove",
 		"cors-allow-origin", "cors-allow-method", "cors-allow-header", "cors-expose-header",
 		"cors-allow-credentials", "cors-max-age-seconds",
-		"jwt-issuer", "jwt-jwks-url", "jwt-audience", "jwt-algorithm", "jwt-required-claim", "jwt-platform-tenant-external-ref-claim",
+		"jwt-issuer", "jwt-jwks-url", "jwt-audience", "jwt-algorithm", "jwt-required-claim", "jwt-platform-tenant-external-ref-claim", "jwt-require-exp",
 		"ip-allow", "ip-deny",
 		"limit-max-body-bytes", "limit-max-body-bytes-streaming",
 		"throttle-requests-per-second", "throttle-burst",

@@ -60,3 +60,24 @@ func TestEdgeRulePopulatedEntriesHaveBoundedFallbackExpiry(t *testing.T) {
 		})
 	}
 }
+
+// An expired entry is no longer served as current, but stays available as the
+// last-known-good set for loaders whose reload fails; Reset still drops it.
+func TestEdgeRuleExpiredEntryRemainsLastKnownUntilReset(t *testing.T) {
+	c := NewEdgeRuleCache(2)
+	now := time.Unix(100, 0)
+	c.SetClock(func() time.Time { return now })
+	c.Put("host", &HostEntry{IP: []EdgeRuleIPResolved{{ID: "deny"}}})
+	now = now.Add(edgeRuleCacheTTL)
+	if _, hit := c.GetIP("host"); hit {
+		t.Fatal("expired entry served as current")
+	}
+	last, ok := c.GetLastKnownHost("host")
+	if !ok || len(last.IP) != 1 || last.IP[0].ID != "deny" {
+		t.Fatalf("GetLastKnownHost = %+v, %v; want the expired deny rule", last, ok)
+	}
+	c.Reset()
+	if _, ok := c.GetLastKnownHost("host"); ok {
+		t.Fatal("last-known entry survived rule invalidation")
+	}
+}
