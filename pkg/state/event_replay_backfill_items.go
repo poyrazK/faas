@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -109,12 +110,19 @@ func (s *PgStore) ListEventReplayBackfillItems(ctx context.Context, accountID, j
 	for _, row := range rows {
 		failureCode := eventHistoryText(row.FailureCode, api.EventRoutingHistoryCodeMaxBytes)
 		lastError := eventHistoryText(row.LastError, api.EventRoutingHistoryErrorMaxBytes)
-		out.Items = append(out.Items, api.EventReplayBackfillItem{
+		item := api.EventReplayBackfillItem{
 			EventSource: row.EventSource, EventID: row.EventID, EventType: row.EventType, SchemaVersion: row.SchemaVersion,
 			AcceptedAt: timeFromPgtype(row.AcceptedAt), State: row.State, Attempts: int(row.Attempts),
 			FailureCode: failureCode, LastError: lastError, DetailsTruncated: failureCode != row.FailureCode || lastError != row.LastError,
 			Retryable: row.Retryable, UpdatedAt: timeFromPgtype(row.UpdatedAt),
-		})
+		}
+		if row.ReceiptAvailable {
+			item.ReceiptURL = "/v1/events/receipt?" + url.Values{"source": {row.EventSource}, "id": {row.EventID}}.Encode()
+		}
+		if row.ExecutionHistoryAvailable {
+			item.AttemptHistoryURL = "/v1/events/receipt/attempts?" + url.Values{"source": {row.EventSource}, "id": {row.EventID}, "subscription_id": {uuidString(row.SubscriptionID)}}.Encode()
+		}
+		out.Items = append(out.Items, item)
 	}
 	if hasMore {
 		last := rows[len(rows)-1]

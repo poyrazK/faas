@@ -42,6 +42,11 @@ pruned. A stale outbox claim cannot admit work. The scheduler then records the
 ordinary recipient checkpoint; interruption between admission and checkpoint
 does not create another run.
 
+ADR-648 extends admission to independent recipient leases. For adopted receipts,
+the run, admission receipt, recipient checkpoint and routing history commit
+together. Explicitly disabled adoption retains the original parent-lease path
+for new workflow receipts.
+
 Quota pressure and temporarily unavailable targets use the existing bounded
 fanout retry and recipient replay mechanism. Deleted targets and invalid
 definitions produce terminal failures. Workflow recipients stay pending without

@@ -2,6 +2,7 @@ package fcvm
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -146,6 +147,22 @@ const (
 // this driver.
 const guestBootConsoleArgs = "console=ttyS0,115200n8 quiet i8042.nokbd i8042.noaux "
 
+// guestTimerArgs pins the guest timekeeping that survives a snapshot restore
+// (ADR-642). The default x86 choice, the tsc clocksource with the
+// lapic-deadline clockevent, loses timer interrupts after a Firecracker 1.7
+// restore: KVM restores MSR_IA32_TSC_DEADLINE relative to a TSC that is
+// written later (firecracker#4099, fixed in 1.8 by #4666/#4618), and vCPUs can
+// come back with different TSC offsets (firecracker#6200). On production-us a
+// restored Node app ran its 1 s setInterval every 5 s and a setTimeout for
+// over 30 s, until liveness killed the VM (hunt #5, H5-25). kvm-clock is the
+// paravirtual clock KVM keeps consistent across a restore, and the one-shot
+// LAPIC timer is programmed in timer ticks rather than TSC deadlines.
+const guestTimerArgs = "clocksource=kvm-clock lapic=notscdeadline "
+
+// guestTimerProfile is guestTimerArgs unless a diagnostic test overrides it;
+// it is recorded in every capture's backing identity.
+var guestTimerProfile = guestTimerArgs
+
 const coldBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
 	// BuildKit generates a per-VM proxy CA during worker startup. The
@@ -163,6 +180,11 @@ const executionBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
 	"random.trust_cpu=on rng_core.default_quality=1000 " +
 	"root=/dev/vda ro init=/sbin/init"
+
+// withGuestTimer inserts the timer profile after the console arguments.
+func withGuestTimer(args string) string {
+	return guestBootConsoleArgs + guestTimerProfile + strings.TrimPrefix(args, guestBootConsoleArgs)
+}
 
 // ColdBootSpec is everything needed to build a cold-boot VM config. RAM and vCPU
 // come from the app's plan (via pkg/api limits) — never inline them here.
@@ -360,9 +382,9 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	if s.Networkless {
 		network = nil
 	}
-	bootArgs := coldBootArgs
+	bootArgs := withGuestTimer(coldBootArgs)
 	if s.Networkless {
-		bootArgs = executionBootArgs
+		bootArgs = withGuestTimer(executionBootArgs)
 	}
 	return VMConfig{
 		BootSource:        BootSource{KernelImagePath: s.KernelKey, BootArgs: bootArgs},

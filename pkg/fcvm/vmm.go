@@ -3850,8 +3850,8 @@ func (v *JailerVMM) DeleteWarmSnapshot(ctx context.Context, storageKey, vmstateS
 		return fmt.Errorf("vmm: delete warm snapshot: storage backend unavailable")
 	}
 	var errs []error
-	driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: storageKey})
-	for _, key := range []string{storageKey, vmstateStorageKey, driveKey} {
+	capture := state.Snapshot{StorageKey: storageKey}
+	for _, key := range []string{storageKey, vmstateStorageKey, state.SnapshotDriveKey(capture), state.SnapshotBackingKey(capture)} {
 		if key == "" {
 			continue
 		}
@@ -5864,29 +5864,34 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 	// every iteration. The host loop is bounded by ctx.Done() and
 	// the deadline.
 	client := v.healthcheckClient()
-	responseCount := 0
+	var seen readinessObservation
 	for {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			if errors.Is(ctxErr, context.DeadlineExceeded) {
-				return v.healthcheckNotReadyProblem(l, healthcheckPath, responseCount, readyTimeout)
+				return v.healthcheckNotReadyProblem(l, healthcheckPath, seen, readyTimeout)
 			}
 			return ctxErr
 		}
 		if time.Now().After(deadline) {
-			return v.healthcheckNotReadyProblem(l, healthcheckPath, responseCount, readyTimeout)
+			return v.healthcheckNotReadyProblem(l, healthcheckPath, seen, readyTimeout)
 		}
 		probeCount++
-		if ok, probeErr := healthcheckProbe(ctx, client, addr, healthcheckPath); probeErr == nil {
-			responseCount++
-			if ok {
+		if status, transportErr, probeErr := healthcheckProbeResult(ctx, client, addr, healthcheckPath); probeErr == nil {
+			switch {
+			case status/100 == 2:
 				v.emitReadiness200(ctx, l, healthcheckPath, probeCount, readinessStartedAt)
 				return nil
+			case status > 0:
+				seen.responses++
+				seen.lastStatus = status
+			case isConnRefusedErr(transportErr):
+				seen.connRefused++
 			}
 		}
 		select {
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return v.healthcheckNotReadyProblem(l, healthcheckPath, responseCount, readyTimeout)
+				return v.healthcheckNotReadyProblem(l, healthcheckPath, seen, readyTimeout)
 			}
 			return ctx.Err()
 		case <-time.After(10 * time.Millisecond):
@@ -6074,14 +6079,29 @@ func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefused
 		fmt.Sprintf("guest %s not ready after %s: startup_phase=guest_startup; no readiness connection was accepted", l.Instance, readyTimeout))
 }
 
+// readinessObservation summarizes the HTTP readiness probes of one wake.
+// responses counts real HTTP answers; connRefused counts probes nothing
+// accepted. A transport failure is never an answer (H4-21: a crashed app was
+// reported as "answered 348 readiness probes without a 2xx").
+type readinessObservation struct {
+	responses, lastStatus, connRefused int
+}
+
 // healthcheckNotReadyProblem distinguishes a reachable handler returning an
-// unhealthy status from a guest/network path that never answered at all.
-func (v *JailerVMM) healthcheckNotReadyProblem(l Lease, healthcheckPath string, responseCount int, readyTimeout time.Duration) *api.Problem {
-	if responseCount > 0 {
+// unhealthy status from an app that never listened and from a guest/network
+// path that never answered at all.
+func (v *JailerVMM) healthcheckNotReadyProblem(l Lease, healthcheckPath string, seen readinessObservation, readyTimeout time.Duration) *api.Problem {
+	if seen.responses > 0 {
 		return api.NewProblem(422, api.CodeAppStartupTimeout,
 			"app healthcheck did not become ready in time",
-			fmt.Sprintf("startup_phase=handler_healthcheck: guest %s answered %d readiness probes at %s without a 2xx response before %s",
-				l.Instance, responseCount, healthcheckPath, readyTimeout))
+			fmt.Sprintf("startup_phase=handler_healthcheck: guest %s answered %d readiness probes at %s without a 2xx response (last status %d) before %s",
+				l.Instance, seen.responses, healthcheckPath, seen.lastStatus, readyTimeout))
+	}
+	if seen.connRefused > 0 {
+		return api.NewProblem(422, api.CodeAppNotListening,
+			"no process listening on $PORT",
+			fmt.Sprintf("startup_phase=handler_boot: readiness probe GET %s on :8080 got ECONNREFUSED (refused_count=%d, deadline=%s, instance=%s); the app never listened or exited during startup",
+				healthcheckPath, seen.connRefused, readyTimeout, l.Instance))
 	}
 	return api.NewProblem(422, api.CodeAppStartupTimeout,
 		"app did not become ready in time",
@@ -6302,12 +6322,19 @@ func eventColdBootArtifactTimings(timings []coldBootArtifactTiming) []events.Col
 // scheme); healthcheckPath must start with `/` (DTO validator
 // guarantees this in production).
 func healthcheckProbe(ctx context.Context, client *http.Client, addr, healthcheckPath string) (bool, error) {
+	status, _, err := healthcheckProbeResult(ctx, client, addr, healthcheckPath)
+	return status/100 == 2, err
+}
+
+// healthcheckProbeResult is one readiness GET. status is 0 when no HTTP
+// response arrived, and transportErr then says why; err aborts the loop.
+func healthcheckProbeResult(ctx context.Context, client *http.Client, addr, healthcheckPath string) (status int, transportErr, err error) {
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return 0, nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+healthcheckPath, nil)
 	if err != nil {
-		return false, err
+		return 0, nil, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -6319,7 +6346,7 @@ func healthcheckProbe(ctx context.Context, client *http.Client, addr, healthchec
 		// work" stance (a guest that hasn't bound its port
 		// yet looks identical to a guest whose netns blew
 		// away mid-probe — both must be retried).
-		return false, nil //nolint:nilerr
+		return 0, err, nil
 	}
 	// Drain the body (capped) before close so the cached
 	// transport's keep-alive can reuse the connection. Without
@@ -6331,7 +6358,7 @@ func healthcheckProbe(ctx context.Context, client *http.Client, addr, healthchec
 	// the host.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	_ = resp.Body.Close()
-	return resp.StatusCode/100 == 2, nil
+	return resp.StatusCode, nil, nil
 }
 
 // healthcheckClient returns the per-VMM *http.Client used by the

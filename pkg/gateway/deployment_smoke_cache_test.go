@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -325,5 +326,25 @@ func TestDeploymentSmokeNoStoreOverridesGuestAndEdgeHeaders(t *testing.T) {
 				t.Fatal("candidate populated customer cache")
 			}
 		})
+	}
+}
+
+// production-us hunt #5 (H5-48): an app restricted with public_auth
+// ip_allowlist could not deploy: the hosting verifier probes from the
+// platform's address and was refused until the recovery window expired.
+func TestDeploymentSmokePassesIngressIPAllowlist(t *testing.T) {
+	f := newSmokeCacheFixture(t)
+	f.backend.fakeBackend.app.PublicAuth = PublicAuthConfig{Mode: publicAuthModeIPAllowlist, IPAllowlist: []netip.Prefix{netip.MustParsePrefix("203.0.113.9/32")}}
+	for _, smoke := range []bool{false, true} {
+		r := f.request(smoke)
+		r.Header.Set("X-Forwarded-For", "198.51.100.7")
+		rec := httptest.NewRecorder()
+		f.handler.ServeHTTP(rec, r)
+		if smoke && rec.Code != http.StatusOK {
+			t.Fatalf("authorized smoke from a non-allowlisted address: status %d, want 200", rec.Code)
+		}
+		if !smoke && rec.Code != http.StatusForbidden {
+			t.Fatalf("ordinary request from a non-allowlisted address: status %d, want 403", rec.Code)
+		}
 	}
 }

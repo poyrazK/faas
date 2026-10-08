@@ -13544,7 +13544,7 @@ func (m *MemStore) ListInvocationsForApp(_ context.Context, appID string, states
 	}
 	var out []Invocation
 	for _, inv := range m.invocations {
-		if inv.AppID != appID {
+		if !sameMemUUID(inv.AppID, appID) {
 			continue
 		}
 		if len(stateSet) > 0 {

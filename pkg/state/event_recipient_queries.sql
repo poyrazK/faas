@@ -69,6 +69,7 @@ WITH candidate AS (
     LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r.subscription_id
     WHERE ((r.state = 'pending' AND r.available_at <= sqlc.arg(now_at)::timestamptz)
        OR (r.state = 'processing' AND r.lease_until <= sqlc.arg(now_at)::timestamptz))
+      AND (sqlc.arg(include_workflows)::boolean OR NOT r.recipient ? 'workflow')
       AND (r.backfill_job_id IS NULL OR EXISTS (
           SELECT 1 FROM event_replay_jobs j JOIN event_replay_job_items i ON i.job_id=j.id
           WHERE j.id=r.backfill_job_id AND j.state='running' AND i.outbox_id=r.outbox_id
