@@ -47,7 +47,17 @@ New apps start with this guard in `observe` mode at 10 requests/s and burst 20
 per source, clamped to the plan's request rate and burst
 ([ADR-732](adr/732-default-pre-auth-observe.md)). Observe never rejects a
 request, so check the recorded would-block traffic before switching to
-`enforce`. To choose different values, or to opt out with `{"mode":"off"}`, set
+`enforce`. `GET /v1/apps/{slug}/pre-auth-observations?range=24h` includes a
+`suggestion` (`ready`, `review`, or `insufficient_data`), also shown on the
+dashboard's pre-auth page. From the CLI:
+
+```sh
+gregale app my-api --pre-auth enforce                 # prints the 24h check first
+gregale app my-api --pre-auth-rps 20 --pre-auth-burst 40
+gregale app my-api --pre-auth off
+```
+
+To choose different values, or to opt out with `{"mode":"off"}`, set
 `pre_auth_rate_limit` when creating the app or through
 `PATCH /v1/apps/{slug}`:
 

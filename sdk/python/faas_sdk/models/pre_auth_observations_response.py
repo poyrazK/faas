@@ -11,8 +11,10 @@ from ..models.pre_auth_observations_response_range import (
     PreAuthObservationsResponseRange,
     check_pre_auth_observations_response_range,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.pre_auth_enforcement_suggestion import PreAuthEnforcementSuggestion
     from ..models.pre_auth_policy_observation import PreAuthPolicyObservation
 
 
@@ -29,6 +31,13 @@ class PreAuthObservationsResponse:
     """prometheus or degraded: <reason>."""
     as_of: datetime.datetime
     policies: list[PreAuthPolicyObservation]
+    suggestion: PreAuthEnforcementSuggestion | Unset = UNSET
+    """Advice on switching an observe-mode guard to enforce, judged on the
+    response range (ADR-732 amendment 1). Present only for observe mode
+    with a healthy metrics source; nothing is applied automatically.
+    `ready` needs a range of 24h or longer, at least 1000 requests, and no
+    successful (2xx/3xx) request among those the guard would have blocked.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +54,10 @@ class PreAuthObservationsResponse:
             policies_item = policies_item_data.to_dict()
             policies.append(policies_item)
 
+        suggestion: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.suggestion, Unset):
+            suggestion = self.suggestion.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -56,11 +69,14 @@ class PreAuthObservationsResponse:
                 "policies": policies,
             }
         )
+        if suggestion is not UNSET:
+            field_dict["suggestion"] = suggestion
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.pre_auth_enforcement_suggestion import PreAuthEnforcementSuggestion
         from ..models.pre_auth_policy_observation import PreAuthPolicyObservation
 
         d = dict(src_dict)
@@ -79,12 +95,20 @@ class PreAuthObservationsResponse:
 
             policies.append(policies_item)
 
+        _suggestion = d.pop("suggestion", UNSET)
+        suggestion: PreAuthEnforcementSuggestion | Unset
+        if isinstance(_suggestion, Unset):
+            suggestion = UNSET
+        else:
+            suggestion = PreAuthEnforcementSuggestion.from_dict(_suggestion)
+
         pre_auth_observations_response = cls(
             app_id=app_id,
             range_=range_,
             source=source,
             as_of=as_of,
             policies=policies,
+            suggestion=suggestion,
         )
 
         pre_auth_observations_response.additional_properties = d

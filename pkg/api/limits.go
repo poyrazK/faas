@@ -122,6 +122,13 @@ const (
 	PreAuthDefaultBurst             = 20
 )
 
+// The enforce suggestion on GET /v1/apps/{slug}/pre-auth-observations only
+// judges a range long enough to include a daily traffic cycle with at least
+// this many requests (ADR-732 amendment 1).
+const PreAuthSuggestionMinRequests = 1000
+
+var PreAuthSuggestionRanges = []string{"24h", "7d", "15d"}
+
 const ServiceBindingCheckBatchSize = 32
 const ServiceBindingCheckIntervalSeconds = 2
 

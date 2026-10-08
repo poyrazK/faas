@@ -40160,6 +40160,24 @@ components:
           maxItems: 49
           items:
             $ref: '#/components/schemas/PreAuthPolicyObservation'
+        suggestion:
+          $ref: '#/components/schemas/PreAuthEnforcementSuggestion'
+
+    PreAuthEnforcementSuggestion:
+      description: |
+        Advice on switching an observe-mode guard to enforce, judged on the
+        response range (ADR-732 amendment 1). Present only for observe mode
+        with a healthy metrics source; nothing is applied automatically.
+        `ready` needs a range of 24h or longer, at least 1000 requests, and no
+        successful (2xx/3xx) request among those the guard would have blocked.
+      type: object
+      required: [status, reason, requests, would_block, would_block_succeeded]
+      properties:
+        status: { type: string, enum: [ready, review, insufficient_data] }
+        reason: { type: string }
+        requests: { type: integer, format: int64, minimum: 0, description: "Every gateway request to the app in the range." }
+        would_block: { type: integer, format: int64, minimum: 0, description: "Sum over the app and route policies." }
+        would_block_succeeded: { type: integer, format: int64, minimum: 0, description: "Would-block requests whose final response was 2xx or 3xx." }
 
     PreAuthPolicyObservation:
       description: Counts for one bounded app, route, failed-response, or target-observation policy slot.

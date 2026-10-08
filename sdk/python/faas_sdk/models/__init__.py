@@ -1825,6 +1825,8 @@ from .post_force_cold_boot_app_confirm import PostForceColdBootAppConfirm
 from .post_force_park_instance_confirm import PostForceParkInstanceConfirm
 from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
+from .pre_auth_enforcement_suggestion import PreAuthEnforcementSuggestion
+from .pre_auth_enforcement_suggestion_status import PreAuthEnforcementSuggestionStatus
 from .pre_auth_failed_response_limit import PreAuthFailedResponseLimit
 from .pre_auth_failed_response_limit_coordination import PreAuthFailedResponseLimitCoordination
 from .pre_auth_observations_response import PreAuthObservationsResponse
@@ -4545,6 +4547,8 @@ __all__ = (
     "PostForceParkInstanceConfirm",
     "PostForceRestartInstanceConfirm",
     "PostSweepStuckBuildsConfirm",
+    "PreAuthEnforcementSuggestion",
+    "PreAuthEnforcementSuggestionStatus",
     "PreAuthFailedResponseLimit",
     "PreAuthFailedResponseLimitCoordination",
     "PreAuthObservationsResponse",

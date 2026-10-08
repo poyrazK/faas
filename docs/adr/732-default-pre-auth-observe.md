@@ -60,6 +60,29 @@ app, while every new app accumulates the evidence needed to switch to
 - Copying an app's manifest (environment clones, GitOps) carries the stored
   value, as for any other manifest field.
 
+## Amendment 1 (enforce suggestion and CLI, 2026-10-08)
+
+An observe default only helps if customers eventually enforce. The
+observations response (`GET /v1/apps/{slug}/pre-auth-observations`) now carries
+an advisory `suggestion` for observe-mode guards:
+
+- `ready`: the range is 24h or longer (`PreAuthSuggestionRanges`), the app
+  served at least `PreAuthSuggestionMinRequests` (1000) requests, and no request
+  the app or route policies would have blocked finished 2xx or 3xx.
+- `review`: at least one would-block request succeeded. The reason names the
+  count and points at raising the rate or adding route overrides.
+- `insufficient_data`: the range is too short or the traffic too low.
+
+The request count comes from `gateway_requests_total`; if that query fails the
+suggestion is omitted rather than guessed. Failed-response and target policies
+are excluded because they are not request-rate decisions.
+
+`gregale app <slug> --pre-auth off|observe|enforce [--pre-auth-rps N]
+[--pre-auth-burst N]` closes the CLI gap. It keeps stored route overrides, and
+before switching to `enforce` prints the 24h suggestion (a `warning` when the
+status is `review`) without blocking the change. The dashboard's pre-auth page
+shows the same suggestion. Nothing switches modes automatically.
+
 ## Rejected alternatives
 
 - **Enforce by default.** Breaks apps whose legitimate traffic comes from few
