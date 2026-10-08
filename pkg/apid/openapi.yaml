@@ -36425,6 +36425,8 @@ components:
         method: { type: string, enum: [GET, HEAD, PUT] }
         key: { type: string, minLength: 1, maxLength: 1024 }
         version_id: { type: string, format: uuid, description: GET/HEAD only. Exact owned immutable public version UUID. Mutable null and native provider selectors are rejected. Omit for the current object. }
+        if_match: { type: string, minLength: 1, maxLength: 256, description: 'PUT only. Mutually exclusive with if_none_match. GCS accepts one strong quoted XML ETag or * and binds the observed content generation; a concurrent replacement is rejected even if it has the same ETag. Conditions are fixed in the signed capability.' }
+        if_none_match: { type: string, enum: ['*'], description: PUT only. Create only if no live object exists. Mutually exclusive with if_match. }
         expires_in: { type: integer, minimum: 0, maximum: 900, default: 300 }
         size_bytes: { type: integer, format: int64, minimum: 0, description: Required for PUT; forbidden for GET. }
         content_type: { type: string, maxLength: 255, description: PUT only. }

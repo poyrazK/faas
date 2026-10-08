@@ -31,6 +31,12 @@ type ObjectTrackedUploadStore interface {
 	RetryTrackedObjectUploadRecovery(context.Context, ObjectUploadCompletion, string) error
 }
 
+// ObjectPreparedUploadFailureStore settles a rejected URL preflight atomically
+// against dispatch. It cannot retire a concurrent dispatched native attempt.
+type ObjectPreparedUploadFailureStore interface {
+	FailPreparedObjectUpload(context.Context, ObjectUploadCompletion) (ObjectUploadCompletion, error)
+}
+
 // ObjectTrackedGatewayUploadStore shares dispatch, settlement and recovery with
 // route receipts. Every client PUT is a distinct intent; keys are not idempotency keys.
 type ObjectTrackedGatewayUploadStore interface {

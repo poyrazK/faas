@@ -58,6 +58,12 @@ func PublicSignedObjectHeaders(r SignRequest) (http.Header, error) {
 	if r.Method != http.MethodPut {
 		return h, nil
 	}
+	if r.IfMatch != "" {
+		h.Set("If-Match", r.IfMatch)
+	}
+	if r.IfNoneMatch != "" {
+		h.Set("If-None-Match", r.IfNoneMatch)
+	}
 	for name, value := range map[string]string{"Content-Type": r.ContentType, "Cache-Control": r.CacheControl, "Content-Disposition": r.ContentDisposition, "Content-Encoding": r.ContentEncoding, "Content-Language": r.ContentLanguage} {
 		if value != "" {
 			h.Set(name, value)
@@ -121,7 +127,7 @@ func PresignPublicObject(ctx context.Context, endpoint, region, bucket, access, 
 }
 
 func PresignPublicMultipartPart(ctx context.Context, endpoint, region, bucket, access, secret string, r SignRequest, upload string, part int32, now time.Time) (SignedRequest, error) {
-	if r.Method != http.MethodPut || r.SizeBytes == nil || *r.SizeBytes < 1 || upload == "" || part < 1 || part > api.MaxMultipartParts {
+	if r.Method != http.MethodPut || r.SizeBytes == nil || *r.SizeBytes < 1 || r.IfMatch != "" || r.IfNoneMatch != "" || upload == "" || part < 1 || part > api.MaxMultipartParts {
 		return SignedRequest{}, ErrInvalid
 	}
 	return presignPublicRequest(ctx, endpoint, region, bucket, access, secret, r, now, url.Values{"uploadId": []string{upload}, "partNumber": []string{strconv.FormatInt(int64(part), 10)}})

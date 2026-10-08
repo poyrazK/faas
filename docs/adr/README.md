@@ -647,3 +647,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-646: Unified backfill delivery inspection](646-unified-backfill-delivery-inspection.md)
 - [ADR-647: Independent event routing by default](647-independent-event-routing-default.md)
 - [ADR-648: Independent workflow event routing](648-independent-workflow-event-routing.md)
+
+- [ADR-732: GCS conditional PUT capabilities](732-gcs-conditional-put-capabilities.md)

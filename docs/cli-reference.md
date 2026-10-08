@@ -781,11 +781,13 @@ List uploaded multipart parts
 
 Upload a file with resumable multipart transfers
 
-`gregale bucket upload [--content-type <TYPE>] [--resume <UPLOAD-ID>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+`gregale bucket upload [--content-type <TYPE>] [--if-match <ETAG>] [--if-none-match <*>] [--resume <UPLOAD-ID>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--content-type <TYPE>` | object MIME type |  |
+| `--if-match <ETAG>` | replace a matching object (single PUT only) |  |
+| `--if-none-match <*>` | create only if absent (single PUT only) |  |
 | `--resume <UPLOAD-ID>` | resume a multipart upload from its local checkpoint |  |
 | `--timeout <DURATION>` | transfer deadline (default 30m) |  |
 

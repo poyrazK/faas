@@ -623,10 +623,13 @@ jobs:
           npm run build
       - name: install customer Operations example dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund --prefix examples/customer-operation-orders
+      - name: build CLI for local object storage wire journeys
+        run: go build -o "$RUNNER_TEMP/gregale" ./cmd/gregale
       - name: unit tests (pg shard 1)
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit test debug metadata and serialize its backend; keep optimization.
         env:
+          GREGALE_OBJECT_STORAGE_E2E_CLI: ${{ runner.temp }}/gregale
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10

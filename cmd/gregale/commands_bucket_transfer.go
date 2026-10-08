@@ -19,10 +19,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const bucketTransferUsage = "usage: gregale bucket upload <app> <bucket-id> <key> <file> [--content-type TYPE] [--resume UPLOAD-ID] [--timeout DURATION] | gregale bucket download <app> <bucket-id> <key> <file> [--force] [--version-id VERSION] [--timeout DURATION]"
+const bucketTransferUsage = "usage: gregale bucket upload <app> <bucket-id> <key> <file> [--content-type TYPE] [--if-match ETAG | --if-none-match '*'] [--resume UPLOAD-ID] [--timeout DURATION] | gregale bucket download <app> <bucket-id> <key> <file> [--force] [--version-id VERSION] [--timeout DURATION]"
 
 type bucketTransferOptions struct {
 	action, app, bucket, key, path, contentType, versionID, resumeID string
+	conditions                                                       api.ObjectWriteConditions
 	timeout                                                          time.Duration
 	force, contentTypeSet                                            bool
 }
@@ -62,6 +63,8 @@ func parseBucketTransfer(args []string) (bucketTransferOptions, error) {
 	if o.action == "upload" {
 		fs.StringVar(&o.contentType, "content-type", "application/octet-stream", "object content type")
 		fs.StringVar(&o.resumeID, "resume", "", "resume an owned multipart upload using its local checkpoint")
+		fs.StringVar(&o.conditions.IfMatch, "if-match", "", "replace only the matching ETag (single PUT only)")
+		fs.StringVar(&o.conditions.IfNoneMatch, "if-none-match", "", "use '*' to create only if absent (single PUT only)")
 	} else {
 		fs.StringVar(&o.versionID, "version-id", "", "owned immutable version to download")
 		fs.BoolVar(&o.force, "force", false, "replace destination after a complete download")
@@ -72,11 +75,18 @@ func parseBucketTransfer(args []string) (bucketTransferOptions, error) {
 	if fs.NArg() != 0 || o.timeout <= 0 || o.timeout > api.MaxObjectTransferTimeout || len(o.contentType) > 255 || strings.ContainsAny(o.contentType, "\r\n\x00") {
 		return o, errors.New("invalid transfer options")
 	}
+	emptyCondition := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "content-type" {
 			o.contentTypeSet = true
 		}
+		if f.Name == "if-match" && o.conditions.IfMatch == "" || f.Name == "if-none-match" && o.conditions.IfNoneMatch == "" {
+			emptyCondition = true
+		}
 	})
+	if emptyCondition || !o.conditions.Valid() || o.resumeID != "" && !o.conditions.Empty() {
+		return o, errors.New("write conditions must be mutually exclusive and cannot be used with multipart resume")
+	}
 	if o.resumeID != "" && !validBucketUploadID(o.resumeID) {
 		return o, errors.New("invalid owned upload ID")
 	}
@@ -148,10 +158,13 @@ func runBucketTransfer(ctx context.Context, c bucketTransferClient, o bucketTran
 		return bucketTransferResult{}, errors.New("upload exceeds the enabled service's size limit")
 	}
 	if info.Size() > catalog.MaxSinglePutBytes && catalog.MaxSinglePutBytes > 0 {
+		if !o.conditions.Empty() {
+			return bucketTransferResult{}, errors.New("conditional CLI uploads require a single PUT; no multipart upload was created")
+		}
 		return uploadBucketMultipart(ctx, c, o, file, info.Size())
 	}
 	size := info.Size()
-	signed, err := c.SignBucketObject(ctx, o.app, o.bucket, api.ObjectSignRequest{Method: http.MethodPut, Key: o.key, SizeBytes: &size, ContentType: o.contentType})
+	signed, err := c.SignBucketObject(ctx, o.app, o.bucket, api.ObjectSignRequest{Method: http.MethodPut, Key: o.key, SizeBytes: &size, ContentType: o.contentType, IfMatch: o.conditions.IfMatch, IfNoneMatch: o.conditions.IfNoneMatch})
 	if err != nil {
 		return bucketTransferResult{}, err
 	}

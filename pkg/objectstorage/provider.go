@@ -458,6 +458,10 @@ type ObjectTaggingResult struct {
 type SignRequest api.ObjectSignRequest
 
 func (r SignRequest) Validate(maxBytes int64) error {
+	conditions := ObjectWriteConditions{IfMatch: r.IfMatch, IfNoneMatch: r.IfNoneMatch}
+	if !conditions.Valid() || !conditions.Empty() && r.Method != http.MethodPut {
+		return ErrInvalid
+	}
 	if r.VersionID != "" && (r.Method != http.MethodGet && r.Method != http.MethodHead || r.VersionID == "null" || !state.ValidObjectVersionID(r.VersionID)) {
 		return ErrInvalid
 	}
