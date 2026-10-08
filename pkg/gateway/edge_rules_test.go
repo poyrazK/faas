@@ -798,7 +798,7 @@ func TestPickFirstJWTMatch_PriorityOrdering(t *testing.T) {
 	}
 }
 
-// The MCP resource policy is stored with match_path=/**; the JWT gate must
+// adr: 091 — the MCP resource policy is stored with match_path=/**; the JWT gate must
 // cover every path on the resource host, not only single-segment ones.
 func TestPickFirstJWTMatch_DoubleStarCoversNestedPaths(t *testing.T) {
 	rule := sampleJWTRule("mcp", 0, "a.example.com")
