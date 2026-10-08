@@ -410,3 +410,33 @@ change behavior without changing the type fingerprint. A passing
 rollout section in Gregale's `docs/data-api.md` for expand-and-contract steps
 and rollback boundaries. The migration runner is append-only; never edit an
 already-applied starter migration to perform a breaking change.
+
+### Browser example and CORS
+
+Install the starter client and SDK as described above, then run:
+
+```sh
+npm run build:browser --prefix client
+npm run serve:browser --prefix client
+```
+
+Open `http://127.0.0.1:3030`. Configure that exact origin in the Data API's
+`--origins` setting and redeploy before testing. Enter the API URL, the signed-in
+application user's subject and application JWT. Management credentials must
+never enter the browser. The example clears the token field immediately and
+keeps the token only in memory for the request; it uses no persistent storage
+or external scripts. In an application, provide the identity provider's current
+session token through the SDK's `accessToken` callback.
+
+The read uses a five-second abort signal, disables retries and displays the
+RLS-filtered rows and exact count. Allowed origins can read `Content-Range` and
+`Preference-Applied`; an expired JWT returns a readable 401. A blocked origin
+produces status 0, which browsers also use for network failures. CORS governs
+browser access; JWT verification and database RLS enforce authorization.
+`/healthz` requires no application token and returns no application data.
+
+Run `make data-api-browser-acceptance` with `DATA_API_CHROMIUM_BIN` pointing to
+Chromium, plus the disposable PostgreSQL URL and pinned PostgREST executable
+required by the acceptance suite. This gate requires a real browser; CI runs
+it against separate allowed and denied origins, including preflights, exposed
+headers, expired sessions and cookie omission. Live staging remains pending.

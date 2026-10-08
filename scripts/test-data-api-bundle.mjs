@@ -38,6 +38,7 @@ async function main() {
     run('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: app, env, stdio: 'inherit' })
     run('npm', ['test'], { cwd: app, env, stdio: 'inherit' })
     run('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: join(app, 'client'), env, stdio: 'inherit' })
+    run('npm', ['run', 'build:browser'], { cwd: join(app, 'client'), env, stdio: 'inherit' })
     run('npm', ['run', 'typecheck'], { cwd: join(app, 'client'), env, stdio: 'inherit' })
     run('npm', ['test'], { cwd: join(app, 'client'), env, stdio: 'inherit' })
     console.log('Packaged CLI/SDK fresh starter and clean CI installation passed.')

@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { readFile, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { browserOrigins, verifyBrowserCORS } from './browser-cors.mjs'
 import { verifySchemaEvolution } from './schema-evolution.mjs'
 import { verifyQueryPlans } from './query-plans.mjs'
 import { command } from './staging/canary.mjs'
@@ -38,8 +39,9 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const role = `starter_api_${suffix}`
   const admin = new pg.Client({ connectionString: process.env.DATA_API_TEST_DATABASE_URL })
   await admin.connect()
-  let owner, child, gateway
+  let owner, child, gateway, origins
   t.after(async () => {
+    await origins?.close()
     if (gateway) { gateway.closeAllConnections(); await new Promise(resolve => gateway.close(resolve)) }
     if (child && child.exitCode === null) { child.kill(); await once(child, 'exit') }
     await owner?.end()
@@ -130,7 +132,11 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   await owner.query(`CREATE VIEW api.slow_notes WITH (security_invoker=true) AS
     SELECT id, body, pg_sleep(5)::text AS delay FROM api.notes WHERE body='slow-read-fixture';
     GRANT SELECT ON api.slow_notes TO "${role}"`)
-  const config = runtimeConfig({ DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
+  if (process.env.DATA_API_CHROMIUM_BIN) {
+    await command('npm', ['run', 'build:browser'], { cwd: join(root, 'client'), env: process.env })
+    origins = await browserOrigins(root)
+  }
+  const config = runtimeConfig({ DATA_API_ALLOWED_ORIGINS: origins?.allowed ?? '', DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
   const upstream = await port(), ready = await port()
   child = spawn(process.env.DATA_API_POSTGREST_BIN, [], { env: { ...process.env, ...config.postgrestEnv, PGRST_SERVER_PORT: String(upstream), PGRST_ADMIN_SERVER_PORT: String(ready) }, stdio: ['ignore', 'pipe', 'pipe'] })
   let logs = ''
@@ -154,6 +160,12 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const client = notesClient({ url, subject: userA.subject, accessToken: userA.token })
   const { readCursorPageWithSession } = await import(pathToFileURL(join(root, 'client/dist/session.js')))
   const expired = await new SignJWT({ sub: userA.subject }).setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience('notes').setExpirationTime('0s').sign(privateKey)
+  if (origins) {
+    const fixtures = await owner.query('INSERT INTO api.notes(subject, body) VALUES ($1, $3), ($2, $3) RETURNING id, subject', [userA.subject, userB.subject, 'browser-cors-fixture'])
+    try {
+      await verifyBrowserCORS({ origins, url, token: userA.token, expired, subject: userA.subject, gateway, expectedID: fixtures.rows.find(row => row.subject === userA.subject).id })
+    } finally { await owner.query('DELETE FROM api.notes WHERE id = ANY($1::integer[])', [fixtures.rows.map(row => row.id)]) }
+  }
   let sessionToken = expired
   const sessionClient = notesClient({ url, subject: userA.subject, accessToken: () => sessionToken })
   const rejected = await sessionClient.cursorPage().retry(false)

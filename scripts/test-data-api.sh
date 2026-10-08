@@ -5,6 +5,10 @@ cd "$repo_root"
 if [[ "${1:-}" == "--integration" ]]; then
   : "${DATA_API_TEST_DATABASE_URL:?A disposable administrative PostgreSQL URL is required}"
   : "${DATA_API_POSTGREST_BIN:?The pinned PostgREST executable is required}"
+  if [[ "${DATA_API_BROWSER_REQUIRED:-}" == "1" ]]; then
+    : "${DATA_API_CHROMIUM_BIN:?A Chromium executable is required for browser acceptance}"
+    [[ -x "$DATA_API_CHROMIUM_BIN" ]]
+  fi
   "$DATA_API_POSTGREST_BIN" --version | grep -E '^PostgREST 14\.3([[:space:]]|$)' >/dev/null
 fi
 # Never install dependencies beneath go:embed templates: they would be shipped

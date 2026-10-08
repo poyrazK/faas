@@ -1301,12 +1301,15 @@ terraform-provider-check: ## Build and test the Terraform/OpenTofu provider modu
 sdk-unit-node: ## Run Node SDK unit tests (no fixture required)
 	@cd sdk/node && npm ci && npm run test:unit
 
-.PHONY: data-api-check data-api-acceptance data-api-packaging-check
+.PHONY: data-api-check data-api-acceptance data-api-packaging-check data-api-browser-acceptance
 data-api-check: ## Runtime and typed application client unit checks
 	@bash scripts/test-data-api.sh
 
 data-api-acceptance: ## Disposable PostgreSQL/PostgREST application API acceptance
 	@bash scripts/test-data-api.sh --integration
+
+data-api-browser-acceptance: ## Real browser CORS acceptance with disposable PostgreSQL
+	@DATA_API_BROWSER_REQUIRED=1 bash scripts/test-data-api.sh --integration
 
 data-api-packaging-check: ## Reproducible CLI/SDK bundle and fresh starter installation
 	@bash scripts/test-data-api-packaging.sh

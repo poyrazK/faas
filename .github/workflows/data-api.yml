@@ -68,6 +68,7 @@ jobs:
       DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
       DATA_API_TEST_DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
       DATA_API_POSTGREST_BIN: /tmp/gregale-postgrest
+      DATA_API_BROWSER_REQUIRED: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -83,6 +84,8 @@ jobs:
           trap 'docker rm "$container_id"' EXIT
           docker cp "$container_id:/bin/postgrest" "$DATA_API_POSTGREST_BIN"
           chmod +x "$DATA_API_POSTGREST_BIN"
+      - name: Locate Chromium for real browser acceptance
+        run: echo "DATA_API_CHROMIUM_BIN=$(command -v google-chrome)" >> "$GITHUB_ENV"
       - name: Verify generated API, JWT RLS and client contract
         run: make data-api-acceptance
       - name: Verify credential qualification, lifecycle and CLI integration
