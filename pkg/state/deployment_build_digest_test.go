@@ -28,8 +28,11 @@ func TestSourceBuildDigestFencesExportAndTaskIdentity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindDockerfile, Status: state.DeployImaging})
+			dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindDockerfile, Status: state.DeployPending})
 			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployImaging, ""); err != nil {
 				t.Fatal(err)
 			}
 			const export = "/builder/export.tar"
