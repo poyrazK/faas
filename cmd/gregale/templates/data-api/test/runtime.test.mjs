@@ -52,6 +52,7 @@ test('relationship metadata preserves composite order and excludes inaccessible 
 
 test('proxy rejects unauthenticated requests and normalizes untrusted SQL roles', async t => {
   const config = runtimeConfig({ DATABASE_URL:'postgres://restricted:p@localhost/db',DATA_API_ISSUER:'https://issuer.example',DATA_API_JWKS_URL:'https://issuer.example/jwks',DATA_API_AUDIENCE:'notes',DATA_API_ALLOWED_ORIGINS:'https://app.example' })
+  config.functions = [{ schema: 'api', name: 'approved' }]
   let received
   const upstream=http.createServer(async (req,res)=>{
     received=(await jwtVerify(req.headers.authorization.slice(7),new TextEncoder().encode(config.secret.toString('base64url')))).payload
@@ -66,6 +67,10 @@ test('proxy rejects unauthenticated requests and normalizes untrusted SQL roles'
   assert.equal((await fetch(base+'/rest/v1/notes')).status,401)
   assert.equal((await fetch(base+'/rest/v1/notes',{headers:{Authorization:'Bearer invalid'}})).status,401)
   assert.equal((await fetch(base+'/rest/v1/notes',{headers:{Authorization:'Bearer valid','X-FaaS-Consumer-Id':'forged'}})).status,200)
+  assert.equal((await fetch(base+'/rest/v1/rpc/approved',{method:'POST',headers:{Authorization:'Bearer valid'}})).status,200)
+  assert.equal((await fetch(base+'/rest/v1/rpc/approved',{method:'POST',headers:{Authorization:'Bearer valid','Content-Profile':'other'}})).status,404)
+  assert.equal((await fetch(base+'/rest/v1/rpc%2Fapproved',{method:'POST',headers:{Authorization:'Bearer valid'}})).status,404)
+  assert.equal((await fetch(base+'/rest/v1/rpc/approved',{headers:{Authorization:'Bearer valid'}})).status,405)
   assert.equal(received.role,'restricted')
   assert.equal(received.sub,'alice')
   assert.equal((await fetch(base+'/rest/v1/notes',{method:'OPTIONS',headers:{Origin:'https://evil.example'}})).status,403)
@@ -106,4 +111,14 @@ test('proxy closes canceled upstream requests and sanitizes unavailable and time
   assert.equal(JSON.parse(body).code, 'data_api_unavailable')
   assert.doesNotMatch(body, /credential-sentinel|token-sentinel|postgres:/)
   assert.equal(unavailable.headers.get('Cache-Control'), 'no-store')
+})
+
+
+test('RPC contract includes defaults and nullable scalars without confusing enum labels with unsupported types', () => {
+  const types = [{ id: '1', schema: 'api', name: 'state', kind: 'e', element: '0', labels: ['unknown', 'known'] }]
+  const functions = [{ schema: 'api', name: 'state_value', overloads: 1, names: ['value'], arguments: ['1'], defaults: 1, return_type: '1', setof: false, modes: null }]
+  const output = generate(normalize([], types, [], ['api'], functions))
+  assert.match(output, /"value"\?: "unknown" \| "known" \| null/)
+  assert.match(output, /Returns: "unknown" \| "known" \| null/)
+  assert.notEqual(output, generate(normalize([], types, [], ['api'], [{ ...functions[0], defaults: 0 }])))
 })

@@ -30,3 +30,10 @@ The token getter runs on each request. Requests omit browser cookies and refuse
 redirects so access tokens stay at the configured API. The client preserves
 PostgREST relation, insert, update, filter, projection and relationship inference.
 See [the Data API guide](../../docs/data-api.md).
+
+Opted-in PostgreSQL functions appear in the generated `Functions` contract.
+Call `db.rpc('function_name', { named_argument: value }).retry(false)` using an
+application JWT. Gregale permits POST RPC only; omit `get` and `head` options.
+Arguments, defaults and results are inferred from the database. Each call is
+one transaction. See the guide for opt-in comments, execution grants, supported
+signatures, RLS and fresh-restart requirements.

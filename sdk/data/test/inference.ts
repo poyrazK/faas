@@ -20,7 +20,7 @@ client.from('notes').insert({subject:'alice',body:'hello',state:'invalid'})
 client.from('notes').insert({id:42,subject:'alice',body:'hello'})
 // @ts-expect-error Relations outside the exported schema do not exist.
 client.from('private_notes')
-// @ts-expect-error RPC is excluded from the V1 Data API contract.
+// @ts-expect-error Unapproved RPC functions are absent from the generated contract.
 client.rpc('echo', {value:'hello'})
 const result = await client.from('notes').select('id,body,state').single()
 if (result.data) {

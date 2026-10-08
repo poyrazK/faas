@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { readFile, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { verifyRPC, verifyRPCPolicy } from './rpc.mjs'
 import { browserOrigins, verifyBrowserCORS } from './browser-cors.mjs'
 import { verifySchemaEvolution } from './schema-evolution.mjs'
 import { verifyQueryPlans } from './query-plans.mjs'
@@ -71,18 +72,20 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   // Exercise exactly the stable-owner migration session and restricted API role.
   await migrate(migrationURL.toString())
   await migrate(migrationURL.toString())
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 7)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 8)
   const firstSQL = join(root, 'migrations/sql/0001_notes.sql')
   const originalSQL = await readFile(firstSQL, 'utf8')
   await writeFile(firstSQL, originalSQL + '\n-- changed after deployment\n')
   try { await assert.rejects(migrate(migrationURL.toString()), /changed or removed/) }
   finally { await writeFile(firstSQL, originalSQL) }
-  const failedSQL = join(root, 'migrations/sql/0008_failure.sql')
+  const failedSQL = join(root, 'migrations/sql/0009_failure.sql')
   await writeFile(failedSQL, 'ALTER TABLE api.notes ADD COLUMN rolled_back text; SELECT 1/0;')
   try { await assert.rejects(migrate(migrationURL.toString())) }
   finally { await rm(failedSQL) }
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 7)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 8)
   assert.equal((await owner.query("SELECT count(*)::integer AS count FROM information_schema.columns WHERE table_schema='api' AND column_name='rolled_back'")).rows[0].count, 0)
+  await owner.query(`GRANT EXECUTE ON FUNCTION api.create_note_with_tags(text, text[]) TO "${role}"`)
+  await verifyRPCPolicy({ owner, inspect, loginURL: loginURL.toString(), role })
   const snapshot = await inspect(loginURL.toString(), ['api'])
   assert.deepEqual(snapshot.tables.find(table => table.name === 'comments').relationships[0].referencedColumns, ['subject', 'id'])
   const types = generate(snapshot)
@@ -137,6 +140,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
     origins = await browserOrigins(root)
   }
   const config = runtimeConfig({ DATA_API_ALLOWED_ORIGINS: origins?.allowed ?? '', DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
+  config.functions = (await inspect(loginURL.toString(), ['api'])).functions
   const upstream = await port(), ready = await port()
   child = spawn(process.env.DATA_API_POSTGREST_BIN, [], { env: { ...process.env, ...config.postgrestEnv, PGRST_SERVER_PORT: String(upstream), PGRST_ADMIN_SERVER_PORT: String(ready) }, stdio: ['ignore', 'pipe', 'pipe'] })
   let logs = ''
@@ -159,6 +163,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const { notesClient, noteCursor } = await import(pathToFileURL(join(root, 'client/dist/notes.js')))
   const client = notesClient({ url, subject: userA.subject, accessToken: userA.token })
   const { readCursorPageWithSession } = await import(pathToFileURL(join(root, 'client/dist/session.js')))
+  await verifyRPC({ owner, client, url, userA, userB })
   const expired = await new SignJWT({ sub: userA.subject }).setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience('notes').setExpirationTime('0s').sign(privateKey)
   if (origins) {
     const fixtures = await owner.query('INSERT INTO api.notes(subject, body) VALUES ($1, $3), ($2, $3) RETURNING id, subject', [userA.subject, userB.subject, 'browser-cors-fixture'])

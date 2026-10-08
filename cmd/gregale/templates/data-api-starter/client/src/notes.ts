@@ -29,6 +29,7 @@ export function notesClient(options: {
 }) {
   const db = createDataClient<Database>(options).schema('api')
   return {
+    createWithTags: (body: string, tags?: string[]) => db.rpc('create_note_with_tags', { note_body: body, ...(tags === undefined ? {} : { tag_names: tags }) }).retry(false),
     cursorPage: ({ after, size = 20, priority }: { after?: NoteCursor; size?: number; priority?: number } = {}) => {
       if (!Number.isSafeInteger(size) || size < 1) throw new RangeError('Cursor page size must be a positive safe integer')
       const cursor = after === undefined ? undefined : noteCursor(after)

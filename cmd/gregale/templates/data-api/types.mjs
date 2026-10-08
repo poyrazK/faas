@@ -39,6 +39,20 @@ const relationsQuery = `SELECT n.nspname AS schema, c.relname AS relation, x.con
  AND has_table_privilege(c.oid,'SELECT') AND has_table_privilege(rc.oid,'SELECT')
  ORDER BY n.nspname,c.relname,x.conname LIMIT ${limits.relations + 1}`
 
+// An exact annotation is the owner's explicit RPC opt-in. Count every overload,
+// including inaccessible ones: PostgREST dispatch must never select another body.
+const functionsQuery = `SELECT n.nspname AS schema, p.proname AS name,
+ p.prorettype::text AS return_type, p.proretset AS setof,
+ p.proargnames AS names, p.proargtypes::oid[]::text[] AS arguments,
+ p.pronargdefaults AS defaults, p.proargmodes AS modes,
+ (SELECT count(*) FROM pg_proc other WHERE other.pronamespace=p.pronamespace AND other.proname=p.proname) AS overloads
+ FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+ WHERE n.nspname=ANY($1::text[]) AND p.prokind='f' AND NOT p.prosecdef
+ AND p.provariadic=0 AND has_schema_privilege(n.oid,'USAGE')
+ AND has_function_privilege(p.oid,'EXECUTE')
+ AND obj_description(p.oid,'pg_proc')='@gregale:rpc'
+ ORDER BY n.nspname,p.proname LIMIT ${limits.relations + 1}`
+
 export async function inspect(connection, schemas) {
   const client = new pg.Client({ connectionString: databaseURL(connection), connectionTimeoutMillis: limits.queryMs, query_timeout: limits.queryMs })
   await client.connect()
@@ -49,12 +63,14 @@ export async function inspect(connection, schemas) {
     const types = (await client.query(typesQuery)).rows
     const relations = (await client.query(relationsQuery, [schemas])).rows
     if (columns.length > limits.columns || types.length > limits.types || relations.length > limits.relations) throw new Error('Schema exceeds generation limits')
+    const functions = (await client.query(functionsQuery, [schemas])).rows
+    if (functions.length > limits.relations) throw new Error('Too many opted-in functions')
     await client.query('COMMIT')
-    return normalize(columns, types, relations, schemas)
+    return normalize(columns, types, relations, schemas, functions)
   } finally { await client.end() }
 }
 
-export function normalize(columns, types, relationships, schemas) {
+export function normalize(columns, types, relationships, schemas, functions = []) {
   const byID = new Map(types.map(t => [t.id, t]))
   const enums = {}
   const seen = new Set()
@@ -95,7 +111,30 @@ export function normalize(columns, types, relationships, schemas) {
     if (!table || !target || !r.columns.every(n => table.columns.some(c => c.name === n)) || !r.referenced_columns.every(n => target.columns.some(c => c.name === n))) continue
     table.relationships.push({ foreignKeyName: r.name, columns: r.columns, isOneToOne: r.one_to_one, referencedRelation: r.referenced_relation, referencedColumns: r.referenced_columns })
   }
-  return { version: 1, schemas: [...schemas].sort(), tables: [...tables.values()].sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`)), enums: Object.fromEntries(Object.entries(enums).sort(([a], [b]) => a.localeCompare(b))) }
+  function supported(id, depth = 0) {
+    const type = byID.get(id)
+    if (!type || depth > 12) return false
+    if (type.kind === 'd') return supported(type.base, depth + 1)
+    if (type.kind === 'e') return type.labels.length > 0
+    if (type.element !== '0') return supported(type.element, depth + 1)
+    return tsType(id) !== 'unknown'
+  }
+  const callable = []
+  for (const f of functions) {
+    if (Number(f.overloads) !== 1 || !/^[a-z][a-z0-9_]{0,62}$/.test(f.name) ||
+        f.modes?.some(mode => mode !== 'i') || (f.names ?? []).length !== f.arguments.length || new Set(f.names ?? []).size !== f.arguments.length) continue
+    const args = f.arguments.map((id, i) => ({ name: f.names[i], type: tsType(id), optional: i >= f.arguments.length - f.defaults }))
+    if (args.some(a => !a.name) || f.arguments.some(id => !supported(id))) continue
+    const result = byID.get(f.return_type)
+    const table = result?.kind === 'c' ? tables.get(`${result.schema}.${result.name}`) : null
+    if (result?.kind === 'c' && (!table || !f.setof)) continue
+    let returns = table ? `Database[${JSON.stringify(table.schema)}][${JSON.stringify(table.view ? 'Views' : 'Tables')}][${JSON.stringify(table.name)}]['Row']` : tsType(f.return_type)
+    if (result?.schema === 'pg_catalog' && result.name === 'void') returns = 'undefined'
+    if (!table && returns !== 'undefined' && !supported(f.return_type)) continue
+    returns = f.setof ? table ? `${returns}[]` : `(${returns} | null)[]` : returns === 'undefined' ? returns : `${returns} | null`
+    callable.push({ schema: f.schema, name: f.name, args, returns })
+  }
+  return { version: 1, schemas: [...schemas].sort(), tables: [...tables.values()].sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`)), functions: callable.sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`)), enums: Object.fromEntries(Object.entries(enums).sort(([a], [b]) => a.localeCompare(b))) }
 }
 
 export function generate(snapshot) {
@@ -122,7 +161,13 @@ export function generate(snapshot) {
       }
       lines.push('    }')
     }
-    lines.push('    Functions: { [_ in never]: never }', '    Enums: {')
+    lines.push('    Functions: {')
+    for (const f of snapshot.functions ?? []) if (f.schema === schema) {
+      lines.push(`      ${JSON.stringify(f.name)}: {`, '        Args: {')
+      for (const a of f.args) lines.push(`          ${JSON.stringify(a.name)}${a.optional ? '?' : ''}: ${a.type} | null`)
+      lines.push('        }', `        Returns: ${f.returns}`, '      }')
+    }
+    lines.push('    }', '    Enums: {')
     for (const [key, labels] of Object.entries(snapshot.enums)) if (key.startsWith(`${schema}.`)) lines.push(`      ${JSON.stringify(key.slice(schema.length + 1))}: ${labels.map(JSON.stringify).join(' | ')}`)
     lines.push('    }', '    CompositeTypes: Record<string, never>', '  }')
   }

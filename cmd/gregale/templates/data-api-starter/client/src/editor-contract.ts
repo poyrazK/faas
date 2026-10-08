@@ -162,3 +162,16 @@ async function versionContract(client: ReturnType<typeof notesClient>) {
   client.update(1, 1, { version: 2 })
 }
 void versionContract
+
+async function rpcContract(client: ReturnType<typeof notesClient>) {
+  const result = await client.createWithTags('atomic', ['one'])
+  if (result.data) { const version: number = result.data[0].version; void version }
+  client.db.rpc('create_note_with_tags', { note_body: 'default tags' })
+  // @ts-expect-error RPC arguments come from PostgreSQL
+  client.db.rpc('create_note_with_tags', { note_body: 1 })
+  // @ts-expect-error required RPC argument cannot be omitted
+  client.db.rpc('create_note_with_tags', {})
+  // @ts-expect-error unapproved functions are absent
+  client.db.rpc('advance_note_version', {})
+}
+void rpcContract

@@ -440,3 +440,54 @@ Chromium, plus the disposable PostgreSQL URL and pinned PostgREST executable
 required by the acceptance suite. This gate requires a real browser; CI runs
 it against separate allowed and denied origins, including preflights, exposed
 headers, expired sessions and cookie omission. Live staging remains pending.
+
+### Atomic function calls (RPC)
+
+Opt in an owner-reviewed PostgreSQL function with an exact comment:
+
+```sql
+COMMENT ON FUNCTION api.create_note_with_tags(text, text[]) IS '@gregale:rpc';
+REVOKE ALL ON FUNCTION api.create_note_with_tags(text, text[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION api.create_note_with_tags(text, text[]) TO your_data_api_login;
+```
+
+Use the binding login role, not an application user's subject, for the grant.
+The starter's append-only `0008_note_rpc.sql` creates this security-invoker
+function and revokes public execution. Grant execution as the migration owner
+before refreshing and exporting types. The function takes `note_body` and
+optional `tag_names`, derives ownership from the verified JWT subject, and
+creates the note, tags and attachments in one transaction. A constraint or RLS
+failure rolls back every statement.
+
+```ts
+const result = await db.rpc('create_note_with_tags', {
+  note_body: 'Atomic note', tag_names: ['work', 'todo']
+}).retry(false)
+if (result.error) throw result.error
+// result.data is the generated notes Row[]
+```
+
+Only POST RPC is exposed. The same application JWT, fixed binding SQL role,
+body/query limits and database policies apply. No management key or caller-
+supplied ownership role is accepted. The starter also exposes
+`notesClient(...).createWithTags(body, tags)` with retries disabled. Do not
+replay mutations after an uncertain network outcome without application-level
+idempotency. Abort and token callbacks work as they do for CRUD.
+
+Type export and fresh startup include only annotated, executable security-
+invoker functions in exposed schemas. Supported signatures have unique names
+without overloads, named input arguments of recognized types, and scalar, void,
+scalar-set or exposed-relation-set results. Defaults make arguments optional;
+PostgreSQL permits null arguments and scalar results. Variadic, unnamed,
+OUT/INOUT, arbitrary composite and non-set composite signatures are excluded.
+Unapproved functions are absent from generated `Functions` and public OpenAPI,
+and their RPC routes return 404. OpenAPI advertises approved calls as POST only.
+
+Function bodies remain owner-authored application code: invoker status alone
+cannot prove a body safe. Schema-qualify objects, review all called functions,
+and apply RLS to every user-specific table. Refresh with a **fresh restart**
+after changing signatures, annotations, execution grants or security modes,
+then regenerate types and check callers. Startup captures the gateway allowlist;
+exporting types or sending PostgREST SIGUSR1 alone does not replace it. Revoking
+SQL execution takes effect immediately; removing an annotation alone requires
+the fresh restart. Database changes are not undone by a failed app release.

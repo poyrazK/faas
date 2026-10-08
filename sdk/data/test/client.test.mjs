@@ -55,3 +55,22 @@ test('abort signals stop pending client reads and network failures retain status
   assert.ok(failed.error)
   await assert.rejects(Promise.resolve(offline.schema('api').from('notes').select().retry(false).throwOnError()), TypeError)
 })
+
+test('RPC uses application authorization and named POST arguments without replaying a failed mutation', async () => {
+  const requests = []
+  const db = createDataClient({ url: 'https://data.example', accessToken: async () => 'application-token',
+    fetch: async (url, init) => {
+      requests.push({ url: String(url), ...init })
+      return new Response('{"code":"data_api_unavailable","message":"unavailable"}', { status: 503, headers: { 'Content-Type': 'application/json' } })
+    } }).schema('api')
+  const result = await db.rpc('create_note_with_tags', { note_body: 'atomic', tag_names: ['one'] }).retry(false)
+  assert.equal(result.status, 503)
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].method, 'POST')
+  assert.equal(requests[0].headers.get('Authorization'), 'Bearer application-token')
+  assert.equal(requests[0].headers.get('Content-Profile'), 'api')
+  assert.equal(requests[0].credentials, 'omit')
+  assert.equal(requests[0].redirect, 'error')
+  assert.deepEqual(JSON.parse(requests[0].body), { note_body: 'atomic', tag_names: ['one'] })
+  assert.equal(new URL(requests[0].url).search, '')
+})

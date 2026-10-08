@@ -2,6 +2,7 @@ import http from 'node:http'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
+import { inspect } from './types.mjs'
 import { runtimeConfig, limits } from './config.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001) {
@@ -19,12 +20,16 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     }
     if (req.url === '/healthz' && req.method === 'GET') return readiness(res, readyPort)
     if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json') return problem(res, 404, 'not_found')
-    // V1 exposes only relation routes and OpenAPI. Decode before checking so
-    // percent-encoded separators cannot enter PostgREST's RPC routes.
     if (req.url.startsWith('/rest/v1/')) {
-      let relation
-      try { relation = decodeURIComponent(req.url.slice('/rest/v1/'.length).split('?')[0]) } catch { return problem(res, 400, 'invalid_path') }
-      if (relation.includes('/')) return problem(res, 404, 'not_found')
+      const raw = req.url.slice('/rest/v1/'.length).split('?')[0]
+      let path
+      try { path = decodeURIComponent(raw) } catch { return problem(res, 400, 'invalid_path') }
+      if (path.includes('/')) {
+        const match = /^rpc\/([a-z][a-z0-9_]{0,62})$/.exec(path)
+        const schema = req.headers['content-profile'] ?? config.schemas[0]
+        if (raw !== path || !match || !config.functions?.some(f => f.schema === schema && f.name === match[1])) return problem(res, 404, 'not_found')
+        if (req.method !== 'POST') return problem(res, 405, 'method_not_allowed')
+      }
     }
     if (!['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(req.method)) return problem(res, 405, 'method_not_allowed')
     const token = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1]
@@ -37,7 +42,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       // cannot select an administrator, owner or another application's role.
       const claims = { ...payload, role: config.role }
       const internal = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(config.secret.toString('base64url')))
-      proxy(req, res, internal, upstreamPort)
+      proxy(req, res, internal, upstreamPort, config)
     } catch { problem(res, 503, 'data_api_unavailable') }
   })
 }
@@ -58,7 +63,7 @@ function readiness(res, port) {
   request.on('error', () => problem(res, 503, 'data_api_unavailable'))
 }
 
-function proxy(req, res, token, port) {
+function proxy(req, res, token, port, config) {
   const declared = Number(req.headers['content-length'] ?? 0)
   if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
   const headers = { authorization: `Bearer ${token}` }
@@ -67,7 +72,7 @@ function proxy(req, res, token, port) {
   for (const name of ['accept', 'content-type', 'prefer', 'range', 'range-unit', 'accept-profile', 'content-profile']) if (req.headers[name]) headers[name] = req.headers[name]
   const path = req.url === '/openapi.json' ? '/' : req.url.slice('/rest/v1'.length)
   const upstream = http.request({ hostname: '127.0.0.1', port, path, method: req.method, headers, timeout: limits.queryMs }, response => {
-    if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res)
+    if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config)
     const out = {}
     for (const name of ['content-type', 'content-range', 'preference-applied', 'location']) if (response.headers[name]) out[name] = response.headers[name]
     res.writeHead(response.statusCode, { ...out, 'Cache-Control': 'no-store' })
@@ -86,7 +91,7 @@ function proxy(req, res, token, port) {
   req.pipe(upstream)
 }
 
-function openAPISpec(response, res) {
+function openAPISpec(response, res, config) {
   let bytes = 0
   const chunks = []
   response.on('data', chunk => {
@@ -104,7 +109,11 @@ function openAPISpec(response, res) {
       delete document.host
       delete document.schemes
       document.basePath = '/rest/v1'
-      for (const path of Object.keys(document.paths ?? {})) if (path.startsWith('/rpc/')) delete document.paths[path]
+      const schema = response.req.getHeader('accept-profile') ?? config.schemas[0]
+      for (const path of Object.keys(document.paths ?? {})) if (path.startsWith('/rpc/')) {
+        if (!config.functions?.some(f => f.schema === schema && f.name === path.slice(5))) delete document.paths[path]
+        else for (const method of Object.keys(document.paths[path])) if (method !== 'post' && method !== 'parameters') delete document.paths[path][method]
+      }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
       res.end(JSON.stringify(document))
     } catch { problem(res, 503, 'data_api_unavailable') }
@@ -113,6 +122,7 @@ function openAPISpec(response, res) {
 
 export async function main(env = process.env) {
   const config = runtimeConfig(env)
+  config.functions = (await inspect(config.connection, config.schemas)).functions
   const jwks = createRemoteJWKSet(config.auth.jwks, { timeoutDuration: 3000, cacheMaxAge: 300000 })
   const verify = tokenVerifier(config.auth, jwks)
   // Avoid inheriting arbitrary PGRST_* overrides from application secrets.
