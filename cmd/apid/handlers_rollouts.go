@@ -108,9 +108,35 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrPlanTrafficSplitNotAllowed(acct.Plan))
 		return
 	}
+	if api.ApiContractDiffEnabled() && (req.Action == "promote" || req.Action == "advance") {
+		rows, readErr := s.store.LiveDeployments(r.Context(), app.ID)
+		if readErr != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not read rollout contract target"))
+			return
+		}
+		var selected state.Deployment
+		for _, d := range rows {
+			rollout := state.NormalizeRolloutState(d.RolloutState)
+			if (rollout == "pending" || rollout == "rolling_out") && (selected.ID == "" || d.CreatedAt.After(selected.CreatedAt)) {
+				selected = d
+			}
+		}
+		if selected.ID != "" {
+			contractCtx, problem := s.contractTrafficContext(r.Context(), app, selected)
+			if problem != nil {
+				api.WriteProblem(w, problem)
+				return
+			}
+			r = r.WithContext(contractCtx)
+		}
+	}
 	// (6) Atomic-tx recovery.
 	updated, auditID, err := s.store.RecoverRollout(r.Context(), app.ID, req.Action, req.Reason)
 	if err != nil {
+		if problem := routeRemovalBlockedProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		var routeBlocked *state.RouteGateBlockedError
 		var healthBlocked *state.RouteHealthBlockedError
 		switch {

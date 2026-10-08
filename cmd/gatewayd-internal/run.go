@@ -31,7 +31,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -48,6 +47,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/caddyserver/certmagic"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/miekg/dns"
 	"github.com/prometheus/client_golang/prometheus"
@@ -2947,9 +2947,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 	requestTelemetryEnabled := osGetenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false"
-	if requestTelemetryEnabled {
+	{
 		recorder := gateway.NewRequestTelemetryRecorder(gateway.RequestTelemetryConfig{
-			Enabled:     true,
+			Enabled:     requestTelemetryEnabled,
 			RingSize:    4096,
 			OnOverwrite: deps.metrics.IncRequestTelemetryOverwritten,
 		}, log)
@@ -2958,11 +2958,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// private endpoint cannot silently downgrade to plaintext.
 		apidRTTarget := cfg.GetRequestTelemetryTarget(osGetenv)
 		rtTLS, rtTLSErr := cfg.LoadAppErrorsTLS()
-		if rtTLSErr != nil {
+		if rtTLSErr != nil && requestTelemetryEnabled {
 			return fmt.Errorf("gatewayd: load request telemetry TLS: %w", rtTLSErr)
 		}
-		rtCli, dialErr := apidgrpc.DialRequestTelemetry(ctx, apidRTTarget, rtTLS)
+		var rtCli *apidgrpc.RequestTelemetryClientImpl
+		dialErr := rtTLSErr
+		if rtTLSErr == nil {
+			rtCli, dialErr = apidgrpc.DialRequestTelemetry(ctx, apidRTTarget, rtTLS)
+		}
 		var rtShippedTotal int64
+		coverageBootID := uuid.NewString()
+		var coverageSequence int64
+		coverageNode := cfg.NodeName
+		if coverageNode == "" {
+			coverageNode = state.DefaultLocalNodeName
+		}
 		publisher := gateway.NewRequestTelemetryPublisher(gateway.RequestTelemetryPublisherConfig{
 			Enabled:        true,
 			FlushInterval:  5 * time.Second,
@@ -2970,7 +2980,41 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			MaxRetries:     3,
 			OnDropped:      deps.metrics.AddRequestTelemetryDropped,
 			OnShipped:      deps.metrics.AddRequestTelemetryShipped,
+			OnCoverage: func(heartbeatCtx context.Context, report gateway.RequestTelemetryCoverage) error {
+				if rtTLSErr != nil {
+					return rtTLSErr
+				}
+				coverageSequence++
+				heartbeatCtx, cancel := context.WithTimeout(heartbeatCtx, 2*time.Second)
+				defer cancel()
+				if rtCli == nil {
+					var err error
+					rtCli, err = apidgrpc.DialRequestTelemetry(heartbeatCtx, apidRTTarget, rtTLS)
+					if err != nil {
+						return err
+					}
+				}
+				appGaps := make([]*apidpb.TelemetryAppGap, 0, len(report.AppGaps))
+				for _, gap := range report.AppGaps {
+					appGaps = append(appGaps, &apidpb.TelemetryAppGap{AppId: gap.AppID.String(), DroppedCount: gap.DroppedCount, PendingCount: int32(gap.PendingCount)})
+				}
+				receipt, err := rtCli.RecordTelemetryCoverage(heartbeatCtx, &apidpb.TelemetryCoverage{
+					NodeName: coverageNode, BootId: coverageBootID, Sequence: coverageSequence, Enabled: report.Enabled,
+					SamplingBasisPoints: int32(report.SamplingBasisPoints), DroppedTotal: report.DroppedTotal,
+					PendingCount: int32(report.PendingCount), SourceAtUnixMs: report.SourceAt.UnixMilli(),
+					AppScoped: report.AppScoped, UnattributedDroppedTotal: report.UnattributedDroppedTotal, AppGaps: appGaps,
+				})
+				if err != nil {
+					return err
+				}
+				if receipt == nil || !receipt.GetRecorded() {
+					return errors.New("telemetry coverage was not recorded")
+				}
+				return nil
+			},
 		}, recorder, func(ctx context.Context, rows []gateway.RequestTelemetryRow) error {
+			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
 			if rtCli == nil {
 				// DialRequestTelemetry is intentionally lazy. If the
 				// initial dial failed (or the connection was invalidated
@@ -3043,38 +3087,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				rtCli = nil
 				return fmt.Errorf("close request_telemetry stream: %w", err)
 			}
-			// Drain responses to detect per-row failures. The
-			// publisher's retry-with-backoff covers transient
-			// errors here; rate-limit + db_error outcomes are
-			// surfaced via Prometheus counters in the apid
-			// receiver (PR-B stage 4).
-			for {
-				resp, rerr := stream.Recv()
-				if rerr != nil {
-					// io.EOF is the canonical end-of-stream.
-					if errors.Is(rerr, io.EOF) {
-						break
-					}
-					_ = rtCli.Close()
-					rtCli = nil
-					return fmt.Errorf("recv request_telemetry response: %w", rerr)
-				}
-				if resp == nil {
-					break
-				}
-				if resp.GetOutcome() == "rate_limited" {
-					log.Debug("request_telemetry: row rate_limited",
-						"retry_after_ms", resp.GetRetryAfterMs())
-				}
-				if resp.GetOutcome() == "db_error" {
-					// The usage ledger is idempotent by event_id, so retrying
-					// this collapsed row is safe even if the response arrived
-					// after the apid transaction committed. A database error
-					// must not be counted as shipped merely because the stream
-					// itself stayed open.
-					return errors.New("request_telemetry receiver rejected row: db_error")
-				}
+			if err := acknowledgeTelemetryRows(stream, rows); err != nil {
+				_ = rtCli.Close()
+				rtCli = nil
+				return err
 			}
+
 			for _, row := range rows {
 				if row.Count > 0 {
 					rtShippedTotal += int64(row.Count)
@@ -3112,12 +3130,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer publisher.Stop()
 		// Expose counters for the dashboard via /metrics; read by
 		// the existing Prometheus scrape.
-		log.Info("request_telemetry recorder enabled",
+		log.Info("request_telemetry coverage publisher started",
+			"collection_enabled", requestTelemetryEnabled,
 			"ring_size", 4096,
 			"flush_interval", 5*time.Second,
 			"apid_target", apidRTTarget)
-	} else {
-		log.Info("request_telemetry recorder disabled (FAAS_REQUEST_TELEMETRY_ENABLED == \"false\")")
 	}
 
 	// SIGHUP = "drop in-memory rate-limit buckets". Operators use this after

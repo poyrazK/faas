@@ -29,6 +29,7 @@ func TestRedisResponseCacheLiveRoundTripAndInvalidation(t *testing.T) {
 
 	now := time.Now()
 	entry := &cacheEntry{
+		servedDeploymentID: "deployment-live",
 		key: CacheKey{
 			AppID:          "app-live",
 			RuleID:         "rule-live",
@@ -60,7 +61,7 @@ func TestRedisResponseCacheLiveRoundTripAndInvalidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get from second client: %v", err)
 	}
-	if got == nil || got.statusCode != entry.statusCode || !reflect.DeepEqual(got.body, entry.body) || !reflect.DeepEqual(got.header, entry.header) || !reflect.DeepEqual(got.tags, entry.tags) {
+	if got == nil || got.statusCode != entry.statusCode || got.servedDeploymentID != entry.servedDeploymentID || !reflect.DeepEqual(got.body, entry.body) || !reflect.DeepEqual(got.header, entry.header) || !reflect.DeepEqual(got.tags, entry.tags) {
 		t.Fatalf("round trip = %+v, want status/header/body from %+v", got, entry)
 	}
 

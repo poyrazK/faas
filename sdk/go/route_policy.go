@@ -139,3 +139,12 @@ type RouteMonitorCustomerCohort = api.RouteMonitorCustomerCohort
 type RouteMonitorCustomerRoute = api.RouteMonitorCustomerRoute
 
 type RouteMonitorCustomerReport = api.RouteMonitorCustomerReport
+
+type RouteLifecycleMapping = api.RouteLifecycleMapping
+type ApproveRouteLifecycleRequest = api.ApproveRouteLifecycleRequest
+type RouteLifecycleApproval = api.RouteLifecycleApproval
+
+type RouteLifecycleHistoryPage = api.RouteLifecycleHistoryPage
+type RouteLifecycleHistoryEntry = api.RouteLifecycleHistoryEntry
+type RouteLifecycleHistoryApproval = api.RouteLifecycleHistoryApproval
+type RouteLifecycleHistoryCapture = api.RouteLifecycleHistoryCapture

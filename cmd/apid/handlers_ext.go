@@ -2436,8 +2436,8 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		if gateErr != nil && !errors.Is(gateErr, openapidiff.ErrSnapshotBaselineMissing) {
 			return state.Deployment{}, api.ErrCapacity("could not evaluate API contract")
 		}
-		if len(check.Diff.Breaks) > 0 {
-			problem := api.ErrAPIContractBreakingChange((&openapidiff.GateError{Diff: check.Diff}).Error())
+		if check.Diff.Blocking() {
+			problem := contractGateProblem(check.Diff)
 			return state.Deployment{}, problem
 		}
 	}

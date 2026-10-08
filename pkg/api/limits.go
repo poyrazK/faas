@@ -8954,3 +8954,15 @@ const (
 	DataAPIMaxColumns         = 10000
 	DataAPIMaxTypes           = 20000
 )
+
+// A compatibility receipt is short-lived authorization for captured declarations.
+const RouteLifecycleApprovalTTL = time.Hour
+
+// Production review history exposes bounded metadata, never configuration bodies.
+const (
+	RouteLifecycleHistoryPageSize     = 10
+	RouteLifecycleHistoryMaxPage      = 20
+	RouteLifecycleHistoryMaxApprovals = 20
+	RouteLifecycleHistoryMaxCaptures  = 64
+	RouteLifecycleHistoryMaxGraphs    = 64
+)

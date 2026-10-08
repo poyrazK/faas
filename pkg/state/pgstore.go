@@ -7699,6 +7699,29 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	if _, err := pgLockCanaryRouteSnapshot(ctx, tx, id); err != nil {
+		return Deployment{}, err
+	}
+	currentTraffic, err := sqlc.New().ReadLifecycleCurrentTraffic(ctx, tx, id)
+	if err != nil {
+		return Deployment{}, routePolicyReadError(err)
+	}
+	if newPercent > int(currentTraffic) {
+		if err := s.authorizeProductionLifecycle(ctx, tx, id, false); err != nil {
+			return Deployment{}, err
+		}
+	}
+	// Match activation and policy writes: app first, then deployment rows.
+	// This prevents an app-versus-deployment lock cycle with the DB guard.
+	var policyAppID string
+	if err := tx.QueryRow(ctx, `select app_id from deployments where id=$1`, id).Scan(&policyAppID); err != nil {
+		return Deployment{}, mapErr(err)
+	}
+	var lockedApp int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 for update`, policyAppID).Scan(&lockedApp); err != nil {
+		return Deployment{}, mapErr(err)
+	}
+
 	// (1) Lock the app's live rows. FOR UPDATE serialises concurrent
 	// UpdateDeploymentTraffic / CreateDeployment calls.
 	var appID string
@@ -7818,12 +7841,6 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		}
 	}
 
-	if _, err := tx.Exec(ctx,
-		`update deployments set traffic_percent = $2 where id = $1`,
-		id, newPercent); err != nil {
-		return Deployment{}, fmt.Errorf("state: stamp traffic_percent %s: %w", id, mapErr(err))
-	}
-
 	// RedistributeTraffic returns weights that sum to (100 - newPercent);
 	// siblings[idx].ID gets newWeights[idx]. Σ + newPercent = 100 by
 	// construction (the algorithm enforces it; see helper doc).
@@ -7836,6 +7853,19 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		helperSiblings[i].Prior = s.Prior
 	}
 	newWeights := RedistributeTraffic(helperSiblings, 100-newPercent)
+	for i, sibling := range siblings {
+		if newWeights[i] > sibling.Prior {
+			if err := s.authorizeProductionLifecycle(ctx, tx, sibling.ID, false); err != nil {
+				return Deployment{}, err
+			}
+		}
+	}
+	if _, err := tx.Exec(ctx,
+		`update deployments set traffic_percent = $2 where id = $1`,
+		id, newPercent); err != nil {
+		return Deployment{}, fmt.Errorf("state: stamp traffic_percent %s: %w", id, mapErr(err))
+	}
+
 	for i, s := range siblings {
 		if _, err := tx.Exec(ctx,
 			`update deployments set traffic_percent = $2 where id = $1`,
@@ -7974,7 +8004,7 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		return Deployment{}, 0, ErrCanaryStageNotElapsed
 	}
 
-	if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params); err != nil {
+	if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params, now); err != nil {
 		var blocked *RouteGateBlockedError
 		if errors.As(err, &blocked) {
 			if commitErr := tx.Commit(ctx); commitErr != nil {
@@ -7984,6 +8014,9 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		return Deployment{}, 0, err
 	}
 
+	if err := s.authorizeProductionLifecycle(ctx, tx, id, false); err != nil {
+		return Deployment{}, 0, err
+	}
 	if err := pgCheckRouteHealth(ctx, tx, snapshot, dep, now, params); err != nil {
 		var blocked *RouteHealthBlockedError
 		if errors.As(err, &blocked) {
@@ -8733,6 +8766,15 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 }
 
 func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration, auditOverride *DeploymentAudit) (Deployment, int64, error) {
+	if err := pgAuthorizeRouteRemoval(ctx, tx); err != nil {
+		return Deployment{}, 0, err
+	}
+	if deploymentID == "" {
+		if fences, _ := ctx.Value(routeRemovalFencesKey{}).([]RouteRemovalFence); len(fences) == 1 {
+			deploymentID = fences[0].DeploymentID
+		}
+	}
+
 	switch action {
 	case "advance", "promote", "abort":
 	default:
@@ -8762,6 +8804,9 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		if checkedAt.Before(expiresAt.Add(*emergencyGrace)) {
 			return Deployment{}, 0, ErrSafeReleaseLeaseNotExpired
 		}
+	}
+	if err := pgLockProductionLifecycleApp(ctx, tx, appID); err != nil {
+		return Deployment{}, 0, err
 	}
 	{
 		// Deployment creation already serializes on the app row. Taking the
@@ -8857,6 +8902,11 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		}
 		if predecessorCount != 1 || !predecessorCreatedAt.Before(dep.CreatedAt) {
 			return dep, 0, ErrRolloutStateInvalid
+		}
+	}
+	if action != "abort" {
+		if err := s.authorizeProductionLifecycle(ctx, tx, dep.ID, false); err != nil {
+			return Deployment{}, 0, err
 		}
 	}
 	if expectedPredecessorID != "" {
@@ -9070,6 +9120,17 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		auditData = rolloutAuditData("promote", reason)
 
 	case "abort":
+		ids, err := sqlc.New().ReadLifecycleTrafficCandidates(ctx, tx, sqlc.ReadLifecycleTrafficCandidatesParams{AppID: appID, DeploymentID: dep.ID})
+		if err != nil {
+			return dep, 0, err
+		}
+		for _, recipientID := range ids {
+			if recipientID != dep.ID {
+				if err := s.authorizeProductionLifecycle(ctx, tx, recipientID, true); err != nil {
+					return dep, 0, err
+				}
+			}
+		}
 		if expectedPredecessorID != "" {
 			if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
 				return dep, 0, err
@@ -9252,6 +9313,9 @@ func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx
 	if err != nil {
 		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: capture snapshot for %s: %w", dep.ID, err)
 	}
+	if err := validateRouteRemovalSnapshot(ctx, snap); err != nil {
+		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, err
+	}
 	return snap, policySnapshot, nil
 }
 
@@ -9267,12 +9331,20 @@ func (s *PgStore) MarkDeploymentLiveIfLatest(ctx context.Context, id string) err
 	return s.markDeploymentLive(ctx, id, true)
 }
 
-func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest bool) error {
+func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest bool) (resultErr error) {
+	defer func() { resultErr = mapErr(resultErr) }()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("state: mark deployment live begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+
+	if err := s.authorizeLifecycleActivation(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := pgAuthorizeRouteRemoval(ctx, tx); err != nil {
+		return err
+	}
 
 	// CreateDeployment takes the app lock before touching deployment rows.
 	// Use the same order here so two ready candidates cannot race through
@@ -9654,6 +9726,19 @@ func persistDeploymentSnapshotsDBTX(ctx context.Context, db sqlc.DBTX, openAPI O
 			return err
 		}
 	}
+	fences, _ := ctx.Value(routeRemovalFencesKey{}).([]RouteRemovalFence)
+	for _, f := range fences {
+		if f.DeploymentID == openAPI.DeploymentID && f.CandidateSnapshotSHA256 != "" {
+			var digest string
+			if err := db.QueryRow(ctx, `SELECT sha256 FROM deployment_openapi_snapshots WHERE deployment_id=$1 AND app_id=$2 FOR SHARE`, openAPI.DeploymentID, openAPI.AppID).Scan(&digest); err != nil {
+				return err
+			}
+			if digest != f.CandidateSnapshotSHA256 {
+				return &RouteRemovalBlockedError{Reason: "persisted_candidate_contract_changed_after_preflight"}
+			}
+		}
+	}
+
 	if capturePolicy && policy.DeploymentID != "" {
 		if err := upsertDeploymentRoutePolicySnapshotDBTX(ctx, db, policy); err != nil {
 			return err
@@ -10589,6 +10674,9 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	if err := pgLockProductionLifecycleApp(ctx, tx, appID); err != nil {
+		return "", err
+	}
 	// Follow MarkDeploymentLive's lock order. Serializing on the app keeps a
 	// concurrent canary advance or manual cutover from interleaving with the
 	// release projection repair below.
@@ -10640,6 +10728,9 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 		return "", mapErr(err)
 	}
 
+	if err := s.authorizeProductionLifecycle(ctx, tx, operationUUIDString(target), true); err != nil {
+		return "", err
+	}
 	// Preserve privately retained code while switching the weighted route and
 	// closing the failed rollout in the same transaction.
 	if err := q.RetireAutoRollbackDeploymentSiblings(ctx, tx, sqlc.RetireAutoRollbackDeploymentSiblingsParams{
@@ -25193,6 +25284,10 @@ func mapErr(err error) error {
 				return &EventDeliveryCapacityError{Scope: pgErr.Detail}
 			case "checked_rollback_required":
 				return ErrCheckedRollbackRequired
+			case "production_lifecycle_required":
+				return &RouteGateBlockedError{Decision: api.RouteGateDecision{Mode: "enforce", Status: "blocked", Reasons: []string{"lifecycle_transaction_review_required"}}}
+			case "route_removal_required":
+				return &RouteRemovalBlockedError{Reason: pgErr.Detail}
 			case "binding_release_required":
 				return ErrBindingReleaseRequired
 			case "binding_release_changed":

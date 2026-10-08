@@ -118,7 +118,8 @@ def sync_detailed(
         x_faas_invocation_id (UUID):
         x_gregale_operation_attempt (int):
         x_gregale_operation_capability (str):
-        body (OperationWorkflowStateValidationRequest):
+        body (OperationWorkflowStateValidationRequest): Batch of application-reported workflow
+            updates to validate before their transaction commits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,7 +164,8 @@ def sync(
         x_faas_invocation_id (UUID):
         x_gregale_operation_attempt (int):
         x_gregale_operation_capability (str):
-        body (OperationWorkflowStateValidationRequest):
+        body (OperationWorkflowStateValidationRequest): Batch of application-reported workflow
+            updates to validate before their transaction commits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -203,7 +205,8 @@ async def asyncio_detailed(
         x_faas_invocation_id (UUID):
         x_gregale_operation_attempt (int):
         x_gregale_operation_capability (str):
-        body (OperationWorkflowStateValidationRequest):
+        body (OperationWorkflowStateValidationRequest): Batch of application-reported workflow
+            updates to validate before their transaction commits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -246,7 +249,8 @@ async def asyncio(
         x_faas_invocation_id (UUID):
         x_gregale_operation_attempt (int):
         x_gregale_operation_capability (str):
-        body (OperationWorkflowStateValidationRequest):
+        body (OperationWorkflowStateValidationRequest): Batch of application-reported workflow
+            updates to validate before their transaction commits.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

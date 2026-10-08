@@ -1983,6 +1983,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/bindings/release-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putBindingReleasePolicy))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-requirements/gate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCanaryRouteGate))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/route-requirements/gate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putCanaryRouteGate))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-removal/policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteRemovalPolicy))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/route-removal/policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireSameOrigin(s.putRouteRemovalPolicy)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/route-lifecycle/approvals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireSameOrigin(s.postRouteLifecycleApproval)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-lifecycle/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteLifecycleHistory))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-lifecycle/approvals/{approval_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteLifecycleApproval))))
+	mux.HandleFunc("POST /v1/apps/{slug}/route-removal/approvals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireSameOrigin(s.postRouteRemovalApproval)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-removal/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteRemovalCheck))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-requirements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getSavedRouteRequirements))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/route-requirements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putSavedRouteRequirements))))
 	mux.HandleFunc("POST /v1/apps/{slug}/route-requirements/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.postCheckRouteRequirements))))
@@ -4339,7 +4346,7 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 		return true
 	}
 	switch problem.Code {
-	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged:
+	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged:
 		return false
 	default:
 		return true

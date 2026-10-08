@@ -58,6 +58,9 @@ func validServiceRolloutHandoff(h ServiceRolloutHandoff) bool {
 // finalizer/aborter serialize with a deploy that is trying to change the same
 // generation set.
 func (s *PgStore) loadAndLockServiceRollout(ctx context.Context, tx pgx.Tx, id string) (Deployment, []pgServiceRolloutLiveRow, error) {
+	if _, err := pgLockCanaryRouteSnapshot(ctx, tx, id); err != nil {
+		return Deployment{}, nil, err
+	}
 	var appID string
 	if err := tx.QueryRow(ctx, `select app_id from deployments where id = $1`, id).Scan(&appID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

@@ -114,8 +114,8 @@ func (s *server) prepareCheckedRollbackWithContract(r *http.Request, acct state.
 	if err != nil && !errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
 		return api.RollbackOperation{}, target, api.ErrCapacity("could not evaluate API contract")
 	}
-	if len(check.Diff.Breaks) > 0 {
-		return api.RollbackOperation{}, target, api.ErrAPIContractBreakingChange((&openapidiff.GateError{Diff: check.Diff}).Error())
+	if check.Diff.Blocking() {
+		return api.RollbackOperation{}, target, contractGateProblem(check.Diff)
 	}
 	return s.persistCheckedRollback(r, acct, app, req, target, currentID)
 }

@@ -41,6 +41,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	RequestTelemetry_RecordTelemetryCoverage_FullMethodName   = "/onebox.faas.apid.v1.RequestTelemetry/RecordTelemetryCoverage"
 	RequestTelemetry_IncrementRequestTelemetry_FullMethodName = "/onebox.faas.apid.v1.RequestTelemetry/IncrementRequestTelemetry"
 	RequestTelemetry_RecordConsumerUsage_FullMethodName       = "/onebox.faas.apid.v1.RequestTelemetry/RecordConsumerUsage"
 	RequestTelemetry_RecordRequestIDJournal_FullMethodName    = "/onebox.faas.apid.v1.RequestTelemetry/RecordRequestIDJournal"
@@ -57,6 +58,8 @@ const (
 // so the gateway can update its in-process counters (shipped /
 // rate_limited / db_error).
 type RequestTelemetryClient interface {
+	// Durable delivery coverage, including idle and disabled gateways.
+	RecordTelemetryCoverage(ctx context.Context, in *TelemetryCoverage, opts ...grpc.CallOption) (*TelemetryCoverageReceipt, error)
 	// IncrementRequestTelemetry streams collapsed telemetry rows
 	// from the gateway edge to apid's writer path. The server
 	// commits each record inside its own transaction (per-record
@@ -86,6 +89,16 @@ type requestTelemetryClient struct {
 
 func NewRequestTelemetryClient(cc grpc.ClientConnInterface) RequestTelemetryClient {
 	return &requestTelemetryClient{cc}
+}
+
+func (c *requestTelemetryClient) RecordTelemetryCoverage(ctx context.Context, in *TelemetryCoverage, opts ...grpc.CallOption) (*TelemetryCoverageReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TelemetryCoverageReceipt)
+	err := c.cc.Invoke(ctx, RequestTelemetry_RecordTelemetryCoverage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *requestTelemetryClient) IncrementRequestTelemetry(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[IncrementRequestTelemetryRequest, IncrementRequestTelemetryResponse], error) {
@@ -132,6 +145,8 @@ func (c *requestTelemetryClient) RecordRequestIDJournal(ctx context.Context, in 
 // so the gateway can update its in-process counters (shipped /
 // rate_limited / db_error).
 type RequestTelemetryServer interface {
+	// Durable delivery coverage, including idle and disabled gateways.
+	RecordTelemetryCoverage(context.Context, *TelemetryCoverage) (*TelemetryCoverageReceipt, error)
 	// IncrementRequestTelemetry streams collapsed telemetry rows
 	// from the gateway edge to apid's writer path. The server
 	// commits each record inside its own transaction (per-record
@@ -163,14 +178,17 @@ type RequestTelemetryServer interface {
 // pointer dereference when methods are called.
 type UnimplementedRequestTelemetryServer struct{}
 
+func (UnimplementedRequestTelemetryServer) RecordTelemetryCoverage(context.Context, *TelemetryCoverage) (*TelemetryCoverageReceipt, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RecordTelemetryCoverage not implemented")
+}
 func (UnimplementedRequestTelemetryServer) IncrementRequestTelemetry(grpc.BidiStreamingServer[IncrementRequestTelemetryRequest, IncrementRequestTelemetryResponse]) error {
-	return status.Error(codes.Unimplemented, "method IncrementRequestTelemetry not implemented")
+	return status.Errorf(codes.Unimplemented, "method IncrementRequestTelemetry not implemented")
 }
 func (UnimplementedRequestTelemetryServer) RecordConsumerUsage(context.Context, *ConsumerUsageEvent) (*ConsumerUsageReceipt, error) {
-	return nil, status.Error(codes.Unimplemented, "method RecordConsumerUsage not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method RecordConsumerUsage not implemented")
 }
 func (UnimplementedRequestTelemetryServer) RecordRequestIDJournal(context.Context, *RecordRequestIDJournalRequest) (*RecordRequestIDJournalResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method RecordRequestIDJournal not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method RecordRequestIDJournal not implemented")
 }
 func (UnimplementedRequestTelemetryServer) mustEmbedUnimplementedRequestTelemetryServer() {}
 func (UnimplementedRequestTelemetryServer) testEmbeddedByValue()                          {}
@@ -183,7 +201,7 @@ type UnsafeRequestTelemetryServer interface {
 }
 
 func RegisterRequestTelemetryServer(s grpc.ServiceRegistrar, srv RequestTelemetryServer) {
-	// If the following call panics, it indicates UnimplementedRequestTelemetryServer was
+	// If the following call pancis, it indicates UnimplementedRequestTelemetryServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
@@ -191,6 +209,24 @@ func RegisterRequestTelemetryServer(s grpc.ServiceRegistrar, srv RequestTelemetr
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&RequestTelemetry_ServiceDesc, srv)
+}
+
+func _RequestTelemetry_RecordTelemetryCoverage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TelemetryCoverage)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RequestTelemetryServer).RecordTelemetryCoverage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RequestTelemetry_RecordTelemetryCoverage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RequestTelemetryServer).RecordTelemetryCoverage(ctx, req.(*TelemetryCoverage))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _RequestTelemetry_IncrementRequestTelemetry_Handler(srv interface{}, stream grpc.ServerStream) error {
@@ -243,6 +279,10 @@ var RequestTelemetry_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "onebox.faas.apid.v1.RequestTelemetry",
 	HandlerType: (*RequestTelemetryServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "RecordTelemetryCoverage",
+			Handler:    _RequestTelemetry_RecordTelemetryCoverage_Handler,
+		},
 		{
 			MethodName: "RecordConsumerUsage",
 			Handler:    _RequestTelemetry_RecordConsumerUsage_Handler,

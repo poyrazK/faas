@@ -640,3 +640,25 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-646: Unified backfill delivery inspection](646-unified-backfill-delivery-inspection.md)
 - [ADR-647: Independent event routing by default](647-independent-event-routing-default.md)
 - [ADR-648: Independent workflow event routing](648-independent-workflow-event-routing.md)
+
+- [ADR-725: Approved route removal exceptions in the contract gate](725-approved-route-removal-contract-exceptions.md)
+
+- [ADR-726: Telemetry coverage for route removal approvals](726-route-removal-telemetry-coverage.md)
+
+- [ADR-727: App-scoped route removal coverage](727-app-scoped-route-removal-coverage.md)
+- [ADR-728: Operation deprecation and sunset headers](728-route-deprecation-headers.md)
+- [ADR-729: Gregale route sunset report](729-route-sunset-report.md)
+- [ADR-730: Saved sunset report comparisons](730-route-sunset-regression-tracking.md)
+- [ADR-792: Deployment-specific route lifecycle metadata](792-deployment-route-lifecycle.md)
+- [ADR-732: Lifecycle guidance on cached responses](732-cached-route-lifecycle.md)
+- [ADR-733: Lifecycle declaration reviews and canary gate](733-route-lifecycle-declaration-gate.md)
+
+- [ADR-734: Durable lifecycle successor compatibility approvals](734-lifecycle-successor-review-receipts.md)
+
+- [ADR-735: Lifecycle review at the production traffic boundary](735-production-lifecycle-transaction-guards.md)
+
+- [ADR-736: Verified lifecycle successors](736-verified-lifecycle-successors.md)
+
+- [ADR-737: Release graph lifecycle successor bindings](737-release-graph-lifecycle-successors.md)
+
+- [ADR-738: Production lifecycle review history](738-production-lifecycle-review-history.md)

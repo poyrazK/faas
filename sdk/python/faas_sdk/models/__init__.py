@@ -279,6 +279,9 @@ from .apply_response import ApplyResponse
 from .apply_response_apps_item import ApplyResponseAppsItem
 from .approve_environment_git_revision_request import ApproveEnvironmentGitRevisionRequest
 from .approve_environment_git_revision_response import ApproveEnvironmentGitRevisionResponse
+from .approve_route_lifecycle_request import ApproveRouteLifecycleRequest
+from .approve_route_removal_request import ApproveRouteRemovalRequest
+from .approve_route_removal_request_mappings_item import ApproveRouteRemovalRequestMappingsItem
 from .apps_metrics_response import AppsMetricsResponse
 from .apps_metrics_response_apps_type_0 import AppsMetricsResponseAppsType0
 from .apps_metrics_response_range import AppsMetricsResponseRange
@@ -1557,6 +1560,7 @@ from .open_api_contract_break_kind import OpenAPIContractBreakKind
 from .open_api_contract_break_method import OpenAPIContractBreakMethod
 from .open_api_contract_diff_response import OpenAPIContractDiffResponse
 from .open_api_contract_diff_response_source import OpenAPIContractDiffResponseSource
+from .open_api_contract_unknown import OpenAPIContractUnknown
 from .operation_accepted_response import OperationAcceptedResponse
 from .operation_artifact_request import OperationArtifactRequest
 from .operation_cancellation_request import OperationCancellationRequest
@@ -2048,6 +2052,7 @@ from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
 from .publish_event_response import PublishEventResponse
+from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .put_app_env_request import PutAppEnvRequest
@@ -2215,7 +2220,6 @@ from .route_finding_change import RouteFindingChange
 from .route_finding_change_kind import RouteFindingChangeKind
 from .route_gate_decision import RouteGateDecision
 from .route_gate_decision_mode import RouteGateDecisionMode
-from .route_gate_decision_reasons_item import RouteGateDecisionReasonsItem
 from .route_gate_decision_status import RouteGateDecisionStatus
 from .route_group import RouteGroup
 from .route_group_methods_item import RouteGroupMethodsItem
@@ -2284,6 +2288,18 @@ from .route_health_window_evidence import RouteHealthWindowEvidence
 from .route_health_window_evidence_error_status import RouteHealthWindowEvidenceErrorStatus
 from .route_health_window_evidence_latency_status import RouteHealthWindowEvidenceLatencyStatus
 from .route_health_window_evidence_status import RouteHealthWindowEvidenceStatus
+from .route_lifecycle_approval import RouteLifecycleApproval
+from .route_lifecycle_approval_checker_version import RouteLifecycleApprovalCheckerVersion
+from .route_lifecycle_approval_compatibility import RouteLifecycleApprovalCompatibility
+from .route_lifecycle_history_approval import RouteLifecycleHistoryApproval
+from .route_lifecycle_history_approval_status import RouteLifecycleHistoryApprovalStatus
+from .route_lifecycle_history_capture import RouteLifecycleHistoryCapture
+from .route_lifecycle_history_entry import RouteLifecycleHistoryEntry
+from .route_lifecycle_history_entry_outcome import RouteLifecycleHistoryEntryOutcome
+from .route_lifecycle_history_page import RouteLifecycleHistoryPage
+from .route_lifecycle_mapping import RouteLifecycleMapping
+from .route_lifecycle_mapping_method import RouteLifecycleMappingMethod
+from .route_lifecycle_mapping_successor_method import RouteLifecycleMappingSuccessorMethod
 from .route_monitor_config import RouteMonitorConfig
 from .route_monitor_config_customer_group_by import RouteMonitorConfigCustomerGroupBy
 from .route_monitor_customer_cohort import RouteMonitorCustomerCohort
@@ -2353,6 +2369,15 @@ from .route_policy_receipt import RoutePolicyReceipt
 from .route_policy_rule_usage import RoutePolicyRuleUsage
 from .route_public_exception import RoutePublicException
 from .route_public_exception_method import RoutePublicExceptionMethod
+from .route_removal_approval import RouteRemovalApproval
+from .route_removal_approval_coverage import RouteRemovalApprovalCoverage
+from .route_removal_check import RouteRemovalCheck
+from .route_removal_check_status import RouteRemovalCheckStatus
+from .route_removal_mapping import RouteRemovalMapping
+from .route_removal_mapping_method import RouteRemovalMappingMethod
+from .route_removal_mapping_successor_method import RouteRemovalMappingSuccessorMethod
+from .route_removal_policy import RouteRemovalPolicy
+from .route_removal_policy_mode import RouteRemovalPolicyMode
 from .route_requirement import RouteRequirement
 from .route_requirement_method import RouteRequirementMethod
 from .route_requirements_check import RouteRequirementsCheck
@@ -2487,6 +2512,8 @@ from .set_route_health_gate_request_mode import SetRouteHealthGateRequestMode
 from .set_route_health_gate_request_on_regression import SetRouteHealthGateRequestOnRegression
 from .set_route_monitor_request import SetRouteMonitorRequest
 from .set_route_monitor_request_customer_group_by import SetRouteMonitorRequestCustomerGroupBy
+from .set_route_removal_policy_request import SetRouteRemovalPolicyRequest
+from .set_route_removal_policy_request_mode import SetRouteRemovalPolicyRequestMode
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
@@ -2980,6 +3007,9 @@ __all__ = (
     "AppRoutesResponseSource",
     "ApproveEnvironmentGitRevisionRequest",
     "ApproveEnvironmentGitRevisionResponse",
+    "ApproveRouteLifecycleRequest",
+    "ApproveRouteRemovalRequest",
+    "ApproveRouteRemovalRequestMappingsItem",
     "AppSecretExportResponse",
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",
@@ -4295,6 +4325,7 @@ __all__ = (
     "OpenAPIContractBreakMethod",
     "OpenAPIContractDiffResponse",
     "OpenAPIContractDiffResponseSource",
+    "OpenAPIContractUnknown",
     "OperationAcceptedResponse",
     "OperationArtifactRequest",
     "OperationCancellationRequest",
@@ -4742,6 +4773,7 @@ __all__ = (
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishManagedRealtimeChannelDelivery",
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
     "PutAppEnvRequest",
@@ -4907,7 +4939,6 @@ __all__ = (
     "RouteFindingChangeKind",
     "RouteGateDecision",
     "RouteGateDecisionMode",
-    "RouteGateDecisionReasonsItem",
     "RouteGateDecisionStatus",
     "RouteGroup",
     "RouteGroupMethodsItem",
@@ -4976,6 +5007,18 @@ __all__ = (
     "RouteHealthWindowEvidenceErrorStatus",
     "RouteHealthWindowEvidenceLatencyStatus",
     "RouteHealthWindowEvidenceStatus",
+    "RouteLifecycleApproval",
+    "RouteLifecycleApprovalCheckerVersion",
+    "RouteLifecycleApprovalCompatibility",
+    "RouteLifecycleHistoryApproval",
+    "RouteLifecycleHistoryApprovalStatus",
+    "RouteLifecycleHistoryCapture",
+    "RouteLifecycleHistoryEntry",
+    "RouteLifecycleHistoryEntryOutcome",
+    "RouteLifecycleHistoryPage",
+    "RouteLifecycleMapping",
+    "RouteLifecycleMappingMethod",
+    "RouteLifecycleMappingSuccessorMethod",
     "RouteMonitorConfig",
     "RouteMonitorConfigCustomerGroupBy",
     "RouteMonitorCustomerCohort",
@@ -5045,6 +5088,15 @@ __all__ = (
     "RoutePolicyRuleUsage",
     "RoutePublicException",
     "RoutePublicExceptionMethod",
+    "RouteRemovalApproval",
+    "RouteRemovalApprovalCoverage",
+    "RouteRemovalCheck",
+    "RouteRemovalCheckStatus",
+    "RouteRemovalMapping",
+    "RouteRemovalMappingMethod",
+    "RouteRemovalMappingSuccessorMethod",
+    "RouteRemovalPolicy",
+    "RouteRemovalPolicyMode",
     "RouteRequirement",
     "RouteRequirementMethod",
     "RouteRequirementsCheck",
@@ -5173,6 +5225,8 @@ __all__ = (
     "SetRouteHealthGateRequestOnRegression",
     "SetRouteMonitorRequest",
     "SetRouteMonitorRequestCustomerGroupBy",
+    "SetRouteRemovalPolicyRequest",
+    "SetRouteRemovalPolicyRequestMode",
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",

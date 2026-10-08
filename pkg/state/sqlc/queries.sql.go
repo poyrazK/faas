@@ -1537,6 +1537,17 @@ func (q *Queries) AuthorizeCheckedRollback(ctx context.Context, db DBTX, request
 	return set_config, err
 }
 
+const authorizeLifecycleTraffic = `-- name: AuthorizeLifecycleTraffic :one
+SELECT set_config('faas.lifecycle_fences',$1::text,true)::text
+`
+
+func (q *Queries) AuthorizeLifecycleTraffic(ctx context.Context, db DBTX, fences string) (string, error) {
+	row := db.QueryRow(ctx, authorizeLifecycleTraffic, fences)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const authorizeWorkflowOutbound = `-- name: AuthorizeWorkflowOutbound :one
 SELECT EXISTS(
  SELECT 1 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
@@ -16471,6 +16482,30 @@ func (q *Queries) InsertAppErrorRequest(ctx context.Context, db DBTX, arg Insert
 	return err
 }
 
+const insertBlockedLifecycleHistory = `-- name: InsertBlockedLifecycleHistory :exec
+INSERT INTO production_lifecycle_reviews(app_id,deployment_id,decision,recovery,scope,evidence)
+VALUES($1::text::uuid,$2::text::uuid,$3::jsonb,false,$4::text,$5::jsonb)
+`
+
+type InsertBlockedLifecycleHistoryParams struct {
+	AppID        string
+	DeploymentID string
+	Decision     []byte
+	Scope        string
+	Evidence     []byte
+}
+
+func (q *Queries) InsertBlockedLifecycleHistory(ctx context.Context, db DBTX, arg InsertBlockedLifecycleHistoryParams) error {
+	_, err := db.Exec(ctx, insertBlockedLifecycleHistory,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.Decision,
+		arg.Scope,
+		arg.Evidence,
+	)
+	return err
+}
+
 const insertCheckedRollback = `-- name: InsertCheckedRollback :exec
 INSERT INTO deployment_rollback_operations(id,app_id,scope,target_deployment_id,current_deployment_id,status,receipt)
  VALUES($1,$2,$3,$4,$5,$6,$7)
@@ -20323,6 +20358,41 @@ func (q *Queries) InsertRouteHealthHistory(ctx context.Context, db DBTX, arg Ins
 	return id, err
 }
 
+const insertRouteLifecycleApproval = `-- name: InsertRouteLifecycleApproval :execrows
+INSERT INTO route_lifecycle_approvals(id,account_id,app_id,baseline_deployment_id,candidate_deployment_id,receipt,approved_at,valid_until,configuration_snapshot,successor_snapshot)
+SELECT $1::text::uuid,$2::text::uuid,$3::text::uuid,$4::text::uuid,$5::text::uuid,$6::jsonb,$7::timestamptz,$8::timestamptz,lifecycle_configuration($3::text::uuid),lifecycle_approval_successor_bindings($3::text::uuid,$6::jsonb) WHERE $9::jsonb=lifecycle_approval_successor_bindings($3::text::uuid,$6::jsonb)
+`
+
+type InsertRouteLifecycleApprovalParams struct {
+	ID                string
+	AccountID         string
+	AppID             string
+	BaselineID        string
+	CandidateID       string
+	Receipt           []byte
+	ApprovedAt        pgtype.Timestamptz
+	ValidUntil        pgtype.Timestamptz
+	SuccessorSnapshot []byte
+}
+
+func (q *Queries) InsertRouteLifecycleApproval(ctx context.Context, db DBTX, arg InsertRouteLifecycleApprovalParams) (int64, error) {
+	result, err := db.Exec(ctx, insertRouteLifecycleApproval,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BaselineID,
+		arg.CandidateID,
+		arg.Receipt,
+		arg.ApprovedAt,
+		arg.ValidUntil,
+		arg.SuccessorSnapshot,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertRoutePolicyReceipt = `-- name: InsertRoutePolicyReceipt :exec
 INSERT INTO route_policy_receipts (id, account_id, app_id, idempotency_key, request_sha256, receipt)
 VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid, $4, $5, $6)
@@ -22734,6 +22804,35 @@ func (q *Queries) LayerArtifactHasReferences(ctx context.Context, db DBTX, stora
 	var referenced pgtype.Bool
 	err := row.Scan(&referenced)
 	return referenced, err
+}
+
+const lifecycleApprovalClock = `-- name: LifecycleApprovalClock :one
+SELECT clock_timestamp()::timestamptz AS now
+`
+
+func (q *Queries) LifecycleApprovalClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, lifecycleApprovalClock)
+	var now pgtype.Timestamptz
+	err := row.Scan(&now)
+	return now, err
+}
+
+const lifecycleHistoryCursorExists = `-- name: LifecycleHistoryCursorExists :one
+SELECT EXISTS(SELECT 1 FROM production_lifecycle_reviews h JOIN apps a ON a.id=h.app_id
+WHERE h.id=$1::bigint AND a.id=$2::text::uuid AND a.account_id=$3::text::uuid AND a.status<>'deleted')
+`
+
+type LifecycleHistoryCursorExistsParams struct {
+	BeforeID  int64
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) LifecycleHistoryCursorExists(ctx context.Context, db DBTX, arg LifecycleHistoryCursorExistsParams) (bool, error) {
+	row := db.QueryRow(ctx, lifecycleHistoryCursorExists, arg.BeforeID, arg.AppID, arg.AccountID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const listAPIKeys = `-- name: ListAPIKeys :many
@@ -28607,6 +28706,54 @@ func (q *Queries) ListProductionDeadLetterEvents(ctx context.Context, db DBTX, a
 	return items, nil
 }
 
+const listProductionLifecycleHistory = `-- name: ListProductionLifecycleHistory :many
+SELECT jsonb_build_object('id',h.id::text,'app_id',h.app_id,'deployment_id',h.deployment_id,'reviewed_at',h.reviewed_at,
+ 'scope',coalesce(h.scope,''),'outcome',CASE WHEN h.decision->>'status'='blocked' THEN 'blocked' ELSE 'applied' END,
+ 'recovery',h.recovery,'decision',h.decision,'evidence_available',h.evidence IS NOT NULL,
+ 'truncated',coalesce((h.evidence->>'truncated')::boolean,false),'captures',coalesce(h.evidence->'captures','[]'::jsonb),
+ 'graph_ids',coalesce(h.evidence->'graph_ids','[]'::jsonb),
+ 'approvals',coalesce((SELECT jsonb_agg(p || jsonb_build_object('invalidated_at',r.invalidated_at,
+ 'status',CASE WHEN r.id IS NULL THEN 'unavailable' WHEN r.invalidated_at IS NOT NULL OR r.successor_snapshot IS DISTINCT FROM lifecycle_approval_successor_bindings(r.app_id,r.receipt) THEN 'invalidated' WHEN r.valid_until<=now() THEN 'expired' ELSE 'valid' END,
+ 'status_reason',CASE WHEN r.id IS NULL THEN 'approval_not_retained' WHEN r.invalidated_at IS NOT NULL THEN 'review_inputs_changed' WHEN r.successor_snapshot IS DISTINCT FROM lifecycle_approval_successor_bindings(r.app_id,r.receipt) THEN 'destination_binding_changed' WHEN r.valid_until<=now() THEN 'approval_expired' ELSE '' END))
+ FROM jsonb_array_elements(coalesce(h.evidence->'approvals','[]'::jsonb)) p LEFT JOIN route_lifecycle_approvals r ON r.id::text=p->>'id' AND r.app_id=h.app_id),'[]'::jsonb))::jsonb
+FROM production_lifecycle_reviews h JOIN apps a ON a.id=h.app_id
+WHERE a.id=$1::text::uuid AND a.account_id=$2::text::uuid AND a.status<>'deleted'
+AND ($3::bigint=0 OR h.id<$3::bigint)
+ORDER BY h.id DESC LIMIT $4
+`
+
+type ListProductionLifecycleHistoryParams struct {
+	AppID     string
+	AccountID string
+	BeforeID  int64
+	PageLimit int32
+}
+
+func (q *Queries) ListProductionLifecycleHistory(ctx context.Context, db DBTX, arg ListProductionLifecycleHistoryParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listProductionLifecycleHistory,
+		arg.AppID,
+		arg.AccountID,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var column_1 []byte
+		if err := rows.Scan(&column_1); err != nil {
+			return nil, err
+		}
+		items = append(items, column_1)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProductionNamedQueueCandidates = `-- name: ListProductionNamedQueueCandidates :many
 select i.id::text from invocations i
 		left join trigger_records tr on tr.trigger_id = $1
@@ -31954,6 +32101,17 @@ func (q *Queries) LockLegacyInvocationReceiptFence(ctx context.Context, db DBTX,
 	var id_2 pgtype.UUID
 	err := row.Scan(&id_2)
 	return id_2, err
+}
+
+const lockLifecycleSuccessorProject = `-- name: LockLifecycleSuccessorProject :one
+SELECT id::text FROM projects WHERE id=$1::text::uuid FOR UPDATE
+`
+
+func (q *Queries) LockLifecycleSuccessorProject(ctx context.Context, db DBTX, projectID string) (string, error) {
+	row := db.QueryRow(ctx, lockLifecycleSuccessorProject, projectID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockManagedPostgresCustomerDatabase = `-- name: LockManagedPostgresCustomerDatabase :one
@@ -47780,6 +47938,279 @@ func (q *Queries) ReadInvocationWorkEnvironmentDomain(ctx context.Context, db DB
 	return environment_id, err
 }
 
+const readLifecycleAppOwner = `-- name: ReadLifecycleAppOwner :one
+SELECT account_id::text FROM apps WHERE id=$1::text::uuid
+`
+
+func (q *Queries) ReadLifecycleAppOwner(ctx context.Context, db DBTX, appID string) (string, error) {
+	row := db.QueryRow(ctx, readLifecycleAppOwner, appID)
+	var account_id string
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
+const readLifecycleApprovalSuccessorBindings = `-- name: ReadLifecycleApprovalSuccessorBindings :one
+SELECT lifecycle_approval_successor_bindings($1::text::uuid,$2::jsonb)::jsonb AS bindings
+`
+
+type ReadLifecycleApprovalSuccessorBindingsParams struct {
+	AppID   string
+	Receipt []byte
+}
+
+func (q *Queries) ReadLifecycleApprovalSuccessorBindings(ctx context.Context, db DBTX, arg ReadLifecycleApprovalSuccessorBindingsParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readLifecycleApprovalSuccessorBindings, arg.AppID, arg.Receipt)
+	var bindings []byte
+	err := row.Scan(&bindings)
+	return bindings, err
+}
+
+const readLifecycleCanaryBaselines = `-- name: ReadLifecycleCanaryBaselines :many
+SELECT id::text FROM deployments
+WHERE app_id = $1::text::uuid AND id != $2::text::uuid
+AND (scope = $3::text OR (coalesce(nullif(scope,''),'default') IN ('default','prod','production') AND coalesce(nullif($3::text,''),'default') IN ('default','prod','production')))
+AND ((status = 'live' AND traffic_percent > 0) OR id IN (SELECT baseline_deployment_id FROM app_route_removal_policies WHERE app_id = $1::text::uuid))
+ORDER BY id
+`
+
+type ReadLifecycleCanaryBaselinesParams struct {
+	AppID       string
+	CandidateID string
+	Scope       string
+}
+
+func (q *Queries) ReadLifecycleCanaryBaselines(ctx context.Context, db DBTX, arg ReadLifecycleCanaryBaselinesParams) ([]string, error) {
+	rows, err := db.Query(ctx, readLifecycleCanaryBaselines, arg.AppID, arg.CandidateID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readLifecycleConfigurationReceipt = `-- name: ReadLifecycleConfigurationReceipt :one
+SELECT (receipt->>'configuration_sha256')::text AS sha FROM route_lifecycle_approvals
+WHERE app_id=$1::text::uuid AND candidate_deployment_id=$2::text::uuid
+AND successor_snapshot=lifecycle_approval_successor_bindings(app_id,receipt)
+AND configuration_snapshot=lifecycle_configuration(app_id) AND invalidated_at IS NULL AND valid_until>clock_timestamp()
+ORDER BY approved_at DESC LIMIT 1
+`
+
+type ReadLifecycleConfigurationReceiptParams struct {
+	AppID        string
+	DeploymentID string
+}
+
+func (q *Queries) ReadLifecycleConfigurationReceipt(ctx context.Context, db DBTX, arg ReadLifecycleConfigurationReceiptParams) (string, error) {
+	row := db.QueryRow(ctx, readLifecycleConfigurationReceipt, arg.AppID, arg.DeploymentID)
+	var sha string
+	err := row.Scan(&sha)
+	return sha, err
+}
+
+const readLifecycleCurrentTraffic = `-- name: ReadLifecycleCurrentTraffic :one
+SELECT CASE WHEN status='live' THEN traffic_percent ELSE 0 END::integer FROM deployments WHERE id=$1::text::uuid
+`
+
+func (q *Queries) ReadLifecycleCurrentTraffic(ctx context.Context, db DBTX, deploymentID string) (int32, error) {
+	row := db.QueryRow(ctx, readLifecycleCurrentTraffic, deploymentID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const readLifecycleDarkActivation = `-- name: ReadLifecycleDarkActivation :one
+SELECT (d.traffic_percent=0 AND (d.traffic_percent_explicit OR EXISTS(SELECT 1 FROM deployment_rollback_operations r WHERE r.target_deployment_id=d.id AND r.status='preparing')))::boolean FROM deployments d WHERE d.id=$1::text::uuid
+`
+
+func (q *Queries) ReadLifecycleDarkActivation(ctx context.Context, db DBTX, deploymentID string) (bool, error) {
+	row := db.QueryRow(ctx, readLifecycleDarkActivation, deploymentID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const readLifecycleDeploymentScope = `-- name: ReadLifecycleDeploymentScope :one
+SELECT coalesce(scope,'')::text AS scope FROM deployments WHERE id=$1::text::uuid AND app_id=$2::text::uuid
+`
+
+type ReadLifecycleDeploymentScopeParams struct {
+	DeploymentID string
+	AppID        string
+}
+
+func (q *Queries) ReadLifecycleDeploymentScope(ctx context.Context, db DBTX, arg ReadLifecycleDeploymentScopeParams) (string, error) {
+	row := db.QueryRow(ctx, readLifecycleDeploymentScope, arg.DeploymentID, arg.AppID)
+	var scope string
+	err := row.Scan(&scope)
+	return scope, err
+}
+
+const readLifecycleHistoryDeployment = `-- name: ReadLifecycleHistoryDeployment :one
+SELECT app_id::text AS app_id,scope FROM deployments WHERE id=$1::text::uuid
+`
+
+type ReadLifecycleHistoryDeploymentRow struct {
+	AppID string
+	Scope string
+}
+
+func (q *Queries) ReadLifecycleHistoryDeployment(ctx context.Context, db DBTX, deploymentID string) (ReadLifecycleHistoryDeploymentRow, error) {
+	row := db.QueryRow(ctx, readLifecycleHistoryDeployment, deploymentID)
+	var i ReadLifecycleHistoryDeploymentRow
+	err := row.Scan(&i.AppID, &i.Scope)
+	return i, err
+}
+
+const readLifecycleHistoryEvidence = `-- name: ReadLifecycleHistoryEvidence :one
+SELECT lifecycle_history_evidence($1::text::uuid,$2::text::uuid,$3::jsonb)::jsonb
+`
+
+type ReadLifecycleHistoryEvidenceParams struct {
+	AppID        string
+	DeploymentID string
+	Decision     []byte
+}
+
+func (q *Queries) ReadLifecycleHistoryEvidence(ctx context.Context, db DBTX, arg ReadLifecycleHistoryEvidenceParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readLifecycleHistoryEvidence, arg.AppID, arg.DeploymentID, arg.Decision)
+	var column_1 []byte
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const readLifecycleProjectSuccessor = `-- name: ReadLifecycleProjectSuccessor :one
+SELECT lifecycle_project_successor($1::text::uuid,$2::text::uuid)::jsonb AS routing
+`
+
+type ReadLifecycleProjectSuccessorParams struct {
+	AppID        string
+	DeploymentID string
+}
+
+func (q *Queries) ReadLifecycleProjectSuccessor(ctx context.Context, db DBTX, arg ReadLifecycleProjectSuccessorParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readLifecycleProjectSuccessor, arg.AppID, arg.DeploymentID)
+	var routing []byte
+	err := row.Scan(&routing)
+	return routing, err
+}
+
+const readLifecycleSuccessorAppMetadata = `-- name: ReadLifecycleSuccessorAppMetadata :one
+SELECT jsonb_build_object('OrgID',coalesce(org_id::text,''),'ProjectID',coalesce(project_id::text,''),'Visibility',visibility,'OnlyAllowDeclaredRoutes',only_declared_routes,'DeclaredRoutes',declared_routes)::jsonb AS metadata FROM apps WHERE id=$1::text::uuid
+`
+
+func (q *Queries) ReadLifecycleSuccessorAppMetadata(ctx context.Context, db DBTX, appID string) ([]byte, error) {
+	row := db.QueryRow(ctx, readLifecycleSuccessorAppMetadata, appID)
+	var metadata []byte
+	err := row.Scan(&metadata)
+	return metadata, err
+}
+
+const readLifecycleSuccessorDeployments = `-- name: ReadLifecycleSuccessorDeployments :many
+SELECT jsonb_build_object('ID',id,'AppID',app_id,'Status',status,'scope',scope,'traffic_percent',traffic_percent)::jsonb AS deployment FROM deployments WHERE app_id=$1::text::uuid AND status='live' ORDER BY id
+`
+
+func (q *Queries) ReadLifecycleSuccessorDeployments(ctx context.Context, db DBTX, appID string) ([][]byte, error) {
+	rows, err := db.Query(ctx, readLifecycleSuccessorDeployments, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var deployment []byte
+		if err := rows.Scan(&deployment); err != nil {
+			return nil, err
+		}
+		items = append(items, deployment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readLifecycleSuccessorHost = `-- name: ReadLifecycleSuccessorHost :one
+SELECT jsonb_build_object('verified_domain',EXISTS(SELECT 1 FROM custom_domains d WHERE d.domain::text=$1::text AND d.app_id=$2::text::uuid AND d.verified_at IS NOT NULL AND d.environment_id IS NULL),
+ 'claimed',EXISTS(SELECT 1 FROM tenant_hostnames h WHERE h.hostname::text=$1::text))::jsonb AS routing
+`
+
+type ReadLifecycleSuccessorHostParams struct {
+	Host  string
+	AppID string
+}
+
+func (q *Queries) ReadLifecycleSuccessorHost(ctx context.Context, db DBTX, arg ReadLifecycleSuccessorHostParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readLifecycleSuccessorHost, arg.Host, arg.AppID)
+	var routing []byte
+	err := row.Scan(&routing)
+	return routing, err
+}
+
+const readLifecycleTrafficCandidates = `-- name: ReadLifecycleTrafficCandidates :many
+SELECT id::text FROM deployments WHERE app_id=$1::text::uuid
+AND (id=$2::text::uuid OR status='live')
+ORDER BY id
+`
+
+type ReadLifecycleTrafficCandidatesParams struct {
+	AppID        string
+	DeploymentID string
+}
+
+func (q *Queries) ReadLifecycleTrafficCandidates(ctx context.Context, db DBTX, arg ReadLifecycleTrafficCandidatesParams) ([]string, error) {
+	rows, err := db.Query(ctx, readLifecycleTrafficCandidates, arg.AppID, arg.DeploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readLifecycleTrafficFences = `-- name: ReadLifecycleTrafficFences :one
+SELECT coalesce(nullif(current_setting('faas.lifecycle_fences',true),''),'[]')::jsonb AS fences
+`
+
+func (q *Queries) ReadLifecycleTrafficFences(ctx context.Context, db DBTX) ([]byte, error) {
+	row := db.QueryRow(ctx, readLifecycleTrafficFences)
+	var fences []byte
+	err := row.Scan(&fences)
+	return fences, err
+}
+
+const readLifecycleTrafficInputs = `-- name: ReadLifecycleTrafficInputs :one
+SELECT lifecycle_traffic_inputs($1::text::uuid)::jsonb AS inputs
+`
+
+func (q *Queries) ReadLifecycleTrafficInputs(ctx context.Context, db DBTX, appID string) ([]byte, error) {
+	row := db.QueryRow(ctx, readLifecycleTrafficInputs, appID)
+	var inputs []byte
+	err := row.Scan(&inputs)
+	return inputs, err
+}
+
 const readManagedPostgresCloneRestoreProof = `-- name: ReadManagedPostgresCloneRestoreProof :one
 SELECT p.database_id, p.account_id, p.operation_id, p.backend_id, p.backend_fingerprint, p.provider_resource_id, p.source_database_id, p.source_resource_id, p.point_in_time, p.spec, p.generation, p.observed_at, p.data_resource_id FROM managed_postgres_restore_proofs p
 JOIN managed_postgres_databases d ON d.id=p.database_id
@@ -50608,6 +51039,25 @@ func (q *Queries) ReadRouteHealthNotificationState(ctx context.Context, db DBTX,
 	return i, err
 }
 
+const readRouteLifecycleApproval = `-- name: ReadRouteLifecycleApproval :one
+SELECT (r.receipt || jsonb_build_object('invalidated_at',r.invalidated_at))::jsonb AS receipt FROM route_lifecycle_approvals r
+JOIN apps a ON a.id=r.app_id AND a.account_id=r.account_id
+WHERE r.id=$1::text::uuid AND r.account_id=$2::text::uuid AND r.app_id=$3::text::uuid AND a.status<>'deleted'
+`
+
+type ReadRouteLifecycleApprovalParams struct {
+	ID        string
+	AccountID string
+	AppID     string
+}
+
+func (q *Queries) ReadRouteLifecycleApproval(ctx context.Context, db DBTX, arg ReadRouteLifecycleApprovalParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readRouteLifecycleApproval, arg.ID, arg.AccountID, arg.AppID)
+	var receipt []byte
+	err := row.Scan(&receipt)
+	return receipt, err
+}
+
 const readRouteMonitorConfig = `-- name: ReadRouteMonitorConfig :one
 SELECT (jsonb_build_object('app_id',a.id,'enabled',coalesce(m.enabled,false),'revision',coalesce(m.revision,0),
 	'routes',coalesce(m.routes,'[]'::jsonb),'updated_at',m.updated_at)::jsonb ||
@@ -51266,6 +51716,67 @@ func (q *Queries) ReadSnapshotPublicationSource(ctx context.Context, db DBTX, in
 	var i ReadSnapshotPublicationSourceRow
 	err := row.Scan(&i.AppID, &i.DeploymentID, &i.StartedAt)
 	return i, err
+}
+
+const readValidRouteLifecycleApprovals = `-- name: ReadValidRouteLifecycleApprovals :many
+SELECT receipt FROM route_lifecycle_approvals
+WHERE account_id=$1::text::uuid AND app_id=$2::text::uuid
+AND baseline_deployment_id=$3::text::uuid AND candidate_deployment_id=$4::text::uuid
+AND invalidated_at IS NULL AND valid_until > $5::timestamptz
+AND successor_snapshot=lifecycle_approval_successor_bindings(app_id,receipt)
+AND receipt->>'baseline_contract_sha256'=$6::text
+AND receipt->>'candidate_contract_sha256'=$7::text
+AND receipt->>'configuration_sha256'=$8::text
+AND (receipt->>'gate_revision')::bigint=$9::bigint
+AND (receipt->>'requirements_revision')::bigint=$10::bigint
+AND (receipt->>'removal_policy_revision')::bigint=$11::bigint
+ORDER BY approved_at DESC LIMIT 1
+`
+
+type ReadValidRouteLifecycleApprovalsParams struct {
+	AccountID            string
+	AppID                string
+	BaselineID           string
+	CandidateID          string
+	At                   pgtype.Timestamptz
+	BaselineSha          string
+	CandidateSha         string
+	ConfigurationSha     string
+	GateRevision         int64
+	RequirementsRevision int64
+	RemovalRevision      int64
+}
+
+func (q *Queries) ReadValidRouteLifecycleApprovals(ctx context.Context, db DBTX, arg ReadValidRouteLifecycleApprovalsParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, readValidRouteLifecycleApprovals,
+		arg.AccountID,
+		arg.AppID,
+		arg.BaselineID,
+		arg.CandidateID,
+		arg.At,
+		arg.BaselineSha,
+		arg.CandidateSha,
+		arg.ConfigurationSha,
+		arg.GateRevision,
+		arg.RequirementsRevision,
+		arg.RemovalRevision,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var receipt []byte
+		if err := rows.Scan(&receipt); err != nil {
+			return nil, err
+		}
+		items = append(items, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const reapExpiredUploadSessions = `-- name: ReapExpiredUploadSessions :many

@@ -64,8 +64,20 @@ type routeMigrationPairReview struct {
 }
 
 func cmdRoutesMigration(args []string) int {
+	if len(args) > 0 && (args[0] == "policy" || args[0] == "authorize" || args[0] == "server-check") {
+		return cmdRouteRemovalServer(args[0], args[1:])
+	}
+	if len(args) > 0 && (args[0] == "gate" || args[0] == "approve") {
+		return cmdRoutesMigrationGate(args[1:], args[0] == "approve")
+	}
+	if len(args) > 0 && args[0] == "readiness" {
+		return cmdRouteMigrationCutoverReview(args[1:], true)
+	}
+	if len(args) > 0 && args[0] == "suggest" {
+		return cmdRoutesMigrationSuggest(args[1:])
+	}
 	if len(args) == 0 || args[0] != "review" {
-		PrintUsage(osStderr, "usage: gregale routes migration review --mapping <PATH> --from-deployment APP=ID [--from-deployment APP=ID...] --to-deployment APP=ID [--to-deployment APP=ID...] [--format text|markdown] [--out PATH] [--fail-on-breaking] [--fail-on-incomplete] [--json]", "cli")
+		PrintUsage(osStderr, "usage: gregale routes migration <suggest|review|readiness|gate|approve> [options]", "cli")
 		return 1
 	}
 	return cmdRoutesMigrationReview(args[1:])
@@ -178,8 +190,10 @@ func cmdRoutesMigrationReview(args []string) int {
 }
 
 type routeMigrationLoadedDeployment struct {
-	evidence routeMigrationDeploymentEvidence
-	spec     *openapidiff.Spec
+	captureSHA string
+	evidence   routeMigrationDeploymentEvidence
+	spec       *openapidiff.Spec
+	deployment api.DeploymentResponse
 }
 
 func routeMigrationRequiredApps(mappings map[previewCustomerMigrationRouteKey]previewCustomerMigrationMapping) (map[string]bool, map[string]bool, int) {
@@ -210,6 +224,10 @@ func validateRouteMigrationDeploymentSet(side string, required map[string]bool, 
 }
 
 func readRouteMigrationDeploymentSet(ctx context.Context, client *api.Client, deployments map[string]string) (map[string]routeMigrationLoadedDeployment, error) {
+	return readRouteMigrationDeploymentSetAllowEmpty(ctx, client, deployments, false)
+}
+
+func readRouteMigrationDeploymentSetAllowEmpty(ctx context.Context, client *api.Client, deployments map[string]string, allowEmpty bool) (map[string]routeMigrationLoadedDeployment, error) {
 	apps := make([]string, 0, len(deployments))
 	for app := range deployments {
 		apps = append(apps, app)
@@ -226,10 +244,12 @@ func readRouteMigrationDeploymentSet(ctx context.Context, client *api.Client, de
 			return nil, fmt.Errorf("deployment %s returned incomplete identity for app %s", id, app)
 		}
 		inventory, spec := readRouteLifecycleInventory(ctx, client, app, id, deployment.AppID)
-		if inventory.Status != "available" {
+		if inventory.Status != "available" && !(allowEmpty && inventory.Reason == "deployment_contract_has_no_paths") {
 			spec = nil
 		}
 		result[app] = routeMigrationLoadedDeployment{
+			deployment: deployment,
+			captureSHA: inventory.CaptureSHA256,
 			evidence: routeMigrationDeploymentEvidence{
 				App: app, DeploymentID: id, Status: inventory.Status, Reason: inventory.Reason,
 				ContractSource: inventory.CaptureSource, ContractSHA: inventory.DocumentSHA256, CapturedAt: inventory.CapturedAt,

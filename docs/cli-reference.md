@@ -8469,3 +8469,95 @@ Print the powershell completion snippet
 Print the gregale(1) man page (or gregale-&lt;command&gt;(1) with one arg)
 
 `gregale man <command>`
+
+### routes sunsets
+
+Read-only sunset queue for deprecated operations in the selected deployment's
+captured OpenAPI document, joined with retained callers on that deployment.
+
+```sh
+gregale routes sunsets api --deployment BASELINE_UUID --since 14d --within 720h \
+  --mapping route-successors.json --to-deployment api=SUCCESSOR_UUID \
+  --out sunset-report.json --json
+```
+
+`--deployment` is required. `--source` defaults to `deployment`; use
+`--source manual_import` to inspect the app import. Reports identify the metadata
+source, capture hash/source/time or import hash. `--since` defaults to `14d`; `--within` defaults to
+`720h`. `--mapping` and repeatable `--to-deployment APP=UUID` are optional and
+must be supplied together to include fresh compatibility and successor usage.
+`--out` saves JSON to a new file. `--fail-on-overdue` exits 1 for elapsed dates;
+`--fail-on-incomplete` exits 1 for missing metadata or inconclusive contract or
+caller evidence. Reports are emitted before either exit.
+
+Caller evidence is observed-only; zero requests never grants removal approval.
+See [route lifecycle guidance](route-lifecycle.md#review-upcoming-sunsets-and-remaining-callers)
+for metadata, identity, and telemetry limitations.
+
+#### routes sunsets diff
+
+Compare two saved version 1 sunset reports locally:
+
+```sh
+gregale routes sunsets diff --before BEFORE.json --after AFTER.json \
+  --max-staleness 24h --out DIFF.json --fail-on-regression --fail-on-incomplete --json
+```
+
+`--before` and `--after` are required. Both snapshots must use the same app and
+baseline deployment and advance generation time and telemetry window end.
+`--max-staleness` defaults to `24h`. `--out` creates a new JSON file.
+The diff highlights observed regressions, advisory activity improvements,
+metadata/mapping changes and degraded evidence. Aggregate progress requires
+equal-length, non-overlapping windows and unchanged contract evidence.
+Both CI flags emit the report before exiting 1. No network or login is needed.
+
+#### routes lifecycle declarations
+
+Read-only comparison of lifecycle declarations in two deployment captures:
+
+```sh
+gregale routes lifecycle declarations api --from-deployment BASELINE_UUID \
+  --to-deployment CANDIDATE_UUID --out REVIEW.json --fail-on-findings --json
+```
+
+Both deployment flags are required and must differ. `--out` writes a new JSON
+file. `--fail-on-findings` emits the report then exits 1 for regressions,
+incomplete evidence or required review. Advisory output does not grant rollout
+or removal approval. The existing `routes gate` report/enforce modes govern
+server-side lifecycle checks on production traffic increases, including initial
+activation and ordinary promotions. Dark staging, validated abort and automatic
+incident recovery remain available. See
+[declaration rollout guidance](route-lifecycle.md#check-lifecycle-declarations-before-rollout)
+for enforced baseline capture requirements and successor-review limitations.
+
+
+#### routes lifecycle prepare-approval / approve / receipt
+
+Prepare a pinned request from server-owned captures and policy evidence, review
+its explicit successor mappings, then request an authenticated compatibility
+approval:
+
+```sh
+gregale routes lifecycle prepare-approval api --from-deployment BASELINE_UUID \
+  --to-deployment CANDIDATE_UUID --mappings MAPPINGS.json --out REQUEST.json
+gregale routes lifecycle approve api --request REQUEST.json --json
+gregale routes lifecycle receipt api --id APPROVAL_UUID --json
+```
+
+Mappings are an array of `method`, `path`, `successor_url`, `successor_method`
+and `successor_path`. The first checker supports the same app's canonical HTTPS
+production host and inline rooted operations with response contracts. The
+successor URL must match the candidate declaration and mapped path; queries,
+fragments and external/custom hosts are unsupported. Unknown or incompatible
+contracts fail closed. `prepare-approval` writes a new request file, preserving
+authoritative capture hashes and current gate, saved intent and removal policy
+revisions plus the configured route-check hash. It does not grant approval.
+
+`approve` requires owner/account-admin authorization and completed MFA; local
+status or approver claims are not accepted. Receipts expire after one hour and
+are bound to exact mappings, captures and policy configuration. Capture writes
+or deletion permanently invalidate receipts. Canary decisions identify accepted
+receipt IDs; receipt reads alone do not prove current validity. These receipts
+clear only successor-review findings and cannot authorize route removal.
+
+Lifecycle approval mapping files may include `successor_app_id`, `successor_deployment_id`, and `successor_contract_sha256` together. `routes lifecycle prepare-approval` preserves these destination pins; `approve` verifies the current same-account/organization routing and captured contract on the server. See [route lifecycle](route-lifecycle.md#cross-app-successor-approvals).
