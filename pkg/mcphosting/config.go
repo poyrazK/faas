@@ -58,6 +58,7 @@ type TasksConfig struct {
 	OwnerKeyEnv            string `json:"owner_key_env,omitempty"`
 	NamespaceEnv           string `json:"namespace_env,omitempty"`
 	TTLSeconds             int    `json:"ttl_seconds,omitempty"`
+	ShutdownTimeoutMS      int    `json:"shutdown_timeout_ms,omitempty"`
 	PollIntervalMS         int    `json:"poll_interval_ms,omitempty"`
 	MaxAttempts            int    `json:"max_attempts,omitempty"`
 	RetryBaseDelayMS       int    `json:"retry_base_delay_ms,omitempty"`
@@ -283,6 +284,9 @@ func (c *TasksConfig) validate() error {
 	}
 	if c.PollIntervalMS != 0 && (c.PollIntervalMS < 500 || c.PollIntervalMS > 30_000) {
 		return fmt.Errorf("tasks.poll_interval_ms must be between 500 and 30000")
+	}
+	if c.ShutdownTimeoutMS != 0 && (c.ShutdownTimeoutMS < 1000 || c.ShutdownTimeoutMS > 300_000) {
+		return fmt.Errorf("tasks.shutdown_timeout_ms must be between 1000 and 300000")
 	}
 	if c.WorkerConcurrency != 0 && (c.WorkerConcurrency < 1 || c.WorkerConcurrency > 16) {
 		return fmt.Errorf("tasks.worker_concurrency must be between 1 and 16")

@@ -2,6 +2,7 @@ const DEFAULT_API_URL = 'https://api.gregale.dev';
 const METRIC_NAMES = Object.freeze({
   outstanding: 'mcp_tasks_outstanding',
   activeWorkers: 'mcp_tasks_active_workers',
+  drainingWorkers: 'mcp_tasks_draining_workers',
   unsupportedHandlers: 'mcp_tasks_unsupported_handler_tasks',
   observerHeartbeat: 'mcp_tasks_observer_heartbeat',
   running: 'mcp_tasks_running',
@@ -60,13 +61,14 @@ export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = D
     publishing = (async () => {
       const metrics = await store.queueMetrics();
       if (!metrics || !Number.isSafeInteger(metrics.outstandingTasks) || metrics.outstandingTasks < 0 ||
-          !['runningTasks', 'capacityWaitingTasks', 'failedTasks', 'retryWaitingTasks', 'activeWorkers', 'unsupportedHandlerTasks'].every(key => Number.isSafeInteger(metrics[key]) && metrics[key] >= 0) ||
+          !['runningTasks', 'capacityWaitingTasks', 'failedTasks', 'retryWaitingTasks', 'activeWorkers', 'drainingWorkers', 'unsupportedHandlerTasks'].every(key => Number.isSafeInteger(metrics[key]) && metrics[key] >= 0) ||
           !Number.isFinite(metrics.oldestAgeSeconds) || metrics.oldestAgeSeconds < 0) {
         throw new Error('MCP task queue metrics returned invalid values');
       }
       await Promise.all([
         push(METRIC_NAMES.outstanding, metrics.outstandingTasks),
         push(METRIC_NAMES.activeWorkers, metrics.activeWorkers),
+        push(METRIC_NAMES.drainingWorkers, metrics.drainingWorkers),
         push(METRIC_NAMES.unsupportedHandlers, metrics.unsupportedHandlerTasks),
         push(METRIC_NAMES.running, metrics.runningTasks),
         push(METRIC_NAMES.failed, metrics.failedTasks),

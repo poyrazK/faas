@@ -746,7 +746,7 @@ test('running limits are atomic across replicas and recover from completion and 
 test('owner saturation leaves capacity for other owners and cancellation releases it', postgresOnly, async t => {
   const { pool, namespace, ownerKey } = await harness(t);
   const store = createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs: 60_000, maxRunning: 3, maxRunningPerOwner: 1 });
-  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 0, oldestAgeSeconds: 0, runningTasks: 0, capacityWaitingTasks: 0, failedTasks: 0, retryWaitingTasks: 0, activeWorkers: 0, unsupportedHandlerTasks: 0 });
+  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 0, oldestAgeSeconds: 0, runningTasks: 0, capacityWaitingTasks: 0, failedTasks: 0, retryWaitingTasks: 0, activeWorkers: 0, drainingWorkers: 0, unsupportedHandlerTasks: 0 });
   await create(store, 'alice');
   await create(store, 'alice');
   const alice = await store.claim(3, 60_000);

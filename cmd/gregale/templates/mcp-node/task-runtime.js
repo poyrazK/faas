@@ -42,6 +42,7 @@ export function resolveMcpTaskSettings(config, { env = process.env, role = 'comb
     ttlMs: (settings.ttl_seconds ?? 86400) * 1000,
     pollIntervalMs: settings.poll_interval_ms ?? 2000,
     workerConcurrency: settings.worker_concurrency ?? 1,
+    shutdownTimeoutMs: settings.shutdown_timeout_ms ?? 30_000,
     ...validateMcpTaskRetryPolicy({ maxAttempts: settings.max_attempts ?? 3, retryBaseDelayMs: settings.retry_base_delay_ms ?? 1000, retryMaxDelayMs: settings.retry_max_delay_ms ?? 60_000 }),
     maxRunning: settings.max_running || defaults.maxRunning,
     maxRunningPerOwner: settings.max_running_per_owner || defaults.maxRunningPerOwner,
@@ -76,6 +77,7 @@ export async function startMcpTaskRuntime(config, {
       handlers,
       pollIntervalMs: settings.pollIntervalMs,
       workerConcurrency: settings.workerConcurrency,
+      shutdownTimeoutMs: settings.shutdownTimeoutMs,
       maxAttempts: settings.maxAttempts,
       retryBaseDelayMs: settings.retryBaseDelayMs,
       retryMaxDelayMs: settings.retryMaxDelayMs,
@@ -102,8 +104,8 @@ export async function startMcpTaskRuntime(config, {
       if (closing) return closing;
       closing = (async () => {
         try {
-          await metricsPublisher?.close();
           await taskRuntime?.stop();
+          await metricsPublisher?.close();
         } finally {
           await pool.end();
         }

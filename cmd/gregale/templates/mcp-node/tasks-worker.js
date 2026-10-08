@@ -13,7 +13,8 @@ async function shutdown(signal) {
     process.exitCode = 1;
     console.error(JSON.stringify({ event: 'mcp_task_worker_shutdown_error' }));
   });
-  return shutdownPromise;
+  await shutdownPromise;
+  process.exit(process.exitCode ?? 0);
 }
 
 process.once('SIGTERM', () => { void shutdown('SIGTERM'); });

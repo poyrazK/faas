@@ -446,3 +446,12 @@ are made. Detailed database errors, keys and payloads are omitted. Repeat on eve
 writer during key rotation; this report cannot establish fleet-wide consistency.
 For remote metrics and scale-to-zero checks, use `gregale mcp doctor --hosting
 --app <worker-app> --preflight-path <this-directory>` with the same environment.
+
+Task workers drain on SIGTERM/SIGINT. Set `tasks.shutdown_timeout_ms` (default
+30000, range 1000–300000) below the platform termination grace period. New claims
+stop immediately; active handlers renew leases until completion or the deadline.
+At the deadline handlers receive an abort signal and leases expire naturally for
+recovery. Dedicated workers exit after cleanup even if a handler ignores abort.
+External effects must remain idempotent by Task ID. Available and draining
+workers publish separate aggregate gauges; initialize the updated worker schema
+before upgrading read-only observers.

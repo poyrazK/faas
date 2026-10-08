@@ -374,9 +374,11 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
         await client.query(`CREATE TABLE IF NOT EXISTS ${WORKER_TABLE} (
           namespace text NOT NULL, worker_id uuid NOT NULL,
           handlers jsonb NOT NULL CHECK (jsonb_typeof(handlers) = 'array'),
+          draining boolean NOT NULL DEFAULT false,
           heartbeat_at timestamptz NOT NULL, expires_at timestamptz NOT NULL,
           PRIMARY KEY (namespace, worker_id)
         )`);
+        await client.query(`ALTER TABLE ${WORKER_TABLE} ADD COLUMN IF NOT EXISTS draining boolean NOT NULL DEFAULT false`);
         await client.query(MIGRATE_SCHEMA);
         await client.query(CREATE_QUEUE_INDEX);
         await client.query(CREATE_ADMISSION_INDEX);
@@ -435,8 +437,14 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
       if (Buffer.byteLength(registry) > MAX_ARGUMENT_BYTES) throw new Error('MCP worker registry is too large');
       await pool.query(`INSERT INTO ${WORKER_TABLE} (namespace, worker_id, handlers, heartbeat_at, expires_at)
         VALUES ($1, $2::uuid, $3::jsonb, clock_timestamp(), clock_timestamp() + interval '90 seconds')
-        ON CONFLICT (namespace, worker_id) DO UPDATE SET handlers = EXCLUDED.handlers,
+        ON CONFLICT (namespace, worker_id) DO UPDATE SET handlers = EXCLUDED.handlers, draining = false,
           heartbeat_at = EXCLUDED.heartbeat_at, expires_at = EXCLUDED.expires_at`, [namespace, workerID, registry]);
+    },
+    async workerDraining(workerID) {
+      if (!UUID_PATTERN.test(workerID)) throw new Error('Invalid MCP worker registration');
+      await pool.query(`UPDATE ${WORKER_TABLE} SET draining = true,
+        heartbeat_at = clock_timestamp(), expires_at = clock_timestamp() + interval '90 seconds'
+        WHERE namespace = $1 AND worker_id = $2::uuid`, [namespace, workerID]);
     },
     async workerStopped(workerID) {
       if (!UUID_PATTERN.test(workerID)) throw new Error('Invalid MCP worker registration');
@@ -820,7 +828,8 @@ export function createMcpTaskQueueObserver({ pool, namespace, maxRunning = defau
                status = 'running' AND lease_expires_at > instant.now AS live
           FROM ${TABLE} AS task CROSS JOIN instant
          WHERE namespace = $1 AND expires_at > instant.now AND status IN ('queued', 'running', 'failed')
-      ), workers AS MATERIALIZED (SELECT handlers FROM ${WORKER_TABLE} CROSS JOIN instant WHERE namespace = $1 AND expires_at > instant.now),
+      ), registrations AS MATERIALIZED (SELECT handlers, draining FROM ${WORKER_TABLE} CROSS JOIN instant WHERE namespace = $1 AND expires_at > instant.now),
+      workers AS MATERIALIZED (SELECT handlers FROM registrations WHERE NOT draining),
       supported AS MATERIALIZED (SELECT DISTINCT handler.name, handler.version FROM workers CROSS JOIN LATERAL jsonb_to_recordset(workers.handlers) AS handler(name text, version text)),
       pending AS MATERIALIZED (SELECT * FROM retained WHERE status <> 'failed'), owners AS (
         SELECT owner_hash, COUNT(*) FILTER (WHERE live) AS running FROM pending GROUP BY owner_hash
@@ -832,14 +841,15 @@ export function createMcpTaskQueueObserver({ pool, namespace, maxRunning = defau
              (SELECT COUNT(*) FROM retained WHERE status = 'failed')::text AS failed_tasks,
              COUNT(*) FILTER (WHERE status = 'queued' AND next_attempt_at > now)::text AS retry_waiting_tasks,
              (SELECT COUNT(*) FROM workers)::text AS active_workers,
+             (SELECT COUNT(*) FROM registrations WHERE draining)::text AS draining_workers,
              COUNT(*) FILTER (WHERE NOT live AND (next_attempt_at IS NULL OR next_attempt_at <= now)
                AND EXISTS (SELECT 1 FROM workers) AND NOT EXISTS (SELECT 1 FROM supported WHERE supported.name = pending.tool_name AND supported.version = pending.handler_version))::text AS unsupported_handler_tasks
         FROM pending JOIN owners USING (owner_hash) CROSS JOIN totals
     `, [namespace, maxRunning, maxRunningPerOwner]);
     const row = result.rows?.[0];
     if (!row) throw new Error('Could not read MCP task queue metrics');
-    const metrics = { outstandingTasks: Number(row.outstanding_tasks), oldestAgeSeconds: Number(row.oldest_age_seconds), runningTasks: Number(row.running_tasks), capacityWaitingTasks: Number(row.capacity_waiting_tasks), failedTasks: Number(row.failed_tasks), retryWaitingTasks: Number(row.retry_waiting_tasks), activeWorkers: Number(row.active_workers), unsupportedHandlerTasks: Number(row.unsupported_handler_tasks) };
-    if (!['outstandingTasks', 'runningTasks', 'capacityWaitingTasks', 'failedTasks', 'retryWaitingTasks', 'activeWorkers', 'unsupportedHandlerTasks'].every(key => Number.isSafeInteger(metrics[key]) && metrics[key] >= 0) || !Number.isFinite(metrics.oldestAgeSeconds) || metrics.oldestAgeSeconds < 0) throw new Error('MCP task queue metrics returned invalid values');
+    const metrics = { outstandingTasks: Number(row.outstanding_tasks), oldestAgeSeconds: Number(row.oldest_age_seconds), runningTasks: Number(row.running_tasks), capacityWaitingTasks: Number(row.capacity_waiting_tasks), failedTasks: Number(row.failed_tasks), retryWaitingTasks: Number(row.retry_waiting_tasks), activeWorkers: Number(row.active_workers), drainingWorkers: Number(row.draining_workers), unsupportedHandlerTasks: Number(row.unsupported_handler_tasks) };
+    if (!['outstandingTasks', 'runningTasks', 'capacityWaitingTasks', 'failedTasks', 'retryWaitingTasks', 'activeWorkers', 'drainingWorkers', 'unsupportedHandlerTasks'].every(key => Number.isSafeInteger(metrics[key]) && metrics[key] >= 0) || !Number.isFinite(metrics.oldestAgeSeconds) || metrics.oldestAgeSeconds < 0) throw new Error('MCP task queue metrics returned invalid values');
     return metrics;
   }
   return { queueMetrics };

@@ -816,3 +816,29 @@ Handler coverage describes currently eligible queued work, not every future
 handler invocation. Zero live workers leaves compatibility unknown, including
 an intentionally idle scale-to-zero deployment. A recent observer heartbeat
 is evidence of a successful publication, not a guarantee of future uptime.
+
+### Draining workers during rollout
+
+On shutdown, Task workers stop claiming new work and mark their live registration
+as draining. `mcp_tasks_active_workers` counts workers available to claim;
+`mcp_tasks_draining_workers` counts workers finishing active work. Draining
+registrations do not provide handler coverage for pending Tasks.
+
+Active handlers continue lease renewal until they finish or the configured
+`tasks.shutdown_timeout_ms` deadline expires (default 30000; range 1000–300000).
+At the deadline the runtime aborts handler signals and stops lease renewal;
+unfinished Tasks remain running until lease expiry makes them recoverable.
+Late handler results and errors are not persisted after abandonment. Concurrent
+stop calls share the same shutdown operation. Dedicated worker processes exit
+when shutdown finishes, including when a handler ignores its abort signal.
+
+Configure the platform termination grace period above the Task deadline, allowing
+additional time for database and metrics cleanup. A process kill can interrupt
+any drain. In-flight database operations can finish after the deadline; no lease
+is cleared early. Handlers must respect abort signals and use Task IDs for
+idempotent external effects because recovery remains at least once.
+
+Upgrade schema via worker startup before upgrading read-only observers: the
+worker registry now includes a `draining` column. Older workers do not report
+draining state, so complete the rollout across workers before relying on this
+metric. Run replacement workers before draining the last compatible worker.

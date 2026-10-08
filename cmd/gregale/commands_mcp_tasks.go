@@ -251,6 +251,7 @@ func cmdMCPTasksReport(args []string, doctor bool) int {
 			{Name: "mcp_tasks_retry_waiting"},
 			{Name: "mcp_tasks_failed"},
 			{Name: "mcp_tasks_active_workers"},
+			{Name: "mcp_tasks_draining_workers"},
 			{Name: "mcp_tasks_unsupported_handler_tasks"},
 			{Name: "mcp_tasks_observer_heartbeat"},
 		},
@@ -334,6 +335,9 @@ func (result *mcpTasksStatusResult) diagnose() {
 	}
 	if result.ScaleToZeroConfigured && !result.ObserverHeartbeatFresh {
 		add("observer_health_unknown", "Scale-to-zero is configured, but the separate observer heartbeat is missing or stale. Check the always-on observer and its metrics credentials.")
+	}
+	if values["mcp_tasks_draining_workers"] > 0 {
+		add("workers_draining", "Workers are finishing active Tasks and no longer claiming new work. Verify replacement workers are available during rollout.")
 	}
 	if values["mcp_tasks_capacity_waiting"] > 0 {
 		add("execution_capacity", "Tasks are waiting for namespace or owner execution capacity. More replicas may not help; review the configured running limits and active leases.")
