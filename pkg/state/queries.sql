@@ -14770,6 +14770,36 @@ SELECT receipt FROM deployment_rollback_operations WHERE target_deployment_id=sq
 -- name: ListPendingCheckedRollbacks :many
 SELECT receipt FROM deployment_rollback_operations WHERE status NOT IN ('complete','failed') ORDER BY updated_at,id LIMIT sqlc.arg(batch_size);
 
+-- name: ListAppPendingRollbacks :many
+SELECT r.receipt FROM deployment_rollback_operations r JOIN apps a ON a.id=r.app_id
+ WHERE r.app_id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'
+ AND r.status NOT IN ('complete','failed') ORDER BY r.updated_at DESC,r.id DESC LIMIT sqlc.arg(row_limit);
+
+-- name: AppOpenMonitorIncident :one
+SELECT i.id,i.deployment_id,i.opened_at FROM route_monitor_incidents i JOIN apps a ON a.id=i.app_id
+ WHERE i.app_id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted' AND i.status='open';
+
+-- name: ListAppPendingRestarts :many
+WITH latest AS (
+ SELECT DISTINCT ON (o.payload::jsonb->>'wake_id')
+  (o.payload::jsonb->>'wake_id')::text AS wake_id,o.state,o.attempts,o.last_error,o.created_at,o.delivered_at,o.id
+ FROM notification_outbox o JOIN apps a ON a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'
+ WHERE o.channel='runtime_config_restart' AND o.payload::jsonb->>'app_id'=a.id::text
+  AND COALESCE(o.payload::jsonb->>'wake_id','')<>''
+ ORDER BY o.payload::jsonb->>'wake_id',o.id DESC
+)
+SELECT wake_id,
+ CASE state WHEN 'pending' THEN CASE WHEN attempts>0 THEN 'retrying' ELSE 'queued' END
+  WHEN 'processing' THEN 'running' WHEN 'dead_letter' THEN 'failed' ELSE 'unknown' END::text AS status,
+ attempts,
+ CASE WHEN COALESCE(last_error,'')='' THEN ''
+  WHEN position('reason=telemetry_missing' in last_error)>0 THEN 'telemetry_missing'
+  WHEN position('reason=requests_active' in last_error)>0 THEN 'requests_active'
+  WHEN position('reason=quiet_period_not_elapsed' in last_error)>0 THEN 'quiet_period_not_elapsed'
+  ELSE 'restart_attempt_failed' END::text AS failure_reason,
+ created_at AS requested_at,delivered_at AS completed_at
+FROM latest WHERE state<>'delivered' ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(row_limit);
+
 -- name: SaveCheckedRollback :exec
 UPDATE deployment_rollback_operations SET status=sqlc.arg(status),receipt=sqlc.arg(receipt),updated_at=clock_timestamp()
  WHERE id=sqlc.arg(id);
