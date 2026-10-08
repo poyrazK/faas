@@ -928,7 +928,7 @@ Periodic events reuse `profile.route_regressed` and `profile.route_recovered`,
 with payload `source: "periodic"`. Incident contexts include the pinned baseline
 window so periodic results cannot recover rollout incidents or incidents against
 an expired reference. Event delivery remains advisory and at least once. Apply
-migration `20261008170000000_profile_periodic_monitors.sql` and deploy the updated
+migration `20261008210606568_profile_periodic_monitors.sql` and deploy the updated
 API/worker before enabling this setting.
 
 ### Route-specific code evidence
