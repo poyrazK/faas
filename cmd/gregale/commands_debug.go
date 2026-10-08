@@ -843,7 +843,7 @@ func renderDebugRequestMetadata(w io.Writer, r api.DebugTelemetryRequestItem) {
 	if r.TraceID != nil && *r.TraceID != "" {
 		_, _ = fmt.Fprintf(w, "Trace ID:   %s\n", *r.TraceID)
 	}
-	_, _ = fmt.Fprintf(w, "Route:      %s %s\n", r.Method, r.Route)
+	_, _ = fmt.Fprintf(w, "Route:      %s\n", requestLine(r.Method, r.Route))
 	_, _ = fmt.Fprintf(w, "Status:     %d\n", r.Status)
 	_, _ = fmt.Fprintf(w, "Latency:    %d ms\n", r.LatencyMS)
 	_, _ = fmt.Fprintf(w, "Count:      %d\n", r.Count)
@@ -949,7 +949,7 @@ func renderDebugDependencies(w io.Writer, resp api.DebugDependencyLatencyRespons
 // not part of this surface.
 func renderDebugRequestEvidence(w io.Writer, resp api.DebugRequestEvidenceResponse) {
 	r := resp.Request
-	_, _ = fmt.Fprintf(w, "%s %s · HTTP %d · %d ms\n", r.Method, r.Route, r.Status, r.LatencyMS)
+	_, _ = fmt.Fprintf(w, "%s · HTTP %d · %d ms\n", requestLine(r.Method, r.Route), r.Status, r.LatencyMS)
 	_, _ = fmt.Fprintf(w, "telemetry row %s", r.ID)
 	if r.TraceID != nil && *r.TraceID != "" {
 		_, _ = fmt.Fprintf(w, " · public request %s", *r.TraceID)
@@ -1162,4 +1162,19 @@ func renderDebugCompareTable(w io.Writer, resp api.DebugCompareResponse) {
 			r.MirrorP50, r.MirrorP95, r.MirrorP99, r.MirrorN, delta)
 	}
 	_ = tw.Flush()
+}
+
+// requestLine renders a request as "METHOD /path". Request telemetry stores
+// the route with its method already ("GET /"), so prefixing the method again
+// printed "GET GET /" in every debugger and trace view (hunt #8).
+func requestLine(method, route string) string {
+	method = strings.TrimSpace(method)
+	route = strings.TrimSpace(route)
+	switch {
+	case route == "":
+		return method
+	case method == "" || strings.HasPrefix(route, method+" "):
+		return route
+	}
+	return method + " " + route
 }
