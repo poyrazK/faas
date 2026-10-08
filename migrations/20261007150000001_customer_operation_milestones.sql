@@ -1,7 +1,9 @@
 -- filename: 20261007150000001_customer_operation_milestones.sql
 -- ADR-715: retained public business facts and cross-generation deduplication.
+-- Replay-safety: guard the named CHECK, create the table/index if absent, and
+-- drop/re-add the widened event-type CHECK.
 -- +goose Up
-CREATE TABLE customer_operation_milestones (
+CREATE TABLE IF NOT EXISTS customer_operation_milestones (
     operation_id uuid NOT NULL REFERENCES customer_operations(id) ON DELETE CASCADE,
     id uuid NOT NULL,
     event_sequence bigint NOT NULL CHECK (event_sequence > 0),
@@ -13,14 +15,23 @@ CREATE TABLE customer_operation_milestones (
     PRIMARY KEY (operation_id, id),
     UNIQUE (operation_id, event_sequence)
 );
-CREATE INDEX customer_operation_milestones_history_idx ON customer_operation_milestones
+CREATE INDEX IF NOT EXISTS customer_operation_milestones_history_idx ON customer_operation_milestones
     (operation_id, created_at DESC, id DESC);
-ALTER TABLE customer_operations ADD CONSTRAINT customer_operation_milestone_count_valid CHECK (
-    NOT (record ? 'milestone_count') OR coalesce(
-        jsonb_typeof(record->'milestone_count') = 'number'
-        AND (record->>'milestone_count')::integer BETWEEN 0 AND 64, false)
-);
-ALTER TABLE customer_operation_events DROP CONSTRAINT customer_operation_events_event_type_check;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_constraint
+        WHERE conname = 'customer_operation_milestone_count_valid'
+          AND conrelid = 'customer_operations'::regclass
+    ) THEN
+        ALTER TABLE customer_operations ADD CONSTRAINT customer_operation_milestone_count_valid CHECK (
+            NOT (record ? 'milestone_count') OR coalesce(
+                jsonb_typeof(record->'milestone_count') = 'number'
+                AND (record->>'milestone_count')::integer BETWEEN 0 AND 64, false)
+        );
+    END IF;
+END$$;
+ALTER TABLE customer_operation_events DROP CONSTRAINT IF EXISTS customer_operation_events_event_type_check;
 ALTER TABLE customer_operation_events ADD CONSTRAINT customer_operation_events_event_type_check
     CHECK (event_type IN ('accepted','running','progress','artifact_attached','milestone','succeeded','failed','cancellation_requested','cancelled','reconciliation_required','recovery_requested','delivery_changed','result_expired'));
 
@@ -34,8 +45,8 @@ DO $$ BEGIN
 END $$;
 -- +goose StatementEnd
 DELETE FROM customer_operation_events WHERE event_type='milestone';
-ALTER TABLE customer_operation_events DROP CONSTRAINT customer_operation_events_event_type_check;
+ALTER TABLE customer_operation_events DROP CONSTRAINT IF EXISTS customer_operation_events_event_type_check;
 ALTER TABLE customer_operation_events ADD CONSTRAINT customer_operation_events_event_type_check
     CHECK (event_type IN ('accepted','running','progress','artifact_attached','succeeded','failed','cancellation_requested','cancelled','reconciliation_required','recovery_requested','delivery_changed','result_expired'));
-ALTER TABLE customer_operations DROP CONSTRAINT customer_operation_milestone_count_valid;
-DROP TABLE customer_operation_milestones;
+ALTER TABLE customer_operations DROP CONSTRAINT IF EXISTS customer_operation_milestone_count_valid;
+DROP TABLE IF EXISTS customer_operation_milestones;

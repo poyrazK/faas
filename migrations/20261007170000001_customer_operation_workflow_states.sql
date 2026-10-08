@@ -1,7 +1,8 @@
 -- filename: 20261007170000001_customer_operation_workflow_states.sql
 -- ADR-719: app-declared workflow state and monotonic current snapshots.
+-- Replay-safety: both tables and the index are created if absent.
 -- +goose Up
-CREATE TABLE customer_operation_workflow_state_reports (
+CREATE TABLE IF NOT EXISTS customer_operation_workflow_state_reports (
     operation_id uuid NOT NULL REFERENCES customer_operations(id) ON DELETE CASCADE,
     id uuid NOT NULL,
     workflow text NOT NULL CHECK (workflow ~ '^[a-z][a-z0-9-]{0,62}$'),
@@ -14,7 +15,7 @@ CREATE TABLE customer_operation_workflow_state_reports (
     PRIMARY KEY (operation_id, id)
 );
 
-CREATE TABLE customer_operation_workflow_states (
+CREATE TABLE IF NOT EXISTS customer_operation_workflow_states (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     platform_tenant_id uuid NOT NULL REFERENCES platform_tenants(id) ON DELETE CASCADE,
@@ -31,7 +32,7 @@ CREATE TABLE customer_operation_workflow_states (
     PRIMARY KEY (account_id, app_id, platform_tenant_id, scope, subject_type, subject_id, workflow, instance_id)
 );
 
-CREATE INDEX customer_operation_workflow_states_subject_idx ON customer_operation_workflow_states
+CREATE INDEX IF NOT EXISTS customer_operation_workflow_states_subject_idx ON customer_operation_workflow_states
     (account_id, app_id, platform_tenant_id, scope, subject_type, subject_id, updated_at DESC);
 
 -- +goose Down
@@ -44,5 +45,5 @@ DO $$ BEGIN
     END IF;
 END $$;
 -- +goose StatementEnd
-DROP TABLE customer_operation_workflow_states;
-DROP TABLE customer_operation_workflow_state_reports;
+DROP TABLE IF EXISTS customer_operation_workflow_states;
+DROP TABLE IF EXISTS customer_operation_workflow_state_reports;
