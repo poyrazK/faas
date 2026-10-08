@@ -64,6 +64,11 @@ func TestMetalQuarantineDataPlane(t *testing.T) {
 			if !q.connect("h", "10.100.0.240", 8080) {
 				t.Errorf("platform → guest via DNAT blocked; the fork must stay reachable from the platform")
 			}
+			// vmmd's per-instance bridge dials the guest from inside the
+			// fork namespace; its replies arrive on the input hook.
+			if !q.connect("n", "10.0.0.2", 8080) {
+				t.Errorf("fork namespace → guest blocked; vmmd's bridge could not reach the fork")
+			}
 			if got := q.connect("g", "203.0.113.1", 443); got == tc.quarantine {
 				t.Errorf("guest → internet reachable=%v with quarantine=%v", got, tc.quarantine)
 			}
@@ -140,7 +145,7 @@ func (q *quarantineTopology) serve(ns, host string, port int) {
 // connect reports whether a TCP connection from the named side ("g" guest,
 // "h" host) completes and reads the server's reply within two seconds.
 func (q *quarantineTopology) connect(side, host string, port int) bool {
-	ns := map[string]string{"g": q.g, "h": q.h}[side]
+	ns := map[string]string{"g": q.g, "h": q.h, "n": q.n}[side]
 	return exec.Command("ip", "netns", "exec", ns, "python3", "-c", quarantineMetalPy, "connect", host, fmt.Sprint(port)).Run() == nil
 }
 

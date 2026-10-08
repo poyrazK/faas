@@ -41,6 +41,7 @@ func TestQuarantineRendersIsolatedBaseChainsPerFamily(t *testing.T) {
 			pre + "rule " + family + " faas quarantine_forward iifname tap0 counter name quarantine_drop drop",
 			pre + "rule " + family + " faas quarantine_forward oifname tap0 iifname != vp-inst-1 counter name quarantine_drop drop",
 			pre + "chain " + family + " faas quarantine_input { type filter hook input priority -10 ; policy accept ; }",
+			pre + "rule " + family + " faas quarantine_input ct state established,related accept",
 			pre + "rule " + family + " faas quarantine_input iifname tap0 counter name quarantine_drop drop",
 		}
 		start := slices.Index(cmds, want[0])

@@ -97,8 +97,9 @@ func TestForkMetal(t *testing.T) {
 
 	var fork api.AppForkResponse
 	t.Run("create-and-restore", func(t *testing.T) {
+		// Keep the create response: only it carries the one-time token.
 		fork = createForkE2E(t, h, key, 600)
-		fork = waitForkStatus(ctx, t, h, key, fork.ID, "running", 120*time.Second)
+		waitForkStatus(ctx, t, h, key, fork.ID, "running", 120*time.Second)
 		ins := forkInstance(ctx, t, pool, appID)
 		if ins.State != string(state.StateRunning) || ins.DeploymentID != dep.ID {
 			t.Fatalf("fork instance = %+v, want running on the live deployment", ins)

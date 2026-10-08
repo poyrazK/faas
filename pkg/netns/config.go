@@ -1190,7 +1190,8 @@ const QuarantineDropCounter = "quarantine_drop"
 //     pass; every other packet from the guest drops; a new flow to the guest
 //     is admitted only from VethPeer, the platform's path, so a private
 //     network side-link cannot reach the fork.
-//   - input: nothing from the guest reaches the namespace itself.
+//   - input: replies to connections the namespace opened (vmmd's bridge to
+//     the guest) pass; nothing the guest starts reaches the namespace.
 //
 // Each chain's policy is accept so packets the chain does not match fall
 // through to the regular chains unchanged.
@@ -1213,6 +1214,10 @@ func (c Config) quarantineRules(nft func(parts ...string) []string, family strin
 		rule(append([]string{"quarantine_forward", "iifname", c.Tap}, drop...)...),
 		rule(append([]string{"quarantine_forward", "oifname", c.Tap, "iifname", "!=", c.VethPeer}, drop...)...),
 		chain("quarantine_input", "input"),
+		// vmmd's per-instance bridge reaches the guest from inside this
+		// namespace, so the guest's replies arrive on the input hook. Accept
+		// those; drop anything the guest itself starts toward the namespace.
+		rule("quarantine_input", "ct", "state", "established,related", "accept"),
 		rule(append([]string{"quarantine_input", "iifname", c.Tap}, drop...)...),
 	}
 }
