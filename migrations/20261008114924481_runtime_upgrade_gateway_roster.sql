@@ -1,3 +1,5 @@
+-- filename: 20261008114924481_runtime_upgrade_gateway_roster.sql
+
 -- +goose Up
 CREATE TABLE runtime_upgrade_gateway_rosters (
  revision uuid PRIMARY KEY CHECK (revision<>'00000000-0000-0000-0000-000000000000'::uuid),

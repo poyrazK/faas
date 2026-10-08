@@ -1,4 +1,4 @@
--- filename: 20261007131321215_runtime_upgrade_external_fence_receipts.sql
+-- filename: 20261008114924508_runtime_upgrade_external_fence_receipts.sql
 
 -- +goose Up
 CREATE TABLE runtime_upgrade_external_fence_authorities (

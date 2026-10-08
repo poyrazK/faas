@@ -1,3 +1,5 @@
+-- filename: 20261008114924486_runtime_upgrade_forwarding_drains.sql
+
 -- +goose Up
 -- adr: 697
 ALTER TABLE deployments ADD COLUMN runtime_upgrade_routing_token uuid NOT NULL DEFAULT gen_random_uuid()

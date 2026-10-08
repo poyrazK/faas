@@ -1,3 +1,5 @@
+-- filename: 20261008114924464_runtime_upgrade_reservation_controls.sql
+
 -- +goose Up
 -- ADR-692: reserve before source I/O, with private status/cancel controls.
 ALTER TABLE runtime_upgrade_operations ADD COLUMN source_path text NOT NULL DEFAULT '';

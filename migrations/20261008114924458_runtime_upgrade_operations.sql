@@ -1,3 +1,5 @@
+-- filename: 20261008114924458_runtime_upgrade_operations.sql
+
 -- +goose Up
 CREATE TABLE runtime_upgrade_operations (
  id uuid PRIMARY KEY CHECK (id<>'00000000-0000-0000-0000-000000000000'::uuid),

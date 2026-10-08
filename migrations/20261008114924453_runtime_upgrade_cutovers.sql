@@ -1,3 +1,5 @@
+-- filename: 20261008114924453_runtime_upgrade_cutovers.sql
+
 -- +goose Up
 CREATE TABLE deployment_runtime_upgrade_cutovers (
  deployment_id uuid PRIMARY KEY REFERENCES deployment_runtime_upgrade_acceptances(deployment_id) ON DELETE CASCADE,

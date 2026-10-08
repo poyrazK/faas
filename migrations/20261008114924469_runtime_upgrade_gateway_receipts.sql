@@ -1,3 +1,5 @@
+-- filename: 20261008114924469_runtime_upgrade_gateway_receipts.sql
+
 -- adr: 693
 -- +goose Up
 CREATE TABLE runtime_upgrade_gateway_receipts (

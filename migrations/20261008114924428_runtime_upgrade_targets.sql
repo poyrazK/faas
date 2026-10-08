@@ -1,3 +1,5 @@
+-- filename: 20261008114924428_runtime_upgrade_targets.sql
+
 -- +goose Up
 CREATE TABLE deployment_runtime_upgrade_targets (
  deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,

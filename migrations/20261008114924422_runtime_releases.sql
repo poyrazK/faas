@@ -1,3 +1,5 @@
+-- filename: 20261008114924422_runtime_releases.sql
+
 -- +goose Up
 ALTER TABLE build_provenance ADD COLUMN runtime_base_ref text NOT NULL DEFAULT '';
 CREATE TABLE runtime_releases (

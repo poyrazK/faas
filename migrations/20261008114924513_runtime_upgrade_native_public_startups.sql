@@ -1,3 +1,5 @@
+-- filename: 20261008114924513_runtime_upgrade_native_public_startups.sql
+
 -- +goose Up
 -- ADR-711: immutable selected startup provenance, never a fencing receipt.
 CREATE TABLE runtime_upgrade_native_public_startups (

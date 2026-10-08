@@ -1,3 +1,5 @@
+-- filename: 20261008114924475_runtime_upgrade_verification_journal.sql
+
 -- +goose Up
 CREATE TABLE runtime_upgrade_verifications (
  operation_id uuid PRIMARY KEY REFERENCES runtime_upgrade_operations(id) ON DELETE CASCADE,

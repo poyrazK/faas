@@ -1,4 +1,4 @@
--- filename: 20261006222201377_runtime_upgrade_public_edge_withdrawal.sql
+-- filename: 20261008114924503_runtime_upgrade_public_edge_withdrawal.sql
 
 -- +goose Up
 CREATE TABLE runtime_upgrade_public_edge_withdrawals (

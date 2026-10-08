@@ -1,4 +1,4 @@
--- filename: 20261006215556164_runtime_upgrade_public_edge_activity.sql
+-- filename: 20261008114924497_runtime_upgrade_public_edge_activity.sql
 
 -- +goose Up
 CREATE TABLE runtime_upgrade_public_edge_activity (

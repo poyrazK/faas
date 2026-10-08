@@ -1,3 +1,5 @@
+-- filename: 20261008114924492_runtime_upgrade_public_edge_inventory.sql
+
 -- +goose Up
 CREATE TABLE runtime_upgrade_public_edge_rosters (
  revision uuid PRIMARY KEY CHECK (revision <> '00000000-0000-0000-0000-000000000000'::uuid),

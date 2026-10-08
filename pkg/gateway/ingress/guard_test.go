@@ -144,7 +144,11 @@ func TestGuardRejectsPeerReplacementWithoutForwardOrIdentityCache(t *testing.T) 
 		_ = resp.Body.Close()
 		body := &closeSpy{Reader: strings.NewReader("must-not-forward")}
 		r, _ = http.NewRequestWithContext(t.Context(), "POST", "http://logical/app", body)
-		if _, err := guard.RoundTrip(r); !errors.Is(err, ErrUnverified) || !body.closed.Load() || calls.Load() != 1 || dialer.calls.Load() != 2 {
+		resp, err = guard.RoundTrip(r)
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		if !errors.Is(err, ErrUnverified) || !body.closed.Load() || calls.Load() != 1 || dialer.calls.Load() != 2 {
 			t.Fatal("unreviewed replacement reached forwarding", err, body.closed.Load(), calls.Load(), dialer.calls.Load())
 		}
 	}
@@ -257,7 +261,13 @@ func TestGuardCancelsBlockedProbeAndMembership(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		r, _ := http.NewRequestWithContext(ctx, "GET", "http://logical/app", nil)
 		done := make(chan error, 1)
-		go func() { _, err := guard.RoundTrip(r); done <- err }()
+		go func() {
+			resp, err := guard.RoundTrip(r)
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+			done <- err
+		}()
 		select {
 		case <-started:
 		case <-time.After(3 * time.Second):

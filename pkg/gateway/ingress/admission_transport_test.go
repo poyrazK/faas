@@ -83,7 +83,7 @@ func TestGuardAdmissionsRetainOldHTTPBodiesAndCancelStreams(t *testing.T) {
 					err  error
 				}
 				ch := make(chan result, 1)
-				go func() { resp, err := g.RoundTrip(r); ch <- result{resp, err} }()
+				go func() { resp, err := g.RoundTrip(r); ch <- result{resp, err} }() //nolint:bodyclose // The receiver reads the streaming response and closes its body.
 				select {
 				case <-started:
 				case <-time.After(time.Second):
@@ -191,7 +191,10 @@ func TestGuardAdmissionsReleaseFailedAndCancelledProbes(t *testing.T) {
 				return
 			}
 			r, _ := http.NewRequestWithContext(ctx, "POST", "http://logical/app", body)
-			_, err := g.RoundTrip(r)
+			resp, err := g.RoundTrip(r)
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
 			done <- err
 		}()
 		select {

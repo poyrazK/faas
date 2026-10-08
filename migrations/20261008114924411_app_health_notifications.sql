@@ -1,3 +1,5 @@
+-- filename: 20261008114924411_app_health_notifications.sql
+
 -- +goose Up
 ALTER TABLE app_health_collection_state ADD COLUMN notification_state jsonb
  CHECK (jsonb_typeof(notification_state) = 'object' AND octet_length(notification_state::text) <= 8192);

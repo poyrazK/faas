@@ -1,4 +1,4 @@
--- filename: 20261006083940000_runtime_upgrade_acceptances.sql
+-- filename: 20261008114924447_runtime_upgrade_acceptances.sql
 
 -- +goose Up
 CREATE TABLE deployment_runtime_upgrade_acceptances (

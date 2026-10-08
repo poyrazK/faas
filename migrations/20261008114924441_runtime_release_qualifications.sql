@@ -1,3 +1,5 @@
+-- filename: 20261008114924441_runtime_release_qualifications.sql
+
 -- +goose Up
 CREATE TABLE runtime_release_qualifications (
  release_id text PRIMARY KEY REFERENCES runtime_releases(id),

@@ -1,3 +1,5 @@
+-- filename: 20261008114924406_app_health_history.sql
+
 -- +goose Up
 CREATE TABLE app_health_collection_state (
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
