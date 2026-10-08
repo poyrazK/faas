@@ -469,7 +469,7 @@ func ComputeDryRun(importedDoc []byte, existingRules []state.EdgeRule) (DryRunSu
 	}
 	// Walk each (path, method) in the spec. A suggestion carries the
 	// operation's own JSON request-body schema and a path glob the gateway
-	// can match ("/users/{id}" -> "/users/*"). Operations without a JSON body
+	// can match ("/users/{id}" -> "/users/?*"). Operations without a JSON body
 	// get none: validating an empty GET body against a schema rejects it
 	// once the rule is enforced. An existing rule stored with the literal
 	// template path never matched a request, so it does not count as cover.
@@ -480,7 +480,7 @@ func ComputeDryRun(importedDoc []byte, existingRules []state.EdgeRule) (DryRunSu
 		}
 		sort.Strings(methodList)
 		out.EndpointCount += len(methodList)
-		glob, ok := openAPIPathGlob(template)
+		glob, ok := api.OpenAPIPathGlob(template)
 		if !ok {
 			continue
 		}

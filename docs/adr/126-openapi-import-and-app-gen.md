@@ -244,8 +244,18 @@ move under `$defs` (recursive schemas included), `#/components/requestBodies`
 refs are resolved, and OpenAPI 3.0 `nullable` and boolean
 `exclusiveMinimum`/`exclusiveMaximum` are rewritten to their Draft 2020-12
 forms. A body that cannot be made self-contained within
-`MaxEdgeRuleValidateSchemaBytes` gets no suggestion. Each `{param}` becomes `*`
-in the match path, and literal glob metacharacters are escaped. Coverage is
-keyed on that glob, so an earlier rule stored with the literal template path
-no longer counts as covering its operation. Suggestions still default to
-`validate_mode=observe`.
+`MaxEdgeRuleValidateSchemaBytes` gets no suggestion. Each `{param}` becomes `?*`
+(one or more characters within a segment) in the match path, and literal glob
+metacharacters are escaped (`api.OpenAPIPathGlob`). A bare `*` is not used:
+`MatchEdgeRulePath` treats a trailing `/*` as the whole subtree, so
+`/users/{id}` would also have matched `/users/7/avatar` and applied the wrong
+body schema there. Coverage is keyed on that glob, so an earlier rule stored
+with the literal template path no longer counts as covering its operation.
+Suggestions still default to `validate_mode=observe`.
+
+To stop new dead rules, `POST /v1/apps/{slug}/edge-rules` and
+`PATCH /v1/edge-rules/{id}` reject a `match_path` with a `{param}` placeholder
+and name the glob to use (`api.EdgeRuleTemplatedPath`). Manifest-owned async
+routes and environment policies are not rejected yet, so a redeploy of an
+existing manifest keeps working. `gregale edge-rules list` prints a warning
+and the fix command for each existing rule with a templated path.

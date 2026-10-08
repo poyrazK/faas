@@ -587,8 +587,8 @@ func TestPostAppOpenAPI_DryRunHappy(t *testing.T) {
 	if len(suggestions) != 1 {
 		t.Fatalf("suggestions=%d, want 1", len(suggestions))
 	}
-	if path := suggestions[0].(map[string]any)["path"]; path != "/users/*" {
-		t.Errorf("suggestion path=%v, want /users/*", path)
+	if path := suggestions[0].(map[string]any)["path"]; path != "/users/?*" {
+		t.Errorf("suggestion path=%v, want /users/?*", path)
 	}
 }
 
@@ -641,7 +641,7 @@ func TestPostAppOpenAPIPolicyApply_PlanConfirmAndNoop(t *testing.T) {
 		t.Fatalf("unexpected apply: %+v", applied)
 	}
 	if applied.Applied[0].MatchHost != "policy-apply.gregale.dev" || applied.Applied[0].ValidateMode != api.ValidateModeObserve ||
-		applied.Applied[0].MatchPath != "/users/*" || !strings.Contains(string(applied.Applied[0].Action), `"required"`) {
+		applied.Applied[0].MatchPath != "/users/?*" || !strings.Contains(string(applied.Applied[0].Action), `"required"`) {
 		t.Fatalf("generated rule: %+v action=%s", applied.Applied[0], applied.Applied[0].Action)
 	}
 

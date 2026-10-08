@@ -430,7 +430,7 @@ func TestComputeDryRun_UncoveredPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComputeDryRun: %v", err)
 	}
-	want := []string{"/orders/*/items:post", "/users/*:put"}
+	want := []string{"/orders/?*/items:post", "/users/?*:put"}
 	if got := suggestionPaths(out.Suggestions); !reflect.DeepEqual(got, want) {
 		t.Errorf("suggestions: got %v, want %v", got, want)
 	}
@@ -448,8 +448,8 @@ func TestComputeDryRun_UncoveredPaths(t *testing.T) {
 func TestComputeDryRun_FullyCovered(t *testing.T) {
 	existing := []state.EdgeRule{
 		{ID: "r1", Kind: state.EdgeRuleKindValidate, MatchPath: "/users", MatchMethods: []string{"post"}},
-		{ID: "r2", Kind: state.EdgeRuleKindValidate, MatchPath: "/users/*", MatchMethods: []string{"put"}},
-		{ID: "r3", Kind: state.EdgeRuleKindValidate, MatchPath: "/orders/*/items", MatchMethods: []string{"post"}},
+		{ID: "r2", Kind: state.EdgeRuleKindValidate, MatchPath: "/users/?*", MatchMethods: []string{"put"}},
+		{ID: "r3", Kind: state.EdgeRuleKindValidate, MatchPath: "/orders/?*/items", MatchMethods: []string{"post"}},
 	}
 	out, err := ComputeDryRun([]byte(importedDocBodies), existing)
 	if err != nil {
@@ -460,7 +460,7 @@ func TestComputeDryRun_FullyCovered(t *testing.T) {
 	}
 	existing[1].MatchPath = "/users/{id}"
 	out, err = ComputeDryRun([]byte(importedDocBodies), existing)
-	if err != nil || !reflect.DeepEqual(suggestionPaths(out.Suggestions), []string{"/users/*:put"}) {
+	if err != nil || !reflect.DeepEqual(suggestionPaths(out.Suggestions), []string{"/users/?*:put"}) {
 		t.Errorf("literal template rule counted as cover: %v (err=%v)", suggestionPaths(out.Suggestions), err)
 	}
 }
@@ -473,7 +473,7 @@ func TestComputeDryRun_SuggestionsSorted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComputeDryRun: %v", err)
 	}
-	wantPaths := []string{"/orders/*/items:post", "/users/*:put", "/users:post"}
+	wantPaths := []string{"/orders/?*/items:post", "/users/?*:put", "/users:post"}
 	if got := suggestionPaths(out.Suggestions); !reflect.DeepEqual(got, wantPaths) {
 		t.Errorf("paths: got %v, want %v", got, wantPaths)
 	}
@@ -496,9 +496,9 @@ func TestComputeDryRun_SchemasCompileAndValidate(t *testing.T) {
 		schemas[s.Path+":"+s.Methods[0]] = raw
 	}
 	for key, cases := range map[string]map[string]bool{
-		"/users:post":          {`{"name":"ada","age":36}`: true, `{"age":36}`: false, `{"name":"ada","age":-1}`: false},
-		"/users/*:put":         {`{"name":"ada"}`: true, `{"name":7}`: false},
-		"/orders/*/items:post": {`{"children":[{"children":[]}]}`: true, `{"children":[{"children":5}]}`: false},
+		"/users:post":           {`{"name":"ada","age":36}`: true, `{"age":36}`: false, `{"name":"ada","age":-1}`: false},
+		"/users/?*:put":         {`{"name":"ada"}`: true, `{"name":7}`: false},
+		"/orders/?*/items:post": {`{"children":[{"children":[]}]}`: true, `{"children":[{"children":5}]}`: false},
 	} {
 		compiled, err := edgevalidate.Compile(schemas[key], false)
 		if err != nil {
@@ -509,25 +509,6 @@ func TestComputeDryRun_SchemasCompileAndValidate(t *testing.T) {
 			if err != nil || (fieldErr == nil) != valid {
 				t.Errorf("%s %s: valid=%v, fieldErr=%v err=%v", key, body, valid, fieldErr, err)
 			}
-		}
-	}
-}
-
-func TestOpenAPIPathGlob(t *testing.T) {
-	for template, want := range map[string]string{
-		"/users":                 "/users",
-		"/users/{id}":            "/users/*",
-		"/orders/{id}/items/{n}": "/orders/*/items/*",
-		"/files/{name}.json":     "/files/*.json",
-		"/literal/*star?":        `/literal/\*star\?`,
-	} {
-		if got, ok := openAPIPathGlob(template); !ok || got != want {
-			t.Errorf("openAPIPathGlob(%q) = %q, %v; want %q", template, got, ok, want)
-		}
-	}
-	for _, bad := range []string{"/users/{id", "/users/}", "/a/{}", "/a/{b/c}", "users"} {
-		if got, ok := openAPIPathGlob(bad); ok {
-			t.Errorf("openAPIPathGlob(%q) = %q, accepted", bad, got)
 		}
 	}
 }

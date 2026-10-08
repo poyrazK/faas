@@ -155,7 +155,20 @@ func cmdEdgeRulesList(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-9d %-32s %s  [%s]\n",
 			it.ID, it.Kind, it.Priority, truncate(it.MatchHost, 32), it.MatchPath, enabled)
 	}
+	warnTemplatedEdgeRulePaths(osStderr, items)
 	return 0
+}
+
+// warnTemplatedEdgeRulePaths flags rules whose match path holds an OpenAPI
+// {param} placeholder. Edge-rule paths are globs, so such a rule only matches
+// the literal braces and never runs; older OpenAPI policy applies created them.
+func warnTemplatedEdgeRulePaths(w io.Writer, items []api.EdgeRuleResponse) {
+	for _, it := range items {
+		if glob, templated := api.EdgeRuleTemplatedPath(it.MatchPath); templated {
+			_, _ = fmt.Fprintf(w, "warning: rule %s never matches: %q is an OpenAPI template, not a glob. Fix: gregale edge-rules update %s --match-path '%s'\n",
+				it.ID, it.MatchPath, it.ID, glob)
+		}
+	}
 }
 
 // cmdEdgeRulesCreate builds a CreateEdgeRuleRequest from the per-kind

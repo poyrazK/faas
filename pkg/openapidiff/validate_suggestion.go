@@ -3,43 +3,10 @@ package openapidiff
 import (
 	"encoding/json"
 	"mime"
-	"path"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
-
-// openAPIPathGlob converts an OpenAPI path template into the path.Match glob
-// edge rules use: every {param} matches within one segment ("/users/{id}"
-// becomes "/users/*"). Literal glob metacharacters are escaped so they keep
-// matching themselves. It reports false for a template the glob cannot
-// express, such as an unclosed brace.
-func openAPIPathGlob(template string) (string, bool) {
-	var b strings.Builder
-	for i := 0; i < len(template); i++ {
-		switch c := template[i]; c {
-		case '{':
-			end := strings.IndexByte(template[i:], '}')
-			if end <= 1 || strings.ContainsAny(template[i+1:i+end], "/{") {
-				return "", false
-			}
-			b.WriteByte('*')
-			i += end
-		case '}':
-			return "", false
-		case '*', '?', '[', ']', '\\':
-			b.WriteByte('\\')
-			b.WriteByte(c)
-		default:
-			b.WriteByte(c)
-		}
-	}
-	glob := b.String()
-	if _, err := path.Match(glob, ""); err != nil || !strings.HasPrefix(glob, "/") {
-		return "", false
-	}
-	return glob, true
-}
 
 // requestBodyValidateSchema returns the operation's JSON request-body schema as
 // a self-contained Draft 2020-12 document for a kind=validate rule. Component
