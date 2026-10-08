@@ -1158,9 +1158,18 @@ jobs:
     name: portable container contracts (strict)
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Bounded-memory cold builds reached 14 min before the contracts finished.
+    timeout-minutes: 35
     permissions:
       contents: read
+    # The UDP contract race-builds cmd/apid; cold, that exhausted hosted-runner
+    # memory and the runner was shut down (exit 143) right after pkg/vmmdgrpc
+    # in 12 of 22 runs, main included. Mirror unit-tests-pg-1's bounds.
+    env:
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+      GOMEMLIMIT: 2GiB
+      GOGC: 10
+      GOMAXPROCS: 2
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
