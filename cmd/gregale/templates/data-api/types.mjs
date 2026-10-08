@@ -188,7 +188,9 @@ export function generate(snapshot) {
 
 export async function main(env = process.env) {
   const snapshot = await inspect(env.DATABASE_URL, schemaNames(env.DATA_API_SCHEMAS))
-  process.stdout.write(generate(snapshot))
+  const output = process.argv.includes('--snapshot') ? JSON.stringify({ version: 1, fingerprint: fingerprint(snapshot), snapshot }) + '\n' : generate(snapshot)
+  if (Buffer.byteLength(output) > limits.outputBytes) throw new Error('Generated contract exceeds output limit')
+  process.stdout.write(output)
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(() => { console.error('Data API schema generation failed'); process.exitCode = 1 })

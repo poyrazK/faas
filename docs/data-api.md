@@ -888,3 +888,44 @@ runtime logs. Its evidence contains identifiers and verification results rather
 than raw logs or credentials. The local harness tests include a simulated full
 journey and failure cleanup; a live qualified staging target is still required
 before this can provide release evidence.
+
+## Check schema compatibility
+
+Save the approved contract as a JSON baseline in source control:
+
+```sh
+gregale data-api types notes-data --snapshot --output schema.json
+```
+
+After applying migrations to a candidate database, compare its Data API app with
+that baseline before promoting the application change:
+
+```sh
+gregale data-api diff notes-data --baseline schema.json
+gregale --json data-api diff notes-data --baseline schema.json --check
+```
+
+Diff inspects the current database with a bounded, owner-authenticated private
+app task using the restricted Data API binding. It does not refresh the serving
+app or run migrations. The runtime must include snapshot export support; older
+runtime deployments fail rather than report a compatible schema. The baseline
+is validated before starting a remote task and is never rewritten by diff.
+
+Without `--check`, a completed comparison exits zero even if it finds breaking
+changes. With `--check`, breaking changes exit one after printing the report;
+invalid baselines and failed inspections also exit nonzero. JSON output includes
+baseline/current fingerprints, task/deployment identifiers, the breaking count
+and a deterministic array of changes. No changes produces an empty array.
+
+Removed schemas, relations, columns, RPCs and RPC arguments are breaking.
+Type changes (including enum changes), nullability changes in either direction,
+removed write privileges, table/view changes, relationship changes, newly
+required insert fields, and required RPC arguments are conservatively breaking.
+Optional fields, new relations/RPCs, optional RPC arguments and relaxed write
+requirements are compatible. Defaults are checked through insert optionality;
+changing a default expression while retaining optionality is not detected.
+
+Update queries, writes and generated types for breaking changes, then approve a
+new baseline explicitly. This is a structural contract check: policies, function
+bodies, default values and data-dependent behavior need separate tests. It does
+not verify the serving fingerprint; use `data-api sync` for that release check.

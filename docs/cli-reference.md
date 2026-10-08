@@ -6607,13 +6607,32 @@ Deploy a managed PostgREST Data API
 
 Generate types in an owner-authenticated app task
 
-`gregale data-api types [--output <FILE>] [--check] [--timeout <DURATION>] <name>`
+`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--output <FILE>` | generated TypeScript output |  |
+| `--output <FILE>` | generated TypeScript or snapshot output |  |
 | `--check` | fail if the output file is stale |  |
+| `--snapshot` | export a JSON baseline for data-api diff |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
+
+### data-api diff
+
+Compare the current schema with a saved JSON baseline
+
+`gregale data-api diff --baseline <FILE> [--check] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--baseline <FILE>` | JSON snapshot exported with types --snapshot | required |
+| `--check` | fail on breaking contract changes |  |
+| `--timeout <DURATION>` | task wait deadline (default 2m) |  |
+
+Examples:
+
+```sh
+gregale data-api diff notes-data --baseline schema.json --check
+```
 
 ### data-api refresh
 
