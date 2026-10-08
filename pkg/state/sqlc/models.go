@@ -2709,6 +2709,13 @@ type GlobalImageReleaseTarget struct {
 	RegionalOrgID     pgtype.UUID
 }
 
+type GlobalIngressPublication struct {
+	Singleton  bool
+	IssuerID   pgtype.UUID
+	Generation int64
+	Envelope   []byte
+}
+
 type GlobalOwnerCellBinding struct {
 	OwnerID           pgtype.UUID
 	CellID            pgtype.UUID

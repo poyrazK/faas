@@ -38,7 +38,8 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
-	RuntimeQuotaTransport RuntimeQuotaTransportConfig `toml:"runtime_quota_transport"`
+	RuntimeQuotaTransport  RuntimeQuotaTransportConfig  `toml:"runtime_quota_transport"`
+	GlobalIngressPublisher GlobalIngressPublisherConfig `toml:"global_ingress_publisher"`
 	// OutboundProbeGatewayURL is the operator-trusted HTTPS origin reachable by task guests.
 	OutboundProbeGatewayURL string `toml:"outbound_probe_gateway_url"`
 	// GlobalAppDirectoryEnabled exposes the internal cross-cell identity API.

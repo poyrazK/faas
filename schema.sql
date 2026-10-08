@@ -5525,6 +5525,28 @@ END $$;
 
 
 --
+-- Name: guard_global_ingress_publication(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_global_ingress_publication() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM assert_global_directory_scope();
+ IF TG_OP IN ('DELETE','TRUNCATE') THEN
+  RAISE EXCEPTION 'ingress generation watermark cannot be deleted' USING ERRCODE='23514',CONSTRAINT='global_ingress_identity';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM global_runtime_quota_issuer WHERE issuer_id=NEW.issuer_id) OR
+  (TG_OP='INSERT' AND NEW.generation<>1) OR
+  (TG_OP='UPDATE' AND (NEW.issuer_id<>OLD.issuer_id OR NEW.generation<>OLD.generation+1)) THEN
+  RAISE EXCEPTION 'ingress publisher identity or generation conflicts' USING ERRCODE='23514',CONSTRAINT='global_ingress_identity';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_global_quota_delivery_owner(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15819,6 +15841,22 @@ CREATE TABLE public.global_image_releases (
 
 
 --
+-- Name: global_ingress_publication; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_ingress_publication (
+    singleton boolean DEFAULT true NOT NULL,
+    issuer_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    envelope bytea NOT NULL,
+    CONSTRAINT global_ingress_publication_envelope_check CHECK (((octet_length(envelope) >= 1) AND (octet_length(envelope) <= 25165824))),
+    CONSTRAINT global_ingress_publication_generation_check CHECK (((generation >= 1) AND (generation <= '9007199254740991'::bigint))),
+    CONSTRAINT global_ingress_publication_issuer_id_check CHECK ((issuer_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_ingress_publication_singleton_check CHECK (singleton)
+);
+
+
+--
 -- Name: global_owner_cell_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23642,6 +23680,14 @@ ALTER TABLE ONLY public.global_image_releases
 
 ALTER TABLE ONLY public.global_image_releases
     ADD CONSTRAINT global_image_releases_pkey PRIMARY KEY (global_app_id, release_id);
+
+
+--
+-- Name: global_ingress_publication global_ingress_publication_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_ingress_publication
+    ADD CONSTRAINT global_ingress_publication_pkey PRIMARY KEY (singleton);
 
 
 --
@@ -32956,6 +33002,20 @@ CREATE TRIGGER global_image_releases_guard BEFORE INSERT OR DELETE OR UPDATE ON 
 --
 
 CREATE TRIGGER global_image_releases_truncate_guard BEFORE TRUNCATE ON public.global_image_releases FOR EACH STATEMENT EXECUTE FUNCTION public.protect_global_image_release();
+
+
+--
+-- Name: global_ingress_publication global_ingress_publication_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_ingress_publication_guard BEFORE INSERT OR DELETE OR UPDATE ON public.global_ingress_publication FOR EACH ROW EXECUTE FUNCTION public.guard_global_ingress_publication();
+
+
+--
+-- Name: global_ingress_publication global_ingress_publication_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_ingress_publication_truncate_guard BEFORE TRUNCATE ON public.global_ingress_publication FOR EACH STATEMENT EXECUTE FUNCTION public.guard_global_ingress_publication();
 
 
 --

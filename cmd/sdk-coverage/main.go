@@ -46,7 +46,11 @@ const (
 // routeExclude lists spec routes that have no SDK method by design.
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
+const delegatedQuotaDaemonRoute = "PUT /v1/cells/{cell_id}/apps/{app_id}/runtime-quotas/{allocation_id}/delegated"
+
 var routeExclude = map[string]bool{
+	delegatedQuotaDaemonRoute:                             true, // ADR-645 signed directory daemon protocol.
+	"POST /internal/v1/ingress-status":                    true, // ADR-658 signed read-only directory daemon protocol.
 	"PUT /v1/global-cells/{id}":                           true, // ADR-602: operator cookie session and step-up required.
 	"PUT /v1/regions/{id}":                                true, // ADR-592: operator session, step-up and allowlist required.
 	"GET /v1/account/dpa":                                 true, // public markdown (no Bearer; SDK consumers don't render HTML)

@@ -20062,6 +20062,124 @@ func (q *Queries) ListGlobalImageReleaseTargets(ctx context.Context, db DBTX, ar
 	return items, nil
 }
 
+const listGlobalIngressApps = `-- name: ListGlobalIngressApps :many
+SELECT id::text AS global_app_id,owner_id::text AS owner_id,slug,routing_policy,created_at
+FROM global_apps ORDER BY id LIMIT $1::integer
+`
+
+type ListGlobalIngressAppsRow struct {
+	GlobalAppID   string
+	OwnerID       string
+	Slug          string
+	RoutingPolicy string
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) ListGlobalIngressApps(ctx context.Context, db DBTX, rowLimit int32) ([]ListGlobalIngressAppsRow, error) {
+	rows, err := db.Query(ctx, listGlobalIngressApps, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGlobalIngressAppsRow{}
+	for rows.Next() {
+		var i ListGlobalIngressAppsRow
+		if err := rows.Scan(
+			&i.GlobalAppID,
+			&i.OwnerID,
+			&i.Slug,
+			&i.RoutingPolicy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGlobalIngressCandidates = `-- name: ListGlobalIngressCandidates :many
+SELECT DISTINCT ON (a.id,b.region)
+ a.id::text AS global_app_id,q.owner_id::text AS owner_id,q.allocation_id::text AS allocation_id,
+ q.generation,q.policy_id,q.plan,q.max_concurrency,q.max_peak_concurrency,
+ t.snapshot,t.concurrency,t.rollout_concurrency,t.issued_at,
+ c.apps_domain,r.id::text AS consent_id,r.issuer_id::text AS issuer_id,r.binding,r.expires_at
+FROM global_apps a
+JOIN global_directory_owners o ON o.id=a.owner_id AND o.org_id IS NULL
+JOIN accounts ac ON ac.id=o.account_id AND ac.status='active' AND ac.abuse_hold_at IS NULL AND ac.email_verified_at IS NOT NULL
+JOIN global_app_targets b ON b.global_app_id=a.id AND b.owner_id=a.owner_id AND b.regional_org_id IS NULL
+JOIN global_directory_cells c ON c.id=b.cell_id AND c.region=b.region AND c.enabled AND c.generation=b.cell_generation AND c.apps_domain<>''
+JOIN global_runtime_quota_allocations q ON q.global_app_id=a.id AND q.owner_id=a.owner_id AND q.generation=a.desired_runtime_quota_generation AND q.plan=ac.plan AND q.retired_at IS NULL
+JOIN global_runtime_quota_targets t ON t.global_app_id=a.id AND t.allocation_id=q.allocation_id AND t.region=b.region AND t.issued_at IS NOT NULL AND t.released_at IS NULL
+JOIN global_runtime_consents r ON r.global_app_id=a.id AND r.owner_id=a.owner_id AND r.global_app_slug=a.slug AND r.status='active' AND r.expires_at>clock_timestamp()
+JOIN global_runtime_quota_issuer i ON i.issuer_id=r.issuer_id
+WHERE r.binding=jsonb_build_object('CellID',c.id::text,'Region',c.region,'CellGeneration',c.generation,'RegionalAccountID',b.regional_account_id::text,'RegionalOrgID','','RegionalAppID',b.regional_app_id::text,'RegionalAppSlug',b.regional_app_slug,'APIBase',c.api_base)
+ AND t.snapshot @> (r.binding-'RegionalOrgID')
+ AND coalesce(t.snapshot->>'RegionalOrgID','')=''
+ORDER BY a.id,b.region,r.id LIMIT $1::integer
+`
+
+type ListGlobalIngressCandidatesRow struct {
+	GlobalAppID        string
+	OwnerID            string
+	AllocationID       string
+	Generation         int64
+	PolicyID           string
+	Plan               string
+	MaxConcurrency     int32
+	MaxPeakConcurrency int32
+	Snapshot           []byte
+	Concurrency        int32
+	RolloutConcurrency int32
+	IssuedAt           pgtype.Timestamptz
+	AppsDomain         string
+	ConsentID          string
+	IssuerID           string
+	Binding            []byte
+	ExpiresAt          pgtype.Timestamptz
+}
+
+func (q *Queries) ListGlobalIngressCandidates(ctx context.Context, db DBTX, rowLimit int32) ([]ListGlobalIngressCandidatesRow, error) {
+	rows, err := db.Query(ctx, listGlobalIngressCandidates, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGlobalIngressCandidatesRow{}
+	for rows.Next() {
+		var i ListGlobalIngressCandidatesRow
+		if err := rows.Scan(
+			&i.GlobalAppID,
+			&i.OwnerID,
+			&i.AllocationID,
+			&i.Generation,
+			&i.PolicyID,
+			&i.Plan,
+			&i.MaxConcurrency,
+			&i.MaxPeakConcurrency,
+			&i.Snapshot,
+			&i.Concurrency,
+			&i.RolloutConcurrency,
+			&i.IssuedAt,
+			&i.AppsDomain,
+			&i.ConsentID,
+			&i.IssuerID,
+			&i.Binding,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGlobalRuntimeQuotaTargets = `-- name: ListGlobalRuntimeQuotaTargets :many
 SELECT region,concurrency,rollout_concurrency,snapshot,issued_at,released_at FROM global_runtime_quota_targets
 WHERE global_app_id=$1::uuid AND allocation_id=$2::uuid ORDER BY region
@@ -23882,6 +24000,29 @@ func (q *Queries) LockGlobalDirectoryCell(ctx context.Context, db DBTX, arg Lock
 		&i.AppsDomain,
 	)
 	return i, err
+}
+
+const lockGlobalIngressIntent = `-- name: LockGlobalIngressIntent :exec
+LOCK TABLE accounts, global_directory_owners, global_apps, global_app_targets,
+ global_directory_cells, global_runtime_quota_issuer, global_runtime_quota_allocations,
+ global_runtime_quota_targets, global_runtime_consents IN SHARE MODE
+`
+
+// ADR-658: one coherent bounded catalog and a fenced final publication. SHARE
+// table locks cover inserts/removals as well as row changes; no network I/O is
+// performed while holding them. Owner entitlement is included in the catalog.
+func (q *Queries) LockGlobalIngressIntent(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockGlobalIngressIntent)
+	return err
+}
+
+const lockGlobalIngressPublisher = `-- name: LockGlobalIngressPublisher :exec
+SELECT pg_advisory_xact_lock(hashtextextended('gregale-global-ingress-publication',0))
+`
+
+func (q *Queries) LockGlobalIngressPublisher(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockGlobalIngressPublisher)
+	return err
 }
 
 const lockGlobalOrgTargetOwner = `-- name: LockGlobalOrgTargetOwner :one
@@ -36350,6 +36491,23 @@ func (q *Queries) ReadGlobalImageRelease(ctx context.Context, db DBTX, arg ReadG
 	return i, err
 }
 
+const readGlobalIngressPublication = `-- name: ReadGlobalIngressPublication :one
+SELECT issuer_id::text AS issuer_id,generation,envelope FROM global_ingress_publication WHERE singleton
+`
+
+type ReadGlobalIngressPublicationRow struct {
+	IssuerID   string
+	Generation int64
+	Envelope   []byte
+}
+
+func (q *Queries) ReadGlobalIngressPublication(ctx context.Context, db DBTX) (ReadGlobalIngressPublicationRow, error) {
+	row := db.QueryRow(ctx, readGlobalIngressPublication)
+	var i ReadGlobalIngressPublicationRow
+	err := row.Scan(&i.IssuerID, &i.Generation, &i.Envelope)
+	return i, err
+}
+
 const readGlobalOwnerCellBinding = `-- name: ReadGlobalOwnerCellBinding :one
 SELECT coalesce(regional_account_id::text,'')::text AS regional_account_id, coalesce(regional_org_id::text,'')::text AS regional_org_id FROM global_owner_cell_bindings
 WHERE owner_id = $1::uuid AND cell_id = $2::uuid
@@ -44469,6 +44627,24 @@ func (q *Queries) UpdateGlobalImageReleaseTarget(ctx context.Context, db DBTX, a
 	return result.RowsAffected(), nil
 }
 
+const updateGlobalIngressPublication = `-- name: UpdateGlobalIngressPublication :execrows
+UPDATE global_ingress_publication SET generation=$1::bigint,envelope=$2::bytea WHERE singleton AND issuer_id=$3::uuid
+`
+
+type UpdateGlobalIngressPublicationParams struct {
+	Generation int64
+	Envelope   []byte
+	IssuerID   pgtype.UUID
+}
+
+func (q *Queries) UpdateGlobalIngressPublication(ctx context.Context, db DBTX, arg UpdateGlobalIngressPublicationParams) (int64, error) {
+	result, err := db.Exec(ctx, updateGlobalIngressPublication, arg.Generation, arg.Envelope, arg.IssuerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateInstanceState = `-- name: UpdateInstanceState :exec
 update instances set state = $2 where id = $1
 `
@@ -45815,6 +45991,22 @@ func (q *Queries) WriteDeploymentHostingVerification(ctx context.Context, db DBT
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const writeGlobalIngressPublication = `-- name: WriteGlobalIngressPublication :exec
+INSERT INTO global_ingress_publication(issuer_id,generation,envelope)
+VALUES($1::uuid,$2::bigint,$3::bytea)
+`
+
+type WriteGlobalIngressPublicationParams struct {
+	IssuerID   pgtype.UUID
+	Generation int64
+	Envelope   []byte
+}
+
+func (q *Queries) WriteGlobalIngressPublication(ctx context.Context, db DBTX, arg WriteGlobalIngressPublicationParams) error {
+	_, err := db.Exec(ctx, writeGlobalIngressPublication, arg.IssuerID, arg.Generation, arg.Envelope)
+	return err
 }
 
 const writeRouteHealthGate = `-- name: WriteRouteHealthGate :exec

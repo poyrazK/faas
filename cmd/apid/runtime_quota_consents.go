@@ -17,6 +17,7 @@ func (s *server) registerRuntimeConsentRoutes(mux *http.ServeMux) {
 		principal := s.requireRegionalAccountKey(s.requireDirectoryAccount(s.requireVerifiedEmail(h)))
 		return s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin)(principal)))
 	}
+	mux.HandleFunc("POST /internal/v1/ingress-status", s.regionalIngressStatus)
 	path := "/v1/cells/{cell_id}/apps/{app_id}/runtime-consents/{consent_id}"
 	mux.HandleFunc("PUT "+path, admin(s.requireCellDeploymentApp(s.putRuntimeConsent)))
 	mux.HandleFunc("GET "+path, admin(s.getRuntimeConsent))

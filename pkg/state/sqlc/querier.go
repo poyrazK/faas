@@ -1179,6 +1179,8 @@ type Querier interface {
 	ListGlobalAppTargets(ctx context.Context, db DBTX, arg ListGlobalAppTargetsParams) ([]ListGlobalAppTargetsRow, error)
 	ListGlobalDirectoryCells(ctx context.Context, db DBTX) ([]ListGlobalDirectoryCellsRow, error)
 	ListGlobalImageReleaseTargets(ctx context.Context, db DBTX, arg ListGlobalImageReleaseTargetsParams) ([]ListGlobalImageReleaseTargetsRow, error)
+	ListGlobalIngressApps(ctx context.Context, db DBTX, rowLimit int32) ([]ListGlobalIngressAppsRow, error)
+	ListGlobalIngressCandidates(ctx context.Context, db DBTX, rowLimit int32) ([]ListGlobalIngressCandidatesRow, error)
 	ListGlobalRuntimeQuotaTargets(ctx context.Context, db DBTX, arg ListGlobalRuntimeQuotaTargetsParams) ([]ListGlobalRuntimeQuotaTargetsRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
@@ -1318,6 +1320,11 @@ type Querier interface {
 	LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error)
 	LockGlobalAppIdentity(ctx context.Context, db DBTX, arg LockGlobalAppIdentityParams) (LockGlobalAppIdentityRow, error)
 	LockGlobalDirectoryCell(ctx context.Context, db DBTX, arg LockGlobalDirectoryCellParams) (LockGlobalDirectoryCellRow, error)
+	// ADR-658: one coherent bounded catalog and a fenced final publication. SHARE
+	// table locks cover inserts/removals as well as row changes; no network I/O is
+	// performed while holding them. Owner entitlement is included in the catalog.
+	LockGlobalIngressIntent(ctx context.Context, db DBTX) error
+	LockGlobalIngressPublisher(ctx context.Context, db DBTX) error
 	// ADR-611: current organization consent is held through binding commit.
 	LockGlobalOrgTargetOwner(ctx context.Context, db DBTX, arg LockGlobalOrgTargetOwnerParams) (pgtype.UUID, error)
 	LockGlobalQuotaDelivery(ctx context.Context, db DBTX, arg LockGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error)
@@ -1814,6 +1821,7 @@ type Querier interface {
 	// ADR-609: directory tenant roots, separate from authentication actors.
 	ReadGlobalDirectoryOwner(ctx context.Context, db DBTX, ownerID pgtype.UUID) (ReadGlobalDirectoryOwnerRow, error)
 	ReadGlobalImageRelease(ctx context.Context, db DBTX, arg ReadGlobalImageReleaseParams) (ReadGlobalImageReleaseRow, error)
+	ReadGlobalIngressPublication(ctx context.Context, db DBTX) (ReadGlobalIngressPublicationRow, error)
 	ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg ReadGlobalOwnerCellBindingParams) (ReadGlobalOwnerCellBindingRow, error)
 	// ADR-647: original signed quota delivery and leased recovery.
 	ReadGlobalQuotaDelivery(ctx context.Context, db DBTX, arg ReadGlobalQuotaDeliveryParams) (GlobalRuntimeQuotaDelivery, error)
@@ -2318,6 +2326,7 @@ type Querier interface {
 	UpdateDeploymentStatus(ctx context.Context, db DBTX, arg UpdateDeploymentStatusParams) error
 	UpdateEnvironmentGitSourceControl(ctx context.Context, db DBTX, arg UpdateEnvironmentGitSourceControlParams) (EnvironmentGitSource, error)
 	UpdateGlobalImageReleaseTarget(ctx context.Context, db DBTX, arg UpdateGlobalImageReleaseTargetParams) (int64, error)
+	UpdateGlobalIngressPublication(ctx context.Context, db DBTX, arg UpdateGlobalIngressPublicationParams) (int64, error)
 	UpdateInstanceState(ctx context.Context, db DBTX, arg UpdateInstanceStateParams) error
 	UpdateOrgPlan(ctx context.Context, db DBTX, arg UpdateOrgPlanParams) error
 	UpdateOrgStatus(ctx context.Context, db DBTX, arg UpdateOrgStatusParams) error
@@ -2430,6 +2439,7 @@ type Querier interface {
 	WriteCanaryRouteGate(ctx context.Context, db DBTX, arg WriteCanaryRouteGateParams) error
 	WriteDeploymentHostingFailureReceipt(ctx context.Context, db DBTX, arg WriteDeploymentHostingFailureReceiptParams) (int64, error)
 	WriteDeploymentHostingVerification(ctx context.Context, db DBTX, arg WriteDeploymentHostingVerificationParams) (int64, error)
+	WriteGlobalIngressPublication(ctx context.Context, db DBTX, arg WriteGlobalIngressPublicationParams) error
 	WriteRouteHealthGate(ctx context.Context, db DBTX, arg WriteRouteHealthGateParams) error
 	// Serialized by AdvanceCanary's owned parent app/deployment lock.
 	WriteRouteHealthNotificationState(ctx context.Context, db DBTX, arg WriteRouteHealthNotificationStateParams) error

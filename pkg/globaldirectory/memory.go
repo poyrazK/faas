@@ -14,6 +14,8 @@ import (
 // covering registry generation, account mapping and target uniqueness.
 type MemoryStore struct {
 	mu                         sync.Mutex
+	ingressGeneration          int64
+	ingressEnvelope            []byte
 	owners                     map[string]Owner
 	orgAuthority               OrgAuthority
 	cells                      map[string]Cell

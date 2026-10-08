@@ -61,6 +61,7 @@ type server struct {
 	globalDirectory           globaldirectory.Store
 	globalQuotaAuthority      *globaldirectory.RuntimeQuotaAuthority
 	globalQuotaDeliveryWorker bool
+	globalIngressManifest     string
 	regionalQuotaTrust        runtimequota.Trust
 	regionalQuotaAPIBase      string
 	globalVerifier            globaldirectory.Verifier

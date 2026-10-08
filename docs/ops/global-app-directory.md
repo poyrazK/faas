@@ -522,3 +522,47 @@ and replicated data/secrets remain separate integration work. The current proxy
 uses the regional host and credentials and derives forwarding from its direct
 connection. Validate those application contracts before advertising transparent
 global app URLs. Dedicated native KVM recovery acceptance remains mandatory.
+
+### Durable ingress publisher (ADR-658)
+
+On the **unbound directory APID**, configure its existing immutable directory
+issuer and directory authority keys first. Create a dedicated APID-owned
+projection directory with mode 02750 (group inheritance) and a read-only group shared with the global
+internal gateway. The publisher requires an existing directory; it does not
+create system users, groups or permissions. Configure APID explicitly:
+
+```toml
+[global_ingress_publisher]
+manifest_path = "/run/faas/global-ingress/routes.json"
+```
+
+Use the same path for the ADR-656 global gateway's
+`global_ingress_manifest_path`, with matching directory UUID and directory trust
+bundle. Start APID and allow its first committed projection to be exported before
+starting the global gateway; the gateway validates its initial file before
+serving. The file is atomically replaced as 0640. A separate unbound directory
+database and authority key are mandatory. Regional APID accepts only its existing
+pinned directory trust bundle and regional API origin; it cannot run this
+publisher. These TOML settings are operator configuration and are not a live
+configuration change in this implementation.
+
+The publisher runs every five seconds with bounded parallel, three-second HTTPS
+regional status probes and a twenty-second publication deadline. It uses
+`POST /internal/v1/ingress-status`, a signed read-only daemon protocol, with no
+customer credential. Registry apps domains must already be configured and
+bindings reverified at the current generation. Original active consent and
+issued quota are necessary; they are insufficient for serving eligibility.
+The production regional admission guard remains frozen, so current accepted
+streams produce ineligible targets and global traffic returns 503. Protocol
+fixtures that return ready status are test evidence only.
+
+Every committed projection has a durable generation and exact retained signed
+bytes. A failed export preserves that journal; a later worker exports only the
+latest committed bytes. Never clear or truncate `global_ingress_publication`,
+rewind its generation, or restore an older directory backup under the same issuer.
+The migration refuses rollback with a populated watermark. An issuer migration
+and consumer transition are required for such recovery. Failed probes deny their
+specific target, changed directory intent aborts the projection, and old output
+expires within its bounded lease. No failure releases quota holds or confirms
+native absence. Global UUID app hosts continue to use all selected healthy
+eligible regions.

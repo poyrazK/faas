@@ -1,7 +1,7 @@
 # ADR-657: Explicit regional apps domain
 
 Date: 2026-10-08
-Status: Implemented locally; live route publisher and regional serving acceptance pending.
+Status: Implemented locally; ADR-658 adds the durable publisher; regional serving acceptance pending.
 
 ## Context
 

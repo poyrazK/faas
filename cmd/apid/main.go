@@ -713,6 +713,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
 		go srv.runGlobalReleaseRecovery(ctx)
 		go srv.runGlobalQuotaDeliveryRecovery(ctx)
+		go srv.runGlobalIngressPublisher(ctx)
 		go srv.runSafeReleaseEmergencyAbort(ctx)
 		go srv.runObjectStorageRecovery(ctx)
 		go srv.runObjectStorageAccounting(ctx)
@@ -1421,6 +1422,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	if err := srv.configureRuntimeQuotaTransport(ctx, cfg.RuntimeQuotaTransport, deps.pool); err != nil {
+		return err
+	}
+	if err := srv.configureGlobalIngressPublisher(cfg.GlobalIngressPublisher); err != nil {
 		return err
 	}
 	if cfg.OutboundProbeGatewayURL != "" && !api.ValidOutboundProbeGateway(cfg.OutboundProbeGatewayURL) {

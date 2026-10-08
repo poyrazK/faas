@@ -74,6 +74,12 @@ const (
 	GlobalIngressKeepAlive             = 30 * time.Second
 	GlobalIngressMaxIdleConnections    = 100
 	GlobalIngressMaxIdlePerOrigin      = 32
+	// ADR-658 bounds off-path publication and read-only regional status probes.
+	GlobalIngressPublishInterval  = 5 * time.Second
+	GlobalIngressPublishTimeout   = 20 * time.Second
+	GlobalIngressProbeConcurrency = 16
+	GlobalIngressProbeTimeout     = 3 * time.Second
+	GlobalIngressProbeMaxBytes    = 32 << 10
 )
 
 // ADR-604 bounds immutable image-release input and receipt projections.

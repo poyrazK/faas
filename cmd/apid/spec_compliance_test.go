@@ -1,5 +1,7 @@
 package main
 
+// adr: 658
+
 // adr: 657
 
 // spec_compliance_test.go is the CI gate that keeps api/openapi.yaml honest.
@@ -87,7 +89,11 @@ const (
 // /auth/reset, /v1/auth/google, /v1/auth/github, and
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
+const delegatedQuotaDaemonRoute = "PUT /v1/cells/{cell_id}/apps/{app_id}/runtime-quotas/{allocation_id}/delegated"
+
 var routeExclude = map[string]bool{
+	delegatedQuotaDaemonRoute:                               true, // ADR-645: original signed directory/consent daemon protocol.
+	"POST /internal/v1/ingress-status":                      true, // ADR-658: signed read-only daemon protocol; no customer SDK.
 	"PUT /v1/global-cells/{id}":                             true, // ADR-602: verified operator session and step-up required.
 	"PUT /v1/regions/{id}":                                  true, // ADR-592: operator session, step-up and allowlist required.
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions": true, // scoped HTML/CSRF adapter for the public issue action API
@@ -839,6 +845,7 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "cmd/apid", serverSrcPath),
 		filepath.Join(root, "cmd/apid", "handlers_issues.go"),
 		filepath.Join(root, "cmd/apid", "global_directory.go"),
+		filepath.Join(root, "cmd/apid", "runtime_quota_consents.go"),
 		filepath.Join(root, "cmd/gatewayd-internal", "run.go"),
 	}
 	var codeRoutes []string

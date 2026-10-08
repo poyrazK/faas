@@ -11292,3 +11292,49 @@ WHERE id=sqlc.arg(id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND cell_id=sqlc.a
 
 -- name: LockRegionalRuntimeConsentOwner :exec
 SELECT lock_regional_runtime_consent_owner(sqlc.arg(binding)::jsonb);
+
+-- ADR-658: one coherent bounded catalog and a fenced final publication. SHARE
+-- table locks cover inserts/removals as well as row changes; no network I/O is
+-- performed while holding them. Owner entitlement is included in the catalog.
+-- name: LockGlobalIngressIntent :exec
+LOCK TABLE accounts, global_directory_owners, global_apps, global_app_targets,
+ global_directory_cells, global_runtime_quota_issuer, global_runtime_quota_allocations,
+ global_runtime_quota_targets, global_runtime_consents IN SHARE MODE;
+
+-- name: LockGlobalIngressPublisher :exec
+SELECT pg_advisory_xact_lock(hashtextextended('gregale-global-ingress-publication',0));
+
+-- name: ListGlobalIngressApps :many
+SELECT id::text AS global_app_id,owner_id::text AS owner_id,slug,routing_policy,created_at
+FROM global_apps ORDER BY id LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ListGlobalIngressCandidates :many
+SELECT DISTINCT ON (a.id,b.region)
+ a.id::text AS global_app_id,q.owner_id::text AS owner_id,q.allocation_id::text AS allocation_id,
+ q.generation,q.policy_id,q.plan,q.max_concurrency,q.max_peak_concurrency,
+ t.snapshot,t.concurrency,t.rollout_concurrency,t.issued_at,
+ c.apps_domain,r.id::text AS consent_id,r.issuer_id::text AS issuer_id,r.binding,r.expires_at
+FROM global_apps a
+JOIN global_directory_owners o ON o.id=a.owner_id AND o.org_id IS NULL
+JOIN accounts ac ON ac.id=o.account_id AND ac.status='active' AND ac.abuse_hold_at IS NULL AND ac.email_verified_at IS NOT NULL
+JOIN global_app_targets b ON b.global_app_id=a.id AND b.owner_id=a.owner_id AND b.regional_org_id IS NULL
+JOIN global_directory_cells c ON c.id=b.cell_id AND c.region=b.region AND c.enabled AND c.generation=b.cell_generation AND c.apps_domain<>''
+JOIN global_runtime_quota_allocations q ON q.global_app_id=a.id AND q.owner_id=a.owner_id AND q.generation=a.desired_runtime_quota_generation AND q.plan=ac.plan AND q.retired_at IS NULL
+JOIN global_runtime_quota_targets t ON t.global_app_id=a.id AND t.allocation_id=q.allocation_id AND t.region=b.region AND t.issued_at IS NOT NULL AND t.released_at IS NULL
+JOIN global_runtime_consents r ON r.global_app_id=a.id AND r.owner_id=a.owner_id AND r.global_app_slug=a.slug AND r.status='active' AND r.expires_at>clock_timestamp()
+JOIN global_runtime_quota_issuer i ON i.issuer_id=r.issuer_id
+WHERE r.binding=jsonb_build_object('CellID',c.id::text,'Region',c.region,'CellGeneration',c.generation,'RegionalAccountID',b.regional_account_id::text,'RegionalOrgID','','RegionalAppID',b.regional_app_id::text,'RegionalAppSlug',b.regional_app_slug,'APIBase',c.api_base)
+ AND t.snapshot @> (r.binding-'RegionalOrgID')
+ AND coalesce(t.snapshot->>'RegionalOrgID','')=''
+ORDER BY a.id,b.region,r.id LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ReadGlobalIngressPublication :one
+SELECT issuer_id::text AS issuer_id,generation,envelope FROM global_ingress_publication WHERE singleton;
+
+-- name: WriteGlobalIngressPublication :exec
+INSERT INTO global_ingress_publication(issuer_id,generation,envelope)
+VALUES(sqlc.arg(issuer_id)::uuid,sqlc.arg(generation)::bigint,sqlc.arg(envelope)::bytea)
+;
+
+-- name: UpdateGlobalIngressPublication :execrows
+UPDATE global_ingress_publication SET generation=sqlc.arg(generation)::bigint,envelope=sqlc.arg(envelope)::bytea WHERE singleton AND issuer_id=sqlc.arg(issuer_id)::uuid;
