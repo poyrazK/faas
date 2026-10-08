@@ -67,7 +67,7 @@ func TestDataAPIStarterUploadKeepsMigrationAndExcludesClientTools(t *testing.T) 
 		t.Fatal(err)
 	}
 	entries := tarEntries(t, archive)
-	for _, file := range []string{"Dockerfile", "Procfile", "gregale.yaml", "package.json", "package-lock.json", "server.mjs", "migrations/migrate.mjs", "migrations/sql/0001_notes.sql", "migrations/sql/0002_priority.sql", "migrations/sql/0003_relationships.sql", "migrations/sql/0004_tags.sql"} {
+	for _, file := range []string{"Dockerfile", "Procfile", "gregale.yaml", "package.json", "package-lock.json", "server.mjs", "migrations/migrate.mjs", "migrations/sql/0001_notes.sql", "migrations/sql/0002_priority.sql", "migrations/sql/0003_relationships.sql", "migrations/sql/0004_tags.sql", "migrations/sql/0005_favorite_tags.sql"} {
 		if !entries["notes/"+file] {
 			t.Errorf("migration upload missing %s", file)
 		}

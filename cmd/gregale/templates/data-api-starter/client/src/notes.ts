@@ -12,6 +12,8 @@ export function notesClient(options: {
     list: () => db.from('notes').select('id,body,priority,created_at').order('created_at', { ascending: false }).range(0, 19),
     listWithReplies: () => db.from('notes').select('id,body,comments(id,body),note_details(summary)').order('created_at', { ascending: false }).range(0, 19),
     listWithTags: () => db.from('notes').select('id,body,tags!note_tags(id,name)').order('id').range(0, 19),
+    listWithFavoriteTags: () => db.from('notes').select('id,body,tags!note_favorite_tags(id,name)').order('id').range(0, 19),
+    listFavoriteTaggedNotes: () => db.from('tags').select('id,name,notes!note_favorite_tags(id,body)').order('id').range(0, 19),
     listTaggedNotes: () => db.from('tags').select('id,name,notes!note_tags(id,body)').order('id').range(0, 19),
     listComments: () => db.from('comments').select('id,body,notes(id,body)').order('id').range(0, 19),
     reply: (note_id: number, body: string) => db.from('comments').insert({ subject: options.subject, note_id, body }).select().single(),

@@ -48,40 +48,58 @@ async function verifyNoteRelationships(owner, other, subject, otherSubject, id, 
   assert.equal(attachedDetails.error?.code, '23503', 'cross_subject_details_attachment_allowed')
 }
 
-async function verifyTags(owner, other, subject, otherSubject, id, body, ownedTags, owned) {
-  const empty = await owner.listWithTags().eq('id', id).single()
+async function verifyTags(owner, other, subject, otherSubject, id, body, ownedTags, owned, junction) {
+  const listTags = junction === 'note_tags' ? owner.listWithTags : owner.listWithFavoriteTags
+  const listNotes = junction === 'note_tags' ? owner.listTaggedNotes : owner.listFavoriteTaggedNotes
+  const otherPath = junction === 'note_tags' ? 'note_favorite_tags' : 'note_tags'
+  const empty = await listTags().eq('id', id).single()
   assert.equal(empty.error, null, 'empty_tags_failed')
   assert.deepEqual(empty.data.tags, [])
+  const alternateBefore = await owner.db.from('notes').select(`tags!${otherPath}(id,name)`).eq('id', id).single()
+  assert.equal(alternateBefore.error, null, 'alternate_baseline_failed')
   const tags = []
   for (const name of ['first tag', 'second tag']) {
     const created = await owner.db.from('tags').insert({ subject, name }).select('id,name').single()
     assert.equal(created.error, null, 'own_tag_failed')
     tags.push(created.data)
     ownedTags.push([owner, created.data.id])
-    const linked = await owner.db.from('note_tags').insert({ subject, note_id: id, tag_id: created.data.id })
+    const linked = await owner.db.from(junction).insert({ subject, note_id: id, tag_id: created.data.id })
     assert.equal(linked.error, null, 'own_tag_link_failed')
   }
-  const duplicate = await owner.db.from('note_tags').insert({ subject, note_id: id, tag_id: tags[0].id })
+  const duplicate = await owner.db.from(junction).insert({ subject, note_id: id, tag_id: tags[0].id })
   assert.equal(duplicate.error?.code, '23505', 'duplicate_link_allowed')
-  const joined = await owner.listWithTags().eq('id', id).single()
+  const joined = await listTags().eq('id', id).single()
   assert.equal(joined.error, null, 'many_to_many_failed')
   assert.deepEqual(joined.data.tags.sort((a, b) => a.id - b.id), tags)
   const unhinted = await owner.db.from('notes').select('tags(id,name)').eq('id', id).single()
-  assert.equal(unhinted.error, null, 'unhinted_many_to_many_failed')
-  assert.deepEqual(unhinted.data.tags.sort((a, b) => a.id - b.id), tags)
+  assert.equal(unhinted.status, 300, 'ambiguous_embed_status_mismatch')
+  assert.equal(unhinted.error?.code, 'PGRST201', 'ambiguous_embed_not_rejected')
+  assert.equal(unhinted.data, null)
+  assert.ok(unhinted.error.hint.includes('note_tags') && unhinted.error.hint.includes('note_favorite_tags'), 'ambiguity_hint_missing_paths')
+  const reverseAmbiguous = await owner.db.from('tags').select('notes(id,body)').eq('id', tags[0].id)
+  assert.equal(reverseAmbiguous.error?.code, 'PGRST201', 'reverse_ambiguous_embed_not_rejected')
+  const wrongPath = await owner.db.from('notes').select(`tags!${otherPath}(id,name)`).eq('id', id).single()
+  assert.equal(wrongPath.error, null, 'alternate_path_failed')
+  assert.deepEqual(wrongPath.data.tags.sort((a, b) => a.id - b.id), alternateBefore.data.tags.sort((a, b) => a.id - b.id), 'hint_selected_wrong_path')
+  const both = await owner.db.from('notes').select(`selected:tags!${junction}(id,name),alternate:tags!${otherPath}(id,name)`).eq('id', id).single()
+  assert.equal(both.error, null, 'aliased_paths_failed')
+  assert.deepEqual(both.data.selected.sort((a, b) => a.id - b.id), tags)
+  assert.deepEqual(both.data.alternate.sort((a, b) => a.id - b.id), alternateBefore.data.tags)
+  const invalid = await owner.db.from('notes').select('tags!missing_junction(id)').eq('id', id)
+  assert.equal(invalid.error?.code, 'PGRST200', 'invalid_hint_not_rejected')
   const secondNote = await owner.create('shared tag probe')
   assert.equal(secondNote.error, null, 'second_tagged_note_failed')
   owned.push([owner, secondNote.data.id])
-  const shared = await owner.db.from('note_tags').insert({ subject, note_id: secondNote.data.id, tag_id: tags[0].id })
+  const shared = await owner.db.from(junction).insert({ subject, note_id: secondNote.data.id, tag_id: tags[0].id })
   assert.equal(shared.error, null, 'shared_tag_link_failed')
   for (const tag of tags) {
-    const reverse = await owner.listTaggedNotes().eq('id', tag.id).single()
+    const reverse = await listNotes().eq('id', tag.id).single()
     assert.equal(reverse.error, null, 'reverse_many_to_many_failed')
     const expected = [{ id, body }]
     if (tag.id === tags[0].id) expected.push({ id: secondNote.data.id, body: 'shared tag probe' })
     assert.deepEqual(reverse.data.notes.sort((a, b) => a.id - b.id), expected.sort((a, b) => a.id - b.id))
   }
-  for (const table of ['tags', 'note_tags']) {
+  for (const table of ['tags', junction]) {
     const hidden = await other.db.from(table).select('*').eq('subject', subject)
     assert.equal(hidden.error, null, 'cross_subject_tag_read_failed')
     assert.deepEqual(hidden.data, [], 'cross_subject_tag_read_allowed')
@@ -94,17 +112,17 @@ async function verifyTags(owner, other, subject, otherSubject, id, body, ownedTa
   }
   const forgedTag = await other.db.from('tags').insert({ subject, name: 'forged' })
   assert.equal(forgedTag.error?.code, '42501', 'forged_tag_subject_allowed')
-  const reassigned = await owner.db.from('note_tags').update({ subject: otherSubject }).eq('note_id', id)
+  const reassigned = await owner.db.from(junction).update({ subject: otherSubject }).eq('note_id', id)
   assert.equal(reassigned.error?.code, '42501', 'link_subject_reassignment_allowed')
-  const forged = await other.db.from('note_tags').insert({ subject, note_id: id, tag_id: tags[0].id })
+  const forged = await other.db.from(junction).insert({ subject, note_id: id, tag_id: tags[0].id })
   assert.equal(forged.error?.code, '42501', 'forged_link_subject_allowed')
-  const foreignNote = await other.db.from('note_tags').insert({ subject: otherSubject, note_id: id, tag_id: tags[0].id })
+  const foreignNote = await other.db.from(junction).insert({ subject: otherSubject, note_id: id, tag_id: tags[0].id })
   assert.equal(foreignNote.error?.code, '23503', 'foreign_note_attachment_allowed')
   // An owned note still cannot be linked to another user's tag.
   const ownNote = await other.create('tag authorization probe')
   assert.equal(ownNote.error, null, 'probe_note_failed')
   try {
-    const foreignTag = await other.db.from('note_tags').insert({ subject: otherSubject, note_id: ownNote.data.id, tag_id: tags[0].id })
+    const foreignTag = await other.db.from(junction).insert({ subject: otherSubject, note_id: ownNote.data.id, tag_id: tags[0].id })
     assert.equal(foreignTag.error?.code, '23503', 'foreign_tag_attachment_allowed')
   } finally {
     const removed = await other.remove(ownNote.data.id)
@@ -144,7 +162,9 @@ export async function verifyAuthorization({ url, userA, userB }) {
       const reassigned = await owner.db.from('notes').update({ subject: otherSubject }).eq('id', id)
       assert.equal(reassigned.error?.code, '42501', 'cross_subject_reassignment_allowed')
       await verifyNoteRelationships(owner, other, subject, otherSubject, id, created.data.body, orphaned)
-      await verifyTags(owner, other, subject, otherSubject, id, created.data.body, ownedTags, owned)
+      for (const junction of ['note_tags', 'note_favorite_tags']) {
+        await verifyTags(owner, other, subject, otherSubject, id, created.data.body, ownedTags, owned, junction)
+      }
       const updated = await owner.update(id, { body: 'updated', priority: 1 })
       assert.equal(updated.error, null, 'own_update_failed')
       assert.equal(updated.data.body, 'updated', 'own_update_missing')

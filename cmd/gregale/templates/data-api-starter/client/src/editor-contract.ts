@@ -62,3 +62,29 @@ async function tagContract(client: ReturnType<typeof notesClient>) {
   }
 }
 void tagContract
+
+async function favoriteTagContract(client: ReturnType<typeof notesClient>) {
+  const favorites = await client.listWithFavoriteTags()
+  if (favorites.data) for (const note of favorites.data) {
+    const tags: { id: number; name: string }[] = note.tags
+    // @ts-expect-error the favorite path also produces arrays
+    const single: { name: string } = note.tags
+    // @ts-expect-error unselected fields are absent on the hinted path
+    const subject = note.tags[0].subject
+    void [tags, single, subject]
+  }
+  const reverse = await client.listFavoriteTaggedNotes()
+  if (reverse.data) for (const tag of reverse.data) {
+    const notes: { id: number; body: string }[] = tag.notes
+    void notes
+  }
+  const both = await client.db.from('notes').select('ordinary:tags!note_tags(id,name),favorites:tags!note_favorite_tags(name)').single()
+  if (both.data) {
+    const ordinary: { id: number; name: string }[] = both.data.ordinary
+    const favorites: { name: string }[] = both.data.favorites
+    // @ts-expect-error aliases retain their own projections
+    const id = both.data.favorites[0].id
+    void [ordinary, favorites, id]
+  }
+}
+void favoriteTagContract

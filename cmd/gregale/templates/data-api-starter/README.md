@@ -166,7 +166,7 @@ they do not silently skip it.
 
 ## Evolve the schema
 
-Add `migrations/sql/0005_description.sql` and run sync again. Numbered SQL files
+Add `migrations/sql/0006_description.sql` and run sync again. Numbered SQL files
 are applied under a transaction and database advisory lock. The private
 `gregale_migrations.applied` ledger records versions and SHA-256 checksums;
 already-applied SQL cannot be edited, renamed, removed or inserted out of order.
@@ -227,3 +227,12 @@ foreign keys, as PostgREST requires for many-to-many discovery. Tags and links
 have their own RLS policies, and subject-bound foreign keys reject attachments
 to another user's note or tag. The authorization check exercises these joins
 and removes only rows created by its own run.
+
+`note_favorite_tags` provides a second path between notes and tags. Use
+`listWithFavoriteTags()` / `listFavoriteTaggedNotes()` for favorites and the
+existing tag methods for ordinary tags. Unhinted `tags(id,name)` or
+`notes(id,body)` embeds fail with PostgREST `PGRST201` (HTTP 300); specify the
+junction, for example `tags!note_favorite_tags(id,name)`. Aliases can return both
+paths in one projection. An unknown hint fails with `PGRST200`. These are runtime errors; the SDK
+does not validate junction hints at compile time. The two-user
+check verifies both paths, including their independent RLS policies.

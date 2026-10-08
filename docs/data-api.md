@@ -170,7 +170,11 @@ such a relationship could infer a same-named, unrelated local table. View-inferr
 and computed relationships are not emitted. The starter qualifies many-to-many
 joins in both directions using `tags!note_tags(id,name)` and
 `notes!note_tags(id,body)`. The SDK infers these from the junction foreign keys;
-PostgREST requires their columns to be included in the junction primary key. Each joined table needs its own RLS
+PostgREST requires their columns to be included in the junction primary key.
+The starter also qualifies a second `note_favorite_tags` path: ambiguous
+unhinted embeds fail with `PGRST201` (HTTP 300), and junction hints select the
+ordinary or favorite path explicitly. Ambiguity and invalid hints are runtime
+PostgREST errors; the SDK does not validate junction hints at compile time. Each joined table needs its own RLS
 policy. RLS can hide a parent even
 when its FK column is NOT NULL, so handle missing embeds at runtime or use
 `!inner` when a visible parent is required; static nullability follows the FK
