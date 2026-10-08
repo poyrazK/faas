@@ -9,12 +9,12 @@ import (
 	"fmt"
 	"slices"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgevalidate"
 	"github.com/onebox-faas/faas/pkg/eventcontract"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 type EventSchemaRolloutStore interface {
@@ -151,15 +151,9 @@ func eventSchemaRolloutValidate(compiled *edgevalidate.CompiledSchema, data []by
 	return result, nil
 }
 func eventSchemaRolloutDiagnostic(value string) string {
-	if len(value) <= api.EventSchemaRolloutDiagnosticMaxBytes {
-		return value
-	}
-	value = value[:api.EventSchemaRolloutDiagnosticMaxBytes]
-	for !utf8.ValidString(value) {
-		value = value[:len(value)-1]
-	}
-	return value
+	return safetext.Truncate(value, api.EventSchemaRolloutDiagnosticMaxBytes)
 }
+
 func eventSchemaRolloutValidateRetained(ctx context.Context, compiled *edgevalidate.CompiledSchema, account string, req api.EventSchemaRolloutRequest, cutoff time.Time, observed eventSchemaRolloutObservation) (api.EventSchemaRolloutRetained, error) {
 	out := api.EventSchemaRolloutRetained{Requested: true, From: req.From, Until: req.Until, CutoffAt: &cutoff, ScannedCount: observed.scanned, Truncated: observed.truncated, Results: []api.EventSchemaRolloutValidation{}}
 	used := 0
