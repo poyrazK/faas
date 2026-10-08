@@ -386,7 +386,10 @@ type server struct {
 	appTaskAPIEnabled bool
 	// appForksEnabled is the fail-closed gate for production forks
 	// (ADR-732). It stays off until schedd can restore quarantined forks.
-	appForksEnabled         bool
+	appForksEnabled bool
+	// crashSnapshotsEnabled is the fail-closed gate for ADR-733 crash
+	// snapshots (FAAS_CRASH_SNAPSHOTS).
+	crashSnapshotsEnabled   bool
 	outboundProbeGatewayURL string
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
@@ -777,6 +780,13 @@ func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 // (ADR-732, FAAS_APP_FORKS).
 func (s *server) WithAppForksEnabled(enabled bool) *server {
 	s.appForksEnabled = enabled
+	return s
+}
+
+// WithCrashSnapshotsEnabled attaches the boot-time gate for ADR-733 crash
+// snapshots (FAAS_CRASH_SNAPSHOTS).
+func (s *server) WithCrashSnapshotsEnabled(enabled bool) *server {
+	s.crashSnapshotsEnabled = enabled
 	return s
 }
 
@@ -1386,6 +1396,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/forks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireScope(api.ScopesAppForkSecretsSurface...)(s.idempotent(s.createAppFork))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/forks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppFork))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/forks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelAppFork)))))
+	// ADR-733 crash snapshots. Opening one as a fork needs the fork route's
+	// deploy:write AND secrets:read.
+	mux.HandleFunc("GET /v1/apps/{slug}/crash-snapshots/settings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCrashSnapshotSettings))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/crash-snapshots/settings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putCrashSnapshotSettings))))
+	mux.HandleFunc("GET /v1/apps/{slug}/crash-snapshots", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCrashSnapshots))))
+	mux.HandleFunc("POST /v1/apps/{slug}/crash-snapshots", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createCrashSnapshot)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/crash-snapshots/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCrashSnapshot))))
+	mux.HandleFunc("POST /v1/apps/{slug}/crash-snapshots/{id}/fork", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireScope(api.ScopesAppForkSecretsSurface...)(s.idempotent(s.forkCrashSnapshot))))))
 	mux.HandleFunc("POST /v1/admin/object-storage/usage-reports", s.authLimited(s.requireAdminMutation(s.recordObjectStorageUsage)))
 	// IAM-6 (issue #190 / ADR-061, PR 4): active-org whoami. The
 	// route is undocumented in api/openapi.yaml for PR 4 — PR 5

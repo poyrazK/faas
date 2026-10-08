@@ -16,6 +16,7 @@
     {"path": "builds", "source": "docs/build.md"},
     {"path": "cli", "source": "docs/cli-reference.md"},
     {"path": "companions", "source": "docs/companions.md"},
+    {"path": "crash-snapshots", "source": "docs/crash-snapshots.md"},
     {"path": "custom-domains", "source": "docs/domains.md"},
     {"path": "crons", "source": "docs/event-driven.md"},
     {"path": "data-api", "source": "docs/data-api.md"},

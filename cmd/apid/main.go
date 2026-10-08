@@ -1428,6 +1428,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithAppForksEnabled(appForksEnabledFromEnv(deps.getenv)).
+		WithCrashSnapshotsEnabled(strings.TrimSpace(deps.getenv("FAAS_CRASH_SNAPSHOTS")) == "1").
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
 	if cfg.OutboundProbeGatewayURL != "" && !api.ValidOutboundProbeGateway(cfg.OutboundProbeGatewayURL) {

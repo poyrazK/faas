@@ -22,6 +22,10 @@ import type { AutomaticRouteCheck } from '../models/AutomaticRouteCheck.js';
 import type { BindingReleasePolicy } from '../models/BindingReleasePolicy.js';
 import type { CanaryRouteGate } from '../models/CanaryRouteGate.js';
 import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirementsRequest.js';
+import type { CrashCaptureListResponse } from '../models/CrashCaptureListResponse.js';
+import type { CrashCaptureResponse } from '../models/CrashCaptureResponse.js';
+import type { CrashSnapshotSettingsRequest } from '../models/CrashSnapshotSettingsRequest.js';
+import type { CrashSnapshotSettingsResponse } from '../models/CrashSnapshotSettingsResponse.js';
 import type { CreateAppForkRequest } from '../models/CreateAppForkRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
@@ -261,6 +265,235 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read whether 5xx crash snapshots are on for an app.
+   * @returns CrashSnapshotSettingsResponse The app's crash snapshot setting.
+   * @throws ApiError
+   */
+  public static getCrashSnapshotSettings({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<CrashSnapshotSettingsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/crash-snapshots/settings',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Turn 5xx crash snapshots on or off for an app.
+   * When on, the first 5xx answered by one of the app's instances
+   * captures that instance's memory (ADR-733), at most one in flight and
+   * none within 10 minutes of the last. Pro and Scale only. Answers 501
+   * `crash_snapshots_not_enabled` until the operator enables the feature.
+   *
+   * @returns CrashSnapshotSettingsResponse The saved setting.
+   * @throws ApiError
+   */
+  public static putCrashSnapshotSettings({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CrashSnapshotSettingsRequest,
+  }): CancelablePromise<CrashSnapshotSettingsResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/crash-snapshots/settings',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * List an app's crash snapshots, newest first.
+   * @returns CrashCaptureListResponse The app's crash snapshots.
+   * @throws ApiError
+   */
+  public static listCrashSnapshots({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<CrashCaptureListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/crash-snapshots',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Capture the app's newest running instance now.
+   * Requests a crash snapshot of the app's newest running instance,
+   * whether or not 5xx captures are on. Refused with 409
+   * `crash_capture_refused` while another capture is in flight, within
+   * 10 minutes of the last, or when no instance is running.
+   *
+   * @returns CrashCaptureResponse Capture requested.
+   * @throws ApiError
+   */
+  public static createCrashSnapshot({
+    slug,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<CrashCaptureResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/crash-snapshots',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Read one crash snapshot.
+   * @returns CrashCaptureResponse The crash snapshot.
+   * @throws ApiError
+   */
+  public static getCrashSnapshot({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a crash snapshot.
+     */
+    id: string,
+  }): CancelablePromise<CrashCaptureResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/crash-snapshots/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Open a ready crash snapshot as a production fork.
+   * Creates an ADR-732 fork restored from this capture instead of the
+   * deployment's newest snapshot. Same rules as `POST /v1/apps/{slug}/forks`:
+   * the key needs `deploy:write` and `secrets:read`, the response carries
+   * the one-time `access_token`, and the fork counts against the fork
+   * limits. 409 `crash_capture_not_ready` unless the capture is ready and
+   * unexpired.
+   *
+   * @returns AppForkResponse Fork of the crash snapshot admitted and queued.
+   * @throws ApiError
+   */
+  public static forkCrashSnapshot({
+    slug,
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a crash snapshot.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    requestBody?: CreateAppForkRequest,
+  }): CancelablePromise<AppForkResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/crash-snapshots/{id}/fork',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
     });
   }

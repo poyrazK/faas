@@ -57,6 +57,17 @@
       "acceptance_test": "pkg/oci/container_contract_test.go::TestContainerDeploymentContract"
     },
     {
+      "id": "crash-snapshots",
+      "name": "Crash snapshots",
+      "category": "observability",
+      "description": "Capture a running instance's memory after it answers a 5xx, keep it for 7 days, and open it as a quarantined production fork.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/733-crash-snapshots",
+      "operator_flag": "FAAS_CRASH_SNAPSHOTS",
+      "acceptance_test": "cmd/apid/handlers_crash_snapshots_test.go::TestCrashSnapshots_ManualCaptureAndFork"
+    },
+    {
       "id": "custom-domains",
       "name": "Custom domains",
       "category": "edge",

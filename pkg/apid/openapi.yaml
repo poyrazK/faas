@@ -4195,6 +4195,155 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/crash-snapshots/settings:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getCrashSnapshotSettings
+      summary: Read whether 5xx crash snapshots are on for an app.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The app's crash snapshot setting.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashSnapshotSettingsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    put:
+      tags: [apps]
+      operationId: putCrashSnapshotSettings
+      summary: Turn 5xx crash snapshots on or off for an app.
+      description: |
+        When on, the first 5xx answered by one of the app's instances
+        captures that instance's memory (ADR-733), at most one in flight and
+        none within 10 minutes of the last. Pro and Scale only. Answers 501
+        `crash_snapshots_not_enabled` until the operator enables the feature.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CrashSnapshotSettingsRequest' }
+      responses:
+        '200':
+          description: The saved setting.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashSnapshotSettingsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/crash-snapshots:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listCrashSnapshots
+      summary: List an app's crash snapshots, newest first.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The app's crash snapshots.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashCaptureListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [apps]
+      operationId: createCrashSnapshot
+      summary: Capture the app's newest running instance now.
+      description: |
+        Requests a crash snapshot of the app's newest running instance,
+        whether or not 5xx captures are on. Refused with 409
+        `crash_capture_refused` while another capture is in flight, within
+        10 minutes of the last, or when no instance is running.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Capture requested.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashCaptureResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/crash-snapshots/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/CrashCaptureID'
+    get:
+      tags: [apps]
+      operationId: getCrashSnapshot
+      summary: Read one crash snapshot.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The crash snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashCaptureResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/crash-snapshots/{id}/fork:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/CrashCaptureID'
+    post:
+      tags: [apps]
+      operationId: forkCrashSnapshot
+      summary: Open a ready crash snapshot as a production fork.
+      description: |
+        Creates an ADR-732 fork restored from this capture instead of the
+        deployment's newest snapshot. Same rules as `POST /v1/apps/{slug}/forks`:
+        the key needs `deploy:write` and `secrets:read`, the response carries
+        the one-time `access_token`, and the fork counts against the fork
+        limits. 409 `crash_capture_not_ready` unless the capture is ready and
+        unexpired.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppForkRequest' }
+      responses:
+        '202':
+          description: Fork of the crash snapshot admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/apps/{slug}/forks:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -31266,6 +31415,12 @@ components:
       required: true
       schema: { type: string, format: uuid }
       description: Canonical UUID for a deployment-attached app task.
+    CrashCaptureID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Canonical UUID for a crash snapshot.
     AppForkID:
       name: id
       in: path
@@ -55128,6 +55283,53 @@ components:
         code: { type: string, maxLength: 64 }
         message: { type: string, maxLength: 4096 }
 
+    CrashSnapshotSettingsRequest:
+      description: Body of `PUT /v1/apps/{slug}/crash-snapshots/settings`.
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    CrashSnapshotSettingsResponse:
+      description: Whether 5xx crash snapshots are on for the app.
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        updated_at: { type: string, format: date-time }
+    CrashCaptureResponse:
+      description: |
+        One crash snapshot (ADR-733). `status` moves from `requested` through
+        `capturing` to `ready`, then `expired`, or ends as `failed`. Storage
+        locations are never returned; open a ready capture as a fork.
+      type: object
+      required: [id, app_id, deployment_id, trigger, status, requested_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        trigger: { type: string, enum: [http_5xx, manual] }
+        status_code: { type: integer, minimum: 500, maximum: 599 }
+        route: { type: string, description: Request path of the failing request (http_5xx only). }
+        status: { type: string, enum: [requested, capturing, ready, failed, expired] }
+        mem_bytes: { type: integer, format: int64 }
+        failure:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        requested_at: { type: string, format: date-time }
+        captured_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time, description: When the capture is deleted. }
+    CrashCaptureListResponse:
+      description: An app's crash snapshots, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CrashCaptureResponse' }
     CreateAppForkRequest:
       description: Body of `POST /v1/apps/{slug}/forks`. Every field is optional.
       type: object
