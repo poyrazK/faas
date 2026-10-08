@@ -287,13 +287,16 @@ func writeAppScaleSavedPlan(path string, plan appScaleSavedPlan) error {
 	return nil
 }
 
-func readAppScaleSavedPlan(path string) (appScaleSavedPlan, error) {
-	var plan appScaleSavedPlan
+func readAppScaleSavedPlan(path string) (plan appScaleSavedPlan, retErr error) {
 	file, err := openCustomerFile(path)
 	if err != nil {
 		return plan, fmt.Errorf("open plan file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil && retErr == nil {
+			retErr = fmt.Errorf("close plan file: %w", err)
+		}
+	}()
 	body, err := io.ReadAll(io.LimitReader(file, appScaleSavedPlanMaxBytes+1))
 	if err != nil {
 		return plan, fmt.Errorf("read plan file: %w", err)
