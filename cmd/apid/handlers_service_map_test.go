@@ -102,15 +102,19 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 	foreignAccount, _ := mustCreateAccount(t, e.store, "service-map-foreign", api.PlanHobby)
 	foreignAppID := mustSeedAppFor(t, e.store, foreignAccount.ID, "foreign-app")
 
+	// The gateway labels edges with dashed UUIDs (uuid.UUID.String), while the
+	// store hands out 32-hex IDs; the selectors and fixtures use the gateway
+	// form so this pins the translation between the two.
+	gw := canonicalServiceMapAppID
 	var queries atomic.Int32
 	installPromFixture(t, &e, func(query string) string {
 		queries.Add(1)
 		for _, id := range []string{api1.ID, payments.ID, ledger.ID} {
-			if strings.Count(query, id) != 2 {
-				t.Errorf("query must constrain caller and target to owned app %s: %s", id, query)
+			if strings.Count(query, gw(id)) != 2 {
+				t.Errorf("query must constrain caller and target to owned app %s: %s", gw(id), query)
 			}
 		}
-		if strings.Contains(query, foreignAppID) {
+		if strings.Contains(query, gw(foreignAppID)) || strings.Contains(query, foreignAppID) {
 			t.Errorf("query includes foreign app ID: %s", query)
 		}
 		switch {
@@ -121,7 +125,7 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 				`{"metric":{"caller_app":"%[2]s","target_app":"%[3]s","outcome":"success"},"value":[1,"10"]},`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[3]s","outcome":"success"},"value":[1,"0.2"]},`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[4]s","outcome":"success"},"value":[1,"50"]}]}}`,
-				api1.ID, payments.ID, ledger.ID, foreignAppID)
+				gw(api1.ID), gw(payments.ID), gw(ledger.ID), gw(foreignAppID))
 		case strings.Contains(query, "gateway_service_dependency_duration_seconds_bucket"):
 			if !strings.Contains(query, `outcome="success"`) {
 				t.Errorf("latency query must be success-only: %s", query)
@@ -130,7 +134,7 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","le":"0.01"},"value":[1,"48"]},`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","le":"0.05"},"value":[1,"96"]},`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","le":"+Inf"},"value":[1,"96"]}]}}`,
-				api1.ID, payments.ID)
+				gw(api1.ID), gw(payments.ID))
 		default:
 			t.Errorf("unexpected query: %s", query)
 			return `{"data":{"resultType":"vector","result":[]}}`

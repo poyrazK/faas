@@ -8976,3 +8976,6 @@ const ServiceMapMaxEdges = 500
 // needs enough traffic to show quiet edges, so it is longer than the 5m
 // default of the per-app metrics endpoints.
 const ServiceMapDefaultRange = "1h"
+
+// ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
+const ServiceMapHighErrorRatePct = 5.0

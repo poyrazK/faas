@@ -40,28 +40,37 @@ func (s *server) getServiceMap(w http.ResponseWriter, r *http.Request, acct stat
 			fmt.Sprintf("range must be one of: %s", strings.Join(appmetrics.Ranges(), ", "))))
 		return
 	}
-	apps, err := s.store.ListApps(r.Context(), acct.ID)
+	resp, err := s.serviceMapFor(r.Context(), acct, rng)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list apps"))
 		return
 	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// serviceMapFor builds the map for an already-validated range. Prometheus
+// failures become a degraded Source, never an error; only the app listing
+// can fail. The API and the dashboard share it so both show the same edges.
+func (s *server) serviceMapFor(ctx context.Context, acct state.Account, rng string) (api.ServiceMapResponse, error) {
+	apps, err := s.store.ListApps(ctx, acct.ID)
+	if err != nil {
+		return api.ServiceMapResponse{}, err
+	}
 	resp := api.ServiceMapResponse{Range: rng, AsOf: time.Now().UTC().Format(time.RFC3339Nano)}
 	if s.promqlClient == nil {
 		resp.Source = appmetrics.SourceDegradedPrefix + "prometheus not configured"
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return resp, nil
 	}
 	owned := serviceMapOwnedApps(apps)
-	samples, err := fetchServiceMapSamples(r.Context(), s.promqlClient, owned, rng)
+	samples, err := fetchServiceMapSamples(ctx, s.promqlClient, owned, rng)
 	if err != nil {
 		s.logServiceMapDegraded(err)
 		resp.Source = appmetrics.SourceDegradedPrefix + appmetrics.TelemetryDegradedReason(err)
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return resp, nil
 	}
 	resp.Nodes, resp.Edges, resp.Truncated = buildServiceMap(samples, owned, api.ServiceMapMaxEdges)
 	resp.Source = appmetrics.SourcePrometheus
-	writeJSON(w, http.StatusOK, resp)
+	return resp, nil
 }
 
 func (s *server) logServiceMapDegraded(err error) {

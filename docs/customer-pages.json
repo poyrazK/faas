@@ -54,6 +54,7 @@
     {"path": "scaling-policy", "source": "docs/scaling-policy.md"},
     {"path": "secrets", "source": "docs/secrets.md"},
     {"path": "security", "source": "docs/security.md"},
+    {"path": "service-map", "source": "docs/service-map.md"},
     {"path": "sidecars", "source": "docs/sidecars.md"},
     {"path": "static-egress-ip", "source": "docs/static-egress-ip.md"},
     {"path": "storage", "source": "docs/storage.md"},

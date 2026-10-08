@@ -3445,6 +3445,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	mux.Handle("GET /dashboard/dev-bridges", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDevBridgesDashboard))))
 	mux.Handle("GET /dashboard/dev-bridges/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDevBridgesDashboard))))
+	mux.Handle("GET /dashboard/service-map", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderServiceMapDashboard))))
 	mux.Handle("POST /dashboard/dev-bridges/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.revokeDevBridgeDashboard))))
 
 	// PR-B bind picker UX (handlers_install_github.go). Both routes
