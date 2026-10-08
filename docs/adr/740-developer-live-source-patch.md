@@ -121,7 +121,14 @@ Anything else falls back to today's build path with no behavior change.
 ## Rollout
 
 1. Builder verbatim source map + apid eligibility check, reported in
-   `--json` receipts only (no delivery).
+   `--json` receipts only (no delivery). *Implemented:* guest-init classifies
+   the plan `railpack prepare` wrote (`pkg/devpatch`), builderd stores it in
+   `build_provenance.dev_patch` (also through build-cache hits), and apid
+   returns a `dev_patch` preview on developer uploads, which `gregale dev
+   --json` copies into each `developer_sync` receipt. Railpack v0.38.0 plans
+   are verbatim for Node without a `build` script and for Python with
+   `requirements.txt`; Node with `npm run build` and uv projects (which run
+   `uv sync` over the full source) are not.
 2. vmmd/guest-init delivery behind an operator flag, with the schedd
    snapshot guard and metal tests.
 3. CLI `patch` phase in the timing summary and `dev history`; docs.

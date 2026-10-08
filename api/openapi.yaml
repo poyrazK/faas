@@ -46702,6 +46702,22 @@ components:
           pattern: '^[a-z][a-z0-9-]{0,62}$'
           description: Optional placement region; omitted uses the platform default.
 
+    DevPatchPreview:
+      description: >-
+        Set only on the response to a developer source upload (`gregale dev`).
+        Reports whether the sync could have been applied as a live source patch
+        to the deployment that was live at upload time (ADR-740 phase 1). It is a
+        measurement only; the normal developer build always runs.
+      type: object
+      required: [eligible, changed_paths, patch_bytes]
+      properties:
+        eligible: { type: boolean }
+        reason:
+          type: string
+          enum: [not_railpack, plan_unreadable, no_source_layer, build_command, source_not_deployed, no_live_build, full_snapshot, rebuild_input_changed, unsupported_entry, patch_too_large, unsupported_source_map]
+          description: Why the sync could not use a live patch. Absent when eligible.
+        changed_paths: { type: integer, minimum: 0, description: Files added, modified or deleted inside the build's source root. }
+        patch_bytes: { type: integer, format: int64, minimum: 0, description: Total size of the added or modified files. }
     DevPostgresResponse:
       description: Safe receipt for the isolated developer database and its app binding. Credentials are injected into DATABASE_URL and never returned.
       type: object
@@ -48144,6 +48160,8 @@ components:
             platform. retry_not_before is an
             eligibility floor, not a promised delivery time; completed_at means
             the attempt finished, while the hosting receipt records its verdict.
+        dev_patch:
+          $ref: '#/components/schemas/DevPatchPreview'
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         revision:

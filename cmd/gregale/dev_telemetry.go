@@ -59,6 +59,9 @@ type devSyncReceipt struct {
 	WithinSLO     bool                     `json:"within_slo"`
 	Phases        []devPhaseTiming         `json:"phases"`
 	Postgres      *api.DevPostgresResponse `json:"postgres,omitempty"`
+	// DevPatch reports whether this sync could have been applied as a live
+	// source patch (ADR-740 phase 1, measurement only).
+	DevPatch *api.DevPatchPreview `json:"dev_patch,omitempty"`
 }
 
 type devPhaseTracker struct {
@@ -69,6 +72,7 @@ type devPhaseTracker struct {
 	timings        map[string]devPhaseTiming
 	routeStartedAt time.Time
 	postgres       *api.DevPostgresResponse
+	devPatch       *api.DevPatchPreview
 }
 
 func newDevPhaseTracker() *devPhaseTracker {
@@ -91,6 +95,11 @@ func (t *devPhaseTracker) receipt(status string) devSyncReceipt {
 		copy := *t.postgres
 		postgres = &copy
 	}
+	var devPatch *api.DevPatchPreview
+	if t.devPatch != nil {
+		preview := *t.devPatch
+		devPatch = &preview
+	}
 	t.mu.Unlock()
 	editToLive := time.Since(startedAt)
 	if editToLive < 0 {
@@ -106,6 +115,7 @@ func (t *devPhaseTracker) receipt(status string) devSyncReceipt {
 		WithinSLO:     editToLive <= devEditToLiveTarget,
 		Phases:        timings,
 		Postgres:      postgres,
+		DevPatch:      devPatch,
 	}
 }
 
@@ -126,6 +136,17 @@ func reportDevSyncReceipt(parent context.Context, client *api.Client, project, w
 		Phases: phases,
 	})
 	return err
+}
+
+// setDevPatch records the server's live-patch preview for this sync.
+func (t *devPhaseTracker) setDevPatch(preview *api.DevPatchPreview) {
+	if t == nil || preview == nil {
+		return
+	}
+	t.mu.Lock()
+	recorded := *preview
+	t.devPatch = &recorded
+	t.mu.Unlock()
 }
 
 func (t *devPhaseTracker) setPostgres(postgres *api.DevPostgresResponse) {

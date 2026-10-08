@@ -40,12 +40,3 @@ type DevPatchSourceMap struct {
 	ImageDir     string   `json:"image_dir,omitempty"`
 	RebuildPaths []string `json:"rebuild_paths,omitempty"`
 }
-
-// DevPatchPreview reports whether one developer sync could have been applied
-// as a live patch to the deployment that was live when it was uploaded.
-type DevPatchPreview struct {
-	Eligible     bool   `json:"eligible"`
-	Reason       string `json:"reason,omitempty"`
-	ChangedPaths int    `json:"changed_paths"`
-	PatchBytes   int64  `json:"patch_bytes"`
-}

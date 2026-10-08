@@ -409,6 +409,7 @@ export type { DevBridgeScope } from './models/DevBridgeScope.js';
 export type { DevBridgeSession } from './models/DevBridgeSession.js';
 export type { DevBridgeSessionSummary } from './models/DevBridgeSessionSummary.js';
 export type { DevBridgeWebhookReplay } from './models/DevBridgeWebhookReplay.js';
+export type { DevPatchPreview } from './models/DevPatchPreview.js';
 export type { DevPostgresRequest } from './models/DevPostgresRequest.js';
 export type { DevPostgresResponse } from './models/DevPostgresResponse.js';
 export type { DevSessionResponse } from './models/DevSessionResponse.js';

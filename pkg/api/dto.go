@@ -802,6 +802,16 @@ type UpsertDevSessionRequest struct {
 	LeaseSeconds int64 `json:"lease_seconds,omitempty"`
 }
 
+// DevPatchPreview reports whether one developer sync could have been applied
+// as a live source patch to the deployment that was live when it was uploaded
+// (ADR-740 phase 1). Reason is one of the DevPatchReason* values.
+type DevPatchPreview struct {
+	Eligible     bool   `json:"eligible"`
+	Reason       string `json:"reason,omitempty"`
+	ChangedPaths int    `json:"changed_paths"`
+	PatchBytes   int64  `json:"patch_bytes"`
+}
+
 // DevPostgresRequest opts a developer session into an isolated managed
 // PostgreSQL database. The connection credential is injected into the app's
 // secret environment; it is never returned over this API.
@@ -2968,8 +2978,12 @@ type ListDeploymentAuditResponse struct {
 // DeploymentResponse is a deployment as returned by the API.
 type DeploymentResponse struct {
 	StageState json.RawMessage `json:"stage_state,omitempty"`
-	ID         string          `json:"id"`
-	AppID      string          `json:"app_id"`
+	// DevPatch is set only on the response to a developer source upload
+	// (`gregale dev`). It reports whether the sync could have been applied as
+	// a live source patch (ADR-740 phase 1, measurement only).
+	DevPatch *DevPatchPreview `json:"dev_patch,omitempty"`
+	ID       string           `json:"id"`
+	AppID    string           `json:"app_id"`
 	// Revision (ADR-198) is the per-app deployment number rendered as
 	// `v42` by the CLI and dashboard, and accepted anywhere this API
 	// takes a deployment id. It is the same N that appears in the

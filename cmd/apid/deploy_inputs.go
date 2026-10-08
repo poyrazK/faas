@@ -381,7 +381,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	var devPatch *api.DevPatchPreview
 	if developerSource {
+		devPatch = s.devPatchPreview(r.Context(), app, sourcePath, devSource, sourceRoot, limits)
 		deltaStarted := time.Now()
 		deltaOutcome := "failed"
 		defer func() {
@@ -562,7 +564,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 			return
 		}
-		writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+		response := s.deploymentResponse(d, app)
+		response.DevPatch = devPatch
+		writeJSON(w, http.StatusAccepted, response)
 		return
 	}
 }

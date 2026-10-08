@@ -796,6 +796,8 @@ from .dev_bridge_session_summary import DevBridgeSessionSummary
 from .dev_bridge_session_summary_connection_state import DevBridgeSessionSummaryConnectionState
 from .dev_bridge_webhook_replay import DevBridgeWebhookReplay
 from .dev_bridge_webhook_replay_state import DevBridgeWebhookReplayState
+from .dev_patch_preview import DevPatchPreview
+from .dev_patch_preview_reason import DevPatchPreviewReason
 from .dev_postgres_request import DevPostgresRequest
 from .dev_postgres_response import DevPostgresResponse
 from .dev_postgres_response_binding_state import DevPostgresResponseBindingState
@@ -4045,6 +4047,8 @@ __all__ = (
     "DevBridgeSessionSummaryConnectionState",
     "DevBridgeWebhookReplay",
     "DevBridgeWebhookReplayState",
+    "DevPatchPreview",
+    "DevPatchPreviewReason",
     "DevPostgresRequest",
     "DevPostgresResponse",
     "DevPostgresResponseBindingState",

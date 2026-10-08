@@ -201,6 +201,18 @@ cached-edit target, a `within_slo` boolean, and the phase timings. Receipts are
 NDJSON so a long-running watcher can be consumed incrementally; no source,
 secret, or runtime-log content is included.
 
+Receipts for incremental syncs also carry a `dev_patch` object. It reports
+whether the edit could have been applied to the running environment as a live
+source patch instead of a rebuild ([ADR-740](adr/740-developer-live-source-patch.md)).
+This is a measurement only: the normal developer build always runs. `eligible`
+is true when the live build copied its source into the image unchanged (for
+example a Node app without a `build` script, or Python with
+`requirements.txt`) and the edit touched no build input such as
+`package.json`, a lockfile, `requirements.txt`, `railpack.json`, or
+`gregale.yaml`. Otherwise `reason` says why, for example `build_command`,
+`rebuild_input_changed`, `full_snapshot` (the first sync of a session), or
+`no_live_build`. `changed_paths` and `patch_bytes` describe the edit.
+
 Failed syncs include a developer diagnostic in the same terminal. Deployment
 stage failures reuse the platform error code and explain the failing phase,
 the next action, and the deployment log command. The runtime stream also

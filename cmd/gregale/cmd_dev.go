@@ -562,6 +562,7 @@ func cmdDev(args []string) int {
 				}(),
 				onQueued: func(dep api.DeploymentResponse) {
 					devTelemetry.setDeploymentID(dep.ID)
+					devTelemetry.setDevPatch(dep.DevPatch)
 					if queued != nil {
 						queued(dep.ID)
 					}

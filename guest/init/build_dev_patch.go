@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -27,17 +26,4 @@ func buildDevPatchSourceMap(m api.BuildManifest, readFile func(string) ([]byte, 
 	}
 	sourceMap := devpatch.ClassifyRailpackPlan(data)
 	return &sourceMap
-}
-
-func readBuildPlan(name string) ([]byte, error) {
-	info, err := os.Stat(name)
-	if err != nil {
-		return nil, err
-	}
-	// Railpack plans are a few KiB; refuse anything implausibly large rather
-	// than copying it into the durable build result.
-	if info.Size() > 1<<20 {
-		return nil, os.ErrInvalid
-	}
-	return os.ReadFile(name)
 }
