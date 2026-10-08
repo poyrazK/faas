@@ -334,10 +334,11 @@ func TestOperationsOrderHTTPPostgresRecoveryAcceptance(t *testing.T) {
 		}
 	}
 	orderID := uuid.NewString()
+	workflowRunID := uuid.NewString()
 	if _, err := applicationDB.Exec(ctx, "INSERT INTO public.example_orders(id, platform_tenant_id) VALUES ($1, $2)", orderID, f.tenants[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	input := fmt.Sprintf(`{"order_id":%q}`, orderID)
+	input := fmt.Sprintf(`{"order_id":%q,"workflow_run_id":%q}`, orderID, workflowRunID)
 	backend := &operationsAcceptanceBackend{store: f.store, app: f.app, plan: f.account.Plan}
 	edge := gateway.NewHandlerWith(backend, gateway.NewMetrics(), f.logger).WithConsumerAuth(operationsAcceptanceConsumerStore{f.store}).WithOperationRoutes(gateway.DurableOperationRoutes{Store: f.store, Admission: f.preview})
 	submit := func() *httptest.ResponseRecorder {

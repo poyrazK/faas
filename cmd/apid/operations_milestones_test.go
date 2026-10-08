@@ -99,7 +99,7 @@ func TestDashboardOperationMilestones(t *testing.T) {
 	query := url.Values{"scope": {f.def.Scope}, "subject_type": {"order"}, "subject_id": {"order-42"}}
 	for _, path := range []string{base + "/" + operations[0].ID, base + "?" + query.Encode()} {
 		body := f.get(t, path, http.StatusOK).Body.String()
-		if !strings.Contains(body, "Business milestones") || !strings.Contains(body, "Observed business workflows") || strings.Contains(body, dangerous) || !strings.Contains(body, "public_note") {
+		if !strings.Contains(body, "Business milestones") || !strings.Contains(body, "Business workflows") || strings.Contains(body, dangerous) || !strings.Contains(body, "public_note") {
 			t.Fatalf("missing or unsafe fact projection: %s", body)
 		}
 	}
