@@ -302,6 +302,7 @@ func saveToken(token string) error {
 				PrintWarn(os.Stderr, "Could not remove legacy plaintext token file: %v", lerr)
 			}
 		}
+		clearCompletionCaches()
 		return nil
 	} else {
 		// Keychain unreachable (no D-Bus on headless Linux, locked
@@ -318,7 +319,11 @@ func saveToken(token string) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(p, []byte(token+"\n"), 0o600)
+	if err := os.WriteFile(p, []byte(token+"\n"), 0o600); err != nil {
+		return err
+	}
+	clearCompletionCaches()
+	return nil
 }
 
 // deleteToken clears the token from both stores (keychain + legacy
@@ -340,4 +345,5 @@ func deleteToken() {
 	if lp, err := legacyTokenPath(); err == nil {
 		_ = os.Remove(lp)
 	}
+	clearCompletionCaches()
 }

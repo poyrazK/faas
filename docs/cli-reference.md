@@ -96,7 +96,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`usage`](#usage) | Show this month&#39;s usage (gregale usage [--month YYYY-MM]\|daily [--day YYYY-MM-DD]\|storage [--day YYYY-MM-DD]\|summary) |
 | [`version`](#version) | Print the CLI version |
 | [`config`](#config) | Manage non-secret local CLI settings (config get\|set\|list) |
-| [`wake-timeline`](#wake-timeline) | Walk the per-wake event stream (wake-timeline &lt;slug&gt; &lt;wake-id&gt; [--since RFC3339] [--limit N] [--all]; slug defaults to linked context) |
+| [`wake-timeline`](#wake-timeline) | Walk the per-wake event stream (wake-timeline [&lt;slug&gt;] &lt;wake-id&gt; [--app SLUG] [--since RFC3339] [--limit N] [--all] [--verbose]; slug defaults to linked context) |
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (available on every plan) |
@@ -652,9 +652,22 @@ Manage the local account (account export|delete|restore|status|dpa|slo)
 
 Export account data (GDPR)
 
+`gregale account export [-o <PATH>] [--no-secrets]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `-o <PATH>` | output file |  |
+| `--no-secrets` | exclude the sealed-secret ciphertext slice |  |
+
 ### account delete
 
 Schedule account deletion
+
+`gregale account delete [-q]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `-q` | skip the confirmation prompt |  |
 
 ### account restore
 
@@ -667,6 +680,12 @@ Show account status
 ### account dpa
 
 Show DPA metadata
+
+`gregale account dpa [-o <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `-o <PATH>` | write DPA metadata to a file |  |
 
 ### account slo
 
@@ -1444,6 +1463,17 @@ Audit-log query (audit-events list|get &lt;id&gt;)
 
 List audit events
 
+`gregale audit-events list [--kind-prefix <PREFIX>] [--app-id <UUID>] [--since <RFC3339>] [--limit <N>] [--include-anonymous] [--verbose]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--kind-prefix <PREFIX>` | filter by kind prefix |  |
+| `--app-id <UUID>` | filter by app UUID |  |
+| `--since <RFC3339>` | RFC3339 lower bound |  |
+| `--limit <N>` | maximum rows (1..100; default 50) |  |
+| `--include-anonymous` | include rows without a subject |  |
+| `--verbose` | expand stateless advisory rows |  |
+
 ### audit-events get
 
 Show one audit event
@@ -1783,17 +1813,18 @@ Reliably deliver an event to a registered webhook
 
 List your apps
 
-`gregale apps [<subcommand>] [--quiet]`
+`gregale apps [<subcommand>] [--quiet|-q]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--quiet` | delete one app without prompting (short form: -q) |  |
+| `--quiet|-q` | delete one app without prompting |  |
 
 Examples:
 
 ```sh
 gregale apps
 gregale apps --json
+gregale apps -q my-api
 ```
 
 ### apps ls
@@ -1814,9 +1845,118 @@ List admitted per-route labels for one app
 
 ### apps tcp
 
-Manage raw TCP listeners
+Manage raw TCP listeners for an app
 
-`gregale apps tcp <slug>`
+`gregale apps tcp <slug> <list|add|tls|tls-status|enable|disable|rm|delete>`
+
+#### apps tcp list
+
+List TCP listeners
+
+`gregale apps tcp <slug> list`
+
+#### apps tcp add
+
+Create a TCP listener
+
+`gregale apps tcp <slug> add --name <NAME> --guest-port <PORT> [--public-port <PORT>] [--tls-mode <MODE>] [--tls-hostname <HOST>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | listener name | required |
+| `--guest-port <PORT>` | workload TCP port | required |
+| `--public-port <PORT>` | stable public TCP port (40000..49999) |  |
+| `--tls-mode <MODE>` | TLS mode (default passthrough) | one of `passthrough` · `terminate` |
+| `--tls-hostname <HOST>` | verified app-owned hostname for TLS termination |  |
+
+#### apps tcp tls
+
+Update one listener&#39;s TLS policy
+
+`gregale apps tcp <slug> tls <name> --tls-mode <MODE> [--tls-hostname <HOST>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--tls-mode <MODE>` | required TLS mode | required; one of `passthrough` · `terminate` |
+| `--tls-hostname <HOST>` | verified app-owned termination hostname |  |
+
+#### apps tcp tls-status
+
+Show certificate observations for a listener
+
+`gregale apps tcp <slug> tls-status <name>`
+
+#### apps tcp enable
+
+Enable one listener
+
+`gregale apps tcp <slug> enable <name>`
+
+#### apps tcp disable
+
+Disable one listener
+
+`gregale apps tcp <slug> disable <name>`
+
+#### apps tcp rm
+
+Delete one listener
+
+`gregale apps tcp <slug> rm <name>`
+
+#### apps tcp delete
+
+Alias for rm
+
+`gregale apps tcp <slug> delete <name>`
+
+### apps udp
+
+Manage raw UDP listeners for an app
+
+`gregale apps udp <slug> <list|add|enable|disable|rm|delete>`
+
+#### apps udp list
+
+List UDP listeners
+
+`gregale apps udp <slug> list`
+
+#### apps udp add
+
+Create a UDP listener
+
+`gregale apps udp <slug> add --name <NAME> --guest-port <PORT> [--public-port <PORT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | listener name | required |
+| `--guest-port <PORT>` | workload UDP port | required |
+| `--public-port <PORT>` | stable public UDP port |  |
+
+#### apps udp enable
+
+Enable one listener
+
+`gregale apps udp <slug> enable <name>`
+
+#### apps udp disable
+
+Disable one listener
+
+`gregale apps udp <slug> disable <name>`
+
+#### apps udp rm
+
+Delete one listener
+
+`gregale apps udp <slug> rm <name>`
+
+#### apps udp delete
+
+Alias for rm
+
+`gregale apps udp <slug> delete <name>`
 
 ### apps streaming-cap
 
@@ -1824,28 +1964,21 @@ Show app streaming classification
 
 `gregale apps streaming-cap <slug>`
 
-### apps -q
-
-Delete one app (positional: &lt;slug&gt;)
-
-### apps --quiet
-
-Delete one app (positional: &lt;slug&gt;)
-
 
 ## app
 
 Get/update one app or run a deployment-attached command
 
-`gregale app <slug> [<subcommand>] [--environment <SLUG>] [--visibility <public|internal>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes] [--crawler-policy <wake|cached|block>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>]`
+`gregale app <slug> [<subcommand>] [--concurrency] [--environment <SLUG>] [--visibility <public|internal>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes[=true|false]] [--crawler-policy <wake|cached|block>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--concurrency` | print only the per-VM concurrency bound for the app&#39;s plan |  |
 | `--environment <SLUG>` | read or edit desired workload settings in a project environment |  |
 | `--visibility <public|internal>` | set public edge exposure | one of `public` · `internal` |
-| `--profile <micro|small|medium|large|xlarge>` | set a named RAM/CPU profile |  |
+| `--profile <micro|small|medium|large|xlarge>` | set a named RAM/CPU profile | one of `micro` · `small` · `medium` · `large` · `xlarge` |
 | `--ram <MB>` | set RAM in MB |  |
-| `--cpu-millicores <250|500|1000>` | set sustained CPU allowance |  |
+| `--cpu-millicores <250|500|1000>` | set sustained CPU allowance | one of `250` · `500` · `1000` |
 | `--max-concurrency <N>` | set max_concurrency |  |
 | `--concurrency-overflow <value>` | set saturated concurrency behavior | one of `queue` · `drop` |
 | `--max-queue-depth <N>` | set maximum warm-saturation waiters |  |
@@ -1883,7 +2016,7 @@ Get/update one app or run a deployment-attached command
 | `--consumer-auth-mode <optional|required>` | end-customer API-key policy: optional\|required | one of `optional` · `required` |
 | `--only-declared-routes` | reject undeclared paths before waking the app (OpenAPI or explicit route list) |  |
 | `--no-only-declared-routes` | disable the declared-route pre-wake gate |  |
-| `--head-wakes` | wake a parked app for HEAD / |  |
+| `--head-wakes[=true|false]` | wake a parked app for HEAD / | one of `true` · `false` |
 | `--crawler-policy <wake|cached|block>` | monitor/crawler wake policy | one of `wake` · `cached` · `block` |
 | `--health-path <PATH>` | set the monitor-facing health path |  |
 | `--health-path-wakes` | allow health probes to wake the app |  |
@@ -1906,7 +2039,7 @@ gregale app my-api --consumer-auth-mode required --json
 
 Preview, save, apply or update app resource and runtime settings
 
-`gregale app <slug> scale [--plan] [--out <PATH>] [--apply <PATH>] [--confirm] [--environment <SLUG>]`
+`gregale app <slug> scale [--plan] [--out <PATH>] [--apply <PATH>] [--confirm] [--environment <SLUG>] [--profile <PROFILE>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <POLICY>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <MS>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <SECONDS>] [--idle <SECONDS>] [--request-timeout <SECONDS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy <POLICY>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <PROTOCOL>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1915,6 +2048,34 @@ Preview, save, apply or update app resource and runtime settings
 | `--apply <PATH>` | apply a saved scale plan JSON file |  |
 | `--confirm` | confirm applying the saved plan (requires --apply) |  |
 | `--environment <SLUG>` | edit desired workload settings in a project environment |  |
+| `--profile <PROFILE>` | named RAM/CPU profile | one of `micro` · `small` · `medium` · `large` · `xlarge` |
+| `--ram <MB>` | RAM in MB |  |
+| `--cpu-millicores <250|500|1000>` | sustained CPU allowance | one of `250` · `500` · `1000` |
+| `--max-concurrency <N>` | maximum concurrent requests |  |
+| `--concurrency-overflow <POLICY>` | saturated concurrency behavior | one of `queue` · `drop` |
+| `--max-queue-depth <N>` | maximum queued requests at warm saturation |  |
+| `--max-queue-wait <DURATION>` | maximum warm-saturation wait |  |
+| `--max-queue-wait-ms <MS>` | maximum queued concurrency wait |  |
+| `--wake-max-queue-depth <N>` | per-app cold-wake waiter cap |  |
+| `--wake-max-queue-wait-seconds <SECONDS>` | per-app cold-wake wait budget |  |
+| `--idle <SECONDS>` | idle timeout |  |
+| `--request-timeout <SECONDS>` | per-app request timeout |  |
+| `--min <N>` | minimum warm instances |  |
+| `--autoscale-target-rps <N>` | per-instance RPS scale-up target |  |
+| `--autoscale-target-cpu-pct <1..100>` | per-instance CPU scale-up target |  |
+| `--warm-snapshot` | enable warm-snapshot tier |  |
+| `--no-warm-snapshot` | disable warm-snapshot tier |  |
+| `--warm-snapshot-min-requests <N>` | warm-snapshot minimum request gate |  |
+| `--warm-snapshot-min-ms <MS>` | warm-snapshot ready-time gate |  |
+| `--warm-pool-size <N>` | paused warm-pool size |  |
+| `--require-authn` | require a bearer token on each request |  |
+| `--no-require-authn` | remove the bearer-token requirement |  |
+| `--head-wakes[=true|false]` | wake a parked app for HEAD requests | one of `true` · `false` |
+| `--crawler-policy <POLICY>` | monitor/crawler wake policy | one of `wake` · `cached` · `block` |
+| `--health-path <PATH>` | monitor-facing health path |  |
+| `--health-path-wakes` | allow health probes to wake the app |  |
+| `--no-health-path-wakes` | answer health probes without waking |  |
+| `--app-protocol <PROTOCOL>` | wire-protocol selector | one of `http1` · `http2` · `grpc` |
 
 Examples:
 
@@ -2010,7 +2171,7 @@ Show posture or configure deploy enforcement
 
 Inspect or update the outbound CIDR allowlist
 
-`gregale app <slug> egress-allowlist`
+`gregale app <slug> egress-allowlist <show|add|remove|clear>`
 
 #### app egress-allowlist show
 
@@ -2040,7 +2201,7 @@ Clear the configured egress policy
 
 Inspect or update the extra outbound TCP ports (Pro/Scale)
 
-`gregale app <slug> egress-ports`
+`gregale app <slug> egress-ports <show|add|remove|clear>`
 
 #### app egress-ports show
 
@@ -2070,7 +2231,7 @@ Clear the configured egress policy
 
 Inspect networking or manage private-network attachments
 
-`gregale app <slug> network`
+`gregale app <slug> network <show|doctor|attach|detach>`
 
 #### app network show
 
@@ -2105,7 +2266,7 @@ Remove the private-network attachment
 
 Inspect or pin a static outbound address (Pro/Scale)
 
-`gregale app <slug> static-egress-ip`
+`gregale app <slug> static-egress-ip <show|set|clear>`
 
 #### app static-egress-ip show
 
@@ -2133,9 +2294,118 @@ List admitted per-route labels for one app
 
 ### app tcp
 
-Manage raw TCP listeners
+Manage raw TCP listeners for an app
 
-`gregale app <slug> tcp`
+`gregale app <slug> tcp <list|add|tls|tls-status|enable|disable|rm|delete>`
+
+#### app tcp list
+
+List TCP listeners
+
+`gregale app <slug> tcp list`
+
+#### app tcp add
+
+Create a TCP listener
+
+`gregale app <slug> tcp add --name <NAME> --guest-port <PORT> [--public-port <PORT>] [--tls-mode <MODE>] [--tls-hostname <HOST>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | listener name | required |
+| `--guest-port <PORT>` | workload TCP port | required |
+| `--public-port <PORT>` | stable public TCP port (40000..49999) |  |
+| `--tls-mode <MODE>` | TLS mode (default passthrough) | one of `passthrough` · `terminate` |
+| `--tls-hostname <HOST>` | verified app-owned hostname for TLS termination |  |
+
+#### app tcp tls
+
+Update one listener&#39;s TLS policy
+
+`gregale app <slug> tcp tls <name> --tls-mode <MODE> [--tls-hostname <HOST>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--tls-mode <MODE>` | required TLS mode | required; one of `passthrough` · `terminate` |
+| `--tls-hostname <HOST>` | verified app-owned termination hostname |  |
+
+#### app tcp tls-status
+
+Show certificate observations for a listener
+
+`gregale app <slug> tcp tls-status <name>`
+
+#### app tcp enable
+
+Enable one listener
+
+`gregale app <slug> tcp enable <name>`
+
+#### app tcp disable
+
+Disable one listener
+
+`gregale app <slug> tcp disable <name>`
+
+#### app tcp rm
+
+Delete one listener
+
+`gregale app <slug> tcp rm <name>`
+
+#### app tcp delete
+
+Alias for rm
+
+`gregale app <slug> tcp delete <name>`
+
+### app udp
+
+Manage raw UDP listeners for an app
+
+`gregale app <slug> udp <list|add|enable|disable|rm|delete>`
+
+#### app udp list
+
+List UDP listeners
+
+`gregale app <slug> udp list`
+
+#### app udp add
+
+Create a UDP listener
+
+`gregale app <slug> udp add --name <NAME> --guest-port <PORT> [--public-port <PORT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | listener name | required |
+| `--guest-port <PORT>` | workload UDP port | required |
+| `--public-port <PORT>` | stable public UDP port |  |
+
+#### app udp enable
+
+Enable one listener
+
+`gregale app <slug> udp enable <name>`
+
+#### app udp disable
+
+Disable one listener
+
+`gregale app <slug> udp disable <name>`
+
+#### app udp rm
+
+Delete one listener
+
+`gregale app <slug> udp rm <name>`
+
+#### app udp delete
+
+Alias for rm
+
+`gregale app <slug> udp delete <name>`
 
 
 ## billing
@@ -2155,6 +2425,13 @@ gregale billing export --month 2026-09 --format csv --out invoices.csv
 
 Open the active billing provider&#39;s portal
 
+`gregale billing portal [--print] [--no-open]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--print` | print the portal URL without opening a browser |  |
+| `--no-open` | alias of --print |  |
+
 ### billing retry
 
 Retry failed payment when supported; Polar uses the portal
@@ -2166,6 +2443,13 @@ Cancel the subscription at period end
 ### billing payment-method
 
 Show the card on file
+
+`gregale billing payment-method [--print] [--no-open]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--print` | print the card summary and portal URL without opening a browser |  |
+| `--no-open` | alias of --print |  |
 
 ### billing status
 
@@ -3344,7 +3628,11 @@ Send external event to a workflow run
 
 Open the account dashboard in your browser
 
-`gregale dashboard`
+`gregale dashboard [--stateless]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--stateless` | open the stateless-advisory landing page instead of the account page |  |
 
 
 ## doctor
@@ -3496,12 +3784,13 @@ Remove an alias without deleting its deployment
 
 Inspect a deployment, wait for its rollout, advance a canary, or set its minimum instances
 
-`gregale deployment [<subcommand>] <id|vN> [--app <SLUG>] [--show-scan] [--min <N>]`
+`gregale deployment [<subcommand>] <id|vN> [--app <SLUG>] [--show-scan] [--show-secret-scan] [--min <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 | `--show-scan` | include the per-deploy grype scan payload |  |
+| `--show-secret-scan` | include the per-deploy image-layer secret-scan payload |  |
 | `--min <N>` | min_instances floor (&gt;= 0) |  |
 
 Examples:
@@ -3665,7 +3954,11 @@ Hide obsolete deployments older than a cutoff
 
 Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
-`gregale deploys retry <id>`
+`gregale deploys retry [--from <STAGE>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <STAGE>` | retry from this stage (defaults to the failing stage) | one of `source_download` · `dependency_restore` · `image_build` · `security_scan` · `snapshot_prepare` · `readiness` |
 
 
 ## deploy
@@ -3845,7 +4138,7 @@ show developer-environment quota usage
 
 run an HTTP service locally in a remote development environment
 
-`gregale dev bridge [--environment <ENV>] [--local-port <PORT>] [--dependencies <APPS>] [--entrypoint <APP>] [--inspect] [--replay-webhook <INVOCATION>] [--ready-path <PATH>] [--bind-env <BINDING>]`
+`gregale dev bridge <list|status|revoke|doctor> [--environment <ENV>] [--local-port <PORT>] [--dependencies <APPS>] [--entrypoint <APP>] [--inspect] [--replay-webhook <INVOCATION>] [--ready-path <PATH>] [--bind-env <BINDING>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4242,7 +4535,7 @@ gregale preview review pr-42-api pr-42-worker --test-report pr-42-api=api-tests.
 
 Build customer impact rosters and track route migrations
 
-`gregale preview customers --report <PATH> [--by <consumer|tenant>] [--format <FORMAT>] [--out <PATH>]`
+`gregale preview customers <track|progress|migration> --report <PATH> [--by <consumer|tenant>] [--format <FORMAT>] [--out <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4307,7 +4600,7 @@ gregale preview customers progress --snapshot migration-week-1.json --snapshot m
 
 Join contract compatibility with customer cutover evidence
 
-`gregale preview customers migration`
+`gregale preview customers migration <review|diff>`
 
 ##### preview customers migration review
 
@@ -4425,12 +4718,14 @@ List immutable configuration versions
 
 Explain a customer&#39;s decision
 
-`gregale flags inspect --key <key> [--customer-id <UUID>] [--version <number>]`
+`gregale flags inspect --key <key> [--customer-id <UUID>] [--subject-id <ID>] [--fallback-variant <NAME>] [--version <number>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--key <key>` | flag key | required |
 | `--customer-id <UUID>` | customer UUID |  |
+| `--subject-id <ID>` | authenticated application subject (requires --customer-id) |  |
+| `--fallback-variant <NAME>` | named-variant fallback |  |
 | `--version <number>` | historical configuration version |  |
 
 ### flags rollback
@@ -4448,16 +4743,43 @@ Publish an earlier configuration
 
 Inspect request evidence by flag value
 
-`gregale flags requests --key <key> [--customer-id <UUID>] [--value <bool>] [--used <bool>] [--since <duration>] [--cursor <cursor>]`
+`gregale flags requests --key <key> [--customer-id <UUID>] [--value <bool>] [--variant <NAME>] [--used <bool>] [--since <duration>] [--cursor <cursor>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--key <key>` | flag key | required |
 | `--customer-id <UUID>` | customer UUID |  |
 | `--value <bool>` | true or false |  |
+| `--variant <NAME>` | filter by named variant |  |
 | `--used <bool>` | true or false exposure |  |
 | `--since <duration>` | lookback (default 24h) |  |
 | `--cursor <cursor>` | next-page cursor |  |
+
+### flags outcomes
+
+Inspect flag decision outcomes
+
+`gregale flags outcomes --key <key> [--customer-id <UUID>] [--rule-id <ID>] [--config-version <number>] [--since <duration>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--key <key>` | flag key | required |
+| `--customer-id <UUID>` | customer UUID |  |
+| `--rule-id <ID>` | filter to a targeting rule |  |
+| `--config-version <number>` | filter to one configuration version |  |
+| `--since <duration>` | lookback (default 24h) |  |
+
+### flags promote
+
+Promote a targeting rule rollout
+
+`gregale flags promote --key <key> --rule-id <ID> --expected-version <number>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--key <key>` | flag key | required |
+| `--rule-id <ID>` | targeting rule ID | required |
+| `--expected-version <number>` | current configuration version | required |
 
 
 ## platform-tenants
@@ -4658,7 +4980,7 @@ Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breake
 
 Add an edge rule
 
-`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields]`
+`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled[=true|false]] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--cache-stale-if-error-seconds <SECONDS>] [--budget-allow-override-header <HEADER>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4669,7 +4991,7 @@ Add an edge rule
 | `--match-method <METHOD>` | HTTP method to match (repeat for multiple) |  |
 | `--match-header <Name=Value>` | exact request header selector (repeat) |  |
 | `--priority <N>` | match priority; lower wins (default 100) |  |
-| `--enabled` | whether the rule is enabled (default true) |  |
+| `--enabled[=true|false]` | whether the rule is enabled (default true) | one of `true` · `false` |
 | `--throttle-requests-per-second <RPS>` | kind=throttle: refill rate in requests per second |  |
 | `--throttle-burst <N>` | kind=throttle: token-bucket burst |  |
 | `--throttle-key-by <KEY>` | kind=throttle: bucket key (none\|api_key\|consumer_id\|jwt_subject\|jwt_claim\|country) |  |
@@ -4705,6 +5027,26 @@ Add an edge rule
 | `--validate-max-body-bytes <N>` | optional body cap in bytes (0 = plan default) |  |
 | `--validate-apply-while-streaming` | also validate streaming requests |  |
 | `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
+| `--cors-allow-credentials` | kind=cors: allow credentials |  |
+| `--cors-max-age-seconds <SECONDS>` | kind=cors: preflight max age |  |
+| `--jwt-platform-tenant-external-ref-claim <CLAIM>` | kind=jwt: claim containing the platform tenant external reference |  |
+| `--limit-max-body-bytes <BYTES>` | kind=limit: buffered body cap (required; 1..25 MiB) |  |
+| `--limit-max-body-bytes-streaming <BYTES>` | kind=limit: streaming body cap (0 inherits buffered cap) |  |
+| `--throttle-jwt-claim <CLAIM>` | kind=throttle: JWT claim when key-by is jwt_claim |  |
+| `--throttle-max-keys-per-rule <N>` | kind=throttle: maximum distinct consumer buckets |  |
+| `--throttle-missing-key-policy <POLICY>` | kind=throttle: behavior when identity is missing | one of `shared` · `reject` |
+| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure (max 300) |  |
+| `--budget-allow-override-header <HEADER>` | kind=budget: header allowed to override the budget |  |
+| `--retry-allow-non-idempotent` | kind=retry: allow POST/PATCH replay when Idempotency-Key is honored |  |
+| `--retry-min-remaining-ms <MS>` | kind=retry: remaining request budget required before replay |  |
+| `--retry-backoff-ms <MS>` | kind=retry: delay before replay |  |
+| `--retry-budget-percent <PERCENT>` | kind=retry: retry budget as percent of originals |  |
+| `--retry-budget-min-retries <N>` | kind=retry: minimum retries allowed per window |  |
+| `--circuit-min-requests <N>` | kind=circuit_breaker: observations before consulting the failure ratio |  |
+| `--circuit-window-seconds <SECONDS>` | kind=circuit_breaker: rolling failure window |  |
+| `--circuit-max-open-seconds <SECONDS>` | kind=circuit_breaker: maximum open interval |  |
+| `--maintenance-retry-after-seconds <SECONDS>` | kind=maintenance: Retry-After hint |  |
+| `--maintenance-message <TEXT>` | kind=maintenance: operator message |  |
 
 Examples:
 
@@ -4727,10 +5069,77 @@ Show one edge rule
 
 Update one edge rule
 
-`gregale edge-rules update [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] <id>`
+`gregale edge-rules update [--match-host <HOST>] [--match-path <PATH>] [--match-method <METHOD>]... [--match-header <NAME=VALUE>]... [--clear-match-headers] [--priority <N>] [--enable] [--disable] [--kind <KIND>] [--route-target-slug <SLUG>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--redirect-status <CODE>] [--redirect-to <URL>] [--redirect-header <NAME:VALUE>]... [--headers-request-add <NAME:VALUE>]... [--headers-request-set <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-set <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--cors-allow-origin <ORIGIN>]... [--cors-allow-method <METHOD>]... [--cors-allow-header <HEADER>]... [--cors-expose-header <HEADER>]... [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--jwt-audience <AUDIENCE>]... [--jwt-algorithm <ALG>]... [--jwt-required-claim <NAME=VALUE>]... [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--ip-allow <CIDR>]... [--ip-deny <CIDR>]... [--geo-allow <CC>]... [--geo-deny <CC>]... [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--cache-max-age-seconds <SECONDS>] [--cache-stale-while-revalidate-seconds <SECONDS>] [--cache-stale-if-error-seconds <SECONDS>] [--cache-vary-on <HEADER>]... [--cache-methods <METHOD>]... [--budget-ms <MS>] [--budget-allow-override-header <HEADER>] [--retry-max-attempts <N>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-failure-threshold <RATIO>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-open-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--respond-status <CODE>] [--respond-body <JSON>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--match-host <HOST>` | new host to match |  |
+| `--match-path <PATH>` | new path to match |  |
+| `--match-method <METHOD>` | replacement HTTP method (repeatable) |  |
+| `--match-header <NAME=VALUE>` | replacement exact request header selector (repeatable) |  |
+| `--clear-match-headers` | remove all request header selectors |  |
+| `--priority <N>` | new match priority |  |
+| `--enable` | enable the rule |  |
+| `--disable` | disable the rule |  |
+| `--kind <KIND>` | new action kind (required when changing action flags) | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `async` |
+| `--route-target-slug <SLUG>` | kind=route: target app slug |  |
+| `--rewrite-from <PATH>` | kind=rewrite: source path |  |
+| `--rewrite-to <PATH>` | kind=rewrite: destination path |  |
+| `--redirect-status <CODE>` | kind=redirect: response status |  |
+| `--redirect-to <URL>` | kind=redirect: Location URL |  |
+| `--redirect-header <NAME:VALUE>` | kind=redirect: extra response header (repeatable) |  |
+| `--headers-request-add <NAME:VALUE>` | kind=headers: request header to add (repeatable) |  |
+| `--headers-request-set <NAME:VALUE>` | kind=headers: request header to set (repeatable) |  |
+| `--headers-request-remove <NAME>` | kind=headers: request header to remove (repeatable) |  |
+| `--headers-response-add <NAME:VALUE>` | kind=headers: response header to add (repeatable) |  |
+| `--headers-response-set <NAME:VALUE>` | kind=headers: response header to set (repeatable) |  |
+| `--headers-response-remove <NAME>` | kind=headers: response header to remove (repeatable) |  |
+| `--cors-allow-origin <ORIGIN>` | kind=cors: allowed origin (repeatable) |  |
+| `--cors-allow-method <METHOD>` | kind=cors: allowed method (repeatable) |  |
+| `--cors-allow-header <HEADER>` | kind=cors: allowed header (repeatable) |  |
+| `--cors-expose-header <HEADER>` | kind=cors: exposed header (repeatable) |  |
+| `--cors-allow-credentials` | kind=cors: allow credentials |  |
+| `--cors-max-age-seconds <SECONDS>` | kind=cors: preflight max age |  |
+| `--jwt-issuer <ISSUER>` | kind=jwt: token issuer |  |
+| `--jwt-jwks-url <URL>` | kind=jwt: JWKS URL |  |
+| `--jwt-audience <AUDIENCE>` | kind=jwt: required audience (repeatable) |  |
+| `--jwt-algorithm <ALG>` | kind=jwt: allowed signing algorithm (repeatable) |  |
+| `--jwt-required-claim <NAME=VALUE>` | kind=jwt: required claim (repeatable) |  |
+| `--jwt-platform-tenant-external-ref-claim <CLAIM>` | kind=jwt: claim containing the platform tenant external reference |  |
+| `--ip-allow <CIDR>` | kind=ip: allowed CIDR (repeatable) |  |
+| `--ip-deny <CIDR>` | kind=ip: denied CIDR (repeatable) |  |
+| `--geo-allow <CC>` | kind=geo: allowed country code (repeatable) |  |
+| `--geo-deny <CC>` | kind=geo: denied country code (repeatable) |  |
+| `--limit-max-body-bytes <BYTES>` | kind=limit: buffered body cap |  |
+| `--limit-max-body-bytes-streaming <BYTES>` | kind=limit: streaming body cap (0 inherits buffered cap) |  |
+| `--throttle-requests-per-second <RPS>` | kind=throttle: refill rate |  |
+| `--throttle-burst <N>` | kind=throttle: token-bucket burst |  |
+| `--throttle-key-by <KEY>` | kind=throttle: bucket key | one of `none` · `api_key` · `consumer_id` · `jwt_subject` · `jwt_claim` · `country` |
+| `--throttle-jwt-claim <CLAIM>` | kind=throttle: JWT claim when key-by is jwt_claim |  |
+| `--throttle-max-keys-per-rule <N>` | kind=throttle: maximum distinct consumer buckets |  |
+| `--throttle-missing-key-policy <POLICY>` | kind=throttle: behavior when identity is missing | one of `shared` · `reject` |
+| `--cache-max-age-seconds <SECONDS>` | kind=cache: fresh window |  |
+| `--cache-stale-while-revalidate-seconds <SECONDS>` | kind=cache: stale-while-revalidate window |  |
+| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure |  |
+| `--cache-vary-on <HEADER>` | kind=cache: header to vary on (repeatable) |  |
+| `--cache-methods <METHOD>` | kind=cache: cacheable method (repeatable) |  |
+| `--budget-ms <MS>` | kind=budget: per-request wall-clock budget |  |
+| `--budget-allow-override-header <HEADER>` | kind=budget: header allowed to override the budget |  |
+| `--retry-max-attempts <N>` | kind=retry: total attempts including the original |  |
+| `--retry-allow-non-idempotent` | kind=retry: allow POST/PATCH replay when Idempotency-Key is honored |  |
+| `--retry-min-remaining-ms <MS>` | kind=retry: remaining budget required before replay |  |
+| `--retry-backoff-ms <MS>` | kind=retry: delay before replay |  |
+| `--retry-budget-percent <PERCENT>` | kind=retry: retry budget as percent of originals |  |
+| `--retry-budget-min-retries <N>` | kind=retry: minimum retries allowed per window |  |
+| `--circuit-failure-threshold <RATIO>` | kind=circuit_breaker: failure ratio that opens the breaker |  |
+| `--circuit-min-requests <N>` | kind=circuit_breaker: observations before consulting the ratio |  |
+| `--circuit-window-seconds <SECONDS>` | kind=circuit_breaker: rolling failure window |  |
+| `--circuit-open-seconds <SECONDS>` | kind=circuit_breaker: first open interval |  |
+| `--circuit-max-open-seconds <SECONDS>` | kind=circuit_breaker: maximum open interval |  |
+| `--maintenance-retry-after-seconds <SECONDS>` | kind=maintenance: Retry-After hint |  |
+| `--maintenance-message <TEXT>` | kind=maintenance: operator message |  |
+| `--respond-status <CODE>` | kind=respond: response status |  |
+| `--respond-body <JSON>` | kind=respond: JSON response body |  |
 | `--on-success-webhook <ID>` | success webhook subscription |  |
 | `--on-failure-webhook <ID>` | failure webhook subscription |  |
 | `--async-max-attempts <N>` | total attempts (0 = plan default; capped by plan) |  |
@@ -5352,12 +5761,13 @@ gregale env clone-status <operation-id> --project shop --wait
 
 Pull sealed-secret keys to a .env skeleton (values blank)
 
-`gregale env pull [--app <slug>] [--scope <SCOPE>]`
+`gregale env pull [--app <slug>] [--scope <SCOPE>] [-o <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (defaults to linked context) |  |
 | `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
+| `-o <PATH>` | output file (default .env) |  |
 
 Examples:
 
@@ -5370,14 +5780,16 @@ gregale env pull --app my-api --scope staging
 
 Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)
 
-`gregale env push [--app <slug>] [--scope <SCOPE>] [--from-stdin] [--restart]`
+`gregale env push [--app <slug>] [--scope <SCOPE>] [-f <PATH>] [--from-stdin] [--restart] [--secret-scan <MODE>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (defaults to linked context) |  |
 | `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
+| `-f <PATH>` | input file (default .env) |  |
 | `--from-stdin` | read KEY=VALUE pairs from stdin |  |
 | `--restart` | restart app after applying changes (otherwise changes apply on next cold wake) |  |
+| `--secret-scan <MODE>` | scan pairs before pushing | one of `on` · `off` · `strict` · `source-tree` |
 
 Examples:
 
@@ -5521,7 +5933,7 @@ List runs
 
 Show workflow status or manage an agent-owned Runs plan
 
-`gregale runs workflow <workflow-id>`
+`gregale runs workflow <run> <workflow-id>`
 
 #### runs workflow run
 
@@ -5609,7 +6021,7 @@ Wait for one invocation to finish (exit 124 on timeout, 130 on Ctrl-C)
 
 Group failures and track ownership and release-aware resolution
 
-`gregale issues [<subcommand>] [--app <SLUG>] [--deployment <UUID>] [--state <STATE>] [--environment <ENV>] [--cursor <CURSOR>] [--release-cursor <CURSOR>] [--activity-cursor <CURSOR>] [--assignee <OWNER>] [--sort <ORDER>] [--min-customers <N>] [--since <RFC3339>] [--until <RFC3339>] [--name <NAME>] [--expires-in <D>]`
+`gregale issues [<subcommand>] [--app <SLUG>] [--deployment <UUID>] [--state <STATE>] [--environment <ENV>] [--cursor <CURSOR>] [--release-cursor <CURSOR>] [--activity-cursor <CURSOR>] [--assignee <OWNER>] [--sort <ORDER>] [--min-customers <N>] [--since <RFC3339>] [--until <RFC3339>] [--name <NAME>] [--expires-in <D>] [--rules-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5627,6 +6039,7 @@ Group failures and track ownership and release-aware resolution
 | `--until <RFC3339>` | ignore until |  |
 | `--name <NAME>` | credential name |  |
 | `--expires-in <D>` | credential lifetime |  |
+| `--rules-file <PATH>` | ownership-rules JSON policy file to replace rules; use - for stdin |  |
 
 Examples:
 
@@ -5719,11 +6132,12 @@ Read or configure customer-impact alert threshold
 
 Read or replace automatic assignment rules
 
-`gregale issues ownership-rules --app <SLUG>`
+`gregale issues ownership-rules --app <SLUG> [--rules-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+| `--rules-file <PATH>` | JSON policy file to replace rules; use - for stdin |  |
 
 ### issues tokens
 
@@ -6268,31 +6682,142 @@ Show observed dependency latency and regressions
 
 Observed debugger signal coverage (coverage &lt;slug&gt; [--since D])
 
-`gregale debug coverage <slug>`
+`gregale debug coverage [--since <DURATION>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | lookback window |  |
 
 ### debug running
 
 Explain why an app is still running, with request evidence when available (running &lt;slug&gt; [--since D] [--limit N])
 
-`gregale debug running <slug>`
+`gregale debug running [--since <DURATION>] [--limit <N>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | lookback window |  |
+| `--limit <N>` | maximum recent observations (1..100; default 20) |  |
 
 ### debug regressions
 
-Regressions (live watch, lifecycle actions, per-app/--all, rollback)
+List, watch, triage, or roll back regressions
 
-`gregale debug regressions [<slug>]`
+`gregale debug regressions <watch|ack|acknowledge|dismiss|resolve|reopen|rollback> [--since <DURATION>] [--all] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | lookback window |  |
+| `--all` | include every app in the account |  |
+
+#### debug regressions watch
+
+Watch regression changes (live stream by default)
+
+`gregale debug regressions watch [--since <DURATION>] [--interval <DURATION>] [--all] [--poll] [--once] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | lookback window |  |
+| `--interval <DURATION>` | poll interval (250ms..1h) |  |
+| `--all` | watch every app in the account |  |
+| `--poll` | poll instead of using the live event stream |  |
+| `--once` | poll once and exit |  |
+
+#### debug regressions ack
+
+Acknowledge a regression
+
+`gregale debug regressions ack --deployment-id <UUID> --route <PATH> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment-id <UUID>` | regression deployment UUID | required |
+| `--route <PATH>` | regression route | required |
+
+#### debug regressions acknowledge
+
+Acknowledge a regression
+
+`gregale debug regressions acknowledge --deployment-id <UUID> --route <PATH> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment-id <UUID>` | regression deployment UUID | required |
+| `--route <PATH>` | regression route | required |
+
+#### debug regressions dismiss
+
+Dismiss a regression
+
+`gregale debug regressions dismiss --deployment-id <UUID> --route <PATH> [--dismissed-until <RFC3339>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment-id <UUID>` | regression deployment UUID | required |
+| `--route <PATH>` | regression route | required |
+| `--dismissed-until <RFC3339>` | dismissal expiry (RFC3339; default 24h) |  |
+
+#### debug regressions resolve
+
+Resolve a regression
+
+`gregale debug regressions resolve --deployment-id <UUID> --route <PATH> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment-id <UUID>` | regression deployment UUID | required |
+| `--route <PATH>` | regression route | required |
+
+#### debug regressions reopen
+
+Reopen a regression
+
+`gregale debug regressions reopen --deployment-id <UUID> --route <PATH> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment-id <UUID>` | regression deployment UUID | required |
+| `--route <PATH>` | regression route | required |
+
+#### debug regressions rollback
+
+Roll back an app from the regressions view
+
+`gregale debug regressions rollback [--to <ID>] --yes <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--to <ID>` | target superseded deployment ID |  |
+| `--yes` | confirm the rollback | required |
 
 ### debug compare
 
 Per-route deployment-vs-deployment compare
 
-`gregale debug compare <slug>`
+`gregale debug compare --source <ID> --mirror <ID> [--route <PATH>] [--since <DURATION>] [--until <RFC3339>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--source <ID>` | source deployment ID | required |
+| `--mirror <ID>` | comparison deployment ID | required |
+| `--route <PATH>` | exact route filter |  |
+| `--since <DURATION>` | lookback window |  |
+| `--until <RFC3339>` | end of comparison window (RFC3339) |  |
 
 ### debug bundle
 
-Export a redacted incident bundle with coverage (bundle &lt;slug&gt; &lt;request-id-or-row-id&gt; [--output PATH])
+Export a redacted incident bundle with coverage
 
-`gregale debug bundle <slug> <request-id-or-row-id>`
+`gregale debug bundle [--since <DURATION>] [--route <PATH>] [--source <ID>] [--mirror <ID>] [--output <PATH>] <slug> <request-id-or-row-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | regression and comparison lookback |  |
+| `--route <PATH>` | route filter for optional deployment comparison |  |
+| `--source <ID>` | source deployment ID (requires --mirror) |  |
+| `--mirror <ID>` | comparison deployment ID (requires --source) |  |
+| `--output <PATH>` | write bundle to PATH (default stdout; use - for stdout) |  |
 
 
 ## trace
@@ -6380,7 +6905,14 @@ gregale keys rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a
 
 ### keys grace-window
 
-Set the rotation grace window
+Read or update the rotation grace window
+
+`gregale keys grace-window [--reset] [--days <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--reset` | clear the account override and use the plan default |  |
+| `--days <N>` | new grace window in days (0 or greater) |  |
 
 
 ## login
@@ -6517,27 +7049,52 @@ Manage account MFA (mfa enroll|confirm|verify|recover|disable)
 
 Begin TOTP enrolment
 
+`gregale mfa enroll [--qr-out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--qr-out <PATH>` | write the QR PNG to this path |  |
+
 ### mfa confirm
 
-Confirm an enrolment code
+Confirm an enrolment code (positional code or --code)
 
-`gregale mfa confirm <6-digit-code>`
+`gregale mfa confirm [--code <CODE>] [<6-digit-code>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--code <CODE>` | 6-digit TOTP (alternative to positional code) |  |
 
 ### mfa verify
 
-Verify a TOTP code (step-up)
+Verify a TOTP code (step-up; positional code or --code)
 
-`gregale mfa verify <6-digit-code>`
+`gregale mfa verify [--code <CODE>] [<6-digit-code>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--code <CODE>` | 6-digit TOTP (alternative to positional code) |  |
 
 ### mfa recover
 
-Use a recovery code
+Use a recovery code (positional code or --code)
 
-`gregale mfa recover <recovery-code>`
+`gregale mfa recover [--code <CODE>] [<recovery-code>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--code <CODE>` | recovery code (alternative to positional code) |  |
 
 ### mfa disable
 
 Disable MFA
+
+`gregale mfa disable [--password <PASSWORD>] [--recovery-code <CODE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--password <PASSWORD>` | account password (prompts when omitted) |  |
+| `--recovery-code <CODE>` | single-use recovery code (alternative to password) |  |
 
 
 ## open
@@ -6597,7 +7154,11 @@ Show the global infrastructure timeline
 
 Delete one org
 
-`gregale orgs rm <slug>`
+`gregale orgs rm [-q] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `-q` | skip the confirmation prompt |  |
 
 ### orgs members
 
@@ -7111,7 +7672,7 @@ Show one endpoint and safe auth-rotation status
 
 Create a managed realtime endpoint
 
-`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--callback-auth-token <TOKEN>] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--max-connections <N>] <slug>`
+`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--callback-auth-token <TOKEN>] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--auth-token <TOKEN>] [--auth-issuer <URL>] [--auth-jwks-url <URL>] [--auth-audience <AUDIENCE>]... [--auth-algorithm <ALG>]... [--auth-claim <KEY=VALUE>]... [--allowed-origin <ORIGIN>]... [--max-connections <N>] [--max-message-bytes <N>] [--max-connection-age-seconds <SECONDS>] [--enabled[=true|false]] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7121,15 +7682,50 @@ Create a managed realtime endpoint
 | `--connect-path <PATH>` | callback path for connect events |  |
 | `--message-path <PATH>` | callback path for message events |  |
 | `--disconnect-path <PATH>` | callback path for disconnect events |  |
-| `--auth-mode <MODE>` | client auth mode (none\|static_bearer\|oidc_jwt) |  |
+| `--auth-mode <MODE>` | client auth mode | one of `none` · `static_bearer` · `oidc_jwt` |
 | `--auth-token-stdin` | read the client static bearer token from stdin |  |
+| `--auth-token <TOKEN>` | client static bearer token (prefer --auth-token-stdin) |  |
+| `--auth-issuer <URL>` | OIDC issuer URL |  |
+| `--auth-jwks-url <URL>` | OIDC JWKS URL |  |
+| `--auth-audience <AUDIENCE>` | OIDC audience (repeatable) |  |
+| `--auth-algorithm <ALG>` | OIDC signing algorithm (repeatable) |  |
+| `--auth-claim <KEY=VALUE>` | required OIDC claim as KEY=VALUE (repeatable) |  |
+| `--allowed-origin <ORIGIN>` | exact browser origin (repeatable) |  |
 | `--max-connections <N>` | per-endpoint connection cap (0 inherits the default) |  |
+| `--max-message-bytes <N>` | decoded message size cap (0 inherits the default) |  |
+| `--max-connection-age-seconds <SECONDS>` | connection age cap (0 inherits the default) |  |
+| `--enabled[=true|false]` | create enabled or disabled | one of `true` · `false` |
 
 ### realtime update
 
 Update endpoint callback, auth, or connection policy
 
-`gregale realtime update <app> <endpoint-id>`
+`gregale realtime update [--callback-url <URL>] [--callback-auth-token-stdin] [--callback-auth-token <TOKEN>] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-token-stdin] [--auth-token <TOKEN>] [--auth-mode <MODE>] [--auth-issuer <URL>] [--auth-jwks-url <URL>] [--auth-audience <AUDIENCE>]... [--auth-algorithm <ALG>]... [--auth-claim <KEY=VALUE>]... [--clear-auth-claims] [--allowed-origin <ORIGIN>]... [--clear-allowed-origins] [--max-connections <N>] [--max-message-bytes <N>] [--max-connection-age-seconds <SECONDS>] [--enable] [--disable] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--callback-url <URL>` | new application callback URL |  |
+| `--callback-auth-token-stdin` | read replacement callback bearer token from stdin |  |
+| `--callback-auth-token <TOKEN>` | replacement callback bearer token (prefer --callback-auth-token-stdin) |  |
+| `--connect-path <PATH>` | new callback path for connect events |  |
+| `--message-path <PATH>` | new callback path for message events |  |
+| `--disconnect-path <PATH>` | new callback path for disconnect events |  |
+| `--auth-token-stdin` | read replacement client bearer token from stdin |  |
+| `--auth-token <TOKEN>` | new client static bearer token (prefer --auth-token-stdin) |  |
+| `--auth-mode <MODE>` | new client auth mode | one of `none` · `static_bearer` · `oidc_jwt` |
+| `--auth-issuer <URL>` | new OIDC issuer URL |  |
+| `--auth-jwks-url <URL>` | new OIDC JWKS URL |  |
+| `--auth-audience <AUDIENCE>` | replace OIDC audiences (repeatable) |  |
+| `--auth-algorithm <ALG>` | replace OIDC signing algorithms (repeatable) |  |
+| `--auth-claim <KEY=VALUE>` | set required OIDC claim as KEY=VALUE (repeatable) |  |
+| `--clear-auth-claims` | remove all required OIDC claims |  |
+| `--allowed-origin <ORIGIN>` | replace exact browser origins (repeatable) |  |
+| `--clear-allowed-origins` | remove the browser-origin allowlist |  |
+| `--max-connections <N>` | new per-endpoint connection cap |  |
+| `--max-message-bytes <N>` | new decoded message size cap |  |
+| `--max-connection-age-seconds <SECONDS>` | new connection age cap |  |
+| `--enable` | enable the endpoint |  |
+| `--disable` | disable the endpoint |  |
 
 ### realtime delete
 
@@ -7397,9 +7993,37 @@ List environment promotions
 
 #### projects environments config
 
-Manage environment configuration
+Read or update environment configuration
 
-`gregale projects environments config`
+`gregale projects environments config <set|apply> <project-slug> <environment-slug>`
+
+##### projects environments config set
+
+Update environment configuration with optimistic hash checking
+
+`gregale projects environments config set [--file <PATH>] [--stdin] [--dry-run] [--if-hash <HASH>] [--yes] <project-slug> <environment-slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | JSON configuration file (choose --file or --stdin) |  |
+| `--stdin` | read JSON configuration from stdin |  |
+| `--dry-run` | preview the change without writing it |  |
+| `--if-hash <HASH>` | apply only if the current config hash matches |  |
+| `--yes` | confirm the configuration update |  |
+
+##### projects environments config apply
+
+Alias for config set
+
+`gregale projects environments config apply [--file <PATH>] [--stdin] [--dry-run] [--if-hash <HASH>] [--yes] <project-slug> <environment-slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | JSON configuration file (choose --file or --stdin) |  |
+| `--stdin` | read JSON configuration from stdin |  |
+| `--dry-run` | preview the change without writing it |  |
+| `--if-hash <HASH>` | apply only if the current config hash matches |  |
+| `--yes` | confirm the configuration update |  |
 
 #### projects environments routes
 
@@ -7417,7 +8041,7 @@ Manage environment policies
 
 Read or replace a stage workload&#39;s complete desired queue collection; consumer activation is unavailable. Set input contains expected_revision and bindings; [] removes all definitions
 
-`gregale projects environments queues [--file <PATH>] [--stdin] <get|set> <project> <stage> <workload>`
+`gregale projects environments queues <get|set> [--file <PATH>] [--stdin] <get|set> <project> <stage> <workload>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7464,7 +8088,7 @@ gregale projects environments queues set shop staging shop-worker --file queues.
 
 Review Git definitions, adopt owned fields, and inspect reconciliation (JSON output)
 
-`gregale projects environments gitops`
+`gregale projects environments gitops <status|bind|rebind|unbind|review|approve|adoption-preview|adopt|controls|override|remove-override>`
 
 ##### projects environments gitops status
 
@@ -7982,15 +8606,17 @@ Show all effective settings
 
 ## wake-timeline
 
-Walk the per-wake event stream (wake-timeline &lt;slug&gt; &lt;wake-id&gt; [--since RFC3339] [--limit N] [--all]; slug defaults to linked context)
+Walk the per-wake event stream (wake-timeline [&lt;slug&gt;] &lt;wake-id&gt; [--app SLUG] [--since RFC3339] [--limit N] [--all] [--verbose]; slug defaults to linked context)
 
-`gregale wake-timeline [<slug>] <wake-id> [--since <RFC3339>] [--limit <N>] [--all]`
+`gregale wake-timeline [<slug>] <wake-id> [--app <SLUG>] [--since <RFC3339>] [--limit <N>] [--all] [--verbose]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (alternative to the leading slug positional) |  |
 | `--since <RFC3339>` | RFC3339 timestamp |  |
 | `--limit <N>` | page size (1..1000) |  |
 | `--all` | walk every page |  |
+| `--verbose` | show detailed restore phases in human output |  |
 
 
 ## throttle-suggestions
