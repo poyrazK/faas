@@ -47,6 +47,33 @@ type CrashCapture struct {
 	FinishedAt        *time.Time
 	ExpiresAt         *time.Time
 	UpdatedAt         time.Time
+	// PlaintextState, SealedKey and EncryptedAt are imaged's encryption
+	// at rest (ADR-733). SealedKey is the capture's age identity sealed to
+	// the fleet recipient; it is dropped at expiry.
+	PlaintextState CrashCapturePlaintext
+	SealedKey      []byte
+	EncryptedAt    *time.Time
+}
+
+// CrashCapturePlaintext says whether a capture's plaintext objects exist.
+type CrashCapturePlaintext string
+
+const (
+	// CrashPlaintextPresent: captured, not yet encrypted.
+	CrashPlaintextPresent CrashCapturePlaintext = "present"
+	// CrashPlaintextPurging: encrypted; plaintext delete pending or retried.
+	CrashPlaintextPurging CrashCapturePlaintext = "purging"
+	// CrashPlaintextAbsent: encrypted; no plaintext on storage.
+	CrashPlaintextAbsent CrashCapturePlaintext = "absent"
+	// CrashPlaintextStaging: encrypted; plaintext being restored for a fork.
+	CrashPlaintextStaging CrashCapturePlaintext = "staging"
+	// CrashPlaintextStaged: encrypted; plaintext restored for an active fork.
+	CrashPlaintextStaged CrashCapturePlaintext = "staged"
+)
+
+// PlaintextReadable reports whether a fork can restore the capture now.
+func (c CrashCapture) PlaintextReadable() bool {
+	return c.PlaintextState == CrashPlaintextPresent || c.PlaintextState == CrashPlaintextStaged
 }
 
 // CrashSnapshotSettings is an app's opt-in.
@@ -74,7 +101,8 @@ type CompleteCrashCaptureParams struct {
 var ErrCrashCaptureRefused = errors.New("state: crash capture refused")
 
 // CrashCaptureStore is the ADR-733 surface. apid writes settings and manual
-// requests, gatewayd-internal writes 5xx requests, schedd owns the rest.
+// requests, gatewayd-internal writes 5xx requests, schedd owns the capture
+// lifecycle, and imaged owns the files: encryption, staging and expiry.
 type CrashCaptureStore interface {
 	SetCrashSnapshotSettings(ctx context.Context, accountID, appID string, enabled bool, now time.Time) (CrashSnapshotSettings, error)
 	CrashSnapshotSettingsFor(ctx context.Context, accountID, appID string) (CrashSnapshotSettings, error)
@@ -91,6 +119,29 @@ type CrashCaptureStore interface {
 	// CrashCaptureForRestore is schedd's read when it restores a fork pinned
 	// to a capture.
 	CrashCaptureForRestore(ctx context.Context, id string) (CrashCapture, error)
+	CrashCaptureEncryptionStore
+}
+
+// CrashCaptureEncryptionStore is imaged's encryption-at-rest surface
+// (ADR-733). A fork is active while queued, restoring or running; plaintext
+// is kept or restored only for an active fork. Every Begin/Finish/Mark is a
+// compare-and-swap that returns ErrNotFound when the row moved on.
+type CrashCaptureEncryptionStore interface {
+	// LiveCrashCaptureDeploymentIDs lists deployments with a capture being
+	// written or kept, whose capture files the orphan sweep must keep.
+	LiveCrashCaptureDeploymentIDs(ctx context.Context) ([]string, error)
+	CrashCapturesToEncrypt(ctx context.Context, now time.Time, limit int) ([]CrashCapture, error)
+	// MarkCrashCaptureEncrypted stores the sealed key; the row becomes
+	// staged when an active fork is pinned to it, otherwise purging.
+	MarkCrashCaptureEncrypted(ctx context.Context, id string, sealedKey []byte, now time.Time) (CrashCapture, error)
+	CrashCapturesToPurge(ctx context.Context, limit int) ([]CrashCapture, error)
+	// BeginCrashCapturePurge refuses while an active fork is pinned.
+	BeginCrashCapturePurge(ctx context.Context, id string, now time.Time) (CrashCapture, error)
+	FinishCrashCapturePurge(ctx context.Context, id string, now time.Time) (CrashCapture, error)
+	CrashCapturesToStage(ctx context.Context, now time.Time, limit int) ([]CrashCapture, error)
+	// BeginCrashCaptureStage requires an active fork.
+	BeginCrashCaptureStage(ctx context.Context, id string, now time.Time) (CrashCapture, error)
+	FinishCrashCaptureStage(ctx context.Context, id string, now time.Time) (CrashCapture, error)
 }
 
 // Snapshot projects a ready capture onto the restore inputs a fork uses. It

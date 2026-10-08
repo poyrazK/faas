@@ -101,6 +101,10 @@
     reapers) must handle it; each is listed in the PR that adds the mode.
   - Apps with ephemeral-class secrets never publish a capture, so they
     cannot be forked. The API answers 409 with a clear code.
+  - `fcvm.Lease` gains `Quarantine`. Like every lease field it is part of
+    vmmd's resource and native launch journal schemas (both reject unknown
+    and missing fields), so rolling vmmd back past this change needs an
+    empty resource journal: drain the node first.
 - **Rejected alternatives:**
   - **Networkless restore.** `SnapshotRef.networkless` removes the NIC, but
     Firecracker must restore the device set the snapshot was taken with, and

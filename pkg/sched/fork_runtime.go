@@ -104,13 +104,13 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 }
 
 // forkSnapshot picks what a fork restores: its ADR-733 crash capture when it
-// is pinned to one (which must still be ready and unexpired), otherwise the
-// deployment's newest compatible snapshot.
+// is pinned to one (which must still be ready, unexpired and decrypted for
+// the fork), otherwise the deployment's newest compatible snapshot.
 func (e *Engine) forkSnapshot(ctx context.Context, fork state.AppFork, dep state.Deployment, plan string, app state.App) (state.Snapshot, error) {
 	if fork.CrashCaptureID != nil {
 		capture, err := e.store.CrashCaptureForRestore(ctx, *fork.CrashCaptureID)
 		if err != nil || capture.AppID != fork.AppID || capture.DeploymentID != dep.ID ||
-			capture.ExpiresAt == nil || !capture.ExpiresAt.After(time.Now()) {
+			capture.ExpiresAt == nil || !capture.ExpiresAt.After(time.Now()) || !capture.PlaintextReadable() {
 			return state.Snapshot{}, ErrForkNoCapture
 		}
 		snap, ok := capture.Snapshot()

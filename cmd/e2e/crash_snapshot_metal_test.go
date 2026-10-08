@@ -3,8 +3,10 @@
 // crash_snapshot_metal_test.go — ADR-733 crash snapshots end to end on real
 // Firecracker: apid requests a capture of the running instance, schedd's
 // CrashCaptureCoordinator captures it in place (the instance keeps serving
-// and no snapshots row appears), and the capture opens as an ADR-732 fork
-// that a token-bearing request reaches through the gateway.
+// and no snapshots row appears), imaged encrypts it at rest and deletes the
+// plaintext, and the capture opens as an ADR-732 fork (imaged decrypts it
+// for the fork) that a token-bearing request reaches through the gateway.
+// Once the fork ends, the plaintext is purged again.
 //
 // Requires /dev/kvm, root, Firecracker on PATH and FAAS_TEST_KERNEL.
 package e2e_test
@@ -17,13 +19,18 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"filippo.io/age"
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -49,7 +56,8 @@ func TestCrashSnapshotMetal(t *testing.T) {
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.DeployWake, "FAAS_APP_FORKS=1", "FAAS_CRASH_SNAPSHOTS=1")
+	h := e2etest.Start(t, pool, e2etest.DeployWake, "FAAS_APP_FORKS=1", "FAAS_CRASH_SNAPSHOTS=1",
+		"FAAS_HOST_AGE_IDENTITY_PATH="+writeE2EAgeKeys(t))
 	key := h.SeedAccount(context.Background(), api.PlanPro)
 	img, _ := e2etest.HelloImageAboveBase("library/hello", helloBody)
 	ref := registry.AddImage("library/hello", img)
@@ -108,6 +116,18 @@ func TestCrashSnapshotMetal(t *testing.T) {
 		if err != nil || ins.State != string(state.StateRunning) {
 			t.Fatalf("serving instance after capture = %+v, %v; want still running", ins, err)
 		}
+		// imaged encrypts the capture and deletes the plaintext.
+		sealed := waitCapturePlaintext(ctx, t, pool, capture.ID, state.CrashPlaintextAbsent, 60*time.Second)
+		if len(sealed.SealedKey) == 0 || sealed.EncryptedAt == nil {
+			t.Fatalf("capture not sealed: %+v", sealed)
+		}
+		mem := captureFile(*sealed.StorageKey)
+		if _, err := os.Stat(mem); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("plaintext memory %s still on disk (err=%v)", mem, err)
+		}
+		if st, err := os.Stat(mem + ".age"); err != nil || st.Size() >= *sealed.MemBytes {
+			t.Fatalf("encrypted memory: %v (size vs mem_bytes %d)", err, *sealed.MemBytes)
+		}
 		// Only the deploy's own captures may exist as snapshots rows; the crash
 		// capture key must not be among them.
 		for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
@@ -139,7 +159,64 @@ func TestCrashSnapshotMetal(t *testing.T) {
 		if status != http.StatusOK || strings.TrimSpace(string(body)) != helloBody || headers.Get("X-Gregale-Fork-Served") != "1" {
 			t.Fatalf("request to the crash fork = %d %q", status, body)
 		}
+		if c := waitCapturePlaintext(ctx, t, pool, capture.ID, state.CrashPlaintextStaged, 10*time.Second); c.SealedKey == nil {
+			t.Fatalf("staged capture lost its sealed key: %+v", c)
+		}
+
+		// Once the fork ends, the plaintext goes again.
+		if _, status := doReq(t, h, key, http.MethodDelete, "/v1/apps/hello/forks/"+fork.ID, nil); status != http.StatusAccepted {
+			t.Fatalf("cancel fork = %d", status)
+		}
+		waitForkStatus(ctx, t, h, key, fork.ID, "cancelled", 60*time.Second)
+		purged := waitCapturePlaintext(ctx, t, pool, capture.ID, state.CrashPlaintextAbsent, 60*time.Second)
+		if _, err := os.Stat(captureFile(*purged.StorageKey)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("plaintext memory outlived the fork (err=%v)", err)
+		}
 	})
+}
+
+// writeE2EAgeKeys writes the fleet and host identities imaged loads to seal
+// crash capture keys, and returns the host identity path.
+func writeE2EAgeKeys(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range []string{"fleet.age", "host.age"} {
+		id, err := age.GenerateX25519Identity()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := secretbox.WriteHostKeyAtPath(filepath.Join(dir, name), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return filepath.Join(dir, "host.age")
+}
+
+// captureFile is where the local storage backend keeps a capture object.
+func captureFile(key string) string {
+	root := os.Getenv("FAAS_STORAGE_ROOT")
+	if root == "" {
+		root = "/srv/fc"
+	}
+	return filepath.Join(root, key)
+}
+
+func waitCapturePlaintext(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id string, want state.CrashCapturePlaintext, timeout time.Duration) state.CrashCapture {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last state.CrashCapture
+	for time.Now().Before(deadline) && ctx.Err() == nil {
+		c, err := state.NewPgStore(pool).CrashCaptureForRestore(ctx, id)
+		if err == nil {
+			last = c
+			if c.PlaintextState == want {
+				return c
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("capture %s plaintext = %q after %s, want %q", id, last.PlaintextState, timeout, want)
+	return last
 }
 
 func waitCrashCaptureStatus(ctx context.Context, t *testing.T, h *e2etest.Harness, key, id, want string, timeout time.Duration) api.CrashCaptureResponse {

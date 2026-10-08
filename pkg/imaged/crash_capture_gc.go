@@ -14,20 +14,13 @@ const crashCaptureGCBatch = 50
 
 // expireCrashCaptures deletes the files of every ADR-733 crash capture past
 // its expires_at and marks it expired. imaged owns capture file deletion as
-// it does for snapshot rows; a capture is only marked expired once all four
-// objects (mem, vmstate, private drive, backing identity) are gone, so a
-// failed delete is retried on the next tick.
-func (l *Loop) expireCrashCaptures(ctx context.Context, now time.Time) {
+// it does for snapshot rows; a capture is only marked expired once every
+// object (plaintext and encrypted) is gone, so a failed delete is retried on
+// the next tick. Expiry also drops the sealed key.
+func (l *Loop) expireCrashCaptures(ctx context.Context, be crashCaptureDeleter, now time.Time) {
 	due, err := l.store.ExpiredCrashCaptures(ctx, now, crashCaptureGCBatch)
-	if err != nil || len(due) == 0 {
-		if err != nil {
-			l.log.Warn("imaged: crash capture expiry list", "err", err)
-		}
-		return
-	}
-	be, err := l.handler.storageFor()
 	if err != nil {
-		l.log.Warn("imaged: crash capture expiry storage", "err", err)
+		l.log.Warn("imaged: crash capture expiry list", "err", err)
 		return
 	}
 	for _, capture := range due {
@@ -45,18 +38,37 @@ type crashCaptureDeleter interface {
 	Delete(ctx context.Context, key string) error
 }
 
-func deleteCrashCaptureFiles(ctx context.Context, be crashCaptureDeleter, capture state.CrashCapture) error {
+// crashCaptureKeys lists a capture's plaintext objects: memory, vmstate,
+// private drive and backing identity. Each has an encrypted twin at
+// key + crashCaptureEncryptedSuffix.
+func crashCaptureKeys(capture state.CrashCapture) []string {
 	if capture.StorageKey == nil || capture.VMStateStorageKey == nil {
 		return nil
 	}
 	snap := state.Snapshot{DeploymentID: capture.DeploymentID, StorageKey: *capture.StorageKey, Tier: state.SnapshotTierWarm}
-	keys := []string{*capture.StorageKey, *capture.VMStateStorageKey, state.SnapshotDriveKey(snap), state.SnapshotBackingKey(snap)}
+	keys := make([]string, 0, 4)
+	for _, key := range []string{*capture.StorageKey, *capture.VMStateStorageKey, state.SnapshotDriveKey(snap), state.SnapshotBackingKey(snap)} {
+		if key != "" {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+func deleteCrashCaptureFiles(ctx context.Context, be crashCaptureDeleter, capture state.CrashCapture) error {
+	var keys []string
+	for _, key := range crashCaptureKeys(capture) {
+		keys = append(keys, key, key+crashCaptureEncryptedSuffix)
+	}
+	return deleteCrashCaptureKeys(ctx, be, keys)
+}
+
+// deleteCrashCaptureKeys treats only a missing object as deleted: a
+// refused delete leaves evidence behind, so it is retried.
+func deleteCrashCaptureKeys(ctx context.Context, be crashCaptureDeleter, keys []string) error {
 	var errs []error
 	for _, key := range keys {
-		if key == "" {
-			continue
-		}
-		if err := be.Delete(ctx, key); err != nil && !errors.Is(err, storage.ErrNotFound) && !errors.Is(err, storage.ErrDeleteQuarantined) {
+		if err := be.Delete(ctx, key); err != nil && !errors.Is(err, storage.ErrNotFound) {
 			errs = append(errs, err)
 		}
 	}

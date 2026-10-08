@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"time"
 
@@ -67,7 +68,7 @@ func (m *MemStore) insertCrashCaptureLocked(app App, ins Instance, trigger strin
 	c := CrashCapture{
 		ID: uuid.NewString(), AccountID: app.AccountID, AppID: app.ID, DeploymentID: ins.DeploymentID,
 		InstanceID: ins.ID, Trigger: trigger, StatusCode: statusCode, Route: route,
-		Status: CrashCaptureRequested, RequestedAt: at, UpdatedAt: at,
+		Status: CrashCaptureRequested, RequestedAt: at, UpdatedAt: at, PlaintextState: CrashPlaintextPresent,
 	}
 	m.crashCaptures[c.ID] = c
 	return c
@@ -235,6 +236,7 @@ func (m *MemStore) ExpireCrashCapture(_ context.Context, id string, now time.Tim
 	}
 	at := memTime(now)
 	c.Status, c.FinishedAt = CrashCaptureExpired, &at
+	c.SealedKey, c.PlaintextState = nil, CrashPlaintextAbsent
 	m.touchCrashLocked(&c, now)
 	return c, nil
 }
@@ -282,4 +284,152 @@ func (m *MemStore) forkTargetForCaptureLocked(p CreateAppForkParams) (string, bo
 		return "", false
 	}
 	return c.DeploymentID, true
+}
+
+// activeForkPinnedLocked mirrors the SQL "active fork" rule: a fork queued,
+// restoring or running against the capture.
+func (m *MemStore) activeForkPinnedLocked(captureID string) bool {
+	for _, f := range m.appForks {
+		if f.CrashCaptureID != nil && *f.CrashCaptureID == captureID &&
+			(f.Status == AppForkQueued || f.Status == AppForkRestoring || f.Status == AppForkRunning) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *MemStore) crashCapturesWhereLocked(limit int, keep func(CrashCapture) bool) []CrashCapture {
+	out := make([]CrashCapture, 0)
+	for _, c := range m.crashCaptures {
+		if c.Status == CrashCaptureReady && keep(c) {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CapturedAt.Equal(*out[j].CapturedAt) {
+			return out[i].CapturedAt.Before(*out[j].CapturedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	if limit = clampAppForkListLimit(limit); len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// moveCrashPlaintextLocked is the MemStore compare-and-swap behind every
+// encryption transition.
+func (m *MemStore) moveCrashPlaintextLocked(id string, now time.Time, from []CrashCapturePlaintext, guard func(CrashCapture) bool, apply func(*CrashCapture)) (CrashCapture, error) {
+	m.ensureCrashLocked()
+	c, ok := m.crashCaptures[id]
+	if !ok || c.Status != CrashCaptureReady || !slices.Contains(from, c.PlaintextState) || (guard != nil && !guard(c)) {
+		return CrashCapture{}, ErrNotFound
+	}
+	apply(&c)
+	m.touchCrashLocked(&c, now)
+	return c, nil
+}
+
+func (m *MemStore) CrashCapturesToEncrypt(_ context.Context, now time.Time, limit int) ([]CrashCapture, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureCrashLocked()
+	return m.crashCapturesWhereLocked(limit, func(c CrashCapture) bool {
+		return c.PlaintextState == CrashPlaintextPresent && c.ExpiresAt.After(now)
+	}), nil
+}
+
+func (m *MemStore) MarkCrashCaptureEncrypted(_ context.Context, id string, sealedKey []byte, now time.Time) (CrashCapture, error) {
+	if len(sealedKey) == 0 {
+		return CrashCapture{}, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.moveCrashPlaintextLocked(id, now, []CrashCapturePlaintext{CrashPlaintextPresent}, nil, func(c *CrashCapture) {
+		at := memTime(now)
+		c.SealedKey, c.EncryptedAt, c.PlaintextState = slices.Clone(sealedKey), &at, CrashPlaintextPurging
+		if m.activeForkPinnedLocked(c.ID) {
+			c.PlaintextState = CrashPlaintextStaged
+		}
+	})
+}
+
+func (m *MemStore) CrashCapturesToPurge(_ context.Context, limit int) ([]CrashCapture, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureCrashLocked()
+	return m.crashCapturesWhereLocked(limit, func(c CrashCapture) bool {
+		return c.PlaintextState == CrashPlaintextPurging ||
+			((c.PlaintextState == CrashPlaintextStaging || c.PlaintextState == CrashPlaintextStaged) && !m.activeForkPinnedLocked(c.ID))
+	}), nil
+}
+
+func (m *MemStore) BeginCrashCapturePurge(_ context.Context, id string, now time.Time) (CrashCapture, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.moveCrashPlaintextLocked(id, now,
+		[]CrashCapturePlaintext{CrashPlaintextStaging, CrashPlaintextStaged, CrashPlaintextPurging},
+		func(c CrashCapture) bool { return !m.activeForkPinnedLocked(c.ID) },
+		func(c *CrashCapture) { c.PlaintextState = CrashPlaintextPurging })
+}
+
+func (m *MemStore) FinishCrashCapturePurge(_ context.Context, id string, now time.Time) (CrashCapture, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.moveCrashPlaintextLocked(id, now, []CrashCapturePlaintext{CrashPlaintextPurging}, nil,
+		func(c *CrashCapture) { c.PlaintextState = CrashPlaintextAbsent })
+}
+
+func (m *MemStore) CrashCapturesToStage(_ context.Context, now time.Time, limit int) ([]CrashCapture, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureCrashLocked()
+	return m.crashCapturesWhereLocked(limit, func(c CrashCapture) bool {
+		return (c.PlaintextState == CrashPlaintextAbsent || c.PlaintextState == CrashPlaintextStaging) &&
+			c.ExpiresAt.After(now) && m.activeForkPinnedLocked(c.ID)
+	}), nil
+}
+
+func (m *MemStore) BeginCrashCaptureStage(_ context.Context, id string, now time.Time) (CrashCapture, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.moveCrashPlaintextLocked(id, now,
+		[]CrashCapturePlaintext{CrashPlaintextAbsent, CrashPlaintextStaging},
+		func(c CrashCapture) bool { return m.activeForkPinnedLocked(c.ID) },
+		func(c *CrashCapture) { c.PlaintextState = CrashPlaintextStaging })
+}
+
+func (m *MemStore) FinishCrashCaptureStage(_ context.Context, id string, now time.Time) (CrashCapture, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.moveCrashPlaintextLocked(id, now, []CrashCapturePlaintext{CrashPlaintextStaging}, nil,
+		func(c *CrashCapture) { c.PlaintextState = CrashPlaintextStaged })
+}
+
+// crashCaptureClaimableLocked mirrors ClaimNextAppFork's ADR-733 gate: a
+// fork pinned to a ready capture waits until its plaintext is readable.
+func (m *MemStore) crashCaptureClaimableLocked(f AppFork) bool {
+	if f.CrashCaptureID == nil {
+		return true
+	}
+	c, ok := m.crashCaptures[*f.CrashCaptureID]
+	return ok && (c.Status != CrashCaptureReady || c.PlaintextReadable())
+}
+
+func (m *MemStore) LiveCrashCaptureDeploymentIDs(_ context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
+	for _, c := range m.crashCaptures {
+		if c.Status != CrashCaptureCapturing && c.Status != CrashCaptureReady {
+			continue
+		}
+		if _, ok := seen[c.DeploymentID]; !ok {
+			seen[c.DeploymentID] = struct{}{}
+			out = append(out, c.DeploymentID)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }

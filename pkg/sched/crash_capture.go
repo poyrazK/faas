@@ -55,6 +55,21 @@ type CrashCaptureRuntime interface {
 	CaptureCrash(ctx context.Context, capture state.CrashCapture) (state.CompleteCrashCaptureParams, error)
 }
 
+// ErrCrashStorageRemote refuses captures on a remote storage backend
+// (ADR-733): imaged encrypts captures through the backend, but a node's
+// read-through cache could keep a plaintext copy it cannot purge.
+var ErrCrashStorageRemote = errors.New("sched: crash captures need the local storage backend")
+
+type refusingCrashRuntime struct{ err error }
+
+func (r refusingCrashRuntime) CaptureCrash(context.Context, state.CrashCapture) (state.CompleteCrashCaptureParams, error) {
+	return state.CompleteCrashCaptureParams{}, r.err
+}
+
+// RefuseCrashCaptures is a runtime that fails every capture with err, so
+// requests end failed instead of holding the app's one in-flight slot.
+func RefuseCrashCaptures(err error) CrashCaptureRuntime { return refusingCrashRuntime{err: err} }
+
 // CrashCaptureCoordinator claims requested crash captures and captures them
 // one at a time (ADR-733). Captures pause a serving instance, so they are
 // never run in parallel on one scheduler.
@@ -115,8 +130,11 @@ func (c *CrashCaptureCoordinator) capture(ctx context.Context, capture state.Cra
 	done, err := c.runtime.CaptureCrash(ctx, capture)
 	if err != nil {
 		code, message := "capture_failed", "the instance could not be captured"
-		if errors.Is(err, ErrCrashInstanceGone) {
+		switch {
+		case errors.Is(err, ErrCrashInstanceGone):
 			code, message = "instance_gone", "the instance had stopped before it could be captured"
+		case errors.Is(err, ErrCrashStorageRemote):
+			code, message = "storage_unsupported", "crash snapshots are not available on this node's storage yet"
 		}
 		c.log.Warn("crash capture coordinator: capture failed", "capture", capture.ID, "code", code, "err", err)
 		if _, ferr := c.store.FailCrashCapture(ctx, capture.ID, code, message, c.now().UTC()); ferr != nil {

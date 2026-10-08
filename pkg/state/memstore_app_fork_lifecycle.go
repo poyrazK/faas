@@ -62,7 +62,7 @@ func (m *MemStore) ClaimNextAppFork(_ context.Context, owner string, now time.Ti
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	queued := m.sortedAppForksLocked(func(f AppFork) bool {
-		return f.Status == AppForkQueued && f.CancelRequested == nil && f.ExpiresAt.After(now)
+		return f.Status == AppForkQueued && f.CancelRequested == nil && f.ExpiresAt.After(now) && m.crashCaptureClaimableLocked(f)
 	}, func(f AppFork) time.Time { return f.CreatedAt })
 	if len(queued) == 0 {
 		return AppFork{}, ErrNotFound

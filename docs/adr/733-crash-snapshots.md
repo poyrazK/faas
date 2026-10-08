@@ -30,16 +30,36 @@
     route), the capture keys, Firecracker version, size, and `expires_at`
     (default 7 days, in `limits.go`). schedd writes the capture lifecycle.
     imaged, which already owns capture file deletion for snapshot rows,
-    deletes all four capture objects (mem, vmstate, private drive, backing
-    identity) at expiry and only then marks the row `expired`, so a failed
-    delete is retried on the next GC tick.
+    owns the capture files: encryption, staging for forks and expiry. At
+    expiry it deletes every object (plaintext and encrypted) and only then
+    marks the row `expired` and drops its sealed key, so a failed delete is
+    retried on the next pass.
+  - **Encryption at rest.** Within one imaged pass (5 s) of a capture
+    becoming ready, imaged compresses (zstd; guest memory is mostly zero
+    pages and ciphertext is never sparse) and encrypts each of the four
+    objects with a fresh age X25519 identity, seals that identity to the
+    fleet recipient in `crash_captures.sealed_key` (namespace bound to the
+    capture ID, so a key copied to another row does not open), and deletes
+    the plaintext. `plaintext_state` tracks the plaintext: `present` →
+    `purging` → `absent`, and `absent` → `staging` → `staged` while a fork
+    pinned to the capture is active (queued, restoring or running). The
+    fork coordinator does not claim such a fork until its capture is
+    `staged`, and the purge of a staged capture is fenced on no active
+    fork, so a fork never loses the plaintext it restores from. When the
+    fork ends, imaged purges the plaintext again. Encryption, staging,
+    purge and expiry run on one imaged goroutine, so they never race.
+    Without a host age identity imaged leaves captures `present` and logs
+    an error every pass.
+  - **Local storage only.** The encryption runs through the storage
+    backend. On a remote backend (GCS, OCI) a node's read-through cache
+    could keep a plaintext copy imaged cannot purge, so schedd fails every
+    capture there with `storage_unsupported`.
   - **Open as a fork.** `POST /v1/apps/{slug}/crash-snapshots/{id}/fork`
     creates an ADR-732 fork pinned to the capture (`app_forks.
     crash_capture_id`). `Engine.RestoreFork` restores that capture instead
     of the deployment's newest one. The same scopes (deploy:write AND
     secrets:read), MFA, audit and limits apply.
-  - **Gate.** Everything stays behind `FAAS_CRASH_SNAPSHOTS` and the
-    capability stays `internal` until captures are encrypted at rest.
+  - **Gate.** Everything stays behind `FAAS_CRASH_SNAPSHOTS`.
 - **Why:** the most useful moment to inspect a process is right after it
   failed. Logs and traces say what happened; the memory says why. Forks
   already give a safe way to look at a capture; this adds captures taken at
@@ -53,9 +73,10 @@
   - The capture is taken after the failing response, not at the instant of
     the fault; state that unwinds on error is gone. An SDK hook that asks
     for a capture from inside the error handler is a follow-up.
-- **Not yet (blocks promotion to `preview`):**
-  - Encryption at rest of capture files with a per-account key.
-  - A DPA and SOC2 C1.1 update describing crash captures.
+  - A capture sits in plaintext for up to one imaged pass after it is
+    taken, and in plaintext again for as long as a fork of it is active.
+  - The key is per capture, not per account: deleting a capture destroys
+    its only key, and one leaked key exposes one capture.
 - **Rejected alternatives:**
   - **Storing captures as `snapshots` rows with a new tier.** The partial
     unique index allows one live row per tier, GC floors and replication
