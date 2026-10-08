@@ -112,8 +112,19 @@
   2. `netns.Config.Quarantine` and the `AppSpec` field that requests it,
      with metal tests that a quarantined guest cannot open any outbound
      flow and still answers on its port.
-  3. `mode='fork'`, `KindFork`, the gateway loader filter, the
-     `ForkCoordinator` and the TTL sweeper.
+  3. a. Make a fork row safe before anything creates one: `mode='fork'`,
+        `KindFork` (also when `SeedLedger` rebuilds after a restart),
+        the scheduler `AppSpec.Quarantine`, the scheduler-side lease
+        store, and a fork exclusion in every path that would route,
+        park, snapshot, drain, reap or concurrency-count it (gateway
+        live and smoke loaders, tcpd/udpd resolvers,
+        `RunningInstanceForApp`, wake reuse, reaper, `ParkApp`,
+        `StopInstance`, service drain). `snapshotAndPark` destroys a
+        fork instead of capturing it, so no caller can turn fork memory
+        into a restorable capture.
+     b. The `ForkCoordinator` (claim, restore, renew, TTL teardown,
+        abandoned-lease takeover) and its schedd wiring behind
+        `FAAS_APP_FORKS`.
   4. The drive1 secrets scrub on fork restores.
   5. Access (separate ADR), then promotion to `preview`.
 - **Verification:**
