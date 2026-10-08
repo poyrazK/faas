@@ -86,6 +86,20 @@ type LogEventFilter struct {
 type LogEventStore interface {
 	InsertLogEvent(ctx context.Context, event LogEvent) (LogEvent, error)
 	ListLogEvents(ctx context.Context, filter LogEventFilter) (events []LogEvent, hasMore bool, err error)
+	ListAccountTraceLogEvents(ctx context.Context, filter AccountTraceLogFilter) (events []LogEvent, hasMore bool, err error)
+}
+
+// AccountTraceLogFilter selects the newest events carrying one exact trace id
+// across a set of an account's apps in one query, for `gregale trace`.
+// AccountID stays in the predicate next to the app set (ADR-213 IDOR guard).
+type AccountTraceLogFilter struct {
+	AccountID string
+	AppIDs    []string
+	TraceID   string
+	Source    LogEventSource
+	Since     time.Time
+	Until     time.Time
+	Limit     int
 }
 
 func validLogEventSource(source LogEventSource) bool {
@@ -232,6 +246,41 @@ func normalizeLogEventFilter(filter LogEventFilter) (LogEventFilter, error) {
 		}
 		filter.BeforeAt = filter.BeforeAt.UTC()
 	}
+	if filter.Limit <= 0 {
+		filter.Limit = 100
+	}
+	if filter.Limit > MaxLogEventPage {
+		filter.Limit = MaxLogEventPage
+	}
+	return filter, nil
+}
+
+func normalizeAccountTraceLogFilter(filter AccountTraceLogFilter) (AccountTraceLogFilter, error) {
+	filter.AccountID = strings.TrimSpace(filter.AccountID)
+	filter.TraceID = strings.TrimSpace(filter.TraceID)
+	if _, err := uuid.Parse(filter.AccountID); err != nil {
+		return AccountTraceLogFilter{}, errors.New("state: trace log query requires a valid account id")
+	}
+	appIDs := make([]string, 0, len(filter.AppIDs))
+	for _, appID := range filter.AppIDs {
+		appID = strings.TrimSpace(appID)
+		if _, err := uuid.Parse(appID); err != nil {
+			return AccountTraceLogFilter{}, errors.New("state: trace log query app ids must be UUIDs")
+		}
+		appIDs = append(appIDs, appID)
+	}
+	filter.AppIDs = appIDs
+	if filter.TraceID == "" || len(filter.TraceID) > 128 {
+		return AccountTraceLogFilter{}, errors.New("state: trace log query requires a trace id of at most 128 characters")
+	}
+	if filter.Source != "" && !validLogEventSource(filter.Source) {
+		return AccountTraceLogFilter{}, fmt.Errorf("state: invalid trace log query source %q", filter.Source)
+	}
+	if filter.Since.IsZero() || filter.Until.IsZero() || !filter.Since.Before(filter.Until) {
+		return AccountTraceLogFilter{}, errors.New("state: trace log query requires a valid since/until window")
+	}
+	filter.Since = filter.Since.UTC()
+	filter.Until = filter.Until.UTC()
 	if filter.Limit <= 0 {
 		filter.Limit = 100
 	}

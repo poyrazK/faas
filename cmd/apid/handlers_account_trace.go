@@ -1,15 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -104,54 +103,7 @@ func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct
 	if logLimit > state.MaxLogEventPage {
 		logLimit = state.MaxLogEventPage
 	}
-	seenSpans := make(map[string]struct{})
-	for _, app := range apps {
-		logEvents, hasMoreLogs, logErr := s.store.ListLogEvents(r.Context(), state.LogEventFilter{
-			AccountID: acct.ID,
-			AppID:     app.ID,
-			Since:     now.Add(-retention),
-			Until:     now,
-			Source:    state.LogEventSourceHTTP,
-			TraceID:   traceID,
-			Limit:     logLimit,
-		})
-		if logErr != nil {
-			result.Partial = true
-			result.Errors = append(result.Errors, api.AccountTraceLookupError{App: app.Slug, Detail: "HTTP log events unavailable"})
-		} else {
-			result.LogsTruncated = result.LogsTruncated || hasMoreLogs
-			for _, event := range logEvents {
-				result.Logs = append(result.Logs, accountTraceLogQueryEvent(app.Slug, event))
-			}
-		}
-
-		row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-			AppID:         stringToPgUUID(app.ID),
-			Identifier:    traceID,
-			ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
-			ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			result.Partial = true
-			result.Errors = append(result.Errors, api.AccountTraceLookupError{App: app.Slug, Detail: "request telemetry unavailable"})
-			continue
-		}
-		result.Matches = append(result.Matches, api.AccountTraceMatch{App: app.Slug, Request: debugTelemetryGetRowToItem(row)})
-		spans, truncated := parseDebugEvidenceSpans(row.SpansSummary)
-		result.SpansTruncated = result.SpansTruncated || truncated
-		for _, span := range spans {
-			if span.SpanID != "" {
-				if _, exists := seenSpans[span.SpanID]; exists {
-					continue
-				}
-				seenSpans[span.SpanID] = struct{}{}
-			}
-			result.Spans = append(result.Spans, span)
-		}
-	}
+	s.addAccountTraceEvidence(r.Context(), acct.ID, apps, traceID, now.Add(-retention), now, logLimit, &result)
 	sort.SliceStable(result.Logs, func(i, j int) bool {
 		left, leftErr := time.Parse(time.RFC3339Nano, result.Logs[i].Timestamp)
 		right, rightErr := time.Parse(time.RFC3339Nano, result.Logs[j].Timestamp)
@@ -177,6 +129,79 @@ func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// addAccountTraceEvidence attaches the retained HTTP logs and request
+// telemetry for traceID across every app of the account, one account-scoped
+// read each. production-us hunt #7: the per-app loop this replaces cost two
+// round trips per app; at 71 apps it ran past apid's 5 s request budget and
+// every app after the deadline came back "unavailable", so `gregale trace`
+// and `gregale logs --trace` exited partial.
+func (s *server) addAccountTraceEvidence(ctx context.Context, accountID string, apps []state.App, traceID string, since, until time.Time, logLimit int, result *api.AccountTraceLookupResponse) {
+	appSlugs := make(map[string]string, len(apps))
+	appIDs := make([]string, 0, len(apps))
+	for _, app := range apps {
+		appSlugs[app.ID] = app.Slug
+		appIDs = append(appIDs, app.ID)
+	}
+	logEvents, hasMoreLogs, err := s.store.ListAccountTraceLogEvents(ctx, state.AccountTraceLogFilter{
+		AccountID: accountID, AppIDs: appIDs, TraceID: traceID,
+		Source: state.LogEventSourceHTTP, Since: since, Until: until, Limit: logLimit,
+	})
+	if err != nil {
+		result.Partial = true
+		result.Errors = append(result.Errors, api.AccountTraceLookupError{Detail: "HTTP log events unavailable"})
+	} else {
+		result.LogsTruncated = result.LogsTruncated || hasMoreLogs
+		for _, event := range logEvents {
+			result.Logs = append(result.Logs, accountTraceLogQueryEvent(appSlugs[event.AppID], event))
+		}
+	}
+
+	rows, err := s.store.ListRequestTelemetryByAccountTrace(ctx, sqlc.ListRequestTelemetryByAccountTraceParams{
+		AccountID:     stringToPgUUID(accountID),
+		TraceID:       traceID,
+		ReceivedFrom:  pgtype.Timestamptz{Time: since, Valid: true},
+		ReceivedUntil: pgtype.Timestamptz{Time: until, Valid: true},
+	})
+	if err != nil {
+		result.Partial = true
+		result.Errors = append(result.Errors, api.AccountTraceLookupError{Detail: "request telemetry unavailable"})
+		return
+	}
+	seenSpans := make(map[string]struct{})
+	for _, row := range rows {
+		slug, ok := appSlugs[uuidFromPg(row.AppID)]
+		if !ok {
+			continue // retained rows of a deleted app stay out of the trace
+		}
+		result.Matches = append(result.Matches, api.AccountTraceMatch{App: slug, Request: debugTelemetryGetRowToItem(accountTraceTelemetryRow(row))})
+		spans, truncated := parseDebugEvidenceSpans(row.SpansSummary)
+		result.SpansTruncated = result.SpansTruncated || truncated
+		for _, span := range spans {
+			if span.SpanID != "" {
+				if _, exists := seenSpans[span.SpanID]; exists {
+					continue
+				}
+				seenSpans[span.SpanID] = struct{}{}
+			}
+			result.Spans = append(result.Spans, span)
+		}
+	}
+}
+
+// accountTraceTelemetryRow reuses the per-app debugger projection for an
+// account-wide trace row; the two queries select the same columns.
+func accountTraceTelemetryRow(row sqlc.ListRequestTelemetryByAccountTraceRow) sqlc.GetRequestTelemetryByAppAndIdentifierRow {
+	return sqlc.GetRequestTelemetryByAppAndIdentifierRow{
+		ID: row.ID, DeploymentID: row.DeploymentID, Route: row.Route, Method: row.Method,
+		Status: row.Status, LatencyMs: row.LatencyMs, Count: row.Count, ColdBoot: row.ColdBoot,
+		TraceID: row.TraceID, ReceivedAt: row.ReceivedAt, SpansSummary: row.SpansSummary,
+		WakeID: row.WakeID, InstanceID: row.InstanceID, GuestDurationMs: row.GuestDurationMs,
+		GuestRuntime: row.GuestRuntime, GuestOutcome: row.GuestOutcome, GuestErrorClass: row.GuestErrorClass,
+		ConsumerID: row.ConsumerID, NodeID: row.NodeID, Region: row.Region, CommitSha: row.CommitSha,
+		DeploymentTag: row.DeploymentTag, DeploymentCreatedAt: row.DeploymentCreatedAt, ImageDigest: row.ImageDigest,
+	}
 }
 
 func accountTraceLogQueryEvent(app string, event state.LogEvent) api.LogQueryEvent {
