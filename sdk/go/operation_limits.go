@@ -2,10 +2,15 @@
 package faas
 
 const (
-	operationRequestBytes  = 2097152
-	operationIdentityBytes = 128
-	operationResponseBytes = 1048576
-	operationEffects       = 32
-	operationPayloadBytes  = 65536
-	operationTypeBytes     = 256
+	operationMilestonePayloadBytes = 8192
+	operationMilestoneBatchBytes   = 65536
+	operationMilestones            = 64
+	operationWorkflowStateReports  = 64
+	operationSubjectIdBytes        = 256
+	operationRequestBytes          = 2097152
+	operationIdentityBytes         = 128
+	operationResponseBytes         = 1048576
+	operationEffects               = 32
+	operationPayloadBytes          = 65536
+	operationTypeBytes             = 256
 )

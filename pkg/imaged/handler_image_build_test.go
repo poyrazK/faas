@@ -290,8 +290,8 @@ func TestHandleDeployment_RealBuildPath(t *testing.T) {
 				if len(resolving.configRefs) != 1 || resolving.configRefs[0] != mp.appRef || len(resolving.manifestRefs) < 1 || resolving.manifestRefs[0] != mp.appRef {
 					t.Fatalf("build did not consume selected child: configs=%v manifests=%v", resolving.configRefs, resolving.manifestRefs)
 				}
-				if got.ImageDigest != dep.ImageDigest {
-					t.Fatal("original deployment reference was overwritten")
+				if got.ImageDigest != resolving.resolution.SourceReference {
+					t.Fatalf("deployment source was not pinned: %s", got.ImageDigest)
 				}
 			}
 		})

@@ -69,18 +69,20 @@ type EventReplayBackfillRetryRequest struct {
 // EventReplayBackfillItem is the metadata-only outcome for one envelope in a
 // durable backfill. It remains useful after the source envelope is pruned.
 type EventReplayBackfillItem struct {
-	EventSource      string    `json:"event_source"`
-	EventID          string    `json:"event_id"`
-	EventType        string    `json:"event_type"`
-	SchemaVersion    string    `json:"schema_version,omitempty"`
-	AcceptedAt       time.Time `json:"accepted_at"`
-	State            string    `json:"state"`
-	Attempts         int       `json:"attempts"`
-	FailureCode      string    `json:"failure_code,omitempty"`
-	LastError        string    `json:"last_error,omitempty"`
-	DetailsTruncated bool      `json:"details_truncated,omitempty"`
-	Retryable        bool      `json:"retryable"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	EventSource       string    `json:"event_source"`
+	EventID           string    `json:"event_id"`
+	EventType         string    `json:"event_type"`
+	SchemaVersion     string    `json:"schema_version,omitempty"`
+	AcceptedAt        time.Time `json:"accepted_at"`
+	State             string    `json:"state"`
+	Attempts          int       `json:"attempts"`
+	FailureCode       string    `json:"failure_code,omitempty"`
+	LastError         string    `json:"last_error,omitempty"`
+	DetailsTruncated  bool      `json:"details_truncated,omitempty"`
+	Retryable         bool      `json:"retryable"`
+	UpdatedAt         time.Time `json:"updated_at"`
+	ReceiptURL        string    `json:"receipt_url,omitempty"`
+	AttemptHistoryURL string    `json:"attempt_history_url,omitempty"`
 }
 
 // EventReplayBackfillItemsResponse is one stable, acceptance-ordered page of

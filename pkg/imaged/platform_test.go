@@ -73,7 +73,13 @@ func TestPrepareContainerImageSignatureBindsSource(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			th := newTestHarness(t, state.DeploymentKindImage, "pro", "")
 			th.app.SecurityPolicy = api.AppSecurityPolicyEnforce
-			th.dep.ImageDigest = "example.com/org/service:latest"
+			th.dep, err = th.store.CreateDeployment(t.Context(), state.Deployment{
+				AppID: th.app.ID, Kind: state.DeploymentKindImage,
+				ImageDigest: "example.com/org/service:latest", Status: state.DeployPending,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
 			p := &resolvingTestPuller{fakeManifestPuller: &fakeManifestPuller{}, resolution: oci.ImageResolution{
 				SourceDigest: source, SourceReference: "example.com/org/service@" + source,
 				Digest: child, Reference: "example.com/org/service@" + child}}
@@ -103,6 +109,10 @@ func TestPrepareContainerImageSignatureBindsSource(t *testing.T) {
 			if mode == "signed index" {
 				if err != nil || ref != p.resolution.Reference || digest != child {
 					t.Fatalf("resolution: %q %q %v", ref, digest, err)
+				}
+				dep, _ := th.store.DeploymentByID(t.Context(), th.dep.ID)
+				if dep.ImageDigest != p.resolution.SourceReference {
+					t.Fatalf("deployment did not pin signed source: %+v", dep)
 				}
 			} else {
 				if err == nil || ref != "" || digest != "" {

@@ -24,5 +24,13 @@ export type EventReplayBackfillItemResponse = {
   details_truncated?: boolean;
   retryable: boolean;
   updated_at: string;
+  /**
+   * Account-authenticated receipt inspection; omitted after the original receipt expires.
+   */
+  receipt_url?: string;
+  /**
+   * Handler attempt history for this consumer; omitted when retained delivery provenance or current app ownership is unavailable.
+   */
+  attempt_history_url?: string;
 };
 

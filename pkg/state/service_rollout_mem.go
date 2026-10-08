@@ -107,7 +107,7 @@ func (m *MemStore) FinalizeServiceRollout(ctx context.Context, id string) (Deplo
 			other.Status = DeploySuperseded
 		}
 		other.TrafficPercent = 0
-		m.deployments[row.id] = other
+		m.putDeploymentLocked(row.id, other)
 	}
 	now := time.Now().UTC()
 	target.TrafficPercent = 100
@@ -122,7 +122,7 @@ func (m *MemStore) FinalizeServiceRollout(ctx context.Context, id string) (Deplo
 	handoff.UpdatedAt = &now
 	handoff.CompletedAt = &now
 	target.ServiceRolloutHandoff = handoff
-	m.deployments[id] = target
+	m.putDeploymentLocked(id, target)
 	m.enqueueRolloutOutcomeWebhooksLocked(before, target)
 	return target, nil
 }
@@ -165,7 +165,7 @@ func (m *MemStore) beginServiceRolloutCutoverLocked(ctx context.Context, id stri
 			}
 			other.TrafficPercent = 0
 		}
-		m.deployments[row.id] = other
+		m.putDeploymentLocked(row.id, other)
 	}
 	now := time.Now().UTC()
 	handoff := target.ServiceRolloutHandoff
@@ -181,7 +181,7 @@ func (m *MemStore) beginServiceRolloutCutoverLocked(ctx context.Context, id stri
 	handoff.CompletedAt = nil
 	target.TrafficPercent = 100
 	target.ServiceRolloutHandoff = handoff
-	m.deployments[target.ID] = target
+	m.putDeploymentLocked(target.ID, target)
 	return m.deployments[target.ID], nil
 }
 
@@ -214,7 +214,7 @@ func (m *MemStore) BeginServiceRolloutAbort(ctx context.Context, id string) (Dep
 		} else {
 			other.TrafficPercent = 0
 		}
-		m.deployments[row.id] = other
+		m.putDeploymentLocked(row.id, other)
 	}
 	now := time.Now().UTC()
 	handoff := target.ServiceRolloutHandoff
@@ -226,7 +226,7 @@ func (m *MemStore) BeginServiceRolloutAbort(ctx context.Context, id string) (Dep
 	handoff.CompletedAt = nil
 	target.TrafficPercent = 0
 	target.ServiceRolloutHandoff = handoff
-	m.deployments[target.ID] = target
+	m.putDeploymentLocked(target.ID, target)
 	return target, nil
 }
 
@@ -248,7 +248,7 @@ func (m *MemStore) UpdateServiceRolloutHandoff(_ context.Context, id string, han
 	}
 	handoff.BindingsCheck = target.ServiceRolloutHandoff.BindingsCheck
 	target.ServiceRolloutHandoff = handoff
-	m.deployments[id] = target
+	m.putDeploymentLocked(id, target)
 	return target, nil
 }
 
@@ -285,7 +285,7 @@ func (m *MemStore) AbortServiceRollout(ctx context.Context, id, reason string) (
 			other.Status = DeploySuperseded
 			other.TrafficPercent = 0
 		}
-		m.deployments[row.id] = other
+		m.putDeploymentLocked(row.id, other)
 	}
 	now := time.Now().UTC()
 	target.Status = DeploySuperseded
@@ -305,7 +305,7 @@ func (m *MemStore) AbortServiceRollout(ctx context.Context, id, reason string) (
 	handoff.UpdatedAt = &now
 	handoff.CompletedAt = &now
 	target.ServiceRolloutHandoff = handoff
-	m.deployments[id] = target
+	m.putDeploymentLocked(id, target)
 	m.enqueueRolloutOutcomeWebhooksLocked(before, target)
 	return target, nil
 }

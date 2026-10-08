@@ -22,13 +22,13 @@ func cmdWorkflows(args []string) int {
 		return 1
 	}
 	switch args[0] {
-	case "list":
+	case "list", "ls", "runs":
 		return cmdWorkflowsList(args[1:])
 	case "schedules":
 		return cmdWorkflowSchedules(args[1:])
 	case "run":
 		return cmdWorkflowsRun(args[1:])
-	case "status":
+	case "status", "get", "show":
 		return cmdWorkflowsStatus(args[1:])
 	case "steps":
 		return cmdWorkflowsSteps(args[1:])
@@ -46,6 +46,10 @@ func cmdWorkflows(args []string) int {
 		return cmdWorkflowsEvents(args[1:])
 	default:
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown workflows subcommand: %s", args[0]), "workflows")
+		if parent, ok := lookupCliCommand("workflows"); ok {
+			sug, _ := suggestSubcommand(args[0], parent)
+			maybeSuggestSub(sug)
+		}
 		return 1
 	}
 }
@@ -413,19 +417,21 @@ func cmdWorkflowsRetry(args []string) int {
 }
 
 func cmdWorkflowsEvents(args []string) int {
-	if len(args) == 0 || args[0] != "send" {
-		PrintUsage(os.Stderr, "usage: gregale workflows events send <run_id> <event_name> [--payload '{\"k\":\"v\"}']", "workflows")
-		return 1
+	// The documented form is `workflows events <run_id> <event_name>`; the
+	// older `workflows events send ...` spelling keeps working. Requiring
+	// "send" made the documented command fail (production-us hunt #5, H5-46).
+	if len(args) > 0 && args[0] == "send" {
+		args = args[1:]
 	}
 
 	fs := newFlagSet("workflows-events-send", flag.ContinueOnError)
 	payloadStr := fs.String("payload", "{}", "JSON payload for the event")
-	flags, posArgs := splitArgsForFlags(args[1:])
+	flags, posArgs := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(posArgs) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale workflows events send <run_id> <event_name> [--payload '{\"k\":\"v\"}']", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows events <run_id> <event_name> [--payload '{\"k\":\"v\"}']", "workflows")
 		return 1
 	}
 

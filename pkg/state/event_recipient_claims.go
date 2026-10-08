@@ -34,7 +34,7 @@ type PublishedEventRecipientWork struct {
 
 type PublishedEventRecipientWorkStore interface {
 	InitializePublishedEventRecipients(context.Context, *PublishedEventWork, time.Time) error
-	ClaimDuePublishedEventRecipient(context.Context, time.Time) (*PublishedEventRecipientWork, error)
+	ClaimDuePublishedEventRecipient(context.Context, time.Time, ...bool) (*PublishedEventRecipientWork, error)
 	FinishPublishedEventRecipient(context.Context, *PublishedEventRecipientWork, PublishedEventRecipientProgress, time.Time) error
 }
 
@@ -79,8 +79,12 @@ func (s *PgStore) InitializePublishedEventRecipients(ctx context.Context, work *
 	return tx.Commit(ctx)
 }
 
-func (s *PgStore) ClaimDuePublishedEventRecipient(ctx context.Context, now time.Time) (*PublishedEventRecipientWork, error) {
-	row, err := sqlc.New().EventRecipientClaim(ctx, s.pool, pgtypeFromTime(now))
+// includeWorkflows defaults to true. Schedulers pass false while the workflow
+// runtime is disabled so waiting workflows do not spend routing attempts.
+func (s *PgStore) ClaimDuePublishedEventRecipient(ctx context.Context, now time.Time, includeWorkflows ...bool) (*PublishedEventRecipientWork, error) {
+	row, err := sqlc.New().EventRecipientClaim(ctx, s.pool, sqlc.EventRecipientClaimParams{
+		NowAt: pgtypeFromTime(now), IncludeWorkflows: len(includeWorkflows) == 0 || includeWorkflows[0],
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -227,12 +231,15 @@ func (m *MemStore) InitializePublishedEventRecipients(_ context.Context, claimed
 	return ErrNotFound
 }
 
-func (m *MemStore) ClaimDuePublishedEventRecipient(_ context.Context, now time.Time) (*PublishedEventRecipientWork, error) {
+func (m *MemStore) ClaimDuePublishedEventRecipient(_ context.Context, now time.Time, includeWorkflows ...bool) (*PublishedEventRecipientWork, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var chosen *PublishedEventRecipientWork
 	for _, receipt := range m.eventFanout {
 		for _, work := range receipt.routingRecipients {
+			if len(includeWorkflows) != 0 && !includeWorkflows[0] && len(work.Recipient.Workflow) != 0 {
+				continue
+			}
 			if (work.State != PublishedEventRecipientPending || work.AvailableAt.After(now)) &&
 				(work.State != "processing" || work.LeaseUntil.After(now)) {
 				continue
@@ -320,6 +327,16 @@ func resetEventRecipientForReplay(receipt *PublishedEventWork, subscriptionID st
 }
 
 func (s *PgStore) replayClaimedEventRecipient(ctx context.Context, accountID, appID, source, eventID, subscriptionID string) (bool, error) {
+	jobID, err := sqlc.New().EventReplayBackfillRecipientJob(ctx, s.pool, sqlc.EventReplayBackfillRecipientJobParams{
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), EventSource: source, EventID: eventID, SubscriptionID: subscriptionID,
+	})
+	if err == nil {
+		_, err = s.retryFailedEventReplayBackfill(ctx, accountID, uuidString(jobID), 1, backfillRetryTarget{AppID: appID, Source: source, EventID: eventID, SubscriptionID: subscriptionID})
+		return true, err
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return true, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return true, err

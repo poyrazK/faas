@@ -350,7 +350,7 @@ func (s *server) eventFanoutHistoryResponse(r *http.Request, store state.EventFa
 }
 
 // replayEventFanoutFailure requeues exactly one terminal recipient from the
-// event's immutable acceptance-time snapshot.
+// event's acceptance snapshot or a retained historical backfill.
 func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -377,6 +377,9 @@ func (s *server) replayEventFanoutFailure(w http.ResponseWriter, r *http.Request
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Event fanout failure is not replayable yet", "the event fanout receipt is still being processed; retry after it settles"))
+		return
+	case errors.Is(err, state.ErrEventReplayBackfillQuota), errors.Is(err, state.ErrEventReplayBackfillState):
+		api.WriteProblem(w, eventReplayBackfillProblem(err, r.Context().Err()))
 		return
 	case err != nil:
 		api.WriteProblem(w, api.ErrInternal("event fanout replay"))

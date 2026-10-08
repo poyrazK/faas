@@ -306,6 +306,15 @@
     mode: "0644"
   notify: restart faas-gatewayd-internal
 
+- name: gatewayd_internal_service — install realtimed FAAS_NODE_NAME drop-in
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-node-name.conf.j2
+    dest: /etc/systemd/system/faas-realtimed.service.d/99-faas-node-name.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-realtimed
+
 # Mega-PR-C (issue #911 / ADR-110): wire the per-box role gate
 # through to gatewayd-internal via FAAS_GATEWAYD_ROLE so
 # cmd/gatewayd-internal/config.go::LoadConfig picks up

@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/devbridge"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -137,6 +138,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	deploymentDependencyGates   map[string]DeploymentDependencyGate
 	invocationAttemptHistory    map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID     int64
 	checkedRollbacks            map[string]api.RollbackOperation
@@ -1041,9 +1043,10 @@ type registryCredKey struct {
 }
 
 type idemEntry struct {
-	status  int
-	body    []byte
-	created time.Time
+	status        int
+	body          []byte
+	requestDigest []byte
+	created       time.Time
 }
 
 // usageMinute mirrors the production schema (PK (instance_id, minute)).
@@ -1147,6 +1150,7 @@ type builderVMCleanupRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
+		deploymentDependencyGates:   map[string]DeploymentDependencyGate{},
 		qualificationExecutions:     map[string]EnvironmentQualificationExecutionStatus{},
 		financialRetainedFrom:       time.Now().UTC(),
 		revisionPins:                map[string]time.Time{},
@@ -6967,6 +6971,10 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
 		return Deployment{}, 0, err
 	}
+	dependencyGate, err := m.captureDeploymentDependenciesLocked(app, d)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
 	if d.ID != "" {
 		if _, exists := m.deployments[d.ID]; exists {
 			return Deployment{}, 0, ErrConflict
@@ -7112,6 +7120,9 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	}
 	m.recordRecoveryPredecessorLocked(d)
 	m.putDeploymentLocked(d.ID, d)
+	if dependencyGate != nil {
+		m.deploymentDependencyGates[d.ID] = *dependencyGate
+	}
 	if len(cloneInputs) > 0 {
 		m.attachCloneDeploymentLocked(*cloneInputs[0], cloneRecord, d)
 	}
@@ -8328,6 +8339,11 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	if d.Status == DeployCancelled && status != DeployCancelled {
 		return ErrInvalidStateTransition
 	}
+	if status == DeployLive {
+		if _, err := m.checkDeploymentDependenciesLocked(id, time.Now().UTC(), false); err != nil {
+			return err
+		}
+	}
 	proposal := d
 	proposal.Status = status
 	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
@@ -8457,10 +8473,14 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) (err error
 }
 
 func (m *MemStore) MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id string) error {
+	return m.MarkDeploymentLiveIfLatest(ctx, id)
+}
+
+func (m *MemStore) MarkDeploymentLiveIfLatest(ctx context.Context, id string) error {
 	return m.markDeploymentLive(ctx, id, true)
 }
 
-func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDriven bool) (err error) {
+func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLatest bool) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
@@ -8512,8 +8532,8 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {
 		return err
 	}
-	if fenceGitDriven {
-		if (d.Kind != DeploymentKindGitHub && d.Kind != DeploymentKindPreview) || d.Revision <= 0 {
+	if fenceLatest {
+		if !d.Kind.RequiresLatestRevision() || d.Revision <= 0 {
 			return ErrInvalidStateTransition
 		}
 		if d.Status == DeploySuperseded {
@@ -8534,6 +8554,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 		}
 	}
 
+	if _, gateErr := m.checkDeploymentDependenciesLocked(id, time.Now().UTC(), false); gateErr != nil {
+		return gateErr
+	}
 	// Build the post-transition rows locally first. The callback can fail
 	// (for example, if the canonical spec cannot be loaded); keeping all
 	// mutations local until it succeeds gives MemStore the same atomic
@@ -9163,6 +9186,9 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	// builds a fresh struct and never copies Revision, so this is always
 	// a fresh assignment; mirrors the subselect in PgStore's retry INSERT.
 	newDep.Revision = m.nextDeploymentRevisionLocked(newDep.AppID)
+	if gate, exists := m.deploymentDependencyGates[failedID]; exists {
+		m.deploymentDependencyGates[newDep.ID] = cloneDeploymentDependencyGate(gate)
+	}
 	m.putDeploymentLocked(newDep.ID, newDep)
 	return newDep, nil
 }
@@ -9275,6 +9301,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	if targetID == "" {
 		// No rollback target — succeed as a no-op (mirrors PG path).
 		return "", nil
+	}
+	if _, err := m.checkDeploymentDependenciesLocked(targetID, time.Now().UTC(), false); err != nil {
+		return "", err
 	}
 	if err := m.rejectUncheckedBindingReleaseLocked(cur.AppID, cur.Scope); err != nil {
 		return "", err
@@ -9450,7 +9479,11 @@ func (m *MemStore) SetDeploymentRuntimeProfile(_ context.Context, id string, pro
 		(d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging) {
 		return ErrInvalidStateTransition
 	}
-	d.InferredProfile = append(json.RawMessage(nil), profile...)
+	updated, err := frameworkprofile.PreserveImageRuntime(d.InferredProfile, profile)
+	if err != nil {
+		return fmt.Errorf("state: update image runtime profile: %w", err)
+	}
+	d.InferredProfile = updated
 	m.putDeploymentLocked(id, d)
 	return nil
 }
@@ -13512,7 +13545,7 @@ func (m *MemStore) ListInvocationsForApp(_ context.Context, appID string, states
 	}
 	var out []Invocation
 	for _, inv := range m.invocations {
-		if inv.AppID != appID {
+		if !sameMemUUID(inv.AppID, appID) {
 			continue
 		}
 		if len(stateSet) > 0 {
@@ -19062,6 +19095,59 @@ func (m *MemStore) ReserveIdempotent(_ context.Context, accountID, key string, a
 	return IdempotencyReservation{Status: e.status, Body: append([]byte(nil), e.body...)}, nil
 }
 
+// ReserveManagedRealtimePublish binds one live publish key to a payload for
+// the normal 24-hour idempotency window. In-flight publishes are never
+// reclaimed early: their delivery outcome may be unknown after a crash.
+func (m *MemStore) ReserveManagedRealtimePublish(_ context.Context, accountID, key string, requestDigest []byte) (ManagedRealtimePublishReservation, error) {
+	if len(requestDigest) != sha256.Size {
+		return ManagedRealtimePublishReservation{}, errors.New("state: managed realtime publish digest must be SHA-256")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := accountID + "\x00" + key
+	e, ok := m.idem[id]
+	if !ok || time.Since(e.created) > 24*time.Hour {
+		m.idem[id] = idemEntry{created: time.Now(), requestDigest: append([]byte(nil), requestDigest...)}
+		return ManagedRealtimePublishReservation{Reserved: true}, nil
+	}
+	if !bytes.Equal(e.requestDigest, requestDigest) {
+		return ManagedRealtimePublishReservation{Conflict: true}, nil
+	}
+	if e.status == 0 {
+		return ManagedRealtimePublishReservation{InFlight: true}, nil
+	}
+	return ManagedRealtimePublishReservation{Status: e.status, Body: append([]byte(nil), e.body...)}, nil
+}
+
+// ReapManagedRealtimePublishIdempotency removes expired payload-bound publish
+// receipts in oldest-first order, matching the production retention window.
+func (m *MemStore) ReapManagedRealtimePublishIdempotency(_ context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().Add(-24 * time.Hour)
+	type expiredEntry struct {
+		id      string
+		created time.Time
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expired := make([]expiredEntry, 0)
+	for id, entry := range m.idem {
+		if len(entry.requestDigest) == sha256.Size && !entry.created.After(cutoff) {
+			expired = append(expired, expiredEntry{id: id, created: entry.created})
+		}
+	}
+	sort.Slice(expired, func(i, j int) bool { return expired[i].created.Before(expired[j].created) })
+	if len(expired) > limit {
+		expired = expired[:limit]
+	}
+	for _, entry := range expired {
+		delete(m.idem, entry.id)
+	}
+	return len(expired), nil
+}
+
 // ReclaimIdempotent mirrors PgStore: turn the completed response back into
 // an in-flight reservation only while it still holds status and body.
 func (m *MemStore) ReclaimIdempotent(_ context.Context, accountID, key string, status int, body []byte) (bool, error) {
@@ -19072,7 +19158,8 @@ func (m *MemStore) ReclaimIdempotent(_ context.Context, accountID, key string, s
 	if !ok || e.status == 0 || e.status != status || !bytes.Equal(e.body, body) {
 		return false, nil
 	}
-	m.idem[id] = idemEntry{created: time.Now()}
+	fingerprint := append([]byte(nil), e.requestDigest...)
+	m.idem[id] = idemEntry{created: time.Now(), requestDigest: fingerprint}
 	return true, nil
 }
 
@@ -19090,7 +19177,9 @@ func (m *MemStore) ReleaseIdempotent(_ context.Context, accountID, key string) e
 func (m *MemStore) PutIdempotent(_ context.Context, accountID, key string, status int, body []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.idem[accountID+"\x00"+key] = idemEntry{status: status, body: append([]byte(nil), body...), created: time.Now()}
+	id := accountID + "\x00" + key
+	fingerprint := append([]byte(nil), m.idem[id].requestDigest...)
+	m.idem[id] = idemEntry{status: status, body: append([]byte(nil), body...), requestDigest: fingerprint, created: time.Now()}
 	return nil
 }
 

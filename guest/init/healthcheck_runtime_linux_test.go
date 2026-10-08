@@ -1,5 +1,6 @@
 //go:build linux
 
+// adr: 413, 414, 682
 package main
 
 import (
@@ -13,7 +14,37 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/oci"
 )
+
+func TestComposeImageHealthcheckStartupExecution(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		test        []string
+		wantFailure bool
+	}{
+		{"successful exec", []string{"CMD", "/bin/sh", "-c", "exit 0"}, false},
+		{"failed shell", []string{"CMD-SHELL", "exit 1"}, true},
+		{"disabled image check", []string{"NONE"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config, err := oci.ApplyComposeHealthcheck(oci.ImageConfig{Cmd: []string{"/server"},
+				Healthcheck: &oci.ImageHealthcheck{Test: []string{"CMD-SHELL", "exit 1"}}},
+				&api.ComposeHealthcheck{Test: tc.test, Retries: 1, TimeoutNS: int64(time.Second)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := oci.ManifestFromConfig(oci.Config{Cmd: config.Cmd, Healthcheck: config.Healthcheck})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = runStartupHealthcheck(manifest, nil, "", "", 0, nil, nil)
+			if (err != nil) != tc.wantFailure {
+				t.Fatalf("startup check = %v; want failure %t", err, tc.wantFailure)
+			}
+		})
+	}
+}
 
 func TestHealthcheckPollUsesScopedEnvironmentAfterMainStarts(t *testing.T) {
 	dir := t.TempDir()

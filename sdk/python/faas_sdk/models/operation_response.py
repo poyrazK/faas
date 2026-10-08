@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ..models.operation_delivery_response import OperationDeliveryResponse
     from ..models.operation_progress import OperationProgress
     from ..models.operation_result_artifact import OperationResultArtifact
+    from ..models.operation_subject import OperationSubject
 
 
 T = TypeVar("T", bound="OperationResponse")
@@ -35,6 +36,9 @@ class OperationResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     expires_at: datetime.datetime
+    subject: OperationSubject | Unset = UNSET
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
     progress: OperationProgress | Unset = UNSET
     """Current bounded progress from the active execution attempt."""
     result: Any | Unset = UNSET
@@ -63,6 +67,10 @@ class OperationResponse:
         updated_at = self.updated_at.isoformat()
 
         expires_at = self.expires_at.isoformat()
+
+        subject: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.subject, Unset):
+            subject = self.subject.to_dict()
 
         progress: dict[str, Any] | Unset = UNSET
         if not isinstance(self.progress, Unset):
@@ -95,6 +103,8 @@ class OperationResponse:
                 "expires_at": expires_at,
             }
         )
+        if subject is not UNSET:
+            field_dict["subject"] = subject
         if progress is not UNSET:
             field_dict["progress"] = progress
         if result is not UNSET:
@@ -111,6 +121,7 @@ class OperationResponse:
         from ..models.operation_delivery_response import OperationDeliveryResponse
         from ..models.operation_progress import OperationProgress
         from ..models.operation_result_artifact import OperationResultArtifact
+        from ..models.operation_subject import OperationSubject
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -132,6 +143,13 @@ class OperationResponse:
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
         expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
+
+        _subject = d.pop("subject", UNSET)
+        subject: OperationSubject | Unset
+        if isinstance(_subject, Unset):
+            subject = UNSET
+        else:
+            subject = OperationSubject.from_dict(_subject)
 
         _progress = d.pop("progress", UNSET)
         progress: OperationProgress | Unset
@@ -164,6 +182,7 @@ class OperationResponse:
             created_at=created_at,
             updated_at=updated_at,
             expires_at=expires_at,
+            subject=subject,
             progress=progress,
             result=result,
             artifacts=artifacts,

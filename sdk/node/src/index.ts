@@ -42,6 +42,7 @@ export { OutboundService } from './generated/services/OutboundService.js';
 export { QueuesService } from './generated/services/QueuesService.js';
 export { TriggersService } from './generated/services/TriggersService.js';
 export { ProjectsService } from './generated/services/ProjectsService.js';
+export { RealtimeService } from './generated/services/RealtimeService.js';
 export { RunsService } from './generated/services/RunsService.js';
 export { SecretsService } from './generated/services/SecretsService.js';
 export { UsageService } from './generated/services/UsageService.js';
@@ -95,10 +96,16 @@ export {
 
 export {
   consumeRealtimeChannel,
+  consumeRealtimeChannels,
+  REALTIME_MAX_CHANNELS_PER_CONNECTION,
   REALTIME_RESUME_SUBPROTOCOL,
+  RealtimeConfigurationError,
   RealtimeProtocolError,
   RealtimeResyncRequiredError,
   type ConsumeRealtimeChannelOptions,
+  type ConsumeRealtimeChannelsOptions,
+  type RealtimeChannelConsumerOptions,
+  type RealtimeConnectionOptions,
   type RealtimeCursorStore,
   type RealtimeMessage,
   type RealtimeSocket,
@@ -162,12 +169,14 @@ export {
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
 
-export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport } from './customer-operations.js';
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationSubject, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport, type OperationMilestoneReport, type OperationMilestone, type OperationWorkflowState, type OperationMilestones, type OperationMilestonePageOptions, type OperationBusinessMilestoneOptions } from './customer-operations.js';
 export { GregaleOperations, type GregaleOperationsOptions, type OperationExecutionContext } from './operations-runtime.js';
 
 export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
 
-export { operationReceiptSchema } from "./operation-contract.js";
+export { operationReceiptSchema, customerOperationReceiptSchema } from "./operation-contract.js";
+export { customerOperationRequestFromHeaders, customerOperationRequestDigest, withCustomerOperationTransaction,
+  type CustomerOperationHTTPRequest, type CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
 export {
   operationRequestFromHeaders,
   operationRequestDigest,
@@ -181,3 +190,6 @@ export {
   type OperationPool,
   type OperationTransactionResult,
 } from "./operations.js";
+
+export { OperationMilestonePublicationError, type CustomerOperationTransaction } from './customer-operation-milestones.js';
+export { OperationWorkflowStatePublicationError, type OperationWorkflowStateReport, type OperationWorkflowStateReceipt } from './customer-operation-workflow-states.js';

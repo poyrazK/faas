@@ -1248,6 +1248,23 @@ $$;
 
 
 --
+-- Name: customer_operation_subject_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.customer_operation_subject_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.record->'subject' IS DISTINCT FROM NEW.record->'subject' THEN
+        RAISE EXCEPTION 'customer operation subject is immutable'
+            USING ERRCODE = '23514', CONSTRAINT = 'customer_operation_subject_immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: data_upstreams_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10863,7 +10880,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -11969,7 +11986,7 @@ CREATE TABLE public.customer_operation_events (
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT customer_operation_events_attempt_check CHECK ((attempt >= 0)),
     CONSTRAINT customer_operation_events_data_check CHECK ((jsonb_typeof(data) = 'object'::text)),
-    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'artifact_attached'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
+    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'workflow_progress'::text, 'artifact_attached'::text, 'milestone'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
     CONSTRAINT customer_operation_events_sequence_check CHECK ((sequence > 0))
 );
 
@@ -12010,6 +12027,71 @@ CREATE TABLE public.customer_operation_idempotency (
     expires_at timestamp with time zone NOT NULL,
     CONSTRAINT customer_operation_idempotency_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT customer_operation_idempotency_scope_digest_check CHECK ((scope_digest ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: customer_operation_milestones; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_milestones (
+    operation_id uuid NOT NULL,
+    id uuid NOT NULL,
+    event_sequence bigint NOT NULL,
+    name text NOT NULL,
+    payload json NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    fingerprint text NOT NULL,
+    CONSTRAINT customer_operation_milestones_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT customer_operation_milestones_event_sequence_check CHECK ((event_sequence > 0)),
+    CONSTRAINT customer_operation_milestones_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT customer_operation_milestones_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT customer_operation_milestones_occurred_at_check CHECK (isfinite(occurred_at)),
+    CONSTRAINT customer_operation_milestones_payload_check CHECK (((octet_length((payload)::text) >= 1) AND (octet_length((payload)::text) <= 8192)))
+);
+
+CREATE TABLE public.customer_operation_workflow_state_reports (
+    operation_id uuid NOT NULL,
+    id uuid NOT NULL,
+    workflow text NOT NULL,
+    instance_id text NOT NULL,
+    from_state text NOT NULL,
+    state text NOT NULL,
+    revision bigint NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    fingerprint text NOT NULL,
+    CONSTRAINT customer_operation_workflow_state_reports_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT customer_operation_workflow_state_reports_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT customer_operation_workflow_state_reports_from_state_check CHECK (((from_state = ''::text) OR (from_state ~ '^[a-z][a-z0-9-]{0,63}$'::text))),
+    CONSTRAINT customer_operation_workflow_state_reports_instance_id_check CHECK (((octet_length(instance_id) >= 1) AND (octet_length(instance_id) <= 256) AND (instance_id !~ '[\\x00-\\x1f\\x7f]'::text))),
+    CONSTRAINT customer_operation_workflow_state_reports_occurred_at_check CHECK (isfinite(occurred_at)),
+    CONSTRAINT customer_operation_workflow_state_reports_revision_check CHECK ((revision >= 1) AND (revision <= 9007199254740991)),
+    CONSTRAINT customer_operation_workflow_state_reports_state_check CHECK ((state ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT customer_operation_workflow_state_reports_workflow_check CHECK ((workflow ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+);
+
+CREATE TABLE public.customer_operation_workflow_states (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    scope text NOT NULL,
+    subject_type text NOT NULL,
+    subject_id text NOT NULL,
+    workflow text NOT NULL,
+    instance_id text NOT NULL,
+    state text NOT NULL,
+    revision bigint NOT NULL,
+    operation_id uuid NOT NULL,
+    report_id uuid NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_workflow_states_instance_id_check CHECK (((octet_length(instance_id) >= 1) AND (octet_length(instance_id) <= 256) AND (instance_id !~ '[\\x00-\\x1f\\x7f]'::text))),
+    CONSTRAINT customer_operation_workflow_states_revision_check CHECK ((revision >= 1) AND (revision <= 9007199254740991)),
+    CONSTRAINT customer_operation_workflow_states_state_check CHECK ((state ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT customer_operation_workflow_states_subject_id_check CHECK (((octet_length(subject_id) >= 1) AND (octet_length(subject_id) <= 256) AND (subject_id !~ '[\\x00-\\x1f\\x7f]'::text))),
+    CONSTRAINT customer_operation_workflow_states_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT customer_operation_workflow_states_workflow_check CHECK ((workflow ~ '^[a-z][a-z0-9-]{0,62}$'::text))
 );
 
 
@@ -12093,6 +12175,8 @@ CREATE TABLE public.customer_operations (
     current_execution_id uuid GENERATED ALWAYS AS (COALESCE(((record ->> 'current_execution_id'::text))::uuid, current_invocation_id)) STORED NOT NULL,
     execution_kind text GENERATED ALWAYS AS (COALESCE((record ->> 'execution_kind'::text), 'http'::text)) STORED NOT NULL,
     execution_generation integer GENERATED ALWAYS AS (((record ->> 'generation'::text))::integer) STORED NOT NULL,
+    CONSTRAINT customer_operation_milestone_count_valid CHECK (((NOT (record ? 'milestone_count'::text)) OR COALESCE(((jsonb_typeof((record -> 'milestone_count'::text)) = 'number'::text) AND ((((record ->> 'milestone_count'::text))::integer >= 0) AND (((record ->> 'milestone_count'::text))::integer <= 64))), false))),
+    CONSTRAINT customer_operation_subject_valid CHECK (((NOT (record ? 'subject'::text)) OR COALESCE(((jsonb_typeof((record -> 'subject'::text)) = 'object'::text) AND ((((record -> 'subject'::text) - 'type'::text) - 'id'::text) = '{}'::jsonb) AND (jsonb_typeof(((record -> 'subject'::text) -> 'type'::text)) = 'string'::text) AND (((record -> 'subject'::text) ->> 'type'::text) ~ '^[a-z][a-z0-9-]{0,63}$'::text) AND (jsonb_typeof(((record -> 'subject'::text) -> 'id'::text)) = 'string'::text) AND ((octet_length(((record -> 'subject'::text) ->> 'id'::text)) >= 1) AND (octet_length(((record -> 'subject'::text) ->> 'id'::text)) <= 256)) AND (((record -> 'subject'::text) ->> 'id'::text) !~ '[\x01-\x1f\x7f]'::text)), false))),
     CONSTRAINT customer_operations_backend_check CHECK (((execution_kind = ANY (ARRAY['http'::text, 'workflow'::text, 'job'::text])) AND (((execution_kind = 'http'::text) AND (current_invocation_id IS NOT NULL) AND (current_execution_id = current_invocation_id)) OR ((execution_kind = ANY (ARRAY['workflow'::text, 'job'::text])) AND (current_invocation_id IS NULL))))),
     CONSTRAINT customer_operations_check CHECK (((record ->> 'id'::text) = (id)::text)),
     CONSTRAINT customer_operations_check1 CHECK (((record ->> 'state'::text) = state)),
@@ -12198,7 +12282,9 @@ CREATE TABLE public.customer_operation_workflow_guest_claims (
     capability_digest text NOT NULL,
     deadline_at timestamp with time zone NOT NULL,
     bound_at timestamp with time zone DEFAULT now() NOT NULL,
+    dispatch_started_at timestamp with time zone,
     CONSTRAINT customer_operation_workflow_guest_cla_coordinator_attempt_check CHECK ((coordinator_attempt > 0)),
+    CONSTRAINT customer_operation_workflow_guest_cla_dispatch_started_at_check CHECK (((dispatch_started_at IS NULL) OR isfinite(dispatch_started_at))),
     CONSTRAINT customer_operation_workflow_guest_claim_capability_digest_check CHECK ((capability_digest ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT customer_operation_workflow_guest_claims_bound_at_check CHECK (isfinite(bound_at)),
     CONSTRAINT customer_operation_workflow_guest_claims_deadline_at_check CHECK (isfinite(deadline_at)),
@@ -13523,12 +13609,14 @@ CREATE TABLE public.event_fanout_recipients (
     capacity_deferrals integer DEFAULT 0 NOT NULL,
     generation_capacity_deferrals integer DEFAULT 0 NOT NULL,
     backfill_job_id uuid,
+    receipt_position bigint,
     CONSTRAINT event_fanout_recipients_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT event_fanout_recipients_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
     CONSTRAINT event_fanout_recipients_check CHECK ((total_attempts >= attempts)),
     CONSTRAINT event_fanout_recipients_check1 CHECK ((((state = 'processing'::text) AND (claim_token IS NOT NULL) AND (lease_until IS NOT NULL)) OR ((state <> 'processing'::text) AND (claim_token IS NULL) AND (lease_until IS NULL)))),
     CONSTRAINT event_fanout_recipients_generation_capacity_deferrals_check CHECK ((generation_capacity_deferrals >= 0)),
     CONSTRAINT event_fanout_recipients_generation_check CHECK ((generation > 0)),
+    CONSTRAINT event_fanout_recipients_receipt_position_check CHECK ((receipt_position > 0)),
     CONSTRAINT event_fanout_recipients_recipient_check CHECK ((jsonb_typeof(recipient) = 'object'::text)),
     CONSTRAINT event_fanout_recipients_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'filtered'::text, 'enqueued'::text, 'failed'::text])))
 );
@@ -14552,7 +14640,9 @@ CREATE TABLE public.idempotency_keys (
     account_id uuid NOT NULL,
     response_status integer NOT NULL,
     response_body bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    request_digest bytea,
+    CONSTRAINT idempotency_keys_request_digest_chk CHECK (((request_digest IS NULL) OR (octet_length(request_digest) = 32)))
 );
 
 
@@ -19995,12 +20085,14 @@ CREATE TABLE public.route_monitors (
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     next_check_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     last_deployment_id uuid,
+    last_healthy_deployment jsonb DEFAULT '{}'::jsonb NOT NULL,
     active_incident_id uuid,
     customer_group_by text DEFAULT ''::text NOT NULL,
     customer_recovery_state jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT route_monitors_check CHECK (((NOT enabled) OR (jsonb_array_length(routes) > 0))),
     CONSTRAINT route_monitors_customer_group_by_check CHECK ((customer_group_by = ANY (ARRAY[''::text, 'tenant'::text, 'consumer'::text]))),
     CONSTRAINT route_monitors_customer_recovery_state_check CHECK (((jsonb_typeof(customer_recovery_state) = 'object'::text) AND (octet_length((customer_recovery_state)::text) <= 262144))),
+    CONSTRAINT route_monitors_last_healthy_deployment_check CHECK (((jsonb_typeof(last_healthy_deployment) = 'object'::text) AND (octet_length((last_healthy_deployment)::text) <= 2048))),
     CONSTRAINT route_monitors_next_check_at_check CHECK (isfinite(next_check_at)),
     CONSTRAINT route_monitors_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
     CONSTRAINT route_monitors_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20) AND (octet_length((routes)::text) <= 16384))),
@@ -22466,6 +22558,28 @@ ALTER TABLE ONLY public.customer_operation_executions
 
 ALTER TABLE ONLY public.customer_operation_idempotency
     ADD CONSTRAINT customer_operation_idempotency_pkey PRIMARY KEY (scope_digest);
+
+
+--
+-- Name: customer_operation_milestones customer_operation_milestones_operation_id_event_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_milestones
+    ADD CONSTRAINT customer_operation_milestones_operation_id_event_sequence_key UNIQUE (operation_id, event_sequence);
+
+
+--
+-- Name: customer_operation_milestones customer_operation_milestones_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_milestones
+    ADD CONSTRAINT customer_operation_milestones_pkey PRIMARY KEY (operation_id, id);
+
+ALTER TABLE ONLY public.customer_operation_workflow_state_reports
+    ADD CONSTRAINT customer_operation_workflow_state_reports_pkey PRIMARY KEY (operation_id, id);
+
+ALTER TABLE ONLY public.customer_operation_workflow_states
+    ADD CONSTRAINT customer_operation_workflow_states_pkey PRIMARY KEY (account_id, app_id, platform_tenant_id, scope, subject_type, subject_id, workflow, instance_id);
 
 
 --
@@ -27943,6 +28057,15 @@ CREATE INDEX customer_operation_idempotency_retention_idx ON public.customer_ope
 
 
 --
+-- Name: customer_operation_milestones_history_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_milestones_history_idx ON public.customer_operation_milestones USING btree (operation_id, created_at DESC, id DESC);
+
+CREATE INDEX customer_operation_workflow_states_subject_idx ON public.customer_operation_workflow_states USING btree (account_id, app_id, platform_tenant_id, scope, subject_type, subject_id, updated_at DESC);
+
+
+--
 -- Name: customer_operation_result_blobs_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -27985,6 +28108,13 @@ CREATE INDEX customer_operations_account_app_creation_idx ON public.customer_ope
 
 
 --
+-- Name: customer_operations_account_subject_history_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_account_subject_history_idx ON public.customer_operations USING btree (account_id, app_id, ((record #>> '{subject,type}'::text[])), ((record #>> '{subject,id}'::text[])), created_at DESC, id DESC) WHERE (record ? 'subject'::text);
+
+
+--
 -- Name: customer_operations_definition_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -28017,6 +28147,13 @@ CREATE INDEX customer_operations_retention_idx ON public.customer_operations USI
 --
 
 CREATE INDEX customer_operations_tenant_idx ON public.customer_operations USING btree (platform_tenant_id, created_at DESC, id DESC);
+
+
+--
+-- Name: customer_operations_tenant_subject_history_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_tenant_subject_history_idx ON public.customer_operations USING btree (account_id, app_id, platform_tenant_id, ((record #>> '{subject,type}'::text[])), ((record #>> '{subject,id}'::text[])), created_at DESC, id DESC) WHERE (record ? 'subject'::text);
 
 
 --
@@ -28648,6 +28785,9 @@ CREATE INDEX event_replay_job_items_page_idx ON public.event_replay_job_items US
 -- Name: event_fanout_recipients_backfill_idx; Type: INDEX; Schema: public; Owner: -
 CREATE INDEX event_fanout_recipients_backfill_idx ON public.event_fanout_recipients USING btree (backfill_job_id, outbox_id) WHERE (backfill_job_id IS NOT NULL);
 
+-- Name: event_fanout_recipients_receipt_position_idx; Type: INDEX; Schema: public; Owner: -
+CREATE UNIQUE INDEX event_fanout_recipients_receipt_position_idx ON public.event_fanout_recipients USING btree (outbox_id, receipt_position) WHERE (receipt_position IS NOT NULL);
+
 
 --
 -- Name: event_outbox_unattributed_age; Type: INDEX; Schema: public; Owner: -
@@ -29109,6 +29249,13 @@ CREATE INDEX github_webhook_deliveries_dead_idx ON public.github_webhook_deliver
 --
 
 CREATE INDEX github_webhook_deliveries_due_idx ON public.github_webhook_deliveries USING btree (next_attempt_at, received_at) WHERE (status = ANY (ARRAY['pending'::text, 'processing'::text]));
+
+
+--
+-- Name: idempotency_keys_publish_receipts_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idempotency_keys_publish_receipts_created_at_idx ON public.idempotency_keys USING btree (created_at) WHERE (request_digest IS NOT NULL);
 
 
 --
@@ -33074,6 +33221,13 @@ CREATE TRIGGER crons_schedule_revision BEFORE UPDATE ON public.crons FOR EACH RO
 
 
 --
+-- Name: customer_operations customer_operation_subject_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER customer_operation_subject_immutable BEFORE UPDATE OF record ON public.customer_operations FOR EACH ROW EXECUTE FUNCTION public.customer_operation_subject_immutable();
+
+
+--
 -- Name: data_upstreams data_upstreams_notify_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -36547,6 +36701,26 @@ ALTER TABLE ONLY public.customer_operation_idempotency
 
 ALTER TABLE ONLY public.customer_operation_idempotency
     ADD CONSTRAINT customer_operation_idempotency_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_milestones customer_operation_milestones_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_milestones
+    ADD CONSTRAINT customer_operation_milestones_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.customer_operation_workflow_state_reports
+    ADD CONSTRAINT customer_operation_workflow_state_reports_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.customer_operation_workflow_states
+    ADD CONSTRAINT customer_operation_workflow_states_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.customer_operation_workflow_states
+    ADD CONSTRAINT customer_operation_workflow_states_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.customer_operation_workflow_states
+    ADD CONSTRAINT customer_operation_workflow_states_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --
@@ -41621,6 +41795,18 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 ALTER TABLE ONLY public.workflow_webhook_receipts
     ADD CONSTRAINT workflow_webhook_receipts_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
 
+-- ADR-685: immutable release dependencies and durable readiness deadlines.
+CREATE TABLE public.deployment_dependency_gates (
+    deployment_id uuid PRIMARY KEY REFERENCES public.deployments(id) ON DELETE CASCADE,
+    pins jsonb NOT NULL CHECK (jsonb_typeof(pins) = 'array' AND jsonb_array_length(pins) BETWEEN 1 AND 100),
+    started_at timestamptz,
+    deadline_at timestamptz,
+    status text NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'ready', 'failed')),
+    blocker text NOT NULL DEFAULT '' CHECK (length(blocker) <= 1024),
+    CHECK ((started_at IS NULL AND deadline_at IS NULL) OR
+           (started_at IS NOT NULL AND deadline_at IS NOT NULL AND deadline_at > started_at))
+);
+
 
 --
 --
@@ -42764,3 +42950,34 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+CREATE FUNCTION check_project_dependency_release() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE gate deployment_dependency_gates; pin jsonb; target_status text; target_traffic integer; parked text;
+BEGIN
+    IF NEW.status <> 'live' OR OLD.status = 'live' OR OLD.serving_ended_at IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT * INTO gate FROM deployment_dependency_gates WHERE deployment_id = NEW.id;
+    IF NOT FOUND THEN RETURN NEW; END IF;
+    IF gate.status = 'failed' OR (gate.status <> 'ready' AND gate.deadline_at <= clock_timestamp()) THEN
+        RAISE EXCEPTION 'dependency release gate failed' USING ERRCODE = '23514', CONSTRAINT = 'deployment_dependency_not_ready';
+    END IF;
+    FOR pin IN SELECT value FROM jsonb_array_elements(gate.pins) ORDER BY value->>'deployment_id' LOOP
+        SELECT d.status, d.traffic_percent, coalesce(d.parked_reason, '')
+        INTO target_status, target_traffic, parked
+        FROM deployments d JOIN apps a ON a.id = d.app_id JOIN apps owner ON owner.id = NEW.app_id
+        WHERE d.id = (pin->>'deployment_id')::uuid AND d.app_id = (pin->>'app_id')::uuid
+          AND a.account_id = owner.account_id AND a.project_id = owner.project_id AND a.status <> 'deleted'
+          AND a.workload_class <> 'job' AND coalesce(a.manifest->>'execution_mode', '') <> 'job'
+          AND coalesce(a.preview_pr_number, 0) = coalesce(owner.preview_pr_number, 0)
+          AND (coalesce(a.preview_of_slug, '') = '') = (coalesce(owner.preview_of_slug, '') = '')
+          AND d.scope = NEW.scope AND d.environment_workload_runtime IS NULL
+        FOR SHARE OF d;
+        IF NOT FOUND OR target_status <> 'live' OR target_traffic <= 0 OR parked <> '' THEN
+            RAISE EXCEPTION 'dependency deployment is not ready' USING ERRCODE = '23514', CONSTRAINT = 'deployment_dependency_not_ready';
+        END IF;
+    END LOOP;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER deployment_dependency_release_check BEFORE UPDATE OF status ON deployments
+FOR EACH ROW EXECUTE FUNCTION check_project_dependency_release();

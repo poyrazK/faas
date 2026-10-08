@@ -51,9 +51,17 @@ func prepareOperationHistoryQuery(account, tenant string, opts api.OperationList
 	default:
 		return opts, cursor, ErrInvalidArgument
 	}
+	if opts.SubjectType != "" || opts.SubjectID != "" {
+		if err := api.ValidateOperationSubject(api.OperationSubject{Type: opts.SubjectType, ID: opts.SubjectID}); err != nil {
+			return opts, cursor, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+		}
+	}
 	selectors := []string{accountID.String(), tenantID.String(), opts.AppID, opts.Scope, opts.Name, string(opts.State)}
 	if operator {
 		selectors = append(selectors, "account-operator")
+	}
+	if opts.SubjectType != "" {
+		selectors = append(selectors, "subject", opts.SubjectType, opts.SubjectID)
 	}
 	query, _ := json.Marshal(selectors)
 	digest := fmt.Sprintf("%x", sha256.Sum256(query))
@@ -100,6 +108,10 @@ func operationHistorySummary(op Operation) api.OperationSummary {
 		CancellationRequested: op.CancellationRequested, LatestSequence: op.LatestSequence,
 		CreatedAt: op.CreatedAt.UTC().Truncate(time.Microsecond), UpdatedAt: op.UpdatedAt, ExpiresAt: op.ExpiresAt,
 		CompletionDelivery: api.OperationDeliverySummary{State: op.CompletionDelivery.State, Attempts: op.CompletionDelivery.Attempts}}
+	if op.Subject != nil {
+		subject := *op.Subject
+		summary.Subject = &subject
+	}
 	if op.Progress != nil {
 		progress := *op.Progress
 		summary.Progress = &progress

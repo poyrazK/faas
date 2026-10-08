@@ -813,15 +813,22 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		}
 		vmstateKey := state.SnapshotVMStateKey(snap)
 		driveKey := state.SnapshotDriveKey(snap)
+		// The ADR-510 backing identity sits beside every capture; leaving it
+		// behind orphaned one object per collected snapshot (H5-13).
+		backingKey := state.SnapshotBackingKey(snap)
 		memErr := be.Delete(ctx, memKey)
 		vmstateErr := be.Delete(ctx, vmstateKey)
-		var driveErr error
+		var driveErr, backingErr error
 		if driveKey != "" {
 			driveErr = be.Delete(ctx, driveKey)
+		}
+		if backingKey != "" {
+			backingErr = be.Delete(ctx, backingKey)
 		}
 		memQuarantined := errors.Is(memErr, storage.ErrDeleteQuarantined)
 		vmstateQuarantined := errors.Is(vmstateErr, storage.ErrDeleteQuarantined)
 		driveQuarantined := errors.Is(driveErr, storage.ErrDeleteQuarantined)
+		backingQuarantined := errors.Is(backingErr, storage.ErrDeleteQuarantined)
 		if memErr != nil && !memQuarantined {
 			l.log.Warn("imaged: gc remove snap mem", "deployment", t.DeploymentID, "tier", t.Tier, "err", memErr)
 			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", memKey, memErr))
@@ -834,16 +841,22 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 			l.log.Warn("imaged: gc remove snap drive", "deployment", t.DeploymentID, "tier", t.Tier, "err", driveErr)
 			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", driveKey, driveErr))
 		}
+		if backingErr != nil && !backingQuarantined {
+			l.log.Warn("imaged: gc remove snap backing", "deployment", t.DeploymentID, "tier", t.Tier, "err", backingErr)
+			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", backingKey, backingErr))
+		}
 		if legacyLocal != nil {
 			l.deleteLegacyLocalSnapshot(ctx, legacyLocal, t.DeploymentID, memKey, vmstateKey)
 		}
-		deletable := (memErr == nil || memQuarantined) && (vmstateErr == nil || vmstateQuarantined) && (driveErr == nil || driveQuarantined)
-		terminalDisposition := memQuarantined || vmstateQuarantined || driveQuarantined
+		deletable := (memErr == nil || memQuarantined) && (vmstateErr == nil || vmstateQuarantined) &&
+			(driveErr == nil || driveQuarantined) && (backingErr == nil || backingQuarantined)
+		terminalDisposition := memQuarantined || vmstateQuarantined || driveQuarantined || backingQuarantined
 		if terminalDisposition && deletable {
 			payload, marshalErr := json.Marshal(map[string]any{
 				"snapshot_id": t.ID, "deployment_id": t.DeploymentID, "app_id": t.AppID,
 				"tier": t.Tier, "disposition": "remote_quarantine_manual_retention",
 				"mem_quarantined": memQuarantined, "vmstate_quarantined": vmstateQuarantined, "drive_quarantined": driveQuarantined,
+				"backing_quarantined": backingQuarantined,
 			})
 			var accountID *string
 			if t.AccountID != "" {

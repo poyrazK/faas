@@ -442,6 +442,14 @@ func insertBackfillFailure(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, job 
 }
 
 func (s *PgStore) RetryFailedEventReplayBackfill(ctx context.Context, accountID, jobID string, limit int) (api.EventReplayBackfillRetryResponse, error) {
+	return s.retryFailedEventReplayBackfill(ctx, accountID, jobID, limit, backfillRetryTarget{})
+}
+
+type backfillRetryTarget struct {
+	AppID, Source, EventID, SubscriptionID string
+}
+
+func (s *PgStore) retryFailedEventReplayBackfill(ctx context.Context, accountID, jobID string, limit int, target backfillRetryTarget) (api.EventReplayBackfillRetryResponse, error) {
 	if limit == 0 {
 		limit = EventReplayBackfillRetryMax
 	}
@@ -463,11 +471,16 @@ func (s *PgStore) RetryFailedEventReplayBackfill(ctx context.Context, accountID,
 	if err != nil {
 		return api.EventReplayBackfillRetryResponse{}, err
 	}
-	if job.State != "completed_with_failures" {
+	selective := target.SubscriptionID != ""
+	if selective && job.SubscriptionID != target.SubscriptionID {
+		return api.EventReplayBackfillRetryResponse{}, ErrNotFound
+	}
+	if job.State != "completed_with_failures" && (!selective || job.State != "running") {
 		return api.EventReplayBackfillRetryResponse{}, ErrEventReplayBackfillState
 	}
 	rows, err := q.EventReplayBackfillRetryCandidates(ctx, tx, sqlc.EventReplayBackfillRetryCandidatesParams{
 		JobID: mustPgUUID(jobID), AccountID: mustPgUUID(accountID), PageLimit: int32(limit),
+		EventSource: target.Source, EventID: target.EventID, AppID: target.AppID,
 	})
 	if err != nil {
 		return api.EventReplayBackfillRetryResponse{}, err
@@ -478,12 +491,12 @@ func (s *PgStore) RetryFailedEventReplayBackfill(ctx context.Context, accountID,
 		if _, err := q.EventRoutingLockReceipt(ctx, tx, row.OutboxID); err != nil {
 			return api.EventReplayBackfillRetryResponse{}, err
 		}
-		target, err := decodeBackfillTarget(job, row.Recipient)
+		recipient, err := decodeBackfillTarget(job, row.Recipient)
 		if err != nil {
 			return api.EventReplayBackfillRetryResponse{}, err
 		}
 		changed, err := q.EventRecipientReplay(ctx, tx, sqlc.EventRecipientReplayParams{
-			NowAt: pgtypeFromTime(now), OutboxID: row.OutboxID, SubscriptionID: target.ID,
+			NowAt: pgtypeFromTime(now), OutboxID: row.OutboxID, SubscriptionID: recipient.ID,
 		})
 		if err != nil {
 			return api.EventReplayBackfillRetryResponse{}, err
@@ -500,15 +513,21 @@ func (s *PgStore) RetryFailedEventReplayBackfill(ctx context.Context, accountID,
 		}
 		progress := PublishedEventRecipientProgress{State: PublishedEventRecipientPending, Attempts: int(row.TotalAttempts), CapacityDeferrals: int(row.CapacityDeferrals), UpdatedAt: now}
 		encoded, _ := json.Marshal(progress)
-		if err := q.EventRecipientUpdateProgress(ctx, tx, sqlc.EventRecipientUpdateProgressParams{ID: row.OutboxID, SubscriptionID: target.ID, Progress: encoded}); err != nil {
+		if err := q.EventRecipientUpdateProgress(ctx, tx, sqlc.EventRecipientUpdateProgressParams{ID: row.OutboxID, SubscriptionID: recipient.ID, Progress: encoded}); err != nil {
 			return api.EventReplayBackfillRetryResponse{}, err
 		}
-		if err := appendEventRecipientHistory(ctx, q, tx, row.OutboxID, target.AppID, target.ID, EventFanoutAttemptActionBackfill, progress); err != nil {
+		if err := appendEventRecipientHistory(ctx, q, tx, row.OutboxID, recipient.AppID, recipient.ID, EventFanoutAttemptActionReplay, progress); err != nil {
+			return api.EventReplayBackfillRetryResponse{}, err
+		}
+		if err := q.EventRecipientSettleReceipt(ctx, tx, row.OutboxID); err != nil {
 			return api.EventReplayBackfillRetryResponse{}, err
 		}
 		retried++
 	}
-	if retried > 0 {
+	if selective && retried == 0 {
+		return api.EventReplayBackfillRetryResponse{}, ErrNotFound
+	}
+	if retried > 0 && job.State != "running" {
 		if err := q.EventReplayBackfillLockAccountRange(ctx, tx, mustPgUUID(accountID)); err != nil {
 			return api.EventReplayBackfillRetryResponse{}, err
 		}

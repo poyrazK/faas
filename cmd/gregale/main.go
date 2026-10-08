@@ -388,6 +388,8 @@ func run(args []string) (status int) {
 		return cmdTraffic(args[1:])
 	case "mirror":
 		return cmdMirror(args[1:])
+	case "log-drains":
+		return cmdLogDrains(args[1:])
 	case "cache":
 		return cmdCache(args[1:])
 	case dispatchUploadCache:
