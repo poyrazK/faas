@@ -276,6 +276,22 @@ func printCommandValidation(w io.Writer, format string, args ...any) {
 	})
 }
 
+// printUnknownSubcommand keeps dispatcher failures in the same single-error
+// shape as flag validation when --json is active, while retaining the legacy
+// text diagnostic and typo hint for interactive use.
+func printUnknownSubcommand(w io.Writer, path string, command cliCommand, got string) int {
+	detail := fmt.Sprintf("gregale %s: unknown subcommand %q", path, got)
+	suggestion, ok := suggestSubcommand(got, command)
+	if ok && jsonOutput && !jsonUsageHelp {
+		detail += fmt.Sprintf("; did you mean %q?", "gregale "+path+" "+suggestion)
+	}
+	printCommandValidation(w, "%s\n", detail)
+	if ok && !jsonOutput {
+		maybeSuggestSub(suggestion)
+	}
+	return 1
+}
+
 // PrintUsage emits a one-line "usage:" hint followed by a "Docs:" line
 // pointing at a live public docs route. Always plain (no glyphs) — usage
 // lines go to stderr on bad argv and customers grep them; the glyph would

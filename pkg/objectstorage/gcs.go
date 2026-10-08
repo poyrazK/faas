@@ -668,6 +668,9 @@ func cloneMetadata(metadata map[string]string) map[string]string {
 }
 
 func (p *GCS) Presign(ctx context.Context, bucket string, r SignRequest) (SignedRequest, error) {
+	if r.VersionID != "" {
+		return SignedRequest{}, ErrInvalid
+	}
 	return p.presignGCS(ctx, bucket, r, nil)
 }
 

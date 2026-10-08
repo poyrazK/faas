@@ -42,6 +42,9 @@ func (h *Handler) boundURLRequest(w http.ResponseWriter, r *http.Request, c stat
 func boundURLQuery(r *http.Request, u *state.ObjectURLCapability) bool {
 	q := operationQuery(r.URL.Query())
 	if u.Multipart == nil {
+		if u.Request.VersionID != "" {
+			return len(q) == 1 && len(q["versionId"]) == 1 && q.Get("versionId") == u.Request.VersionID
+		}
 		return len(q) == 0
 	}
 	return len(q) == 2 && len(q["uploadId"]) == 1 && q.Get("uploadId") == u.Multipart.UploadID && len(q["partNumber"]) == 1 && q.Get("partNumber") == strconv.FormatInt(int64(u.Multipart.PartNumber), 10)

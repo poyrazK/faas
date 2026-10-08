@@ -1,9 +1,8 @@
 # Object-storage durable entity prototype
 
-This development harness increments a named counter using a private S3 bucket.
-The platform preview supports S3 and native GCS. The trusted Go command below
-configures S3; GCS setup is described below. Native and live-provider qualification
-remain pending.
+This trusted operator harness increments a named counter using a private S3 or
+native GCS bucket. The operator command and live-provider qualification share
+provider selection. Native and live-provider qualification remain pending.
 It needs no SQL database or persistent local disk. Each invocation creates a new
 execution owner; repeating a request ID and the same delta replays the original
 result without incrementing again.
@@ -16,8 +15,8 @@ Neither is a generally available production feature.
 
 ## Run against a private test bucket
 
-Use an existing **dedicated private test bucket** with reliable conditional PUT
-and strong read-after-write consistency. Native S3 compatibility alone does not
+Use an existing **dedicated private test bucket** with reliable conditional writes
+and strong read-after-write consistency. Provider compatibility alone does not
 qualify a provider. Give the harness private GET/PUT permission, plus LIST for
 alarm qualification and LIST/DELETE for cleanup, and keep all
 customer writes and bucket lifecycle deletion away from the entity prefix.
@@ -27,6 +26,7 @@ Configure `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and, when needed,
 in source files or command arguments.
 
 ```bash
+export GREGALE_ENTITY_PROVIDER=s3
 export GREGALE_ENTITY_BUCKET=gregale-entities-test
 export GREGALE_ENTITY_ENDPOINT=https://s3.us-east-1.amazonaws.com
 export GREGALE_ENTITY_REGION=us-east-1
@@ -35,6 +35,10 @@ go run ./examples/durable-entities -entity customer:456 -request increment-001
 go run ./examples/durable-entities -entity customer:456 -request increment-001
 go run ./examples/durable-entities -entity customer:456 -request increment-002
 ```
+
+Omitting `GREGALE_ENTITY_PROVIDER` preserves the original S3 configuration.
+Only `s3` and `gcs` are accepted. The command opens an existing bucket; it does
+not create a bucket or load the platform's backend registry.
 
 On a fresh entity, these return:
 
@@ -69,8 +73,33 @@ opt-ins apply. Grant the platform identity object read/create/replace access;
 alarm discovery needs LIST, and cleanup needs LIST/DELETE. Keep customer access,
 automatic lifecycle deletion and public caching away from this bucket.
 
-The trusted Go counter command above still configures S3. For GCS, invoke the
-counter app through the platform API/SDK with the GCS backend selected.
+The trusted operator command also supports GCS. Configure Application Default
+Credentials through the normal operator environment (for example, an attached
+service account or `GOOGLE_APPLICATION_CREDENTIALS` managed outside this repo):
+
+```bash
+export GREGALE_ENTITY_PROVIDER=gcs
+export GREGALE_ENTITY_BUCKET=gregale-entities-gcs-test
+
+# Optional: use ADC to impersonate the platform's dedicated storage identity.
+# export GREGALE_ENTITY_GCS_IMPERSONATE_SERVICE_ACCOUNT=entities@PROJECT.iam.gserviceaccount.com
+
+go run ./examples/durable-entities -entity customer:456 -request increment-001
+go run ./examples/durable-entities -entity customer:456 -inventory
+go run ./examples/durable-entities -entity customer:456 -set-storage-limit 1048576
+go run ./examples/durable-entities -entity customer:456 -cleanup
+```
+
+The impersonation target needs bucket permissions, and the ADC source needs
+permission to impersonate it. GCS uses the native Google endpoint; the S3
+`GREGALE_ENTITY_ENDPOINT`, `GREGALE_ENTITY_REGION` and AWS credentials do not
+select its destination or identity. All operator modes work with either provider.
+Keep the complete account/app/environment/customer/namespace/key scope the same
+on each operation. For platform entities, supply the verified UUIDs through
+`-account`, `-app`, `-environment-id` and, when applicable, `-tenant-id`.
+The `GREGALE_ENTITY_*` settings configure this trusted harness only; the
+platform invocation preview still requires its `FAAS_*` backend identity,
+fingerprint, app allowlist and opt-ins described above.
 
 Content generations are the opaque compare-and-swap tokens. Create uses
 `ifGenerationMatch=0`; replacement uses the generation returned with the object
@@ -173,7 +202,7 @@ branches and the legacy archive. It retains new-generation uploads, manifests,
 unknown paths and probes. A delayed orphan upload can be removed on a later
 sweep. A reader racing reclamation can receive a retryable conflict.
 
-Manifest writes upgrade to schema 2; older binaries fail closed. Stop old entity
+Manifest writes upgrade to schema 3; older binaries fail closed. Stop old entity
 callers/alarm workers when upgrading. Downgrading after upgrade needs an explicit
 storage migration. Keep bucket lifecycle deletion disabled. Versioned buckets may
 retain historical versions/delete markers; this command deletes current keys and
@@ -387,12 +416,17 @@ operational qualification are still required for production availability.
 
 ## Qualify a live provider
 
-Use the private test bucket and credential configuration above, then opt in:
+Use either provider's private test bucket and credential configuration above,
+then opt in. For GCS, set `GREGALE_ENTITY_PROVIDER=gcs` and ADC; no S3 endpoint,
+region or AWS credentials are required:
 
 ```bash
 GREGALE_ENTITY_QUALIFY=1 go test -v -count=1 -timeout=3m \
-  ./pkg/durableentity -run '^TestLiveS3DurableEntityQualification$'
+  ./pkg/durableentity -run '^TestLiveDurableEntityQualification$'
 ```
+
+The original `TestLiveS3DurableEntityQualification` entry point remains available
+for S3 and skips when GCS is selected. Use an exact test name to run one harness.
 
 The test uses a new `gregale/entity-qualification/<UUID>/` prefix. It probes native
 conditional writes, restores across managers, submits concurrent calls, drops an
@@ -400,16 +434,22 @@ accepted commit acknowledgement at the platform boundary, rejects an obsolete
 owner, and kills a separate owner process before replaying its committed result
 through takeover. It also checks private delimiter discovery and committed alarm
 replay. It verifies committed/current-key inventory, an explicit cap and receipt
-replay at capacity. It reports parent-process GET/conditional PUT/LIST attempts and
-elapsed milliseconds; child requests add extra cost. Objects are retained so
-results can be inspected. The test does not access existing entities.
+replay at capacity. Its JSON report identifies the provider, target (`live_bucket`
+or `wire_fixture`), cleanup qualification, retained prefix, parent-process
+GET/conditional PUT/LIST/DELETE attempts and elapsed milliseconds; child requests
+add extra cost. Objects are retained so results can be inspected. The test does
+not access existing entities.
 Add `GREGALE_ENTITY_CLEANUP_QUALIFY=1` to explicitly qualify native flat listing,
 deletion and original receipt replay after collection within its isolated prefix.
 That opt-in removes unused objects; committed state/receipts and probes remain.
 
 This is provider-backed correctness evidence when run against the selected live
-bucket. The acknowledgement-loss and future-clock fencing cases use explicit
-fault injection; they do not simulate every network partition. Native deployed
+bucket. The CI S3 fixture runs the shared harness with `target:wire_fixture`;
+GCS SDK wire tests exercise native paginated inventory, caps, cleanup preserving
+original receipts and delimiter-based alarm discovery/delivery/replay. Neither
+fixture qualifies a live bucket. The acknowledgement-loss and future-clock
+fencing cases use explicit fault injection; they do not simulate every network
+partition. Native deployed
 counter acceptance, latency distributions, pricing, lifecycle protections and
 provider failure testing are still required before production availability.
 
@@ -481,5 +521,5 @@ between the final read and publication, renewal during execution, lost commit
 responses, uncommitted uploads, identity isolation, corrupt restoration and
 legacy migration, more than 1,024 receipts, bounded snapshots, replay after
 compaction, cleanup publication races and uncertain barriers/deletions.
-S3 wire tests use the existing AWS SDK/provider against a local
-conditional HTTP fixture; they do not qualify a live object-storage provider.
+S3 and GCS wire tests use the production provider SDKs against local
+conditional HTTP fixtures; they do not qualify a live object-storage provider.

@@ -322,6 +322,9 @@ var dtoExclude = map[string]bool{
 	"EventReplayBackfillItemsQuery":  true, // client-only pagination/filter options; the wire parameters are declared on the route
 	"WorkflowSchedulePreviewInput":   true, // client-side request builder input; the wire parameters are query fields
 	"WorkflowSchedulePreviewOptions": true, // client-only query options; the wire parameters are declared on the route
+	// Version listing carries these fields as individual query parameters,
+	// documented on the GET route; it has no JSON request body.
+	"ObjectVersionListRequest":      true,
 	// ADR-563 native adapter primitives. Customer per-version lock management
 	// is not part of the ADR-564 bucket API capability.
 	"ObjectVersionRetention": true,
@@ -1027,6 +1030,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
+		filepath.Join(root, "pkg", "api", "object_versions.go"),
 		filepath.Join(root, "pkg", "api", "durable_entities.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption_capabilities.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption.go"),

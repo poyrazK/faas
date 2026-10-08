@@ -57,6 +57,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 731 | [Durable PostgreSQL lifecycle qualification](731-managed-postgres-durable-qualification.md) | accepted | Version-8 SQL restart, encrypted credential delivery, workload rotation and cleanup evidence |
+| 687 | [Object version listing and bound historical downloads](687-object-version-cli-and-bound-downloads.md) | accepted | Public immutable version identities, bounded listings and exact-version gateway read authority |
+| 688 | [Resumable CLI object uploads](688-resumable-cli-object-uploads.md) | accepted | Private fingerprint-bound multipart checkpoints and uncertain-completion recovery |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
@@ -650,6 +652,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-615: Customer event storage admission](615-customer-event-storage-admission.md)
 - [ADR-616: Bounded event routing history](616-bounded-event-routing-history.md)
 - [ADR-617: Event consumer backlog inspection](617-event-consumer-backlog-inspection.md)
+
+- [ADR-638: Object version listing and bound historical downloads](638-object-version-cli-and-bound-downloads.md)
+
+- [ADR-639: Resumable CLI object uploads](639-resumable-cli-object-uploads.md)
 - [ADR-645: Subscription-scoped retained-event replay preview](645-subscription-retained-event-replay-preview.md)
 - [ADR-639: Durable subscription event backfill](639-durable-subscription-event-backfill.md)
 - [ADR-646: Unified backfill delivery inspection](646-unified-backfill-delivery-inspection.md)

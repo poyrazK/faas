@@ -617,9 +617,11 @@ const (
 	DefaultMultipartPartBytes           int64 = 64 << 20
 	MinMultipartPartBytes               int64 = 5 << 20
 	MaxMultipartParts                         = 10000
-	MaxObjectWriteETagBytes                   = 256
-	MaxActiveMultipartUploadsPerBucket        = 100
-	ObjectMultipartUploadTTL                  = 24 * time.Hour
+	// Local CLI checkpoints hold at most 10,000 part hashes and acknowledgments.
+	MaxObjectMultipartCheckpointBytes  = 4 << 20
+	MaxObjectWriteETagBytes            = 256
+	MaxActiveMultipartUploadsPerBucket = 100
+	ObjectMultipartUploadTTL           = 24 * time.Hour
 
 	// Admission bounds for brokered upload URLs. Expiry never drains active IO.
 	DefaultObjectSignedURLExpiresSeconds = 300

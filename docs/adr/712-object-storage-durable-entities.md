@@ -60,6 +60,25 @@ fail-closed startup when a provider ignores generation conditions. These
 fixtures do not qualify a live GCS bucket, network partition behavior, native
 microVM execution or production latency/cost.
 
+### Shared provider tooling — 2026-10-08
+
+The trusted counter/maintenance command and opt-in live qualification harness
+select S3 or native GCS through one configuration helper. S3 remains the default
+for existing commands. GCS uses ADC and an optional impersonation target;
+legacy S3 endpoints and credential settings never configure the GCS client.
+The existing bucket is operator-selected; this tooling does not provision it,
+modify platform preview settings or bypass the invocation authorization rules.
+
+The shared live harness checks restart, uncertain publication replay, concurrency,
+stale-owner fencing, an actual killed-owner process, alarm discovery/replay,
+inventory and committed-byte caps. Cleanup requires a separate explicit opt-in
+and preserves original receipts. Reports identify the provider and distinguish
+live-bucket runs from the shared S3 wire-fixture check. Native GCS SDK wire tests
+also cover paginated inventory, caps, cleanup and alarm listing/delivery/replay.
+These fixtures provide CI evidence only; the dedicated-host and live-provider
+acceptance gates remain pending. See the runnable configurations and qualification
+commands in [the operator guide](../../examples/durable-entities/README.md).
+
 Alarm deadlines persist with state. The opt-in alarm milestone below adds
 discovery/delivery; owner-affinity routing, metering,
 entity deletion and cross-entity
@@ -116,7 +135,7 @@ committed result into a reported failure and delays competitors until expiry.
 The Go SDK requires a stable request ID and preserves entity selectors across
 retries. The HTTP response cache does not wrap this route: every retry rechecks
 current authorization and resolves durable receipts in the bucket. An opt-in
-live S3 qualification test writes an isolated retained prefix, checks restart,
+live S3/GCS qualification test writes an isolated retained prefix, checks restart,
 concurrency, acknowledgement loss and fencing, and kills an actual owner process.
 Running this harness against a local S3 wire fixture verifies the harness only;
 live-provider and native microVM evidence remain release gates. Provider request

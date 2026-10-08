@@ -50,7 +50,7 @@ class OperationDefinitionSpec:
     """Declared public milestone names mapped to bundled JSON Schemas. Requires http_transaction_version 1. At most
     16 names, with an aggregate 16384 schema bytes."""
     workflow_steps: list[OperationWorkflowStep] | Unset = UNSET
-    """Resolved app-declared read-only workflow steps mapped to this definition's transaction-backed milestones."""
+    """Materialized workflow step mappings included in this compact definition view."""
     subject: OperationSubjectSpec | Unset = UNSET
     """Optional public business reference extracted once from validated input on new admission. This metadata does
     not authorize access to the business entity."""

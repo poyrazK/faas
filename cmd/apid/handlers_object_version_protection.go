@@ -41,6 +41,7 @@ func (s *server) objectVersionProtection(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	svc := s.versionProtectionService(b, p)
+	svc.BeforeRequest = s.customerObjectRequestRecorder(b)
 	if r.Method == http.MethodGet {
 		s.getVersionProtection(w, r, b, svc, key, version, kind)
 		return

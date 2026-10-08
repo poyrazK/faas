@@ -563,6 +563,26 @@ Versions and delete markers carry durable Gregale UUIDs, scoped to the logical
 bucket and object key. The special S3 `null` ID remains mutable. Native provider
 version IDs are private and are not accepted as customer IDs.
 
+The Gregale control API exposes the same public references with
+`GET /v1/apps/{slug}/buckets/{bucket}/objects/versions`. Query parameters are
+`prefix`, `delimiter`, `limit` (1–1000), `key_marker` and `version_id_marker`.
+The JSON response includes versions, delete markers, common prefixes and paired
+continuation markers. Resume using both returned markers. Listing requires a
+bucket read grant and request-budget admission.
+
+```sh
+gregale bucket versions list <app> <bucket-id> --prefix 'reports/' --limit 100 --json
+gregale bucket download <app> <bucket-id> 'reports/report.txt' ./old-report.txt --version-id <public-version-id>
+```
+
+Upload JSON includes `version_id` when a version is acknowledged. Download
+`--version-id` accepts an owned immutable public UUID; the mutable S3 `null` ID
+is excluded. GET/HEAD signed URL requests accept the same `version_id`. Stored
+URL authority, query signatures and the gateway all enforce that selector.
+Missing, foreign or deleted versions never fall back to the current object. A
+CLI download verifies the acknowledged public version before publishing the
+complete local file. See [ADR-687](adr/687-object-version-cli-and-bound-downloads.md).
+
 Use those IDs with standard SDK GetObject/HeadObject `VersionId` parameters,
 or AWS CLI `s3api get-object --bucket assets --key hello.txt --version-id ID
 output.txt`. Read permissions and credential revocation still apply on every
@@ -690,6 +710,19 @@ The `accounting` object in the same provider-registry JSON sets uniform
 operator limits. It does not add an enable flag or account allowlist. Missing
 or null policy keeps metadata/cleanup usable but blocks new signed URLs.
 Policy changes require restarting API replicas with identical config.
+
+In `gateway_safety_v1`, customer native calls reserve the shared request budget
+before dispatch. Each multipart part-list page (including CLI resume), bucket
+configuration or version-protection probe, and tag request counts separately,
+even when the provider returns an error. Exhausted budgets return
+`object_storage_budget_reached`; unqualified accounting returns
+`object_storage_usage_stale`, before contacting the provider. Multipart session
+status/listing remain available without a native request. A denied resume keeps
+its checkpoint for retry after accounting recovers. Pending bucket configuration
+inspection may return persisted progress when its live probe is denied. S3
+object and part listings make one provider attempt; an explicit retry requires
+a new reservation. Accepted recovery,
+maintenance and cleanup keep recording attempts and can finish at the ceiling.
 
 Copy-source grants have a separate fixed ceiling of 32 source buckets per
 destination credential. The API reports `copy_sources_per_credential` with
@@ -1277,6 +1310,7 @@ and generation, including retained history after a later replacement.
 
 ```sh
 gregale bucket upload <app> <bucket-id> <key> <file> --content-type text/plain
+gregale bucket upload <app> <bucket-id> <key> <file> --resume <upload-id>
 gregale bucket download <app> <bucket-id> <key> <file>
 gregale bucket download <app> <bucket-id> <key> <file> --force
 gregale bucket uploads list <app> <bucket-id>
@@ -1292,6 +1326,36 @@ automatically abort or repeat an admitted write. Downloads publish atomically
 after success, preserve existing files on failure, and require `--force` to
 replace a destination. JSON output includes the key, file, size, status and
 upload ID. Usage output marks unavailable meters as unknown.
+
+Multipart uploads save a private local checkpoint before issuing part URLs.
+Use `--resume <upload-id>` with the same API endpoint, app, bucket, key and file
+contents. The source may move to another path, but its size and SHA-256 must
+match. An explicit `--content-type` must also match; otherwise resume preserves
+the session's original type. The CLI validates all part-list pages and skips
+only parts whose native listing matches the checkpoint's saved ETag. A part
+with a lost acknowledgment is resent from verified staged bytes. Changed or
+unexpected parts fail without completing a mixed object.
+
+Checkpoints live in `gregale/object-uploads` under `XDG_STATE_HOME` when set,
+otherwise the user's configuration directory. They contain fingerprints and
+public session identity, never credentials or signed URLs. Keep this directory
+for later recovery. Completed records remain available for status-based replay;
+they can be removed when recovery is no longer needed. Each record is bounded
+at 4 MiB, with at most 10,000 parts. Processes sharing a checkpoint cannot resume
+it concurrently. Each missing or unacknowledged part needs temporary disk space
+up to the session's configured part size, bounded by 5 GiB. The staged part is
+removed after its attempt; a killed process leaves one private staged file,
+which the next resume removes under the session lock. This extra local I/O prevents an in-place source
+change from altering bytes after verification.
+
+Before completion, the CLI persists the ordered part manifest. If the completion
+response is lost, resume checks the durable session first: an already completed
+session returns its saved result without issuing another completion. A pending
+completion reuses exactly that manifest through the server's recovery journal.
+Expired, aborted, foreign, or uncheckpointed sessions are rejected. A lost create
+response before the first checkpoint still needs session inspection; this CLI
+path does not automatically create a replacement. Single PUTs continue to use
+their existing write-receipt inspection path. See [ADR-688](adr/688-resumable-cli-object-uploads.md).
 
 GCS supports tracked PUT/copy recovery, native version controls and reads, copy
 grants and enrolled AES256. The GCS example enrolls AES256 explicitly. Adding
