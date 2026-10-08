@@ -137,13 +137,13 @@ type ManagedRealtimeCloseRequest struct {
 // whether the active fleet accepted the publish. For retained delivery, Queued
 // includes resumable subscriber wake-ups; it still does not mean client receipt.
 type ManagedRealtimePublishResponse struct {
-	Queued           int  `json:"queued"`
-	Partial          bool `json:"partial"`
-	NodesQueried     int  `json:"nodes_queried"`
-	NodesUnavailable int  `json:"nodes_unavailable"`
-	Subscribers      int  `json:"subscribers"`
-	QueueFull        int  `json:"queue_full"`
-	Failed           int  `json:"failed"`
+	Queued           int   `json:"queued"`
+	Partial          bool  `json:"partial"`
+	NodesQueried     int   `json:"nodes_queried"`
+	NodesUnavailable int   `json:"nodes_unavailable"`
+	Subscribers      int   `json:"subscribers"`
+	QueueFull        int   `json:"queue_full"`
+	Failed           int   `json:"failed"`
 	Sequence         int64 `json:"sequence,omitempty"`
 	Durable          bool  `json:"durable,omitempty"`
 }

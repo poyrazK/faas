@@ -549,8 +549,8 @@ func timeOrZero(value *time.Time) time.Time {
 }
 
 type messageRequest struct {
-	DataBase64      string `json:"data_base64"`
-	Binary          bool   `json:"binary"`
+	DataBase64       string `json:"data_base64"`
+	Binary           bool   `json:"binary"`
 	RetainedSequence int64  `json:"retained_sequence,omitempty"`
 }
 
