@@ -20,6 +20,7 @@ func (l *NodeLedger) beginRegionalRecovery() error {
 		return err
 	}
 	l.seedInProgress = true
+	l.inventoryRecovered = false
 	return nil
 }
 
@@ -27,6 +28,7 @@ func (l *NodeLedger) finishRegionalRecovery(err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.seedInProgress = false
+	l.inventoryRecovered = err == nil
 	if err != nil {
 		l.recoveryBarrier = errors.Join(ErrRegionalRuntimeRecoveryUnresolved, err)
 	}

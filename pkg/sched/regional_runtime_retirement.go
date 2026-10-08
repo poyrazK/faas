@@ -42,6 +42,15 @@ func (r RegionalRuntimeRetirement) Retire(ctx context.Context, instance string, 
 		if receipt.IssuedAt != nil && (receipt.Stop == nil || receipt.StopEnvelope == nil || receipt.Stop.Validate() != nil || receipt.Stop.Permit != p || receipt.Stop.FenceID != receipt.FenceID) {
 			return state.RegionalRuntimeCapacityReceipt{}, runtimequota.ErrBinding
 		}
+		if receipt.IssuedAt != nil {
+			stop, err := r.Authority.Cells.VerifyCapacityStop(*receipt.StopEnvelope)
+			if err != nil {
+				return state.RegionalRuntimeCapacityReceipt{}, fmt.Errorf("sched: verify retained original stop: %w", err)
+			}
+			if stop != *receipt.Stop {
+				return state.RegionalRuntimeCapacityReceipt{}, runtimequota.ErrBinding
+			}
+		}
 		return receipt, nil // Durable cancellation or first accepted signed stop.
 	}
 	if receipt.IssuedAt == nil {

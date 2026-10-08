@@ -38,14 +38,15 @@ import (
 // The entries map preserves the legacy O(1) Release(instance) lookup
 // because each reservation remembers its nodeID.
 type NodeLedger struct {
-	mu               sync.Mutex
-	resident         map[string]*nodeReservation // node_id -> accounting (per-node ceiling check)
-	perApp           map[string]int              // app_id -> instances counting toward concurrency (global, §6.2-1)
-	perAppDeployment map[string]int              // app_id|"\x00"|deployment_id -> per-deployment concurrency (ADR-072, issue #557 closure)
-	entries          map[string]*reservation     // instance_id -> reservation (cross-node lookup for Release)
-	regionalHolds    map[regionalRuntimeHoldKey]state.RegionalRuntimeInventoryEntry
-	recoveryBarrier  error // incomplete startup inventory refuses every new admission
-	seedInProgress   bool
+	mu                 sync.Mutex
+	resident           map[string]*nodeReservation // node_id -> accounting (per-node ceiling check)
+	perApp             map[string]int              // app_id -> instances counting toward concurrency (global, §6.2-1)
+	perAppDeployment   map[string]int              // app_id|"\x00"|deployment_id -> per-deployment concurrency (ADR-072, issue #557 closure)
+	entries            map[string]*reservation     // instance_id -> reservation (cross-node lookup for Release)
+	regionalHolds      map[regionalRuntimeHoldKey]state.RegionalRuntimeInventoryEntry
+	recoveryBarrier    error // incomplete startup inventory refuses every new admission
+	seedInProgress     bool
+	inventoryRecovered bool // a successful full startup traversal, never admission authority
 }
 
 type nodeReservation struct {

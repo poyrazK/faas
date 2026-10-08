@@ -65,6 +65,9 @@ func (e *Engine) completeOriginalRegionalFailure(ctx context.Context, source run
 	if to == "" {
 		return nil
 	}
+	// Accepted original absence can retire an unbound startup shadow after a
+	// restart. A later row-write error cannot restore physical residency.
+	e.ledger.releaseStoppedRegionalStartupRow(source, ins)
 	if err := e.store.FailRegionalRuntimeAttempt(ctx, source, ins.State); err != nil {
 		return err
 	}
