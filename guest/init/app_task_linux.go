@@ -60,26 +60,7 @@ func validateAppTaskManifest(data []byte) error {
 }
 
 func listenAppTaskHook() (net.Listener, error) {
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		return nil, fmt.Errorf("app task vsock socket: %w", err)
-	}
-	addr := &unix.SockaddrVM{CID: VsockAppTaskBindCID, Port: VsockAppTaskPort}
-	if err := unix.Bind(fd, addr); err != nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("app task vsock bind port %d: %w", VsockAppTaskPort, err)
-	}
-	if err := unix.Listen(fd, 1); err != nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("app task vsock listen: %w", err)
-	}
-	f := os.NewFile(uintptr(fd), "app-task-vsock")
-	ln, err := net.FileListener(f)
-	_ = f.Close()
-	if err != nil {
-		return nil, fmt.Errorf("app task vsock listener: %w", err)
-	}
-	return ln, nil
+	return listenGuestVsock(VsockAppTaskPort)
 }
 
 func serveAppTaskOnce(ctx context.Context, ln net.Listener, handler apptaskproto.Handler) error {
@@ -114,11 +95,11 @@ func awaitAppTaskHostClose(ctx context.Context, conn net.Conn) error {
 	if n != 0 {
 		return errors.New("app task host sent data after the terminal result")
 	}
-	if errors.Is(err, io.EOF) {
-		return nil
-	}
 	if contextErr := deliveryCtx.Err(); contextErr != nil {
 		return contextErr
+	}
+	if errors.Is(err, io.EOF) {
+		return nil
 	}
 	return err
 }
@@ -142,6 +123,7 @@ func runAppTaskGuest(log *slog.Logger) error {
 	}
 	ln, err := listenAppTaskHook()
 	if err != nil {
+		log.Warn("app task listener unavailable", "err", err)
 		_ = poweroffAppTask()
 		return err
 	}
