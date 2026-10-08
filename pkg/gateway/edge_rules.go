@@ -44,9 +44,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"path"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -1055,13 +1053,7 @@ func (c *EdgeRuleCache) InvalidateHosts(patterns []string) {
 // ("*", "*.example.com", or an exact host) covers host, case-insensitively.
 // It mirrors the store's LIKE translation and the gateway's glob recheck.
 func EdgeRuleHostPatternMatches(pattern, host string) bool {
-	pattern = strings.ToLower(strings.TrimSpace(pattern))
-	host = strings.ToLower(strings.TrimSpace(host))
-	if pattern == "" || host == "" {
-		return false
-	}
-	ok, err := path.Match(pattern, host)
-	return err == nil && ok
+	return api.EdgeRuleHostMatches(pattern, host)
 }
 
 // Len returns the number of cached host entries.
@@ -1639,22 +1631,9 @@ func pickFirstMatch(rules []EdgeRuleResolved, path, method string, requestHeader
 // compared the raw string and let the request through unchecked. Every
 // extra form only ever adds protection; non-protective kinds (headers,
 // cors, cache, redirect, ...) keep exact matching so they never widen.
+// The implementation lives in pkg/api so the trace simulator shares it.
 func protectivePathMatch(glob, p string) (bool, error) {
-	ok, err := pathGlobMatch(glob, p)
-	if ok || err != nil {
-		return ok, err
-	}
-	cleaned := path.Clean("/" + strings.ReplaceAll(p, "\\", "/"))
-	if cleaned != p {
-		if ok, _ := pathGlobMatch(glob, cleaned); ok {
-			return true, nil
-		}
-	}
-	foldedGlob := strings.ToLower(glob)
-	if folded := strings.ToLower(cleaned); folded != cleaned || foldedGlob != glob {
-		return pathGlobMatch(foldedGlob, folded)
-	}
-	return false, nil
+	return api.MatchProtectiveEdgeRulePath(glob, p)
 }
 
 // pathGlobMatch is a tiny adapter over stdlib path.Match that

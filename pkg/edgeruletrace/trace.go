@@ -595,7 +595,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		default:
 			matched, matchErr := true, error(nil)
 			if rule.MatchPath != "" && rule.MatchPath != "*" {
-				matched, matchErr = api.MatchEdgeRulePath(rule.MatchPath, input.Path)
+				matched, matchErr = api.MatchEdgeRuleKindPath(rule.Kind, rule.MatchPath, input.Path)
 			}
 			switch {
 			case matchErr != nil:
@@ -1209,7 +1209,7 @@ func firstPhaseRule(rules []api.EdgeRuleResponse, kind, host, requestPath, metho
 		}
 		matched, err := true, error(nil)
 		if rule.MatchPath != "" && rule.MatchPath != "*" {
-			matched, err = api.MatchEdgeRulePath(rule.MatchPath, requestPath)
+			matched, err = api.MatchEdgeRuleKindPath(rule.Kind, rule.MatchPath, requestPath)
 		}
 		if err != nil || !matched {
 			continue
@@ -2445,13 +2445,11 @@ func RedactHeaderInputForDisplay(raw string) string {
 	return strings.Join(lines, "")
 }
 
-// HostMatches mirrors the edge-rule store's exact-host and leading-subdomain
-// wildcard semantics.
+// HostMatches is the gateway's match_host comparison (case-insensitive,
+// "*" / "*.suffix" / exact / glob), shared through pkg/api so the simulator
+// and the gateway cannot disagree on which hosts a rule covers.
 func HostMatches(pattern, host string) bool {
-	if pattern == "*" || pattern == host {
-		return true
-	}
-	return strings.HasPrefix(pattern, "*.") && len(host) > len(pattern)-1 && strings.HasSuffix(host, pattern[1:])
+	return api.EdgeRuleHostMatches(pattern, host)
 }
 
 // MethodMatches compares methods case-insensitively; an empty selector matches
