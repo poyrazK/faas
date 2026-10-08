@@ -502,6 +502,7 @@ type MemStore struct {
 	// is needed. Soft-delete semantics (apps.status='deleted') are
 	// mirrored by the per-app lookup in the quota-check branch.
 	edgeRules                map[string]EdgeRule
+	edgeRuleSetVersions      map[string][]EdgeRuleSetVersion // app id -> versions, oldest first (ADR-732)
 	routePolicyReceipts      map[string]routePolicyStoredReceipt
 	savedRouteRequirements   map[string]api.SavedRouteRequirements
 	automaticRouteChecks     map[string]memAutomaticRouteCheck
@@ -22184,6 +22185,7 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	m.edgeRules[r.ID] = stored
 	m.enqueueRoutePolicyChecksLocked(r.AppID)
+	m.recordEdgeRuleSetVersionLocked(r.AppID)
 	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
@@ -22308,6 +22310,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	m.edgeRules[r.ID] = stored
 	m.enqueueRoutePolicyChecksLocked(r.AppID)
+	m.recordEdgeRuleSetVersionLocked(r.AppID)
 	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
@@ -22886,6 +22889,7 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 	if routeCheckRuleInputsChanged(before, stored) {
 		m.enqueueRoutePolicyChecksLocked(r.AppID)
 	}
+	m.recordEdgeRuleSetVersionLocked(r.AppID)
 	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
@@ -22899,6 +22903,7 @@ func (m *MemStore) DeleteEdgeRule(_ context.Context, id string) error {
 	}
 	delete(m.edgeRules, id)
 	m.enqueueRoutePolicyChecksLocked(rule.AppID)
+	m.recordEdgeRuleSetVersionLocked(rule.AppID)
 	return nil
 }
 

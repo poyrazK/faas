@@ -819,6 +819,7 @@ from .edge_rule_response_validate_mode import EdgeRuleResponseValidateMode
 from .edge_rule_retry_action import EdgeRuleRetryAction
 from .edge_rule_rewrite_action import EdgeRuleRewriteAction
 from .edge_rule_route_action import EdgeRuleRouteAction
+from .edge_rule_set_version_response import EdgeRuleSetVersionResponse
 from .edge_rule_suggestion import EdgeRuleSuggestion
 from .edge_rule_suggestion_action import EdgeRuleSuggestionAction
 from .edge_rule_suggestion_kind import EdgeRuleSuggestionKind
@@ -2155,6 +2156,7 @@ from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryCon
 from .retry_policy_dto import RetryPolicyDTO
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
+from .rollback_edge_rules_request import RollbackEdgeRulesRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
 from .rollback_operation import RollbackOperation
 from .rollback_operation_status import RollbackOperationStatus
@@ -3565,6 +3567,7 @@ __all__ = (
     "EdgeRuleRetryAction",
     "EdgeRuleRewriteAction",
     "EdgeRuleRouteAction",
+    "EdgeRuleSetVersionResponse",
     "EdgeRuleSuggestion",
     "EdgeRuleSuggestionAction",
     "EdgeRuleSuggestionKind",
@@ -4849,6 +4852,7 @@ __all__ = (
     "RetryPolicyDTO",
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
+    "RollbackEdgeRulesRequest",
     "RollbackFeatureFlagsRequest",
     "RollbackOperation",
     "RollbackOperationStatus",

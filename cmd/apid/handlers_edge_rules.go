@@ -323,6 +323,7 @@ func (s *server) listEdgeRulesForApp(w http.ResponseWriter, r *http.Request, acc
 	for _, rule := range rules {
 		out = append(out, edgeRuleResponse(rule))
 	}
+	s.setEdgeRuleSetETag(r.Context(), w, app.ID)
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -437,6 +438,10 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; no rule was created"))
 		return
 	}
+	if s.edgeRuleIfMatchFailed(r.Context(), w, r, app.ID) {
+		convergence.abort(r.Context())
+		return
+	}
 	row, err := s.store.CreateEdgeRuleIfUnderQuota(r.Context(), state.CreateEdgeRuleParams{
 		AccountID:    acct.ID,
 		AppID:        app.ID,
@@ -503,6 +508,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	convergence.setResponseState(w, "active")
+	s.setEdgeRuleSetETag(r.Context(), w, row.AppID)
 	writeJSON(w, http.StatusCreated, edgeRuleResponse(row))
 }
 
@@ -940,6 +946,10 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; the rule was not updated"))
 		return
 	}
+	if s.edgeRuleIfMatchFailed(r.Context(), w, r, row.AppID) {
+		convergence.abort(r.Context())
+		return
+	}
 	updated, err := s.store.UpdateEdgeRule(r.Context(), id, edgeRuleUpdateParamsFrom(req, row.Kind))
 	if err != nil {
 		convergence.abort(r.Context())
@@ -970,6 +980,7 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	convergence.setResponseState(w, "active")
+	s.setEdgeRuleSetETag(r.Context(), w, updated.AppID)
 	writeJSON(w, http.StatusOK, edgeRuleResponse(updated))
 }
 
@@ -1077,6 +1088,10 @@ func (s *server) deleteEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; the rule was not deleted"))
 		return
 	}
+	if s.edgeRuleIfMatchFailed(r.Context(), w, r, row.AppID) {
+		convergence.abort(r.Context())
+		return
+	}
 	if err := s.store.DeleteEdgeRule(r.Context(), id); err != nil {
 		convergence.abort(r.Context())
 		api.WriteProblem(w, api.ErrCapacity("could not delete edge rule"))
@@ -1100,6 +1115,7 @@ func (s *server) deleteEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	convergence.setResponseState(w, "active")
+	s.setEdgeRuleSetETag(r.Context(), w, row.AppID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

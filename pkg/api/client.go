@@ -3241,6 +3241,26 @@ func (c *Client) DeleteEdgeRule(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/edge-rules/"+id, nil, nil)
 }
 
+// ListEdgeRuleSetVersions returns the app's recorded edge-rule set versions,
+// newest first, without rule bodies (ADR-732).
+func (c *Client) ListEdgeRuleSetVersions(ctx context.Context, slug string) ([]EdgeRuleSetVersionResponse, error) {
+	var out []EdgeRuleSetVersionResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/versions", nil, &out)
+}
+
+// GetEdgeRuleSetVersion returns one recorded version with its rules.
+func (c *Client) GetEdgeRuleSetVersion(ctx context.Context, slug string, version int) (EdgeRuleSetVersionResponse, error) {
+	var out EdgeRuleSetVersionResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/versions/"+strconv.Itoa(version), nil, &out)
+}
+
+// RollbackEdgeRules restores the app's edge rules to a recorded version and
+// returns the rules now in force. The restore is recorded as a new version.
+func (c *Client) RollbackEdgeRules(ctx context.Context, slug string, version int) ([]EdgeRuleResponse, error) {
+	var out []EdgeRuleResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/edge-rules/rollback", RollbackEdgeRulesRequest{Version: version}, &out)
+}
+
 // CreateCORSEdgeRuleOpts is the typed CORS convenience shape used by
 // CreateCORSEdgeRule (CORS improvements D5). Every field maps 1:1 to
 // an EdgeRuleCORSAction field; the helper below packs them into a

@@ -423,6 +423,7 @@ export type { EdgeRuleResponse } from './models/EdgeRuleResponse.js';
 export type { EdgeRuleRetryAction } from './models/EdgeRuleRetryAction.js';
 export type { EdgeRuleRewriteAction } from './models/EdgeRuleRewriteAction.js';
 export type { EdgeRuleRouteAction } from './models/EdgeRuleRouteAction.js';
+export type { EdgeRuleSetVersionResponse } from './models/EdgeRuleSetVersionResponse.js';
 export type { EdgeRuleSuggestion } from './models/EdgeRuleSuggestion.js';
 export type { EdgeRuleThrottleAction } from './models/EdgeRuleThrottleAction.js';
 export type { EdgeRuleValidateAction } from './models/EdgeRuleValidateAction.js';
@@ -1166,6 +1167,7 @@ export type { RetryDeploymentRequest } from './models/RetryDeploymentRequest.js'
 export type { RetryPolicyDTO } from './models/RetryPolicyDTO.js';
 export type { RevokeExecutionArtifactGrantResponse } from './models/RevokeExecutionArtifactGrantResponse.js';
 export type { RevokePlatformTenantSelfConsumersRequest } from './models/RevokePlatformTenantSelfConsumersRequest.js';
+export type { RollbackEdgeRulesRequest } from './models/RollbackEdgeRulesRequest.js';
 export type { RollbackFeatureFlagsRequest } from './models/RollbackFeatureFlagsRequest.js';
 export type { RollbackOperation } from './models/RollbackOperation.js';
 export type { RollbackOperatorRuntimeConfigRequest } from './models/RollbackOperatorRuntimeConfigRequest.js';

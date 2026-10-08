@@ -757,3 +757,71 @@ func TestPgStore_EdgeRule_ValidateModeInvalidRejected(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// ADR-732: every committed change records the app's whole rule set as a new
+// version (the deferred trigger collapses a multi-row commit into one), an
+// expired rule is listed but not served, and a restore puts back an earlier
+// set — same rule IDs and labels — as a new version.
+func TestPgStore_EdgeRuleSetVersions_RecordAndRestore(t *testing.T) {
+	s, ctx := pgStore(t)
+	limits := api.MustLimitsFor(api.PlanPro)
+	acct, app := pgEdgeRuleSeedAccount(t, s, ctx, api.PlanPro, "versions")
+
+	first := pgSampleEdgeRuleParams(acct, app, "versions.example.com")
+	first.Name = "first"
+	r1, err := s.CreateEdgeRuleIfUnderQuota(ctx, first, limits)
+	if err != nil {
+		t.Fatalf("create first: %v", err)
+	}
+	second := pgSampleEdgeRuleParams(acct, app, "versions.example.com")
+	past := time.Now().Add(-time.Minute)
+	second.ExpiresAt = &past
+	if _, err := s.CreateEdgeRuleIfUnderQuota(ctx, second, limits); err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+	served, err := s.MatchEdgeRulesForHost(ctx, "versions.example.com")
+	if err != nil || len(served) != 1 || served[0].ID != r1.ID {
+		t.Fatalf("gateway read = %v, %v; want only the unexpired rule", served, err)
+	}
+	if _, err := s.UpdateEdgeRule(ctx, r1.ID, state.UpdateEdgeRuleParams{Name: ptr("renamed")}); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	versions, err := s.ListEdgeRuleSetVersions(ctx, app, 10)
+	if err != nil || len(versions) != 3 {
+		t.Fatalf("versions = %+v, %v; want 3 (create, create, rename)", versions, err)
+	}
+	if versions[0].Version != 3 || versions[0].RuleCount != 2 || versions[2].RuleCount != 1 {
+		t.Fatalf("versions newest-first = %+v", versions)
+	}
+	if latest, _ := s.LatestEdgeRuleSetVersion(ctx, app); latest != 3 {
+		t.Fatalf("latest = %d, want 3", latest)
+	}
+
+	restore, err := s.RestoreEdgeRuleSetVersion(ctx, app, 1, limits)
+	if err != nil {
+		t.Fatalf("restore v1: %v", err)
+	}
+	if len(restore.Rules) != 1 || restore.Rules[0].ID != r1.ID || restore.Rules[0].Name != "first" {
+		t.Fatalf("restored = %+v, want the original first rule with its original name", restore.Rules)
+	}
+	if len(restore.PreviousHosts) != 1 || restore.PreviousHosts[0] != "versions.example.com" {
+		t.Fatalf("previous hosts = %v", restore.PreviousHosts)
+	}
+	if latest, _ := s.LatestEdgeRuleSetVersion(ctx, app); latest != 4 {
+		t.Fatalf("restore did not append a new version: latest = %d", latest)
+	}
+	v4, err := s.GetEdgeRuleSetVersion(ctx, app, 4)
+	v1, _ := s.GetEdgeRuleSetVersion(ctx, app, 1)
+	if err != nil || v4.RulesSHA256 != v1.RulesSHA256 {
+		t.Fatalf("restored version digest = %q, want v1's %q (%v)", v4.RulesSHA256, v1.RulesSHA256, err)
+	}
+	if _, err := s.RestoreEdgeRuleSetVersion(ctx, app, 99, limits); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("unknown version err = %v, want ErrNotFound", err)
+	}
+	tight := limits
+	tight.EdgeRulesPerApp = 1
+	var quotaErr *state.EdgeRuleQuotaError
+	if _, err := s.RestoreEdgeRuleSetVersion(ctx, app, 3, tight); !errors.As(err, &quotaErr) {
+		t.Fatalf("over-quota restore err = %v, want *EdgeRuleQuotaError", err)
+	}
+}

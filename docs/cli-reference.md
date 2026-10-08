@@ -46,7 +46,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`preview`](#preview) | Manage preview environments for pull requests |
 | [`flags`](#flags) | Release application behavior to selected customers |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
-| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
+| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|history\|rollback --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`routes`](#routes) | Analyze route changes, migrations, lifecycle and production policies |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
@@ -4566,7 +4566,7 @@ Restore linked credentials and hostnames
 
 ## edge-rules
 
-Per-app edge rules (edge-rules list|trace|create|get|update --app &lt;slug&gt;; edge-rules rm &lt;id&gt;)
+Per-app edge rules (edge-rules list|trace|create|get|update|history|rollback --app &lt;slug&gt;; edge-rules rm &lt;id&gt;)
 
 `gregale edge-rules [<subcommand>] --app <slug> [--kind <value>]`
 
@@ -4706,6 +4706,35 @@ gregale edge-rules update RULE_ID --kind validate --validate-mode observe
 Delete one edge rule
 
 `gregale edge-rules rm <id>`
+
+### edge-rules history
+
+List recorded versions of an app&#39;s edge-rule set (--version N shows its rules)
+
+`gregale edge-rules history --app <slug> [--version <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--version <N>` | show the rules recorded in this version |  |
+
+### edge-rules rollback
+
+Restore an app&#39;s edge rules to a recorded version (recorded as a new version)
+
+`gregale edge-rules rollback --app <slug> --to <N> [--quiet]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--to <N>` | version to restore | required |
+| `--quiet` | skip the typed confirmation (for scripts) |  |
+
+Examples:
+
+```sh
+gregale edge-rules rollback --app my-api --to 12
+```
 
 
 ## openapi

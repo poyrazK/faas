@@ -6,16 +6,16 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.create_edge_rule_request import CreateEdgeRuleRequest
 from ...models.edge_rule_response import EdgeRuleResponse
 from ...models.problem import Problem
+from ...models.rollback_edge_rules_request import RollbackEdgeRulesRequest
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     *,
-    body: CreateEdgeRuleRequest,
+    body: RollbackEdgeRulesRequest,
     if_match: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -24,7 +24,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/apps/{slug}/edge-rules".format(
+        "url": "/v1/apps/{slug}/edge-rules/rollback".format(
             slug=quote(str(slug), safe=""),
         ),
     }
@@ -39,11 +39,16 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> EdgeRuleResponse | Problem | None:
-    if response.status_code == 201:
-        response_201 = EdgeRuleResponse.from_dict(response.json())
+) -> Problem | list[EdgeRuleResponse] | None:
+    if response.status_code == 200:
+        response_200 = []
+        _response_200 = response.json()
+        for response_200_item_data in _response_200:
+            response_200_item = EdgeRuleResponse.from_dict(response_200_item_data)
 
-        return response_201
+            response_200.append(response_200_item)
+
+        return response_200
 
     if response.status_code == 400:
         response_400 = Problem.from_dict(response.json())
@@ -54,11 +59,6 @@ def _parse_response(
         response_401 = Problem.from_dict(response.json())
 
         return response_401
-
-    if response.status_code == 402:
-        response_402 = Problem.from_dict(response.json())
-
-        return response_402
 
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
@@ -75,11 +75,6 @@ def _parse_response(
 
         return response_412
 
-    if response.status_code == 422:
-        response_422 = Problem.from_dict(response.json())
-
-        return response_422
-
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -93,7 +88,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[EdgeRuleResponse | Problem]:
+) -> Response[Problem | list[EdgeRuleResponse]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -106,30 +101,28 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateEdgeRuleRequest,
+    body: RollbackEdgeRulesRequest,
     if_match: str | Unset = UNSET,
-) -> Response[EdgeRuleResponse | Problem]:
-    """Create an edge rule on an app.
+) -> Response[Problem | list[EdgeRuleResponse]]:
+    """Restore an app's edge rules to a recorded version.
 
-     Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
-    validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
-    shape is documented under components/schemas. Plan-kind gate:
-    jwt/ip return 402 plan_edge_rule_kind_not_allowed on Free; geo
-    is allowed on Free with a tighter per-app quota. Per-app
-    quota returns 402 plan_limit_edge_rules once EdgeRulesPerApp
-    is reached.
+     Replaces every current rule with the version's rules in one
+    transaction, preserving rule IDs, behind fleet convergence. The
+    restore is recorded as a new version. Refused when the version
+    exceeds the current plan's edge-rule quotas or references a deleted
+    CORS preset.
 
     Args:
         slug (str):
         if_match (str | Unset):
-        body (CreateEdgeRuleRequest): Body shape for POST /v1/apps/{slug}/edge-rules.
+        body (RollbackEdgeRulesRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[EdgeRuleResponse | Problem]
+        Response[Problem | list[EdgeRuleResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -149,30 +142,28 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateEdgeRuleRequest,
+    body: RollbackEdgeRulesRequest,
     if_match: str | Unset = UNSET,
-) -> EdgeRuleResponse | Problem | None:
-    """Create an edge rule on an app.
+) -> Problem | list[EdgeRuleResponse] | None:
+    """Restore an app's edge rules to a recorded version.
 
-     Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
-    validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
-    shape is documented under components/schemas. Plan-kind gate:
-    jwt/ip return 402 plan_edge_rule_kind_not_allowed on Free; geo
-    is allowed on Free with a tighter per-app quota. Per-app
-    quota returns 402 plan_limit_edge_rules once EdgeRulesPerApp
-    is reached.
+     Replaces every current rule with the version's rules in one
+    transaction, preserving rule IDs, behind fleet convergence. The
+    restore is recorded as a new version. Refused when the version
+    exceeds the current plan's edge-rule quotas or references a deleted
+    CORS preset.
 
     Args:
         slug (str):
         if_match (str | Unset):
-        body (CreateEdgeRuleRequest): Body shape for POST /v1/apps/{slug}/edge-rules.
+        body (RollbackEdgeRulesRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        EdgeRuleResponse | Problem
+        Problem | list[EdgeRuleResponse]
     """
 
     return sync_detailed(
@@ -187,30 +178,28 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateEdgeRuleRequest,
+    body: RollbackEdgeRulesRequest,
     if_match: str | Unset = UNSET,
-) -> Response[EdgeRuleResponse | Problem]:
-    """Create an edge rule on an app.
+) -> Response[Problem | list[EdgeRuleResponse]]:
+    """Restore an app's edge rules to a recorded version.
 
-     Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
-    validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
-    shape is documented under components/schemas. Plan-kind gate:
-    jwt/ip return 402 plan_edge_rule_kind_not_allowed on Free; geo
-    is allowed on Free with a tighter per-app quota. Per-app
-    quota returns 402 plan_limit_edge_rules once EdgeRulesPerApp
-    is reached.
+     Replaces every current rule with the version's rules in one
+    transaction, preserving rule IDs, behind fleet convergence. The
+    restore is recorded as a new version. Refused when the version
+    exceeds the current plan's edge-rule quotas or references a deleted
+    CORS preset.
 
     Args:
         slug (str):
         if_match (str | Unset):
-        body (CreateEdgeRuleRequest): Body shape for POST /v1/apps/{slug}/edge-rules.
+        body (RollbackEdgeRulesRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[EdgeRuleResponse | Problem]
+        Response[Problem | list[EdgeRuleResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -228,30 +217,28 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateEdgeRuleRequest,
+    body: RollbackEdgeRulesRequest,
     if_match: str | Unset = UNSET,
-) -> EdgeRuleResponse | Problem | None:
-    """Create an edge rule on an app.
+) -> Problem | list[EdgeRuleResponse] | None:
+    """Restore an app's edge rules to a recorded version.
 
-     Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
-    validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
-    shape is documented under components/schemas. Plan-kind gate:
-    jwt/ip return 402 plan_edge_rule_kind_not_allowed on Free; geo
-    is allowed on Free with a tighter per-app quota. Per-app
-    quota returns 402 plan_limit_edge_rules once EdgeRulesPerApp
-    is reached.
+     Replaces every current rule with the version's rules in one
+    transaction, preserving rule IDs, behind fleet convergence. The
+    restore is recorded as a new version. Refused when the version
+    exceeds the current plan's edge-rule quotas or references a deleted
+    CORS preset.
 
     Args:
         slug (str):
         if_match (str | Unset):
-        body (CreateEdgeRuleRequest): Body shape for POST /v1/apps/{slug}/edge-rules.
+        body (RollbackEdgeRulesRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        EdgeRuleResponse | Problem
+        Problem | list[EdgeRuleResponse]
     """
 
     return (

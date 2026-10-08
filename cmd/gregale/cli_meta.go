@@ -1882,7 +1882,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "edge-rules",
 		DocSlug: "edge-rules",
-		Short:   "Per-app edge rules (edge-rules list|trace|create|get|update --app <slug>; edge-rules rm <id>)",
+		Short:   "Per-app edge rules (edge-rules list|trace|create|get|update|history|rollback --app <slug>; edge-rules rm <id>)",
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List edge rules", Flags: []cliFlag{
 				{Name: "app", Short: "filter to a single app slug", Value: "slug"},
@@ -1970,6 +1970,17 @@ var cliCommands = []cliCommand{
 				{Name: "validate-reject-unknown-fields", Short: "reject fields not declared by the schema"},
 			}},
 			{Name: subRm, Short: "Delete one edge rule", Positionals: []string{"<id>"}},
+			{Name: "history", Short: "List recorded versions of an app's edge-rule set (--version N shows its rules)", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "version", Short: "show the rules recorded in this version", Value: "N"},
+			}},
+			{Name: "rollback", Short: "Restore an app's edge rules to a recorded version (recorded as a new version)", Examples: []string{
+				"gregale edge-rules rollback --app my-api --to 12",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "to", Short: "version to restore", Req: true, Value: "N"},
+				{Name: "quiet", Short: "skip the typed confirmation (for scripts)"},
+			}},
 		},
 		Flags: []cliFlag{
 			{Name: "app", Short: "app slug", Req: true, Value: "slug"},

@@ -22744,6 +22744,10 @@ paths:
       responses:
         '200':
           description: Edge rules for this app, ordered by priority ASC.
+          headers:
+            ETag:
+              description: The app's current edge-rule set version, for If-Match on later mutations.
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -22756,6 +22760,12 @@ paths:
       tags: [edge_rules]
       operationId: createEdgeRule
       summary: Create an edge rule on an app.
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
+          schema: { type: string }
       description: |
         Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
         validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
@@ -22793,6 +22803,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/EdgeRuleConflict' }
+        '412':
+          description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -22816,6 +22831,12 @@ paths:
       tags: [edge_rules]
       operationId: updateEdgeRule
       summary: Partial-update an edge rule.
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
+          schema: { type: string }
       description: |
         Every field is optional. `kind` is NOT patchable — rotating
         kind mid-life would break the action union. To change kind,
@@ -22835,17 +22856,133 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '412':
+          description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     delete:
       tags: [edge_rules]
       operationId: deleteEdgeRule
       summary: Delete an edge rule.
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
+          schema: { type: string }
       responses:
         '204':
           description: The cors preset was deleted. Referencing edge_rules.cors_preset_id was atomically cleared via ON DELETE SET NULL; the gateway compile path fails closed until the customer wires a new preset or inlines fallback values.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '412':
+          description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/versions:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: listEdgeRuleSetVersions
+      summary: List recorded versions of an app's edge-rule set, newest first.
+      description: |
+        Every committed change to an app's edge rules records the whole rule
+        set as a new version (ADR-732). Up to the 50 newest versions are
+        returned, without rule bodies; the newest 100 are retained.
+      responses:
+        '200':
+          description: Versions, newest first.
+          headers:
+            ETag:
+              description: The app's current edge-rule set version, for If-Match on later mutations.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EdgeRuleSetVersionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/versions/{version}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: version
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeRuleSetVersion
+      summary: Fetch one recorded edge-rule set version with its rules.
+      responses:
+        '200':
+          description: The version and the rules it recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleSetVersionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/rollback:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [edge_rules]
+      operationId: rollbackEdgeRules
+      summary: Restore an app's edge rules to a recorded version.
+      description: |
+        Replaces every current rule with the version's rules in one
+        transaction, preserving rule IDs, behind fleet convergence. The
+        restore is recorded as a new version. Refused when the version
+        exceeds the current plan's edge-rule quotas or references a deleted
+        CORS preset.
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RollbackEdgeRulesRequest' }
+      responses:
+        '200':
+          description: The rules now in force.
+          headers:
+            ETag:
+              description: The app's current edge-rule set version, for If-Match on later mutations.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EdgeRuleResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The version references a CORS preset that no longer exists.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '412':
+          description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/throttle-suggestions:
@@ -49655,6 +49792,27 @@ components:
         description: { type: string, maxLength: 1000, description: Operator-facing description. }
         expires_at: { type: string, format: date-time, description: When the gateway stops applying the rule. }
         clear_expires_at: { type: boolean, description: Remove the expiry so the rule applies indefinitely. }
+
+    EdgeRuleSetVersionResponse:
+      description: One recorded state of an app's whole edge-rule set (ADR-732).
+      type: object
+      required: [version, rule_count, rules_sha256, created_at, current]
+      properties:
+        version: { type: integer, minimum: 1 }
+        rule_count: { type: integer, minimum: 0 }
+        rules_sha256: { type: string, description: Digest of the recorded rule set. }
+        created_at: { type: string, format: date-time }
+        current: { type: boolean, description: True for the app's latest version. }
+        rules:
+          type: array
+          description: The recorded rules; present only when a single version is fetched.
+          items: { $ref: '#/components/schemas/EdgeRuleResponse' }
+
+    RollbackEdgeRulesRequest:
+      type: object
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1, description: The version to restore. }
 
     EdgeRuleRouteAction:
       description: 'Re-targets the matched request to another app owned by the same account.'

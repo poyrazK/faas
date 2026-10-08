@@ -167,3 +167,32 @@ func TestMemStore_EdgeRule_ManifestKeyUniquePerApp(t *testing.T) {
 		t.Fatalf("duplicate manifest key error = %v, want ErrConflict", err)
 	}
 }
+
+// MemStore mirrors the ADR-732 version trigger: one version per effective
+// change, none for a no-op, and restore appends a version equal to the target.
+func TestMemStore_EdgeRuleSetVersions_RecordAndRestore(t *testing.T) {
+	m, ctx := state.NewMemStore(), context.Background()
+	acct, app := memEdgeRuleSeedAccount(t, m, ctx, api.PlanPro, "versions")
+	r1, err := m.CreateEdgeRule(ctx, memSampleValidateRuleParams(acct, app, "v.example.com", "block"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreateEdgeRule(ctx, memSampleValidateRuleParams(acct, app, "v.example.com", "block")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateEdgeRule(ctx, r1.ID, state.UpdateEdgeRuleParams{}); err != nil {
+		t.Fatal(err)
+	}
+	if latest, _ := m.LatestEdgeRuleSetVersion(ctx, app); latest != 2 {
+		t.Fatalf("latest = %d, want 2 (no-op update records nothing)", latest)
+	}
+	restore, err := m.RestoreEdgeRuleSetVersion(ctx, app, 1, api.MustLimitsFor(api.PlanPro))
+	if err != nil || len(restore.Rules) != 1 || restore.Rules[0].ID != r1.ID {
+		t.Fatalf("restore = %+v, %v", restore, err)
+	}
+	v1, _ := m.GetEdgeRuleSetVersion(ctx, app, 1)
+	v3, err := m.GetEdgeRuleSetVersion(ctx, app, 3)
+	if err != nil || v3.RulesSHA256 != v1.RulesSHA256 {
+		t.Fatalf("restore version digest mismatch: %v", err)
+	}
+}

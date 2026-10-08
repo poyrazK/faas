@@ -2503,6 +2503,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/edge-rules/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRule))))
 	mux.HandleFunc("PATCH /v1/edge-rules/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateEdgeRule))))
 	mux.HandleFunc("DELETE /v1/edge-rules/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteEdgeRule))))
+	// ADR-732 §2: rule-set versions and rollback.
+	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEdgeRuleSetVersions))))
+	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/versions/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleSetVersion))))
+	mux.HandleFunc("POST /v1/apps/{slug}/edge-rules/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rollbackEdgeRules)))))
 
 	// Traffic mirroring (issue #72 / ADR-125 PR-A2). Six routes
 	// under /v1/apps/{slug}/mirrors. The path is slug-scoped (not
