@@ -176,7 +176,7 @@ func reportWakePlatformBench(t *testing.T, pool *pgxpool.Pool, wakeIDs []string,
 	}
 	t.Logf("platform wake benchmark over %d wakes (methods: %v)", len(rows), methods)
 	t.Logf("%-34s %7s %7s %7s %7s %7s", "segment (ms)", "min", "p50", "p90", "p95", "max")
-	for _, k := range []string{
+	keys := []string{
 		"client_ms",
 		"gateway_latency_ms",
 		"admitted_to_first_byte",
@@ -185,11 +185,22 @@ func reportWakePlatformBench(t *testing.T, pool *pgxpool.Pool, wakeIDs []string,
 		"readiness_to_boot_completed",
 		"boot_completed_to_first_byte",
 		"restore_total_ms",
-		"setup_network_ms",
-		"stage_pre_boot_files_ms",
-		"resume_hook_ms",
-		"wait_ready_ms",
-	} {
+	}
+	seen := map[string]bool{}
+	for _, k := range keys {
+		seen[k] = true
+	}
+	var phases []string
+	for _, r := range rows {
+		for k := range r {
+			if !seen[k] {
+				seen[k] = true
+				phases = append(phases, k)
+			}
+		}
+	}
+	sort.Strings(phases)
+	for _, k := range append(keys, phases...) {
 		vals := make([]float64, 0, len(rows))
 		for _, r := range rows {
 			if v, ok := r[k]; ok {
@@ -274,10 +285,13 @@ func loadWakeBenchRow(pool *pgxpool.Pool, wakeID string) (wakeBenchRow, string, 
 	}
 	num("wake.proxy_first_byte", "latency_ms", "gateway_latency_ms")
 	num("wake.restore_breakdown", "total_ms", "restore_total_ms")
-	num("wake.restore_breakdown", "setup_network_ms", "setup_network_ms")
-	num("wake.restore_breakdown", "stage_pre_boot_files_ms", "stage_pre_boot_files_ms")
-	num("wake.restore_breakdown", "resume_hook_ms", "resume_hook_ms")
-	num("wake.restore_breakdown", "wait_ready_ms", "wait_ready_ms")
+	// Every other numeric restore phase rides along under its own name so
+	// a regression in any of them is visible without re-instrumenting.
+	for field, v := range data["wake.restore_breakdown"] {
+		if f, ok := v.(float64); ok && strings.HasSuffix(field, "_ms") && field != "total_ms" {
+			r[field] = f
+		}
+	}
 	method := fmt.Sprint(data["wake.boot_completed"]["method"])
 	if _, ok := at["wake.proxy_first_byte"]; !ok {
 		return nil, method, fmt.Errorf("no wake.proxy_first_byte event")
