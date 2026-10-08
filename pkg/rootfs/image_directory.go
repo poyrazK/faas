@@ -44,7 +44,7 @@ func mkdirImageDirectories(path string, mode os.FileMode) error {
 }
 
 func chmodImageDirectory(path string, mode os.FileMode) error {
-	dir, err := os.Open(path)
+	dir, err := os.Open(path) //nolint:forbidigo // Image staging containment is validated before this directory-only metadata operation; no file contents are read.
 	if err != nil {
 		return err
 	}
