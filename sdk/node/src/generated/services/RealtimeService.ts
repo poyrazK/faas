@@ -691,16 +691,18 @@ export class RealtimeService {
     });
   }
   /**
-   * Publish a live-only or retained message to channel subscribers.
-   * @returns ManagedRealtimePublishResponse Per-recipient queue outcomes; retained publishes include the committed channel sequence.
+   * Publish a message to live or resumable channel subscribers.
+   * delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is preview-only and requires FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid; it accepts at most 4096 decoded bytes and requires an Idempotency-Key. Retained delivery commits the message to the ordered channel log before fan-out and returns its sequence. V2 subscribers read the committed log in sequence; a best-effort wake reduces latency while bounded polling recovers missed wakes. The retained log remains authoritative if live fan-out is incomplete. The resume protocol separately requires FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on realtimed.
+   * A supplied Idempotency-Key binds the publish to delivery mode, decoded payload and binary flag for 24 hours. Replays return the original response and do not retry recipients that missed a partial publish. Reusing a key with a different mode or payload returns 409. An in-flight or uncertain reservation also returns 409 and is not run again while the key is active. Queue admission does not confirm client receipt.
+   * @returns ManagedRealtimePublishResponse Per-recipient queue outcomes; retained publishes also include the committed channel sequence.
    * @throws ApiError
    */
   public static publishManagedRealtimeChannel({
     slug,
     id,
     channel,
-    delivery,
     requestBody,
+    delivery = 'live',
     idempotencyKey,
   }: {
     /**
@@ -715,13 +717,13 @@ export class RealtimeService {
      * Channel that receives the published message.
      */
     channel: string,
-    /**
-     * Commit to retained channel history before fan-out. Retained delivery is preview-only and requires an Idempotency-Key.
-     */
-    delivery?: 'live' | 'retained',
     requestBody: ManagedRealtimeMessageRequest,
     /**
-     * Stable key for retrying this publish; reuse it only with the same delivery mode, decoded payload, and binary flag.
+     * Use retained to commit a sequenced message before live fan-out; this is preview-only and requires an Idempotency-Key.
+     */
+    delivery?: 'live' | 'retained',
+    /**
+     * Stable printable-ASCII key for retrying this publish; reuse it only with the same delivery mode, payload, and binary flag.
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedRealtimePublishResponse> {
@@ -733,11 +735,11 @@ export class RealtimeService {
         'id': id,
         'channel': channel,
       },
-      query: {
-        'delivery': delivery,
-      },
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'delivery': delivery,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -746,7 +748,7 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        409: `code: conflict — the key is in progress or was reused with a different payload.`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

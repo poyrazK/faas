@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Per-recipient queue outcome; admission does not imply client receipt and idempotent replays return the original response.
+ * Per-recipient queue outcome for publishing to an endpoint-scoped channel. Queue admission does not imply client receipt; retained publishes include their durable channel sequence.
  */
 export type ManagedRealtimePublishResponse = {
   /**
@@ -43,3 +43,4 @@ export type ManagedRealtimePublishResponse = {
    */
   durable?: boolean;
 };
+
