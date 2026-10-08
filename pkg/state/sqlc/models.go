@@ -5068,6 +5068,16 @@ type ProjectEnvironmentCloneCheckpointObjectTarget struct {
 	ReadyAt           pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneCheckpointObjectVerification struct {
+	OperationID       pgtype.UUID
+	SourceBucketID    pgtype.UUID
+	Plan              []byte
+	State             string
+	RequestedAt       pgtype.Timestamptz
+	ObservationSha256 pgtype.Text
+	VerifiedAt        pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneCheckpointPgActivation struct {
 	OperationID       pgtype.UUID
 	Plan              []byte

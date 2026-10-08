@@ -8481,3 +8481,35 @@ live owned catalogue, stable graph/provenance through lost replies and keyless
 handoff, and the existing publication/withdrawal regressions. Workload-value and
 resource-publication fence regressions pass. Native effects use the protocol test
 driver and do not establish live qualification or complete stage publication.
+
+### Private retained-object verification journal
+
+Read-only object verification now has a separate durable `planned -> requested
+-> verified` journal, bound to the original released capture, manifest, ready
+private target creation receipt, placement and physical owner. A committed claim
+is the sole comparison dispatch authority. Lost claim, comparison or finish
+acknowledgements recover by observing the original request; an unknown request
+cannot be restarted. Each claim and finish reauthenticates the capturing worker,
+retained source horizon, frozen inventory and private target with no credential
+or access-grant rows. No source listing, bucket creation, copy, policy change or
+credential publication is authorized by this journal.
+
+Qualified comparison must cover every original pinned body and supported
+metadata field, the entire target key set, empty objects and empty buckets. Its
+logical source and target digests exclude placement-specific version IDs and
+ETags and must match. Unsupported metadata, missing or extra keys, partial reads
+and active writers fail closed. Observe must attest current privacy, absent
+credentials, closed writers and unchanged contents through the current lease.
+The original comparison receipt is immutable across handoff; only its freshly
+observed closure horizon may advance. Requests are limited centrally to 16 MiB
+and 5 TiB of comparison reads per side. These limits grant no storage entitlement
+or native write authority. Downgrade refuses any owned verification row.
+
+Protocol tests exercise lost comparison and commit replies, unknown claim
+recovery without dispatch, worker handoff, immutable verified replay, changed
+contents and guarded migration round trips. Unit proof tests reject mismatched
+owners, requests, digests, counts, bytes, metadata coverage, privacy, credentials,
+writer closure and timestamps, and cover an empty inventory. The private
+coordinator has no qualified built-in provider or public worker wiring. Native
+copying, object credential/binding publication and complete stage publication
+remain outstanding; live R2/OVH qualification remains deferred.

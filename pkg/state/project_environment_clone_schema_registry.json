@@ -7856,5 +7856,18 @@
       "status",
       "workflow_name"
     ]
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_verification",
+    "columns": [
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "source_bucket_id",
+      "state",
+      "verified_at"
+    ],
+    "kind": "operational"
   }
 ]

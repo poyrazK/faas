@@ -8818,3 +8818,8 @@ const (
 
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
 const EnvironmentFieldOwnershipMaxPaths = 1024
+
+// Read-only checkpoint object comparison bounds; these grant no storage or IO
+// entitlement. One retained original request exists per private target bucket.
+const ObjectCheckpointVerificationPlanMaxBytes = 16 << 20
+const ObjectCheckpointVerificationBytesPerSideMax int64 = 5 << 40

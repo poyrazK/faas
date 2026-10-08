@@ -2582,6 +2582,40 @@ func (q *Queries) ClaimCloneCheckpointObjectTarget(ctx context.Context, db DBTX,
 	return i, err
 }
 
+const claimCloneCheckpointObjectVerification = `-- name: ClaimCloneCheckpointObjectVerification :one
+UPDATE project_environment_clone_checkpoint_object_verification i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_bucket_id=$2::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_bucket_id, i.plan, i.state, i.requested_at, i.observation_sha256, i.verified_at
+`
+
+type ClaimCloneCheckpointObjectVerificationParams struct {
+	OperationID      pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointObjectVerification(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectVerificationParams) (ProjectEnvironmentCloneCheckpointObjectVerification, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointObjectVerification,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
 const claimCloneCheckpointPgActivation = `-- name: ClaimCloneCheckpointPgActivation :one
 UPDATE project_environment_clone_checkpoint_pg_activations i SET state='requested',requested_at=clock_timestamp()
 WHERE i.operation_id=$1::uuid AND i.state='planned'
@@ -4828,6 +4862,17 @@ UPDATE upload_sessions
 func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error {
 	_, err := db.Exec(ctx, clearUploadSessionPartPath, id)
 	return err
+}
+
+const cloneCheckpointObjectTargetHasGrants = `-- name: CloneCheckpointObjectTargetHasGrants :one
+SELECT (EXISTS(SELECT 1 FROM object_storage_s3_credentials c WHERE c.bucket_id=$1::uuid) OR EXISTS(SELECT 1 FROM object_storage_access_grants g WHERE g.bucket_id=$1::uuid))::boolean AS has_grants
+`
+
+func (q *Queries) CloneCheckpointObjectTargetHasGrants(ctx context.Context, db DBTX, targetBucketID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointObjectTargetHasGrants, targetBucketID)
+	var has_grants bool
+	err := row.Scan(&has_grants)
+	return has_grants, err
 }
 
 const cloneCheckpointPostgresCredentialPublished = `-- name: CloneCheckpointPostgresCredentialPublished :one
@@ -13212,6 +13257,35 @@ func (q *Queries) FinishCloneCheckpointObjectTargetBucket(ctx context.Context, d
 	return result.RowsAffected(), nil
 }
 
+const finishCloneCheckpointObjectVerification = `-- name: FinishCloneCheckpointObjectVerification :execrows
+UPDATE project_environment_clone_checkpoint_object_verification i SET state='verified',observation_sha256=$1::text,verified_at=clock_timestamp()
+WHERE i.operation_id=$2::uuid AND i.source_bucket_id=$3::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointObjectVerificationParams struct {
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	SourceBucketID    pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointObjectVerification(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectVerificationParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointObjectVerification,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishCloneCheckpointPgActivation = `-- name: FinishCloneCheckpointPgActivation :execrows
 UPDATE project_environment_clone_checkpoint_pg_activations i SET state='active',observation=$1::jsonb,observation_sha256=$2::text,activated_at=clock_timestamp()
 WHERE i.operation_id=$3::uuid AND i.state='requested'
@@ -16924,6 +16998,42 @@ func (q *Queries) InsertCloneCheckpointObjectTarget(ctx context.Context, db DBTX
 		&i.RequestedAt,
 		&i.ObservationSha256,
 		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointObjectVerification = `-- name: InsertCloneCheckpointObjectVerification :one
+INSERT INTO project_environment_clone_checkpoint_object_verification(operation_id,source_bucket_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_bucket_id, plan, state, requested_at, observation_sha256, verified_at
+`
+
+type InsertCloneCheckpointObjectVerificationParams struct {
+	SourceBucketID   pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectVerification(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectVerificationParams) (ProjectEnvironmentCloneCheckpointObjectVerification, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointObjectVerification,
+		arg.SourceBucketID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.VerifiedAt,
 	)
 	return i, err
 }
@@ -47052,6 +47162,30 @@ func (q *Queries) ReadCloneCheckpointObjectTarget(ctx context.Context, db DBTX, 
 		&i.RequestedAt,
 		&i.ObservationSha256,
 		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointObjectVerification = `-- name: ReadCloneCheckpointObjectVerification :one
+SELECT operation_id, source_bucket_id, plan, state, requested_at, observation_sha256, verified_at FROM project_environment_clone_checkpoint_object_verification WHERE operation_id=$1 AND source_bucket_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointObjectVerificationParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointObjectVerification(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectVerificationParams) (ProjectEnvironmentCloneCheckpointObjectVerification, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointObjectVerification, arg.OperationID, arg.SourceBucketID)
+	var i ProjectEnvironmentCloneCheckpointObjectVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.VerifiedAt,
 	)
 	return i, err
 }
