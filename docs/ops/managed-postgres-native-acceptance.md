@@ -52,6 +52,7 @@ export DATABASE_URL='<private disposable PostgreSQL administrator URL>'
 export FAAS_PGTEST_TEMPLATE_DATABASE=1
 export FAAS_TEST_KERNEL=/srv/fc/base/vmlinux-6.1.134
 export FAAS_BUILDER_BASE_PATH=/srv/fc/base/runner-builder-amd64.ext4
+export FAAS_GUEST_INIT='<static Linux amd64 guest/init binary built from this checkout>'
 export FAAS_PUBLIC_IFACE='<host outward interface>'
 export GREGALE_POSTGRES_NATIVE_HOST_CLASS=native
 export GREGALE_POSTGRES_NATIVE_RESULTS_PATH=/private-test-directory/results.jsonl
@@ -62,7 +63,10 @@ Use `nested-diagnostic` on the internal GCE node. Such a run is diagnostic evide
 and cannot qualify production rollout. The runner refuses a virtual machine
 declared `native`, non-designated or busy hosts, active fleet runtime services,
 disabled PostgreSQL tests, missing fixtures and skipped/missing phases. Keep
-private result logs until failure diagnosis is complete.
+private result logs until failure diagnosis is complete. The guest init must be
+the real static Go executable: scripts, unrelated binaries and dynamic loaders
+are rejected before imaged can stage a base. With a guest kernel configured,
+the harness refuses to substitute its non-guest placeholder PID 1.
 
 The runner holds the shared acceptance lock and temporarily assigns
 `198.18.0.254/32` to loopback for a TLS passthrough proxy. The reserved benchmark

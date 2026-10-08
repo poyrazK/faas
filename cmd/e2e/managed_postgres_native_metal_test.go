@@ -36,13 +36,16 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" || os.Geteuid() != 0 {
 		t.Fatal("SQL guest acceptance requires root on x86_64 Linux")
 	}
-	for _, required := range []string{"DATABASE_URL", "FAAS_TEST_KERNEL", "FAAS_BUILDER_BASE_PATH", "GREGALE_POSTGRES_NATIVE_SQL_IP"} {
+	for _, required := range []string{"DATABASE_URL", "FAAS_TEST_KERNEL", "FAAS_BUILDER_BASE_PATH", "FAAS_GUEST_INIT", "GREGALE_POSTGRES_NATIVE_SQL_IP"} {
 		if os.Getenv(required) == "" {
 			t.Fatalf("missing native SQL prerequisite %s", required)
 		}
 	}
 	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Fatal("SQL guest acceptance cannot skip PostgreSQL")
+	}
+	if err := e2etest.ValidateNativeGuestInit(os.Getenv("FAAS_GUEST_INIT")); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := os.Stat("/dev/kvm"); err != nil {
 		t.Fatal("SQL guest acceptance requires KVM")
