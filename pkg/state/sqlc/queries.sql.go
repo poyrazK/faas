@@ -2590,6 +2590,42 @@ func (q *Queries) ClaimCloneCheckpointPostgresIsolation(ctx context.Context, db 
 	return i, err
 }
 
+const claimCloneCheckpointPostgresRuntime = `-- name: ClaimCloneCheckpointPostgresRuntime :one
+UPDATE project_environment_clone_checkpoint_postgres_runtime i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_database_id=$2::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_database_id, i.plan, i.state, i.requested_at, i.observation, i.observation_sha256, i.data_resource_id, i.ready_at
+`
+
+type ClaimCloneCheckpointPostgresRuntimeParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresRuntimeParams) (ProjectEnvironmentCloneCheckpointPostgresRuntime, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointPostgresRuntime,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresRuntime
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.DataResourceID,
+		&i.ReadyAt,
+	)
+	return i, err
+}
+
 const claimCloneCheckpointPostgresVerification = `-- name: ClaimCloneCheckpointPostgresVerification :one
 UPDATE project_environment_clone_checkpoint_postgres_verification i SET state='requested',requested_at=clock_timestamp()
 WHERE i.operation_id=$1::uuid AND i.source_database_id=$2::uuid AND i.state='planned'
@@ -13031,6 +13067,73 @@ func (q *Queries) FinishCloneCheckpointPostgresIsolation(ctx context.Context, db
 	return result.RowsAffected(), nil
 }
 
+const finishCloneCheckpointPostgresRuntime = `-- name: FinishCloneCheckpointPostgresRuntime :execrows
+UPDATE project_environment_clone_checkpoint_postgres_runtime i SET state='ready',observation=$1::jsonb,observation_sha256=$2::text,
+data_resource_id=$3::text,ready_at=clock_timestamp()
+WHERE i.operation_id=$4::uuid AND i.source_database_id=$5::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$6::bigint AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointPostgresRuntimeParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	DataResourceID    string
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresRuntimeParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPostgresRuntime,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.DataResourceID,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointPostgresRuntimeDatabase = `-- name: FinishCloneCheckpointPostgresRuntimeDatabase :execrows
+UPDATE managed_postgres_databases d SET state='ready',data_resource_id=i.data_resource_id,observed_generation=1,updated_at=clock_timestamp()
+FROM project_environment_clone_checkpoint_postgres_runtime i,project_environment_clone_postgres_snapshot_restores r,project_environment_clone_operations o
+WHERE i.operation_id=$1::uuid AND i.source_database_id=$2::uuid AND i.state='ready'
+AND r.operation_id=i.operation_id AND r.source_database_id=i.source_database_id AND r.state='adopted'
+AND d.id=r.target_owner_id AND d.id=r.adopted_database_id AND d.account_id=r.account_id AND d.environment_clone_operation_id=r.operation_id
+AND d.clone_resource_role='checkpoint' AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0 AND d.data_resource_id IS NULL
+AND d.lease_token IS NULL AND d.lease_until IS NULL AND d.deleted_at IS NULL
+AND d.provider_resource_id=r.target_provider_resource_id AND d.backend_id=r.backend_id AND d.backend_fingerprint=r.backend_fingerprint
+AND o.id=i.operation_id AND o.status='capturing' AND o.revision=$3::bigint
+AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()
+`
+
+type FinishCloneCheckpointPostgresRuntimeDatabaseParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPostgresRuntimeDatabase(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresRuntimeDatabaseParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPostgresRuntimeDatabase,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishCloneCheckpointPostgresVerification = `-- name: FinishCloneCheckpointPostgresVerification :execrows
 UPDATE project_environment_clone_checkpoint_postgres_verification i SET state='verified',observation_sha256=$1::text,verified_at=clock_timestamp()
 WHERE i.operation_id=$2::uuid AND i.source_database_id=$3::uuid AND i.state='requested'
@@ -16591,6 +16694,44 @@ func (q *Queries) InsertCloneCheckpointPostgresIsolation(ctx context.Context, db
 		&i.ObservationSha256,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPostgresRuntime = `-- name: InsertCloneCheckpointPostgresRuntime :one
+INSERT INTO project_environment_clone_checkpoint_postgres_runtime(operation_id,source_database_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_database_id, plan, state, requested_at, observation, observation_sha256, data_resource_id, ready_at
+`
+
+type InsertCloneCheckpointPostgresRuntimeParams struct {
+	SourceDatabaseID pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresRuntimeParams) (ProjectEnvironmentCloneCheckpointPostgresRuntime, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPostgresRuntime,
+		arg.SourceDatabaseID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresRuntime
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.DataResourceID,
+		&i.ReadyAt,
 	)
 	return i, err
 }
@@ -46451,6 +46592,32 @@ func (q *Queries) ReadCloneCheckpointPostgresIsolation(ctx context.Context, db D
 	return i, err
 }
 
+const readCloneCheckpointPostgresRuntime = `-- name: ReadCloneCheckpointPostgresRuntime :one
+SELECT operation_id, source_database_id, plan, state, requested_at, observation, observation_sha256, data_resource_id, ready_at FROM project_environment_clone_checkpoint_postgres_runtime WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointPostgresRuntimeParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresRuntimeParams) (ProjectEnvironmentCloneCheckpointPostgresRuntime, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPostgresRuntime, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentCloneCheckpointPostgresRuntime
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.DataResourceID,
+		&i.ReadyAt,
+	)
+	return i, err
+}
+
 const readCloneCheckpointPostgresVerification = `-- name: ReadCloneCheckpointPostgresVerification :one
 SELECT operation_id, source_database_id, plan, state, requested_at, observation_sha256, verified_at FROM project_environment_clone_checkpoint_postgres_verification WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
 `
@@ -55730,7 +55897,10 @@ FROM project_environment_clone_postgres_snapshot_restores r,project_environment_
 WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state='deleting'
     AND d.id=r.adopted_database_id AND d.id=r.target_owner_id AND d.account_id=r.account_id AND d.environment_clone_operation_id=r.operation_id
     AND d.restore_source_database_id=r.source_database_id AND d.clone_resource_role='checkpoint' AND d.provider_resource_id=r.target_provider_resource_id
-    AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0 AND d.data_resource_id IS NULL AND d.lease_token IS NULL
+    AND d.desired_generation=1 AND d.lease_token IS NULL
+    AND ((d.state='provisioning' AND d.observed_generation=0 AND d.data_resource_id IS NULL)
+    OR (d.state='ready' AND d.observed_generation=1 AND EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_runtime runtime
+        WHERE runtime.operation_id=r.operation_id AND runtime.source_database_id=r.source_database_id AND runtime.state='ready' AND runtime.data_resource_id=d.data_resource_id)))
     AND d.backend_id=r.backend_id AND d.backend_fingerprint=r.backend_fingerprint
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=d.id AND b.state<>'deleted')
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_databases child WHERE child.restore_source_database_id=d.id AND child.state<>'deleted')

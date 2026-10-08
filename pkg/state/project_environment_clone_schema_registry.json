@@ -5779,6 +5779,21 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_checkpoint_postgres_runtime",
+    "columns": [
+      "data_resource_id",
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "ready_at",
+      "requested_at",
+      "source_database_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_checkpoint_postgres_verification",
     "columns": [
       "observation_sha256",

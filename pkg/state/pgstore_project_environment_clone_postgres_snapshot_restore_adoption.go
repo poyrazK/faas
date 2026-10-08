@@ -32,7 +32,16 @@ func validateCloneNativeAdoptedDatabaseTx(ctx context.Context, tx pgx.Tx, op Pro
 		}
 		return mapErr(err)
 	}
+	ready, dataID, err := checkpointPostgresRuntimeCatalogueTx(ctx, tx, op, receipt, source, point)
+	if err != nil {
+		return err
+	}
 	wantState := "provisioning"
+	observedGeneration := int64(0)
+	if ready {
+		wantState = "ready"
+		observedGeneration = 1
+	}
 	if receipt.State == "deleted" {
 		wantState = "deleted"
 	}
@@ -44,8 +53,8 @@ func validateCloneNativeAdoptedDatabaseTx(ctx context.Context, tx pgx.Tx, op Pro
 		actual.BackendID != receipt.BackendID || actual.BackendFingerprint != receipt.BackendFingerprint ||
 		pgUUIDString(actual.RestoreSourceDatabaseID) != source.DatabaseID || actual.RestoreSourceResourceID.String != source.DataResourceID ||
 		!actual.RestorePointInTime.Valid || !actual.RestorePointInTime.Time.Equal(point) || actual.ProviderResourceID.String != receipt.TargetProviderResourceID ||
-		actual.State != wantState || actual.DeletedAt.Valid != (wantState == "deleted") || actual.DataResourceID.Valid ||
-		actual.DesiredGeneration != 1 || actual.ObservedGeneration != 0 || actual.LeaseToken.Valid || actual.LeaseUntil.Valid {
+		actual.State != wantState || actual.DeletedAt.Valid != (wantState == "deleted") || actual.DataResourceID.Valid != ready || actual.DataResourceID.String != dataID ||
+		actual.DesiredGeneration != 1 || actual.ObservedGeneration != observedGeneration || actual.LeaseToken.Valid || actual.LeaseUntil.Valid {
 		return ErrConflict
 	}
 	return nil

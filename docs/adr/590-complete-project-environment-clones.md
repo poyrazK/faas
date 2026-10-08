@@ -8009,3 +8009,62 @@ encoding, shell quoting and ADR numbering checks pass. These tests authenticate
 the protocol; they do not qualify a native comparator or perform live R2/OVH
 qualification.
 Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.
+
+## Verified original fork private runtime readiness
+
+A separate private runtime journal binds the original verification plan and
+terminal digest, isolation authority, retained snapshot, exact native fork owner
+and frozen database specification. Only a verified, isolated and catalogue-adopted
+fork can reserve it. A known committing claim dispatches one qualified runtime
+request. Lost claim/native/commit replies and handoff observe that original
+request without another qualification probe, provisioning, replacement restore
+or source recapture.
+
+Qualified drivers must independently observe the original private runtime and
+its exact immutable dataset, using existing operator-only read access. They
+must preserve customer data and closed SQL writers/logins and may not create
+credentials. Terminal evidence authenticates the original request and plan,
+owner, physical fork, non-source dataset, complete frozen specification,
+read-only private access and original readiness time. Independent current
+runtime health must cover the renewed worker lease. Original data verification,
+SQL isolation and capture retention are rechecked before dispatch and after
+native IO; reopened writers, altered verification proof, changed ownership,
+missing access or expired health/retention fail closed.
+
+One transaction records the stable runtime receipt, pins its exact dataset and
+changes the same private catalogue owner to `ready` with observed generation 1.
+A failure of the catalogue write rolls back the receipt and readiness together.
+Replay authenticates the original receipt and independently current health.
+Every native-fork catalogue read now distinguishes an unready owner from a
+ready owner backed by the original runtime/isolation/verification journals;
+altered dataset, generation, role or specification is rejected. Prior restore,
+isolation and verification coordinators can replay a qualified ready owner.
+
+The catalogue role remains `checkpoint`, excluded from customer reads and the
+general provisioning worker. Operation inventory and original checkpoint proof
+remain unchanged, and ordinary credential preparation/publication gates are
+not advanced. Fresh stage credentials and complete publication remain separate
+requirements. Compensation can retire this exact ready fork and retains the
+historical runtime proof; existing binding/child/read-owner guards remain in
+force. Downgrade refuses any owned runtime journal and preserves the original
+verification authority through a restrictive foreign key.
+
+There is no built-in qualified native runtime driver. Live R2/OVH qualification
+remains deferred, and private runtime readiness does not establish full stage
+readiness or public one-command cloning.
+
+Validation: real-PostgreSQL control-plane tests with private drivers pass for
+lost qualification/claim/commit replies, observation-only handoff, source state
+changes, incomplete/foreign runtime evidence, source dataset rejection, changed
+specification, lost private read access and insufficient health coverage.
+Post-IO SQL closure, original verification and retention loss and stale workers
+fail closed. Final catalogue failure rolls back runtime proof and readiness;
+altered catalogue dataset, generation and role and replacement runtime datasets
+are rejected. Ready fork compensation and retirement replay pass. Customer reads
+and the general lifecycle worker exclude the private owner. Runtime and prior
+isolation/verification migration round trips and owned-journal downgrade refusal
+pass. Original restore/isolation/verification and state-layer native adoption,
+quota, cleanup and schema-registry regressions pass, as do SQLC parity, encoding,
+shell quoting and ADR numbering checks. These tests validate protocol and
+metadata ownership, not native driver qualification or live R2/OVH behavior.
+Pinned golangci-lint v2.4.0 reports zero issues for the API and state packages.

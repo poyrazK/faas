@@ -153,7 +153,11 @@ func (s *PgStore) FinishProjectEnvironmentCloneCheckpointPostgresIsolation(ctx c
 			return err
 		}
 		if in.State == "adopted" {
-			target = ProjectEnvironmentCloneDatabaseTarget{ID: in.Plan.OwnerID, State: "provisioning"}
+			database, err := q.LockManagedPostgresLifecycleDatabase(ctx, tx, sqlc.LockManagedPostgresLifecycleDatabaseParams{AccountID: mustPgUUID(op.AccountID), ID: mustPgUUID(in.Plan.OwnerID)})
+			if err != nil {
+				return mapErr(err)
+			}
+			target = ProjectEnvironmentCloneDatabaseTarget{ID: in.Plan.OwnerID, State: database.State}
 			return nil
 		}
 		target, _, err = adoptCloneSnapshotRestoreTx(ctx, tx, op, snapshot, lease)

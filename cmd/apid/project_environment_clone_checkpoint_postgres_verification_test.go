@@ -263,6 +263,13 @@ func TestPGCloneCheckpointPostgresVerificationLateFailureAndMigration(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	runtime, err := migrations.FS.ReadFile("20261008120000001_clone_checkpoint_postgres_runtime.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(t.Context(), strings.SplitN(string(runtime), "-- +goose Down", 2)[1]); err != nil {
+		t.Fatal(err)
+	}
 	for _, sql := range []string{parts[1], parts[0], parts[1]} {
 		if _, err = tx.Exec(t.Context(), sql); err != nil {
 			t.Fatal(err)

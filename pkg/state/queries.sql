@@ -11021,7 +11021,10 @@ FROM project_environment_clone_postgres_snapshot_restores r,project_environment_
 WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.arg(source_database_id)::uuid AND r.state='deleting'
     AND d.id=r.adopted_database_id AND d.id=r.target_owner_id AND d.account_id=r.account_id AND d.environment_clone_operation_id=r.operation_id
     AND d.restore_source_database_id=r.source_database_id AND d.clone_resource_role='checkpoint' AND d.provider_resource_id=r.target_provider_resource_id
-    AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0 AND d.data_resource_id IS NULL AND d.lease_token IS NULL
+    AND d.desired_generation=1 AND d.lease_token IS NULL
+    AND ((d.state='provisioning' AND d.observed_generation=0 AND d.data_resource_id IS NULL)
+    OR (d.state='ready' AND d.observed_generation=1 AND EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_runtime runtime
+        WHERE runtime.operation_id=r.operation_id AND runtime.source_database_id=r.source_database_id AND runtime.state='ready' AND runtime.data_resource_id=d.data_resource_id)))
     AND d.backend_id=r.backend_id AND d.backend_fingerprint=r.backend_fingerprint
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=d.id AND b.state<>'deleted')
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_databases child WHERE child.restore_source_database_id=d.id AND child.state<>'deleted')
@@ -15041,3 +15044,37 @@ UPDATE project_environment_clone_checkpoint_postgres_verification i SET state='v
 WHERE i.operation_id=sqlc.arg(operation_id)::uuid AND i.source_database_id=sqlc.arg(source_database_id)::uuid AND i.state='requested'
 AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
 AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp());
+
+-- name: ReadCloneCheckpointPostgresRuntime :one
+SELECT * FROM project_environment_clone_checkpoint_postgres_runtime WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE;
+
+-- name: InsertCloneCheckpointPostgresRuntime :one
+INSERT INTO project_environment_clone_checkpoint_postgres_runtime(operation_id,source_database_id,plan)
+SELECT o.id,sqlc.arg(source_database_id)::uuid,sqlc.arg(plan)::jsonb FROM project_environment_clone_operations o
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp() RETURNING *;
+
+-- name: ClaimCloneCheckpointPostgresRuntime :one
+UPDATE project_environment_clone_checkpoint_postgres_runtime i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=sqlc.arg(operation_id)::uuid AND i.source_database_id=sqlc.arg(source_database_id)::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()) RETURNING i.*;
+
+-- name: FinishCloneCheckpointPostgresRuntime :execrows
+UPDATE project_environment_clone_checkpoint_postgres_runtime i SET state='ready',observation=sqlc.arg(observation)::jsonb,observation_sha256=sqlc.arg(observation_sha256)::text,
+data_resource_id=sqlc.arg(data_resource_id)::text,ready_at=clock_timestamp()
+WHERE i.operation_id=sqlc.arg(operation_id)::uuid AND i.source_database_id=sqlc.arg(source_database_id)::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp());
+
+-- name: FinishCloneCheckpointPostgresRuntimeDatabase :execrows
+UPDATE managed_postgres_databases d SET state='ready',data_resource_id=i.data_resource_id,observed_generation=1,updated_at=clock_timestamp()
+FROM project_environment_clone_checkpoint_postgres_runtime i,project_environment_clone_postgres_snapshot_restores r,project_environment_clone_operations o
+WHERE i.operation_id=sqlc.arg(operation_id)::uuid AND i.source_database_id=sqlc.arg(source_database_id)::uuid AND i.state='ready'
+AND r.operation_id=i.operation_id AND r.source_database_id=i.source_database_id AND r.state='adopted'
+AND d.id=r.target_owner_id AND d.id=r.adopted_database_id AND d.account_id=r.account_id AND d.environment_clone_operation_id=r.operation_id
+AND d.clone_resource_role='checkpoint' AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0 AND d.data_resource_id IS NULL
+AND d.lease_token IS NULL AND d.lease_until IS NULL AND d.deleted_at IS NULL
+AND d.provider_resource_id=r.target_provider_resource_id AND d.backend_id=r.backend_id AND d.backend_fingerprint=r.backend_fingerprint
+AND o.id=i.operation_id AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp();

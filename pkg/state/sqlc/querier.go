@@ -151,6 +151,7 @@ type Querier interface {
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
 	ClaimCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
 	ClaimCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error)
+	ClaimCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresRuntimeParams) (ProjectEnvironmentCloneCheckpointPostgresRuntime, error)
 	ClaimCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error)
 	ClaimCloneCheckpointRelease(ctx context.Context, db DBTX, arg ClaimCloneCheckpointReleaseParams) (ProjectEnvironmentCloneCheckpointRelease, error)
 	ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db DBTX, arg ClaimClonePostgresMaintenanceDispatchParams) (ManagedPostgresCheckpointMaintenance, error)
@@ -672,6 +673,8 @@ type Querier interface {
 	FindManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg FindManagedPostgresLifecycleDatabaseParams) (ManagedPostgresDatabase, error)
 	FinishCloneCheckpointObjectTargetBucket(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectTargetBucketParams) (int64, error)
 	FinishCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresIsolationParams) (int64, error)
+	FinishCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresRuntimeParams) (int64, error)
+	FinishCloneCheckpointPostgresRuntimeDatabase(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresRuntimeDatabaseParams) (int64, error)
 	FinishCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresVerificationParams) (int64, error)
 	FinishCloneCheckpointRelease(ctx context.Context, db DBTX, arg FinishCloneCheckpointReleaseParams) (int64, error)
 	FinishClonePostgresWriteFenceAbandonment(ctx context.Context, db DBTX, arg FinishClonePostgresWriteFenceAbandonmentParams) (ProjectEnvironmentClonePostgresWriteFence, error)
@@ -857,6 +860,7 @@ type Querier interface {
 	InsertCheckedRollback(ctx context.Context, db DBTX, arg InsertCheckedRollbackParams) error
 	InsertCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
 	InsertCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error)
+	InsertCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresRuntimeParams) (ProjectEnvironmentCloneCheckpointPostgresRuntime, error)
 	InsertCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error)
 	InsertCloneCheckpointRelease(ctx context.Context, db DBTX, arg InsertCloneCheckpointReleaseParams) (ProjectEnvironmentCloneCheckpointRelease, error)
 	InsertClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg InsertClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error)
@@ -2184,6 +2188,7 @@ type Querier interface {
 	ReadCheckedRollback(ctx context.Context, db DBTX, arg ReadCheckedRollbackParams) ([]byte, error)
 	ReadCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
 	ReadCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error)
+	ReadCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresRuntimeParams) (ProjectEnvironmentCloneCheckpointPostgresRuntime, error)
 	ReadCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error)
 	// ADR-590: once-only successful release, using the original durable plan.
 	ReadCloneCheckpointRelease(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointRelease, error)
