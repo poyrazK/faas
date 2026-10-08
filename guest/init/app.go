@@ -198,11 +198,19 @@ func StampOverridePortEnv(env []string, port int) []string {
 // Railpack Node app logged "mise WARN tracking config: failed create_dir_all:
 // /.local/state/mise/tracked-configs: Permission denied" at startup
 // (production-us hunt #8). /tmp is the guest's world-writable tmpfs.
+//
+// The kernel starts PID 1 with HOME=/ and guest-init passes its own
+// environment through, so "/" counts as unset: it is the kernel default, not
+// an image or customer choice, and it is read-only for the workload user.
 func StampDefaultHomeEnv(env []string) []string {
+	home := ""
 	for _, kv := range env {
-		if k, v, ok := cut(kv); ok && k == "HOME" && v != "" {
-			return env
+		if k, v, ok := cut(kv); ok && k == "HOME" {
+			home = v // exec keeps the last value of a duplicated key
 		}
+	}
+	if home != "" && home != "/" {
+		return env
 	}
 	return append(env, "HOME="+defaultWorkloadHome)
 }

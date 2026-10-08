@@ -423,6 +423,7 @@ func TestStampDefaultHomeEnv(t *testing.T) {
 	}{
 		{"unset", []string{"PATH=/usr/bin"}, "/tmp"},
 		{"empty", []string{"HOME="}, "/tmp"},
+		{"kernel default inherited by PID 1", []string{"HOME=/", "TERM=linux"}, "/tmp"},
 		{"image or customer value kept", []string{"HOME=/home/node"}, "/home/node"},
 	} {
 		got := ""
