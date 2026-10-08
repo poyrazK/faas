@@ -1,4 +1,4 @@
-import { createDataClient } from '@gregale/data'
+import { createDataClient, type DataClientOptions } from '@gregale/data'
 import type { Database } from './database.types.js'
 
 type NoteBatchItem = Pick<Database['api']['Tables']['notes']['Insert'], 'body' | 'priority'>
@@ -21,12 +21,7 @@ export function noteCursor(row: NoteCursor): NoteCursor {
   return { created_at: stamp, id: row.id }
 }
 
-export function notesClient(options: {
-  url: string
-  subject: string
-  accessToken: string | (() => string | Promise<string>)
-  fetch?: typeof globalThis.fetch
-}) {
+export function notesClient(options: DataClientOptions & { subject: string }) {
   const db = createDataClient<Database>(options).schema('api')
   return {
     createWithTagsOnce: (key: string, body: string, tags?: string[]) => {

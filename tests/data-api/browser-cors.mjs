@@ -69,13 +69,20 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
     const input = JSON.stringify({ url, subject, token, expired })
     const allowed = await evaluate(`(async () => {
       const input = ${input}; const { readBrowserNotes } = await import('/client.js');
-      const result = await readBrowserNotes({ url: input.url, subject: input.subject, accessToken: () => input.token, signal: AbortSignal.timeout(5000) });
+      const diagnostics = [];
+      const result = await readBrowserNotes({ url: input.url, subject: input.subject, accessToken: () => input.token, signal: AbortSignal.timeout(5000), onResponse: info => diagnostics.push(info) });
       const raw = await fetch(input.url+'/rest/v1/notes?select=id', { headers: { Authorization:'Bearer '+input.token, 'Accept-Profile':'api', Prefer:'count=exact' }, credentials:'omit' });
       const health = await fetch(input.url+'/healthz', { credentials:'omit' });
       const invalid = await readBrowserNotes({ url: input.url, subject: input.subject, accessToken: () => input.expired, signal: AbortSignal.timeout(5000) });
-      return { ids: result.data?.map(row => row.id), error: result.error?.code ?? null, count: result.count, requestID: raw.headers.get('X-Request-Id'), range: raw.headers.get('Content-Range'), preference: raw.headers.get('Preference-Applied'), health: health.status, invalidStatus: invalid.status, invalidCode: invalid.error?.code };
+      return { diagnostics, ids: result.data?.map(row => row.id), error: result.error?.code ?? null, count: result.count, requestID: raw.headers.get('X-Request-Id'), range: raw.headers.get('Content-Range'), preference: raw.headers.get('Preference-Applied'), health: health.status, invalidStatus: invalid.status, invalidCode: invalid.error?.code };
     })()`)
     assert.equal(allowed.error, null)
+    assert.equal(allowed.diagnostics.length, 1)
+    assert.match(allowed.diagnostics[0].requestId, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/)
+    assert.ok(allowed.diagnostics[0].status >= 200 && allowed.diagnostics[0].status < 300)
+    assert.ok(Number.isFinite(allowed.diagnostics[0].durationMs) && allowed.diagnostics[0].durationMs >= 0)
+    assert.deepEqual(Object.keys(allowed.diagnostics[0]).sort(), ['durationMs', 'requestId', 'status'])
+
     assert.equal(allowed.count, 1, 'browser_count_must_respect_rls')
     assert.deepEqual(allowed.ids, [expectedID])
     assert.match(allowed.requestID, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/, 'request_id_not_exposed')

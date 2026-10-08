@@ -1,6 +1,7 @@
 import { notesClient } from '../src/notes.js'
+import type { DataClientOptions } from '@gregale/data'
 
-export function readBrowserNotes(options: { url: string; subject: string; accessToken: () => string | Promise<string>; signal: AbortSignal }) {
+export function readBrowserNotes(options: { url: string; subject: string; accessToken: () => string | Promise<string>; signal: AbortSignal; onResponse?: DataClientOptions['onResponse'] }) {
   return notesClient(options).page({ size: 20 }).abortSignal(options.signal).retry(false)
 }
 

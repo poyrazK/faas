@@ -43,3 +43,32 @@ Retain one UUID and the same payload for a logical operation, then explicitly
 replay with that key after an uncertain network outcome. Keys are user-scoped;
 changed payloads return 409. The guide describes execution grants, receipt
 retention, snapshot responses and deletion semantics.
+
+Capture response diagnostics without wrapping fetch:
+
+```ts
+const db = createDataClient<Database>({
+  url: 'https://my-data.gregale.dev',
+  accessToken: () => auth.getAccessToken(),
+  onResponse: ({ requestId, status, durationMs }) => {
+    console.info({ requestId, status, durationMs })
+  },
+}).schema('api')
+```
+
+`DataResponseInfo` is a readonly, runtime-frozen object containing only those
+three fields. `requestId` is null when the header is missing, not exposed by CORS,
+or not a UUID v4. No token, URL, query, headers, body or application identity is
+passed to the callback. The SDK emits no logs unless your callback does so.
+
+The callback runs once per HTTP response, including errors and individual retry
+attempts, across reads, writes and RPCs. Duration is monotonic client time from
+token lookup until fetch returns response headers; it excludes body consumption
+and is not database execution or platform wake timing. The callback cannot read
+or consume the response body. Network failures, cancellation before headers and
+invalid tokens produce no callback when there is no HTTP response.
+
+Callbacks may be synchronous or asynchronous. Exceptions and rejected promises
+are ignored, and asynchronous completion is not awaited. Keep synchronous work
+short; the request does not wait for asynchronous telemetry to finish. The hook
+does not change retries, data, errors, counts or generated schema inference.

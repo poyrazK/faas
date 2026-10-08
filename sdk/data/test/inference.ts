@@ -47,3 +47,17 @@ if (parent.data) {
   const array: { id: number; body: string }[] = parent.data.notes
   void [note, array]
 }
+
+createDataClient<Database>({ url: 'https://data.example', accessToken: 'jwt', onResponse: info => {
+  const id: string | null = info.requestId
+  const status: number = info.status
+  const duration: number = info.durationMs
+  // @ts-expect-error Response diagnostics are immutable.
+  info.status = 0
+  // @ts-expect-error Tokens and application metadata are not diagnostics.
+  info.accessToken
+  // @ts-expect-error Raw responses and bodies are not exposed.
+  info.body
+  void [id, status, duration]
+} })
+createDataClient<Database>({ url: 'https://data.example', accessToken: 'jwt', onResponse: async () => {} })

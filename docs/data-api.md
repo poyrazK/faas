@@ -829,3 +829,35 @@ Use the response ID to find the matching record in your app logs. Logging
 exceptions do not change the response. These are gateway request records, not
 distributed traces or measurements of platform wake latency. Log retention and
 live staging verification remain deployment concerns.
+
+### Typed client response diagnostics
+
+`createDataClient` accepts an optional `onResponse` callback so applications can
+capture IDs without replacing fetch:
+
+```ts
+const db = createDataClient<Database>({
+  url: 'https://my-data.gregale.dev',
+  accessToken: () => session.getAccessToken(),
+  onResponse: ({ requestId, status, durationMs }) => {
+    console.info({ requestId, status, durationMs })
+  },
+}).schema('api')
+```
+
+The exported readonly `DataResponseInfo` type has only `requestId`, `status` and
+`durationMs`; instances are frozen. IDs must be UUID v4 headers, otherwise they
+are null, including when a browser cannot read the header through CORS. Tokens,
+URLs, query values, bodies, headers and subjects are excluded. The SDK itself
+does not log these records. The starter's `notesClient` and `readBrowserNotes`
+helpers pass through this option.
+
+The callback fires per HTTP response, including failed HTTP responses and each
+retry attempt, for reads, writes and RPCs. Concurrent calls keep their own
+metadata. The measured client time includes token resolution and fetch through
+response headers, but excludes response-body processing; it is not SQL execution
+or a platform wake metric. No callback fires for failures with no response.
+Body parsing, counts, errors, retry behavior and generated type inference are
+unchanged. Callback exceptions and rejected promises are isolated; asynchronous
+callbacks are not awaited. Keep synchronous callbacks short and handle telemetry
+retention and delivery in the application.

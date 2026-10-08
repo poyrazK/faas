@@ -157,7 +157,8 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   child.stdout.on('data', value => { logs += value }); child.stderr.on('data', value => { logs += value })
   const { privateKey, publicKey } = await generateKeyPair('ES256')
   const jwk = await exportJWK(publicKey)
-  gateway = createServer(config, tokenVerifier(config.auth, createLocalJWKSet({ keys: [jwk] })), upstream, ready)
+  const gatewayLogs = []
+  gateway = createServer(config, tokenVerifier(config.auth, createLocalJWKSet({ keys: [jwk] })), upstream, ready, record => gatewayLogs.push(record))
   await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
   const url = `http://127.0.0.1:${gateway.address().port}`
   let available = false
@@ -193,7 +194,8 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   } finally { await owner.query(`GRANT EXECUTE ON FUNCTION api.create_note_with_tags(text, text[]) TO "${role}"`) }
   const { verifyAuthorization } = await import(pathToFileURL(join(root, 'client/test/authorization.mjs')))
   const { notesClient, noteCursor } = await import(pathToFileURL(join(root, 'client/dist/notes.js')))
-  const client = notesClient({ url, subject: userA.subject, accessToken: userA.token })
+  const diagnostics = []
+  const client = notesClient({ url, subject: userA.subject, accessToken: userA.token, onResponse: info => diagnostics.push(info) })
   const { readCursorPageWithSession } = await import(pathToFileURL(join(root, 'client/dist/session.js')))
   await verifyRPC({ owner, client, url, userA, userB })
   // The RPC's explicit isolation must win over a stronger role default.
@@ -294,6 +296,16 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
     }
   }
   for (const table of ['notes', 'tags', 'note_tags', 'note_favorite_tags']) assert.equal((await owner.query(`SELECT count(*)::integer AS count FROM api.${table}`)).rows[0].count, 0)
+  await new Promise(setImmediate)
+  assert.ok(diagnostics.length > 0)
+  for (const info of diagnostics) {
+    assert.ok(Object.isFrozen(info))
+    assert.ok(info.requestId)
+    const record = gatewayLogs.find(record => record.request_id === info.requestId)
+    assert.ok(record, 'SDK ID must correlate with an actual gateway record')
+    assert.equal(info.status, record.status)
+    assert.deepEqual(Object.keys(info).sort(), ['durationMs', 'requestId', 'status'])
+  }
   // Schema drift changes the contract; regenerating before client compilation
   // is required, while the committed fixture remains untouched.
   await owner.query('ALTER TABLE api.notes ADD COLUMN description text')

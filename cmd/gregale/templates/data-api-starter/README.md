@@ -702,3 +702,16 @@ allowed browser origins; gateway problem bodies also include `request_id`.
 Engine response bodies remain unchanged. The gateway generates IDs itself and
 ignores caller IDs. Its logs use fixed route categories and exclude tokens,
 subjects, query values, table/function names, credentials and application bodies.
+
+### Capture diagnostics from the typed client
+
+`notesClient` and `readBrowserNotes` accept the SDK's optional `onResponse`
+callback. It receives only `{ requestId, status, durationMs }`; use the ID to
+find the matching API request log. The SDK emits no logs by default. Missing,
+malformed or browser-inaccessible IDs are null. Callback failures do not affect
+data access, and asynchronous callbacks are not awaited. Each HTTP response
+produces a callback, including errors and retry attempts; network failures
+without a response do not. Duration measures token lookup and fetch through
+headers, not body processing, SQL execution or platform wake time. See the
+[Data API guide](https://gregale.dev/docs/data-api#typed-client-response-diagnostics)
+for a typed example.
