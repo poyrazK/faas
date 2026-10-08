@@ -26,7 +26,13 @@ func newInstanceFlight(ctx context.Context) (context.Context, *instanceFlight) {
 	recoveryCtx, cancelRecovery := context.WithCancel(context.WithoutCancel(ctx))
 	flight := &instanceFlight{
 		done: make(chan struct{}), recoveryCtx: recoveryCtx,
-		cancel: func() { cancelOperation(); cancelRecovery() },
+		cancel: func() {
+			// The operation can unwind as soon as cancellation wakes it.
+			// Close recovery first so a failed snapshot cannot start a resume
+			// between the two cancellations during teardown.
+			cancelRecovery()
+			cancelOperation()
+		},
 	}
 	return operationCtx, flight
 }
