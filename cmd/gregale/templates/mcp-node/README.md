@@ -354,3 +354,44 @@ TTL; it is a current gauge, not a cumulative failure counter or rate. Expired
 Tasks are excluded. Delayed retries are excluded from
 `mcp_tasks_capacity_waiting`, but remain in `mcp_tasks_outstanding`. Interpret
 these together when diagnosing backlog and autoscaling.
+
+
+### Task operational diagnostics
+
+`gregale mcp tasks status --app <worker-app>` shows running Tasks, capacity waits,
+delayed retries, retained failures, active worker registrations, unsupported
+handler versions, and observer heartbeat freshness. JSON output adds stable
+`diagnostics` entries with `code` and `message`, plus `worker_heartbeats_fresh`
+and `observer_heartbeat_fresh`. Missing or stale metrics produce an unknown-health
+explanation instead of being interpreted as zero work. Queue explanations include
+`execution_capacity`, `retry_delay`, `failed_tasks_retained`,
+`unsupported_handler`, `no_active_workers`, and `idle_queue`.
+
+Workers register their supported tool/handler-version pairs in
+`gregale_mcp_task_workers`. Heartbeats refresh at a bounded cadence (20–30 seconds,
+depending on polling), expire after 90 seconds using database time, and are
+withdrawn when a worker stops accepting work. Worker registrations describe
+availability to claim work; they are not a guarantee that a handler succeeds.
+Expired registrations do not participate in inventory and are pruned by workers.
+The observer reads this table without writing registrations or migrating schema.
+Initialize the updated schema through an upgraded web or worker process before
+starting an upgraded observer. Include read access to the worker registry in any
+observer database grants, and upgrade every worker so the inventory is complete.
+
+`mcp_tasks_active_workers` counts unexpired registrations.
+`mcp_tasks_unsupported_handler_tasks` counts unexpired queued Tasks and
+expired-lease running Tasks with no matching version among registered workers.
+Future retries and live executions are excluded; retry-attempt eligibility is
+separate from handler compatibility. When there are no registered
+workers the unsupported count is zero and compatibility is unknown; status reports
+worker absence rather than claiming that all handlers are compatible.
+
+Only the observer role publishes `mcp_tasks_observer_heartbeat` (value 1), after
+its database read and aggregate metric publication succeed. Worker publishers do
+not overwrite it. The CLI uses server-reported metric freshness; a fresh observer
+heartbeat indicates a recent successful reporting cycle, not proof of continuous
+uptime. Worker freshness means that the latest fresh aggregate reported a live
+registration; allow for registry TTL and metric publication delays. Scale-to-zero
+status reports an unknown observer when that heartbeat is absent or stale.
+Telemetry contains aggregate counts and declared handler inventory, without Task
+arguments, results, bearer tokens, caller identities, or exception messages.

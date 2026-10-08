@@ -1,5 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { createHash, randomInt } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 import * as z from 'zod/v4';
 
 export const MCP_TASKS_EXTENSION_ID = 'io.modelcontextprotocol/tasks';
@@ -89,6 +89,7 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
   const supportedHandlers = [];
   const executionHandlers = new Map();
   for (const [name, handler] of Object.entries(handlers)) {
+    if (!/^[a-z][a-z0-9_.-]{0,127}$/.test(name)) throw new Error('Invalid MCP task handler name');
     if (!handler || typeof handler.version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handler.version)) throw new Error('Invalid MCP task handler version');
     for (const [version, execute] of Object.entries({ ...handler.previousVersions, [handler.version]: handler.execute })) {
       if (!/^[A-Za-z0-9._-]{1,64}$/.test(version) || typeof execute !== 'function') throw new Error('Invalid MCP task handler registry');
@@ -108,6 +109,9 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
   let draining = false;
   let closed = true;
   let lastCleanup = 0;
+  const workerID = randomUUID();
+  let lastWorkerHeartbeat = -Infinity;
+  let workerHeartbeatPending;
 
   function reportError() {
     try { onError(); } catch { /* Never let diagnostics stop task workers. */ }
@@ -304,6 +308,19 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
     }
   }
 
+  async function refreshWorkerHeartbeat() {
+    const now = performance.now();
+    if (closed || typeof store.workerHeartbeat !== 'function' || now - lastWorkerHeartbeat < 20_000) return;
+    // Bound failed registration attempts too, so diagnostics cannot flood the
+    // database or interrupt normal claim processing under sustained load.
+    lastWorkerHeartbeat = now;
+    try {
+      workerHeartbeatPending = Promise.resolve(store.workerHeartbeat(workerID, supportedHandlers));
+      await workerHeartbeatPending;
+    } catch { reportError(); }
+    finally { workerHeartbeatPending = undefined; }
+  }
+
   async function drain() {
     if (closed || draining) return;
     draining = true;
@@ -313,9 +330,14 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
         lastCleanup = now;
         await store.cleanupExpired();
       }
+      await refreshWorkerHeartbeat();
       while (!closed && active.size < workerConcurrency) {
+        // A busy queue can keep this loop running across many heartbeat periods.
+        await refreshWorkerHeartbeat();
+        if (closed) break;
         const task = await store.claim(maxAttempts, LEASE_MS, supportedHandlers);
-        if (!task) break;
+        // Do not start work from a claim that completed during shutdown.
+        if (!task || closed) break;
         let work;
         work = runTask(task).catch(reportError).finally(() => {
           active.delete(work);
@@ -335,6 +357,7 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
       if (!closed) return;
       await store.initialize();
       closed = false;
+      lastWorkerHeartbeat = -Infinity;
       if (workerEnabled) {
         timer = setInterval(() => { void drain(); }, pollIntervalMs);
         if (!keepAlive) timer.unref?.();
@@ -345,6 +368,10 @@ export function createMcpTaskRuntime({ store, handlers, pollIntervalMs = 2000, w
       if (closed) return;
       closed = true;
       clearInterval(timer);
+      await workerHeartbeatPending?.catch(() => {});
+      if (workerEnabled && typeof store.workerStopped === 'function') {
+        try { await store.workerStopped(workerID); } catch { reportError(); }
+      }
       clearInterval(taskSubscriptionTimer);
       taskSubscriptionTimer = undefined;
       const unsubscribe = taskStoreUnsubscribe;
