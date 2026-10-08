@@ -196,6 +196,14 @@ type Config struct {
 	// is already there, instead of having to create the set, the counter and
 	// the rule inside a latency-sensitive transition.
 	EgressCircuitEnabled bool
+	// Quarantine (ADR-732) isolates a production fork: the guest may not
+	// open any flow, and only the platform (via VethPeer) may open flows to
+	// it. The rules live in their own base chains at QuarantinePriority on
+	// the forward and input hooks, in both the ip and ip6 tables, so
+	// nothing added to or inserted into the regular forward chain later
+	// (allowlist, private-network or operator patches) can override them:
+	// a drop in any base chain is final. False renders nothing.
+	Quarantine bool
 	// EgressPorts is the set of TCP destination ports the guest may open
 	// connections to (ADR-361): api.TenantEgressBasePorts plus any ports
 	// the app declares. Everything else the guest originates is dropped,
@@ -500,6 +508,7 @@ func (c Config) NftCommands() [][]string {
 	cmds := make([][]string, 0, 16)
 	add := func(argv ...string) { cmds = append(cmds, nft(argv...)) }
 	add("add", "table", "ip", "faas")
+	cmds = append(cmds, c.quarantineRules(nft, "ip")...)
 	// Chain policy (ADR-031). Empty EgressAllowlist → keep the
 	// historical `policy accept` (every non-deny-listed destination
 	// reaches the public internet, same as today). Non-empty → flip
@@ -731,6 +740,7 @@ func (c Config) NftCommands() [][]string {
 	// per-netns `inet faas` table is a follow-up if we want to collapse the
 	// two; see ADR-023 "rejected alternatives" for the trade-off.
 	add("add", "table", "ip6", "faas")
+	cmds = append(cmds, c.quarantineRules(nft, "ip6")...)
 	cmds = append(cmds, c.egressPolicyObjects(nft, "ip6")...)
 	// Same counter object for the v6 chain — faas_cap is scoped per table,
 	// so ip faas.faas_cap and ip6 faas.faas_cap are independent (ADR-023).
@@ -1164,6 +1174,49 @@ func (c Config) forwardConnlimitRule6(nft func(...string) []string) []string {
 // instead of being duplicated in two argv builders.
 //
 // Internal to NftCommands — do not invoke from anywhere else.
+// QuarantinePriority runs the quarantine base chains before the regular
+// filter chains (priority 0). Order does not change the outcome, because a
+// drop in any base chain is final, but running first keeps the drop counter
+// honest: a quarantined guest's packets are counted here, not by a later
+// deny rule.
+const QuarantinePriority = "-10"
+
+// QuarantineDropCounter counts packets a quarantine chain dropped.
+const QuarantineDropCounter = "quarantine_drop"
+
+// quarantineRules renders the ADR-732 isolation for one table family:
+//
+//   - forward: replies to flows the platform opened (established/related)
+//     pass; every other packet from the guest drops; a new flow to the guest
+//     is admitted only from VethPeer, the platform's path, so a private
+//     network side-link cannot reach the fork.
+//   - input: nothing from the guest reaches the namespace itself.
+//
+// Each chain's policy is accept so packets the chain does not match fall
+// through to the regular chains unchanged.
+func (c Config) quarantineRules(nft func(parts ...string) []string, family string) [][]string {
+	if !c.Quarantine {
+		return nil
+	}
+	chain := func(name, hook string) []string {
+		return nft("add", "chain", family, "faas", name, "{", "type", "filter", "hook", hook,
+			"priority", QuarantinePriority, ";", "policy", nftPolicyAccept, ";", "}")
+	}
+	rule := func(parts ...string) []string {
+		return nft(append([]string{"add", "rule", family, "faas"}, parts...)...)
+	}
+	drop := []string{"counter", "name", QuarantineDropCounter, "drop"}
+	return [][]string{
+		nft("add", "counter", family, "faas", QuarantineDropCounter, "{}"),
+		chain("quarantine_forward", "forward"),
+		rule("quarantine_forward", "ct", "state", "established,related", "accept"),
+		rule(append([]string{"quarantine_forward", "iifname", c.Tap}, drop...)...),
+		rule(append([]string{"quarantine_forward", "oifname", c.Tap, "iifname", "!=", c.VethPeer}, drop...)...),
+		chain("quarantine_input", "input"),
+		rule(append([]string{"quarantine_input", "iifname", c.Tap}, drop...)...),
+	}
+}
+
 func (c Config) forwardChainPolicy() string {
 	if len(c.EgressAllowlist) == 0 {
 		return nftPolicyAccept

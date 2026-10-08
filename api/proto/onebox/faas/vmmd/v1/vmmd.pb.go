@@ -274,7 +274,12 @@ type AppSpec struct {
 	// ports on top of the base web ports every guest may reach. vmmd drops
 	// forbidden ports again before rendering the per-instance egress_ports
 	// set. Empty = base ports only.
-	EgressPorts   []uint32 `protobuf:"varint,29,rep,packed,name=egress_ports,json=egressPorts,proto3" json:"egress_ports,omitempty"`
+	EgressPorts []uint32 `protobuf:"varint,29,rep,packed,name=egress_ports,json=egressPorts,proto3" json:"egress_ports,omitempty"`
+	// quarantine (ADR-732) wakes a production fork: vmmd renders the netns
+	// quarantine chains (no guest-originated flow, inbound only from the
+	// platform veth) and ignores the allowlist, private network, static
+	// egress IP and operator bundle. Only schedd's fork coordinator sets it.
+	Quarantine    bool `protobuf:"varint,31,opt,name=quarantine,proto3" json:"quarantine,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -517,6 +522,13 @@ func (x *AppSpec) GetEgressPorts() []uint32 {
 		return x.EgressPorts
 	}
 	return nil
+}
+
+func (x *AppSpec) GetQuarantine() bool {
+	if x != nil {
+		return x.Quarantine
+	}
+	return false
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -9978,7 +9990,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\x99\v\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xb9\v\n" +
 	"\aAppSpec\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
 	"\tlayer_key\x18\x02 \x01(\tR\blayerKey\x12\x1d\n" +
@@ -10014,7 +10026,10 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x1eprivate_network_firewall_rules\x18\x17 \x03(\v2/.onebox.faas.vmmd.v1.PrivateNetworkFirewallRuleR\x1bprivateNetworkFirewallRules\x129\n" +
 	"\x19disable_startup_cpu_boost\x18\x18 \x01(\bR\x16disableStartupCpuBoost\x12O\n" +
 	"\x0fmain_depends_on\x18\x1c \x03(\v2'.onebox.faas.vmmd.v1.WorkloadDependencyR\rmainDependsOn\x12!\n" +
-	"\fegress_ports\x18\x1d \x03(\rR\vegressPorts\"\x92\b\n" +
+	"\fegress_ports\x18\x1d \x03(\rR\vegressPorts\x12\x1e\n" +
+	"\n" +
+	"quarantine\x18\x1f \x01(\bR\n" +
+	"quarantine\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +

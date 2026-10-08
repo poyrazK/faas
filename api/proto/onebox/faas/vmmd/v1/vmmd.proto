@@ -692,6 +692,11 @@ message AppSpec {
   // forbidden ports again before rendering the per-instance egress_ports
   // set. Empty = base ports only.
   repeated uint32 egress_ports = 29;
+  // quarantine (ADR-732) wakes a production fork: vmmd renders the netns
+  // quarantine chains (no guest-originated flow, inbound only from the
+  // platform veth) and ignores the allowlist, private network, static
+  // egress IP and operator bundle. Only schedd's fork coordinator sets it.
+  bool quarantine = 31;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
