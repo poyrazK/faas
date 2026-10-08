@@ -133,15 +133,29 @@ type ManagedRealtimeCloseRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// ManagedRealtimePublishResponse reports accepted queues and whether the
-// active fleet was fully reached. Queued means admitted to in-memory output
-// queues, not acknowledged by clients.
+// ManagedRealtimePublishResponse reports per-recipient queue outcomes and
+// whether the active fleet accepted the publish. For retained delivery, Queued
+// includes resumable subscriber wake-ups; it still does not mean client receipt.
 type ManagedRealtimePublishResponse struct {
-	Queued           int  `json:"queued"`
-	Partial          bool `json:"partial"`
-	NodesQueried     int  `json:"nodes_queried"`
-	NodesUnavailable int  `json:"nodes_unavailable"`
+	Queued           int   `json:"queued"`
+	Partial          bool  `json:"partial"`
+	NodesQueried     int   `json:"nodes_queried"`
+	NodesUnavailable int   `json:"nodes_unavailable"`
+	Subscribers      int   `json:"subscribers"`
+	QueueFull        int   `json:"queue_full"`
+	Failed           int   `json:"failed"`
+	Sequence         int64 `json:"sequence,omitempty"`
+	Durable          bool  `json:"durable,omitempty"`
 }
+
+// ManagedRealtimeDelivery selects whether a publish only fans out to live
+// subscribers or first commits the message to the ordered retained channel log.
+type ManagedRealtimeDelivery string
+
+const (
+	ManagedRealtimeDeliveryLive     ManagedRealtimeDelivery = "live"
+	ManagedRealtimeDeliveryRetained ManagedRealtimeDelivery = "retained"
+)
 
 // ManagedRealtimeRetainedMessageRequest writes to the ordered outbound log.
 // Its idempotency key is effective while the matching message is retained.

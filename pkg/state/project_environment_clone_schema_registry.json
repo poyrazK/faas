@@ -3352,6 +3352,7 @@
       "account_id",
       "created_at",
       "key",
+      "request_digest",
       "response_body",
       "response_status"
     ],

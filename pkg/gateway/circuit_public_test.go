@@ -85,10 +85,8 @@ func TestHandlerWithoutBreakerIsUnchanged(t *testing.T) {
 }
 
 func TestCircuitConfigsTuneFromTheAppsFirstRule(t *testing.T) {
-	loaded := make(chan struct{}, 4)
 	fail := false
 	c := NewCircuitConfigs(func(_ context.Context, appID string) ([]EdgeRuleCircuitBreakerResolved, error) {
-		defer func() { loaded <- struct{}{} }()
 		if fail {
 			return nil, errors.New("store unavailable")
 		}
@@ -102,11 +100,34 @@ func TestCircuitConfigsTuneFromTheAppsFirstRule(t *testing.T) {
 	}, nil)
 	now := time.Unix(1_000_000, 0)
 	c.now = func() time.Time { return now }
+	waitForLoad := func(appID string) {
+		t.Helper()
+		// The source returning does not mean load has published the cache
+		// entry. Wait under the cache lock before reading it or advancing
+		// the fake clock used by the background worker.
+		deadline := time.NewTimer(circuitConfigLoadTimeout)
+		defer deadline.Stop()
+		tick := time.NewTicker(time.Millisecond)
+		defer tick.Stop()
+		for {
+			c.mu.Lock()
+			e := c.m[appID]
+			done := e != nil && !e.loading
+			c.mu.Unlock()
+			if done {
+				return
+			}
+			select {
+			case <-deadline.C:
+				t.Fatalf("circuit config load for %q did not finish", appID)
+			case <-tick.C:
+			}
+		}
+	}
 	if _, ok := c.ForKey("tuned\x00i1"); ok {
 		t.Fatal("tuned before the first load finished; lookups must not block")
 	}
-	<-loaded
-	waitForCircuitConfigPublication(t, c, "tuned")
+	waitForLoad("tuned")
 	cfg, ok := c.ForKey("tuned\x00i1")
 	if !ok || cfg.FailureThreshold != 0.25 || cfg.MinRequests != 3 || cfg.OpenDuration != 15*time.Second {
 		t.Fatalf("config = %+v ok=%v, want the priority-10 rule", cfg, ok)
@@ -114,8 +135,7 @@ func TestCircuitConfigsTuneFromTheAppsFirstRule(t *testing.T) {
 	if _, ok := c.For("plain"); ok {
 		t.Fatal("an app without rules was tuned")
 	}
-	<-loaded
-	waitForCircuitConfigPublication(t, c, "plain")
+	waitForLoad("plain")
 	if _, ok := c.For("plain"); ok {
 		t.Fatal("an app without rules was tuned after its load")
 	}
@@ -123,29 +143,8 @@ func TestCircuitConfigsTuneFromTheAppsFirstRule(t *testing.T) {
 	fail = true
 	now = now.Add(circuitConfigTTL)
 	_, _ = c.For("tuned")
-	<-loaded
-	waitForCircuitConfigPublication(t, c, "tuned")
+	waitForLoad("tuned")
 	if cfg, ok := c.For("tuned"); !ok || cfg.MinRequests != 3 {
 		t.Fatalf("after a failed refresh config = %+v ok=%v, want the previous tuning", cfg, ok)
-	}
-}
-
-// The source callback returning does not mean load has published its cache
-// entry. Wait for publication before checking tuning or changing the fake clock.
-func waitForCircuitConfigPublication(t *testing.T, c *CircuitConfigs, appID string) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		c.mu.Lock()
-		entry := c.m[appID]
-		ready := entry != nil && !entry.loading
-		c.mu.Unlock()
-		if ready {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("circuit config publication timed out", appID)
-		}
-		time.Sleep(time.Millisecond)
 	}
 }

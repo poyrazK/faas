@@ -23839,7 +23839,36 @@ paths:
     post:
       tags: [realtime]
       operationId: publishManagedRealtimeChannel
-      summary: Publish a message to subscribed live connections.
+      summary: Publish a message to live or resumable channel subscribers.
+      description: >-
+        delivery=live (the default) fans out to live raw-frame subscribers.
+        delivery=retained is preview-only and requires
+        FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid; it accepts at most
+        4096 decoded bytes and requires an Idempotency-Key. Retained delivery
+        commits the message to the ordered channel log before fan-out and
+        returns its sequence. V2 subscribers read the committed log in sequence;
+        a best-effort wake reduces latency while bounded polling recovers missed
+        wakes. The retained log remains authoritative if live fan-out is
+        incomplete. The resume protocol separately requires
+        FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on realtimed.
+
+        A supplied Idempotency-Key binds the publish to delivery mode, decoded
+        payload and binary flag for 24 hours. Replays return the original
+        response and do not retry recipients that missed a partial publish.
+        Reusing a key with a different mode or payload returns 409. An in-flight
+        or uncertain reservation also returns 409 and is not run again while
+        the key is active. Queue admission does not confirm client receipt.
+      parameters:
+        - name: delivery
+          in: query
+          required: false
+          description: Use retained to commit a sequenced message before live fan-out; this is preview-only and requires an Idempotency-Key.
+          schema: { type: string, enum: [live, retained], default: live }
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Stable printable-ASCII key for retrying this publish; reuse it only with the same delivery mode, payload, and binary flag.
+          schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[!-~]{1,128}$' }
       requestBody:
         required: true
         content:
@@ -23847,14 +23876,19 @@ paths:
             schema: { $ref: '#/components/schemas/ManagedRealtimeMessageRequest' }
       responses:
         '200':
-          description: Queued recipients and whether every active realtime node accepted the publish.
+          description: Per-recipient queue outcomes; retained publishes also include the committed channel sequence.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ManagedRealtimePublishResponse' }
+          headers:
+            Idempotent-Replayed:
+              description: Present with value true when this response replays a prior result for the supplied key.
+              schema: { type: string, enum: ['true'] }
         '400': { $ref: '#/components/responses/RealtimeInvalid' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
@@ -24117,6 +24151,85 @@ paths:
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '504': { $ref: '#/components/responses/LongPollTimeout' }
+
+  /v1/apps/{slug}/entities/invoke:
+    post:
+      tags: [invocations]
+      operationId: invokeDurableEntity
+      summary: Invoke an object-storage-backed entity in the operator preview.
+      description: |
+        Disabled unless the operator configures a private bucket and explicitly
+        enables this app. Account authentication, deploy-write scopes and MFA
+        apply. A selected customer must belong to the account and be active;
+        customer self-service tokens are not accepted on this surface.
+        Entity identity includes the app, immutable environment identity,
+        optional verified customer, namespace and key. The deployed handler
+        receives state at POST /__gregale/entities and returns data, result and
+        an optional alarm_at. Handlers must compute transitions without external
+        side effects. Alarm delivery requires a separate operator opt-in and
+        private delimiter listing. Due alarms use the same scheduler path with
+        event=alarm. Clearing or replacing the deadline invalidates stale work;
+        a failed handler leaves the alarm due. Attempts may repeat, while state,
+        the alarm receipt and its next deadline publish atomically. Alarm timing
+        depends on bounded entity sweeps and has no production latency guarantee.
+        State and replay receipts commit in object storage; the existing SQL
+        invocation ledger is used only to schedule and observe guest execution.
+        Keep request_id and exact payload bytes for retries, including after an
+        uncertain response. HTTP Idempotency-Key does not identify entity work.
+        Request IDs starting with __gregale_alarm/ are reserved for delivery.
+        Replays return the original result and version without executing code.
+        Calls have a 25 second budget. Owners expire after at most five minutes.
+        An immutable receipt index preserves original results without a receipt
+        count ceiling. Encoded snapshots and individual receipts remain bounded
+        to 1 MiB. Operator cleanup can reclaim superseded snapshots and index
+        nodes after a fenced generation barrier; it never expires replay receipts.
+        An explicit operator per-entity byte cap can limit the current snapshot
+        and its reachable immutable receipts/index/archive. It excludes metadata,
+        abandoned uploads and provider history; it is not a plan billing quota.
+        Over-cap new work returns 409 durable_entity_storage_limit with limit and
+        observed projected bytes. Existing receipts replay at capacity. Legacy
+        entities under a cap return 503 durable_entity_inventory_pending for new
+        work until bounded verified accounting completes. Handler computation
+        can run before quota rejection. Entity deletion is not available yet.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DurableEntityInvokeRequest' }
+      responses:
+        '200':
+          description: Committed or replayed entity result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DurableEntityInvokeResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanFeatureGated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Request identity conflict, object budget or committed storage cap exceeded, or deployment unavailable. Storage limits include limit and observed projected bytes.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/PlanSourceBytes' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: Handler failed without publishing entity state.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Preview disabled, owner busy, legacy accounting pending, storage unavailable or commit outcome uncertain; retry the same request identity.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Request budget elapsed; retry the same request identity and payload.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/invoke/async:
     post:
@@ -53437,6 +53550,28 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         status_url: { type: string, example: "/v1/invocations/0123456789abcdef0123456789abcdef" }
 
+    DurableEntityInvokeRequest:
+      description: "Preview entity invocation; request_id and payload identify durable retries."
+      type: object
+      additionalProperties: false
+      required: [namespace, key, request_id, payload]
+      properties:
+        namespace: { type: string, minLength: 1, maxLength: 256 }
+        key: { type: string, minLength: 1, maxLength: 256 }
+        request_id: { type: string, minLength: 1, maxLength: 256 }
+        payload: { description: "JSON payload; replay fingerprints the exact decoded JSON bytes." }
+        environment: { type: string, description: "Registered project environment; defaults to production. Standalone apps use their default scope." }
+        platform_tenant_id: { type: string, format: uuid, description: "Optional active customer owned by the authenticated account." }
+
+    DurableEntityInvokeResponse:
+      description: "The acknowledged entity result. Replay returns the original value and version."
+      type: object
+      required: [value, version, replayed]
+      properties:
+        value: { description: "JSON result from the committed transition." }
+        version: { type: integer, minimum: 1, description: "Committed transition version, or original version on replay." }
+        replayed: { type: boolean, description: "True when an existing receipt supplied the result." }
+
     InvokeResponse:
       description: "Sync-invoke result. Status is the drain-driven terminal state (`completed` | `failed` | `cancelled`). Result is the handler response. Error contains the terminal delivery error when status is failed."
       type: object
@@ -56946,13 +57081,18 @@ components:
 
     ManagedRealtimePublishResponse:
       type: object
-      description: Result of publishing a message to an endpoint-scoped channel.
+      description: Per-recipient queue outcome for publishing to an endpoint-scoped channel. Queue admission does not imply client receipt; retained publishes include their durable channel sequence.
       required: [queued]
       properties:
-        queued: { type: integer, minimum: 0, description: Number of local owner queues that accepted the message. }
-        partial: { type: boolean, description: Whether one or more active realtime nodes did not accept the publish. }
+        queued: { type: integer, minimum: 0, description: Number of live subscriber output queues or retained-resume wake-ups that accepted delivery work. }
+        subscribers: { type: integer, minimum: 0, description: Live and resumable subscribers targeted across reachable nodes. }
+        queue_full: { type: integer, minimum: 0, description: Subscribers whose bounded output queues were full. }
+        failed: { type: integer, minimum: 0, description: Target subscribers that could not be queued for another per-connection reason. }
+        partial: { type: boolean, description: Whether a node or any target subscriber did not accept the publish. }
         nodes_queried: { type: integer, minimum: 0, description: Active realtime nodes that accepted the publish request. }
         nodes_unavailable: { type: integer, minimum: 0, description: Active realtime nodes that did not accept the publish request. }
+        sequence: { type: integer, format: int64, minimum: 1, description: Committed channel sequence; present when durable is true. }
+        durable: { type: boolean, description: Whether this publish was committed to retained channel history before fan-out. }
 
     ManagedRealtimeRetainedMessageRequest:
       type: object

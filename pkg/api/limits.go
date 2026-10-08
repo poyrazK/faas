@@ -8870,6 +8870,39 @@ const (
 	RouteMonitorRecoveryStateMaxBytes           = 256 << 10
 )
 
+// Internal durable-entity prototype budgets, not plan availability.
+const (
+	MaxDurableEntitySnapshotBytes        = 1 << 20
+	MaxDurableEntityManifestBytes        = 16 << 10
+	MaxDurableEntityIdentityBytes        = 256
+	MaxDurableEntityReceipts             = 1024 // Legacy inline receipts only; journal receipts do not expire.
+	MaxDurableEntityReceiptBytes         = 1 << 20
+	MaxDurableEntityJournalBytes         = 16 << 10
+	DurableEntityCleanupPageSize         = 32
+	DurableEntityCleanupTimeout          = 20 * time.Second
+	DurableEntityInventoryPageSize       = 32
+	DurableEntityInventoryTimeout        = 20 * time.Second
+	MaxDurableEntityInventoryBytes       = 1 << 20
+	MaxDurableEntityInventoryPending     = 65 * 16
+	DurableEntityMaintenanceScanPageSize = 8
+	MaxDurableEntityMaintenanceBytes     = 128 << 10
+	DurableEntityMaintenanceTimeout      = 45 * time.Second
+	DurableEntityMaintenanceReadTimeout  = 2 * time.Second
+	DurableEntityMaintenancePollInterval = 30 * time.Second
+	DefaultDurableEntityLease            = 30 * time.Second
+	MaxDurableEntityLease                = 5 * time.Minute
+	MaxDurableEntityInvocationBytes      = 2 << 20
+	DurableEntityInvokeTimeout           = 25 * time.Second
+	DurableEntityReleaseTimeout          = 2 * time.Second
+	DurableEntityResultPollInterval      = 250 * time.Millisecond
+	DurableEntityHandlerPath             = "/__gregale/entities"
+	DurableEntityProtocolVersion         = 1
+	DurableEntityAlarmScanPageSize       = 8
+	DurableEntityAlarmReadTimeout        = 2 * time.Second
+	DurableEntityAlarmScanTimeout        = 20 * time.Second
+	DurableEntityAlarmPollInterval       = 5 * time.Second
+)
+
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
 const EnvironmentFieldOwnershipMaxPaths = 1024
 
