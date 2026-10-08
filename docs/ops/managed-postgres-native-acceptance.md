@@ -76,7 +76,9 @@ the harness refuses to substitute its non-guest placeholder PID 1.
 The runner holds the shared acceptance lock and temporarily assigns
 `198.18.0.254/32` to loopback for a TLS passthrough proxy. The reserved benchmark
 address lets the guest reach this disposable SQL fixture. The Pro app declares
-TCP 5432 through the ordinary public app API; the host and guest IP denylists
-are unchanged. It refuses an existing address, removes its own address on
+TCP 5432 and the proxy's single `/32` destination through the ordinary public
+app API. DNS-gated egress requires this explicit CIDR for a literal IP; no
+resolver receipt is fabricated and the host and guest IP denylists are unchanged.
+It refuses an existing address, removes its own address on
 exit, and checks guest resource leaks before and after the test. It never modifies
 the production PostgreSQL server's configuration or billing plan.

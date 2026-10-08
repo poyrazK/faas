@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -105,8 +106,16 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	}
 	appID := mustGetAppID(t, h, key, slug)
 	ports := []int{5432}
-	if status := statusOnly(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{EgressPorts: &ports}); status != http.StatusOK {
-		t.Fatalf("declare SQL TCP port through app policy: status=%d", status)
+	// ADR-373 requires resolved DNS or an explicit customer CIDR for a
+	// literal endpoint. This isolated proxy uses only one benchmark IP.
+	proxyCIDR := netip.PrefixFrom(netip.MustParseAddr(proxy.Host), 32).String()
+	destinations := []string{proxyCIDR}
+	if status := statusOnly(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{EgressPorts: &ports, EgressAllowlist: &destinations}); status != http.StatusOK {
+		t.Fatalf("declare SQL destination and TCP port through app policy: status=%d", status)
+	}
+	app, err := store.AppByID(t.Context(), appID)
+	if err != nil || len(app.EgressAllowlist) != 1 || app.EgressAllowlist[0].String() != proxyCIDR || len(app.EgressPorts) != 1 || app.EgressPorts[0] != 5432 {
+		t.Fatal("public app policy did not persist the isolated SQL destination and port")
 	}
 	hmac, err := os.ReadFile(h.HostHMACKeyPath)
 	if err != nil {
