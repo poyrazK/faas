@@ -143,7 +143,7 @@ func NewClient(baseURL, token string) *Client {
 		baseURL: baseURL,
 		token:   token,
 		http:    &http.Client{Timeout: DefaultClientTimeout, Transport: newClientTransport()},
-		cache:   NewCompletionCache(),
+		cache:   NewCompletionCacheForCredential(baseURL, token),
 	}
 }
 

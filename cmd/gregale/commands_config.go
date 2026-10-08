@@ -210,11 +210,7 @@ func cmdConfig(args []string) int {
 	case "set":
 		return cmdConfigSet(args[1:])
 	default:
-		_, _ = fmt.Fprintf(os.Stderr, "gregale config: unknown subcommand %q\n", args[0])
-		if suggestion, ok := suggestSubcommand(args[0], parent); ok {
-			maybeSuggestSub(suggestion)
-		}
-		return 1
+		return printUnknownSubcommand(os.Stderr, "config", parent, args[0])
 	}
 }
 
