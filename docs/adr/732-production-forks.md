@@ -72,10 +72,17 @@
   - **Entitlement and limits.** Pro and Scale only. Default TTL 1 h, maximum
     4 h; at most one active fork per app and two per account. All of these
     live in `pkg/api/limits.go`.
-  - **Access.** How a customer reaches a running fork (a fork-scoped
-    authenticated route, and a guest exec channel over vsock) is a separate
-    ADR. Until it lands a fork is only useful to operators, so the API stays
-    behind `FAAS_APP_FORKS` and the capability stays `internal`.
+  - **Access.** apid mints a random `gfk_` access token per fork, returns it
+    once at creation, and stores only its SHA-256
+    (`app_forks.access_token_hash`). A request to the app's hostname with
+    `X-Gregale-Fork: <id>` and `X-Gregale-Fork-Token: <token>` is routed by
+    `gatewayd-internal` straight to the fork's instance: the token is
+    compared in constant time, the fork must be running and unexpired, and
+    the instance must be a running `fork` row of the same app. The request
+    never touches the serving path (no wake, picker, cache, retries or edge
+    rules) and both headers are stripped before the guest. Any refusal is
+    the same `404 fork_not_found`, so the route is not an oracle. A guest
+    exec channel over vsock is out of scope.
 - **Why:** reproducing a production bug today means redeploying and
   replaying traffic, which loses the in-memory state that caused it. A
   capture already holds that state (warm captures are taken from a running,

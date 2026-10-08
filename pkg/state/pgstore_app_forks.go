@@ -43,7 +43,7 @@ func (s *PgStore) CreateAppFork(ctx context.Context, params CreateAppForkParams)
 	}
 	row, err := q.InsertAppFork(ctx, tx, sqlc.InsertAppForkParams{
 		RequestedBy: p.RequestedBy, TtlSeconds: int32(p.TTLSeconds), CreatedAt: createdAt, //nolint:gosec // validated 60..86400
-		AppID: appID, AccountID: accountID, DeploymentID: deploymentID,
+		AppID: appID, AccountID: accountID, DeploymentID: deploymentID, AccessTokenHash: p.AccessTokenHash,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppFork{}, ErrAppForkDeploymentUnavailable
@@ -68,6 +68,13 @@ func (s *PgStore) AppForkByID(ctx context.Context, accountID, appID, forkID stri
 		return AppFork{}, mapErr(err)
 	}
 	return appForkFromSQLC(row), nil
+}
+
+func (s *PgStore) AppForkForApp(ctx context.Context, appID, forkID string) (AppFork, error) {
+	row, err := sqlc.New().GetAppForkForApp(ctx, s.pool, sqlc.GetAppForkForAppParams{
+		AppID: mustPgUUID(appID), ForkID: mustPgUUID(forkID),
+	})
+	return appForkRow(row, err, ErrNotFound)
 }
 
 func (s *PgStore) ListAppForks(ctx context.Context, accountID, appID string, limit int) ([]AppFork, error) {
@@ -114,5 +121,6 @@ func appForkFromSQLC(row sqlc.AppFork) AppFork {
 		FailureCode: executionStringPtr(row.FailureCode), FailureMessage: executionStringPtr(row.FailureMessage),
 		StartedAt: timestamptzToTimePtr(row.StartedAt), FinishedAt: timestamptzToTimePtr(row.FinishedAt),
 		CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(),
+		AccessTokenHash: row.AccessTokenHash,
 	}
 }

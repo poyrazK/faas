@@ -71,9 +71,20 @@ func TestAppForks_CreateGetListAndLimit(t *testing.T) {
 		t.Fatalf("fork = %+v, want queued on the live deployment with the 1h default TTL", fork)
 	}
 
+	if !strings.HasPrefix(fork.AccessToken, api.ForkAccessTokenPrefix) {
+		t.Fatalf("create returned access token %q, want a %s token", fork.AccessToken, api.ForkAccessTokenPrefix)
+	}
+	stored, err := e.store.AppForkForApp(context.Background(), fork.AppID, fork.ID)
+	if err != nil || string(stored.AccessTokenHash) != string(api.AppForkAccessTokenHash(fork.AccessToken)) {
+		t.Fatalf("stored fork = %+v, %v; want the token's hash, never the token", stored, err)
+	}
+
 	got := e.do(t, http.MethodGet, "/v1/apps/my-api/forks/"+fork.ID, nil, nil)
 	if got.Code != http.StatusOK || decodeAppFork(t, got.Body.Bytes()).ID != fork.ID {
 		t.Fatalf("get = %d %s", got.Code, got.Body.String())
+	}
+	if strings.Contains(got.Body.String(), "access_token") {
+		t.Fatal("GET echoed the fork access token; it is shown once at create")
 	}
 	list := e.do(t, http.MethodGet, "/v1/apps/my-api/forks", nil, nil)
 	var listed api.AppForkListResponse

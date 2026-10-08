@@ -5,10 +5,41 @@ package api
 // destroyed at its TTL.
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"time"
 )
+
+// Fork routing headers (ADR-732). A request to the app's hostname that
+// carries both is routed by the gateway to the fork's instance instead of
+// the app's serving instances. The gateway strips both before forwarding.
+const (
+	ForkHeader      = "X-Gregale-Fork"
+	ForkTokenHeader = "X-Gregale-Fork-Token"
+	// ForkAccessTokenPrefix marks fork tokens so secret scanners can spot
+	// a leaked one.
+	ForkAccessTokenPrefix = "gfk_"
+)
+
+// NewAppForkAccessToken mints a fork access token and its SHA-256. Only the
+// hash is stored; the token is returned to the caller once.
+func NewAppForkAccessToken() (token string, hash []byte, err error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", nil, fmt.Errorf("api: fork access token: %w", err)
+	}
+	token = ForkAccessTokenPrefix + base64.RawURLEncoding.EncodeToString(raw)
+	return token, AppForkAccessTokenHash(token), nil
+}
+
+// AppForkAccessTokenHash is the stored form of a fork access token.
+func AppForkAccessTokenHash(token string) []byte {
+	sum := sha256.Sum256([]byte(token))
+	return sum[:]
+}
 
 // CreateAppForkRequest is the body of POST /v1/apps/{slug}/forks. An
 // omitted TTL takes AppForkDefaultTTL.
@@ -30,7 +61,7 @@ func (r CreateAppForkRequest) ResolveTTL() (int, *Problem) {
 	if ttl < minS || ttl > maxS {
 		return 0, ErrValidation(fmt.Sprintf("ttl_seconds must be between %d and %d", minS, maxS)).
 			WithLimit(int64(maxS), int64(ttl)).
-			WithDocs(docsBase + "/forks#ttl")
+			WithDocs(docsBase + "/forks#limits")
 	}
 	return ttl, nil
 }
@@ -46,8 +77,11 @@ type AppForkFailure struct {
 
 // AppForkResponse is one fork. Timestamps are RFC3339Nano UTC.
 type AppForkResponse struct {
-	ID                string          `json:"id"`
-	AppID             string          `json:"app_id"`
+	ID    string `json:"id"`
+	AppID string `json:"app_id"`
+	// AccessToken is returned only by the create call. Send it as
+	// ForkTokenHeader, with ForkHeader set to ID, to reach the fork.
+	AccessToken       string          `json:"access_token,omitempty"`
 	DeploymentID      string          `json:"deployment_id"`
 	Status            AppForkStatus   `json:"status"`
 	TTLSeconds        int             `json:"ttl_seconds"`

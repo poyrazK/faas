@@ -57,7 +57,12 @@ func (s *server) createAppFork(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, problem)
 		return
 	}
-	fork, problem := s.admitAppFork(r, acct, app, ttl, perApp, perAccount)
+	token, tokenHash, err := api.NewAppForkAccessToken()
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("could not mint the fork access token"))
+		return
+	}
+	fork, problem := s.admitAppFork(r, acct, app, ttl, perApp, perAccount, tokenHash)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -66,12 +71,15 @@ func (s *server) createAppFork(w http.ResponseWriter, r *http.Request, acct stat
 		"app_id": app.ID, "fork_id": fork.ID, "deployment_id": fork.DeploymentID,
 		"ttl_seconds": fork.TTLSeconds, "requested_by": fork.RequestedBy,
 	})
-	writeJSON(w, http.StatusAccepted, appForkResponse(fork))
+	resp := appForkResponse(fork)
+	// The token is shown once; only its hash is stored.
+	resp.AccessToken = token
+	writeJSON(w, http.StatusAccepted, resp)
 }
 
 // admitAppFork pins the app's live deployment and records the intent under
 // the plan's active-fork caps.
-func (s *server) admitAppFork(r *http.Request, acct state.Account, app state.App, ttl, perApp, perAccount int) (state.AppFork, *api.Problem) {
+func (s *server) admitAppFork(r *http.Request, acct state.Account, app state.App, ttl, perApp, perAccount int, tokenHash []byte) (state.AppFork, *api.Problem) {
 	deployment, err := s.store.LiveDeployment(r.Context(), app.ID)
 	if errors.Is(err, state.ErrNotFound) {
 		return state.AppFork{}, api.ErrAppForkUnavailable()
@@ -83,6 +91,7 @@ func (s *server) admitAppFork(r *http.Request, acct state.Account, app state.App
 		AccountID: acct.ID, AppID: app.ID, DeploymentID: deployment.ID,
 		RequestedBy: appForkActor(r, acct), TTLSeconds: ttl,
 		MaxPerApp: perApp, MaxPerAccount: perAccount, CreatedAt: time.Now().UTC(),
+		AccessTokenHash: tokenHash,
 	})
 	var limitErr *state.AppForkLimitError
 	switch {

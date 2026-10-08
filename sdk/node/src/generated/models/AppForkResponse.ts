@@ -13,6 +13,15 @@ export type AppForkResponse = {
   id: string;
   app_id: string;
   /**
+   * Returned only by `POST /v1/apps/{slug}/forks`, never again. To
+   * reach the running fork, send a request to the app's hostname with
+   * `X-Gregale-Fork: <id>` and `X-Gregale-Fork-Token: <access_token>`.
+   * The gateway routes it to the fork, strips both headers, and never
+   * wakes the app for it.
+   *
+   */
+  access_token?: string;
+  /**
    * The live deployment pinned when the fork was requested.
    */
   deployment_id: string;

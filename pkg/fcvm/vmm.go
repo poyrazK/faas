@@ -2016,6 +2016,16 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tPreBootJoined := time.Now()
+	if l.Quarantine {
+		// ADR-732: the capture's drive still holds the secrets files the
+		// original boot wrote. Remove them from this fork's private copy
+		// before resume so a later process start cannot reload them. This
+		// loop-mounts drive1, so it runs only after the pre-boot write joined
+		// and, like it, before startJailer.
+		if err := v.scrubForkSecrets(ctx, stagingOwner, l.Instance); err != nil {
+			return fmt.Errorf("vmm: scrub fork secrets: %w", err)
+		}
+	}
 
 	// Start firecracker with only the API socket, then load + resume.
 	// Move 4 (issue #254): register the per-instance ring BEFORE

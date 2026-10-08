@@ -37,6 +37,13 @@ class AppForkResponse:
     """When the fork is destroyed (created_at + ttl_seconds)."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    access_token: str | Unset = UNSET
+    """Returned only by `POST /v1/apps/{slug}/forks`, never again. To
+    reach the running fork, send a request to the app's hostname with
+    `X-Gregale-Fork: <id>` and `X-Gregale-Fork-Token: <access_token>`.
+    The gateway routes it to the fork, strips both headers, and never
+    wakes the app for it.
+    """
     cancel_requested_at: datetime.datetime | Unset = UNSET
     started_at: datetime.datetime | Unset = UNSET
     finished_at: datetime.datetime | Unset = UNSET
@@ -59,6 +66,8 @@ class AppForkResponse:
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
+
+        access_token = self.access_token
 
         cancel_requested_at: str | Unset = UNSET
         if not isinstance(self.cancel_requested_at, Unset):
@@ -90,6 +99,8 @@ class AppForkResponse:
                 "updated_at": updated_at,
             }
         )
+        if access_token is not UNSET:
+            field_dict["access_token"] = access_token
         if cancel_requested_at is not UNSET:
             field_dict["cancel_requested_at"] = cancel_requested_at
         if started_at is not UNSET:
@@ -121,6 +132,8 @@ class AppForkResponse:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        access_token = d.pop("access_token", UNSET)
 
         _cancel_requested_at = d.pop("cancel_requested_at", UNSET)
         cancel_requested_at: datetime.datetime | Unset
@@ -159,6 +172,7 @@ class AppForkResponse:
             expires_at=expires_at,
             created_at=created_at,
             updated_at=updated_at,
+            access_token=access_token,
             cancel_requested_at=cancel_requested_at,
             started_at=started_at,
             finished_at=finished_at,
