@@ -128,7 +128,7 @@ After CI pushes an image, the [image-published trigger](image-published-deployme
 deploys its exact digest with durable per-workload and scope deduplication.
 New project image deployments also capture their accepted Compose CMD contract;
 queued images and retries retain it after app configuration changes. See
-[ADR-680](adr/680-frozen-project-image-commands.md). Historical deployments without
+[ADR-686](adr/686-frozen-project-image-commands.md). Historical deployments without
 that record keep their existing command behavior.
 
 Compose `depends_on: {backend: {condition: service_healthy}}` now holds the

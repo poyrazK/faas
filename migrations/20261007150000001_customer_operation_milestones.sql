@@ -35,7 +35,7 @@ END$$;
 -- +goose StatementEnd
 ALTER TABLE customer_operation_events DROP CONSTRAINT IF EXISTS customer_operation_events_event_type_check;
 ALTER TABLE customer_operation_events ADD CONSTRAINT customer_operation_events_event_type_check
-    CHECK (event_type IN ('accepted','running','progress','artifact_attached','milestone','succeeded','failed','cancellation_requested','cancelled','reconciliation_required','recovery_requested','delivery_changed','result_expired'));
+    CHECK (event_type IN ('accepted','running','progress','workflow_progress','artifact_attached','milestone','succeeded','failed','cancellation_requested','cancelled','reconciliation_required','recovery_requested','delivery_changed','result_expired'));
 
 -- +goose Down
 -- Retained business facts make rollback unsafe until their Operations expire.
@@ -49,6 +49,6 @@ END $$;
 DELETE FROM customer_operation_events WHERE event_type='milestone';
 ALTER TABLE customer_operation_events DROP CONSTRAINT IF EXISTS customer_operation_events_event_type_check;
 ALTER TABLE customer_operation_events ADD CONSTRAINT customer_operation_events_event_type_check
-    CHECK (event_type IN ('accepted','running','progress','artifact_attached','succeeded','failed','cancellation_requested','cancelled','reconciliation_required','recovery_requested','delivery_changed','result_expired'));
+    CHECK (event_type IN ('accepted','running','progress','workflow_progress','artifact_attached','succeeded','failed','cancellation_requested','cancelled','reconciliation_required','recovery_requested','delivery_changed','result_expired'));
 ALTER TABLE customer_operations DROP CONSTRAINT IF EXISTS customer_operation_milestone_count_valid;
 DROP TABLE IF EXISTS customer_operation_milestones;

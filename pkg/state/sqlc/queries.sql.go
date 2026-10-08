@@ -510,6 +510,83 @@ func (q *Queries) AdoptProjectEnvironmentClonePostgresSnapshotRestore(ctx contex
 	return i, err
 }
 
+const advanceCustomerOperationWorkflowAttempt = `-- name: AdvanceCustomerOperationWorkflowAttempt :execrows
+UPDATE workflow_step_attempts SET status=$1::text,http_status=$2::integer,
+ error=$3::text,finished_at=$4::timestamptz,next_attempt_at=$5::timestamptz
+WHERE run_id=$6::uuid AND step_name=$7::text
+ AND attempt=$8::integer AND status='running'
+`
+
+type AdvanceCustomerOperationWorkflowAttemptParams struct {
+	Status        string
+	HttpStatus    pgtype.Int4
+	Error         pgtype.Text
+	FinishedAt    pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	RunID         pgtype.UUID
+	StepName      string
+	Attempt       int32
+}
+
+func (q *Queries) AdvanceCustomerOperationWorkflowAttempt(ctx context.Context, db DBTX, arg AdvanceCustomerOperationWorkflowAttemptParams) (int64, error) {
+	result, err := db.Exec(ctx, advanceCustomerOperationWorkflowAttempt,
+		arg.Status,
+		arg.HttpStatus,
+		arg.Error,
+		arg.FinishedAt,
+		arg.NextAttemptAt,
+		arg.RunID,
+		arg.StepName,
+		arg.Attempt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const advanceCustomerOperationWorkflowStep = `-- name: AdvanceCustomerOperationWorkflowStep :execrows
+UPDATE workflow_steps SET status=$1::text,output=$2::jsonb,error=$3::text,
+ started_at=$4::timestamptz,finished_at=$5::timestamptz,
+ next_check_at=$6::timestamptz,next_retry_at=$7::timestamptz
+WHERE run_id=$8::uuid AND step_name=$9::text
+ AND status=$10::text AND attempt=$11::integer
+`
+
+type AdvanceCustomerOperationWorkflowStepParams struct {
+	Status      string
+	Output      []byte
+	Error       pgtype.Text
+	StartedAt   pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
+	NextCheckAt pgtype.Timestamptz
+	NextRetryAt pgtype.Timestamptz
+	RunID       pgtype.UUID
+	StepName    string
+	PriorStatus string
+	Attempt     int32
+}
+
+func (q *Queries) AdvanceCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg AdvanceCustomerOperationWorkflowStepParams) (int64, error) {
+	result, err := db.Exec(ctx, advanceCustomerOperationWorkflowStep,
+		arg.Status,
+		arg.Output,
+		arg.Error,
+		arg.StartedAt,
+		arg.FinishedAt,
+		arg.NextCheckAt,
+		arg.NextRetryAt,
+		arg.RunID,
+		arg.StepName,
+		arg.PriorStatus,
+		arg.Attempt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const advanceEnvironmentGitOpsRuntimeBoundary = `-- name: AdvanceEnvironmentGitOpsRuntimeBoundary :one
 UPDATE environment_gitops_runtime_effects SET required_at = $1::timestamptz,
     wake_id = gen_random_uuid(), requested_at = NULL, next_request_at = now()
@@ -5577,6 +5654,28 @@ func (q *Queries) CompleteWorkflowJoin(ctx context.Context, db DBTX, arg Complet
 	return err
 }
 
+const consumeCustomerOperationWorkflowGuest = `-- name: ConsumeCustomerOperationWorkflowGuest :execrows
+UPDATE customer_operation_workflow_guest_claims SET dispatch_started_at=now()
+WHERE workflow_run_id=$1::uuid AND step_name=$2::text
+ AND step_attempt=$3::integer AND dispatch_started_at IS NULL
+`
+
+type ConsumeCustomerOperationWorkflowGuestParams struct {
+	RunID       pgtype.UUID
+	StepName    string
+	StepAttempt int32
+}
+
+// The parent run lock serializes this consumption with guest reporting and
+// coordinator transitions. A missing HTTP response never releases delivery.
+func (q *Queries) ConsumeCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg ConsumeCustomerOperationWorkflowGuestParams) (int64, error) {
+	result, err := db.Exec(ctx, consumeCustomerOperationWorkflowGuest, arg.RunID, arg.StepName, arg.StepAttempt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const copyProjectEnvironmentSecretReferences = `-- name: CopyProjectEnvironmentSecretReferences :one
 WITH copied AS (
  INSERT INTO app_environment_secret_refs(account_id,project_id,environment_id,app_id,scope,key,secret_name)
@@ -7986,8 +8085,39 @@ func (q *Queries) CustomerOperationStreamMetric(ctx context.Context, db DBTX, no
 	return column_1, err
 }
 
+const customerOperationWorkflowDeliveryDeployment = `-- name: CustomerOperationWorkflowDeliveryDeployment :one
+SELECT d.id,d.app_id,coalesce(d.override_port,0)::integer AS port,
+ coalesce(d.commit_sha,'')::text AS commit_sha,coalesce(d.tag,'')::text AS tag,d.created_at,d.image_digest
+FROM deployments d WHERE d.id=$1::uuid
+`
+
+type CustomerOperationWorkflowDeliveryDeploymentRow struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	Port        int32
+	CommitSha   string
+	Tag         string
+	CreatedAt   pgtype.Timestamptz
+	ImageDigest string
+}
+
+func (q *Queries) CustomerOperationWorkflowDeliveryDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (CustomerOperationWorkflowDeliveryDeploymentRow, error) {
+	row := db.QueryRow(ctx, customerOperationWorkflowDeliveryDeployment, deploymentID)
+	var i CustomerOperationWorkflowDeliveryDeploymentRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Port,
+		&i.CommitSha,
+		&i.Tag,
+		&i.CreatedAt,
+		&i.ImageDigest,
+	)
+	return i, err
+}
+
 const customerOperationWorkflowGuestInstance = `-- name: CustomerOperationWorkflowGuestInstance :one
-SELECT i.id,i.app_id,i.deployment_id,i.state FROM instances i
+SELECT i.id,i.app_id,i.deployment_id,i.state,i.node_id,i.wake_id FROM instances i
 JOIN apps a ON a.id=i.app_id AND a.status<>'deleted'
 JOIN accounts c ON c.id=a.account_id AND c.status IN ('active','past_due') AND c.abuse_hold_at IS NULL
 WHERE i.id=$1::uuid AND a.account_id=$2::uuid
@@ -8003,6 +8133,8 @@ type CustomerOperationWorkflowGuestInstanceRow struct {
 	AppID        pgtype.UUID
 	DeploymentID pgtype.UUID
 	State        string
+	NodeID       pgtype.UUID
+	WakeID       pgtype.UUID
 }
 
 func (q *Queries) CustomerOperationWorkflowGuestInstance(ctx context.Context, db DBTX, arg CustomerOperationWorkflowGuestInstanceParams) (CustomerOperationWorkflowGuestInstanceRow, error) {
@@ -8013,6 +8145,8 @@ func (q *Queries) CustomerOperationWorkflowGuestInstance(ctx context.Context, db
 		&i.AppID,
 		&i.DeploymentID,
 		&i.State,
+		&i.NodeID,
+		&i.WakeID,
 	)
 	return i, err
 }
@@ -13797,6 +13931,29 @@ func (q *Queries) FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ct
 	return i, err
 }
 
+const firstCustomerOperationWorkflowEvent = `-- name: FirstCustomerOperationWorkflowEvent :one
+SELECT id, run_id, event_name, payload, received_at FROM workflow_events WHERE run_id=$1::uuid AND event_name=$2::text
+ORDER BY received_at,id LIMIT 1
+`
+
+type FirstCustomerOperationWorkflowEventParams struct {
+	RunID     pgtype.UUID
+	EventName string
+}
+
+func (q *Queries) FirstCustomerOperationWorkflowEvent(ctx context.Context, db DBTX, arg FirstCustomerOperationWorkflowEventParams) (WorkflowEvent, error) {
+	row := db.QueryRow(ctx, firstCustomerOperationWorkflowEvent, arg.RunID, arg.EventName)
+	var i WorkflowEvent
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.EventName,
+		&i.Payload,
+		&i.ReceivedAt,
+	)
+	return i, err
+}
+
 const getActiveManagedPostgresCutover = `-- name: GetActiveManagedPostgresCutover :one
 SELECT id, account_id, app_id, scope, source_database_id, target_database_id, source_backend_id, source_backend_fingerprint, source_resource_id, source_generation, target_backend_id, target_backend_fingerprint, target_resource_id, target_generation, state, last_error_code, lease_token, lease_until, attempt_count, retry_at, created_at, updated_at, verified_at FROM managed_postgres_cutovers WHERE account_id=$1::text::uuid
 AND app_id=$2::text::uuid AND scope=$3::text AND state<>'cancelled'
@@ -14429,7 +14586,7 @@ func (q *Queries) GetCustomerOperationWorkflowCustody(ctx context.Context, db DB
 }
 
 const getCustomerOperationWorkflowGuest = `-- name: GetCustomerOperationWorkflowGuest :one
-SELECT workflow_run_id, step_name, step_attempt, operation_id, generation, execution_kind, coordinator_attempt, instance_id, capability_digest, deadline_at, bound_at FROM customer_operation_workflow_guest_claims
+SELECT workflow_run_id, step_name, step_attempt, operation_id, generation, execution_kind, coordinator_attempt, instance_id, capability_digest, deadline_at, bound_at, dispatch_started_at FROM customer_operation_workflow_guest_claims
 WHERE workflow_run_id=$1::uuid AND step_name=$2::text AND step_attempt=$3::integer
 `
 
@@ -14456,6 +14613,7 @@ func (q *Queries) GetCustomerOperationWorkflowGuest(ctx context.Context, db DBTX
 		&i.CapabilityDigest,
 		&i.DeadlineAt,
 		&i.BoundAt,
+		&i.DispatchStartedAt,
 	)
 	return i, err
 }
@@ -24550,6 +24708,52 @@ func (q *Queries) ListCustomerOperationDefinitionsForDeployment(ctx context.Cont
 			&i.Spec,
 			&i.WorkflowSnapshot,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCustomerOperationWorkflowSteps = `-- name: ListCustomerOperationWorkflowSteps :many
+SELECT run_id, step_name, status, attempt, input, output, started_at, finished_at, error, created_at, next_check_at, next_retry_at, outbound_attempt_token, foreach_parent, foreach_index, foreach_count, retry_base, when_matched, when_evaluated_at, skip_reason FROM workflow_steps WHERE run_id=$1::uuid ORDER BY step_name
+`
+
+// The parent workflow run is locked before these snapshot and transition queries.
+func (q *Queries) ListCustomerOperationWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowStep, error) {
+	rows, err := db.Query(ctx, listCustomerOperationWorkflowSteps, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowStep{}
+	for rows.Next() {
+		var i WorkflowStep
+		if err := rows.Scan(
+			&i.RunID,
+			&i.StepName,
+			&i.Status,
+			&i.Attempt,
+			&i.Input,
+			&i.Output,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Error,
+			&i.CreatedAt,
+			&i.NextCheckAt,
+			&i.NextRetryAt,
+			&i.OutboundAttemptToken,
+			&i.ForeachParent,
+			&i.ForeachIndex,
+			&i.ForeachCount,
+			&i.RetryBase,
+			&i.WhenMatched,
+			&i.WhenEvaluatedAt,
+			&i.SkipReason,
 		); err != nil {
 			return nil, err
 		}
@@ -58799,6 +59003,36 @@ func (q *Queries) SetWorkflowRunWakeFenced(ctx context.Context, db DBTX, arg Set
 	return result.RowsAffected(), nil
 }
 
+const settleCustomerOperationWorkflow = `-- name: SettleCustomerOperationWorkflow :execrows
+UPDATE workflow_runs SET status=$1::text,output=$2::jsonb,last_error=$3::text,
+ finished_at=$4::timestamptz,updated_at=$4::timestamptz,lease_until=NULL
+WHERE id=$5::uuid AND operation_id=$6::uuid AND status IN ('pending','running','awaiting_event')
+`
+
+type SettleCustomerOperationWorkflowParams struct {
+	Status      string
+	Output      []byte
+	LastError   pgtype.Text
+	FinishedAt  pgtype.Timestamptz
+	RunID       pgtype.UUID
+	OperationID pgtype.UUID
+}
+
+func (q *Queries) SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, arg SettleCustomerOperationWorkflowParams) (int64, error) {
+	result, err := db.Exec(ctx, settleCustomerOperationWorkflow,
+		arg.Status,
+		arg.Output,
+		arg.LastError,
+		arg.FinishedAt,
+		arg.RunID,
+		arg.OperationID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const skipPendingWorkflowStep = `-- name: SkipPendingWorkflowStep :exec
 UPDATE workflow_steps SET status='skipped',skip_reason=$1::text,finished_at=clock_timestamp(),next_retry_at=NULL
 WHERE run_id=$2 AND step_name=$3 AND status='pending'
@@ -61414,6 +61648,19 @@ func (q *Queries) ValidateManagedPostgresSnapshotCreationIntent(ctx context.Cont
 	var account_id pgtype.UUID
 	err := row.Scan(&account_id)
 	return account_id, err
+}
+
+const wakeNativeWorkflowForReceivedEvent = `-- name: WakeNativeWorkflowForReceivedEvent :exec
+UPDATE workflow_runs SET status='pending',scheduled_for=now(),updated_at=now()
+WHERE id=$1::uuid AND (status='awaiting_event'
+ OR (operation_id IS NOT NULL AND status IN ('pending','running')))
+`
+
+// Preserve an arrival in the wait-registration/park window without releasing
+// coordinator custody. Legacy running runs retain their existing wake policy.
+func (q *Queries) WakeNativeWorkflowForReceivedEvent(ctx context.Context, db DBTX, runID pgtype.UUID) error {
+	_, err := db.Exec(ctx, wakeNativeWorkflowForReceivedEvent, runID)
+	return err
 }
 
 const webhookAutomationLegacyReceiptExists = `-- name: WebhookAutomationLegacyReceiptExists :one

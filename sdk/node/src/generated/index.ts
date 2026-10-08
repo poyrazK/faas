@@ -403,6 +403,8 @@ export type { DiscoveredRoutesResponse } from './models/DiscoveredRoutesResponse
 export type { DNSRecordInstruction } from './models/DNSRecordInstruction.js';
 export type { DomainDoctorCheck } from './models/DomainDoctorCheck.js';
 export type { DomainDoctorReport } from './models/DomainDoctorReport.js';
+export type { DurableEntityInvokeRequest } from './models/DurableEntityInvokeRequest.js';
+export type { DurableEntityInvokeResponse } from './models/DurableEntityInvokeResponse.js';
 export type { EdgeRuleAsyncAction } from './models/EdgeRuleAsyncAction.js';
 export type { EdgeRuleBudgetAction } from './models/EdgeRuleBudgetAction.js';
 export type { EdgeRuleCacheAction } from './models/EdgeRuleCacheAction.js';

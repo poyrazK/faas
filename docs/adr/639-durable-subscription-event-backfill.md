@@ -61,9 +61,10 @@ are never pruned.
 The job reaches `completed` after scanning is complete and all created routing
 items are terminal. It reaches `completed_with_failures` when at least one item
 failed, including an invalid retained envelope or a recipient that exhausted
-its routing retry budget. Standard event delivery inspection remains tied to
-the immutable acceptance snapshot; job status is the source of truth for
-backfill outcomes, and per-envelope items preserve job lineage. The status
+its routing retry budget. [ADR-646](646-unified-backfill-delivery-inspection.md)
+extends standard delivery inspection to include backfill consumers while
+preserving immutable acceptance counts. Job status remains the source of truth
+for backfill scan and routing progress; per-envelope items preserve job lineage. The status
 response distinguishes retryable routing failures. `POST
 /v1/event-replays/{jobID}/retry-failed` requeues up to 100 eligible failed
 routing recipients with a fresh routing generation. `enqueued` means routing

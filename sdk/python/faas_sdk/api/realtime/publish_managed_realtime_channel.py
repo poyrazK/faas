@@ -9,7 +9,7 @@ from ...client import AuthenticatedClient, Client
 from ...models.managed_realtime_message_request import ManagedRealtimeMessageRequest
 from ...models.managed_realtime_publish_response import ManagedRealtimePublishResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
@@ -18,8 +18,12 @@ def _get_kwargs(
     channel: str,
     *,
     body: ManagedRealtimeMessageRequest,
+    idempotency_key: str | Unset = UNSET,
+    delivery: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(idempotency_key, Unset):
+        headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -31,6 +35,9 @@ def _get_kwargs(
     }
 
     _kwargs["json"] = body.to_dict()
+
+    if not isinstance(delivery, Unset):
+        _kwargs["params"] = {"delivery": delivery}
 
     headers["Content-Type"] = "application/json"
 
@@ -66,6 +73,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -100,8 +112,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ManagedRealtimeMessageRequest,
+    idempotency_key: str | Unset = UNSET,
+    delivery: str | Unset = UNSET,
 ) -> Response[ManagedRealtimePublishResponse | Problem]:
-    """Publish a message to subscribed live connections.
+    """Publish a live-only or retained message to channel subscribers.
 
     Args:
         slug (str):
@@ -109,6 +123,8 @@ def sync_detailed(
         channel (str):
         body (ManagedRealtimeMessageRequest): Binary-safe message payload encoded as standard
             base64.
+        idempotency_key (str | Unset): Stable key for retrying this publish; reuse it only with the same delivery mode, decoded payload, and binary flag.
+        delivery (str | Unset): Use "retained" to commit a sequenced message before fan-out; requires an Idempotency-Key.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -123,6 +139,8 @@ def sync_detailed(
         id=id,
         channel=channel,
         body=body,
+        idempotency_key=idempotency_key,
+        delivery=delivery,
     )
 
     response = client.get_httpx_client().request(
@@ -139,8 +157,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ManagedRealtimeMessageRequest,
+    idempotency_key: str | Unset = UNSET,
+    delivery: str | Unset = UNSET,
 ) -> ManagedRealtimePublishResponse | Problem | None:
-    """Publish a message to subscribed live connections.
+    """Publish a live-only or retained message to channel subscribers.
 
     Args:
         slug (str):
@@ -148,6 +168,8 @@ def sync(
         channel (str):
         body (ManagedRealtimeMessageRequest): Binary-safe message payload encoded as standard
             base64.
+        idempotency_key (str | Unset): Stable key for retrying this publish; reuse it only with the same delivery mode, decoded payload, and binary flag.
+        delivery (str | Unset): Use "retained" to commit a sequenced message before fan-out; requires an Idempotency-Key.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,6 +185,8 @@ def sync(
         channel=channel,
         client=client,
         body=body,
+        idempotency_key=idempotency_key,
+        delivery=delivery,
     ).parsed
 
 
@@ -173,8 +197,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ManagedRealtimeMessageRequest,
+    idempotency_key: str | Unset = UNSET,
+    delivery: str | Unset = UNSET,
 ) -> Response[ManagedRealtimePublishResponse | Problem]:
-    """Publish a message to subscribed live connections.
+    """Publish a live-only or retained message to channel subscribers.
 
     Args:
         slug (str):
@@ -182,6 +208,8 @@ async def asyncio_detailed(
         channel (str):
         body (ManagedRealtimeMessageRequest): Binary-safe message payload encoded as standard
             base64.
+        idempotency_key (str | Unset): Stable key for retrying this publish; reuse it only with the same delivery mode, decoded payload, and binary flag.
+        delivery (str | Unset): Use "retained" to commit a sequenced message before fan-out; requires an Idempotency-Key.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -196,6 +224,8 @@ async def asyncio_detailed(
         id=id,
         channel=channel,
         body=body,
+        idempotency_key=idempotency_key,
+        delivery=delivery,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -210,8 +240,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ManagedRealtimeMessageRequest,
+    idempotency_key: str | Unset = UNSET,
+    delivery: str | Unset = UNSET,
 ) -> ManagedRealtimePublishResponse | Problem | None:
-    """Publish a message to subscribed live connections.
+    """Publish a live-only or retained message to channel subscribers.
 
     Args:
         slug (str):
@@ -219,6 +251,8 @@ async def asyncio(
         channel (str):
         body (ManagedRealtimeMessageRequest): Binary-safe message payload encoded as standard
             base64.
+        idempotency_key (str | Unset): Stable key for retrying this publish; reuse it only with the same delivery mode, decoded payload, and binary flag.
+        delivery (str | Unset): Use "retained" to commit a sequenced message before fan-out; requires an Idempotency-Key.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -235,5 +269,7 @@ async def asyncio(
             channel=channel,
             client=client,
             body=body,
+            idempotency_key=idempotency_key,
+            delivery=delivery,
         )
     ).parsed

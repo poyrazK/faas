@@ -827,6 +827,13 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 			req.Header.Set(key, value)
 		}
 	}
+	// Workflow step headers are authored by schedd's workflow orchestrator.
+	// Any other persisted envelope (queued, replayed, CLI) cannot assert them.
+	if inv.Source != state.InvocationSource("workflow") {
+		for _, name := range []string{api.WorkflowRunIDHeader, api.WorkflowStepHeader, api.WorkflowAttemptHeader} {
+			req.Header.Del(name)
+		}
+	}
 	// CLI invoke, queue, task, and cron payloads are JSON values, but their
 	// persisted envelopes need not carry HTTP headers. Common guest frameworks
 	// will otherwise ignore the body. Preserve an explicit customer media type
@@ -1744,19 +1751,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke resolve schedd %s: %w", appID, err)
 			}
-			var identity api.PlatformIdentity
-			var instanceID, nodeID, deploymentID, wakeID string
-			var port int
-			if rich, ok := cli.(interface {
-				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
-			}); ok {
-				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, version.DeploymentID, version.Scope)
-			} else {
-				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, version.DeploymentID, version.Scope)
-			}
+			woke, err := wakeForSynth(ctx, synthScheddWake(cli, appID, version.DeploymentID, version.Scope), synthWakeSleep)
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
+			identity := woke.identity
+			instanceID, nodeID, deploymentID, wakeID, port := woke.instanceID, woke.nodeID, woke.deploymentID, woke.wakeID, woke.port
 			target := gateway.Target{
 				AppID:               appID,
 				InstanceID:          instanceID,
@@ -1794,20 +1794,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke resolve schedd %s: %w", appID, err)
 			}
-			var identity api.PlatformIdentity
-			var instanceID, nodeID, deploymentID, wakeID string
-			var port int
 			wakeScope := version.Scope
-			if rich, ok := cli.(interface {
-				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
-			}); ok {
-				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, version.DeploymentID, wakeScope)
-			} else {
-				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, version.DeploymentID, wakeScope)
-			}
+			woke, err := wakeForSynth(ctx, synthScheddWake(cli, appID, version.DeploymentID, wakeScope), synthWakeSleep)
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
+			identity := woke.identity
+			instanceID, nodeID, deploymentID, wakeID, port := woke.instanceID, woke.nodeID, woke.deploymentID, woke.wakeID, woke.port
 			if version.DeploymentID != "" && deploymentID != version.DeploymentID {
 				return inv, 0, fmt.Errorf("synth invoke woke deployment %s instead of pinned %s", deploymentID, version.DeploymentID)
 			}
@@ -2551,6 +2544,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		handler.WithAPIDiscovery(true)
 	}
 	if deps.pgStore != nil {
+		handler.WithHealthOutcomeLookup(healthOutcomeLookup(deps.pgStore))
 		handler.WithMirrorResultStore(deps.pgStore).WithMirrorSlotLeaseStore(deps.pgStore)
 	}
 	if deps.pool != nil {

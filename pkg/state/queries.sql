@@ -14822,6 +14822,39 @@ UPDATE customer_operation_workflow_claims SET lease_until=now() WHERE workflow_r
 -- name: GetCustomerOperationWorkflowStep :one
 SELECT * FROM workflow_steps WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text;
 
+-- The parent workflow run is locked before these snapshot and transition queries.
+-- name: ListCustomerOperationWorkflowSteps :many
+SELECT * FROM workflow_steps WHERE run_id=sqlc.arg(run_id)::uuid ORDER BY step_name;
+
+-- name: FirstCustomerOperationWorkflowEvent :one
+SELECT * FROM workflow_events WHERE run_id=sqlc.arg(run_id)::uuid AND event_name=sqlc.arg(event_name)::text
+ORDER BY received_at,id LIMIT 1;
+
+-- Preserve an arrival in the wait-registration/park window without releasing
+-- coordinator custody. Legacy running runs retain their existing wake policy.
+-- name: WakeNativeWorkflowForReceivedEvent :exec
+UPDATE workflow_runs SET status='pending',scheduled_for=now(),updated_at=now()
+WHERE id=sqlc.arg(run_id)::uuid AND (status='awaiting_event'
+ OR (operation_id IS NOT NULL AND status IN ('pending','running')));
+
+-- name: AdvanceCustomerOperationWorkflowStep :execrows
+UPDATE workflow_steps SET status=sqlc.arg(status)::text,output=sqlc.narg(output)::jsonb,error=sqlc.narg(error)::text,
+ started_at=sqlc.narg(started_at)::timestamptz,finished_at=sqlc.narg(finished_at)::timestamptz,
+ next_check_at=sqlc.narg(next_check_at)::timestamptz,next_retry_at=sqlc.narg(next_retry_at)::timestamptz
+WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text
+ AND status=sqlc.arg(prior_status)::text AND attempt=sqlc.arg(attempt)::integer;
+
+-- name: AdvanceCustomerOperationWorkflowAttempt :execrows
+UPDATE workflow_step_attempts SET status=sqlc.arg(status)::text,http_status=sqlc.narg(http_status)::integer,
+ error=sqlc.narg(error)::text,finished_at=sqlc.arg(finished_at)::timestamptz,next_attempt_at=sqlc.narg(next_attempt_at)::timestamptz
+WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text
+ AND attempt=sqlc.arg(attempt)::integer AND status='running';
+
+-- name: SettleCustomerOperationWorkflow :execrows
+UPDATE workflow_runs SET status=sqlc.arg(status)::text,output=sqlc.narg(output)::jsonb,last_error=sqlc.narg(last_error)::text,
+ finished_at=sqlc.arg(finished_at)::timestamptz,updated_at=sqlc.arg(finished_at)::timestamptz,lease_until=NULL
+WHERE id=sqlc.arg(run_id)::uuid AND operation_id=sqlc.arg(operation_id)::uuid AND status IN ('pending','running','awaiting_event');
+
 -- name: GetCustomerOperationWorkflowStepAttempt :one
 SELECT * FROM workflow_step_attempts WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text AND attempt=sqlc.arg(attempt)::integer;
 
@@ -14868,10 +14901,22 @@ sqlc.arg(generation)::integer,sqlc.arg(coordinator_attempt)::integer,sqlc.arg(in
 sqlc.arg(capability_digest)::text,sqlc.arg(deadline_at)::timestamptz);
 
 -- name: CustomerOperationWorkflowGuestInstance :one
-SELECT i.id,i.app_id,i.deployment_id,i.state FROM instances i
+SELECT i.id,i.app_id,i.deployment_id,i.state,i.node_id,i.wake_id FROM instances i
 JOIN apps a ON a.id=i.app_id AND a.status<>'deleted'
 JOIN accounts c ON c.id=a.account_id AND c.status IN ('active','past_due') AND c.abuse_hold_at IS NULL
 WHERE i.id=sqlc.arg(instance_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid;
+
+-- The parent run lock serializes this consumption with guest reporting and
+-- coordinator transitions. A missing HTTP response never releases delivery.
+-- name: ConsumeCustomerOperationWorkflowGuest :execrows
+UPDATE customer_operation_workflow_guest_claims SET dispatch_started_at=now()
+WHERE workflow_run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text
+ AND step_attempt=sqlc.arg(step_attempt)::integer AND dispatch_started_at IS NULL;
+
+-- name: CustomerOperationWorkflowDeliveryDeployment :one
+SELECT d.id,d.app_id,coalesce(d.override_port,0)::integer AS port,
+ coalesce(d.commit_sha,'')::text AS commit_sha,coalesce(d.tag,'')::text AS tag,d.created_at,d.image_digest
+FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid;
 
 -- name: InsertCustomerOperationJobExecution :execrows
 INSERT INTO customer_operation_executions(operation_id,generation,job_run_id)

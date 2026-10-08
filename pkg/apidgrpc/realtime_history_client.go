@@ -16,26 +16,32 @@ import (
 // Callers must authorize channel membership before exposing a page to a user.
 type RealtimeHistoryClient interface {
 	ReadChannelHistory(context.Context, string, string, int64, int) (state.ManagedRealtimeChannelHistory, error)
+	ReportChannelRoute(context.Context, string, string, bool) error
 	Close() error
 }
 
 type RealtimeHistoryClientImpl struct {
-	conn *grpc.ClientConn
-	cli  apidpb.RealtimeHistoryClient
+	conn     *grpc.ClientConn
+	cli      apidpb.RealtimeHistoryClient
+	nodeName string
 }
 
 var _ RealtimeHistoryClient = (*RealtimeHistoryClientImpl)(nil)
 
-func DialRealtimeHistory(ctx context.Context, target string, tlsCfg *tls.Config) (*RealtimeHistoryClientImpl, error) {
+func DialRealtimeHistory(ctx context.Context, target string, tlsCfg *tls.Config, nodeName string) (*RealtimeHistoryClientImpl, error) {
 	conn, err := wire.DialContext(ctx, target, tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("apidgrpc: dial realtime history: %w", err)
 	}
-	return NewRealtimeHistoryClient(conn), nil
+	return NewRealtimeHistoryClientForNode(conn, nodeName), nil
 }
 
 func NewRealtimeHistoryClient(conn *grpc.ClientConn) *RealtimeHistoryClientImpl {
-	return &RealtimeHistoryClientImpl{conn: conn, cli: apidpb.NewRealtimeHistoryClient(conn)}
+	return NewRealtimeHistoryClientForNode(conn, "")
+}
+
+func NewRealtimeHistoryClientForNode(conn *grpc.ClientConn, nodeName string) *RealtimeHistoryClientImpl {
+	return &RealtimeHistoryClientImpl{conn: conn, cli: apidpb.NewRealtimeHistoryClient(conn), nodeName: nodeName}
 }
 
 func (c *RealtimeHistoryClientImpl) ReadChannelHistory(ctx context.Context, endpointID, channel string, after int64, limit int) (state.ManagedRealtimeChannelHistory, error) {
@@ -64,6 +70,19 @@ func (c *RealtimeHistoryClientImpl) ReadChannelHistory(ctx context.Context, endp
 		})
 	}
 	return history, nil
+}
+
+func (c *RealtimeHistoryClientImpl) ReportChannelRoute(ctx context.Context, endpointID, channel string, subscribed bool) error {
+	if c == nil || c.cli == nil || c.nodeName == "" || endpointID == "" || channel == "" {
+		return fmt.Errorf("apidgrpc: realtime channel route report requires a connection, node name, endpoint, and channel")
+	}
+	_, err := c.cli.ReportChannelRoute(ctx, &apidpb.ReportChannelRouteRequest{
+		EndpointId: endpointID, Channel: channel, NodeName: c.nodeName, Subscribed: subscribed,
+	})
+	if err != nil {
+		return fmt.Errorf("apidgrpc: report realtime channel route: %w", err)
+	}
+	return nil
 }
 
 func (c *RealtimeHistoryClientImpl) Close() error {

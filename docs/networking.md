@@ -159,6 +159,17 @@ keeps cloud credentials out of the control plane while the provider adapter is
 rolled out; a future connector can replace the registry without changing the
 customer-facing attachment contract.
 
+## Public WebSockets
+
+Enable WebSockets on an app with `gregale app APP_SLUG --websocket-enabled`.
+An open WebSocket counts as an in-flight request, so its instance stays
+running past the idle timeout for as long as the connection is open.
+
+The public edge closes a WebSocket that carries no frames for about 100
+seconds. Send a ping or an application heartbeat at least every 60 seconds,
+and reconnect when the connection closes. A connection that carries traffic
+stays open.
+
 ## Internal services
 
 Apps in the same account reach one another by name, on every plan. There is no
