@@ -4898,6 +4898,17 @@ func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id st
 	return err
 }
 
+const cloneCheckpointObjectCredentialIdentityExists = `-- name: CloneCheckpointObjectCredentialIdentityExists :one
+SELECT EXISTS(SELECT 1 FROM object_storage_s3_credentials WHERE id=$1::uuid)::boolean
+`
+
+func (q *Queries) CloneCheckpointObjectCredentialIdentityExists(ctx context.Context, db DBTX, credentialID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointObjectCredentialIdentityExists, credentialID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const cloneCheckpointObjectTargetHasGrants = `-- name: CloneCheckpointObjectTargetHasGrants :one
 SELECT (EXISTS(SELECT 1 FROM object_storage_s3_credentials c WHERE c.bucket_id=$1::uuid) OR EXISTS(SELECT 1 FROM object_storage_access_grants g WHERE g.bucket_id=$1::uuid))::boolean AS has_grants
 `
@@ -17056,6 +17067,39 @@ func (q *Queries) InsertCloneCheckpointObjectCopy(ctx context.Context, db DBTX, 
 		&i.RequestedAt,
 		&i.ObservationSha256,
 		&i.CopiedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointObjectCredentialReservation = `-- name: InsertCloneCheckpointObjectCredentialReservation :one
+INSERT INTO project_environment_clone_checkpoint_object_credential_ids(operation_id,plan,plan_sha256)
+SELECT o.id,$1::jsonb,$2::text FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, plan_sha256, state
+`
+
+type InsertCloneCheckpointObjectCredentialReservationParams struct {
+	Plan             []byte
+	PlanSha256       string
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectCredentialReservation(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectCredentialReservationParams) (ProjectEnvironmentCloneCheckpointObjectCredentialID, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointObjectCredentialReservation,
+		arg.Plan,
+		arg.PlanSha256,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectCredentialID
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
 	)
 	return i, err
 }
@@ -47259,6 +47303,22 @@ func (q *Queries) ReadCloneCheckpointObjectCopy(ctx context.Context, db DBTX, ar
 		&i.RequestedAt,
 		&i.ObservationSha256,
 		&i.CopiedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointObjectCredentialReservation = `-- name: ReadCloneCheckpointObjectCredentialReservation :one
+SELECT operation_id, plan, plan_sha256, state FROM project_environment_clone_checkpoint_object_credential_ids WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointObjectCredentialReservation(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointObjectCredentialID, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointObjectCredentialReservation, operationID)
+	var i ProjectEnvironmentCloneCheckpointObjectCredentialID
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
 	)
 	return i, err
 }

@@ -14,48 +14,53 @@ var _ ProjectEnvironmentCloneCheckpointObjectCredentialInputStore = (*PgStore)(n
 func (s *PgStore) ProjectEnvironmentCloneCheckpointObjectCredentialInputs(ctx context.Context, l ProjectEnvironmentCloneLease, retention ProjectEnvironmentCloneCheckpointReleaseObservation) (ProjectEnvironmentCloneCheckpointObjectCredentialInputs, error) {
 	var out ProjectEnvironmentCloneCheckpointObjectCredentialInputs
 	err := s.checkpointReleaseTx(ctx, l, func(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation) error {
-		release, err := readCloneCheckpointReleaseTx(ctx, tx, op)
-		if err != nil {
-			return err
-		}
-		if release.State != "released" {
-			return ErrConflict
-		}
-		if err = validateCloneCheckpointReleaseJournalsTx(ctx, tx, op, release, false); err != nil {
-			return err
-		}
-		if err = validateCloneCheckpointReleaseObservation(release, retention, l.ExpiresAt); err != nil {
-			return err
-		}
-		records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
-		if err != nil {
-			return err
-		}
-		views, err := cloneBindingViews(records)
-		if err != nil {
-			return err
-		}
-		proofs := []ProjectEnvironmentCloneCheckpointObjectVerification{}
-		for _, v := range views {
-			for _, b := range v.Buckets {
-				p, err := readCheckpointObjectVerificationTx(ctx, tx, op, b.ID)
-				if err != nil {
-					return err
-				}
-				if p.State != "verified" {
-					return ErrConflict
-				}
-				if err = validateCheckpointObjectVerificationTx(ctx, tx, op, l, p, &retention); err != nil {
-					return err
-				}
-				proofs = append(proofs, p)
-			}
-		}
-		out, err = checkpointObjectCredentialInputs(op, views, proofs)
+		var err error
+		out, err = checkpointObjectCredentialInputsTx(ctx, tx, op, l, retention)
 		return err
 	})
 	if err != nil {
 		return ProjectEnvironmentCloneCheckpointObjectCredentialInputs{}, err
 	}
 	return out, nil
+}
+
+func checkpointObjectCredentialInputsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, l ProjectEnvironmentCloneLease, retention ProjectEnvironmentCloneCheckpointReleaseObservation) (ProjectEnvironmentCloneCheckpointObjectCredentialInputs, error) {
+	release, err := readCloneCheckpointReleaseTx(ctx, tx, op)
+	if err != nil {
+		return ProjectEnvironmentCloneCheckpointObjectCredentialInputs{}, err
+	}
+	if release.State != "released" {
+		return ProjectEnvironmentCloneCheckpointObjectCredentialInputs{}, ErrConflict
+	}
+	if err = validateCloneCheckpointReleaseJournalsTx(ctx, tx, op, release, false); err != nil {
+		return ProjectEnvironmentCloneCheckpointObjectCredentialInputs{}, err
+	}
+	if err = validateCloneCheckpointReleaseObservation(release, retention, l.ExpiresAt); err != nil {
+		return ProjectEnvironmentCloneCheckpointObjectCredentialInputs{}, err
+	}
+	records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
+	if err != nil {
+		return ProjectEnvironmentCloneCheckpointObjectCredentialInputs{}, err
+	}
+	views, err := cloneBindingViews(records)
+	if err != nil {
+		return ProjectEnvironmentCloneCheckpointObjectCredentialInputs{}, err
+	}
+	proofs := []ProjectEnvironmentCloneCheckpointObjectVerification{}
+	for _, v := range views {
+		for _, b := range v.Buckets {
+			p, err := readCheckpointObjectVerificationTx(ctx, tx, op, b.ID)
+			if err != nil {
+				return ProjectEnvironmentCloneCheckpointObjectCredentialInputs{}, err
+			}
+			if p.State != "verified" {
+				return ProjectEnvironmentCloneCheckpointObjectCredentialInputs{}, ErrConflict
+			}
+			if err = validateCheckpointObjectVerificationTx(ctx, tx, op, l, p, &retention); err != nil {
+				return ProjectEnvironmentCloneCheckpointObjectCredentialInputs{}, err
+			}
+			proofs = append(proofs, p)
+		}
+	}
+	return checkpointObjectCredentialInputs(op, views, proofs)
 }

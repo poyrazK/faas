@@ -42788,3 +42788,11 @@ CREATE TABLE project_environment_clone_checkpoint_object_copies (
  OR (state='requested' AND requested_at IS NOT NULL AND observation_sha256 IS NULL AND copied_at IS NULL)
  OR (state='copied' AND requested_at IS NOT NULL AND observation_sha256 IS NOT NULL AND copied_at IS NOT NULL))
 );
+
+-- ADR-590: immutable fresh credential identities for the complete verified object graph.
+CREATE TABLE project_environment_clone_checkpoint_object_credential_ids (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
+ plan_sha256 text NOT NULL CHECK(plan_sha256 ~ '^[a-f0-9]{64}$'),
+ state text NOT NULL DEFAULT 'planned' CHECK(state='planned')
+);

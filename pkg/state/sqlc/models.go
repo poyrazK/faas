@@ -5067,6 +5067,13 @@ type ProjectEnvironmentCloneCheckpointObjectCopy struct {
 	CopiedAt          pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneCheckpointObjectCredentialID struct {
+	OperationID pgtype.UUID
+	Plan        []byte
+	PlanSha256  string
+	State       string
+}
+
 type ProjectEnvironmentCloneCheckpointObjectTarget struct {
 	OperationID       pgtype.UUID
 	SourceBucketID    pgtype.UUID

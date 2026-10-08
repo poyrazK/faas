@@ -8583,3 +8583,32 @@ native issuance or publication authority. Durable fresh credential reservation,
 qualified issuance/revocation, sealed target values, atomic binding publication,
 retirement and final stage publication remain outstanding. Provider qualification
 and live R2/OVH tests remain deferred; public full-stage cloning stays gated.
+
+### Durable fresh object credential identity reservations
+
+The private capturing path now atomically reserves the entire verified object
+credential matrix before issuance. An operation-owned immutable journal stores
+the complete authenticated input graph, including original access-grant policies,
+and a fresh UUID for every managed or standalone source credential. Each member
+binds its original app, source bucket and credential to the verified target
+bucket. A plan digest authenticates the full snapshot and identity matrix; the
+existing 16 MiB checkpoint metadata bound applies to the whole reservation.
+
+Reservation and every replay rebuild the original input graph under the same
+transaction locks and worker fences as verification. Retries and worker handoff
+return the committed identities without regenerating them. Missing, extra or
+reordered members, altered definitions, changed proof receipts, invalid or reused
+identities, and pre-existing credential rows fail closed. Failed insertion or a
+worker expiry before the final commit returns no identities and rolls back the
+journal. A downgrade refuses any owned reservation, including an empty matrix;
+an empty graph is not evidence of native issuance or final publication.
+
+Tests cover complete managed/standalone matrices, defensive copies, stored-plan
+round trips, member and grant tampering, empty graphs, lost reservation replies,
+worker handoff, stale/late-expiring workers, expired retention, insert rollback,
+and guarded migration round trips. These rows contain no source or target keys
+and confer no native grant dispatch authority. A separate once-only issuance and
+observe/revocation protocol, sealed target values, atomic object binding and grant
+publication, retirement and final stage publication remain outstanding. Native
+R2/OVH qualification and live provider tests remain deferred at the user's request;
+public full-stage cloning stays gated.
