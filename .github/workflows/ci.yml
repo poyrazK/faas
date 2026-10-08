@@ -1164,10 +1164,25 @@ jobs:
         run: |
           set -o pipefail
           make test-container-contract 2>&1 | tee container-contract.log
+      # The combined serial race run was repeatedly interrupted by a hosted
+      # runner shutdown at ~10 minutes. Keep each invocation bounded while
+      # still proving every test discovered by udp-contract-check.py.
       - name: require portable UDP contracts
         run: |
           set -o pipefail
-          python3 scripts/ci/udp-contract-check.py 2>&1 | tee udp-contract.log
+          python3 scripts/ci/udp-contract-check.py --packages pkg/ingressroute pkg/udpd pkg/udpwire cmd/vmmd-udp-bridge 2>&1 | tee udp-contract-ingress.log
+      - name: require portable UDP bridge contracts
+        run: |
+          set -o pipefail
+          python3 scripts/ci/udp-contract-check.py --packages pkg/gateway pkg/vmmdgrpc 2>&1 | tee udp-contract-bridge.log
+      - name: require portable UDP control-plane contracts
+        run: |
+          set -o pipefail
+          python3 scripts/ci/udp-contract-check.py --packages cmd/apid pkg/api pkg/state 2>&1 | tee udp-contract-control-plane.log
+      - name: require portable UDP customer and protocol contracts
+        run: |
+          set -o pipefail
+          python3 scripts/ci/udp-contract-check.py --packages cmd/gregale cmd/gatewayd-public pkg/e2etest api/proto/onebox/faas/vmmd/v1 2>&1 | tee udp-contract-customer-protocol.log
       - name: retain container qualification log
         if: always()
         uses: actions/upload-artifact@v4
@@ -1175,7 +1190,7 @@ jobs:
           name: container-contract-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             container-contract.log
-            udp-contract.log
+            udp-contract-*.log
           if-no-files-found: warn
 
   checks:
