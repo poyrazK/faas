@@ -12,12 +12,19 @@ SELECT o.id, o.account_id, o.source, o.event_id, o.event_type,
            FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) s(recipient)
            LEFT JOIN event_fanout_recipients r ON r.outbox_id=o.id AND r.subscription_id=s.recipient->>'id'
            GROUP BY 1
-       ) counts), '{}'::jsonb)::jsonb AS routing_summary
+       ) counts), '{}'::jsonb)::jsonb AS routing_summary,
+       (SELECT count(*) FROM event_fanout_recipients r WHERE r.outbox_id=o.id AND r.receipt_position IS NOT NULL)::bigint AS backfill_recipient_count,
+       coalesce((SELECT jsonb_object_agg(counts.state, counts.n) FROM (
+           SELECT r.state, count(*) AS n FROM event_fanout_recipients r
+           WHERE r.outbox_id=o.id AND r.receipt_position IS NOT NULL GROUP BY r.state
+       ) counts), '{}'::jsonb)::jsonb AS backfill_routing_summary
 FROM event_fanout_outbox o
 WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.source=sqlc.arg(event_source)::text AND o.event_id=sqlc.arg(event_id)::text;
 
 -- name: EventReceiptRecipients :many
 SELECT s.position::bigint, s.recipient::jsonb,
+       s.origin::text, r.backfill_job_id,
+       coalesce(s.origin='acceptance' OR (j.state IN ('running','completed_with_failures') AND i.state='failed' AND i.retryable),false)::boolean AS routing_replay_available,
        coalesce(s.recipient->'workflow'->>'name','')::text AS workflow_name,
        coalesce(wer.run_id::text,'')::text AS workflow_run_id,
        coalesce(wr.status,'')::text AS workflow_run_status,
@@ -33,8 +40,16 @@ SELECT s.position::bigint, s.recipient::jsonb,
        (SELECT count(*) FROM event_fanout_attempt_history h WHERE h.outbox_id=o.id AND h.subscription_id=s.recipient->>'id' AND h.action='operator_replay')::bigint AS replay_count,
        (SELECT max(h.occurred_at) FROM event_fanout_attempt_history h WHERE h.outbox_id=o.id AND h.subscription_id=s.recipient->>'id' AND h.action='operator_replay')::timestamptz AS last_replayed_at
 FROM event_fanout_outbox o
-CROSS JOIN LATERAL jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) WITH ORDINALITY s(recipient, position)
+CROSS JOIN LATERAL (
+    SELECT captured.recipient, captured.position, 'acceptance'::text AS origin
+    FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) WITH ORDINALITY captured(recipient, position)
+    UNION ALL
+    SELECT added.recipient, added.receipt_position, 'backfill'::text
+    FROM event_fanout_recipients added WHERE added.outbox_id=o.id AND added.receipt_position IS NOT NULL
+) s
 LEFT JOIN event_fanout_recipients r ON r.outbox_id=o.id AND r.subscription_id=s.recipient->>'id'
+LEFT JOIN event_replay_jobs j ON j.id=r.backfill_job_id AND j.account_id=o.account_id AND j.app_id=r.app_id AND j.subscription_id::text=r.subscription_id
+LEFT JOIN event_replay_job_items i ON i.job_id=j.id AND i.outbox_id=o.id
 LEFT JOIN apps a ON a.id=(s.recipient->>'app_id')::uuid AND a.account_id=o.account_id
 LEFT JOIN workflow_event_receipts wer ON wer.outbox_id=o.id AND wer.recipient_id::text=s.recipient->>'id'
 LEFT JOIN workflow_runs wr ON wr.id=wer.run_id
@@ -82,7 +97,11 @@ CROSS JOIN LATERAL (
 
 -- name: EventReceiptReplayTarget :one
 SELECT a.id AS app_id FROM event_fanout_outbox o
-CROSS JOIN LATERAL jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) s(recipient)
+CROSS JOIN LATERAL (
+    SELECT recipient FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) captured(recipient)
+    UNION ALL
+    SELECT recipient FROM event_fanout_recipients added WHERE added.outbox_id=o.id AND added.receipt_position IS NOT NULL
+) s
 JOIN apps a ON a.id=(s.recipient->>'app_id')::uuid AND a.account_id=o.account_id
 WHERE o.id=sqlc.arg(outbox_id)::bigint AND o.account_id=sqlc.arg(account_id)::uuid
   AND s.recipient->>'id'=sqlc.arg(subscription_id)::text;

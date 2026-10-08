@@ -40,7 +40,10 @@ func (p *Provider) IssueCredentials(ctx context.Context, request managedpostgres
 	if err := validateCredentialRequest(request); err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
-	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly && request.Access != managedpostgres.CredentialMigration {
+	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly && request.Access != managedpostgres.CredentialMigration && request.Access != managedpostgres.CredentialDataAPI {
+		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
+	}
+	if request.Access == managedpostgres.CredentialDataAPI && !p.dataAPIEnabled {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
 	}
 	ref, err := parseResourceRef(request.ProviderResourceID)
@@ -124,7 +127,7 @@ func validateCredentialRequest(request managedpostgres.CredentialRequest) error 
 	if _, err := parseResourceRef(request.ProviderResourceID); err != nil || request.IdentityKey == "" || len(request.IdentityKey) > 1024 || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 255 {
 		return managedpostgres.ErrInvalid
 	}
-	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly && request.Access != managedpostgres.CredentialMigration {
+	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly && request.Access != managedpostgres.CredentialMigration && request.Access != managedpostgres.CredentialDataAPI {
 		return managedpostgres.ErrInvalid
 	}
 	return nil

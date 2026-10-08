@@ -41,9 +41,11 @@ func cmdRoutes(args []string) int {
 			return cmdRoutesContract(args[1:])
 		case "lifecycle":
 			return cmdRoutesLifecycle(args[1:])
+		case "migration":
+			return cmdRoutesMigration(args[1:])
 		}
 	}
-	PrintUsage(osStderr, "usage: gregale routes <requirements|gate|health|monitor|check|results|plan|apply|impact|contract|lifecycle> [slug] [flags]", "cli")
+	PrintUsage(osStderr, "usage: gregale routes <requirements|gate|health|monitor|check|results|plan|apply|impact|contract|lifecycle|migration> [slug] [flags]", "cli")
 	return 1
 }
 

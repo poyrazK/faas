@@ -501,9 +501,12 @@ func (q *Queries) EventReplayBackfillInsertItem(ctx context.Context, db DBTX, ar
 
 const eventReplayBackfillInsertRecipient = `-- name: EventReplayBackfillInsertRecipient :execrows
 INSERT INTO event_fanout_recipients
-    (outbox_id,subscription_id,app_id,recipient,state,total_attempts,available_at,backfill_job_id)
+    (outbox_id,subscription_id,app_id,recipient,state,total_attempts,available_at,backfill_job_id,receipt_position)
 VALUES ($1::bigint,$2::text,$3::uuid,
-        $4::jsonb,'pending',0,$5::timestamptz,$6::uuid)
+        $4::jsonb,'pending',0,$5::timestamptz,$6::uuid,
+        (SELECT greatest(jsonb_array_length(coalesce(o.recipient_snapshot,'[]'::jsonb)),
+                         coalesce((SELECT max(r.receipt_position) FROM event_fanout_recipients r WHERE r.outbox_id=o.id),0))+1
+         FROM event_fanout_outbox o WHERE o.id=$1::bigint))
 ON CONFLICT (outbox_id,subscription_id) DO NOTHING
 `
 
@@ -534,8 +537,18 @@ func (q *Queries) EventReplayBackfillInsertRecipient(ctx context.Context, db DBT
 const eventReplayBackfillItems = `-- name: EventReplayBackfillItems :many
 SELECT i.outbox_id, i.accepted_at, i.event_source, i.event_id, i.event_type,
        i.schema_version, i.state, i.attempts, i.failure_code, i.last_error,
-       i.retryable, i.updated_at
+       i.retryable, i.updated_at, j.subscription_id,
+       (o.id IS NOT NULL)::boolean AS receipt_available,
+       (o.id IS NOT NULL AND a.id IS NOT NULL AND (r.subscription_id IS NOT NULL OR EXISTS (
+           SELECT 1 FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) s(recipient)
+           WHERE s.recipient->>'id'=j.subscription_id::text AND s.recipient->>'app_id'=j.app_id::text
+       )))::boolean AS execution_history_available
 FROM event_replay_job_items i
+JOIN event_replay_jobs j ON j.id=i.job_id
+LEFT JOIN event_fanout_outbox o ON o.id=i.outbox_id AND o.account_id=j.account_id
+    AND o.source=i.event_source AND o.event_id=i.event_id AND o.created_at=i.accepted_at
+LEFT JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
+LEFT JOIN event_fanout_recipients r ON r.outbox_id=o.id AND r.subscription_id=j.subscription_id::text AND r.app_id=j.app_id
 WHERE i.job_id=$1::uuid
   AND ($2::text = '' OR i.state=$2::text)
   AND (i.accepted_at,i.outbox_id) > ($3::timestamptz,$4::bigint)
@@ -552,18 +565,21 @@ type EventReplayBackfillItemsParams struct {
 }
 
 type EventReplayBackfillItemsRow struct {
-	OutboxID      int64
-	AcceptedAt    pgtype.Timestamptz
-	EventSource   string
-	EventID       string
-	EventType     string
-	SchemaVersion string
-	State         string
-	Attempts      int32
-	FailureCode   string
-	LastError     string
-	Retryable     bool
-	UpdatedAt     pgtype.Timestamptz
+	OutboxID                  int64
+	AcceptedAt                pgtype.Timestamptz
+	EventSource               string
+	EventID                   string
+	EventType                 string
+	SchemaVersion             string
+	State                     string
+	Attempts                  int32
+	FailureCode               string
+	LastError                 string
+	Retryable                 bool
+	UpdatedAt                 pgtype.Timestamptz
+	SubscriptionID            pgtype.UUID
+	ReceiptAvailable          bool
+	ExecutionHistoryAvailable bool
 }
 
 func (q *Queries) EventReplayBackfillItems(ctx context.Context, db DBTX, arg EventReplayBackfillItemsParams) ([]EventReplayBackfillItemsRow, error) {
@@ -594,6 +610,9 @@ func (q *Queries) EventReplayBackfillItems(ctx context.Context, db DBTX, arg Eve
 			&i.LastError,
 			&i.Retryable,
 			&i.UpdatedAt,
+			&i.SubscriptionID,
+			&i.ReceiptAvailable,
+			&i.ExecutionHistoryAvailable,
 		); err != nil {
 			return nil, err
 		}
@@ -796,6 +815,39 @@ func (q *Queries) EventReplayBackfillPruneJobs(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const eventReplayBackfillRecipientJob = `-- name: EventReplayBackfillRecipientJob :one
+SELECT j.id FROM event_fanout_outbox o
+JOIN event_fanout_recipients r ON r.outbox_id=o.id
+JOIN event_replay_jobs j ON j.id=r.backfill_job_id AND j.account_id=o.account_id
+    AND j.app_id=r.app_id AND j.subscription_id::text=r.subscription_id
+JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
+WHERE o.account_id=$1::uuid AND o.source=$2::text
+  AND o.event_id=$3::text AND r.app_id=$4::uuid
+  AND r.subscription_id=$5::text AND r.receipt_position IS NOT NULL
+`
+
+type EventReplayBackfillRecipientJobParams struct {
+	AccountID      pgtype.UUID
+	EventSource    string
+	EventID        string
+	AppID          pgtype.UUID
+	SubscriptionID string
+}
+
+// Read provenance before taking the job lock, preserving job -> parent order.
+func (q *Queries) EventReplayBackfillRecipientJob(ctx context.Context, db DBTX, arg EventReplayBackfillRecipientJobParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, eventReplayBackfillRecipientJob,
+		arg.AccountID,
+		arg.EventSource,
+		arg.EventID,
+		arg.AppID,
+		arg.SubscriptionID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const eventReplayBackfillResetItem = `-- name: EventReplayBackfillResetItem :execrows
 UPDATE event_replay_job_items SET state='pending',failure_code='',last_error='',retryable=false,updated_at=clock_timestamp()
 WHERE job_id=$1::uuid AND outbox_id=$2::bigint AND state='failed'
@@ -820,15 +872,22 @@ FROM event_replay_job_items i
 JOIN event_replay_jobs j ON j.id=i.job_id
 JOIN event_fanout_recipients r ON r.outbox_id=i.outbox_id AND r.subscription_id=j.subscription_id::text AND r.backfill_job_id=j.id
 JOIN event_fanout_outbox o ON o.id=i.outbox_id AND o.account_id=j.account_id
+JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
 WHERE i.job_id=$1::uuid AND j.account_id=$2::uuid
   AND i.state='failed' AND i.retryable AND r.state='failed'
-ORDER BY i.accepted_at,i.outbox_id LIMIT $3::integer
+  AND ($3::text='' OR o.source=$3::text)
+  AND ($4::text='' OR o.event_id=$4::text)
+  AND ($5::text='' OR j.app_id::text=$5::text)
+ORDER BY i.accepted_at,i.outbox_id LIMIT $6::integer
 `
 
 type EventReplayBackfillRetryCandidatesParams struct {
-	JobID     pgtype.UUID
-	AccountID pgtype.UUID
-	PageLimit int32
+	JobID       pgtype.UUID
+	AccountID   pgtype.UUID
+	EventSource string
+	EventID     string
+	AppID       string
+	PageLimit   int32
 }
 
 type EventReplayBackfillRetryCandidatesRow struct {
@@ -839,7 +898,14 @@ type EventReplayBackfillRetryCandidatesRow struct {
 }
 
 func (q *Queries) EventReplayBackfillRetryCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillRetryCandidatesParams) ([]EventReplayBackfillRetryCandidatesRow, error) {
-	rows, err := db.Query(ctx, eventReplayBackfillRetryCandidates, arg.JobID, arg.AccountID, arg.PageLimit)
+	rows, err := db.Query(ctx, eventReplayBackfillRetryCandidates,
+		arg.JobID,
+		arg.AccountID,
+		arg.EventSource,
+		arg.EventID,
+		arg.AppID,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

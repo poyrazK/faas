@@ -56,12 +56,28 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 731 | [Durable PostgreSQL lifecycle qualification](731-managed-postgres-durable-qualification.md) | accepted | Version-8 SQL restart, encrypted credential delivery, workload rotation and cleanup evidence |
+| 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
+| 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
 | 634 | [Asynchronous request-ID journal](634-async-request-id-journal.md) | proposed | The exact request-ID index is queued and written by bounded workers; a failed or dropped write never fails the request |
 | 635 | [Authenticated tenant workflow continuations](635-tenant-workflow-continuations.md) | accepted | Tenant-authenticated event and callback continuation routes with atomic live-link checks |
 | 636 | [Tenant-scoped scheduled workflow starts](636-tenant-scheduled-workflow-starts.md) | accepted | Per-tenant schedule cursors and atomic tenant-bound run admission |
 | 637 | [Tenant-configurable workflow schedules](637-tenant-configurable-workflow-schedules.md) | accepted | Explicitly opt in to tenant-owned cadence, overlap, and enablement settings |
+| 640 | [Watchdog claims WAKING rows before teardown](640-watchdog-claims-waking-rows-before-teardown.md) | proposed | Every WAKING row gets the restore + cold-boot budget, and the watchdog CASes it to COLD_BOOTING before Destroy so a peer schedd's RUNNING publication can never point at a destroyed VM |
+| 641 | [Edge health follows the last instance](641-edge-health-follows-last-instance.md) | proposed | A parked app's edge health answer comes from its last instance (only FAILED is unhealthy), cached 15 s per gateway, instead of the process-local wake outcome that went unknown after every restart |
+| 642 | [Restore-safe guest timers](642-restore-safe-guest-timers.md) | proposed | Guests boot with kvm-clock and the one-shot LAPIC timer because Firecracker 1.7 restores lost TSC-deadline interrupts; backing identity v2 refuses captures booted with the old profile |
+| 643 | [Park-to-admit for refused wakes](643-park-to-admit-refused-wakes.md) | proposed | A gateway wake refused for fleet capacity parks one idle, floor-respecting instance of another owned app and retries once, instead of answering 503 until the idle timeout |
+| 680 | [Restored processes reseed their userspace random generators before serving](680-restore-userspace-rng-reseed.md) | accepted | guest-init reseed barrier with Node (N-API RAND_poll addon) and Python preloads; fails closed to cold boot; GHSA-24j2-p895-mwc9 |
 | 644 | [Verified MCP promotion and resource policy](644-mcp-verified-promotion-and-resource-policy.md) | accepted | Verify zero-traffic candidates, gate caller catalogs, and reuse gateway JWT resource authorization |
+| 678 | [Compose prebuilt image workloads](678-compose-prebuilt-image-workloads.md) | accepted | Deploy stateless image services through imaged with immutable resolution and existing project dependency policies |
+| 679 | [Image-published deployment trigger](679-image-published-deployment-trigger.md) | accepted | CI publishes an immutable image, then hands it to existing deployment admission with durable workload/scope/digest deduplication |
+| 686 | [Freeze Compose commands per image deployment](686-frozen-project-image-commands.md) | accepted | Capture Compose CMD in the deployment profile and preserve it through app edits, image processing, retries, and runtime port updates |
+| 681 | [Image deployment promotion ordering](681-image-deployment-promotion-ordering.md) | accepted | Atomically reject older same-scope image candidates at cutover and recheck recorded GitHub branches while preserving explicit rollback |
+| 682 | [Compose image healthchecks](682-compose-image-healthchecks.md) | accepted | Validate and freeze partial Compose healthcheck overrides for prebuilt image workloads, preserving artifact inheritance and existing guest execution |
+| 683 | [Fresh image healthchecks gate readiness](683-image-healthcheck-readiness.md) | implemented; native qualification pending | Require fresh command proof before serving boot, restore, warm resume, or migration |
+| 684 | [Image healthchecks drive runtime recovery](684-image-healthcheck-runtime-recovery.md) | implemented; native qualification pending | Recover serving images after declared command failures using existing scheduler ownership and restart limits |
+| 685 | [Compose dependency readiness gates](685-compose-dependency-release-gates.md) | implemented | Hold dependent project releases against exact dependency deployments with durable waits and atomic promotion checks |
 | 622 | [Event protection for new object versions](622-event-protection-for-new-object-versions.md) | accepted | Captured event defaults, enrolled creation headers and strict exact-version policy proof |
 | 621 | [Durable object event holds](621-durable-object-event-holds.md) | accepted | Exact-version variable retention, immutable native policy snapshots and single-dispatch release recovery |
 | 620 | [Protection-aware object lifecycle deletion](620-protection-aware-object-lifecycle.md) | accepted | Fresh native retention/hold checks, bounded scan deferrals and exact absence proof before settlement |
@@ -622,3 +638,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-617: Event consumer backlog inspection](617-event-consumer-backlog-inspection.md)
 - [ADR-645: Subscription-scoped retained-event replay preview](645-subscription-retained-event-replay-preview.md)
 - [ADR-639: Durable subscription event backfill](639-durable-subscription-event-backfill.md)
+- [ADR-646: Unified backfill delivery inspection](646-unified-backfill-delivery-inspection.md)
+- [ADR-647: Independent event routing by default](647-independent-event-routing-default.md)
+- [ADR-648: Independent workflow event routing](648-independent-workflow-event-routing.md)

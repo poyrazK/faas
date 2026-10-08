@@ -2953,9 +2953,12 @@ type Store interface {
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
-	// MarkGitDrivenDeploymentLiveIfLatest applies the ordinary live cutover
-	// for GitHub and PR preview deployments only while no newer same-scope
-	// deployment intent exists. Explicit rollback uses MarkDeploymentLive.
+	// MarkDeploymentLiveIfLatest applies the ordinary live cutover for image,
+	// GitHub, and PR preview deployments only while no newer same-scope intent
+	// exists. Explicit rollback uses MarkDeploymentLive.
+	MarkDeploymentLiveIfLatest(ctx context.Context, id string) error
+	// MarkGitDrivenDeploymentLiveIfLatest is the compatibility name for
+	// MarkDeploymentLiveIfLatest.
 	MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id string) error
 
 	// CancelDeploymentTx is the single-transaction orchestrator
@@ -3011,9 +3014,10 @@ type Store interface {
 	// wire and vmmd resolves it via Storage.Get before staging the chroot.
 	SetDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error
 	// SetDeploymentRuntimeProfile records image-config-derived runtime metadata
-	// before snapshot prime. In particular, a single OCI EXPOSE port must be
+	// before snapshot prime, preserving the command captured by apid at admission.
+	// In particular, a single OCI EXPOSE port must be
 	// durable so schedd and vmmd agree on the guest DNAT target at first boot
-	// and every later wake. Only imaged writes this deployment-owned field.
+	// and every later wake. Only imaged calls this worker metadata update.
 	SetDeploymentRuntimeProfile(ctx context.Context, id string, profile []byte) error
 
 	// UpsertDeploymentScanResult records the per-deploy grype CVE
@@ -6850,6 +6854,31 @@ type IdempotencyReservation struct {
 	InFlight bool
 	Status   int
 	Body     []byte
+}
+
+// ManagedRealtimePublishReservation extends the ordinary idempotency receipt
+// with a payload-conflict result. Publish keys stay bound to their first
+// request fingerprint for the 24-hour replay window.
+type ManagedRealtimePublishReservation struct {
+	Reserved bool
+	InFlight bool
+	Conflict bool
+	Status   int
+	Body     []byte
+}
+
+// ManagedRealtimePublishIdempotencyStore is optional so unrelated Store
+// adapters can remain narrow. The reservation is scoped by account and the
+// caller-provided route key; requestDigest is the canonical payload digest.
+type ManagedRealtimePublishIdempotencyStore interface {
+	ReserveManagedRealtimePublish(ctx context.Context, accountID, key string, requestDigest []byte) (ManagedRealtimePublishReservation, error)
+}
+
+// ManagedRealtimePublishIdempotencyReaper removes expired payload-bound
+// publish receipts in bounded batches. It is separate from reservation so
+// store adapters can expose reservation and cleanup capabilities independently.
+type ManagedRealtimePublishIdempotencyReaper interface {
+	ReapManagedRealtimePublishIdempotency(ctx context.Context, limit int) (int, error)
 }
 
 // UDPListenerStore is optional so unrelated Store adapters stay narrow.

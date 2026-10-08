@@ -521,8 +521,9 @@ deployments. Do not disable secret scanning to bypass that issue.
 Keep durable task records in the bound PostgreSQL database. The default combined
 process may pause when its app scales to zero; a dedicated worker deployment can
 scale on the task table's aggregate backlog through Gregale custom metrics.
-Per-customer execution isolation, gateway tool policy/metrics and tool-contract
-rollout checks remain follow-on capabilities, not included in this preview.
+The gateway tool policy, redacted execution metrics and tool-contract rollout
+checks are available in this preview. Strict per-customer task scheduling
+fairness and customer-managed task-key rotation remain follow-on capabilities.
 
 Protocol references: [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http),
 [Tasks extension](https://tasks.extensions.modelcontextprotocol.io/specification/2026-07-28/tasks)
@@ -593,6 +594,41 @@ publishes the existing custom metrics every 15 seconds. Configure the worker's
 custom scaling target and `worker.scale.min: 0`; keep the observer at a minimum of
 one running process. An in-process worker publisher still requires a worker
 minimum of one. Monitor observer health and metric freshness.
+
+The CLI can configure and inspect the worker policy:
+
+```sh
+gregale mcp tasks setup --app mcp-worker
+gregale mcp tasks setup --app mcp-worker --min 0 --apply
+gregale mcp tasks status --app mcp-worker
+```
+
+`setup` previews changes by default; pass `--apply` to save the policy. It keeps
+the current replica bounds and scaling target when present, otherwise it uses a
+minimum of one, maximum of ten and target of four outstanding tasks per worker.
+Choose `--min 0` only after the separate observer is deployed and publishing.
+`status` reads the worker's `mcp_tasks_outstanding` and
+`mcp_tasks_oldest_age_seconds` custom metrics, including server-reported
+freshness. A fresh backlog metric does not prove that an always-on observer is
+deployed, so verify the observer app's health separately.
+
+Use `scripts/ops/mcp-qualification.py` to create a pending eight-row evidence
+workspace, record hashes for redacted receipts, and run the same fail-closed
+checker used by release CI. For example:
+
+```sh
+python3 scripts/ops/mcp-qualification.py init --dir ./mcp-evidence --commit <reviewed-sha>
+python3 scripts/ops/mcp-qualification.py record --dir ./mcp-evidence \
+  --name official_sdk_interop --target 'official SDK 2.x / test app' \
+  --artifact official-sdk.json --status passed
+python3 scripts/ops/mcp-qualification.py status --dir ./mcp-evidence
+```
+
+Repeat `record` for every required row. Create and redact each receipt from the
+real native host, provider/client or SDK observation; the runner does not
+perform those live checks. The release gate stays incomplete until all eight
+rows pass and their artifact hashes match. Keep tokens, subjects and customer
+payloads out of the evidence directory.
 
 See [release qualification](ops/mcp-release-qualification.md) for native and
 real-provider/client checks required before promoting the preview to GA.

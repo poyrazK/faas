@@ -57,6 +57,7 @@ import type { ListDeployTokensResponse } from '../models/ListDeployTokensRespons
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
 import type { ListIssuesResponse } from '../models/ListIssuesResponse.js';
 import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
+import type { PreviewRouteMonitorRequest } from '../models/PreviewRouteMonitorRequest.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
 import type { Problem } from '../models/Problem.js';
@@ -77,6 +78,7 @@ import type { RouteHealthReport } from '../models/RouteHealthReport.js';
 import type { RouteMonitorConfig } from '../models/RouteMonitorConfig.js';
 import type { RouteMonitorIncident } from '../models/RouteMonitorIncident.js';
 import type { RouteMonitorIncidentPage } from '../models/RouteMonitorIncidentPage.js';
+import type { RouteMonitorPreview } from '../models/RouteMonitorPreview.js';
 import type { RouteMonitorReport } from '../models/RouteMonitorReport.js';
 import type { RoutePolicyApplyRequest } from '../models/RoutePolicyApplyRequest.js';
 import type { RoutePolicyApplyResponse } from '../models/RoutePolicyApplyResponse.js';
@@ -3557,6 +3559,50 @@ export class AppsService {
       query: {
         'customer_details': customerDetails,
       },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Evaluate proposed route budgets against recent production traffic without saving them.
+   * Read-only evaluation of proposed absolute budgets against the two latest closed UTC minute windows for the sole fully serving default-scope deployment. Requires app read access and completed MFA. Uses the deployment and rollout observation anchors, but not the saved monitor update anchor, because the proposal has not been saved. If the proposal groups by customer, customer IDs are redacted by default. Saving changed configuration resets its observation anchor, so this preview is current evidence and not a prediction of the first post-save report. Violated and unknown findings return 200; no configuration, incident or traffic state is changed. Body limit is 16 KiB.
+   * @returns RouteMonitorPreview Read-only evaluation of the proposed budgets and saved revision used for comparison.
+   * @throws ApiError
+   */
+  public static previewRouteMonitor({
+    slug,
+    requestBody,
+    customerDetails = false,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PreviewRouteMonitorRequest,
+    /**
+     * Explicitly include observed tenant or consumer UUIDs when customer_group_by is selected. Defaults to false.
+     */
+    customerDetails?: boolean,
+  }): CancelablePromise<RouteMonitorPreview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-monitor/preview',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'customer_details': customerDetails,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,

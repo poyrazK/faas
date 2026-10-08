@@ -253,6 +253,68 @@ export class DeploymentsService {
     });
   }
   /**
+   * Deploy an immutable image after CI publishes it.
+   * Requires deploy:write or admin and the normal deployment authentication
+   * checks. App-bound deploy tokens and CI bearer tokens are accepted.
+   * The app must be a project workload configured with image:. The required
+   * image is a full registry/repository@sha256:digest reference matching that
+   * workload's declared registry and repository. A digest-pinned declaration
+   * accepts only its declared digest. Tags are rejected; send the digest
+   * returned by the build/push step after publication completes.
+   *
+   * App, normalized deployment scope, and image reference form a durable
+   * delivery identity. First delivery creates one pending OCI deployment
+   * without a source build. Repeated deliveries return the original row and
+   * its current status, including terminal states, without creating a new
+   * deployment. The first accepted configuration wins for this identity;
+   * use ordinary deployment or retry endpoints for intentional redeploys.
+   * Changing scope creates an independent delivery.
+   *
+   * Normal signature, security, plan, traffic, and account deploy-rate
+   * admission apply. The Compose main container port defaults the port
+   * override. Omitted workflows and the source release command inherit from
+   * the latest image deployment in the same scope. Image commands, service
+   * bindings, and scoped environment settings use the existing app contract.
+   * Optional overrides and rollout policies follow CreateDeploymentRequest.
+   * The project image declaration is retained. This is a CI handoff endpoint;
+   * native registry webhook payloads and registry polling are not supported.
+   *
+   * @returns DeploymentResponse The original deployment for an already accepted image delivery.
+   * @throws ApiError
+   */
+  public static publishAppImage({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateDeploymentRequest,
+  }): CancelablePromise<DeploymentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/image-published',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.`,
+        404: `code: not_found`,
+        422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
    * Fetch a deployment release summary and diff.
    * Returns the selected deployment, its immediately preceding release,
    * a stable field-level diff of non-secret release metadata, and the

@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/api/canary"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -419,6 +420,13 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	}
 	dep := state.Deployment{
 		AppID: app.ID, ImageDigest: req.Image, Kind: state.DeploymentKindImage, Status: state.DeployPending,
+	}
+	if app.Manifest.ProjectImage != "" {
+		profile, err := frameworkprofile.CaptureImageRuntime(app.Manifest.ProjectImageCommand, app.Manifest.ProjectImageHealthcheck)
+		if err != nil {
+			return state.Deployment{}, api.ErrCapacity("could not capture project image runtime")
+		}
+		dep.InferredProfile = profile
 	}
 	if req.RollbackOn5xx != nil {
 		dep.RollbackOn5xx = *req.RollbackOn5xx

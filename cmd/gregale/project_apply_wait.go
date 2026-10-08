@@ -24,7 +24,7 @@ func waitForProjectApply(ctx context.Context, c *Client, apply api.ApplyResponse
 	result := make([]projectApplyWaitResult, len(apply.Builds))
 	var wg sync.WaitGroup
 	for i, build := range apply.Builds {
-		if build.Error != "" || build.DeploymentID == "" || build.BuildID == "" {
+		if build.Error != "" || build.DeploymentID == "" {
 			continue
 		}
 		wg.Add(1)
@@ -33,7 +33,7 @@ func waitForProjectApply(ctx context.Context, c *Client, apply api.ApplyResponse
 			dep := api.DeploymentResponse{ID: build.DeploymentID, BuildID: build.BuildID}
 			final, ok := waitForDeploymentReceiptUntil(waitCtx, c, dep, deadline)
 			waited := projectApplyWaitResult{deployment: final, ok: ok}
-			if ok {
+			if ok && build.BuildID != "" {
 				buildCtx, cancel := context.WithTimeout(waitCtx, 3*time.Second)
 				var buildErr error
 				waited.build, buildErr = c.GetBuildsId(buildCtx, build.BuildID)
@@ -47,22 +47,26 @@ func waitForProjectApply(ctx context.Context, c *Client, apply api.ApplyResponse
 
 	timedOut := false
 	for i, build := range apply.Builds {
-		if build.Error != "" || build.DeploymentID == "" || build.BuildID == "" {
+		if build.Error != "" || build.DeploymentID == "" {
 			continue
 		}
 		waited := result[i]
 		switch {
 		case !waited.ok:
 			apply.Builds[i].DeploymentStatus = "timeout"
-			apply.Builds[i].BuildStatus = "timeout"
+			if build.BuildID != "" {
+				apply.Builds[i].BuildStatus = "timeout"
+			}
 			apply.Builds[i].Error = "deployment wait timed out"
 			timedOut = true
 		default:
 			apply.Builds[i].DeploymentStatus = waited.deployment.Status
-			if waited.buildOK && waited.build.Status != "" {
-				apply.Builds[i].BuildStatus = waited.build.Status
-			} else {
-				apply.Builds[i].BuildStatus = terminalBuildStatusForDeployment(waited.deployment.Status)
+			if build.BuildID != "" {
+				if waited.buildOK && waited.build.Status != "" {
+					apply.Builds[i].BuildStatus = waited.build.Status
+				} else {
+					apply.Builds[i].BuildStatus = terminalBuildStatusForDeployment(waited.deployment.Status)
+				}
 			}
 			if waited.buildOK && waited.build.Status != api.BuildStatusSucceeded {
 				apply.Builds[i].Error = "build " + waited.build.Status

@@ -97,11 +97,12 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// deployment, so it must use the same resolved guest port as later
 		// wakes. Without this field vmmd falls back to guest :8080 while the
 		// inferred profile starts Node/Python apps on their framework port.
-		Port:                   deploymentRuntimePort(dep),
-		HealthcheckPath:        healthcheckPathFromDep(dep),
-		HealthcheckGRPC:        healthcheckGRPC,
-		HealthcheckGRPCService: healthcheckGRPCService,
-		ReadinessProbeJSON:     string(dep.OverrideReadinessProbe),
+		Port:                     deploymentRuntimePort(dep),
+		HealthcheckPath:          healthcheckPathFromDep(dep),
+		HealthcheckGRPC:          healthcheckGRPC,
+		HealthcheckGRPCService:   healthcheckGRPCService,
+		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
+		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label

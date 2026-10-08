@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1301,5 +1303,26 @@ func TestRunReaperFloorDropEmitsAuditRelocated(t *testing.T) {
 	}
 	if payload["reason"] != "min_instances_lowered" {
 		t.Errorf("payload.reason = %v, want min_instances_lowered", payload["reason"])
+	}
+}
+
+// Every schedd hears app_changed; only the owner acknowledges the revision.
+// A non-owner warned on each change (production-us H5-17).
+func TestLoopScalingPolicyObservationSkipsAppsOwnedElsewhere(t *testing.T) {
+	base := state.NewMemStore()
+	_, app, _ := seedApp(t, base, api.PlanPro, 256, 5)
+	store := &scalingPolicyObservationTestStore{Store: base}
+	engine := &Engine{store: store, ownerNodeID: "another-node"}
+	if app.NodeID == engine.ownerNodeID {
+		t.Fatal("fixture app is owned by the observing scheduler")
+	}
+	var logs bytes.Buffer
+	loop := NewLoop(nil, engine, slog.New(slog.NewTextHandler(&logs, nil)))
+	loop.observeAppScalingPolicy(context.Background(), app.ID)
+	if store.status.ObservedRevision != 0 {
+		t.Fatalf("non-owner recorded an observation: %+v", store.status)
+	}
+	if strings.Contains(logs.String(), "scaling policy observation") {
+		t.Fatalf("non-owner warned: %s", logs.String())
 	}
 }

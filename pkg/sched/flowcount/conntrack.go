@@ -3,8 +3,11 @@ package flowcount
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +31,11 @@ const DefaultTTL = 10 * time.Second
 // DefaultBinPath is the Ubuntu 24.04 location of conntrack from the
 // conntrack-tools package. Override via the WithBinPath option.
 const DefaultBinPath = "/usr/sbin/conntrack"
+
+// ErrUnavailable reports that the conntrack binary is not installed, as on a
+// split-box control plane that hosts no VMs and reaps on compute-side
+// telemetry. Warm still poisons the cache, so Open and Snapshot fail open.
+var ErrUnavailable = errors.New("flowcount: conntrack binary unavailable")
 
 // DefaultMaxSummaries bounds the number of endpoint summaries retained for
 // each instance. The conntrack table itself may be large and untrusted input
@@ -182,6 +190,9 @@ func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
 			r.mu.Lock()
 			r.failed = true
 			r.mu.Unlock()
+			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, exec.ErrNotFound) {
+				return fmt.Errorf("%w: %w", ErrUnavailable, err)
+			}
 			return fmt.Errorf("flowcount: conntrack: %w", err)
 		}
 	}

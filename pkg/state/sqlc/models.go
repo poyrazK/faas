@@ -1548,6 +1548,17 @@ type CustomerOperationIdempotency struct {
 	ExpiresAt   pgtype.Timestamptz
 }
 
+type CustomerOperationMilestone struct {
+	OperationID   pgtype.UUID
+	ID            pgtype.UUID
+	EventSequence int64
+	Name          string
+	Payload       []byte
+	OccurredAt    pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	Fingerprint   string
+}
+
 type CustomerOperationRecovery struct {
 	OperationID pgtype.UUID
 	RecoveryID  string
@@ -1605,6 +1616,50 @@ type CustomerOperationWorkflowClaim struct {
 	Attempt          int32
 	CapabilityDigest string
 	LeaseUntil       pgtype.Timestamptz
+}
+
+type CustomerOperationWorkflowGuestClaim struct {
+	WorkflowRunID      pgtype.UUID
+	StepName           string
+	StepAttempt        int32
+	OperationID        pgtype.UUID
+	Generation         int32
+	ExecutionKind      string
+	CoordinatorAttempt int32
+	InstanceID         pgtype.UUID
+	CapabilityDigest   string
+	DeadlineAt         pgtype.Timestamptz
+	BoundAt            pgtype.Timestamptz
+	DispatchStartedAt  pgtype.Timestamptz
+}
+
+type CustomerOperationWorkflowState struct {
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	Scope            string
+	SubjectType      string
+	SubjectID        string
+	Workflow         string
+	InstanceID       string
+	State            string
+	Revision         int64
+	OperationID      pgtype.UUID
+	ReportID         pgtype.UUID
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type CustomerOperationWorkflowStateReport struct {
+	OperationID pgtype.UUID
+	ID          pgtype.UUID
+	Workflow    string
+	InstanceID  string
+	FromState   string
+	State       string
+	Revision    int64
+	OccurredAt  pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	Fingerprint string
 }
 
 type DataUpstream struct {
@@ -1828,6 +1883,15 @@ type DeploymentCodePinDeadline struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
 	ExpiresAt    interface{}
+}
+
+type DeploymentDependencyGate struct {
+	DeploymentID pgtype.UUID
+	Pins         []byte
+	StartedAt    pgtype.Timestamptz
+	DeadlineAt   pgtype.Timestamptz
+	Status       string
+	Blocker      string
 }
 
 type DeploymentImagePreparation struct {
@@ -2424,6 +2488,7 @@ type EventFanoutRecipient struct {
 	CapacityDeferrals           int32
 	GenerationCapacityDeferrals int32
 	BackfillJobID               pgtype.UUID
+	ReceiptPosition             pgtype.Int8
 }
 
 type EventReplayJob struct {
@@ -2941,6 +3006,7 @@ type IdempotencyKey struct {
 	ResponseStatus int32
 	ResponseBody   []byte
 	CreatedAt      pgtype.Timestamptz
+	RequestDigest  []byte
 }
 
 type InboundWebhookEndpoint struct {
@@ -6200,6 +6266,7 @@ type RouteMonitor struct {
 	UpdatedAt             pgtype.Timestamptz
 	NextCheckAt           pgtype.Timestamptz
 	LastDeploymentID      pgtype.UUID
+	LastHealthyDeployment []byte
 	ActiveIncidentID      pgtype.UUID
 	CustomerGroupBy       string
 	CustomerRecoveryState []byte

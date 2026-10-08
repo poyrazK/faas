@@ -266,6 +266,7 @@ type Trigger struct {
 	log             *slog.Logger
 	interval        time.Duration
 	ownerNodeID     string
+	ownsApp         func(state.App) bool
 
 	// mu guards the per-app backoff map. Read paths in Tick take
 	// the lock once per app, holding it just long enough to copy
@@ -334,6 +335,21 @@ func (t *Trigger) WithOwnerNodeID(nodeID string) {
 		return
 	}
 	t.ownerNodeID = nodeID
+}
+
+// WithAppOwnership installs the scheduler's app-ownership rule. An
+// owner-less (control-plane) schedd lists every app, but on a multi-node
+// fleet the compute schedds own their shards; acting on those apps as well
+// doubled every floor (production-us hunt #5, H5-33).
+func (t *Trigger) WithAppOwnership(owns func(state.App) bool) {
+	if t == nil {
+		return
+	}
+	t.ownsApp = owns
+}
+
+func (t *Trigger) manages(app state.App) bool {
+	return t.ownsApp == nil || t.ownsApp(app)
 }
 
 // observe is a nil-receiver-safe metric emitter. Mirrors
@@ -480,6 +496,9 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 			t.observe(d.AppID, OutcomeError)
 			continue
 		}
+		if !t.manages(app) {
+			continue
+		}
 		effective := app.EffectiveMinInstances()
 		if dFloor := d.EffectiveMinInstances(); dFloor > effective {
 			effective = dFloor
@@ -607,6 +626,9 @@ func (t *Trigger) tickPerApp(ctx context.Context) error {
 		headroom = t.ledger.HeadroomMB()
 	}
 	for _, app := range apps {
+		if !t.manages(app) {
+			continue
+		}
 		floor := app.EffectiveMinInstancesAt(now)
 		// ADR-195: publish the schedule's contribution BEFORE the
 		// disabled short-circuit below. An app whose window just closed

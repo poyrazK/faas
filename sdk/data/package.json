@@ -1,0 +1,15 @@
+{
+  "name": "@gregale/data",
+  "version": "0.1.0",
+  "description": "Typed PostgreSQL Data API client for Gregale",
+  "license": "SEE LICENSE IN LICENSE",
+  "publishConfig": {"access": "restricted"},
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": {"node": ">=22"},
+  "exports": {".": {"types": "./dist/index.d.ts", "import": "./dist/index.js"}},
+  "scripts": {"build": "tsc -p tsconfig.json", "test": "npm run build && tsc -p tsconfig.test.json && node --test test/*.test.mjs"},
+  "dependencies": {"@supabase/postgrest-js": "2.117.3"},
+  "devDependencies": {"typescript": "5.9.3"}
+}

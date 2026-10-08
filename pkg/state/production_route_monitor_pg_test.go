@@ -79,6 +79,94 @@ func productionMonitorClear(t *testing.T, pool *pgxpool.Pool, appID string) {
 	productionMonitorExec(t, pool, "DELETE FROM request_telemetry WHERE app_id=$1", appID)
 }
 
+func TestProductionRouteMonitorPersistsAndSnapshotsHealthyReleaseBaseline(t *testing.T) {
+	pool, s, a, app, stable, candidate := productionMonitorPG(t)
+	baseCommit, candidateCommit := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	productionMonitorExec(t, pool, "UPDATE deployments SET source_url='https://github.com/team/service',source_root='.',commit_sha=$2 WHERE id=$1", candidate.ID, baseCommit)
+	productionMonitorTraffic(t, pool, a, app, candidate.ID, "POST", "/checkout", 200, 100, 100, false)
+	productionMonitorDue(t, pool, app.ID)
+	productionMonitorEvaluate(t, s, a, app)
+	var savedBody []byte
+	if err := pool.QueryRow(t.Context(), "SELECT last_healthy_deployment FROM route_monitors WHERE app_id=$1", app.ID).Scan(&savedBody); err != nil {
+		t.Fatal(err)
+	}
+	var baseline api.RouteMonitorDeploymentBaseline
+	if err := json.Unmarshal(savedBody, &baseline); err != nil || baseline.DeploymentID != candidate.ID || baseline.CommitSHA != baseCommit || baseline.Repository != "github.com/team/service" || baseline.SourceRoot != "." {
+		t.Fatalf("healthy deployment provenance was not persisted: %+v (%v) %s", baseline, err, savedBody)
+	}
+
+	productionMonitorExec(t, pool, "UPDATE deployments SET traffic_percent=CASE WHEN id=$1 THEN 100 ELSE 0 END,canary_step=canary_total_steps,rollout_state='complete',created_at=clock_timestamp()-interval '2 hours',canary_step_started_at=clock_timestamp()-interval '1 hour',rollout_completed_at=clock_timestamp()-interval '1 hour',commit_sha=$3,source_url='https://github.com/team/service',source_root='.' WHERE app_id=$2", stable.ID, app.ID, candidateCommit)
+	productionMonitorTraffic(t, pool, a, app, stable.ID, "POST", "/checkout", 500, 100, 600, false)
+	productionMonitorDue(t, pool, app.ID)
+	productionMonitorEvaluate(t, s, a, app)
+	page, err := s.ListRouteMonitorIncidents(t.Context(), a.ID, app.ID, 5, "")
+	if err != nil || len(page.Incidents) != 1 {
+		t.Fatalf("incident was not opened for candidate release: %+v %v", page, err)
+	}
+	incident := page.Incidents[0]
+	if incident.DeploymentID != stable.ID || incident.Baseline == nil || *incident.Baseline != baseline {
+		t.Fatalf("incident did not snapshot the previous healthy release: %+v", incident)
+	}
+	if err := routemonitor.ValidateIncident(incident, app.Slug); err != nil {
+		t.Fatalf("release-pair incident failed validation: %v", err)
+	}
+	var retainedBody []byte
+	if err := pool.QueryRow(t.Context(), "SELECT last_healthy_deployment FROM route_monitors WHERE app_id=$1", app.ID).Scan(&retainedBody); err != nil || string(retainedBody) != string(savedBody) {
+		t.Fatalf("violated release replaced healthy baseline: %s != %s (%v)", retainedBody, savedBody, err)
+	}
+
+	config, err := s.GetRouteMonitor(t.Context(), a.ID, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetRouteMonitor(t.Context(), a.ID, app.ID, api.SetRouteMonitorRequest{Enabled: false, ExpectedRevision: &config.Revision, Routes: config.Routes}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(t.Context(), "SELECT last_healthy_deployment::text FROM route_monitors WHERE app_id=$1", app.ID).Scan(&retainedBody); err != nil || string(retainedBody) != "{}" {
+		t.Fatalf("intent revision retained a stale baseline: %s (%v)", retainedBody, err)
+	}
+}
+
+func TestProductionRouteMonitorPreviewUsesReadOnlyCurrentWindows(t *testing.T) {
+	pool, s, a, app, _, candidate := productionMonitorPG(t)
+	// A recently changed saved config would normally make the current report
+	// unknown until two fresh windows arrive. A preview of a different proposal
+	// should still answer how those current production windows compare.
+	productionMonitorExec(t, pool, "UPDATE route_monitors SET updated_at=clock_timestamp()+interval '1 hour' WHERE app_id=$1", app.ID)
+	productionMonitorTraffic(t, pool, a, app, candidate.ID, "POST", "/checkout", 200, 100, 100, false)
+	current, err := s.GetRouteMonitor(t.Context(), a.ID, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinary, err := s.GetRouteMonitorReport(t.Context(), a.ID, app.ID)
+	if err != nil || ordinary.Status != "unknown" {
+		t.Fatalf("saved monitor should wait for its fresh anchor: %+v %v", ordinary, err)
+	}
+	currentBudget := int64(500)
+	unchangedProposal := api.PreviewRouteMonitorRequest{Routes: []api.RouteMonitorRoute{{Method: "POST", Path: "/checkout", Max5xxRateBPS: &currentBudget, MaxP95MS: 300}}}
+	unchangedPreview, err := s.PreviewRouteMonitor(t.Context(), a.ID, app.ID, unchangedProposal)
+	if err != nil || unchangedPreview.ConfigChangeResetsObservationAnchor || unchangedPreview.Report.Status != "unknown" {
+		t.Fatalf("unchanged proposal did not preserve its saved anchor: %+v %v", unchangedPreview, err)
+	}
+	budget := int64(0)
+	proposal := api.PreviewRouteMonitorRequest{Routes: []api.RouteMonitorRoute{{Method: "POST", Path: "/checkout", Max5xxRateBPS: &budget, MaxP95MS: 200}}}
+	preview, err := s.PreviewRouteMonitor(t.Context(), a.ID, app.ID, proposal)
+	if err != nil || preview.Report.Status != "healthy" || !preview.PreviewOnly || !preview.ConfigChangeResetsObservationAnchor || preview.CurrentRevision != current.Revision || preview.Report.Revision != current.Revision {
+		t.Fatalf("preview did not evaluate current windows: %+v %v", preview, err)
+	}
+	if err := routemonitor.ValidatePreviewForRequest(preview, proposal); err != nil {
+		t.Fatalf("preview failed contract validation: %v", err)
+	}
+	after, err := s.GetRouteMonitor(t.Context(), a.ID, app.ID)
+	if err != nil || !reflect.DeepEqual(after, current) {
+		t.Fatalf("preview changed saved monitor: before=%+v after=%+v err=%v", current, after, err)
+	}
+	page, err := s.ListRouteMonitorIncidents(t.Context(), a.ID, app.ID, 5, "")
+	if err != nil || len(page.Incidents) != 0 {
+		t.Fatalf("preview persisted an incident: %+v %v", page, err)
+	}
+}
+
 // ADR-498: production evaluation survives promotion, snapshots diagnostics and
 // emits exactly one open/recovery transition without inferring recovery from unknown.
 func TestProductionRouteMonitorPostgresLifecycleAndSavedEvidence(t *testing.T) {
@@ -106,7 +194,7 @@ func TestProductionRouteMonitorPostgresLifecycleAndSavedEvidence(t *testing.T) {
 		t.Fatalf("%+v %v", page, err)
 	}
 	opened := page.Incidents[0]
-	if opened.Status != "open" || len(opened.Evidence) != 2 {
+	if opened.Status != "open" || len(opened.Evidence) != 2 || len(opened.Timeline) != 1 || opened.Timeline[0].Status != "violated" {
 		t.Fatalf("missing independent diagnostics %+v", opened)
 	}
 	if err := routemonitor.ValidateIncident(opened, app.Slug); err != nil {
@@ -142,8 +230,8 @@ func TestProductionRouteMonitorPostgresLifecycleAndSavedEvidence(t *testing.T) {
 	productionMonitorEvaluate(t, s, a, app)
 	healthNotificationPending(t, s, 1)
 	saved, err := s.GetRouteMonitorIncident(t.Context(), a.ID, app.ID, opened.ID)
-	if err != nil || !reflect.DeepEqual(saved, opened) {
-		t.Fatal("opening evidence changed with retained telemetry")
+	if err != nil || saved.Status != "open" || len(saved.Timeline) != 3 || saved.Timeline[len(saved.Timeline)-1].Status != "unknown" || !reflect.DeepEqual(saved.OpeningReport, opened.OpeningReport) || !reflect.DeepEqual(saved.Evidence, opened.Evidence) {
+		t.Fatal("incident timeline failed to capture unknown impact while preserving opening evidence")
 	}
 	late := healthNotificationHook(t, s, a.ID, app.ID, "late-production", []string{"routes.monitor.recovered"}, true)
 	productionMonitorTraffic(t, pool, a, app, d.ID, "POST", "/checkout", 200, 100, 100, false)
@@ -151,7 +239,7 @@ func TestProductionRouteMonitorPostgresLifecycleAndSavedEvidence(t *testing.T) {
 	productionMonitorEvaluate(t, s, a, app)
 	healthNotificationPending(t, s, 2)
 	recovered, err := s.GetRouteMonitorIncident(t.Context(), a.ID, app.ID, opened.ID)
-	if err != nil || recovered.Status != "recovered" || routemonitor.ValidateIncident(recovered, app.Slug) != nil || !reflect.DeepEqual(recovered.OpeningReport, opened.OpeningReport) || !reflect.DeepEqual(recovered.Evidence, opened.Evidence) {
+	if err != nil || recovered.Status != "recovered" || routemonitor.ValidateIncident(recovered, app.Slug) != nil || len(recovered.Timeline) != 4 || recovered.Timeline[len(recovered.Timeline)-1].Status != "healthy" || !reflect.DeepEqual(recovered.OpeningReport, opened.OpeningReport) || !reflect.DeepEqual(recovered.Evidence, opened.Evidence) {
 		t.Fatalf("recovery lost immutable evidence %+v %v", recovered, err)
 	}
 	if err := pool.QueryRow(t.Context(), "SELECT recipient_webhook_ids::text[] FROM app_webhook_event_outbox WHERE app_id=$1 AND event='routes.monitor.recovered'", app.ID).Scan(&recipients); err != nil {
@@ -203,6 +291,72 @@ func TestProductionRouteMonitorPostgresLifecycleAndSavedEvidence(t *testing.T) {
 		t.Fatal("advisory monitor mutated release")
 	}
 }
+func TestProductionRouteMonitorPostgresEscalatesOnceForNewSignal(t *testing.T) {
+	pool, s, a, app, _, d := productionMonitorPG(t)
+	hook := healthNotificationHook(t, s, a.ID, app.ID, "escalation-production", []string{"routes.monitor.violated", "routes.monitor.escalated"}, true)
+	// Open on the error budget only; p95 remains below the configured 300 ms.
+	productionMonitorTraffic(t, pool, a, app, d.ID, "POST", "/checkout", 500, 100, 200, false)
+	productionMonitorEvaluate(t, s, a, app)
+	healthNotificationPending(t, s, 1)
+
+	// A new slow bucket violates latency while the error signal remains violated.
+	productionMonitorTraffic(t, pool, a, app, d.ID, "POST", "/checkout", 500, 100, 600, false)
+	productionMonitorDue(t, pool, app.ID)
+	productionMonitorExec(t, pool, "CREATE FUNCTION reject_route_monitor_escalation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event='routes.monitor.escalated' THEN RAISE EXCEPTION 'injected escalation failure'; END IF; RETURN NEW; END $$")
+	productionMonitorExec(t, pool, "CREATE TRIGGER reject_route_monitor_escalation BEFORE INSERT ON app_webhook_event_outbox FOR EACH ROW EXECUTE FUNCTION reject_route_monitor_escalation()")
+	if done, err := s.EvaluateRouteMonitor(t.Context(), a.ID, app.ID); err == nil || done {
+		t.Fatal("escalation outbox failure committed timeline")
+	}
+	incidentPage, err := s.ListRouteMonitorIncidents(t.Context(), a.ID, app.ID, 5, "")
+	if err != nil || len(incidentPage.Incidents) != 1 || len(incidentPage.Incidents[0].Timeline) != 1 || len(incidentPage.Incidents[0].Escalations) != 0 {
+		t.Fatalf("failed escalation left partial timeline or diagnostics: %+v %v", incidentPage, err)
+	}
+	healthNotificationPending(t, s, 1)
+	productionMonitorExec(t, pool, "DROP TRIGGER reject_route_monitor_escalation ON app_webhook_event_outbox")
+	productionMonitorExec(t, pool, "DROP FUNCTION reject_route_monitor_escalation()")
+	productionMonitorEvaluate(t, s, a, app)
+	healthNotificationPending(t, s, 2)
+
+	var event, sourceID string
+	var body []byte
+	var recipients []string
+	if err := pool.QueryRow(t.Context(), `SELECT event, source_id::text, payload, recipient_webhook_ids::text[] FROM app_webhook_event_outbox
+		WHERE app_id=$1 AND event='routes.monitor.escalated'`, app.ID).Scan(&event, &sourceID, &body, &recipients); err != nil {
+		t.Fatal(err)
+	}
+	var payload api.RouteMonitorWebhookPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if event != "routes.monitor.escalated" || sourceID != payload.TransitionID || payload.Status != "open" || payload.Escalation == nil || payload.Escalation.NewlyViolatedRoutes != 1 || payload.Escalation.NewlyViolatedSignals != 1 || payload.Escalation.PreviousCheckedAt.IsZero() || !reflect.DeepEqual(recipients, []string{hook.ID}) || strings.Contains(string(body), "customer_id") {
+		t.Fatalf("escalation event was not stable, bounded and redacted: event=%s source=%s payload=%s recipients=%v", event, sourceID, body, recipients)
+	}
+	incident, err := s.GetRouteMonitorIncident(t.Context(), a.ID, app.ID, payload.IncidentID)
+	if err != nil || len(incident.Escalations) != 1 {
+		t.Fatalf("saved transition evidence is missing: %+v %v", incident.Escalations, err)
+	}
+	saved := incident.Escalations[0]
+	if saved.TransitionID != payload.TransitionID || !saved.CheckedAt.Equal(payload.CheckedAt) || !saved.PreviousCheckedAt.Equal(payload.Escalation.PreviousCheckedAt) || len(saved.Signals) != 1 || saved.Signals[0].RouteIndex != 0 || saved.Signals[0].Signal != "latency" || saved.Signals[0].Finding.Route.Path != "/checkout" || len(saved.Evidence) != 1 || saved.Evidence[0].Method != "POST" || saved.Evidence[0].Path != "/checkout" || saved.Evidence[0].Signal != "latency" || len(saved.Evidence[0].Windows) != api.RouteHealthWindows || saved.Evidence[0].Windows[0].Diagnostics == nil || saved.Evidence[0].Windows[0].Requests.ObservedRows == 0 {
+		t.Fatalf("saved escalation did not capture fresh latency evidence: %+v", saved)
+	}
+	if err := routemonitor.ValidateIncident(incident, app.Slug); err != nil {
+		t.Fatalf("saved escalation failed incident validation: %v", err)
+	}
+
+	// A later evaluation with the same violated signals extends the timeline but
+	// does not send another escalation.
+	productionMonitorDue(t, pool, app.ID)
+	productionMonitorEvaluate(t, s, a, app)
+	healthNotificationPending(t, s, 2)
+	incident, err = s.GetRouteMonitorIncident(t.Context(), a.ID, app.ID, payload.IncidentID)
+	if err != nil || len(incident.Timeline) != 3 || incident.Timeline[2].Routes[0].ErrorStatus != "violated" || incident.Timeline[2].Routes[0].LatencyStatus != "violated" {
+		t.Fatalf("repeat evaluation duplicated escalation or lost timeline: %+v %v", incident, err)
+	}
+	if len(incident.Escalations) != 1 || incident.Escalations[0].TransitionID != payload.TransitionID {
+		t.Fatalf("repeat evaluation changed saved transition details: %+v", incident.Escalations)
+	}
+}
+
 func TestProductionRouteMonitorPostgresAtomicRetriesAndContext(t *testing.T) {
 	pool, s, a, app, _, d := productionMonitorPG(t)
 	healthNotificationHook(t, s, a.ID, app.ID, "atomic-production", []string{"routes.monitor.violated", "routes.monitor.recovered"}, true)

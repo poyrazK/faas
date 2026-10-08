@@ -5,6 +5,8 @@
 import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
 import type { CancelPendingWorkRequest } from '../models/CancelPendingWorkRequest.js';
 import type { CancelPendingWorkResponse } from '../models/CancelPendingWorkResponse.js';
+import type { DurableEntityInvokeRequest } from '../models/DurableEntityInvokeRequest.js';
+import type { DurableEntityInvokeResponse } from '../models/DurableEntityInvokeResponse.js';
 import type { Invocation } from '../models/Invocation.js';
 import type { InvokeRequest } from '../models/InvokeRequest.js';
 import type { InvokeResponse } from '../models/InvokeResponse.js';
@@ -68,6 +70,80 @@ export class InvocationsService {
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         504: `code: long_poll_timeout — server-side long-poll budget elapsed without a terminal row.`,
+      },
+    });
+  }
+  /**
+   * Invoke an object-storage-backed entity in the operator preview.
+   * Disabled unless the operator configures a private bucket and explicitly
+   * enables this app. Account authentication, deploy-write scopes and MFA
+   * apply. A selected customer must belong to the account and be active;
+   * customer self-service tokens are not accepted on this surface.
+   * Entity identity includes the app, immutable environment identity,
+   * optional verified customer, namespace and key. The deployed handler
+   * receives state at POST /__gregale/entities and returns data, result and
+   * an optional alarm_at. Handlers must compute transitions without external
+   * side effects. Alarm delivery requires a separate operator opt-in and
+   * private delimiter listing. Due alarms use the same scheduler path with
+   * event=alarm. Clearing or replacing the deadline invalidates stale work;
+   * a failed handler leaves the alarm due. Attempts may repeat, while state,
+   * the alarm receipt and its next deadline publish atomically. Alarm timing
+   * depends on bounded entity sweeps and has no production latency guarantee.
+   * State and replay receipts commit in object storage; the existing SQL
+   * invocation ledger is used only to schedule and observe guest execution.
+   * Keep request_id and exact payload bytes for retries, including after an
+   * uncertain response. HTTP Idempotency-Key does not identify entity work.
+   * Request IDs starting with __gregale_alarm/ are reserved for delivery.
+   * Replays return the original result and version without executing code.
+   * Calls have a 25 second budget. Owners expire after at most five minutes.
+   * An immutable receipt index preserves original results without a receipt
+   * count ceiling. Encoded snapshots and individual receipts remain bounded
+   * to 1 MiB. Operator cleanup can reclaim superseded snapshots and index
+   * nodes after a fenced generation barrier; it never expires replay receipts.
+   * An explicit operator per-entity byte cap can limit the current snapshot
+   * and its reachable immutable receipts/index/archive. It excludes metadata,
+   * abandoned uploads and provider history; it is not a plan billing quota.
+   * Over-cap new work returns 409 durable_entity_storage_limit with limit and
+   * observed projected bytes. Existing receipts replay at capacity. Legacy
+   * entities under a cap return 503 durable_entity_inventory_pending for new
+   * work until bounded verified accounting completes. Handler computation
+   * can run before quota rejection. Entity deletion is not available yet.
+   *
+   * @returns DurableEntityInvokeResponse Committed or replayed entity result.
+   * @throws ApiError
+   */
+  public static invokeDurableEntity({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: DurableEntityInvokeRequest,
+  }): CancelablePromise<DurableEntityInvokeResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/entities/invoke',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        404: `code: not_found`,
+        409: `Request identity conflict, object budget or committed storage cap exceeded, or deployment unavailable. Storage limits include limit and observed projected bytes.`,
+        413: `code: source_too_large — payload exceeds the plan's MaxSourceBytesPerInvocation.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        502: `Handler failed without publishing entity state.`,
+        503: `Preview disabled, owner busy, legacy accounting pending, storage unavailable or commit outcome uncertain; retry the same request identity.`,
+        504: `Request budget elapsed; retry the same request identity and payload.`,
       },
     });
   }

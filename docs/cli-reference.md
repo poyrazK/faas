@@ -48,7 +48,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
-| [`routes`](#routes) | Analyze source changes and plan or apply route policies |
+| [`routes`](#routes) | Analyze route changes, migrations, lifecycle and production policies |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
 | [`init`](#init) | Scaffold a project from a built-in template |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context) |
@@ -79,17 +79,18 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
+| [`data-api`](#data-api) | Create schema-generated PostgreSQL APIs and export application types |
 | [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
 | [`queue`](#queue) | Inspect queues and manage first-class queue bindings |
 | [`dlq`](#dlq) | Inspect, replay, or purge unified dead-letter events |
-| [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
+| [`registry`](#registry) | Manage private registry credentials and deploy published images |
 | [`realtime`](#realtime) | Manage realtime endpoints, policies, connections, channels, and auth |
 | [`rollback`](#rollback) | Restore a previous deployment, or check an exact historical rollback |
 | [`projects`](#projects) | Inspect and recover repository projects |
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
 | [`secrets`](#secrets) | Manage sealed secrets and environment secret references |
 | [`slo`](#slo) | Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]; slug defaults to linked context) |
-| [`status`](#status) | Personal SLO numbers (availability, wake p95, build success) |
+| [`status`](#status) | Platform status: API availability, wake p95 and deployment success (not account-specific) |
 | [`tail`](#tail) | Live tail of the unified event stream (app defaults to linked context) |
 | [`trusted-publishers`](#trusted-publishers) | Per-app cosign trusted-publisher list (admin; trusted-publishers add\|remove\|list) |
 | [`usage`](#usage) | Show this month&#39;s usage (gregale usage [--month YYYY-MM]\|daily [--day YYYY-MM-DD]\|storage [--day YYYY-MM-DD]\|summary) |
@@ -99,6 +100,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (available on every plan) |
+| [`log-drains`](#log-drains) | Ship app runtime logs to an HTTP JSON or OTLP endpoint |
 | [`mirror`](#mirror) | Manage traffic mirroring and sanitized replay (Pro/Scale only). Rules default to 5% and mirror only safe methods; bodies over 64 KiB are skipped, and raw bodies are never retained. |
 | [`cache`](#cache) | Declare or purge response caching (cache GET /path/:id for 30s) |
 | [`upload-cache`](#upload-cache) | Inspect or clean resumable source-upload recovery state |
@@ -154,7 +156,7 @@ gregale mcp deploy --path ./my-mcp --name my-mcp --profile small
 
 Check discovery, Origin rejection, compatibility and optional streaming
 
-`gregale mcp doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -182,7 +184,7 @@ gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo
 
 Discover tool schemas without invoking tools
 
-`gregale mcp tools [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp tools [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -210,7 +212,7 @@ gregale mcp tools --app my-mcp
 
 Discover resource and template definitions without reading contents
 
-`gregale mcp resources [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp resources [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -238,7 +240,7 @@ gregale mcp resources --app my-mcp
 
 Read one explicitly selected resource URI
 
-`gregale mcp resource-read [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp resource-read [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -287,7 +289,7 @@ gregale mcp resource-watch --app my-mcp --uri 'file:///reports/current'
 
 Discover prompt definitions without rendering them
 
-`gregale mcp prompts [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp prompts [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -315,7 +317,7 @@ gregale mcp prompts --app my-mcp
 
 Render one explicitly selected prompt
 
-`gregale mcp prompt-get [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp prompt-get [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -371,7 +373,7 @@ gregale mcp complete --app my-mcp --resource-template 'customer://records/{recor
 
 Execute one discovered tool; opt in to input requests or durable tasks
 
-`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>] [--tasks] [--wait]`
+`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>] [--tasks] [--wait] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -405,7 +407,7 @@ gregale mcp call --app my-mcp --tool report_preview --tasks
 
 Read the status or result of a previously returned task handle
 
-`gregale mcp task-get [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>]`
+`gregale mcp task-get [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -434,7 +436,7 @@ gregale mcp task-get --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
 
 Resume waiting for a task to finish
 
-`gregale mcp task-wait [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--interactive] [--input-responses-file <PATH>]`
+`gregale mcp task-wait [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--interactive] [--input-responses-file <PATH>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -466,7 +468,7 @@ gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe84
 
 Request cooperative cancellation of a previously returned task
 
-`gregale mcp task-cancel [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>]`
+`gregale mcp task-cancel [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -489,6 +491,47 @@ Examples:
 
 ```sh
 gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
+```
+
+### mcp tasks
+
+Configure and inspect durable task worker scaling
+
+#### mcp tasks setup
+
+Preview or apply the task-backlog scaling policy
+
+`gregale mcp tasks setup [--app <SLUG>] [--min <N>] [--max <N>] [--target <N>] [--apply]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | worker app slug (defaults to the linked project app) |  |
+| `--min <N>` | minimum replicas (default 1; use 0 with an always-on observer) |  |
+| `--max <N>` | maximum replicas (default 10) |  |
+| `--target <N>` | outstanding tasks per worker (default 4) |  |
+| `--apply` | apply the proposed worker scaling policy |  |
+
+Examples:
+
+```sh
+gregale mcp tasks setup --app mcp-worker
+gregale mcp tasks setup --app mcp-worker --min 0 --apply
+```
+
+#### mcp tasks status
+
+Show task scaling policy and custom metric freshness
+
+`gregale mcp tasks status [--app <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | worker app slug (defaults to the linked project app) |  |
+
+Examples:
+
+```sh
+gregale mcp tasks status --app mcp-worker --json
 ```
 
 ### mcp watch
@@ -519,7 +562,7 @@ gregale mcp watch --app my-mcp --baseline gregale-mcp.lock.json
 
 Emit remote MCP connection JSON without credentials
 
-`gregale mcp config [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp config [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -654,7 +697,7 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
 | `--scale-to-zero` | suspend compute when idle |  |
 | `--environment-key <KEY>` | connection environment variable |  |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
 
 ### add bucket
@@ -1613,6 +1656,19 @@ Inspect event routing, execution and replay recovery
 | `--subscription <SUB>` | list retained handler replays for one captured recipient |  |
 | `--after <CURSOR>` | opaque next_after cursor for recipients or replays |  |
 | `--limit <N>` | max recipients or replays (1..200, default 100) |  |
+
+### events recover
+
+Recover one event consumer using its current receipt action
+
+`gregale events recover --source <SOURCE> --id <ID> --subscription <SUB> [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--source <SOURCE>` | published event source | required |
+| `--id <ID>` | published event id | required |
+| `--subscription <SUB>` | captured recipient identifier | required |
+| `--dry-run` | show recovery availability and action without replaying |  |
 
 ### events attempts
 
@@ -3232,7 +3288,11 @@ Cancel an active workflow run
 
 Send external event to a workflow run
 
-`gregale workflows events <run_id> <event_name>`
+`gregale workflows events [--payload <JSON>] <run_id> <event_name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--payload <JSON>` | JSON event payload (default {}) |  |
 
 
 ## dashboard
@@ -3603,7 +3663,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `data-api` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
 | `--handler <HANDLER>` | function handler |  |
@@ -4151,6 +4211,123 @@ gregale preview review pr-42-api pr-42-worker --source-impact pr-42-api=api-impa
 gregale preview review pr-42-api pr-42-worker --test-report pr-42-api=api-tests.json --fail-on-breaking --fail-on-incomplete
 ```
 
+### preview customers
+
+Build customer impact rosters and track route migrations
+
+`gregale preview customers --report <PATH> [--by <consumer|tenant>] [--format <FORMAT>] [--out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--report <PATH>` | preview report or multi-app release review JSON with --customer-details | required |
+| `--by <consumer|tenant>` | group by consumer (app scoped) or tenant (account scoped; default consumer) | one of `consumer` · `tenant` |
+| `--format <FORMAT>` | text, Markdown, or CSV output (default text; --json emits machine-readable JSON) | one of `text` · `markdown` · `csv` |
+| `--out <PATH>` | write a machine-readable roster to a new JSON file |  |
+
+Examples:
+
+```sh
+gregale preview customers --report route-report.json --by consumer --format markdown
+gregale preview customers --report release-review.json --by tenant --format csv
+gregale preview customers track --roster customer-roster.json --mapping route-successors.json --deployment checkout=00000000-0000-4000-8000-000000000001
+```
+
+#### preview customers track
+
+Compare a saved cohort with current route-customer telemetry
+
+`gregale preview customers track --roster <PATH> --mapping <PATH> --deployment <APP=ID>... [--since <DURATION>] [--format <FORMAT>] [--out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--roster <PATH>` | version 1 customer roster JSON produced by preview customers | required |
+| `--mapping <PATH>` | version 1 explicit old-to-successor route mapping JSON | required |
+| `--deployment <APP=ID>` | immutable current deployment as APP=ID; repeat for each app | required |
+| `--since <DURATION>` | post-release observation window (duration or RFC3339 timestamp; default 14d) |  |
+| `--format <FORMAT>` | text, Markdown, or CSV output (default text; --json emits machine-readable JSON) | one of `text` · `markdown` · `csv` |
+| `--out <PATH>` | write the full machine-readable tracker to a new JSON file |  |
+
+Examples:
+
+```sh
+gregale preview customers track --roster customer-roster.json --mapping route-successors.json --deployment checkout=00000000-0000-4000-8000-000000000001 --since 14d --format markdown
+```
+
+#### preview customers progress
+
+Measure sustained old-route traffic and customer migration progress across saved tracker windows
+
+`gregale preview customers progress --snapshot <PATH>... [--grace-period <DURATION>] [--min-windows <COUNT>] [--max-staleness <DURATION>] [--format <FORMAT>] [--out <PATH>] [--fail-on-incomplete] [--fail-on-not-ready]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--snapshot <PATH>` | saved route customer tracker JSON; repeat for each observation window | required |
+| `--grace-period <DURATION>` | minimum continuous zero-traffic period before owner review (default 30d) |  |
+| `--min-windows <COUNT>` | minimum distinct complete observation windows (default 2) |  |
+| `--max-staleness <DURATION>` | maximum age of the latest telemetry watermark (default 72h) |  |
+| `--format <FORMAT>` | text or Markdown output (default text; --json emits machine-readable JSON) | one of `text` · `markdown` |
+| `--out <PATH>` | write the full machine-readable progress report to a new JSON file |  |
+| `--fail-on-incomplete` | exit 1 when evidence is incomplete |  |
+| `--fail-on-not-ready` | exit 1 unless every route is ready for owner review |  |
+
+Examples:
+
+```sh
+gregale preview customers progress --snapshot migration-week-1.json --snapshot migration-week-2.json --grace-period 30d --format markdown
+```
+
+#### preview customers migration
+
+Join contract compatibility with customer cutover evidence
+
+`gregale preview customers migration`
+
+##### preview customers migration review
+
+Review contract compatibility and customer-by-customer route migration progress
+
+`gregale preview customers migration review --contract-review <PATH> --snapshot <PATH>... [--grace-period <DURATION>] [--min-windows <COUNT>] [--max-staleness <DURATION>] [--format <FORMAT>] [--out <PATH>] [--fail-on-breaking] [--fail-on-incomplete] [--fail-on-not-ready]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--contract-review <PATH>` | version 1 JSON from gregale routes migration review | required |
+| `--snapshot <PATH>` | saved route customer tracker JSON; repeat for each observation window | required |
+| `--grace-period <DURATION>` | minimum continuous zero-traffic period before owner review (default 30d) |  |
+| `--min-windows <COUNT>` | minimum distinct complete observation windows (default 2) |  |
+| `--max-staleness <DURATION>` | maximum age of the latest telemetry watermark (default 72h) |  |
+| `--format <FORMAT>` | text, Markdown, or prioritized CSV action queue (default text; --json emits machine-readable JSON) | one of `text` · `markdown` · `csv` |
+| `--out <PATH>` | write the full machine-readable cutover review to a new JSON file |  |
+| `--fail-on-breaking` | exit 1 when any mapped successor has a declared breaking change |  |
+| `--fail-on-incomplete` | exit 1 when contract or telemetry evidence is incomplete |  |
+| `--fail-on-not-ready` | exit 1 unless every route is ready for owner review |  |
+
+Examples:
+
+```sh
+gregale preview customers migration review --contract-review migration-review.json --snapshot migration-week-1.json --snapshot migration-week-2.json --grace-period 30d --format markdown
+gregale preview customers migration review --contract-review migration-review.json --snapshot migration-week-1.json --snapshot migration-week-2.json --format csv
+```
+
+##### preview customers migration diff
+
+Compare customer migration evidence between two cutover reviews
+
+`gregale preview customers migration diff --before <PATH> --after <PATH> [--format <FORMAT>] [--out <PATH>] [--fail-on-regression]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <PATH>` | previous version 1 customer migration cutover review JSON | required |
+| `--after <PATH>` | current version 1 customer migration cutover review JSON | required |
+| `--format <FORMAT>` | text, Markdown, or CSV output (default text; --json emits machine-readable JSON) | one of `text` · `markdown` · `csv` |
+| `--out <PATH>` | write the machine-readable migration diff to a new JSON file |  |
+| `--fail-on-regression` | exit 1 when confirmed customer migration regressions are found |  |
+
+Examples:
+
+```sh
+gregale preview customers migration diff --before migration-last-week.json --after migration-today.json --fail-on-regression --format markdown
+```
+
 ### preview wait
 
 Wait for a preview deployment to become ready
@@ -4621,7 +4798,7 @@ Remove the imported app OpenAPI document
 
 ## routes
 
-Analyze source changes and plan or apply route policies
+Analyze route changes, migrations, lifecycle and production policies
 
 `gregale routes [<subcommand>] [<slug>]`
 
@@ -4666,6 +4843,25 @@ Read production route budgets and revision
 
 `gregale routes monitor get <slug>`
 
+#### routes monitor preview
+
+Evaluate proposed budgets against recent production traffic without saving them
+
+`gregale routes monitor preview --routes <PATH> [--customer-group-by <DIMENSION>] [--customer-details] [--fail-on-unhealthy] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--routes <PATH>` | JSON array of proposed exact route budgets | required |
+| `--customer-group-by <DIMENSION>` | optionally evaluate budgets per tenant or consumer | one of `tenant` · `consumer` |
+| `--customer-details` | include observed tenant or consumer IDs (when enabled) |  |
+| `--fail-on-unhealthy` | exit nonzero unless all proposed budgets are healthy |  |
+
+Examples:
+
+```sh
+gregale routes monitor preview my-api --routes production-routes.json --customer-group-by tenant
+```
+
 #### routes monitor set
 
 Save advisory production route budgets
@@ -4701,14 +4897,21 @@ List retained production route incidents
 
 #### routes monitor explain
 
-Inspect saved incident windows, request links and dependency timings
+Inspect a saved incident and optionally correlate affected customers and changed route owners
 
-`gregale routes monitor explain --incident <ID> [--out <PATH>] <slug>`
+`gregale routes monitor explain --incident <ID> [--out <PATH>] [--source-impact <PATH|auto>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--incident <ID>` | saved incident UUID | required |
 | `--out <PATH>` | save incident evidence JSON to a new file |  |
+| `--source-impact <PATH|auto>` | correlate source, aggregate customer impact, and candidate-commit CODEOWNERS from the matching local repository |  |
+
+Examples:
+
+```sh
+gregale routes monitor explain api --incident INCIDENT_UUID --source-impact auto
+```
 
 ### routes lifecycle
 
@@ -4732,6 +4935,32 @@ Examples:
 
 ```sh
 gregale routes lifecycle review api --deployment DEPLOYMENT_UUID --since 14d --source-impact impact.json --out lifecycle-review.json
+```
+
+### routes migration
+
+Check mapped route successors against immutable deployment contracts
+
+#### routes migration review
+
+Compare method, path parameters, request, response and security contracts
+
+`gregale routes migration review --mapping <PATH> --from-deployment <APP=ID>... --to-deployment <APP=ID>... [--format <FORMAT>] [--out <PATH>] [--fail-on-breaking] [--fail-on-incomplete]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--mapping <PATH>` | version 1 explicit old-to-successor route mapping JSON | required |
+| `--from-deployment <APP=ID>` | immutable baseline deployment as APP=ID; repeat for each app | required |
+| `--to-deployment <APP=ID>` | immutable successor deployment as APP=ID; repeat for each app | required |
+| `--format <FORMAT>` | text or Markdown output (default text; --json emits machine-readable JSON) | one of `text` · `markdown` |
+| `--out <PATH>` | save the full JSON review to a new file |  |
+| `--fail-on-breaking` | exit nonzero when any successor has a declared breaking change |  |
+| `--fail-on-incomplete` | exit nonzero when any route lacks complete contract evidence |  |
+
+Examples:
+
+```sh
+gregale routes migration review --mapping route-successors.json --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --format markdown --out migration-review.json
 ```
 
 ### routes health
@@ -5156,7 +5385,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `data-api` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -6544,6 +6773,48 @@ Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 `gregale plan`
 
 
+## data-api
+
+Create schema-generated PostgreSQL APIs and export application types
+
+`gregale data-api [<subcommand>]`
+
+### data-api create
+
+Deploy a managed PostgREST Data API
+
+`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--scope <SCOPE>] --issuer <HTTPS_URL> --jwks-url <HTTPS_URL> --audience <AUDIENCE> [--origins <ORIGINS>] [--resume] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--database <DATABASE>` | ready managed database name or ID | required |
+| `--schema <SCHEMA>` | exposed schema (api) |  |
+| `--scope <SCOPE>` | environment scope |  |
+| `--issuer <HTTPS_URL>` | application JWT issuer | required |
+| `--jwks-url <HTTPS_URL>` | application JWKS URL | required |
+| `--audience <AUDIENCE>` | application JWT audience | required |
+| `--origins <ORIGINS>` | comma-separated browser origins |  |
+| `--resume` | resume configuration and deployment of an existing app |  |
+
+### data-api types
+
+Generate types in an owner-authenticated app task
+
+`gregale data-api types [--output <FILE>] [--check] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--output <FILE>` | generated TypeScript output |  |
+| `--check` | fail if the output file is stale |  |
+| `--timeout <DURATION>` | task wait deadline (default 2m) |  |
+
+### data-api refresh
+
+Request a fresh restart to reload the database schema
+
+`gregale data-api refresh <name>`
+
+
 ## ps
 
 Show live instances + state for an app (slug defaults to linked context)
@@ -6731,9 +7002,24 @@ Purge one event or --all
 
 ## registry
 
-Per-app private container registry credentials (registry list|set|rm --app &lt;slug&gt;)
+Manage private registry credentials and deploy published images
 
 `gregale registry [<subcommand>]`
+
+### registry published
+
+Deploy an image after CI publishes its immutable digest
+
+`gregale registry published --app <slug> --image <REF> [--scope <SLUG>] [--environment <SLUG>] [--wait] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--image <REF>` | published digest-pinned image reference | required |
+| `--scope <SLUG>` | deployment scope |  |
+| `--environment <SLUG>` | registered project environment |  |
+| `--wait` | wait for the image deployment |  |
+| `--timeout <DURATION>` | deployment wait timeout |  |
 
 ### registry list
 
@@ -6902,13 +7188,15 @@ Remove one live connection from a channel
 
 Publish a message to a channel
 
-`gregale realtime publish [--data <DATA>] [--data-stdin] [--binary] <app> <endpoint-id> <channel>`
+`gregale realtime publish [--data <DATA>] [--data-stdin] [--binary] [--delivery <MODE>] [--idempotency-key <KEY>] <app> <endpoint-id> <channel>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--data <DATA>` | message text (or --data-stdin) |  |
 | `--data-stdin` | read the message from stdin |  |
 | `--binary` | send as a binary frame |  |
+| `--delivery <MODE>` | live by default or preview-only retained (up to 4 KiB) | one of `live` · `retained` |
+| `--idempotency-key <KEY>` | stable retry key; required for retained delivery |  |
 
 ### realtime auth
 
@@ -7559,7 +7847,7 @@ Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]; slug defaults to lin
 
 ## status
 
-Personal SLO numbers (availability, wake p95, build success)
+Platform status: API availability, wake p95 and deployment success (not account-specific)
 
 `gregale status`
 
@@ -7716,7 +8004,7 @@ Manage deployment traffic split (available on every plan)
 
 Set the traffic split for a deployment
 
-`gregale traffic set [--app <SLUG>] --deployment <ID> --percent <N>`
+`gregale traffic set [--app <SLUG>] --deployment <ID> --percent <N> [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7728,7 +8016,7 @@ Set the traffic split for a deployment
 
 Promote a live deployment to 100% production traffic
 
-`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack]`
+`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7745,6 +8033,103 @@ Promote a live deployment to 100% production traffic
 Show live deployment traffic weights for an app
 
 `gregale traffic status <slug>`
+
+
+## log-drains
+
+Ship app runtime logs to an HTTP JSON or OTLP endpoint
+
+`gregale log-drains [<subcommand>]`
+
+### log-drains list
+
+List an app&#39;s log drains
+
+`gregale log-drains list [--app <SLUG>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+
+Examples:
+
+```sh
+gregale log-drains list --app my-app
+```
+
+### log-drains add
+
+Add a log drain; the credential is read from an environment variable
+
+`gregale log-drains add [--app <SLUG>] --url <URL> [--kind <KIND>] [--auth-header-env <ENV>] [--disabled] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--url <URL>` | destination URL | required |
+| `--kind <KIND>` | destination format (default http_json) | one of `http_json` · `otlp` |
+| `--auth-header-env <ENV>` | environment variable holding the Authorization header value |  |
+| `--disabled` | create the drain disabled |  |
+
+Examples:
+
+```sh
+LOG_TOKEN='Bearer …' gregale log-drains add --app my-app --url https://logs.example.com/ingest --auth-header-env LOG_TOKEN
+```
+
+### log-drains get
+
+Show one log drain (credential masked)
+
+`gregale log-drains get [--app <SLUG>] --id <ID> [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--id <ID>` | log drain id | required |
+
+### log-drains health
+
+Show delivery health: queue, delivered, failed and last error
+
+`gregale log-drains health [--app <SLUG>] --id <ID> [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--id <ID>` | log drain id | required |
+
+Examples:
+
+```sh
+gregale log-drains health --app my-app --id <drain-id>
+```
+
+### log-drains update
+
+Change a drain&#39;s URL or credential, or pause and resume it
+
+`gregale log-drains update [--app <SLUG>] --id <ID> [--url <URL>] [--auth-header-env <ENV>] [--enable] [--disable] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--id <ID>` | log drain id | required |
+| `--url <URL>` | new destination URL |  |
+| `--auth-header-env <ENV>` | environment variable holding the new Authorization header value |  |
+| `--enable` | resume delivery |  |
+| `--disable` | pause delivery |  |
+
+### log-drains rm
+
+Delete a log drain
+
+`gregale log-drains rm [--app <SLUG>] --id <ID> [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug |  |
+| `--id <ID>` | log drain id | required |
 
 
 ## mirror

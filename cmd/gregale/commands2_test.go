@@ -356,6 +356,10 @@ func TestCmdAppPublicAuth_ParsesAndForwards(t *testing.T) {
 	t.Run("no_require_authn_opens_public_url", func(t *testing.T) {
 		var seen api.UpdateAppRequest
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: constSlug, RequireAuthn: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeBearer}})
+				return
+			}
 			if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
 				http.Error(w, "bad json", http.StatusBadRequest)
 				return
@@ -374,6 +378,28 @@ func TestCmdAppPublicAuth_ParsesAndForwards(t *testing.T) {
 		}
 		if seen.PublicAuth == nil || seen.PublicAuth.Mode != api.AppPublicAuthModeOpen {
 			t.Fatalf("PublicAuth = %+v; want mode=open", seen.PublicAuth)
+		}
+	})
+	t.Run("no_require_authn_keeps_ip_allowlist", func(t *testing.T) {
+		// production-us hunt #5 (H5-37).
+		var seen api.UpdateAppRequest
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: constSlug, RequireAuthn: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeIPAllowlist, IPAllowlistEntryCount: 1}})
+				return
+			}
+			_ = json.NewDecoder(r.Body).Decode(&seen)
+			_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: constSlug})
+		}))
+		defer srv.Close()
+		t.Setenv("FAAS_API", srv.URL)
+		t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+		if code := cmdApp([]string{constSlug, "--no-require-authn"}); code != 0 {
+			t.Fatalf("cmdApp --no-require-authn exit = %d; want 0", code)
+		}
+		if seen.RequireAuthn == nil || *seen.RequireAuthn || seen.PublicAuth != nil {
+			t.Fatalf("require_authn=%v public_auth=%+v; want the IP allowlist left in place", seen.RequireAuthn, seen.PublicAuth)
 		}
 	})
 	t.Run("explicit_public_auth_wins", func(t *testing.T) {

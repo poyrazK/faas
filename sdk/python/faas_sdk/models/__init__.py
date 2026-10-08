@@ -435,6 +435,7 @@ from .commit_source_response_contract_version import CommitSourceResponseContrac
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
+from .compose_healthcheck import ComposeHealthcheck
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
 from .consumer_key_list_response import ConsumerKeyListResponse
@@ -817,6 +818,8 @@ from .domain_doctor_report import DomainDoctorReport
 from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
 from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
+from .durable_entity_invoke_request import DurableEntityInvokeRequest
+from .durable_entity_invoke_response import DurableEntityInvokeResponse
 from .edge_rule_async_action import EdgeRuleAsyncAction
 from .edge_rule_async_action_retry_policy import EdgeRuleAsyncActionRetryPolicy
 from .edge_rule_budget_action import EdgeRuleBudgetAction
@@ -944,12 +947,14 @@ from .event_receipt_execution_response import EventReceiptExecutionResponse
 from .event_receipt_execution_response_state import EventReceiptExecutionResponseState
 from .event_receipt_recipient_response import EventReceiptRecipientResponse
 from .event_receipt_recipient_response_execution_unavailable import EventReceiptRecipientResponseExecutionUnavailable
+from .event_receipt_recipient_response_origin import EventReceiptRecipientResponseOrigin
 from .event_receipt_recovery_action import EventReceiptRecoveryAction
 from .event_receipt_recovery_action_kind import EventReceiptRecoveryActionKind
 from .event_receipt_recovery_action_method import EventReceiptRecoveryActionMethod
 from .event_receipt_recovery_response import EventReceiptRecoveryResponse
 from .event_receipt_replay_history_response import EventReceiptReplayHistoryResponse
 from .event_receipt_response import EventReceiptResponse
+from .event_receipt_response_backfill_routing_summary import EventReceiptResponseBackfillRoutingSummary
 from .event_receipt_response_routing_mode import EventReceiptResponseRoutingMode
 from .event_receipt_response_routing_summary import EventReceiptResponseRoutingSummary
 from .event_receipt_routing_response import EventReceiptRoutingResponse
@@ -1587,10 +1592,13 @@ from .operation_artifact_request import OperationArtifactRequest
 from .operation_cancellation_request import OperationCancellationRequest
 from .operation_definition_response import OperationDefinitionResponse
 from .operation_definition_spec import OperationDefinitionSpec
+from .operation_definition_spec_http_transaction_version import OperationDefinitionSpecHttpTransactionVersion
 from .operation_definition_spec_method import OperationDefinitionSpecMethod
+from .operation_definition_spec_milestones import OperationDefinitionSpecMilestones
 from .operation_definition_spec_owner import OperationDefinitionSpecOwner
 from .operation_definition_spec_recovery import OperationDefinitionSpecRecovery
 from .operation_definition_summary import OperationDefinitionSummary
+from .operation_definition_summary_http_transaction_version import OperationDefinitionSummaryHttpTransactionVersion
 from .operation_definition_summary_method import OperationDefinitionSummaryMethod
 from .operation_definition_summary_owner import OperationDefinitionSummaryOwner
 from .operation_definition_summary_recovery import OperationDefinitionSummaryRecovery
@@ -1623,6 +1631,11 @@ from .operation_events_response import OperationEventsResponse
 from .operation_execution import OperationExecution
 from .operation_executions_response import OperationExecutionsResponse
 from .operation_list_response import OperationListResponse
+from .operation_milestone import OperationMilestone
+from .operation_milestone_request import OperationMilestoneRequest
+from .operation_milestone_validation_request import OperationMilestoneValidationRequest
+from .operation_milestone_validation_response import OperationMilestoneValidationResponse
+from .operation_milestones_response import OperationMilestonesResponse
 from .operation_progress import OperationProgress
 from .operation_recovery_request import OperationRecoveryRequest
 from .operation_recovery_request_resolution import OperationRecoveryRequestResolution
@@ -1631,9 +1644,20 @@ from .operation_response import OperationResponse
 from .operation_response_state import OperationResponseState
 from .operation_result_artifact import OperationResultArtifact
 from .operation_start_request import OperationStartRequest
+from .operation_subject import OperationSubject
+from .operation_subject_spec import OperationSubjectSpec
 from .operation_summary import OperationSummary
 from .operation_summary_state import OperationSummaryState
 from .operation_tenant_identity import OperationTenantIdentity
+from .operation_workflow_state import OperationWorkflowState
+from .operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
+from .operation_workflow_state_report import OperationWorkflowStateReport
+from .operation_workflow_state_report_response import OperationWorkflowStateReportResponse
+from .operation_workflow_state_validation_request import OperationWorkflowStateValidationRequest
+from .operation_workflow_state_validation_response import OperationWorkflowStateValidationResponse
+from .operation_workflow_step import OperationWorkflowStep
+from .operation_workflow_step_state_stale_after_seconds import OperationWorkflowStepStateStaleAfterSeconds
+from .operation_workflow_transition import OperationWorkflowTransition
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -1713,6 +1737,8 @@ from .plan_response_scan_source import PlanResponseScanSource
 from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
+from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
+from .plan_workload_depends_on_conditions_additional_property import PlanWorkloadDependsOnConditionsAdditionalProperty
 from .plan_workload_tier import PlanWorkloadTier
 from .platform_tenant_access_token_list_response import PlatformTenantAccessTokenListResponse
 from .platform_tenant_access_token_response import PlatformTenantAccessTokenResponse
@@ -1865,6 +1891,8 @@ from .preview_production_changes_response_configuration_changed_groups_item impo
 )
 from .preview_resource_links_response import PreviewResourceLinksResponse
 from .preview_resource_response import PreviewResourceResponse
+from .preview_route_monitor_request import PreviewRouteMonitorRequest
+from .preview_route_monitor_request_customer_group_by import PreviewRouteMonitorRequestCustomerGroupBy
 from .preview_service_calls_policy import PreviewServiceCallsPolicy
 from .prewarm_intent_response import PrewarmIntentResponse
 from .prewarm_intent_response_status import PrewarmIntentResponseStatus
@@ -2050,6 +2078,7 @@ from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
 from .publish_event_response import PublishEventResponse
+from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .put_app_env_request import PutAppEnvRequest
@@ -2302,6 +2331,7 @@ from .route_monitor_customer_report_status import RouteMonitorCustomerReportStat
 from .route_monitor_customer_route import RouteMonitorCustomerRoute
 from .route_monitor_customer_route_method import RouteMonitorCustomerRouteMethod
 from .route_monitor_customer_window import RouteMonitorCustomerWindow
+from .route_monitor_deployment_baseline import RouteMonitorDeploymentBaseline
 from .route_monitor_evidence import RouteMonitorEvidence
 from .route_monitor_evidence_customer_group_by import RouteMonitorEvidenceCustomerGroupBy
 from .route_monitor_evidence_method import RouteMonitorEvidenceMethod
@@ -2312,14 +2342,26 @@ from .route_monitor_finding_error_status import RouteMonitorFindingErrorStatus
 from .route_monitor_finding_latency_status import RouteMonitorFindingLatencyStatus
 from .route_monitor_finding_status import RouteMonitorFindingStatus
 from .route_monitor_incident import RouteMonitorIncident
+from .route_monitor_incident_escalation import RouteMonitorIncidentEscalation
+from .route_monitor_incident_escalation_signal import RouteMonitorIncidentEscalationSignal
+from .route_monitor_incident_escalation_signal_signal import RouteMonitorIncidentEscalationSignalSignal
 from .route_monitor_incident_page import RouteMonitorIncidentPage
 from .route_monitor_incident_status import RouteMonitorIncidentStatus
+from .route_monitor_incident_timeline_entry import RouteMonitorIncidentTimelineEntry
+from .route_monitor_incident_timeline_entry_coverage import RouteMonitorIncidentTimelineEntryCoverage
+from .route_monitor_incident_timeline_entry_status import RouteMonitorIncidentTimelineEntryStatus
+from .route_monitor_incident_timeline_route import RouteMonitorIncidentTimelineRoute
+from .route_monitor_incident_timeline_route_error_status import RouteMonitorIncidentTimelineRouteErrorStatus
+from .route_monitor_incident_timeline_route_latency_status import RouteMonitorIncidentTimelineRouteLatencyStatus
+from .route_monitor_incident_timeline_route_status import RouteMonitorIncidentTimelineRouteStatus
+from .route_monitor_preview import RouteMonitorPreview
 from .route_monitor_report import RouteMonitorReport
 from .route_monitor_report_coverage import RouteMonitorReportCoverage
 from .route_monitor_report_customer_group_by import RouteMonitorReportCustomerGroupBy
 from .route_monitor_report_status import RouteMonitorReportStatus
 from .route_monitor_route import RouteMonitorRoute
 from .route_monitor_route_method import RouteMonitorRouteMethod
+from .route_monitor_webhook_escalation import RouteMonitorWebhookEscalation
 from .route_monitor_webhook_payload import RouteMonitorWebhookPayload
 from .route_monitor_webhook_payload_status import RouteMonitorWebhookPayloadStatus
 from .route_monitor_window import RouteMonitorWindow
@@ -3193,6 +3235,7 @@ __all__ = (
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
+    "ComposeHealthcheck",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
     "ConsumerKeyListResponse",
@@ -3559,6 +3602,8 @@ __all__ = (
     "DryRunAppOpenAPIBody",
     "DryRunAppOpenAPIBodyInfo",
     "DryRunAppOpenAPIBodyPaths",
+    "DurableEntityInvokeRequest",
+    "DurableEntityInvokeResponse",
     "EdgeRuleAsyncAction",
     "EdgeRuleAsyncActionRetryPolicy",
     "EdgeRuleBudgetAction",
@@ -3684,12 +3729,14 @@ __all__ = (
     "EventReceiptExecutionResponseState",
     "EventReceiptRecipientResponse",
     "EventReceiptRecipientResponseExecutionUnavailable",
+    "EventReceiptRecipientResponseOrigin",
     "EventReceiptRecoveryAction",
     "EventReceiptRecoveryActionKind",
     "EventReceiptRecoveryActionMethod",
     "EventReceiptRecoveryResponse",
     "EventReceiptReplayHistoryResponse",
     "EventReceiptResponse",
+    "EventReceiptResponseBackfillRoutingSummary",
     "EventReceiptResponseRoutingMode",
     "EventReceiptResponseRoutingSummary",
     "EventReceiptRoutingResponse",
@@ -4321,11 +4368,14 @@ __all__ = (
     "OperationCancellationRequest",
     "OperationDefinitionResponse",
     "OperationDefinitionSpec",
+    "OperationDefinitionSpecHttpTransactionVersion",
     "OperationDefinitionSpecMethod",
+    "OperationDefinitionSpecMilestones",
     "OperationDefinitionSpecOwner",
     "OperationDefinitionSpecRecovery",
     "OperationDefinitionsResponse",
     "OperationDefinitionSummary",
+    "OperationDefinitionSummaryHttpTransactionVersion",
     "OperationDefinitionSummaryMethod",
     "OperationDefinitionSummaryOwner",
     "OperationDefinitionSummaryRecovery",
@@ -4357,6 +4407,11 @@ __all__ = (
     "OperationExecution",
     "OperationExecutionsResponse",
     "OperationListResponse",
+    "OperationMilestone",
+    "OperationMilestoneRequest",
+    "OperationMilestonesResponse",
+    "OperationMilestoneValidationRequest",
+    "OperationMilestoneValidationResponse",
     "OperationProgress",
     "OperationRecoveryRequest",
     "OperationRecoveryRequestResolution",
@@ -4365,9 +4420,20 @@ __all__ = (
     "OperationResponseState",
     "OperationResultArtifact",
     "OperationStartRequest",
+    "OperationSubject",
+    "OperationSubjectSpec",
     "OperationSummary",
     "OperationSummaryState",
     "OperationTenantIdentity",
+    "OperationWorkflowState",
+    "OperationWorkflowStateHistoryEntry",
+    "OperationWorkflowStateReport",
+    "OperationWorkflowStateReportResponse",
+    "OperationWorkflowStateValidationRequest",
+    "OperationWorkflowStateValidationResponse",
+    "OperationWorkflowStep",
+    "OperationWorkflowStepStateStaleAfterSeconds",
+    "OperationWorkflowTransition",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",
@@ -4447,6 +4513,8 @@ __all__ = (
     "PlanWorkload",
     "PlanWorkloadAction",
     "PlanWorkloadClass",
+    "PlanWorkloadDependsOnConditions",
+    "PlanWorkloadDependsOnConditionsAdditionalProperty",
     "PlanWorkloadTier",
     "PlatformTenantAccessTokenListResponse",
     "PlatformTenantAccessTokenResponse",
@@ -4579,6 +4647,8 @@ __all__ = (
     "PreviewProductionChangesResponseConfigurationChangedGroupsItem",
     "PreviewResourceLinksResponse",
     "PreviewResourceResponse",
+    "PreviewRouteMonitorRequest",
+    "PreviewRouteMonitorRequestCustomerGroupBy",
     "PreviewServiceCallsPolicy",
     "PrewarmIntentResponse",
     "PrewarmIntentResponseStatus",
@@ -4740,6 +4810,7 @@ __all__ = (
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishManagedRealtimeChannelDelivery",
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
     "PutAppEnvRequest",
@@ -4990,6 +5061,7 @@ __all__ = (
     "RouteMonitorCustomerRoute",
     "RouteMonitorCustomerRouteMethod",
     "RouteMonitorCustomerWindow",
+    "RouteMonitorDeploymentBaseline",
     "RouteMonitorEvidence",
     "RouteMonitorEvidenceCustomerGroupBy",
     "RouteMonitorEvidenceMethod",
@@ -5000,14 +5072,26 @@ __all__ = (
     "RouteMonitorFindingLatencyStatus",
     "RouteMonitorFindingStatus",
     "RouteMonitorIncident",
+    "RouteMonitorIncidentEscalation",
+    "RouteMonitorIncidentEscalationSignal",
+    "RouteMonitorIncidentEscalationSignalSignal",
     "RouteMonitorIncidentPage",
     "RouteMonitorIncidentStatus",
+    "RouteMonitorIncidentTimelineEntry",
+    "RouteMonitorIncidentTimelineEntryCoverage",
+    "RouteMonitorIncidentTimelineEntryStatus",
+    "RouteMonitorIncidentTimelineRoute",
+    "RouteMonitorIncidentTimelineRouteErrorStatus",
+    "RouteMonitorIncidentTimelineRouteLatencyStatus",
+    "RouteMonitorIncidentTimelineRouteStatus",
+    "RouteMonitorPreview",
     "RouteMonitorReport",
     "RouteMonitorReportCoverage",
     "RouteMonitorReportCustomerGroupBy",
     "RouteMonitorReportStatus",
     "RouteMonitorRoute",
     "RouteMonitorRouteMethod",
+    "RouteMonitorWebhookEscalation",
     "RouteMonitorWebhookPayload",
     "RouteMonitorWebhookPayloadStatus",
     "RouteMonitorWindow",

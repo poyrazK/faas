@@ -144,6 +144,15 @@ const EnvironmentGitProtectedBranchEvidenceMaxAge = time.Minute
 // acknowledge the alias contract after node capability discovery.
 const VMMSecretAliasCleanupTimeout = 5 * time.Second
 
+// VMMImageHealthcheckCleanupTimeout bounds teardown of an unverified wake.
+const VMMImageHealthcheckCleanupTimeout = 5 * time.Second
+
+// Image command timing remains image-owned; these bound only host transport
+// and monitor recovery when no fresh guest outcome can be obtained.
+const ImageHealthcheckTransportAllowance = time.Second
+const ImageHealthcheckTransportRetryInterval = time.Second
+const ImageHealthcheckTransportFailures = 3
+
 const EnvironmentGitReviewedMergeReadTimeout = 30 * time.Second
 const EnvironmentGitApprovalEvidenceMaxBytes = 64 << 10
 const EnvironmentGitApprovalMaxReviews = 1000
@@ -188,6 +197,13 @@ const NativeHostHelperCgroupEventsMaxBytes = 4096
 
 // Candidate discovery is separate from approval and approved-intent sweeps.
 // One bounded remote read completes inside a fenced durable poll lease.
+// TelemetryIngestDBConcurrency bounds how many gateway debug-telemetry
+// records (app errors, request telemetry) one apid writes at once. Those
+// writes share apid's database pool with the customer API; unbounded, one
+// app's error stream held every connection and secret updates failed at
+// their deadline (production-us hunt #5, H5-34).
+const TelemetryIngestDBConcurrency = 4
+
 const (
 	EnvironmentGitSourcePollLeaseDuration = 2 * time.Minute
 	EnvironmentGitSourcePollReadTimeout   = 45 * time.Second
@@ -241,54 +257,75 @@ const (
 
 // Workflow coordinator attempts use the positive PostgreSQL integer domain.
 const (
-	OperationWorkflowClaimsMaxPerRun   = 1<<31 - 1
-	OperationWorkflowStepAttemptsMax   = 1<<31 - 1
-	OperationWorkflowStepErrorMaxBytes = 4096
+	OperationWorkflowDispatchRetryDelay = time.Second
+	OperationWorkflowDefaultAttempts    = 3
+	OperationWorkflowRetryShiftMax      = 8
+	OperationWorkflowRetryBackoffMax    = 5 * time.Minute
+	OperationWorkflowClaimsMaxPerRun    = 1<<31 - 1
+	OperationWorkflowStepAttemptsMax    = 1<<31 - 1
+	OperationWorkflowStepErrorMaxBytes  = 4096
 )
 
 // Operations protocol limits apply before customer schemas are evaluated.
 const (
-	OperationJSONMaxDepth                      = 64
-	OperationJSONMaxNumberBytes                = 256
-	OperationJSONMaxExponent                   = 10000
-	OperationNameMaxBytes                      = 64
-	OperationPathMaxBytes                      = 2048
-	OperationIdempotencyKeyMaxBytes            = 128
-	OperationReportIDMaxBytes                  = 128
-	OperationRecoveryEvidenceMaxBytes          = 4096
-	OperationEventsPageMax                     = 100
-	OperationDeliveryRetryMaxBytes             = 4096
-	OperationDeliveryReceiptMaxBytes           = 8192
-	OperationDeliveryRetriesMax                = 32
-	OperationHistoryPageDefault                = 20
-	OperationHistoryPageMax                    = 100
-	OperationHistoryCursorMaxBytes             = 512
-	OperationRetentionPageMax                  = 500
-	OperationDefinitionBodyMaxBytes            = 140000
-	OperationReportBodyMaxBytes                = 16384
-	OperationRecoveryBodyOverheadBytes         = 8192
-	OperationSubmissionMaxBytes                = 1 << 20
-	OperationStartBodyOverheadBytes            = 1024
-	OperationDoctorChecksMax                   = 1024
-	OperationDoctorMaxDuration                 = 10 * time.Second
-	OperationSubmissionReceiptMaxBytes         = OperationSubmissionMaxBytes + OperationStartBodyOverheadBytes + 2*OperationPathMaxBytes
-	SourceManifestMaxBytes                     = 1 << 20
-	OperationArtifactNameMaxBytes              = 128
-	OperationArtifactKeyMaxBytes               = 1024
-	OperationArtifactURIMaxBytes               = 2048
-	OperationArtifactSpoolMaxBytes       int64 = 256 << 20
-	OperationArtifactTransfersPerAccount       = 4
-	OperationArtifactTransfersPerNode          = 8
-	OperationArtifactTransferTimeout           = 30 * time.Second
-	OperationArtifactStagingLifetime           = 2 * time.Minute
-	OperationArtifactCleanupLease              = time.Minute
-	OperationArtifactCleanupRetry              = 5 * time.Minute
-	OperationArtifactCleanupInterval           = time.Minute
-	OperationArtifactCleanupBatch              = 20
-	OperationPreviewPolicyMaxBytes             = 64 << 10
-	OperationPreviewCohortsMax                 = 10
-	OperationPreviewTenantsPerCohortMax        = 10
-	OperationPreviewWindowMax                  = time.Hour
+	OperationJSONMaxDepth                                = 64
+	OperationJSONMaxNumberBytes                          = 256
+	OperationJSONMaxExponent                             = 10000
+	OperationNameMaxBytes                                = 64
+	OperationSubjectIDMaxBytes                           = 256
+	OperationWorkflowInstanceIDMaxBytes                  = 256
+	OperationWorkflowNameMaxBytes                        = 63
+	OperationMilestoneDeclarationsMax                    = 16
+	OperationMilestoneSchemasMaxBytes                    = 16 << 10
+	OperationMilestonePayloadMaxBytes                    = 8 << 10
+	OperationMilestonesMaxPerOperation                   = 64
+	OperationMilestoneBatchMaxBytes                      = 64 << 10
+	OperationWorkflowsMaxPerApp                          = 32
+	OperationWorkflowStepsMax                            = 32
+	OperationWorkflowStepsMaxPerOperation                = 32
+	OperationWorkflowStatesMax                           = 32
+	OperationWorkflowTransitionsMax                      = 128
+	OperationWorkflowStateMaxBytes                       = 64
+	OperationWorkflowStateReportsMaxPerTransaction       = 64
+	OperationWorkflowTitleMaxBytes                       = 128
+	OperationWorkflowLabelMaxBytes                       = 128
+	OperationPathMaxBytes                                = 2048
+	OperationIdempotencyKeyMaxBytes                      = 128
+	OperationReportIDMaxBytes                            = 128
+	OperationRecoveryEvidenceMaxBytes                    = 4096
+	OperationEventsPageMax                               = 100
+	OperationDeliveryRetryMaxBytes                       = 4096
+	OperationDeliveryReceiptMaxBytes                     = 8192
+	OperationDeliveryRetriesMax                          = 32
+	OperationHistoryPageDefault                          = 20
+	OperationHistoryPageMax                              = 100
+	OperationHistoryCursorMaxBytes                       = 512
+	OperationRetentionPageMax                            = 500
+	OperationDefinitionBodyMaxBytes                      = 160000
+	OperationReportBodyMaxBytes                          = 16384
+	OperationRecoveryBodyOverheadBytes                   = 8192
+	OperationSubmissionMaxBytes                          = 1 << 20
+	OperationStartBodyOverheadBytes                      = 1024
+	OperationDoctorChecksMax                             = 1024
+	OperationDoctorMaxDuration                           = 10 * time.Second
+	OperationSubmissionReceiptMaxBytes                   = OperationSubmissionMaxBytes + OperationStartBodyOverheadBytes + 2*OperationPathMaxBytes
+	SourceManifestMaxBytes                               = 1 << 20
+	OperationArtifactNameMaxBytes                        = 128
+	OperationArtifactKeyMaxBytes                         = 1024
+	OperationArtifactURIMaxBytes                         = 2048
+	OperationArtifactSpoolMaxBytes                 int64 = 256 << 20
+	OperationArtifactTransfersPerAccount                 = 4
+	OperationArtifactTransfersPerNode                    = 8
+	OperationArtifactTransferTimeout                     = 30 * time.Second
+	OperationArtifactStagingLifetime                     = 2 * time.Minute
+	OperationArtifactCleanupLease                        = time.Minute
+	OperationArtifactCleanupRetry                        = 5 * time.Minute
+	OperationArtifactCleanupInterval                     = time.Minute
+	OperationArtifactCleanupBatch                        = 20
+	OperationPreviewPolicyMaxBytes                       = 64 << 10
+	OperationPreviewCohortsMax                           = 10
+	OperationPreviewTenantsPerCohortMax                  = 10
+	OperationPreviewWindowMax                            = time.Hour
 )
 
 // OperationPlanLimits bounds durable control-plane state independently from
@@ -646,6 +683,12 @@ const (
 	OperationStreamReleaseTimeout  = 2 * time.Second
 	OperationExecutionLeaseMax     = 2 * time.Minute
 	OperationExecutionRenewTimeout = 5 * time.Second
+	// Preserve the native workflow handler default for controlled dispatch.
+	OperationWorkflowHandlerDefaultTimeout = 30 * time.Second
+	// Typed workflow dispatch carries credentials only; the retained ledger
+	// supplies the handler body. Responses include base64 JSON envelope overhead.
+	OperationWorkflowDispatchBodyMaxBytes     int64 = 16 << 10
+	OperationWorkflowDispatchResponseMaxBytes int64 = 2*OperationSubmissionMaxBytes + OperationReportBodyMaxBytes
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
@@ -4525,6 +4568,12 @@ const (
 	// validation.
 	WorkloadDependencyCapMax = SidecarCapMax + 1
 
+	// Project dependency release gates (ADR-685) are bounded independently
+	// of same-VM companion startup dependencies.
+	ProjectDependencyGateCapMax  = 100
+	ProjectDependencyGateTimeout = 15 * time.Minute
+	ProjectDependencyGatePoll    = 5 * time.Second
+
 	// Edge-rule JWT verify deadline (ADR-091 hardening PR-A). Caps
 	// the wall-clock spent inside pkg/gateway.(*Handler).applyEdgeRuleJWT
 	// on a single request — signature verify + claim parse + any
@@ -8198,9 +8247,21 @@ func (l Limits) RequestBudgetMaxDuration() time.Duration {
 // one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
 const FunctionInterpreterMaxWorkers = 4
 
-// Startup attestation runs before the scheduler opens its readiness boundary.
-const StartupAttestationWorkers = 2
-const StartupAttestationLayerTimeout = 15 * time.Second
+// The layer attestation warm verifies the owned live layers in the
+// background at schedd start and again every AttestationWarmInterval, so a
+// wake rarely hashes a layer itself. A layer that failed is retried after
+// AttestationWarmRetryBackoff. The per-layer deadline covers a GCS read plus
+// a SHA-256 of a multi-GB image on a busy compute node; at 15 s about half of
+// production-us's layers timed out after every restart (hunt #6, H5-56).
+const AttestationWarmWorkers = 2
+const AttestationWarmLayerTimeout = 2 * time.Minute
+const AttestationWarmInterval = time.Minute
+const AttestationWarmRetryBackoff = 5 * time.Minute
+
+// LayerVerifyTimeout bounds one shared layer verification. Concurrent
+// verifications of one layer share a single read and hash that outlives a
+// caller that gives up, so the next wake finds the layer verified.
+const LayerVerifyTimeout = 2 * time.Minute
 
 // NodeSizing is the per-host RAM/vCPU shape derived from the machine a
 // compute node actually runs on, rather than the single-box constants.
@@ -8824,20 +8885,58 @@ const RouteHealthTransitionVersion = 1
 
 // Production route monitoring and bounded customer evidence (ADR-498/499).
 const (
-	RouteMonitorVersion                         = 1
-	RouteMonitorMaxRateBPS                int64 = 10_000
-	RouteMonitorPollInterval                    = 30 * time.Second
-	RouteMonitorEvaluationInterval              = time.Minute
-	RouteMonitorBatchSize                       = 20
-	RouteMonitorEvidenceRoutesLimit             = 3
-	RouteMonitorIncidentMaxBytes                = 512 << 10
-	RouteMonitorHistoryMaxEntries               = 100
-	RouteMonitorHistoryMaxBytes                 = 8 << 20
-	RouteMonitorPageSize                        = 5
-	RouteMonitorMaxPage                         = 10
-	RouteMonitorCustomersPerRoute               = 5
-	RouteMonitorRecoveryCustomersPerRoute       = 100
-	RouteMonitorRecoveryStateMaxBytes           = 256 << 10
+	RouteMonitorVersion                               = 1
+	RouteMonitorMaxRateBPS                      int64 = 10_000
+	RouteMonitorPollInterval                          = 30 * time.Second
+	RouteMonitorEvaluationInterval                    = time.Minute
+	RouteMonitorBatchSize                             = 20
+	RouteMonitorEvidenceRoutesLimit                   = 3
+	RouteMonitorHealthyBaselineMaxBytes               = 2048
+	RouteMonitorIncidentMaxBytes                      = 512 << 10
+	RouteMonitorIncidentTimelineMaxEntries            = 60
+	RouteMonitorIncidentEscalationMaxEntries          = 20
+	RouteMonitorIncidentEscalationEvidenceLimit       = 3
+	RouteMonitorIncidentEscalationSignalsMax          = 40
+	RouteMonitorHistoryMaxEntries                     = 100
+	RouteMonitorHistoryMaxBytes                       = 8 << 20
+	RouteMonitorPageSize                              = 5
+	RouteMonitorMaxPage                               = 10
+	RouteMonitorCustomersPerRoute                     = 5
+	RouteMonitorRecoveryCustomersPerRoute             = 100
+	RouteMonitorRecoveryStateMaxBytes                 = 256 << 10
+)
+
+// Internal durable-entity prototype budgets, not plan availability.
+const (
+	MaxDurableEntitySnapshotBytes        = 1 << 20
+	MaxDurableEntityManifestBytes        = 16 << 10
+	MaxDurableEntityIdentityBytes        = 256
+	MaxDurableEntityReceipts             = 1024 // Legacy inline receipts only; journal receipts do not expire.
+	MaxDurableEntityReceiptBytes         = 1 << 20
+	MaxDurableEntityJournalBytes         = 16 << 10
+	DurableEntityCleanupPageSize         = 32
+	DurableEntityCleanupTimeout          = 20 * time.Second
+	DurableEntityInventoryPageSize       = 32
+	DurableEntityInventoryTimeout        = 20 * time.Second
+	MaxDurableEntityInventoryBytes       = 1 << 20
+	MaxDurableEntityInventoryPending     = 65 * 16
+	DurableEntityMaintenanceScanPageSize = 8
+	MaxDurableEntityMaintenanceBytes     = 128 << 10
+	DurableEntityMaintenanceTimeout      = 45 * time.Second
+	DurableEntityMaintenanceReadTimeout  = 2 * time.Second
+	DurableEntityMaintenancePollInterval = 30 * time.Second
+	DefaultDurableEntityLease            = 30 * time.Second
+	MaxDurableEntityLease                = 5 * time.Minute
+	MaxDurableEntityInvocationBytes      = 2 << 20
+	DurableEntityInvokeTimeout           = 25 * time.Second
+	DurableEntityReleaseTimeout          = 2 * time.Second
+	DurableEntityResultPollInterval      = 250 * time.Millisecond
+	DurableEntityHandlerPath             = "/__gregale/entities"
+	DurableEntityProtocolVersion         = 1
+	DurableEntityAlarmScanPageSize       = 8
+	DurableEntityAlarmReadTimeout        = 2 * time.Second
+	DurableEntityAlarmScanTimeout        = 20 * time.Second
+	DurableEntityAlarmPollInterval       = 5 * time.Second
 )
 
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
@@ -9010,4 +9109,17 @@ const (
 	RuntimeQualificationTestTimeout           = 3 * time.Minute
 	RuntimeQualificationCleanupTimeout        = 2 * time.Minute
 	RuntimeQualificationCommandWaitDelay      = 5 * time.Second
+)
+
+// Data API workload bounds (ADR-650). Embedded config.mjs mirrors these
+// constants; the CLI tripwire tests keep the runtime and platform contract aligned.
+const (
+	DataAPIMaxPoolConnections = 2
+	DataAPIMaxRows            = 1000
+	DataAPIMaxRequestBytes    = 1 << 20
+	DataAPIMaxOutputBytes     = 1 << 20
+	DataAPIQueryTimeoutMS     = 15000
+	DataAPIMaxRelations       = 1000
+	DataAPIMaxColumns         = 10000
+	DataAPIMaxTypes           = 20000
 )

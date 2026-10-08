@@ -201,6 +201,7 @@ func TestRunAppErrorsServer_RejectsPlaintextRemoteTarget(t *testing.T) {
 		nil,
 		discardLogger(),
 		true,
+		nil,
 	)
 	if err == nil {
 		t.Fatal("remote AppErrors target without TLS should be rejected")
