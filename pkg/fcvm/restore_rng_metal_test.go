@@ -22,8 +22,8 @@ import (
 // spec: §6.2 invariant 5 — two instances restored from one snapshot never
 // share an RNG stream. TestMetalRestoreUserspaceRNGDiffers restores ONE
 // snapshot of a real Node or Python process twice and asserts the values its
-// in-process generators return differ (ADR-680). The kernel-level V6 test
-// cannot see this failure: before ADR-680 /dev/urandom was unique on every
+// in-process generators return differ (ADR-686). The kernel-level V6 test
+// cannot see this failure: before ADR-686 /dev/urandom was unique on every
 // wake while Node's randomUUID, randomBytes and Math.random and Python's
 // random and ssl replayed identical values (production, 2026-09-22).
 //

@@ -1,4 +1,4 @@
-# ADR-680 · Restored processes reseed their userspace random generators before serving
+# ADR-686 · Restored processes reseed their userspace random generators before serving
 
 - **Status:** accepted
 - **Date:** 2026-09-23
