@@ -4,6 +4,7 @@
 -- and use IF NOT EXISTS for the two indexes.
 
 -- +goose Up
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -23,6 +24,7 @@ BEGIN
         );
     END IF;
 END$$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION customer_operation_subject_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -35,6 +37,7 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -48,6 +51,7 @@ BEGIN
             FOR EACH ROW EXECUTE FUNCTION customer_operation_subject_immutable();
     END IF;
 END$$;
+-- +goose StatementEnd
 
 CREATE INDEX IF NOT EXISTS customer_operations_tenant_subject_history_idx ON customer_operations
     (account_id, app_id, platform_tenant_id, (record #>> '{subject,type}'), (record #>> '{subject,id}'), created_at DESC, id DESC)

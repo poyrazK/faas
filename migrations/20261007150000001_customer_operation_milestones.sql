@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS customer_operation_milestones (
 );
 CREATE INDEX IF NOT EXISTS customer_operation_milestones_history_idx ON customer_operation_milestones
     (operation_id, created_at DESC, id DESC);
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -31,6 +32,7 @@ BEGIN
         );
     END IF;
 END$$;
+-- +goose StatementEnd
 ALTER TABLE customer_operation_events DROP CONSTRAINT IF EXISTS customer_operation_events_event_type_check;
 ALTER TABLE customer_operation_events ADD CONSTRAINT customer_operation_events_event_type_check
     CHECK (event_type IN ('accepted','running','progress','artifact_attached','milestone','succeeded','failed','cancellation_requested','cancelled','reconciliation_required','recovery_requested','delivery_changed','result_expired'));
