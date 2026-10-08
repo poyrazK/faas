@@ -58,6 +58,9 @@ type AppFork struct {
 	// AccessTokenHash is the SHA-256 of the fork's access token; the
 	// gateway compares it in constant time. Nil means unreachable.
 	AccessTokenHash []byte
+	// CrashCaptureID pins the fork to an ADR-733 crash capture instead of
+	// the deployment's newest snapshot.
+	CrashCaptureID *string
 }
 
 // Database backstops for the fork TTL (app_forks_ttl_chk). Plan limits in
@@ -80,6 +83,9 @@ type CreateAppForkParams struct {
 	CreatedAt     time.Time
 	// AccessTokenHash is the SHA-256 of the access token apid minted.
 	AccessTokenHash []byte
+	// CrashCaptureID, when set, forks that ready crash capture; the fork's
+	// deployment is the capture's and DeploymentID is ignored.
+	CrashCaptureID string
 }
 
 var (
@@ -119,7 +125,7 @@ type AppForkStore interface {
 func validateCreateAppFork(p CreateAppForkParams) (CreateAppForkParams, error) {
 	p.RequestedBy = strings.TrimSpace(p.RequestedBy)
 	switch {
-	case p.AccountID == "" || p.AppID == "" || p.DeploymentID == "":
+	case p.AccountID == "" || p.AppID == "" || (p.DeploymentID == "" && p.CrashCaptureID == ""):
 		return p, fmt.Errorf("%w: account, app and deployment are required", ErrAppForkInvalid)
 	case p.RequestedBy == "" || len(p.RequestedBy) > 256:
 		return p, fmt.Errorf("%w: requested_by must be 1..256 bytes", ErrAppForkInvalid)
