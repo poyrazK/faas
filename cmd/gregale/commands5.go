@@ -34,7 +34,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/browser"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -700,18 +699,20 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--environment SLUG] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app <slug> scale [--plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
-// Mirrors cmdApp (commands2.go:53-126) but with no --plan — plan
-// changes live on `gregale plan`. Uses the same fs.Visit pattern so 0 is
-// distinguishable from "unset".
+// Uses the same fs.Visit pattern so 0 is distinguishable from "unset".
 func cmdAppScale(slug string, args []string) int {
 	if hasHelpFlag(args) {
 		PrintUsage(osStdout, appScaleUsage, "apps")
 		return 0
 	}
 	fs := newFlagSet("app scale", flag.ContinueOnError)
+	planOnly := fs.Bool("plan", false, "show the proposed change, plan limits and resident-usage estimate without applying it")
+	planOutput := fs.String("out", "", "write a reusable reviewed plan to a new JSON file (requires --plan)")
+	applyPlan := fs.String("apply", "", "apply a saved scale plan JSON file")
+	confirmPlan := fs.Bool("confirm", false, "confirm applying the saved plan (requires --apply)")
 	environment := fs.String("environment", "", "edit this project environment's workload settings")
 	workloadRevision := int64(-1)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
@@ -774,6 +775,18 @@ func cmdAppScale(slug string, args []string) int {
 	}
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if explicit["apply"] {
+		if *applyPlan == "" || !*confirmPlan || explicit["plan"] || explicit["out"] || explicit["environment"] || appScaleHasSettingFlags(explicit) {
+			return printErr("Invalid scale plan flags", fmt.Errorf("--apply requires a plan file and --confirm; do not combine it with --plan, --out, --environment or setting flags"))
+		}
+		return cmdAppScaleApplyPlan(slug, *applyPlan)
+	}
+	if explicit["confirm"] {
+		return printErr("Invalid scale plan flags", fmt.Errorf("--confirm requires --apply PLAN.json"))
+	}
+	if explicit["out"] && (*planOutput == "" || !*planOnly) {
+		return printErr("Invalid scale plan flags", fmt.Errorf("--out PATH requires --plan"))
+	}
 	queueWaitMS, setQueueWait, err := cliQueueWaitMilliseconds(*maxQueueWaitMS, *maxQueueWait, explicit["max-queue-wait-ms"], explicit["max-queue-wait"])
 	if err != nil {
 		return printErr("Invalid concurrency policy", err)
@@ -924,7 +937,16 @@ func cmdAppScale(slug string, args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(context.Background(), slug, req)
+	appClient := environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}
+	if *planOnly {
+		var expectedWorkloadRevision *int64
+		if *environment != "" && workloadRevision >= 0 {
+			revision := workloadRevision
+			expectedWorkloadRevision = &revision
+		}
+		return cmdAppScalePlan(client, appClient, slug, *environment, req, *planOutput, expectedWorkloadRevision)
+	}
+	updated, err := appClient.UpdateApp(context.Background(), slug, req)
 	if err != nil {
 		return printErr("Scale failed", err)
 	}
@@ -984,33 +1006,13 @@ func cmdAppRename(slug, newSlug string) int {
 // cmdAppRestart requests a fresh snapshot restart for an app. The server
 // performs the park and replacement wake asynchronously and returns a wake id
 // for correlation with the wake timeline.
-func cmdAppRestart(slug string, args []string) int {
-	if len(args) != 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> restart", "apps")
-		return 1
-	}
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
-	}
-	out, err := client.RestartApp(context.Background(), slug)
-	if err != nil {
-		return printErr("Restart failed", err)
-	}
-	if jsonOutput {
-		return jsonOut(writeJSON(out))
-	}
-	PrintOK(osStdout, "Restart requested (wake_id=%s)", out.WakeID)
-	return 0
-}
-
 // cmdAppDispatch routes `gregale app <slug> ...` to either the new
 // subcommand form (scale / rename / exec / security / routes / tcp) or the legacy
 // flag-form (`gregale app <slug> --ram N`, `gregale app <slug>`).
 // Pulled out of main.go so the switch stays small.
 func cmdAppDispatch(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|costs [--month YYYY-MM] [--json]|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -1018,6 +1020,8 @@ func cmdAppDispatch(args []string) int {
 		switch args[1] {
 		case subScale:
 			return cmdAppScale(slug, args[2:])
+		case "costs":
+			return cmdAppCosts(slug, args[2:])
 		case subRename:
 			if len(args) != 3 {
 				PrintUsage(os.Stderr, "usage: gregale app <slug> rename <new-slug>", "apps")
@@ -1069,6 +1073,12 @@ var planRank = map[api.Plan]int{
 // 4 known constants, then asks Whoami to check the current plan and
 // prompts for y/N on paid→downgrade transitions.
 func cmdPlan(args []string) int {
+	fs := newFlagSet("plan", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "confirm a plan downgrade without prompting")
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
+	}
+	args = fs.Args()
 	if len(args) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale plan <free|hobby|pro|scale>", "plan")
 		return 1
@@ -1086,7 +1096,10 @@ func cmdPlan(args []string) int {
 	if err != nil {
 		return printErr("Could not fetch account", err)
 	}
-	if acct.Plan != "" && planRank[api.Plan(acct.Plan)] > planRank[target] {
+	if acct.Plan != "" && planRank[api.Plan(acct.Plan)] > planRank[target] && !*yes {
+		if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
+			return code
+		}
 		fmt.Fprintf(os.Stderr,
 			"Downgrade from %s to %s: existing apps may exceed the new plan's limits. "+
 				"Continue? [y/N] ", acct.Plan, target)
@@ -1171,7 +1184,7 @@ func cmdDashboard(args []string) int {
 		}{target, *stateless}))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", target)
-	if err := browser.Open(target); err != nil {
+	if err := openBrowser(target); err != nil {
 		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", target)
 		return 0
@@ -1521,12 +1534,14 @@ func cmdQueuePeek(args []string) int {
 	fs := newFlagSet("queue peek", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "max rows (1..100)")
 	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
-	flags, pos := splitArgsForFlags(args)
+	fs.StringVar(before, "cursor", "", "alias for --before")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
+	flags, pos := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue peek <slug> [--limit N] [--before C]", "queue")
+	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
+		PrintUsage(os.Stderr, "usage: gregale queue peek <slug> [--limit N] [--cursor C] [--all]", "queue")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
@@ -1538,19 +1553,30 @@ func cmdQueuePeek(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.QueuePeek(context.Background(), slug, *limit, *before)
+	var resp api.QueuePeekResponse
+	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.QueuePeekMessage, string, error) {
+		page, err := client.QueuePeek(ctx, slug, *limit, cursor)
+		resp = page
+		return page.Messages, page.NextBefore, err
+	})
+	resp.Messages, resp.NextBefore = items, next
 	if err != nil {
 		return printErr("Queue peek failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(resp))
+		return jsonOut(writeJSON(struct {
+			api.QueuePeekResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{resp, next}))
 	}
 	if len(resp.Messages) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no rows peekable)")
-		return 0
 	}
 	for _, m := range resp.Messages {
-		fmt.Printf("%-32s %d attempts  %s\n", m.ID, m.Attempts, m.CreatedAt.Format("2006-01-02T15:04:05Z07:00"))
+		_, _ = fmt.Fprintf(osStdout, "%-32s %d attempts  %s\n", m.ID, m.Attempts, m.CreatedAt.Format("2006-01-02T15:04:05Z07:00"))
+	}
+	if next != "" {
+		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", next)
 	}
 	return 0
 }
@@ -1561,12 +1587,18 @@ func cmdQueueDeadLetter(args []string) int {
 	fs := newFlagSet("queue dead-letter", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "max rows (1..100)")
 	before := fs.String("before", "", "pagination cursor")
-	flags, pos := splitArgsForFlags(args)
+	fs.StringVar(before, "cursor", "", "alias for --before")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
+	flags, pos := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> [--limit N] [--before C]", "queue")
+	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
+		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> [--limit N] [--cursor C] [--all]", "queue")
+		return 1
+	}
+	if err := validateCLILimit("limit", *limit, 100); err != nil {
+		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> --limit N (1 <= N <= 100)", "queue")
 		return 1
 	}
 	slug := pos[0]
@@ -1574,19 +1606,30 @@ func cmdQueueDeadLetter(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.QueueDeadLetter(context.Background(), slug, *limit, *before)
+	var resp api.QueueDeadLetterResponse
+	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.QueueDeadLetterMessage, string, error) {
+		page, err := client.QueueDeadLetter(ctx, slug, *limit, cursor)
+		resp = page
+		return page.Messages, page.NextBefore, err
+	})
+	resp.Messages, resp.NextBefore = items, next
 	if err != nil {
 		return printErr("Queue dead-letter failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(resp))
+		return jsonOut(writeJSON(struct {
+			api.QueueDeadLetterResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{resp, next}))
 	}
 	if len(resp.Messages) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no dead-letter rows)")
-		return 0
 	}
 	for _, m := range resp.Messages {
-		fmt.Printf("%-32s %d attempts  failed %s  err=%q\n", m.ID, m.Attempts, m.FailedAt.Format("2006-01-02T15:04:05Z07:00"), m.LastError)
+		_, _ = fmt.Fprintf(osStdout, "%-32s %d attempts  failed %s  err=%q\n", m.ID, m.Attempts, m.FailedAt.Format("2006-01-02T15:04:05Z07:00"), m.LastError)
+	}
+	if next != "" {
+		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", next)
 	}
 	return 0
 }

@@ -15,7 +15,6 @@ import (
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/browser"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/safetext"
 )
@@ -158,7 +157,7 @@ func (r *startRunner) authenticate() int {
 		return printErr("Could not start login", err)
 	}
 	_, _ = fmt.Fprintf(osStdout, "Approve this session in your browser:\n  %s\n", code.URL)
-	if err := browser.Open(code.URL); err != nil {
+	if err := openBrowser(code.URL); err != nil {
 		PrintWarn(osStdout, "Open the link above manually: %v", err)
 	}
 	if result := waitForApproval(r.ctx, client, code); result != 0 {

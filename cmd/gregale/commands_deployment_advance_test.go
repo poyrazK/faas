@@ -54,6 +54,9 @@ func TestDeploymentAdvanceRouteGateCLI(t *testing.T) {
 				args = args[:3]
 			}
 			want := 1
+			if scenario == "blocked" {
+				want = 5
+			}
 			if scenario == "json" || scenario == "report" {
 				want = 0
 			}

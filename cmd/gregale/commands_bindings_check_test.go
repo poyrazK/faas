@@ -267,7 +267,7 @@ func TestCmdBindingsCheckInventoryRequestFailureCannotPass(t *testing.T) {
 	var output bytes.Buffer
 	osStdout, osStderr, jsonOutput = &output, &output, false
 	t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
-	if code := run([]string{"bindings", "check", "api"}); code != 1 || calls != 1 || !strings.Contains(output.String(), "Forbidden") {
+	if code := run([]string{"bindings", "check", "api"}); code != 6 || calls != 1 || !strings.Contains(output.String(), "Forbidden") {
 		t.Fatalf("request failure exit=%d calls=%d output=%s", code, calls, output.String())
 	}
 }

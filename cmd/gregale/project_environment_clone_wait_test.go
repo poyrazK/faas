@@ -96,7 +96,12 @@ func TestProjectEnvironmentCloneWaitTimeoutFailureAndIdentity(t *testing.T) {
 			if vector == "cancelled" {
 				cancel()
 			}
-			op, timedOut, err := waitForProjectEnvironmentClone(ctx, NewClient(srv.URL, "test"), initial, 20*time.Millisecond)
+			// Failure and identity checks need a response, not a short deadline race.
+			timeout := 5 * time.Second
+			if vector == "timeout" {
+				timeout = 20 * time.Millisecond
+			}
+			op, timedOut, err := waitForProjectEnvironmentClone(ctx, NewClient(srv.URL, "test"), initial, timeout)
 			wantError := vector == "identity" || vector == "revision" || vector == "unknown" || vector == "cancelled"
 			if (err != nil) != wantError || timedOut != (vector == "timeout") || (vector == "failed" || vector == "compensated") && op.Status != vector {
 				t.Fatalf("status = %s, timeout = %t, error = %v", op.Status, timedOut, err)

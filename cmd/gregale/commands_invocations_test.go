@@ -174,7 +174,7 @@ func TestCmdInvocationsWait_TimeoutReturnsLastStatus(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdInvocationsWait([]string{"--interval=1s", "--timeout=25ms", inv.ID}); code != 124 {
+	if code := cmdInvocationsWait([]string{"--interval=5s", "--timeout=1s", inv.ID}); code != 124 {
 		t.Fatalf("invocations wait timeout = %d, want 124", code)
 	}
 	if !strings.Contains(stdout.String(), "State:      pending") {
@@ -218,6 +218,9 @@ func TestRunInvocationsWaitJSONAPIErrors(t *testing.T) {
 		exit   int
 	}{
 		{http.StatusNotFound, 1},
+		{http.StatusForbidden, 1},
+		{http.StatusConflict, 1},
+		{http.StatusTooManyRequests, 1},
 		{http.StatusUnauthorized, 2},
 		{http.StatusServiceUnavailable, 3},
 	} {
@@ -243,6 +246,12 @@ func TestRunInvocationsWaitJSONAPIErrors(t *testing.T) {
 			var got api.Problem
 			if err := json.Unmarshal([]byte(stderr()), &got); err != nil {
 				t.Fatalf("stderr is not one Problem: %v: %s", err, stderr())
+			}
+			var metadata struct {
+				ExitCode int `json:"exit_code"`
+			}
+			if err := json.Unmarshal([]byte(stderr()), &metadata); err != nil || metadata.ExitCode != tc.exit {
+				t.Fatalf("exit metadata: %+v error=%v", metadata, err)
 			}
 			if out.Len() != 0 || got.Status != problem.Status || got.Code != problem.Code || got.Detail != problem.Detail {
 				t.Fatalf("stdout=%s problem=%+v", out.String(), got)
@@ -278,6 +287,12 @@ func TestRunInvocationsWaitJSONTimeoutPreservesLastStatus(t *testing.T) {
 	var problem api.Problem
 	if err := json.Unmarshal([]byte(stderr()), &problem); err != nil {
 		t.Fatalf("stderr is not one Problem: %v: %s", err, stderr())
+	}
+	var metadata struct {
+		ExitCode int `json:"exit_code"`
+	}
+	if err := json.Unmarshal([]byte(stderr()), &metadata); err != nil || metadata.ExitCode != 124 {
+		t.Fatalf("timeout metadata: %+v error=%v", metadata, err)
 	}
 	if problem.Code != "invocation_wait_timeout" || problem.Status != http.StatusRequestTimeout || !strings.Contains(problem.Hint, "gregale invocations get "+inv.ID) {
 		t.Fatalf("timeout problem = %+v", problem)

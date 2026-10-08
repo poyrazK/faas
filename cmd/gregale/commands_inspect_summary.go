@@ -13,18 +13,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 )
 
-const inspectSummarySchemaVersion = 2
+const inspectSummarySchemaVersion = 3
 
 type inspectSummary struct {
-	SchemaVersion   int                     `json:"schema_version"`
-	App             inspectAppSummary       `json:"app"`
-	Runtime         inspectRuntimeSummary   `json:"runtime"`
-	Resources       inspectResourceSummary  `json:"resources"`
-	API             inspectAPISummary       `json:"api"`
-	Data            inspectDataSummary      `json:"data"`
-	Release         inspectReleaseSummary   `json:"release"`
-	Recommendations []inspectRecommendation `json:"recommendations"`
-	Unavailable     []string                `json:"unavailable,omitempty"`
+	SchemaVersion   int                        `json:"schema_version"`
+	App             inspectAppSummary          `json:"app"`
+	Runtime         inspectRuntimeSummary      `json:"runtime"`
+	Resources       inspectResourceSummary     `json:"resources"`
+	API             inspectAPISummary          `json:"api"`
+	Data            inspectDataSummary         `json:"data"`
+	Release         inspectReleaseSummary      `json:"release"`
+	Operational     *api.AppOperationalSummary `json:"operational,omitempty"`
+	Recommendations []inspectRecommendation    `json:"recommendations"`
+	Unavailable     []string                   `json:"unavailable,omitempty"`
 }
 
 type inspectAppSummary struct {
@@ -145,6 +146,8 @@ type inspectSummaryInputs struct {
 	UpstreamsErr         error
 	Alerts               []api.AlertRuleResponse
 	AlertsErr            error
+	Operational          *api.AppOperationalSummary
+	OperationalErr       error
 }
 
 func cmdInspectSummary(slug string) int {
@@ -152,13 +155,10 @@ func cmdInspectSummary(slug string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx := context.Background()
-	app, err := client.GetApp(ctx, slug)
+	summary, err := collectInspectSummary(context.Background(), client, slug)
 	if err != nil {
 		return printErr("Could not load app", err)
 	}
-	inputs := loadInspectSummaryInputs(ctx, client, app)
-	summary := buildInspectSummary(app, inputs)
 	if jsonOutput {
 		return jsonOut(writeJSON(summary))
 	}
@@ -166,10 +166,22 @@ func cmdInspectSummary(slug string) int {
 	return 0
 }
 
+func collectInspectSummary(ctx context.Context, client *Client, slug string) (inspectSummary, error) {
+	app, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return inspectSummary{}, err
+	}
+	inputs := loadInspectSummaryInputs(ctx, client, app)
+	if err := ctx.Err(); err != nil {
+		return inspectSummary{}, err
+	}
+	return buildInspectSummary(app, inputs), nil
+}
+
 func loadInspectSummaryInputs(ctx context.Context, client *Client, app api.AppResponse) inspectSummaryInputs {
 	var out inspectSummaryInputs
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(5)
 	go func() {
 		defer wg.Done()
 		deployments, err := client.ListAppDeploymentsAll(ctx, app.Slug)
@@ -194,6 +206,17 @@ func loadInspectSummaryInputs(ctx context.Context, client *Client, app api.AppRe
 		defer wg.Done()
 		out.Alerts, out.AlertsErr = client.ListAlertRules(ctx, app.Slug)
 	}()
+	go func() {
+		defer wg.Done()
+		summary, err := client.GetAppOperationalSummary(ctx, app.Slug)
+		if err == nil && (summary.Version != 1 || summary.AppID != app.ID) {
+			err = fmt.Errorf("unsupported or mismatched operational summary")
+		}
+		out.OperationalErr = err
+		if err == nil {
+			out.Operational = &summary
+		}
+	}()
 	wg.Wait()
 	return out
 }
@@ -211,6 +234,7 @@ func buildInspectSummary(app api.AppResponse, in inspectSummaryInputs) inspectSu
 		Data:        inspectData(in),
 		Release:     inspectRelease(app.ID, in.Deployment, in.NewerFailedCandidate, in.Alerts, in.AlertsErr == nil),
 		Unavailable: inspectUnavailable(in),
+		Operational: in.Operational,
 	}
 	summary.Runtime = inspectRuntime(app, in.Deployment, &summary.Unavailable)
 	if in.OpenAPIErr != nil {
@@ -434,7 +458,7 @@ func inspectUnavailable(in inspectSummaryInputs) []string {
 	for _, row := range []struct {
 		name string
 		err  error
-	}{{"deployment", in.DeploymentErr}, {"openapi", in.OpenAPIErr}, {"upstreams", in.UpstreamsErr}, {"alerts", in.AlertsErr}} {
+	}{{"deployment", in.DeploymentErr}, {"openapi", in.OpenAPIErr}, {"upstreams", in.UpstreamsErr}, {"alerts", in.AlertsErr}, {"operational", in.OperationalErr}} {
 		if row.err != nil {
 			out = append(out, row.name)
 		}
@@ -487,6 +511,11 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	if summary.Release.FiringHealthGates > 0 {
 		add("health_gate_firing", "error", "A safe-release health gate is currently firing.", "Inspect the alert and deployment audit before promoting.")
 	}
+	if summary.Operational != nil {
+		for _, recommendation := range summary.Operational.Recommendations {
+			add(recommendation.Code, recommendation.Severity, recommendation.Message, recommendation.Next)
+		}
+	}
 	return out
 }
 
@@ -513,13 +542,7 @@ func containsString(values []string, want string) bool {
 }
 
 func renderInspectSummaryHuman(w io.Writer, summary inspectSummary) {
-	_, _ = fmt.Fprintf(w, "%s\n", summary.App.Slug)
-	_, _ = fmt.Fprintf(w, "  app:       %s · %s · %s", fallback(summary.App.Status), fallback(summary.App.Type), fallback(summary.App.WorkloadClass))
-	if summary.App.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
-		_, _ = fmt.Fprint(w, " · NO LIVE DEPLOYMENT")
-	}
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintf(w, "  url:       %s\n", fallback(summary.App.URL))
+	renderInspectApp(w, summary.App)
 	renderInspectRuntime(w, summary.Runtime)
 	renderInspectResources(w, summary.Resources)
 	renderInspectSignals(w, summary)
@@ -527,7 +550,18 @@ func renderInspectSummaryHuman(w io.Writer, summary inspectSummary) {
 	if len(summary.Unavailable) > 0 {
 		_, _ = fmt.Fprintf(w, "  unavailable: %s\n", strings.Join(summary.Unavailable, ", "))
 	}
+	renderInspectOperational(w, summary.Operational)
 	renderInspectRecommendations(w, summary.Recommendations)
+}
+
+func renderInspectApp(w io.Writer, app inspectAppSummary) {
+	_, _ = fmt.Fprintf(w, "%s\n", app.Slug)
+	_, _ = fmt.Fprintf(w, "  app:       %s · %s · %s", fallback(app.Status), fallback(app.Type), fallback(app.WorkloadClass))
+	if app.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
+		_, _ = fmt.Fprint(w, " · NO LIVE DEPLOYMENT")
+	}
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintf(w, "  url:       %s\n", fallback(app.URL))
 }
 
 func renderInspectRuntime(w io.Writer, runtime inspectRuntimeSummary) {
@@ -538,10 +572,10 @@ func renderInspectRuntime(w io.Writer, runtime inspectRuntimeSummary) {
 	_, _ = fmt.Fprintf(w, "  runtime:   %s · port %s · %s\n", framework, intOrDash(runtime.Port), fallback(runtime.Source))
 	_, _ = fmt.Fprintf(w, "  start:     %s\n", fallback(runtime.Entrypoint))
 	if runtime.Health == nil {
-		_, _ = fmt.Fprintf(w, "  health:    %s · not verified\n", fallback(runtime.HealthPath))
+		_, _ = fmt.Fprintf(w, "  deploy check: %s · not verified\n", fallback(runtime.HealthPath))
 		return
 	}
-	_, _ = fmt.Fprintf(w, "  health:    %s · %s", fallback(runtime.Health.Path), runtime.Health.Status)
+	_, _ = fmt.Fprintf(w, "  deploy check: %s · %s", fallback(runtime.Health.Path), runtime.Health.Status)
 	if runtime.Health.StatusCode > 0 {
 		_, _ = fmt.Fprintf(w, " · %d", runtime.Health.StatusCode)
 	}

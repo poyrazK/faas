@@ -118,8 +118,13 @@ func apiBase() string {
 	if raw := strings.TrimSpace(os.Getenv("FAAS_API")); raw != "" {
 		return normalizeAPIBase(raw)
 	}
-	if cfg, err := loadCLIConfig(); err == nil && cfg.APIBase != "" {
-		return normalizeAPIBase(cfg.APIBase)
+	if cfg, err := loadCLIConfig(); err == nil {
+		if name := selectedProfile(cfg); name != "default" {
+			return cfg.Profiles[name].APIBase
+		}
+		if cfg.APIBase != "" {
+			return normalizeAPIBase(cfg.APIBase)
+		}
 	}
 	return defaultAPIBase
 }
@@ -130,6 +135,9 @@ func tokenPath() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
+	}
+	if name := currentProfile(); name != "default" {
+		return filepath.Join(dir, "gregale", "profiles", name, "token"), nil
 	}
 	return filepath.Join(dir, "gregale", "token"), nil
 }
@@ -168,7 +176,7 @@ func loadToken() string {
 		return strings.TrimSpace(v)
 	}
 	if kr := effectiveKeyring(); kr != nil {
-		v, err := kr.Get(keyringService, keyringAccount)
+		v, err := kr.Get(keyringService, profileKeyringAccount())
 		switch {
 		case err == nil:
 			v = strings.TrimSpace(v)
@@ -208,6 +216,9 @@ func loadToken() string {
 // expected case for a fresh install); other keychain errors get
 // a WARN.
 func loadLegacyToken() string {
+	if currentProfile() != "default" {
+		return ""
+	}
 	if kr := effectiveKeyring(); kr != nil {
 		v, err := kr.Get(legacyKeyringService, keyringAccount)
 		switch {
@@ -263,7 +274,7 @@ func saveToken(token string) error {
 	}
 
 	kr := effectiveKeyring()
-	if err := kr.Set(keyringService, keyringAccount, token); err == nil {
+	if err := kr.Set(keyringService, profileKeyringAccount(), token); err == nil {
 		// One-shot migration: if the legacy plaintext file exists
 		// from a pre-#293 install, remove it now that the secret
 		// lives in the keychain. ErrNotExist is silent; any other
@@ -286,13 +297,13 @@ func saveToken(token string) error {
 		// who only had the plaintext file (no keychain entry) sees
 		// an accurate "what just happened" rather than a misleading
 		// combined message.
-		if err := kr.Delete(legacyKeyringService, keyringAccount); err == nil {
+		if err := deleteLegacyKeyring(kr); err == nil {
 			PrintProgress(os.Stdout, "Removed legacy keychain entry (\"faas-cli\").")
 		} else if !errors.Is(err, keyring.ErrNotFound) {
 			PrintWarn(os.Stderr, "Could not remove legacy keychain entry: %v", err)
 		}
 		// One-shot migration: pre-#439 legacy plaintext file.
-		if lp, lperr := legacyTokenPath(); lperr == nil {
+		if lp, lperr := legacyTokenPath(); lperr == nil && currentProfile() == "default" {
 			switch lerr := os.Remove(lp); {
 			case lerr == nil:
 				PrintProgress(os.Stdout, "Removed legacy plaintext token file.")
@@ -335,14 +346,16 @@ func saveToken(token string) error {
 // removes both the new and the legacy copies regardless of which
 // store the user upgraded from.
 func deleteToken() {
-	if err := effectiveKeyring().Delete(keyringService, keyringAccount); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+	if err := effectiveKeyring().Delete(keyringService, profileKeyringAccount()); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		PrintWarn(os.Stderr, "Could not remove token from OS keychain: %v", err)
 	}
-	_ = effectiveKeyring().Delete(legacyKeyringService, keyringAccount)
+	if currentProfile() == "default" {
+		_ = effectiveKeyring().Delete(legacyKeyringService, keyringAccount)
+	}
 	if p, err := tokenPath(); err == nil {
 		_ = os.Remove(p)
 	}
-	if lp, err := legacyTokenPath(); err == nil {
+	if lp, err := legacyTokenPath(); err == nil && currentProfile() == "default" {
 		_ = os.Remove(lp)
 	}
 	clearCompletionCaches()
