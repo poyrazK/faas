@@ -15147,3 +15147,30 @@ UPDATE project_environment_clone_checkpoint_pg_connection_values i SET state='se
 WHERE i.operation_id=sqlc.arg(operation_id)::uuid AND i.source_binding_id=sqlc.arg(source_binding_id)::uuid AND i.state='planned'
 AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
 AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()) RETURNING i.*;
+
+-- name: ReadCloneCheckpointPgActivation :one
+SELECT * FROM project_environment_clone_checkpoint_pg_activations WHERE operation_id=$1 FOR UPDATE;
+
+-- name: InsertCloneCheckpointPgActivation :one
+INSERT INTO project_environment_clone_checkpoint_pg_activations(operation_id,plan)
+SELECT o.id,sqlc.arg(plan)::jsonb FROM project_environment_clone_operations o
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp() RETURNING *;
+
+-- name: AttachCloneCheckpointPgActivationConnection :execrows
+UPDATE project_environment_clone_checkpoint_pg_connection_values c SET activation_operation_id=c.operation_id
+WHERE c.operation_id=sqlc.arg(operation_id)::uuid AND c.source_binding_id=sqlc.arg(source_binding_id)::uuid AND c.state='sealed' AND c.activation_operation_id IS NULL
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='capturing'
+AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp());
+
+-- name: ClaimCloneCheckpointPgActivation :one
+UPDATE project_environment_clone_checkpoint_pg_activations i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=sqlc.arg(operation_id)::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()) RETURNING i.*;
+
+-- name: FinishCloneCheckpointPgActivation :execrows
+UPDATE project_environment_clone_checkpoint_pg_activations i SET state='active',observation=sqlc.arg(observation)::jsonb,observation_sha256=sqlc.arg(observation_sha256)::text,activated_at=clock_timestamp()
+WHERE i.operation_id=sqlc.arg(operation_id)::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp());

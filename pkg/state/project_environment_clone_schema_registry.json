@@ -5765,8 +5765,22 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_checkpoint_pg_activations",
+    "columns": [
+      "activated_at",
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_checkpoint_pg_connection_values",
     "columns": [
+      "activation_operation_id",
       "ciphertext",
       "ciphertext_sha256",
       "key_id",

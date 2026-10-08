@@ -10,7 +10,9 @@ import (
 // Qualified adapters permanently fence the ORIGINAL preparation request before
 // deleting the named identity and closing its sessions. Generic absence is not
 // proof: delayed preparation must never recreate authority after retirement.
-// No provider repair, source mutation, SQL-roster changes or secret inputs.
+// A named activation request must also be permanently fenced for this identity,
+// including unknown/partial activation. No repair, source mutation, extra SQL
+// authority or secret inputs. Removing the owned activation delta restores closure.
 type cloneCheckpointPostgresCredentialRetirementDriver interface {
 	RetireCheckpointPostgresCredential(context.Context, state.ProjectEnvironmentCloneCheckpointPostgresCredentialRetirementPlan) error
 	ObserveCheckpointPostgresCredentialRetirement(context.Context, state.ProjectEnvironmentCloneCheckpointPostgresCredentialRetirementPlan) (state.ProjectEnvironmentCloneCheckpointPostgresCredentialRetirementObservation, error)

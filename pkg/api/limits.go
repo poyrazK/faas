@@ -370,6 +370,7 @@ const (
 	PostgresCheckpointCredentialsPerAccountMax     = 4096
 	PostgresCheckpointCredentialCiphertextMaxBytes = 4 << 10
 	PostgresCheckpointCredentialPasswordBytes      = 32
+	PostgresCheckpointActivationPlanMaxBytes       = 16 << 20
 	PostgresCheckpointConnectionCiphertextMaxBytes = 4 << 10
 	PostgresCheckpointConnectionHostMaxBytes       = 253
 	PostgresCheckpointConnectionHostLabelMaxBytes  = 63

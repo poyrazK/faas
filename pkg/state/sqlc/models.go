@@ -5068,15 +5068,26 @@ type ProjectEnvironmentCloneCheckpointObjectTarget struct {
 	ReadyAt           pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneCheckpointPgActivation struct {
+	OperationID       pgtype.UUID
+	Plan              []byte
+	State             string
+	RequestedAt       pgtype.Timestamptz
+	Observation       []byte
+	ObservationSha256 pgtype.Text
+	ActivatedAt       pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneCheckpointPgConnectionValue struct {
-	OperationID      pgtype.UUID
-	SourceBindingID  pgtype.UUID
-	Plan             []byte
-	State            string
-	Ciphertext       []byte
-	KeyID            pgtype.Text
-	CiphertextSha256 pgtype.Text
-	SealedAt         pgtype.Timestamptz
+	OperationID           pgtype.UUID
+	SourceBindingID       pgtype.UUID
+	Plan                  []byte
+	State                 string
+	Ciphertext            []byte
+	KeyID                 pgtype.Text
+	CiphertextSha256      pgtype.Text
+	SealedAt              pgtype.Timestamptz
+	ActivationOperationID pgtype.UUID
 }
 
 type ProjectEnvironmentCloneCheckpointPgCredentialRetirement struct {

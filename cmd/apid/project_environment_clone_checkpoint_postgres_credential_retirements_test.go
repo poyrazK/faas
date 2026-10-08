@@ -66,7 +66,7 @@ func (d *checkpointCredentialRetirementTestDriver) RetireCheckpointPostgresCrede
 		d.t.Fatal("original retirement reissued")
 	}
 	d.retires++
-	d.receipts[id] = state.ProjectEnvironmentCloneCheckpointPostgresCredentialRetirementObservation{RequestID: id, PreparationRequestID: state.ProjectEnvironmentCloneCheckpointPostgresCredentialRequestID(p.Credential), PlanSHA256: state.ProjectEnvironmentCloneCheckpointPostgresCredentialRetirementPlanSHA256(p), ProviderIdentityID: p.Credential.ProviderIdentityID, OwnerID: p.Credential.Runtime.Verification.Isolation.OwnerID, DataResourceID: p.Credential.DataResourceID, PreparationFenced: true, IdentityAbsent: true, SessionsClosed: true, NoSourceAuthority: true, SQLScopeUnchanged: true, RetiredAt: time.Now().UTC().Truncate(time.Microsecond)}
+	d.receipts[id] = state.ProjectEnvironmentCloneCheckpointPostgresCredentialRetirementObservation{RequestID: id, PreparationRequestID: state.ProjectEnvironmentCloneCheckpointPostgresCredentialRequestID(p.Credential), PlanSHA256: state.ProjectEnvironmentCloneCheckpointPostgresCredentialRetirementPlanSHA256(p), ProviderIdentityID: p.Credential.ProviderIdentityID, OwnerID: p.Credential.Runtime.Verification.Isolation.OwnerID, DataResourceID: p.Credential.DataResourceID, PreparationFenced: true, ActivationFenced: p.ActivationRequestID != "", IdentityAbsent: true, SessionsClosed: true, NoSourceAuthority: true, SQLScopeUnchanged: true, RetiredAt: time.Now().UTC().Truncate(time.Microsecond)}
 	if d.loseRetire {
 		d.loseRetire = false
 		return objectstorage.ErrUnavailable

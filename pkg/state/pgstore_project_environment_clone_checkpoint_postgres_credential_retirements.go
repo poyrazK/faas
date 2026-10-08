@@ -74,12 +74,34 @@ func (s *PgStore) checkpointCredentialRetirementTx(ctx context.Context, l Projec
 	}
 	return mapErr(tx.Commit(ctx))
 }
-func checkpointCredentialRetirementPlan(in ProjectEnvironmentCloneCheckpointPostgresCredential) ProjectEnvironmentCloneCheckpointPostgresCredentialRetirementPlan {
-	return ProjectEnvironmentCloneCheckpointPostgresCredentialRetirementPlan{Credential: in.Plan, PreparationState: in.State, CiphertextSHA256: in.CiphertextSHA256, PreparationObservationSHA256: in.ObservationSHA256, PreparationRequestedAt: in.RequestedAt}
+func checkpointCredentialRetirementPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, in ProjectEnvironmentCloneCheckpointPostgresCredential) (ProjectEnvironmentCloneCheckpointPostgresCredentialRetirementPlan, error) {
+	p := ProjectEnvironmentCloneCheckpointPostgresCredentialRetirementPlan{Credential: in.Plan, PreparationState: in.State, CiphertextSHA256: in.CiphertextSHA256, PreparationObservationSHA256: in.ObservationSHA256, PreparationRequestedAt: in.RequestedAt}
+	activation, err := readCheckpointPgActivationTx(ctx, tx, op)
+	if errors.Is(err, ErrNotFound) {
+		return p, nil
+	}
+	if err != nil {
+		return p, err
+	}
+	found := false
+	for _, b := range activation.Plan.Bindings {
+		if b.Connection.Credential.SourceBindingID == in.Plan.SourceBindingID {
+			if found || !reflect.DeepEqual(b.Connection.Credential, in.Plan) || b.Connection.CredentialCiphertextSHA256 != in.CiphertextSHA256 || b.Connection.CredentialObservationSHA256 != in.ObservationSHA256 {
+				return p, ErrConflict
+			}
+			found = true
+		}
+	}
+	if !found {
+		return p, ErrConflict
+	}
+	p.ActivationRequestID = ProjectEnvironmentCloneCheckpointPgActivationRequestID(activation.Plan)
+	p.ActivationPlanSHA256 = cloneCheckpointSHA(activation.Plan)
+	return p, nil
 }
-func checkpointCredentialRetirementFromSQL(r sqlc.ProjectEnvironmentCloneCheckpointPgCredentialRetirement, credential ProjectEnvironmentCloneCheckpointPostgresCredential) (ProjectEnvironmentCloneCheckpointPostgresCredentialRetirement, error) {
+func checkpointCredentialRetirementFromSQL(r sqlc.ProjectEnvironmentCloneCheckpointPgCredentialRetirement, p ProjectEnvironmentCloneCheckpointPostgresCredentialRetirementPlan) (ProjectEnvironmentCloneCheckpointPostgresCredentialRetirement, error) {
 	in := ProjectEnvironmentCloneCheckpointPostgresCredentialRetirement{State: r.State, RequestedAt: r.RequestedAt.Time.UTC(), ObservationSHA256: r.ObservationSha256.String}
-	if json.Unmarshal(r.Plan, &in.Plan) != nil || pgUUIDString(r.OperationID) != credential.Plan.Runtime.Verification.Isolation.OperationID || pgUUIDString(r.SourceBindingID) != credential.Plan.SourceBindingID || !reflect.DeepEqual(in.Plan, checkpointCredentialRetirementPlan(credential)) {
+	if json.Unmarshal(r.Plan, &in.Plan) != nil || pgUUIDString(r.OperationID) != p.Credential.Runtime.Verification.Isolation.OperationID || pgUUIDString(r.SourceBindingID) != p.Credential.SourceBindingID || !reflect.DeepEqual(in.Plan, p) {
 		return in, ErrConflict
 	}
 	if in.State == "retired" && (json.Unmarshal(r.Observation, &in.Observation) != nil || validateCheckpointPostgresCredentialRetirementObservation(in, in.Observation) != nil) {
@@ -92,7 +114,11 @@ func readCheckpointCredentialRetirementTx(ctx context.Context, tx pgx.Tx, op Pro
 	if err != nil {
 		return ProjectEnvironmentCloneCheckpointPostgresCredentialRetirement{}, mapErr(err)
 	}
-	return checkpointCredentialRetirementFromSQL(r, credential)
+	p, err := checkpointCredentialRetirementPlanTx(ctx, tx, op, credential)
+	if err != nil {
+		return ProjectEnvironmentCloneCheckpointPostgresCredentialRetirement{}, err
+	}
+	return checkpointCredentialRetirementFromSQL(r, p)
 }
 func (s *PgStore) ReserveProjectEnvironmentCloneCheckpointPostgresCredentialRetirement(ctx context.Context, l ProjectEnvironmentCloneLease, id string) (ProjectEnvironmentCloneCheckpointPostgresCredentialRetirement, error) {
 	var out ProjectEnvironmentCloneCheckpointPostgresCredentialRetirement
@@ -105,7 +131,11 @@ func (s *PgStore) ReserveProjectEnvironmentCloneCheckpointPostgresCredentialReti
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		encoded, err := json.Marshal(checkpointCredentialRetirementPlan(c))
+		p, err := checkpointCredentialRetirementPlanTx(ctx, tx, op, c)
+		if err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(p)
 		if err != nil {
 			return err
 		}
@@ -113,7 +143,7 @@ func (s *PgStore) ReserveProjectEnvironmentCloneCheckpointPostgresCredentialReti
 		if err != nil {
 			return mapErr(err)
 		}
-		out, err = checkpointCredentialRetirementFromSQL(row, c)
+		out, err = checkpointCredentialRetirementFromSQL(row, p)
 		return err
 	})
 	return out, err
@@ -134,7 +164,7 @@ func (s *PgStore) ClaimProjectEnvironmentCloneCheckpointPostgresCredentialRetire
 		if err != nil {
 			return mapErr(err)
 		}
-		out, err = checkpointCredentialRetirementFromSQL(row, c)
+		out, err = checkpointCredentialRetirementFromSQL(row, out.Plan)
 		dispatch = err == nil
 		return err
 	})

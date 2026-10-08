@@ -8244,3 +8244,61 @@ number checks also pass. Targeted lint is clean after applying equivalent boolea
 character checks and rerunning their endpoint tests. Native effects use the
 protocol test driver; these results
 do not establish live provider qualification.
+
+### Private checkpoint PostgreSQL activation
+
+Activation freezes one complete manifest of every captured PostgreSQL binding
+before enabling any identity. Each member must have an original prepared inactive
+credential and a sealed connection value. The manifest pins those plans, native
+receipts, envelope digests and connection key IDs, sorted by source binding ID.
+Reservation atomically attaches all connection rows; a subset cannot dispatch.
+There is one manifest per operation, bounded at 16 MiB and by the existing
+4096-credential account ledger. Restrictive foreign keys and an explicit downgrade
+guard retain both planned and completed activation ownership.
+
+Current runtime, data, SQL closure, disabled-credential, endpoint and retention
+proofs are required at reservation and again before the activation claim. Only a
+known committed claim may dispatch the named native intent. Its qualified adapter
+may enable only the fresh prepared identities and grant only their frozen access
+on the pinned datasets. It cannot create identities, change passwords, inherit
+source authority, enable original jobs or publish secrets. Activation requires no
+credential decryption or plaintext inputs. There is no built-in qualified adapter.
+
+Once activation is requested, recovery observes the original intent without
+redispatch. Enabling writers invalidates the old closed-roster and equal-data
+proofs, so completion instead requires independently current exact grant scope,
+all identities active, no inherited or source authority, disabled scheduled jobs,
+private endpoints, verified TLS and pinned datasets. Partial or unknown activation
+retains ownership and blocks completion. The original receipt is immutable while
+health and original capture retention must cover the current worker lease. Every
+write and replay remains fenced by the exact capturing worker and revision.
+
+Compensation pins the activation request and manifest digest into each credential
+retirement plan, including planned, uncertain and completed activation. The native
+retirement proof must permanently fence delayed activation of that identity before
+fork cleanup can proceed. Removing the owned grant delta must preserve source and
+unowned SQL authority. Historical retirement plans without activation retain their
+original serialized hashes. Retirement remains replayable after fork deletion and
+does not depend on credential keys or a live database health horizon.
+
+Activated identities remain private: this step creates no managed bindings or app
+secret references and does not open the public full-stage clone gate. Atomic
+binding/secret publication, audited retained-secret erasure and quota reclamation,
+and qualified native provider adapters remain outstanding. Live R2/OVH
+qualification remains deferred at the user's request.
+
+Validation: PostgreSQL activation tests cover lost reserve/claim/native/finish
+replies, worker handoff, incomplete or duplicate manifests, missing sealed values,
+changed endpoints, current prerequisite loss, partial or foreign grant proofs,
+health horizons, late-write recovery, empty/owned/completed downgrade guards,
+immutable receipts and activation-fenced retirement through fork deletion. The
+state suite includes legacy retirement hash compatibility and schema coverage.
+Native effects use the protocol test driver; these tests do not establish live
+provider qualification.
+
+Connection sealing, credential retirement/preparation, SQL isolation, native
+restoration and private runtime regression groups also passed. The combined API
+run reached its 15-minute limit during verification; the complete verification
+group then passed separately. Targeted lint reports zero issues, and SQLC,
+encoding, shell-quoting and ADR-number checks pass. An initial API attempt exhausted
+test-database disk space; obsolete build cache was removed before the rerun.
