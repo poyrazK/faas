@@ -96,7 +96,7 @@ func TestGetServiceMap_Degraded_QueryFails(t *testing.T) {
 func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 	e := serviceMapEnv(t, api.PlanHobby)
 	api1 := createApp(t, e, "public-api")
-	billing := createApp(t, e, "billing")
+	payments := createApp(t, e, "payments")
 	ledger := createApp(t, e, "ledger")
 	createApp(t, e, "quiet")
 	foreignAccount, _ := mustCreateAccount(t, e.store, "service-map-foreign", api.PlanHobby)
@@ -105,7 +105,7 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 	var queries atomic.Int32
 	installPromFixture(t, &e, func(query string) string {
 		queries.Add(1)
-		for _, id := range []string{api1.ID, billing.ID, ledger.ID} {
+		for _, id := range []string{api1.ID, payments.ID, ledger.ID} {
 			if strings.Count(query, id) != 2 {
 				t.Errorf("query must constrain caller and target to owned app %s: %s", id, query)
 			}
@@ -121,7 +121,7 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 				`{"metric":{"caller_app":"%[2]s","target_app":"%[3]s","outcome":"success"},"value":[1,"10"]},`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[3]s","outcome":"success"},"value":[1,"0.2"]},`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[4]s","outcome":"success"},"value":[1,"50"]}]}}`,
-				api1.ID, billing.ID, ledger.ID, foreignAppID)
+				api1.ID, payments.ID, ledger.ID, foreignAppID)
 		case strings.Contains(query, "gateway_service_dependency_duration_seconds_bucket"):
 			if !strings.Contains(query, `outcome="success"`) {
 				t.Errorf("latency query must be success-only: %s", query)
@@ -130,7 +130,7 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","le":"0.01"},"value":[1,"48"]},`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","le":"0.05"},"value":[1,"96"]},`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","le":"+Inf"},"value":[1,"96"]}]}}`,
-				api1.ID, billing.ID)
+				api1.ID, payments.ID)
 		default:
 			t.Errorf("unexpected query: %s", query)
 			return `{"data":{"resultType":"vector","result":[]}}`
@@ -145,10 +145,10 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 		t.Fatalf("Prometheus queries = %d, want 2", got)
 	}
 	if len(out.Edges) != 2 {
-		t.Fatalf("edges = %+v, want public-api→billing and billing→ledger only", out.Edges)
+		t.Fatalf("edges = %+v, want public-api→payments and payments→ledger only", out.Edges)
 	}
 	top := out.Edges[0]
-	if top.CallerAppSlug != "public-api" || top.TargetAppSlug != "billing" || top.Calls != 100 || top.Errors != 4 {
+	if top.CallerAppSlug != "public-api" || top.TargetAppSlug != "payments" || top.Calls != 100 || top.Errors != 4 {
 		t.Fatalf("top edge = %+v", top)
 	}
 	if math.Abs(top.ErrorRatePct-4) > 1e-9 {
@@ -157,15 +157,15 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 	if math.Abs(top.LatencyP50MS-10) > 1e-9 || top.LatencyP95MS <= top.LatencyP50MS {
 		t.Fatalf("latency p50/p95 = %v/%v, want 10 and above", top.LatencyP50MS, top.LatencyP95MS)
 	}
-	if second := out.Edges[1]; second.CallerAppSlug != "billing" || second.TargetAppSlug != "ledger" || second.Calls != 10 {
+	if second := out.Edges[1]; second.CallerAppSlug != "payments" || second.TargetAppSlug != "ledger" || second.Calls != 10 {
 		t.Fatalf("second edge = %+v", second)
 	}
 	slugs := make([]string, 0, len(out.Nodes))
 	for _, node := range out.Nodes {
 		slugs = append(slugs, node.AppSlug)
 	}
-	if got := strings.Join(slugs, ","); got != "billing,ledger,public-api" {
-		t.Fatalf("nodes = %s, want billing,ledger,public-api", got)
+	if got := strings.Join(slugs, ","); got != "ledger,payments,public-api" {
+		t.Fatalf("nodes = %s, want ledger,payments,public-api", got)
 	}
 }
 
