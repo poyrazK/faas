@@ -1,10 +1,10 @@
-# ADR-679: Scoped application health diagnostics
+# ADR-733: Scoped application health diagnostics
 
 Status: accepted · 2026-10-05
 
 ## Context
 
-ADR-678 introduced an observed health projection. Its readiness summary merges
+ADR-732 introduced an observed health projection. Its readiness summary merges
 node liveness and required probe failures, and its app-wide request metrics can
 mix preview errors into default-scope health. Warning on every 5xx also obscures
 the difference between an isolated failure and a substantial serving failure.
@@ -61,4 +61,4 @@ No database migration, routing change or VM lifecycle change is introduced.
 Health transitions, history, notifications, arbitrary environment selection,
 public probes and worker/job health remain subsequent slices.
 
-ADR-680 adds independent background observations and bounded app-health history.
+ADR-734 adds independent background observations and bounded app-health history.

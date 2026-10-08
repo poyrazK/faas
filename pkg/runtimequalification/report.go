@@ -1,5 +1,5 @@
 // Package runtimequalification verifies private operator-native evidence before
-// writing an ADR-685 receipt. Trust anchors are supplied separately from evidence.
+// writing an ADR-739 receipt. Trust anchors are supplied separately from evidence.
 package runtimequalification
 
 import (

@@ -15139,7 +15139,7 @@ VALUES(sqlc.arg(account_id)::text::uuid, sqlc.arg(app_id)::text::uuid, 'app.heal
  sqlc.arg(source_id)::text::uuid, sqlc.arg(payload)::jsonb, sqlc.arg(recipient_ids)::text[]::uuid[])
 ON CONFLICT (event, source_id) DO NOTHING;
 
--- Runtime-base generation identity (ADR-682).
+-- Runtime-base generation identity (ADR-736).
 -- name: SetBuildRuntimeBaseRef :exec
 UPDATE build_provenance SET runtime_base_ref=$2 WHERE build_id=$1;
 -- name: GetBuildRuntimeBaseRef :one
@@ -15172,7 +15172,7 @@ SELECT r.* FROM runtime_artifact_bindings b JOIN runtime_releases r ON r.id=b.re
 WHERE b.account_id=$1 AND b.rootfs_key=$2;
 
 -- Runtime update preparation: lock in the app -> deployment order used by
--- queue admission, so pinning cannot race a claimed or queued build (ADR-683).
+-- queue admission, so pinning cannot race a claimed or queued build (ADR-737).
 -- name: LockRuntimeUpgradeTargetApp :one
 SELECT a.id FROM apps a JOIN deployments d ON d.app_id=a.id
 WHERE d.id=sqlc.arg(deployment_id)::uuid AND a.status='active' FOR UPDATE OF a;
@@ -15251,7 +15251,7 @@ SELECT sqlc.arg(target_deployment_id)::uuid,serving_deployment_id,serving_rootfs
  target_release_id,configuration_fingerprint,secret_fingerprint,input_fingerprint,input_secret_fingerprint,captured_at
 FROM deployment_runtime_upgrade_baselines WHERE deployment_id=sqlc.arg(source_deployment_id)::uuid;
 
--- Operator-owned native runtime qualification (ADR-685), never customer intent.
+-- Operator-owned native runtime qualification (ADR-739), never customer intent.
 -- name: RecordRuntimeReleaseQualification :one
 INSERT INTO runtime_release_qualifications(release_id,profile,architecture,host_id,kernel_boot_id,source_commit,
  kernel_sha256,firecracker_sha256,report_sha256,test_metal_sha256,leakcheck_sha256,started_at,completed_at)

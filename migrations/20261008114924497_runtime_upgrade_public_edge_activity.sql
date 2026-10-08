@@ -1,7 +1,7 @@
 -- filename: 20261008114924497_runtime_upgrade_public_edge_activity.sql
 
 -- +goose Up
-CREATE TABLE runtime_upgrade_public_edge_activity (
+CREATE TABLE IF NOT EXISTS runtime_upgrade_public_edge_activity (
  slot_id uuid PRIMARY KEY CHECK (slot_id <> '00000000-0000-0000-0000-000000000000'::uuid),
  public_session_id uuid NOT NULL CHECK (public_session_id <> '00000000-0000-0000-0000-000000000000'::uuid),
  public_roster_revision uuid NOT NULL REFERENCES runtime_upgrade_public_edge_rosters(revision),
@@ -16,9 +16,10 @@ CREATE TABLE runtime_upgrade_public_edge_activity (
  expires_at timestamptz NOT NULL CHECK (isfinite(expires_at) AND expires_at=observed_at+interval '1 minute'),
  CHECK (pending_forwards+current_forwards+previous_forwards <= 65536)
 );
+DROP TRIGGER IF EXISTS runtime_upgrade_public_edge_activity_membership_guard ON runtime_upgrade_public_edge_activity;
 CREATE TRIGGER runtime_upgrade_public_edge_activity_membership_guard BEFORE INSERT OR UPDATE ON runtime_upgrade_public_edge_activity FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_public_edge_fact();
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_upgrade_public_edge_activity_version() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_upgrade_public_edge_activity_version() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF OLD.public_session_id=NEW.public_session_id AND OLD.public_roster_revision=NEW.public_roster_revision AND (
   NEW.activity_version < OLD.activity_version
@@ -31,6 +32,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_public_edge_activity_version_guard ON runtime_upgrade_public_edge_activity;
 CREATE TRIGGER runtime_upgrade_public_edge_activity_version_guard BEFORE UPDATE ON runtime_upgrade_public_edge_activity FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_public_edge_activity_version();
 -- +goose Down
 -- Forward-only: retain operational generation observations.

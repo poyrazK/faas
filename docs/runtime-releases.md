@@ -48,7 +48,7 @@ daemon defaults change. Failed-build retries retain the same target. Missing
 or mismatched source, runtime or scan evidence blocks preparation. This
 contract does not authorize activation, so the API, CLI and console continue
 to offer read-only previews. See
-[ADR-683](adr/683-runtime-upgrade-build-targets.md).
+[ADR-737](adr/737-runtime-upgrade-build-targets.md).
 
 Internal preparation can now capture the serving artifact and configuration
 and secret-version fingerprints before queueing an explicit zero-traffic
@@ -57,12 +57,12 @@ configuration or secret input. Retries retain the original review; they cannot
 silently adopt new values. Secret values are not copied or restored by this
 record. Activation still needs target qualification, fresh cold boot/readiness
 and baseline checks inside guarded cutover. See
-[ADR-684](adr/684-runtime-upgrade-baselines.md).
+[ADR-738](adr/738-runtime-upgrade-baselines.md).
 
 REST reads: `GET /v1/deployments/{id}/runtime` and
 `GET /v1/deployments/{id}/runtime/upgrade-preview?target=RELEASE_ID`.
 Both require read authorization and deployment ownership. See
-[ADR-682](adr/682-immutable-runtime-releases.md) for publication, retention and
+[ADR-736](adr/736-immutable-runtime-releases.md) for publication, retention and
 native acceptance requirements.
 
 Runtime metadata bounds are 1,024 bytes for the physical artifact key, 64 bytes
@@ -81,8 +81,8 @@ receipt for the exact target. Publication and scans alone cannot authorize a
 build. The private operator importer verifies a separately trusted signature,
 exact native metal coverage, published artifact binding/bytes and retained
 readback evidence before recording a receipt. It provides no customer apply or
-scheduling operation. See [ADR-685](adr/685-native-runtime-release-qualification.md),
-[ADR-686](adr/686-trusted-runtime-qualification-import.md) and the
+scheduling operation. See [ADR-739](adr/739-native-runtime-release-qualification.md),
+[ADR-740](adr/740-trusted-runtime-qualification-import.md) and the
 [native qualification runbook](ops/runtime-release-qualification.md).
 
 Qualification evidence bounds are 64 KiB per report/envelope/fixture JSON,

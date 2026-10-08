@@ -1,28 +1,28 @@
 -- filename: 20261008114924481_runtime_upgrade_gateway_roster.sql
 
 -- +goose Up
-CREATE TABLE runtime_upgrade_gateway_rosters (
+CREATE TABLE IF NOT EXISTS runtime_upgrade_gateway_rosters (
  revision uuid PRIMARY KEY CHECK (revision<>'00000000-0000-0000-0000-000000000000'::uuid),
  slot_ids uuid[] NOT NULL CHECK (cardinality(slot_ids) BETWEEN 1 AND 64 AND array_ndims(slot_ids)=1 AND array_lower(slot_ids,1)=1),
  gateway_sessions uuid[] NOT NULL CHECK (cardinality(gateway_sessions)=cardinality(slot_ids) AND array_ndims(gateway_sessions)=1 AND array_lower(gateway_sessions,1)=1),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(created_at))
 );
-CREATE TABLE runtime_upgrade_gateway_roster_head (
+CREATE TABLE IF NOT EXISTS runtime_upgrade_gateway_roster_head (
  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
  revision uuid REFERENCES runtime_upgrade_gateway_rosters(revision)
 );
-INSERT INTO runtime_upgrade_gateway_roster_head(singleton) VALUES (true);
-CREATE TABLE runtime_upgrade_gateway_heartbeats (
+INSERT INTO runtime_upgrade_gateway_roster_head(singleton) VALUES (true) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS runtime_upgrade_gateway_heartbeats (
  slot_id uuid PRIMARY KEY CHECK (slot_id<>'00000000-0000-0000-0000-000000000000'::uuid),
  gateway_session_id uuid NOT NULL CHECK (gateway_session_id<>'00000000-0000-0000-0000-000000000000'::uuid),
  roster_revision uuid NOT NULL REFERENCES runtime_upgrade_gateway_rosters(revision),
  seen_at timestamptz NOT NULL CHECK (isfinite(seen_at)),
  expires_at timestamptz NOT NULL CHECK (isfinite(expires_at) AND expires_at=seen_at+interval '1 minute')
 );
-ALTER TABLE runtime_upgrade_verifications ADD COLUMN gateway_roster_revision uuid REFERENCES runtime_upgrade_gateway_rosters(revision);
+ALTER TABLE runtime_upgrade_verifications ADD COLUMN IF NOT EXISTS gateway_roster_revision uuid REFERENCES runtime_upgrade_gateway_rosters(revision);
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_upgrade_gateway_roster() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_upgrade_gateway_roster() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE canonical uuid[]; unique_sessions integer;
 BEGIN
  IF TG_OP<>'INSERT' THEN
@@ -39,6 +39,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_gateway_roster_guard ON runtime_upgrade_gateway_rosters;
 CREATE TRIGGER runtime_upgrade_gateway_roster_guard BEFORE INSERT OR UPDATE OR DELETE ON runtime_upgrade_gateway_rosters FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_gateway_roster();
 
 -- +goose StatementBegin

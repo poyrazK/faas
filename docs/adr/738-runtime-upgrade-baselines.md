@@ -1,10 +1,10 @@
-# ADR-684: Serving and configuration baselines for runtime upgrades
+# ADR-738: Serving and configuration baselines for runtime upgrades
 
 Status: accepted · 2026-10-05
 
 ## Context
 
-ADR-683 retains the exact runtime and source chosen before building. Preparing
+ADR-737 retains the exact runtime and source chosen before building. Preparing
 an update also needs a stable serving predecessor and configuration evidence.
 Otherwise a concurrent deployment, environment edit or secret rotation can
 change what the update replaces or what its retained source will receive.

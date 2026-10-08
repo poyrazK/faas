@@ -8973,7 +8973,7 @@ const (
 	AppHealthNotificationRecipients = 100
 )
 
-// Runtime release catalogue and metadata bounds (ADR-682).
+// Runtime release catalogue and metadata bounds (ADR-736).
 const (
 	RuntimeReleaseCatalogLimit         = 50
 	RuntimeReleaseArtifactKeyMaxBytes  = 1024

@@ -1,7 +1,7 @@
 -- filename: 20261008114924441_runtime_release_qualifications.sql
 
 -- +goose Up
-CREATE TABLE runtime_release_qualifications (
+CREATE TABLE IF NOT EXISTS runtime_release_qualifications (
  release_id text PRIMARY KEY REFERENCES runtime_releases(id),
  profile text NOT NULL CHECK (profile = 'runtime-upgrade-native-v1'),
  architecture text NOT NULL CHECK (architecture IN ('amd64','arm64')),
@@ -22,7 +22,7 @@ CREATE TABLE runtime_release_qualifications (
 );
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_release_qualification() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_release_qualification() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP = 'INSERT' THEN
   IF NOT EXISTS (SELECT 1 FROM runtime_releases WHERE id=NEW.release_id AND architecture=NEW.architecture) THEN
@@ -46,6 +46,7 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_release_qualification_immutable ON runtime_release_qualifications;
 CREATE TRIGGER runtime_release_qualification_immutable BEFORE INSERT OR UPDATE OR DELETE ON runtime_release_qualifications
 FOR EACH ROW EXECUTE FUNCTION guard_runtime_release_qualification();
 

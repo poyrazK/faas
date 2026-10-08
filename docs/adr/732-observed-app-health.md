@@ -1,4 +1,4 @@
-# ADR-678: Observed application health
+# ADR-732: Observed application health
 
 Status: accepted · 2026-10-05
 
@@ -66,6 +66,6 @@ existing evidence. Scenario, authorization, client contract and UI freshness
 checks cover this slice; public probes, health history, alert transitions and
 workload-specific assessments remain subsequent work.
 
-The follow-up in [ADR-679](593-scoped-health-diagnostics.md) replaces app-wide
+The follow-up in [ADR-733](593-scoped-health-diagnostics.md) replaces app-wide
 request evidence and the any-5xx policy with scoped diagnostics and explicit
 severity defaults.

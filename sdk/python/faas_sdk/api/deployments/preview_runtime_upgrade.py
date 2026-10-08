@@ -87,7 +87,7 @@ def sync_detailed(
 ) -> Response[Problem | RuntimeUpgradePreviewResponse]:
     """Preview a runtime base change without applying it.
 
-     Compares exact published component identities (ADR-682). This planning-only
+     Compares exact published component identities (ADR-736). This planning-only
     response cannot authorize an update. Runtime family changes, architecture changes
     and unknown current provenance block the plan. Same-family changes still require
     native qualification, a rebuilt candidate, fresh readiness and guarded rollout.
@@ -126,7 +126,7 @@ def sync(
 ) -> Problem | RuntimeUpgradePreviewResponse | None:
     """Preview a runtime base change without applying it.
 
-     Compares exact published component identities (ADR-682). This planning-only
+     Compares exact published component identities (ADR-736). This planning-only
     response cannot authorize an update. Runtime family changes, architecture changes
     and unknown current provenance block the plan. Same-family changes still require
     native qualification, a rebuilt candidate, fresh readiness and guarded rollout.
@@ -160,7 +160,7 @@ async def asyncio_detailed(
 ) -> Response[Problem | RuntimeUpgradePreviewResponse]:
     """Preview a runtime base change without applying it.
 
-     Compares exact published component identities (ADR-682). This planning-only
+     Compares exact published component identities (ADR-736). This planning-only
     response cannot authorize an update. Runtime family changes, architecture changes
     and unknown current provenance block the plan. Same-family changes still require
     native qualification, a rebuilt candidate, fresh readiness and guarded rollout.
@@ -197,7 +197,7 @@ async def asyncio(
 ) -> Problem | RuntimeUpgradePreviewResponse | None:
     """Preview a runtime base change without applying it.
 
-     Compares exact published component identities (ADR-682). This planning-only
+     Compares exact published component identities (ADR-736). This planning-only
     response cannot authorize an update. Runtime family changes, architecture changes
     and unknown current provenance block the plan. Same-family changes still require
     native qualification, a rebuilt candidate, fresh readiness and guarded rollout.

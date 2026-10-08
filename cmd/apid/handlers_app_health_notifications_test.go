@@ -1,6 +1,6 @@
 package main
 
-// adr: 681
+// adr: 735
 
 import (
 	"encoding/json"
@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-681: opt-in notifications link to the owner's retained health evidence.
+// ADR-735: opt-in notifications link to the owner's retained health evidence.
 func TestAppHealthNotificationsAPISubscriptionAndProvenance(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
 	slug := mustSeedEdgeRuleApp(t, e, "observed-health-notifications")

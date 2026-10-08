@@ -1,6 +1,6 @@
 package webhook
 
-// adr: 681
+// adr: 735
 
 import (
 	"context"
@@ -57,7 +57,7 @@ func TestEmit_RejectsUnknownEvent(t *testing.T) {
 	}
 }
 
-// ADR-681: health changes require explicit opt-in even for wildcard hooks.
+// ADR-735: health changes require explicit opt-in even for wildcard hooks.
 func TestEmit_HealthRequiresExplicitSubscription(t *testing.T) {
 	store := state.NewMemStore()
 	account, err := store.CreateAccount(t.Context(), "health-opt-in@example.com", api.PlanPro)

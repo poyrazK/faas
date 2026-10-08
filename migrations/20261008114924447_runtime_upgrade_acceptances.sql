@@ -1,7 +1,7 @@
 -- filename: 20261008114924447_runtime_upgrade_acceptances.sql
 
 -- +goose Up
-CREATE TABLE deployment_runtime_upgrade_acceptances (
+CREATE TABLE IF NOT EXISTS deployment_runtime_upgrade_acceptances (
  deployment_id uuid PRIMARY KEY REFERENCES deployment_runtime_upgrade_baselines(deployment_id) ON DELETE CASCADE,
  target_release_id text NOT NULL REFERENCES runtime_releases(id),
  rootfs_key text NOT NULL CHECK (octet_length(rootfs_key) BETWEEN 1 AND 1024),
@@ -15,6 +15,7 @@ CREATE TABLE deployment_runtime_upgrade_acceptances (
  started_at timestamptz NOT NULL CHECK (isfinite(started_at)),
  ready_at timestamptz NOT NULL CHECK (isfinite(ready_at) AND ready_at >= started_at)
 );
+DROP TRIGGER IF EXISTS runtime_upgrade_acceptance_immutable ON deployment_runtime_upgrade_acceptances;
 CREATE TRIGGER runtime_upgrade_acceptance_immutable BEFORE UPDATE OR DELETE ON deployment_runtime_upgrade_acceptances
 FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_target();
 

@@ -1,6 +1,6 @@
 package state_test
 
-// adr: 681
+// adr: 735
 
 import (
 	"encoding/json"
@@ -55,7 +55,7 @@ func healthNotifications(t *testing.T, s state.Store, app state.App, hook state.
 	return out
 }
 
-// ADR-681: only explicit, eligible subscriptions receive coalesced status changes.
+// ADR-735: only explicit, eligible subscriptions receive coalesced status changes.
 func TestAppHealthNotificationsOptInAndCoalescing(t *testing.T) {
 	healthNotificationStores(t, func(t *testing.T, store state.Store, s state.AppHealthHistoryStore) {
 		account, app := healthNotificationFixture(t, store)
@@ -109,7 +109,7 @@ func TestAppHealthNotificationsOptInAndCoalescing(t *testing.T) {
 	})
 }
 
-// ADR-681: a subscription revision fences deferred notifications.
+// ADR-735: a subscription revision fences deferred notifications.
 func TestAppHealthNotificationsDeferredOptOut(t *testing.T) {
 	healthNotificationStores(t, func(t *testing.T, store state.Store, s state.AppHealthHistoryStore) {
 		account, app := healthNotificationFixture(t, store)
@@ -138,7 +138,7 @@ func TestAppHealthNotificationsDeferredOptOut(t *testing.T) {
 	})
 }
 
-// ADR-681: missing evidence cannot imply an outage or recovery.
+// ADR-735: missing evidence cannot imply an outage or recovery.
 func TestAppHealthNotificationsGapsUnknownAndLateOptIn(t *testing.T) {
 	healthNotificationStores(t, func(t *testing.T, store state.Store, s state.AppHealthHistoryStore) {
 		account, app := healthNotificationFixture(t, store)
@@ -174,7 +174,7 @@ func TestAppHealthNotificationsGapsUnknownAndLateOptIn(t *testing.T) {
 	})
 }
 
-// ADR-681: the maximum cohort fits durable JSON state; overflow rolls back.
+// ADR-735: the maximum cohort fits durable JSON state; overflow rolls back.
 func TestAppHealthNotificationsRecipientBoundIsAtomic(t *testing.T) {
 	healthNotificationStores(t, func(t *testing.T, store state.Store, s state.AppHealthHistoryStore) {
 		account, app := healthNotificationFixture(t, store)

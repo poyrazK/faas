@@ -1627,7 +1627,7 @@ export class DeploymentsService {
   }
   /**
    * Inspect immutable runtime base identity.
-   * Read-only artifact evidence for Gregale-managed function runtimes (ADR-682).
+   * Read-only artifact evidence for Gregale-managed function runtimes (ADR-736).
    * Older artifacts return unknown rather than inferring their base from builder
    * provenance. Published candidates are limited to the same family and architecture,
    * at most 50 newest publications. Publication does not establish upgrade compatibility.
@@ -1659,7 +1659,7 @@ export class DeploymentsService {
   }
   /**
    * Preview a runtime base change without applying it.
-   * Compares exact published component identities (ADR-682). This planning-only
+   * Compares exact published component identities (ADR-736). This planning-only
    * response cannot authorize an update. Runtime family changes, architecture changes
    * and unknown current provenance block the plan. Same-family changes still require
    * native qualification, a rebuilt candidate, fresh readiness and guarded rollout.

@@ -1,10 +1,10 @@
-# ADR-680: Continuous application health observations and history
+# ADR-734: Continuous application health observations and history
 
 Status: accepted · 2026-10-05
 
 ## Context
 
-ADR-678 and ADR-679 explain current serving evidence when a customer reads the
+ADR-732 and ADR-733 explain current serving evidence when a customer reads the
 health endpoint. Incidents between dashboard visits leave no application health
 record. A saved healthy assessment must not imply continuous health during a
 collector outage. Route-health history records rollout decisions; application

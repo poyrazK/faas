@@ -1,7 +1,7 @@
 -- filename: 20261008114924475_runtime_upgrade_verification_journal.sql
 
 -- +goose Up
-CREATE TABLE runtime_upgrade_verifications (
+CREATE TABLE IF NOT EXISTS runtime_upgrade_verifications (
  operation_id uuid PRIMARY KEY REFERENCES runtime_upgrade_operations(id) ON DELETE CASCADE,
  gateway_sessions uuid[] NOT NULL CHECK (cardinality(gateway_sessions) BETWEEN 1 AND 64),
  cutover_at timestamptz NOT NULL CHECK (isfinite(cutover_at)),
@@ -18,10 +18,10 @@ CREATE TABLE runtime_upgrade_verifications (
  CHECK ((phase='pending' AND finished_at IS NULL) OR (phase<>'pending' AND finished_at IS NOT NULL AND lease_token IS NULL)),
  CHECK (phase<>'verified' OR (reason='' AND last_observation IS NOT NULL AND last_observation->>'status' IS NOT DISTINCT FROM 'verified'))
 );
-CREATE INDEX runtime_upgrade_verifications_due ON runtime_upgrade_verifications(next_attempt_at,created_at,operation_id) WHERE phase='pending';
+CREATE INDEX IF NOT EXISTS runtime_upgrade_verifications_due ON runtime_upgrade_verifications(next_attempt_at,created_at,operation_id) WHERE phase='pending';
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_upgrade_verification() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_upgrade_verification() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE canonical uuid[];
 BEGIN
  SELECT array_agg(DISTINCT s ORDER BY s) INTO canonical FROM unnest(NEW.gateway_sessions) s;
@@ -43,6 +43,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_verification_guard ON runtime_upgrade_verifications;
 CREATE TRIGGER runtime_upgrade_verification_guard BEFORE INSERT OR UPDATE ON runtime_upgrade_verifications FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_verification();
 
 -- +goose Down

@@ -2,8 +2,8 @@
 
 This private operator workflow implements
 [ADR-687](../adr/687-guarded-native-runtime-qualification-collector.md) and
-[ADR-686](../adr/686-trusted-runtime-qualification-import.md)
-and records the [ADR-685](../adr/685-native-runtime-release-qualification.md)
+[ADR-740](../adr/740-trusted-runtime-qualification-import.md)
+and records the [ADR-739](../adr/739-native-runtime-release-qualification.md)
 receipt consumed by explicit upgrade preparation. Publishing a runtime,
 scanning it, passing generic metal smoke tests or hashing synthetic logs does
 not qualify it. Customer upgrade previews remain read-only.
@@ -173,7 +173,7 @@ Limits are 64 KiB per envelope/report/fixture JSON, 64 MiB per log, 256 KiB per
 Go JSON event or leakcheck line, and 16 JSON nesting levels. Published artifacts
 are streamed when hashed. Identical imports retain the receipt timestamp and
 reuse audit objects. Different evidence cannot replace a receipt. Revoked
-releases cannot be revived by import; ADR-685 has no reset/supersession switch.
+releases cannot be revived by import; ADR-739 has no reset/supersession switch.
 Corrupt retained evidence is rejected without overwriting it. Failed imports
 can leave unreferenced audit objects but never a qualification receipt.
 

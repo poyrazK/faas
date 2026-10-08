@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- ADR-711: immutable selected startup provenance, never a fencing receipt.
-CREATE TABLE runtime_upgrade_native_public_startups (
+CREATE TABLE IF NOT EXISTS runtime_upgrade_native_public_startups (
  public_session_id uuid PRIMARY KEY CHECK (public_session_id <> '00000000-0000-0000-0000-000000000000'::uuid),
  slot_id uuid NOT NULL CHECK (slot_id <> '00000000-0000-0000-0000-000000000000'::uuid),
  gateway_revision uuid NOT NULL REFERENCES runtime_upgrade_gateway_rosters(revision),
@@ -22,7 +22,7 @@ CREATE TABLE runtime_upgrade_native_public_startups (
  recorded_at timestamptz NOT NULL CHECK (isfinite(recorded_at) AND recorded_at>=observed_at AND recorded_at-observed_at<=interval '90 seconds')
 );
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_upgrade_native_public_startup() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_upgrade_native_public_startup() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE roster runtime_upgrade_public_edge_rosters; body jsonb; selected jsonb; epoch jsonb;
 BEGIN
  IF TG_OP<>'INSERT' THEN
@@ -61,13 +61,15 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_native_public_startup_guard ON runtime_upgrade_native_public_startups;
 CREATE TRIGGER runtime_upgrade_native_public_startup_guard BEFORE INSERT OR UPDATE OR DELETE ON runtime_upgrade_native_public_startups FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_native_public_startup();
 -- +goose StatementBegin
-CREATE FUNCTION forbid_runtime_upgrade_native_public_startup_truncate() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION forbid_runtime_upgrade_native_public_startup_truncate() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  RAISE EXCEPTION 'native startup provenance cannot be truncated' USING ERRCODE='23514';
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_native_public_startup_truncate ON runtime_upgrade_native_public_startups;
 CREATE TRIGGER runtime_upgrade_native_public_startup_truncate BEFORE TRUNCATE ON runtime_upgrade_native_public_startups FOR EACH STATEMENT EXECUTE FUNCTION forbid_runtime_upgrade_native_public_startup_truncate();
 -- +goose Down
 -- Forward-only: never erase historical startup provenance.

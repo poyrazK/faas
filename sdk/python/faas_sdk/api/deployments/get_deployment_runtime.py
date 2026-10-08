@@ -72,7 +72,7 @@ def sync_detailed(
 ) -> Response[DeploymentRuntimeResponse | Problem]:
     """Inspect immutable runtime base identity.
 
-     Read-only artifact evidence for Gregale-managed function runtimes (ADR-682).
+     Read-only artifact evidence for Gregale-managed function runtimes (ADR-736).
     Older artifacts return unknown rather than inferring their base from builder
     provenance. Published candidates are limited to the same family and architecture,
     at most 50 newest publications. Publication does not establish upgrade compatibility.
@@ -107,7 +107,7 @@ def sync(
 ) -> DeploymentRuntimeResponse | Problem | None:
     """Inspect immutable runtime base identity.
 
-     Read-only artifact evidence for Gregale-managed function runtimes (ADR-682).
+     Read-only artifact evidence for Gregale-managed function runtimes (ADR-736).
     Older artifacts return unknown rather than inferring their base from builder
     provenance. Published candidates are limited to the same family and architecture,
     at most 50 newest publications. Publication does not establish upgrade compatibility.
@@ -137,7 +137,7 @@ async def asyncio_detailed(
 ) -> Response[DeploymentRuntimeResponse | Problem]:
     """Inspect immutable runtime base identity.
 
-     Read-only artifact evidence for Gregale-managed function runtimes (ADR-682).
+     Read-only artifact evidence for Gregale-managed function runtimes (ADR-736).
     Older artifacts return unknown rather than inferring their base from builder
     provenance. Published candidates are limited to the same family and architecture,
     at most 50 newest publications. Publication does not establish upgrade compatibility.
@@ -170,7 +170,7 @@ async def asyncio(
 ) -> DeploymentRuntimeResponse | Problem | None:
     """Inspect immutable runtime base identity.
 
-     Read-only artifact evidence for Gregale-managed function runtimes (ADR-682).
+     Read-only artifact evidence for Gregale-managed function runtimes (ADR-736).
     Older artifacts return unknown rather than inferring their base from builder
     provenance. Published candidates are limited to the same family and architecture,
     at most 50 newest publications. Publication does not establish upgrade compatibility.

@@ -28,7 +28,7 @@ type CommandArtifactReplicator struct {
 }
 
 // RuntimeReleaseReplicator hands off immutable drive0 bytes and their scan
-// evidence before an application artifact can bind to them (ADR-682).
+// evidence before an application artifact can bind to them (ADR-736).
 type RuntimeReleaseReplicator interface {
 	ReplicateRuntimeRelease(context.Context, string) error
 }

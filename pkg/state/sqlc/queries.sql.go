@@ -35608,7 +35608,7 @@ WHERE d.id=$1::uuid AND a.status='active' FOR UPDATE OF a
 `
 
 // Runtime update preparation: lock in the app -> deployment order used by
-// queue admission, so pinning cannot race a claimed or queued build (ADR-683).
+// queue admission, so pinning cannot race a claimed or queued build (ADR-737).
 func (q *Queries) LockRuntimeUpgradeTargetApp(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, lockRuntimeUpgradeTargetApp, deploymentID)
 	var id pgtype.UUID
@@ -56044,7 +56044,7 @@ type RecordRuntimeReleaseQualificationParams struct {
 	CompletedAt       pgtype.Timestamptz
 }
 
-// Operator-owned native runtime qualification (ADR-685), never customer intent.
+// Operator-owned native runtime qualification (ADR-739), never customer intent.
 func (q *Queries) RecordRuntimeReleaseQualification(ctx context.Context, db DBTX, arg RecordRuntimeReleaseQualificationParams) (RuntimeReleaseQualification, error) {
 	row := db.QueryRow(ctx, recordRuntimeReleaseQualification,
 		arg.ReleaseID,
@@ -61751,7 +61751,7 @@ type SetBuildRuntimeBaseRefParams struct {
 	RuntimeBaseRef string
 }
 
-// Runtime-base generation identity (ADR-682).
+// Runtime-base generation identity (ADR-736).
 func (q *Queries) SetBuildRuntimeBaseRef(ctx context.Context, db DBTX, arg SetBuildRuntimeBaseRefParams) error {
 	_, err := db.Exec(ctx, setBuildRuntimeBaseRef, arg.BuildID, arg.RuntimeBaseRef)
 	return err

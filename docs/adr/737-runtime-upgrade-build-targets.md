@@ -1,10 +1,10 @@
-# ADR-683: Immutable targets for runtime upgrade builds
+# ADR-737: Immutable targets for runtime upgrade builds
 
 Status: accepted · 2026-10-05
 
 ## Context
 
-ADR-682 records the base that a build actually used and previews published
+ADR-736 records the base that a build actually used and previews published
 targets. A controlled updater must also select the exact base before building.
 Using the current daemon default can change the selected OCI source. Selecting
 only an OCI digest is insufficient: identical OCI input with a different
@@ -49,7 +49,7 @@ binding, and the state layer refuses a binding to any other target.
 After function assembly, confirm the physical artifact's binding rather than
 staging the mutable daemon default. Explicit updates require immutable base
 staging; the legacy test/materialization path cannot silently bypass it.
-Runtime release replication remains the ADR-682 handoff before artifact
+Runtime release replication remains the ADR-736 handoff before artifact
 binding. Source-root and handler capture are each bounded to 4,096 bytes by
 `api.RuntimeUpgradeSourceFieldMaxBytes` and database checks.
 

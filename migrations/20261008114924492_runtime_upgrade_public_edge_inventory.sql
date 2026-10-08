@@ -1,7 +1,7 @@
 -- filename: 20261008114924492_runtime_upgrade_public_edge_inventory.sql
 
 -- +goose Up
-CREATE TABLE runtime_upgrade_public_edge_rosters (
+CREATE TABLE IF NOT EXISTS runtime_upgrade_public_edge_rosters (
  revision uuid PRIMARY KEY CHECK (revision <> '00000000-0000-0000-0000-000000000000'::uuid),
  gateway_roster_revision uuid NOT NULL REFERENCES runtime_upgrade_gateway_rosters(revision),
  topology_sha256 text NOT NULL CHECK (topology_sha256 ~ '^[0-9a-f]{64}$'),
@@ -10,12 +10,12 @@ CREATE TABLE runtime_upgrade_public_edge_rosters (
  config_sha256s text[] NOT NULL CHECK (cardinality(config_sha256s)=cardinality(slot_ids) AND array_ndims(config_sha256s)=1 AND array_lower(config_sha256s,1)=1),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(created_at))
 );
-CREATE TABLE runtime_upgrade_public_edge_roster_head (
+CREATE TABLE IF NOT EXISTS runtime_upgrade_public_edge_roster_head (
  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
  revision uuid REFERENCES runtime_upgrade_public_edge_rosters(revision)
 );
-INSERT INTO runtime_upgrade_public_edge_roster_head(singleton) VALUES (true);
-CREATE TABLE runtime_upgrade_public_edge_guards (
+INSERT INTO runtime_upgrade_public_edge_roster_head(singleton) VALUES (true) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS runtime_upgrade_public_edge_guards (
  slot_id uuid PRIMARY KEY CHECK (slot_id <> '00000000-0000-0000-0000-000000000000'::uuid),
  public_session_id uuid NOT NULL CHECK (public_session_id <> '00000000-0000-0000-0000-000000000000'::uuid),
  public_roster_revision uuid NOT NULL REFERENCES runtime_upgrade_public_edge_rosters(revision),
@@ -25,7 +25,7 @@ CREATE TABLE runtime_upgrade_public_edge_guards (
  expires_at timestamptz NOT NULL CHECK (isfinite(expires_at) AND expires_at=observed_at+interval '1 minute')
 );
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_upgrade_public_edge_roster() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_upgrade_public_edge_roster() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE canonical uuid[];
 BEGIN
  IF TG_OP <> 'INSERT' THEN
@@ -47,9 +47,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_public_edge_roster_guard ON runtime_upgrade_public_edge_rosters;
 CREATE TRIGGER runtime_upgrade_public_edge_roster_guard BEFORE INSERT OR UPDATE OR DELETE ON runtime_upgrade_public_edge_rosters FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_public_edge_roster();
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_upgrade_public_edge_fact() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_upgrade_public_edge_fact() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
  PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;
@@ -64,6 +65,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_public_edge_fact_guard ON runtime_upgrade_public_edge_guards;
 CREATE TRIGGER runtime_upgrade_public_edge_fact_guard BEFORE INSERT OR UPDATE ON runtime_upgrade_public_edge_guards FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_public_edge_fact();
 -- +goose Down
 -- Forward-only: keep reviewed platform inventory and operational guard facts.

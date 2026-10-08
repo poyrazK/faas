@@ -1,7 +1,7 @@
 -- filename: 20261008114924503_runtime_upgrade_public_edge_withdrawal.sql
 
 -- +goose Up
-CREATE TABLE runtime_upgrade_public_edge_withdrawals (
+CREATE TABLE IF NOT EXISTS runtime_upgrade_public_edge_withdrawals (
  id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'::uuid),
  slot_id uuid NOT NULL CHECK (slot_id <> '00000000-0000-0000-0000-000000000000'::uuid),
  public_session_id uuid NOT NULL UNIQUE CHECK (public_session_id <> '00000000-0000-0000-0000-000000000000'::uuid),
@@ -9,7 +9,7 @@ CREATE TABLE runtime_upgrade_public_edge_withdrawals (
  roster_revision uuid NOT NULL REFERENCES runtime_upgrade_public_edge_rosters(revision),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(created_at))
 );
-CREATE TABLE runtime_upgrade_public_edge_withdrawal_receipts (
+CREATE TABLE IF NOT EXISTS runtime_upgrade_public_edge_withdrawal_receipts (
  withdrawal_id uuid PRIMARY KEY REFERENCES runtime_upgrade_public_edge_withdrawals(id),
  fence_id uuid NOT NULL CHECK (fence_id <> '00000000-0000-0000-0000-000000000000'::uuid),
  activity_version bigint NOT NULL CHECK (activity_version > 0),
@@ -19,7 +19,7 @@ CREATE TABLE runtime_upgrade_public_edge_withdrawal_receipts (
  observed_at timestamptz NOT NULL CHECK (isfinite(observed_at))
 );
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_upgrade_public_edge_withdrawal() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_upgrade_public_edge_withdrawal() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP <> 'INSERT' THEN
   RAISE EXCEPTION 'immutable public edge withdrawal' USING ERRCODE='23514';
@@ -35,9 +35,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_public_edge_withdrawal_guard ON runtime_upgrade_public_edge_withdrawals;
 CREATE TRIGGER runtime_upgrade_public_edge_withdrawal_guard BEFORE INSERT OR UPDATE OR DELETE ON runtime_upgrade_public_edge_withdrawals FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_public_edge_withdrawal();
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_upgrade_public_edge_withdrawal_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_upgrade_public_edge_withdrawal_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE withdrawn runtime_upgrade_public_edge_withdrawals;
 BEGIN
  IF TG_OP <> 'INSERT' THEN
@@ -53,9 +54,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_public_edge_withdrawal_receipt_guard ON runtime_upgrade_public_edge_withdrawal_receipts;
 CREATE TRIGGER runtime_upgrade_public_edge_withdrawal_receipt_guard BEFORE INSERT OR UPDATE OR DELETE ON runtime_upgrade_public_edge_withdrawal_receipts FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_public_edge_withdrawal_receipt();
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_upgrade_public_edge_head_withdrawals() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_upgrade_public_edge_head_withdrawals() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE next_roster runtime_upgrade_public_edge_rosters;
 BEGIN
  IF TG_OP='DELETE' OR NEW.revision IS NULL THEN
@@ -75,9 +77,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_public_edge_head_withdrawal_guard ON runtime_upgrade_public_edge_roster_head;
 CREATE TRIGGER runtime_upgrade_public_edge_head_withdrawal_guard BEFORE UPDATE OR DELETE ON runtime_upgrade_public_edge_roster_head FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_public_edge_head_withdrawals();
 -- +goose StatementBegin
-CREATE FUNCTION capture_runtime_upgrade_public_edge_withdrawals() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION capture_runtime_upgrade_public_edge_withdrawals() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE added bigint;
 BEGIN
  INSERT INTO runtime_upgrade_public_edge_withdrawals(id,slot_id,public_session_id,config_sha256,roster_revision)
@@ -100,9 +103,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_public_edge_withdrawal_capture ON runtime_upgrade_public_edge_roster_head;
 CREATE TRIGGER runtime_upgrade_public_edge_withdrawal_capture AFTER UPDATE ON runtime_upgrade_public_edge_roster_head FOR EACH ROW EXECUTE FUNCTION capture_runtime_upgrade_public_edge_withdrawals();
 -- +goose StatementBegin
-CREATE FUNCTION seed_runtime_upgrade_public_edge_withdrawals() RETURNS void LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION seed_runtime_upgrade_public_edge_withdrawals() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
  PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
  PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;

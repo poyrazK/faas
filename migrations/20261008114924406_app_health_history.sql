@@ -1,7 +1,7 @@
 -- filename: 20261008114924406_app_health_history.sql
 
 -- +goose Up
-CREATE TABLE app_health_collection_state (
+CREATE TABLE IF NOT EXISTS app_health_collection_state (
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     next_check_at timestamptz NOT NULL CHECK (isfinite(next_check_at)),
@@ -16,9 +16,9 @@ CREATE TABLE app_health_collection_state (
     CHECK ((checked_at IS NULL) = (assessment IS NULL) AND (assessment_key IS NULL) = (assessment IS NULL)),
     CHECK (checked_at IS NULL OR isfinite(checked_at))
 );
-CREATE INDEX app_health_collection_due_idx ON app_health_collection_state(next_check_at, app_id);
+CREATE INDEX IF NOT EXISTS app_health_collection_due_idx ON app_health_collection_state(next_check_at, app_id);
 
-CREATE TABLE app_health_history (
+CREATE TABLE IF NOT EXISTS app_health_history (
     id uuid PRIMARY KEY,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -27,8 +27,8 @@ CREATE TABLE app_health_history (
     encoded_bytes integer NOT NULL CHECK (encoded_bytes BETWEEN 1 AND 65536),
     entry jsonb NOT NULL CHECK (jsonb_typeof(entry) = 'object' AND entry->>'id' = id::text AND entry->>'kind' = kind AND entry->'assessment'->>'app_id' = app_id::text AND entry->'assessment'->>'scope' = 'default' AND octet_length(entry::text) <= 131072)
 );
-CREATE INDEX app_health_history_app_idx ON app_health_history(app_id, observed_at DESC, id DESC);
-CREATE INDEX app_health_history_retention_idx ON app_health_history(observed_at, id);
+CREATE INDEX IF NOT EXISTS app_health_history_app_idx ON app_health_history(app_id, observed_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS app_health_history_retention_idx ON app_health_history(observed_at, id);
 
 -- +goose Down
 -- Forward-only: retain collected evidence.

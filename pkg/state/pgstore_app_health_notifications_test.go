@@ -1,6 +1,6 @@
 package state_test
 
-// adr: 681
+// adr: 735
 
 import (
 	"sync"
@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-681: assessment, history, cooldown state and outbox intent commit together.
+// ADR-735: assessment, history, cooldown state and outbox intent commit together.
 func TestAppHealthNotificationsPgAtomicRestartAndConcurrentRelay(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {

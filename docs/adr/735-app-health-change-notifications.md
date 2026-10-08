@@ -1,10 +1,10 @@
-# ADR-681: Opt-in application health change notifications
+# ADR-735: Opt-in application health change notifications
 
 Status: accepted · 2026-10-05
 
 ## Context
 
-ADR-680 retains application health observations independently of dashboard
+ADR-734 retains application health observations independently of dashboard
 visits. Customers need notification of meaningful status changes through the
 existing signed webhook delivery system. Missing evidence must not imply an
 outage or recovery, and flapping assessments must not flood receivers.

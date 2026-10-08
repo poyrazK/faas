@@ -1,6 +1,6 @@
 package faas_test
 
-// adr: 681
+// adr: 735
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
-// ADR-681: receivers can decode a change and retrieve its retained observation.
+// ADR-735: receivers can decode a change and retrieve its retained observation.
 func TestAppHealthNotificationSavedEvidence(t *testing.T) {
 	var payload faas.AppHealthChangedWebhookPayload
 	err := json.Unmarshal([]byte(`{"version":1,"app_id":"app","scope":"default","transition_id":"transition","transition_observed_at":"2026-10-05T10:00:00Z","previous_status":"healthy","status":"unhealthy","change":"worsened","phase":"serving","evaluated_at":"2026-10-05T10:00:00Z","queued_at":"2026-10-05T10:00:00Z","coalesced":false,"cooldown_seconds":300,"serving_deployment_ids":[],"history_path":"/v1/apps/demo/health/history"}`), &payload)

@@ -1,7 +1,7 @@
 -- filename: 20261008114924453_runtime_upgrade_cutovers.sql
 
 -- +goose Up
-CREATE TABLE deployment_runtime_upgrade_cutovers (
+CREATE TABLE IF NOT EXISTS deployment_runtime_upgrade_cutovers (
  deployment_id uuid PRIMARY KEY REFERENCES deployment_runtime_upgrade_acceptances(deployment_id) ON DELETE CASCADE,
  serving_deployment_id uuid NOT NULL REFERENCES deployments(id) DEFERRABLE INITIALLY DEFERRED,
  target_release_id text NOT NULL REFERENCES runtime_releases(id),
@@ -10,6 +10,7 @@ CREATE TABLE deployment_runtime_upgrade_cutovers (
  cutover_at timestamptz NOT NULL CHECK (isfinite(cutover_at)),
  CHECK (deployment_id<>serving_deployment_id)
 );
+DROP TRIGGER IF EXISTS runtime_upgrade_cutover_immutable ON deployment_runtime_upgrade_cutovers;
 CREATE TRIGGER runtime_upgrade_cutover_immutable BEFORE UPDATE OR DELETE ON deployment_runtime_upgrade_cutovers
 FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_target();
 
@@ -17,7 +18,7 @@ FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_target();
 -- This ledger is written only by the private atomic apid state seam, before
 -- weights change. It is historical authorization, not continuing health proof.
 -- +goose StatementBegin
-CREATE FUNCTION enforce_runtime_upgrade_traffic_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION enforce_runtime_upgrade_traffic_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.status='live' AND NEW.traffic_percent>0
   AND EXISTS(SELECT 1 FROM deployment_runtime_upgrade_targets WHERE deployment_id=NEW.id)
@@ -34,13 +35,14 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS deployments_runtime_upgrade_traffic_fence ON deployments;
 CREATE TRIGGER deployments_runtime_upgrade_traffic_fence BEFORE INSERT OR UPDATE ON deployments
 FOR EACH ROW EXECUTE FUNCTION enforce_runtime_upgrade_traffic_fence();
 
 
 -- A pin acquired after traffic changed cannot evade the deployment trigger.
 -- +goose StatementBegin
-CREATE FUNCTION enforce_runtime_upgrade_pin_traffic_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION enforce_runtime_upgrade_pin_traffic_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE candidate deployments;
 BEGIN
  SELECT * INTO candidate FROM deployments WHERE id=NEW.deployment_id FOR SHARE;
@@ -52,6 +54,7 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_pin_traffic_fence ON deployment_runtime_upgrade_targets;
 CREATE TRIGGER runtime_upgrade_pin_traffic_fence BEFORE INSERT ON deployment_runtime_upgrade_targets
 FOR EACH ROW EXECUTE FUNCTION enforce_runtime_upgrade_pin_traffic_fence();
 

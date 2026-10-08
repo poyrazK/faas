@@ -1,11 +1,11 @@
-# ADR-685: Native qualification receipts for runtime upgrade targets
+# ADR-739: Native qualification receipts for runtime upgrade targets
 
 Status: accepted · 2026-10-05
 
 ## Context
 
-ADR-682 publishes immutable runtime bytes, ADR-683 selects them for a build, and
-ADR-684 retains reviewed source/configuration and the serving predecessor.
+ADR-736 publishes immutable runtime bytes, ADR-737 selects them for a build, and
+ADR-738 retains reviewed source/configuration and the serving predecessor.
 Publication and vulnerability scans do not prove that a selected runtime boots
 and becomes ready on native hardware. Environment qualification receipts belong
 to one deployment attempt and cannot qualify an unrelated platform base.

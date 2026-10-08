@@ -2,19 +2,20 @@
 
 -- +goose Up
 -- adr: 697
-ALTER TABLE deployments ADD COLUMN runtime_upgrade_routing_token uuid NOT NULL DEFAULT gen_random_uuid()
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_upgrade_routing_token uuid NOT NULL DEFAULT gen_random_uuid()
  CHECK(runtime_upgrade_routing_token<>'00000000-0000-0000-0000-000000000000'::uuid);
 -- +goose StatementBegin
-CREATE FUNCTION renew_runtime_upgrade_routing_token() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION renew_runtime_upgrade_routing_token() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  NEW.runtime_upgrade_routing_token:=gen_random_uuid();
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS deployments_runtime_upgrade_routing_token ON deployments;
 CREATE TRIGGER deployments_runtime_upgrade_routing_token BEFORE INSERT OR UPDATE ON deployments
  FOR EACH ROW EXECUTE FUNCTION renew_runtime_upgrade_routing_token();
 
-CREATE TABLE runtime_upgrade_gateway_drains (
+CREATE TABLE IF NOT EXISTS runtime_upgrade_gateway_drains (
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  gateway_session_id uuid NOT NULL CHECK(gateway_session_id<>'00000000-0000-0000-0000-000000000000'::uuid),
  slot_id uuid NOT NULL CHECK(slot_id<>'00000000-0000-0000-0000-000000000000'::uuid),
@@ -31,7 +32,7 @@ CREATE TABLE runtime_upgrade_gateway_drains (
  expires_at timestamptz NOT NULL CHECK(isfinite(expires_at) AND expires_at=observed_at+interval '1 minute'),
  PRIMARY KEY(app_id,gateway_session_id)
 );
-CREATE INDEX runtime_upgrade_gateway_drains_expiry ON runtime_upgrade_gateway_drains(expires_at);
+CREATE INDEX IF NOT EXISTS runtime_upgrade_gateway_drains_expiry ON runtime_upgrade_gateway_drains(expires_at);
 -- +goose Down
 -- Forward-only: old observations must not become reusable after schema rollback.
 SELECT 1;

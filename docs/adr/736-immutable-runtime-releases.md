@@ -1,4 +1,4 @@
-# ADR-682: Immutable runtime releases and read-only upgrade previews
+# ADR-736: Immutable runtime releases and read-only upgrade previews
 
 Status: accepted · 2026-10-05
 
@@ -73,7 +73,7 @@ Publication order does not establish a newer interpreter patch or safe upgrade.
 Execution is always unavailable. The preview requires native target
 qualification, rebuilding the same source, a fresh cold boot and readiness,
 then existing guarded rollout/rollback. It changes no VM, environment, traffic,
-health observation or source. Historical app health (ADR-680/595) remains
+health observation or source. Historical app health (ADR-734/595) remains
 advisory and cannot authorize an update. Expose this evidence in the typed API,
 SDKs, CLI and the console's existing runtime tab.
 

@@ -1,13 +1,13 @@
 -- filename: 20261008114924508_runtime_upgrade_external_fence_receipts.sql
 
 -- +goose Up
-CREATE TABLE runtime_upgrade_external_fence_authorities (
+CREATE TABLE IF NOT EXISTS runtime_upgrade_external_fence_authorities (
  id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'::uuid),
  public_key bytea NOT NULL UNIQUE CHECK (octet_length(public_key)=32 AND public_key<>decode(repeat('00',32),'hex')),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(created_at)),
  revoked_at timestamptz CHECK (revoked_at IS NULL OR (isfinite(revoked_at) AND revoked_at>=created_at))
 );
-CREATE TABLE runtime_upgrade_external_fence_intents (
+CREATE TABLE IF NOT EXISTS runtime_upgrade_external_fence_intents (
  id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'::uuid),
  withdrawal_id uuid NOT NULL REFERENCES runtime_upgrade_public_edge_withdrawals(id),
  authority_id uuid NOT NULL REFERENCES runtime_upgrade_external_fence_authorities(id),
@@ -20,8 +20,8 @@ CREATE TABLE runtime_upgrade_external_fence_intents (
  scope_sha256 text NOT NULL CHECK (scope_sha256 ~ '^[0-9a-f]{64}$'),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(created_at))
 );
-CREATE INDEX runtime_upgrade_external_fence_intents_withdrawal ON runtime_upgrade_external_fence_intents(withdrawal_id);
-CREATE TABLE runtime_upgrade_external_fence_receipts (
+CREATE INDEX IF NOT EXISTS runtime_upgrade_external_fence_intents_withdrawal ON runtime_upgrade_external_fence_intents(withdrawal_id);
+CREATE TABLE IF NOT EXISTS runtime_upgrade_external_fence_receipts (
  withdrawal_id uuid PRIMARY KEY REFERENCES runtime_upgrade_public_edge_withdrawals(id),
  intent_id uuid NOT NULL UNIQUE REFERENCES runtime_upgrade_external_fence_intents(id),
  receipt_id uuid NOT NULL UNIQUE CHECK (receipt_id <> '00000000-0000-0000-0000-000000000000'::uuid),
@@ -32,7 +32,7 @@ CREATE TABLE runtime_upgrade_external_fence_receipts (
  observed_at timestamptz NOT NULL CHECK (isfinite(observed_at) AND observed_at>=issued_at)
 );
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_upgrade_external_fence_authority() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_upgrade_external_fence_authority() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='DELETE' OR (TG_OP='INSERT' AND (NEW.revoked_at IS NOT NULL OR NEW.created_at>clock_timestamp())) THEN
   RAISE EXCEPTION 'external authority history cannot be erased or pre-revoked' USING ERRCODE='23514';
@@ -44,9 +44,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_external_fence_authority_guard ON runtime_upgrade_external_fence_authorities;
 CREATE TRIGGER runtime_upgrade_external_fence_authority_guard BEFORE INSERT OR UPDATE OR DELETE ON runtime_upgrade_external_fence_authorities FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_external_fence_authority();
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_upgrade_external_fence_intent() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_upgrade_external_fence_intent() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE withdrawn runtime_upgrade_public_edge_withdrawals;
 BEGIN
  IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'external fence intent is immutable' USING ERRCODE='23514'; END IF;
@@ -65,9 +66,10 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_external_fence_intent_guard ON runtime_upgrade_external_fence_intents;
 CREATE TRIGGER runtime_upgrade_external_fence_intent_guard BEFORE INSERT OR UPDATE OR DELETE ON runtime_upgrade_external_fence_intents FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_external_fence_intent();
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_upgrade_external_fence_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_upgrade_external_fence_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE reviewed runtime_upgrade_external_fence_intents;
 BEGIN
  IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'external fence receipt is immutable' USING ERRCODE='23514'; END IF;
@@ -92,6 +94,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_external_fence_receipt_guard ON runtime_upgrade_external_fence_receipts;
 CREATE TRIGGER runtime_upgrade_external_fence_receipt_guard BEFORE INSERT OR UPDATE OR DELETE ON runtime_upgrade_external_fence_receipts FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_external_fence_receipt();
 -- Both receipt families serialize on the withdrawal; external receipts never
 -- invent a local activity version for a terminated host epoch.

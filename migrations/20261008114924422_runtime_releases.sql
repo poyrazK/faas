@@ -1,8 +1,8 @@
 -- filename: 20261008114924422_runtime_releases.sql
 
 -- +goose Up
-ALTER TABLE build_provenance ADD COLUMN runtime_base_ref text NOT NULL DEFAULT '';
-CREATE TABLE runtime_releases (
+ALTER TABLE build_provenance ADD COLUMN IF NOT EXISTS runtime_base_ref text NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS runtime_releases (
  id text PRIMARY KEY CHECK (id ~ '^[a-f0-9]{64}$'),
  runtime text NOT NULL CHECK (runtime IN ('node22','node24','python312','python313','go124','go124-alpine')),
  architecture text NOT NULL CHECK (architecture IN ('amd64','arm64')),
@@ -13,13 +13,13 @@ CREATE TABLE runtime_releases (
  created_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE (runtime, architecture, source_ref, guest_init_sha256, layout_version)
 );
-CREATE TABLE runtime_artifact_bindings (
+CREATE TABLE IF NOT EXISTS runtime_artifact_bindings (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  rootfs_key text NOT NULL CHECK (length(rootfs_key) BETWEEN 1 AND 1024),
  release_id text NOT NULL REFERENCES runtime_releases(id),
  PRIMARY KEY (account_id, rootfs_key)
 );
-CREATE INDEX runtime_releases_catalog_idx ON runtime_releases (runtime, architecture, created_at DESC, id);
+CREATE INDEX IF NOT EXISTS runtime_releases_catalog_idx ON runtime_releases (runtime, architecture, created_at DESC, id);
 
 -- +goose Down
 -- Forward-only: preserve the base identity needed to boot existing artifacts.

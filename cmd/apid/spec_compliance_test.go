@@ -76,7 +76,7 @@ const (
 	platformTenantsFile           = "platform_tenants.go"            // ADR-226 account-level platform customers
 	platformTenantCredentialsFile = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
 	runtimePolicyFile             = "runtime_policy.go"              // app and traffic control-plane convergence status
-	runtimeReleasesFile           = "runtime_releases.go"            // ADR-682 immutable runtime identity and update preview DTOs
+	runtimeReleasesFile           = "runtime_releases.go"            // ADR-736 immutable runtime identity and update preview DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the

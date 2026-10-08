@@ -1,7 +1,7 @@
 -- filename: 20261008114924458_runtime_upgrade_operations.sql
 
 -- +goose Up
-CREATE TABLE runtime_upgrade_operations (
+CREATE TABLE IF NOT EXISTS runtime_upgrade_operations (
  id uuid PRIMARY KEY CHECK (id<>'00000000-0000-0000-0000-000000000000'::uuid),
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -25,11 +25,11 @@ CREATE TABLE runtime_upgrade_operations (
   OR (phase='complete' AND blocker='' AND wake_id IS NOT NULL AND finished_at IS NOT NULL AND lease_token IS NULL)
   OR (phase='blocked' AND blocker<>'' AND wake_id IS NULL AND finished_at IS NOT NULL AND lease_token IS NULL))
 );
-CREATE UNIQUE INDEX runtime_upgrade_operations_active_app ON runtime_upgrade_operations(app_id) WHERE phase IN ('prepared','waiting');
-CREATE INDEX runtime_upgrade_operations_due ON runtime_upgrade_operations(next_attempt_at,created_at,id) WHERE phase IN ('prepared','waiting');
+CREATE UNIQUE INDEX IF NOT EXISTS runtime_upgrade_operations_active_app ON runtime_upgrade_operations(app_id) WHERE phase IN ('prepared','waiting');
+CREATE INDEX IF NOT EXISTS runtime_upgrade_operations_due ON runtime_upgrade_operations(next_attempt_at,created_at,id) WHERE phase IN ('prepared','waiting');
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_runtime_upgrade_operation() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_runtime_upgrade_operation() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='UPDATE' THEN
  IF (NEW.id,NEW.account_id,NEW.app_id,NEW.deployment_id,NEW.serving_deployment_id,NEW.target_release_id,
@@ -52,6 +52,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS runtime_upgrade_operation_guard ON runtime_upgrade_operations;
 CREATE TRIGGER runtime_upgrade_operation_guard BEFORE INSERT OR UPDATE ON runtime_upgrade_operations FOR EACH ROW EXECUTE FUNCTION guard_runtime_upgrade_operation();
 
 -- +goose Down
