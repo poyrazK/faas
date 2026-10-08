@@ -254,12 +254,16 @@ type restoreTimingBreakdown struct {
 	StageSnapshotMs     int64
 	HelperMs            int64
 	StartJailerMs       int64
-	BindTunMs           int64
-	LoadSnapshotMs      int64
-	ResumeHookMs        int64
-	WaitReadyMs         int64
-	TotalMs             int64
-	ResolveArtifacts    []restoreArtifactTiming
+	// NetworkWaitMs is how long the restore blocked on the overlapped wake
+	// network before startJailer (wake_network.go). Operator-only, like the
+	// TUN subphases: it is not on the customer wake.restore_breakdown event.
+	NetworkWaitMs    int64
+	BindTunMs        int64
+	LoadSnapshotMs   int64
+	ResumeHookMs     int64
+	WaitReadyMs      int64
+	TotalMs          int64
+	ResolveArtifacts []restoreArtifactTiming
 }
 
 // restoreArtifactTiming attributes one restore input to where its bytes came
@@ -998,6 +1002,9 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		}
 	}
 	helperReadyAt := time.Now()
+	if _, _, err = awaitWakeNetwork(ctx); err != nil {
+		return err
+	}
 	if err = v.startJailer(ctx, l, "--config-file", VMConfigName); err != nil {
 		return err
 	}
@@ -1882,6 +1889,11 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// startJailer so cmd.Stdout captures every byte the resumed FC
 	// writes, including the boot echo and the resume hook's ack.
 	_ = v.registerRing(l.Instance)
+	networkWait, networkSetup, err := awaitWakeNetwork(ctx)
+	if err != nil {
+		return err
+	}
+	tNetworkReady := time.Now()
 	if err = v.startJailer(ctx, l); err != nil {
 		return err
 	}
@@ -1972,7 +1984,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		StagePreBootFilesMs:  tPreBootFiles.Sub(tStageDrives).Milliseconds(),
 		StageSnapshotMs:      tMemState.Sub(tPreBootFiles).Milliseconds(),
 		HelperMs:             tHelper.Sub(tMemState).Milliseconds(),
-		StartJailerMs:        tStartJailer.Sub(tHelper).Milliseconds(),
+		StartJailerMs:        tStartJailer.Sub(tNetworkReady).Milliseconds(),
+		NetworkWaitMs:        networkWait.Milliseconds(),
 		BindTunMs:            tBindTun.Sub(tStartJailer).Milliseconds(),
 		LoadSnapshotMs:       tLoad.Sub(tBindTun).Milliseconds(),
 		ResumeHookMs:         tResume.Sub(tLoad).Milliseconds(),
@@ -1983,6 +1996,11 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		// budget, so an operator reading the timeline sees them before the
 		// kernel/base/layer drives.
 		ResolveArtifacts: append(blobTimings, restoreArtifactTimings(resolvedArtifacts)...),
+	}
+	if networkSetup > 0 {
+		// Overlapped wake: report the namespace build's real duration, not
+		// the near-zero gap Manager marked when it started it.
+		breakdown.Prepare.SetupNetworkMs = networkSetup.Milliseconds()
 	}
 	v.observeRestoreArtifacts(breakdown.ResolveArtifacts)
 	v.emitRestoreBreakdown(ctx, l, tDone, breakdown)
@@ -2013,6 +2031,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"stage_snapshot_ms", breakdown.StageSnapshotMs,
 		"helper_ms", breakdown.HelperMs,
 		"start_jailer_ms", breakdown.StartJailerMs,
+		"network_wait_ms", breakdown.NetworkWaitMs,
 		"bind_tun_ms", breakdown.BindTunMs,
 		"tun_wait_mntns_ms", breakdown.TunWaitMntnsMs,
 		"tun_wait_chroot_ms", breakdown.TunWaitChrootMs,
