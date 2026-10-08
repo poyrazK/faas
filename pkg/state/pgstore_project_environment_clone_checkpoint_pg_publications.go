@@ -133,7 +133,23 @@ func (s *PgStore) ProjectEnvironmentCloneCheckpointPgPublicationInputs(ctx conte
 			}
 			out.Publication = &publication
 			out.Preparations, err = checkpointPgWorkloadPreparations(op, out.Activation, publication)
-			return err
+			if err != nil {
+				return err
+			}
+			records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
+			if err != nil {
+				return err
+			}
+			views, err := cloneBindingViews(records)
+			if err != nil {
+				return err
+			}
+			graph, err := checkpointPgBindingGraph(op, views, out.Activation, publication, out.Preparations)
+			if err != nil {
+				return err
+			}
+			out.BindingGraph = &graph
+			return nil
 		}
 		if !errors.Is(err, ErrNotFound) {
 			return err

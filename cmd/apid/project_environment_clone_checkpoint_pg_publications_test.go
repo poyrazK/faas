@@ -104,6 +104,20 @@ func TestPGCloneCheckpointPgPublicationLostReplyAndKeylessRecovery(t *testing.T)
 	if err != nil || len(inputs.Preparations) != len(before.Plan.Secrets) || len(inputs.Credentials) != 0 || len(inputs.Connections) != 0 {
 		t.Fatal("committed workload preparations", err)
 	}
+	if inputs.BindingGraph == nil || len(inputs.BindingGraph.Bindings) != len(inputs.Preparations) || len(inputs.BindingGraph.SHA256) != 64 || inputs.BindingGraph.OperationID != f.lease.Operation.ID || inputs.BindingGraph.SourceRevisionHash != f.lease.Operation.SourceRevisionHash || inputs.BindingGraph.PublicationPlanSHA256 != inputs.Publication.PlanSHA256 {
+		t.Fatal("binding graph lost original publication provenance")
+	}
+	for _, edge := range inputs.BindingGraph.Bindings {
+		var actual state.ProjectEnvironmentClonePostgresBinding
+		err := f.pool.QueryRow(t.Context(), `select b.id::text,b.database_id::text,d.name,b.environment_key,b.access,b.credential_ref,b.credential_generation,
+d.backend_id,d.backend_fingerprint,d.provider_resource_id,d.data_resource_id,d.region,d.postgres_major,d.service_class,d.availability,d.scale_to_zero,d.storage_limit_bytes,d.restore_window_seconds
+from managed_postgres_bindings b join managed_postgres_databases d on d.id=b.database_id where b.id=$1`, edge.Target.ID).Scan(
+			&actual.ID, &actual.DatabaseID, &actual.DatabaseName, &actual.EnvironmentKey, &actual.Access, &actual.CredentialRef, &actual.CredentialGeneration,
+			&actual.BackendID, &actual.BackendFingerprint, &actual.ProviderResourceID, &actual.DataResourceID, &actual.Region, &actual.PostgresMajor, &actual.ServiceClass, &actual.Availability, &actual.ScaleToZero, &actual.StorageLimitBytes, &actual.RestoreWindowSeconds)
+		if err != nil || !reflect.DeepEqual(actual, edge.Target) || edge.SourceBindingsSHA256 == "" || edge.SourceScope == "" {
+			t.Fatal("projected binding graph differs from owned catalogue", err)
+		}
+	}
 	for i, member := range inputs.Activation.Plan.Bindings {
 		c := member.Connection.Credential
 		prepared := inputs.Preparations[c.SourceBindingID]
@@ -129,7 +143,7 @@ func TestPGCloneCheckpointPgPublicationLostReplyAndKeylessRecovery(t *testing.T)
 	}
 	after := assertCheckpointPgPublication(t, f, s, "published")
 	recovered, err := s.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
-	if err != nil || !reflect.DeepEqual(inputs.Preparations, recovered.Preparations) {
+	if err != nil || !reflect.DeepEqual(inputs.Preparations, recovered.Preparations) || !reflect.DeepEqual(inputs.BindingGraph, recovered.BindingGraph) {
 		t.Fatal("keyless handoff changed workload preparations", err)
 	}
 	if !reflect.DeepEqual(before.Plan, after.Plan) || d.activates != 1 || !reflect.DeepEqual(original.Resources, f.lease.Operation.Resources) {

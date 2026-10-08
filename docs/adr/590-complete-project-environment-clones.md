@@ -8435,3 +8435,49 @@ lost replies, keyless handoff and rejection of changed ciphertext, scope and
 binding access, alongside the existing publication/withdrawal suite. Existing
 workload-value and resource-publication fence regressions pass. Native effects
 use the protocol test driver; this is not live provider qualification.
+
+### Checkpoint PostgreSQL workload binding graph
+
+Committed publication inputs now also return the complete PostgreSQL binding graph
+for the authenticated frozen workload catalogue. Each edge ties its source app,
+effective scope, binding-catalogue digest, binding and database to the original
+independent target definition. Target definitions retain the captured database
+spec, backend placement, environment key and access, and use the original fork's
+catalogue name, owner, native/data resource identities and generation-one binding
+and credential reference. They match the private live catalogue authenticated and
+locked by activation/publication replay.
+
+The projection checks the complete original binding roster and exact preparation
+envelopes, and rejects missing, extra or duplicate source/target owners, source
+identity reuse, changed specs/backends/data origins and replacement credentials.
+Shared source databases must retain one identical independent target database;
+different source databases cannot collapse into one target owner or physical
+resource. Opaque physical identities are compared within their backend ID,
+placement fingerprint and native/data resource kind. Identical strings in different
+placements or resource namespaces do not imply shared physical authority.
+
+Edges are sorted by original source binding, and the graph digest binds the
+operation, target environment, original configuration revision and activation and
+publication digests. Reordering workload views or keyless worker handoff yields
+the same graph. The graph copies target definitions without changing the frozen
+capture and contains no password or encrypted secret material.
+
+This is the PostgreSQL component of the common workload resource graph. It remains
+a private read projection, creates no workload specs or deployments, promotes no
+database role and publishes no release. Object-storage binding publication and
+its graph, complete configuration materialization and final release proof remain
+required. Public full-stage cloning stays gated; live R2/OVH qualification remains
+deferred at the user's request.
+
+Validation: focused unit tests pass shared-database preservation, distinct fresh
+binding ownership, stable graph digests under deterministic workload permutations,
+target-definition hashing and capture-copy isolation. They reject missing, extra
+and duplicate owners, modified source hashes/specs/backends/data origins, split or
+merged database relationships, source and target physical identity reuse, and
+changed preparation envelopes/digests. Namespace tests accept equal opaque IDs
+across different backends, placement fingerprints or native/data resource kinds.
+The PostgreSQL publication suite passes full target-definition equality with the
+live owned catalogue, stable graph/provenance through lost replies and keyless
+handoff, and the existing publication/withdrawal regressions. Workload-value and
+resource-publication fence regressions pass. Native effects use the protocol test
+driver and do not establish live qualification or complete stage publication.
