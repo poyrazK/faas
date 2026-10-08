@@ -8460,6 +8460,7 @@ AND (sqlc.arg(tenant_id)::text='' OR platform_tenant_id::text=sqlc.arg(tenant_id
 -- The tenant creation index supports descending keyset paging. Only public
 -- summary fields cross this boundary; source input/results/capabilities do not.
 SELECT jsonb_build_object(
+ 'subject', o.record->'subject',
  'id', o.record->'id',
  'name', o.record->'name',
  'generation', o.record->'generation',
@@ -8495,6 +8496,7 @@ ORDER BY o.created_at DESC,o.id DESC LIMIT sqlc.arg(page_limit)::integer;
 -- tenants. Only explicit public summary fields cross this operator boundary.
 SELECT jsonb_build_object(
  'platform_tenant_id', o.platform_tenant_id,
+ 'subject', o.record->'subject',
  'id', o.record->'id',
  'name', o.record->'name',
  'generation', o.record->'generation',
@@ -8518,6 +8520,83 @@ LEFT JOIN app_webhook_deliveries delivery ON delivery.id=nullif(o.record->'compl
  AND delivery.account_id=o.account_id AND delivery.app_id=o.app_id
 WHERE o.account_id=sqlc.arg(account_id)::uuid AND (sqlc.arg(tenant_id)::text='' OR o.platform_tenant_id::text=sqlc.arg(tenant_id)::text)
  AND o.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+ AND (sqlc.arg(operation_name)::text='' OR d.name=sqlc.arg(operation_name)::text)
+ AND (sqlc.arg(operation_state)::text='' OR o.state=sqlc.arg(operation_state)::text)
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR
+      (o.created_at,o.id)<(sqlc.narg(before_created_at)::timestamptz,sqlc.narg(before_id)::uuid))
+ORDER BY o.created_at DESC,o.id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ListPlatformTenantCustomerOperationsBySubject :many
+-- The tenant creation index supports descending keyset paging. Only public
+-- summary fields cross this boundary; source input/results/capabilities do not.
+SELECT jsonb_build_object(
+ 'subject', o.record->'subject',
+ 'id', o.record->'id',
+ 'name', o.record->'name',
+ 'generation', o.record->'generation',
+ 'state', o.record->'state',
+ 'progress', o.record->'progress',
+ 'cancellation_requested', o.record->'cancellation_requested',
+ 'latest_sequence', o.record->'latest_sequence',
+ 'updated_at', o.record->'updated_at',
+ 'expires_at', o.record->'expires_at',
+ 'created_at', o.created_at,
+ 'completion_delivery', jsonb_strip_nulls(jsonb_build_object(
+   'state', CASE WHEN coalesce(o.record->'completion_delivery'->>'delivery_id','') = ''
+     THEN o.record->'completion_delivery'->>'state'
+     WHEN delivery.id IS NULL THEN 'delivery_expired' ELSE delivery.status END,
+   'attempts', coalesce(delivery.attempt,(o.record->'completion_delivery'->>'attempts')::integer,0),
+   'next_attempt_at', CASE WHEN delivery.status IN ('pending','failed') THEN delivery.next_attempt_at END
+ ))) AS summary
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+LEFT JOIN app_webhook_deliveries delivery ON delivery.id=nullif(o.record->'completion_delivery'->>'delivery_id','')::uuid
+ AND delivery.account_id=o.account_id AND delivery.app_id=o.app_id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.platform_tenant_id=sqlc.arg(tenant_id)::uuid
+ AND o.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+ AND o.record ? 'subject'
+ AND (o.record #>> '{subject,type}')=sqlc.arg(subject_type)::text
+ AND (o.record #>> '{subject,id}')=sqlc.arg(subject_id)::text
+ AND (sqlc.arg(operation_name)::text='' OR d.name=sqlc.arg(operation_name)::text)
+ AND (sqlc.arg(operation_state)::text='' OR o.state=sqlc.arg(operation_state)::text)
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR
+      (o.created_at,o.id)<(sqlc.narg(before_created_at)::timestamptz,sqlc.narg(before_id)::uuid))
+ORDER BY o.created_at DESC,o.id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ListAccountCustomerOperationsBySubject :many
+-- The account/app creation index supports descending keyset paging across
+-- tenants. Only explicit public summary fields cross this operator boundary.
+SELECT jsonb_build_object(
+ 'platform_tenant_id', o.platform_tenant_id,
+ 'subject', o.record->'subject',
+ 'id', o.record->'id',
+ 'name', o.record->'name',
+ 'generation', o.record->'generation',
+ 'state', o.record->'state',
+ 'progress', o.record->'progress',
+ 'cancellation_requested', o.record->'cancellation_requested',
+ 'latest_sequence', o.record->'latest_sequence',
+ 'updated_at', o.record->'updated_at',
+ 'expires_at', o.record->'expires_at',
+ 'created_at', o.created_at,
+ 'completion_delivery', jsonb_strip_nulls(jsonb_build_object(
+   'state', CASE WHEN coalesce(o.record->'completion_delivery'->>'delivery_id','') = ''
+     THEN o.record->'completion_delivery'->>'state'
+     WHEN delivery.id IS NULL THEN 'delivery_expired' ELSE delivery.status END,
+   'attempts', coalesce(delivery.attempt,(o.record->'completion_delivery'->>'attempts')::integer,0),
+   'next_attempt_at', CASE WHEN delivery.status IN ('pending','failed') THEN delivery.next_attempt_at END
+ ))) AS summary
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+LEFT JOIN app_webhook_deliveries delivery ON delivery.id=nullif(o.record->'completion_delivery'->>'delivery_id','')::uuid
+ AND delivery.account_id=o.account_id AND delivery.app_id=o.app_id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND (sqlc.arg(tenant_id)::text='' OR o.platform_tenant_id::text=sqlc.arg(tenant_id)::text)
+ AND o.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+ AND o.record ? 'subject'
+ AND (o.record #>> '{subject,type}')=sqlc.arg(subject_type)::text
+ AND (o.record #>> '{subject,id}')=sqlc.arg(subject_id)::text
  AND (sqlc.arg(operation_name)::text='' OR d.name=sqlc.arg(operation_name)::text)
  AND (sqlc.arg(operation_state)::text='' OR o.state=sqlc.arg(operation_state)::text)
  AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
@@ -15259,3 +15338,252 @@ SELECT now()::timestamptz AS observed_at,ac.plan,
  (SELECT count(*) FROM app_runs WHERE workflow_name=selected.workflow_name AND
   (live OR status='awaiting_event' OR (status='pending' AND started_at IS NOT NULL)))::bigint AS workflow_active
 FROM current_run selected JOIN apps a ON a.id=selected.app_id JOIN accounts ac ON ac.id=a.account_id;
+
+-- name: GetCustomerOperationMilestone :one
+SELECT id::text,operation_id::text,event_sequence,name,payload,occurred_at,created_at,fingerprint
+FROM customer_operation_milestones WHERE operation_id=sqlc.arg(operation_id)::uuid AND id=sqlc.arg(id)::uuid;
+
+-- name: InsertCustomerOperationMilestone :exec
+INSERT INTO customer_operation_milestones(operation_id,id,event_sequence,name,payload,occurred_at,created_at,fingerprint)
+VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(id)::uuid,sqlc.arg(event_sequence)::bigint,
+ sqlc.arg(name)::text,sqlc.arg(payload)::json,sqlc.arg(occurred_at)::timestamptz,
+ sqlc.arg(created_at)::timestamptz,sqlc.arg(fingerprint)::text);
+
+-- name: ListPlatformTenantCustomerOperationMilestones :many
+SELECT json_build_object(
+ 'id',m.id,'operation_id',m.operation_id,'name',m.name,'payload',m.payload,
+ 'occurred_at',m.occurred_at,'created_at',m.created_at,'sequence',m.event_sequence,
+ 'workflow_steps',COALESCE((SELECT json_agg(step ORDER BY (step->>'position')::integer)
+   FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) AS workflow_steps(step)
+   WHERE step->>'milestone'=m.name),'[]'::json),
+ 'subject',o.record->'subject') AS milestone
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+JOIN customer_operation_milestones m ON m.operation_id=o.id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uuid
+ AND o.platform_tenant_id=sqlc.arg(tenant_id)::uuid AND d.scope=sqlc.arg(scope)::text
+ AND o.id=sqlc.arg(operation_id)::uuid
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR
+      (m.created_at,m.operation_id,m.id)<(sqlc.narg(before_created_at)::timestamptz,sqlc.narg(before_operation_id)::uuid,sqlc.narg(before_id)::uuid))
+ORDER BY m.created_at DESC,m.operation_id DESC,m.id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ListPlatformTenantCustomerOperationMilestonesBySubject :many
+SELECT json_build_object(
+ 'id',m.id,'operation_id',m.operation_id,'name',m.name,'payload',m.payload,
+ 'occurred_at',m.occurred_at,'created_at',m.created_at,'sequence',m.event_sequence,
+ 'workflow_steps',COALESCE((SELECT json_agg(step ORDER BY (step->>'position')::integer)
+   FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) AS workflow_steps(step)
+   WHERE step->>'milestone'=m.name),'[]'::json),
+ 'subject',o.record->'subject') AS milestone
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+JOIN customer_operation_milestones m ON m.operation_id=o.id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uuid
+ AND o.platform_tenant_id=sqlc.arg(tenant_id)::uuid AND d.scope=sqlc.arg(scope)::text
+ AND o.record ? 'subject'
+ AND (o.record #>> '{subject,type}')=sqlc.arg(subject_type)::text
+ AND (o.record #>> '{subject,id}')=sqlc.arg(subject_id)::text
+ AND (sqlc.arg(workflow_name)::text='' OR EXISTS (
+   SELECT 1
+   FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) AS workflow_steps(step)
+   CROSS JOIN LATERAL (
+     SELECT CASE
+       WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[]
+       ELSE ARRAY(SELECT replace(replace(pointer_token,'~1','/'),'~0','~')
+                  FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) AS parts(pointer_token))
+     END AS pointer_parts
+   ) AS selected_path
+   WHERE step->>'workflow'=sqlc.arg(workflow_name)::text
+     AND step->>'milestone'=m.name
+     AND COALESCE(step->>'instance_id_from','')<>''
+     AND m.payload #>> selected_path.pointer_parts=sqlc.arg(workflow_instance_id)::text
+ ))
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR
+      (m.created_at,m.operation_id,m.id)<(sqlc.narg(before_created_at)::timestamptz,sqlc.narg(before_operation_id)::uuid,sqlc.narg(before_id)::uuid))
+ORDER BY m.created_at DESC,m.operation_id DESC,m.id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ListAccountCustomerOperationMilestones :many
+SELECT json_build_object(
+ 'platform_tenant_id',o.platform_tenant_id,
+ 'id',m.id,'operation_id',m.operation_id,'name',m.name,'payload',m.payload,
+ 'occurred_at',m.occurred_at,'created_at',m.created_at,'sequence',m.event_sequence,
+ 'workflow_steps',COALESCE((SELECT json_agg(step ORDER BY (step->>'position')::integer)
+   FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) AS workflow_steps(step)
+   WHERE step->>'milestone'=m.name),'[]'::json),
+ 'subject',o.record->'subject') AS milestone
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+JOIN customer_operation_milestones m ON m.operation_id=o.id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uuid
+ AND (sqlc.arg(tenant_id)::text='' OR o.platform_tenant_id::text=sqlc.arg(tenant_id)::text) AND d.scope=sqlc.arg(scope)::text
+ AND o.id=sqlc.arg(operation_id)::uuid
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR
+      (m.created_at,m.operation_id,m.id)<(sqlc.narg(before_created_at)::timestamptz,sqlc.narg(before_operation_id)::uuid,sqlc.narg(before_id)::uuid))
+ORDER BY m.created_at DESC,m.operation_id DESC,m.id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ListAccountCustomerOperationMilestonesBySubject :many
+SELECT json_build_object(
+ 'platform_tenant_id',o.platform_tenant_id,
+ 'id',m.id,'operation_id',m.operation_id,'name',m.name,'payload',m.payload,
+ 'occurred_at',m.occurred_at,'created_at',m.created_at,'sequence',m.event_sequence,
+ 'workflow_steps',COALESCE((SELECT json_agg(step ORDER BY (step->>'position')::integer)
+   FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) AS workflow_steps(step)
+   WHERE step->>'milestone'=m.name),'[]'::json),
+ 'subject',o.record->'subject') AS milestone
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+JOIN customer_operation_milestones m ON m.operation_id=o.id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uuid
+ AND (sqlc.arg(tenant_id)::text='' OR o.platform_tenant_id::text=sqlc.arg(tenant_id)::text) AND d.scope=sqlc.arg(scope)::text
+ AND o.record ? 'subject'
+ AND (o.record #>> '{subject,type}')=sqlc.arg(subject_type)::text
+ AND (o.record #>> '{subject,id}')=sqlc.arg(subject_id)::text
+ AND (sqlc.arg(workflow_name)::text='' OR EXISTS (
+   SELECT 1
+   FROM jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) AS workflow_steps(step)
+   CROSS JOIN LATERAL (
+     SELECT CASE
+       WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[]
+       ELSE ARRAY(SELECT replace(replace(pointer_token,'~1','/'),'~0','~')
+                  FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) AS parts(pointer_token))
+     END AS pointer_parts
+   ) AS selected_path
+   WHERE step->>'workflow'=sqlc.arg(workflow_name)::text
+     AND step->>'milestone'=m.name
+     AND COALESCE(step->>'instance_id_from','')<>''
+     AND m.payload #>> selected_path.pointer_parts=sqlc.arg(workflow_instance_id)::text
+ ))
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR
+      (m.created_at,m.operation_id,m.id)<(sqlc.narg(before_created_at)::timestamptz,sqlc.narg(before_operation_id)::uuid,sqlc.narg(before_id)::uuid))
+ORDER BY m.created_at DESC,m.operation_id DESC,m.id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: GetCustomerOperationWorkflowStateReport :one
+SELECT id::text,workflow,instance_id,from_state,state,revision,occurred_at,fingerprint
+FROM customer_operation_workflow_state_reports
+WHERE operation_id=sqlc.arg(operation_id)::uuid AND id=sqlc.arg(id)::uuid;
+
+-- name: InsertCustomerOperationWorkflowStateReport :exec
+INSERT INTO customer_operation_workflow_state_reports(operation_id,id,workflow,instance_id,from_state,state,revision,occurred_at,created_at,fingerprint)
+VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(id)::uuid,sqlc.arg(workflow)::text,sqlc.arg(instance_id)::text,
+ sqlc.arg(from_state)::text,sqlc.arg(state)::text,sqlc.arg(revision)::bigint,sqlc.arg(occurred_at)::timestamptz,
+ sqlc.arg(created_at)::timestamptz,sqlc.arg(fingerprint)::text);
+
+-- name: UpsertCustomerOperationWorkflowState :exec
+INSERT INTO customer_operation_workflow_states(
+ account_id,app_id,platform_tenant_id,scope,subject_type,subject_id,
+ workflow,instance_id,state,revision,operation_id,report_id,updated_at)
+SELECT o.account_id,o.app_id,o.platform_tenant_id,d.scope,
+ o.record #>> '{subject,type}',o.record #>> '{subject,id}',
+ sqlc.arg(workflow)::text,sqlc.arg(instance_id)::text,sqlc.arg(state)::text,
+ sqlc.arg(revision)::bigint,o.id,sqlc.arg(report_id)::uuid,sqlc.arg(updated_at)::timestamptz
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.record ? 'subject'
+ON CONFLICT(account_id,app_id,platform_tenant_id,scope,subject_type,subject_id,workflow,instance_id)
+DO UPDATE SET state=EXCLUDED.state,revision=EXCLUDED.revision,operation_id=EXCLUDED.operation_id,
+ report_id=EXCLUDED.report_id,updated_at=EXCLUDED.updated_at
+WHERE (EXCLUDED.revision,EXCLUDED.report_id)>
+ (customer_operation_workflow_states.revision,customer_operation_workflow_states.report_id);
+
+-- name: ListPlatformTenantCustomerOperationWorkflowStatesBySubject :many
+SELECT json_build_object(
+ 'workflow',s.workflow,'instance_id',s.instance_id,'state',s.state,
+ 'terminal',EXISTS (
+   SELECT 1
+   FROM jsonb_array_elements(CASE WHEN jsonb_typeof(d.spec->'workflow_steps')='array' THEN d.spec->'workflow_steps' ELSE '[]'::jsonb END) AS workflow_steps(workflow_step)
+   WHERE workflow_step->>'workflow'=s.workflow
+     AND COALESCE(workflow_step->'terminal_states','[]'::jsonb) ? s.state
+ ),
+ 'occurred_at',r.occurred_at,'stale_after_seconds',workflow_config.stale_after_seconds,
+ 'revision',s.revision,'updated_at',s.updated_at
+) AS workflow_state
+FROM customer_operation_workflow_states s
+JOIN customer_operations o ON o.id=s.operation_id AND o.account_id=s.account_id AND o.app_id=s.app_id
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+JOIN customer_operation_workflow_state_reports r ON r.operation_id=s.operation_id AND r.id=s.report_id
+CROSS JOIN LATERAL (
+ SELECT COALESCE(MAX((workflow_step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds
+ FROM jsonb_array_elements(CASE WHEN jsonb_typeof(d.spec->'workflow_steps')='array' THEN d.spec->'workflow_steps' ELSE '[]'::jsonb END) AS workflow_steps(workflow_step)
+ WHERE workflow_step->>'workflow'=s.workflow
+) AS workflow_config
+WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid
+ AND s.platform_tenant_id=sqlc.arg(tenant_id)::uuid AND d.scope=sqlc.arg(scope)::text
+ AND s.subject_type=sqlc.arg(subject_type)::text AND s.subject_id=sqlc.arg(subject_id)::text
+ AND (sqlc.arg(workflow_name)::text='' OR s.workflow=sqlc.arg(workflow_name)::text)
+ AND (sqlc.arg(workflow_instance_id)::text='' OR s.instance_id=sqlc.arg(workflow_instance_id)::text)
+ AND (NOT sqlc.arg(stale_only)::boolean OR
+      (workflow_config.stale_after_seconds>0 AND r.occurred_at + make_interval(secs => workflow_config.stale_after_seconds::double precision)<=sqlc.arg(now)::timestamptz))
+ORDER BY s.updated_at DESC,s.workflow,s.instance_id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ListAccountCustomerOperationWorkflowStatesBySubject :many
+SELECT json_build_object(
+ 'platform_tenant_id',s.platform_tenant_id,'workflow',s.workflow,'instance_id',s.instance_id,
+ 'state',s.state,
+ 'terminal',EXISTS (
+   SELECT 1
+   FROM jsonb_array_elements(CASE WHEN jsonb_typeof(d.spec->'workflow_steps')='array' THEN d.spec->'workflow_steps' ELSE '[]'::jsonb END) AS workflow_steps(workflow_step)
+   WHERE workflow_step->>'workflow'=s.workflow
+     AND COALESCE(workflow_step->'terminal_states','[]'::jsonb) ? s.state
+ ),
+ 'occurred_at',r.occurred_at,'stale_after_seconds',workflow_config.stale_after_seconds,
+ 'revision',s.revision,'updated_at',s.updated_at
+) AS workflow_state
+FROM customer_operation_workflow_states s
+JOIN customer_operations o ON o.id=s.operation_id AND o.account_id=s.account_id AND o.app_id=s.app_id
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+JOIN customer_operation_workflow_state_reports r ON r.operation_id=s.operation_id AND r.id=s.report_id
+CROSS JOIN LATERAL (
+ SELECT COALESCE(MAX((workflow_step->'state_stale_after_seconds'->>s.state)::bigint),0::bigint) AS stale_after_seconds
+ FROM jsonb_array_elements(CASE WHEN jsonb_typeof(d.spec->'workflow_steps')='array' THEN d.spec->'workflow_steps' ELSE '[]'::jsonb END) AS workflow_steps(workflow_step)
+ WHERE workflow_step->>'workflow'=s.workflow
+) AS workflow_config
+WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid
+ AND (sqlc.arg(tenant_id)::text='' OR s.platform_tenant_id::text=sqlc.arg(tenant_id)::text)
+ AND d.scope=sqlc.arg(scope)::text AND s.subject_type=sqlc.arg(subject_type)::text AND s.subject_id=sqlc.arg(subject_id)::text
+ AND (sqlc.arg(workflow_name)::text='' OR s.workflow=sqlc.arg(workflow_name)::text)
+ AND (sqlc.arg(workflow_instance_id)::text='' OR s.instance_id=sqlc.arg(workflow_instance_id)::text)
+ AND (NOT sqlc.arg(stale_only)::boolean OR
+      (workflow_config.stale_after_seconds>0 AND r.occurred_at + make_interval(secs => workflow_config.stale_after_seconds::double precision)<=sqlc.arg(now)::timestamptz))
+ORDER BY s.updated_at DESC,s.workflow,s.instance_id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ListPlatformTenantCustomerOperationWorkflowStateHistory :many
+SELECT json_build_object(
+ 'id',r.id,'operation_id',o.id,'workflow',r.workflow,'instance_id',r.instance_id,
+ 'from_state',r.from_state,'state',r.state,'revision',r.revision,
+ 'occurred_at',r.occurred_at,'published_at',r.created_at) AS workflow_state_history
+FROM customer_operation_workflow_state_reports r
+JOIN customer_operations o ON o.id=r.operation_id
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uuid
+ AND o.platform_tenant_id=sqlc.arg(tenant_id)::uuid AND d.scope=sqlc.arg(scope)::text
+ AND o.record ? 'subject' AND o.record #>> '{subject,type}'=sqlc.arg(subject_type)::text
+ AND o.record #>> '{subject,id}'=sqlc.arg(subject_id)::text
+ AND r.workflow=sqlc.arg(workflow_name)::text AND r.instance_id=sqlc.arg(workflow_instance_id)::text
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ AND (sqlc.narg(after_revision)::bigint IS NULL OR
+      (r.revision,r.created_at,r.operation_id,r.id)>
+      (sqlc.narg(after_revision)::bigint,sqlc.narg(after_published_at)::timestamptz,sqlc.narg(after_operation_id)::uuid,sqlc.narg(after_id)::uuid))
+ORDER BY r.revision,r.created_at,r.operation_id,r.id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ListAccountCustomerOperationWorkflowStateHistory :many
+SELECT json_build_object(
+ 'platform_tenant_id',o.platform_tenant_id,'id',r.id,'operation_id',o.id,
+ 'workflow',r.workflow,'instance_id',r.instance_id,'from_state',r.from_state,
+ 'state',r.state,'revision',r.revision,'occurred_at',r.occurred_at,'published_at',r.created_at) AS workflow_state_history
+FROM customer_operation_workflow_state_reports r
+JOIN customer_operations o ON o.id=r.operation_id
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uuid
+ AND (sqlc.arg(tenant_id)::text='' OR o.platform_tenant_id::text=sqlc.arg(tenant_id)::text)
+ AND d.scope=sqlc.arg(scope)::text AND o.record ? 'subject'
+ AND o.record #>> '{subject,type}'=sqlc.arg(subject_type)::text AND o.record #>> '{subject,id}'=sqlc.arg(subject_id)::text
+ AND r.workflow=sqlc.arg(workflow_name)::text AND r.instance_id=sqlc.arg(workflow_instance_id)::text
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ AND (sqlc.narg(after_revision)::bigint IS NULL OR
+      (r.revision,r.created_at,r.operation_id,r.id)>
+      (sqlc.narg(after_revision)::bigint,sqlc.narg(after_published_at)::timestamptz,sqlc.narg(after_operation_id)::uuid,sqlc.narg(after_id)::uuid))
+ORDER BY r.revision,r.created_at,r.operation_id,r.id LIMIT sqlc.arg(page_limit)::integer;

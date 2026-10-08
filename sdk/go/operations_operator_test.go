@@ -16,7 +16,7 @@ func TestOperationAccountOperatorRoutes(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /v1/apps/exports/operations":
 			q := r.URL.Query()
-			if q.Get("scope") != "production" || q.Get("tenant_id") != "customer" || q.Get("limit") != "2" || q.Get("cursor") != "opaque" || q.Get("state") != "succeeded" || q.Get("name") != "export" || q.Has("app_id") {
+			if q.Get("subject_type") != "order" || q.Get("subject_id") != "ord/42&é" || q.Get("scope") != "production" || q.Get("tenant_id") != "customer" || q.Get("limit") != "2" || q.Get("cursor") != "opaque" || q.Get("state") != "succeeded" || q.Get("name") != "export" || q.Has("app_id") {
 				t.Errorf("account selectors %v", q)
 			}
 			writeOperationJSON(w, 200, `{"operations":[{"id":"operation","platform_tenant_id":"customer","completion_delivery":{"state":"dead","attempts":7}}],"next_cursor":"next"}`)
@@ -39,7 +39,7 @@ func TestOperationAccountOperatorRoutes(t *testing.T) {
 	}))
 	defer server.Close()
 	client := operationClient(t, server)
-	page, err := client.ListAccountOperations(context.Background(), "exports", faas.OperationListOptions{Scope: "production", TenantID: "customer", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque"})
+	page, err := client.ListAccountOperations(context.Background(), "exports", faas.OperationListOptions{SubjectType: "order", SubjectID: "ord/42&é", Scope: "production", TenantID: "customer", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque"})
 	if err != nil || len(page.Operations) != 1 || page.Operations[0].PlatformTenantID != "customer" || page.NextCursor != "next" {
 		t.Fatalf("list %+v %v", page, err)
 	}

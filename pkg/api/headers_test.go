@@ -13,6 +13,9 @@ func TestPlatformIdentityApplyGuestHeadersOverridesClaims(t *testing.T) {
 	h.Set(TargetDeploymentHeader, "attacker-deployment")
 	h.Set(PlatformTenantIDHeader, "attacker-tenant")
 	h.Set(ManagedOperationResultVersionHeader, "attacker-version")
+	h.Set(OperationTransactionVersionHeader, "1")
+	h.Set(OperationMilestoneVersionHeader, "1")
+	h.Set(OperationResultMaxBytesHeader, "1048576")
 
 	PlatformIdentity{
 		RequestID:           "req-1",
@@ -38,6 +41,9 @@ func TestPlatformIdentityApplyGuestHeadersOverridesClaims(t *testing.T) {
 		TenantIDHeader:                      "tenant-1",
 		PlatformTenantIDHeader:              "",
 		ManagedOperationResultVersionHeader: "",
+		OperationTransactionVersionHeader:   "",
+		OperationMilestoneVersionHeader:     "",
+		OperationResultMaxBytesHeader:       "",
 		InstanceIDHeader:                    "instance-1",
 		NodeIDHeader:                        "node-1",
 		RegionHeader:                        "eu-west",
