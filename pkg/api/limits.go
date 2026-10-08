@@ -8972,6 +8972,11 @@ const (
 	DurableEntityAlarmReadTimeout        = 2 * time.Second
 	DurableEntityAlarmScanTimeout        = 20 * time.Second
 	DurableEntityAlarmPollInterval       = 5 * time.Second
+	MaxDurableEntityAlarmIndexBytes      = 4 << 10
+	DurableEntityAlarmIndexTimeout       = 2 * time.Second
+	MaxDurableEntityAlarmAttempts        = 5
+	DurableEntityAlarmRetryBase          = 30 * time.Second
+	DurableEntityAlarmRetryMax           = 5 * time.Minute
 )
 
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.

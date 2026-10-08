@@ -1551,6 +1551,11 @@ type Querier interface {
 	// per-account projections; the broader ?actor + ?subject filter
 	// shape lives on ListAllEventsPaged.
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
+	// Account-wide `gregale trace` lookup: the newest retained row per app for
+	// one public trace id, in a single read through request_telemetry_trace_idx.
+	// The caller validates the id as 32 lowercase hex characters, so the row-UUID
+	// alias GetRequestTelemetryByAppAndIdentifier also accepts can never match.
+	ListRequestTelemetryByAccountTrace(ctx context.Context, db DBTX, arg ListRequestTelemetryByAccountTraceParams) ([]ListRequestTelemetryByAccountTraceRow, error)
 	// Canonical read pattern: "give me the last N requests for this app".
 	// Backs GET /v1/apps/{slug}/debug/requests. Uses
 	// request_telemetry_app_received_idx. The (since, until) pair is

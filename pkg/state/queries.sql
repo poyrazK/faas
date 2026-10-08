@@ -2926,6 +2926,24 @@ WHERE app_id = sqlc.arg(app_id)
 ORDER BY (id::text = sqlc.arg(identifier)::text) DESC, received_at DESC
 LIMIT 1;
 
+-- name: ListRequestTelemetryByAccountTrace :many
+-- Account-wide `gregale trace` lookup: the newest retained row per app for
+-- one public trace id, in a single read through request_telemetry_trace_idx.
+-- The caller validates the id as 32 lowercase hex characters, so the row-UUID
+-- alias GetRequestTelemetryByAppAndIdentifier also accepts can never match.
+SELECT DISTINCT ON (app_id)
+       app_id, id, deployment_id, route, method, status, latency_ms, count,
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest
+FROM request_telemetry
+WHERE account_id = sqlc.arg(account_id)
+  AND trace_id = sqlc.arg(trace_id)::text
+  AND received_at >= sqlc.arg(received_from)
+  AND received_at <  sqlc.arg(received_until)
+ORDER BY app_id, received_at DESC;
+
 -- name: RequestTelemetryByDeployment :many
 -- Per-deployment drilldown. Used by gregale debug compare and the
 -- regression detector (PR-B). Includes the publisher's `count`

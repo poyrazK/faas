@@ -340,7 +340,7 @@ func renderTraceResult(traceID string, result api.AccountTraceLookupResponse) in
 		}
 	}
 	for _, item := range result.Errors {
-		_, _ = fmt.Fprintf(osStderr, "trace %s: %s\n", item.App, item.Detail)
+		_, _ = fmt.Fprintln(osStderr, traceLookupErrorLine(item))
 	}
 	if result.Partial {
 		return 3
@@ -523,4 +523,13 @@ func traceDurationFromNanos(nanos uint64) (time.Duration, bool) {
 
 func formatTraceDuration(duration time.Duration) string {
 	return fmt.Sprintf("%.2fms", float64(duration)/float64(time.Millisecond))
+}
+
+// traceLookupErrorLine names the app whose evidence failed, or none when the
+// account-wide read failed.
+func traceLookupErrorLine(item api.AccountTraceLookupError) string {
+	if item.App == "" {
+		return "trace: " + item.Detail
+	}
+	return fmt.Sprintf("trace %s: %s", item.App, item.Detail)
 }

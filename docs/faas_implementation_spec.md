@@ -452,7 +452,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 
 - Builder VM: 2 vCPU, **2048 MB**, 8 GB scratch ext4 (thrown away), 4 GB per-app cache volume (kept, quota'd), rootfs = our `builder-base` image containing BuildKit (rootless inside the VM — inside a VM it may as well be root), Railpack, git, and the OCI exporter. No inbound network; outbound via the build egress policy (§7).
 - Semaphore: **1 builder slot** per 5 GiB parent cgroup. A second ordinary 2816 MiB builder can exceed that fence, and a snapshot builder can approach it alone, so local overcommit is disabled. Queue is FIFO per account with global fairness. Additional capacity comes from another eligible compute node.
-- Timeouts: 10 min build, 15 min end-to-end. On timeout/OOM (VM hits its own wall — host unaffected): kill VM, mark build `failed(reason)`, requeue once if `oom` and slot was opportunistic.
+- Timeouts: 15 min build (`api.BuildTimeoutSeconds`; ADR-791 — the original 10 min was raised for cold rootless Railpack exports). End-to-end deploy time is not separately enforced; the CLI waits build + 5 min. On timeout/OOM (VM hits its own wall — host unaffected): kill VM, mark build `failed(reason)`, requeue once if `oom` and slot was opportunistic.
 - Source in: scratch disk pre-loaded with the tarball. Image out: OCI layout written to the cache volume, hash-addressed; host copies it out after VM exit (no live channel needed — keeps the surface tiny).
 
 ### 4.6 `imaged` — image and snapshot service

@@ -16,7 +16,13 @@ name: ci
 on:
   push:
     branches: [main]
+  # Draft PRs run only `lint + build`; every other job is gated on
+  # `github.event.pull_request.draft != true` so iteration on a draft does not
+  # hold ~25 hosted runners per push. `ready_for_review` starts the full suite
+  # (and cancels the draft run through the concurrency group below), and
+  # workflow_dispatch still runs everything on demand for a draft branch.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   # Required checks must also run on the queue's temporary merge ref,
   # otherwise the queue waits forever for a status that never arrives.
   merge_group:
@@ -543,6 +549,7 @@ jobs:
   # pkg/e2etest (its fixture SQL must run against a real migrated schema)
   unit-tests-pg-1:
     name: unit tests (pg shard 1 — apid/meter/migrations)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Include cold APID race compilation and the full PostgreSQL API suite.
     timeout-minutes: 45
@@ -664,6 +671,7 @@ jobs:
   # Go's registered list guards against silently omitting a new test family.
   unit-tests-state:
     name: unit tests (state shard ${{ matrix.shard }})
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -705,10 +713,12 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Both shards compile the identical ./pkg/state race test binary, so
+          # they share one cache entry (written by shard 1 only, below).
+          key: go-state-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-state-${{ matrix.shard }}-${{ runner.os }}-
+            go-state-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-state-${{ runner.os }}-
       - name: verify complete state inventory
         run: |
           mkdir -p coverage
@@ -732,18 +742,22 @@ jobs:
           use_oidc: true
           fail_ci_if_error: false
       - name: save Go build + test cache
-        if: always() && github.event_name == 'push'
+        # One writer per shared key: a second shard's save would only fail to
+        # reserve it, and duplicate entries are what overflowed the 10 GB
+        # repository cache budget and evicted the other families.
+        if: always() && github.event_name == 'push' && matrix.shard == 1
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-state-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-state-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # PostgreSQL parity/reconciliation and CLI/daemon packages have independent
   # services. The state package itself runs in unit-tests-state above.
   unit-tests-pg-2:
     name: unit tests (pg shard 2${{ matrix.id }} — ${{ matrix.label }})
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -961,7 +975,7 @@ jobs:
   # while its original state/PostgreSQL inventory runs in parallel above.
   unit-tests-pg-2a-gate:
     name: unit tests (pg shard 2a — state/reconcile/reposcan)
-    if: always()
+    if: always() && github.event.pull_request.draft != true
     needs: [unit-tests-state, unit-tests-pg-2, state-coverage]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -983,6 +997,7 @@ jobs:
   # Shard 3 (pure Go heavy): pkg/sched, pkg/fcvm, pkg/gateway, pkg/imaged, etc. No Postgres needed.
   unit-tests-pure-1:
     name: unit tests (pure Go shard 1 — sched/fcvm/gateway)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Race compilation plus the scheduler suite can consume ten minutes.
     # Leave room for the coverage gate and upload after the tests pass.
@@ -1062,6 +1077,7 @@ jobs:
   # Shard 4 (pure Go light): all remaining packages. No Postgres needed.
   unit-tests-pure-2:
     name: unit tests (pure Go shard 2 — light packages)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # This job runs the package shard and property suite sequentially. Each
     # Go command has its own 10-minute test timeout, so the job budget must
@@ -1140,23 +1156,38 @@ jobs:
 
   container-contract:
     name: portable container contracts (strict)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Bounded-memory cold builds reached 14 min before the contracts finished.
+    timeout-minutes: 35
     permissions:
       contents: read
+    # The UDP contract race-builds cmd/apid; cold, that exhausted hosted-runner
+    # memory and the runner was shut down (exit 143) right after pkg/vmmdgrpc
+    # in 12 of 22 runs, main included. Mirror unit-tests-pg-1's bounds.
+    env:
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+      GOMEMLIMIT: 2GiB
+      GOGC: 10
+      GOMAXPROCS: 2
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
-      - name: cache container contract builds
-        uses: actions/cache@v4
+      # Restore-only on pull requests, like every other family. The previous
+      # combined actions/cache step saved a ~1 GB entry for every PR ref and
+      # every source-hash change, evicting main's shared families.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore container contract builds
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ hashFiles('scripts/ci/container-contract-check.py', 'scripts/ci/udp-contract-check.py', 'pkg/ingressroute/**', 'pkg/tcpd/**', 'pkg/udpd/**', 'pkg/oci/**', 'pkg/ociidentity/**', 'pkg/e2etest/**', 'pkg/imaged/**', 'cmd/gregale/**') }}
+          key: go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
             go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-container-contract-${{ runner.os }}-
@@ -1177,6 +1208,14 @@ jobs:
             container-contract.log
             udp-contract.log
           if-no-files-found: warn
+      - name: save container contract builds
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   checks:
     # Nine gates that each finished in well under two minutes used to run
@@ -1190,6 +1229,7 @@ jobs:
     # step, unchanged; the former job names are kept as section markers
     # so `git log -S` still finds them.
     name: checks (drift + contract gates)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Bounded APID compilation can take ~16 minutes on a cold hosted runner;
     # retain time for the remaining SQLC, vulnerability and Ansible gates.
@@ -1691,6 +1731,7 @@ jobs:
   # Node SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-node:
     name: sdk-node (gen-check + smoke + unit)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1800,6 +1841,7 @@ jobs:
   # Required database tests must run; unit-only SDK jobs skip these fixtures.
   operation-sdk-acceptance:
     name: operations (transaction + HTTP recovery + cross-SDK)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -1860,6 +1902,7 @@ jobs:
   # verified customer targeting or refresh after inactivity.
   flags-acceptance:
     name: flags (customer release + request evidence)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -1903,6 +1946,7 @@ jobs:
   # Python SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -1969,6 +2013,7 @@ jobs:
     # and otherwise queue forever — our org doesn't have them provisioned,
     # so the job sat QUEUED for ~19 h without starting.
     name: load (1k rps hot-path)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -2063,6 +2108,7 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     name: migration IDs, apply and replay
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -2276,10 +2322,12 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-migrations-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # All four shards compile the identical non-race ./migrations test
+          # binary, so they share one cache entry (written by shard 1 only).
+          key: go-migrations-history-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-migrations-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-migrations-${{ matrix.shard }}-${{ runner.os }}-
+            go-migrations-history-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-migrations-history-${{ runner.os }}-
             go-migrations-${{ runner.os }}-
       - name: verify complete migration inventory
         run: |
@@ -2294,19 +2342,20 @@ jobs:
           MIGRATION_RUN=$(go run ./scripts/ci/e2eshard -package=./migrations -all-tests -shards=4 -shard=${{ matrix.shard }})
           go test -count=1 -timeout=60m -run="$MIGRATION_RUN" ./migrations
       - name: save Go build + test cache
-        if: always() && github.event_name == 'push'
+        # One writer per shared key; see unit-tests-state.
+        if: always() && github.event_name == 'push' && matrix.shard == 1
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-migrations-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-migrations-history-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Keep the exact branch-protection context. A failed/cancelled prerequisite
   # or shard must fail this gate; only the impact policy can skip the suite.
   migrations:
     name: migrations (IDs + apply)
-    if: always()
+    if: always() && github.event.pull_request.draft != true
     needs: [migration-checks, migrations-full]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -2337,6 +2386,7 @@ jobs:
     # dedicated job. Keep this separate from the name-sharded e2e jobs so a
     # new TestBootContract_* cannot compile successfully without ever running.
     name: boot-contract (production config)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -2382,6 +2432,7 @@ jobs:
 
   e2e-shard1:
     name: e2e (shard 1 — 18 tests)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # The test command has a 15m package timeout; leave runner cleanup
     # headroom so slow shared runners fail with the test result instead of
@@ -2477,6 +2528,7 @@ jobs:
 
   e2e-shard2:
     name: e2e (shard 2 — 15 tests)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -2554,6 +2606,7 @@ jobs:
 
   e2e-shard3:
     name: e2e (shard 3 — 24 tests)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -2631,6 +2684,7 @@ jobs:
 
   e2e-shard4:
     name: e2e (shard 4 — 22 tests)
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:

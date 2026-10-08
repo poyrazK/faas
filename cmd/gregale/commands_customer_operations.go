@@ -44,7 +44,7 @@ type customerOperationCommand struct {
 
 func cmdCustomerOperations(args []string) int {
 	if len(args) == 0 {
-			PrintUsage(os.Stderr, "usage: gregale customer-operations <doctor|definitions|validate|types|start|list|get|inspect|milestones|events|executions|watch|download|cancel|recover|delivery|delivery-attempts|retry-delivery>", "customer-operations")
+		PrintUsage(os.Stderr, "usage: gregale customer-operations <doctor|definitions|validate|types|start|list|get|inspect|milestones|events|executions|watch|download|cancel|recover|delivery|delivery-attempts|retry-delivery>", "customer-operations")
 		return 1
 	}
 	if args[0] == "milestones" {

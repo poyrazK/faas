@@ -42,12 +42,13 @@ func run(ctx context.Context, output io.Writer, args []string, getenv func(strin
 	cleanup := flags.Bool("cleanup", false, "collect one bounded page of unused objects; no counter transition")
 	cursor := flags.String("cleanup-cursor", "", "opaque cursor from the previous cleanup page")
 	inventory := flags.Bool("inventory", false, "measure one bounded page of committed and current-key storage; rerun until complete")
+	alarmStatus := flags.Bool("alarm-status", false, "inspect this entity's alarm retry reservations and exhaustion; no counter transition")
 	storageLimit := flags.String("set-storage-limit", "", "operator-only committed byte cap; 0 explicitly removes the cap")
 	delta := flags.Int64("delta", 1, "counter increment")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	mode, limit, err := harnessMode(*requestID, *cleanup, *inventory, *storageLimit, *cursor, flags.Args())
+	mode, limit, err := harnessMode(*requestID, *cleanup, *inventory, *alarmStatus, *storageLimit, *cursor, flags.Args())
 	if err != nil {
 		return err
 	}
@@ -61,7 +62,15 @@ func run(ctx context.Context, output io.Writer, args []string, getenv func(strin
 	if err != nil {
 		return err
 	}
-	claim, err := engine.Acquire(ctx, durableentity.ID{AccountID: *account, AppID: *app, EnvironmentID: *environment, TenantID: *tenant, Namespace: *namespace, Key: *entity}, uuid.NewString())
+	id := durableentity.ID{AccountID: *account, AppID: *app, EnvironmentID: *environment, TenantID: *tenant, Namespace: *namespace, Key: *entity}
+	if mode == "alarm-status" {
+		status, err := engine.InspectAlarm(ctx, id)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(status)
+	}
+	claim, err := engine.Acquire(ctx, id, uuid.NewString())
 	if err != nil {
 		return err
 	}
@@ -102,18 +111,18 @@ func run(ctx context.Context, output io.Writer, args []string, getenv func(strin
 	return releaseErr
 }
 
-func harnessMode(requestID string, cleanup, inventory bool, rawLimit, cursor string, args []string) (string, int64, error) {
+func harnessMode(requestID string, cleanup, inventory, alarmStatus bool, rawLimit, cursor string, args []string) (string, int64, error) {
 	mode, selected := "", 0
 	for _, candidate := range []struct {
 		name string
 		on   bool
-	}{{"invoke", requestID != ""}, {"cleanup", cleanup}, {"inventory", inventory}, {"limit", rawLimit != ""}} {
+	}{{"invoke", requestID != ""}, {"cleanup", cleanup}, {"inventory", inventory}, {"alarm-status", alarmStatus}, {"limit", rawLimit != ""}} {
 		if candidate.on {
 			mode, selected = candidate.name, selected+1
 		}
 	}
 	if len(args) != 0 || selected != 1 || cursor != "" && !cleanup {
-		return "", 0, errors.New("select one of -request, -cleanup, -inventory or -set-storage-limit; cursors require -cleanup")
+		return "", 0, errors.New("select one of -request, -cleanup, -inventory, -alarm-status or -set-storage-limit; cursors require -cleanup")
 	}
 	if mode != "limit" {
 		return mode, 0, nil

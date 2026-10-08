@@ -1,6 +1,6 @@
 // ADR-586: customer PostgreSQL business writes and replayable handler responses.
 import { createHash } from "node:crypto";
-import { OperationConflictError, OperationCommitUnknownError, type OperationPool, type OperationTransaction, type OperationTransactionResult } from './operation-receipt.js';
+import { operationReceiptTransaction, type OperationPool, type OperationTransaction, type OperationTransactionResult } from './operation-receipt.js';
 export { OperationConflictError, OperationCommitUnknownError, type OperationPool, type OperationTransaction, type OperationConnection, type OperationTransactionResult } from './operation-receipt.js';
 import type { ManagedOperationEffect } from "./generated/models/ManagedOperationEffect.js";
 import {
@@ -174,40 +174,13 @@ async function operationTransaction(
 ): Promise<OperationTransactionResult> {
   const request = normalize(input);
   const digest = Buffer.from(operationRequestDigest(request));
-  const connection = await pool.connect();
-  let discard = false;
-  try {
-    await connection.query("BEGIN ISOLATION LEVEL READ COMMITTED");
-    await connection.query("SELECT pg_advisory_xact_lock(hashtextextended('gregale.operation-inbox.v1:' || $1::uuid::text, 0))", [request.operationId]);
-    const stored = (await connection.query(
-      "SELECT account_id::text,app_id::text,coalesce(platform_tenant_id::text,'') AS platform_tenant_id,request_digest,response_body FROM public.gregale_operation_inbox WHERE operation_id=$1::uuid",
-      [request.operationId],
-    )).rows[0];
-    let body: string;
-    if (stored) {
-      if (stored.account_id !== request.accountId || stored.app_id !== request.appId
-          || stored.platform_tenant_id !== (request.platformTenantId ?? "") || !(stored.request_digest instanceof Uint8Array)
-          || !digest.equals(Buffer.from(stored.request_digest))) throw new OperationConflictError();
-      if (typeof stored.response_body !== "string") throw new TypeError("invalid saved operation response");
-      body = stored.response_body;
+  const protocol = request[customerBinding] === undefined ? 'managed' : 'customer';
+  return operationReceiptTransaction(pool, request, digest, protocol,
+    async connection => encode(await handler(connection)),
+    body => {
       validateBody(body);
-      if (request[customerBinding] !== undefined) customerResult(body);
-    } else {
-      body = encode(await handler(connection));
-      await connection.query(
-        "INSERT INTO public.gregale_operation_inbox(operation_id,account_id,app_id,platform_tenant_id,request_digest,response_body) VALUES ($1::uuid,$2::uuid,$3::uuid,nullif($4,'')::uuid,$5,$6)",
-        [request.operationId, request.accountId, request.appId, request.platformTenantId ?? "", digest, body],
-      );
-    }
-    try { await connection.query("COMMIT"); }
-    catch (error) { throw new OperationCommitUnknownError(error); }
-    return { body, replayed: stored !== undefined };
-  } catch (error) {
-    try { await connection.query("ROLLBACK"); } catch { discard = true; }
-    throw error;
-  } finally {
-    connection.release(discard);
-  }
+      if (protocol === 'customer') customerResult(body);
+    });
 }
 
 /** Explicit HTTP/PostgreSQL receipt context. Claim proofs are never retained. */

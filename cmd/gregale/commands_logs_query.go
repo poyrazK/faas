@@ -117,7 +117,7 @@ func runHTTPLogsQuery(ctx context.Context, slug, deploymentID, requestID, traceI
 		}
 		if result.Partial {
 			for _, item := range result.Errors {
-				_, _ = fmt.Fprintf(osStderr, "trace %s: %s\n", item.App, item.Detail)
+				_, _ = fmt.Fprintln(osStderr, traceLookupErrorLine(item))
 			}
 			return 3
 		}
