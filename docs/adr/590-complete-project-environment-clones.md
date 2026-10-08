@@ -8650,3 +8650,28 @@ credential and binding publication, API-key grant publication, native grant
 qualification/revocation, retirement and final stage publication remain separate
 steps. Live R2/OVH qualification remains deferred at the user's request; public
 full-stage cloning stays gated.
+
+### Authenticated object publication plan
+
+A private read-only publication plan now projects the complete frozen object
+matrix and committed sealed values under the current worker transaction. Every
+bucket remains represented, including buckets with API-key grants and no gateway
+credentials. Target bucket IDs, original source edges, sealed credential and app
+secret preparations, and sorted API-key grants are bound to the frozen-input,
+identity-reservation and sealed-value digests. Nested ciphertext and secret slices
+are copied so consumers cannot mutate the underlying authenticated inputs.
+
+Plan reads reauthenticate retained original checkpoints, copy and verification
+receipts, private target ownership and logical names, and the reserved identities.
+Worker authorization is checked before and after the transaction; errors return
+no plan or sealed material. Recovery derives the same plan without opening keys
+or creating any normal credentials, secrets or grants. This is publication intent,
+not a quota reservation or an API-key eligibility decision: those checks must
+occur under locks in the future atomic publication transaction.
+
+Tests cover the complete matrix, defensive copies, grant-only and empty graphs,
+reservation linkage, stale workers, handoff without encryption keys, and tampered
+sealed journals. Atomic object credential/binding/API-key grant publication and
+its exact-ownership replay remain the next implementation step. Native grant
+qualification/revocation, retirement and final stage publication remain required;
+live R2/OVH qualification remains deferred and public full-stage cloning gated.

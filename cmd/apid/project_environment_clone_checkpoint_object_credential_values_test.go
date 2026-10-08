@@ -69,6 +69,10 @@ func TestPGCloneCheckpointObjectCredentialValuesRecovery(t *testing.T) {
 	if err != nil || len(original.Preparations) == 0 {
 		t.Fatal("sealed matrix", err)
 	}
+	plan, err := store.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), f.lease, retention)
+	if err != nil || plan.ValuesSHA256 != original.SHA256 || len(plan.Buckets) == 0 {
+		t.Fatal("authenticated publication plan", err)
+	}
 	encoded, err := json.Marshal(original)
 	if err != nil {
 		t.Fatal(err)
@@ -139,6 +143,9 @@ func TestPGCloneCheckpointObjectCredentialValuesRecovery(t *testing.T) {
 	if out, err := store.ProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), old, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
 		t.Fatal("stale worker read sealed material", err)
 	}
+	if out, err := store.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), old, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
+		t.Fatal("stale worker read publication plan", err)
+	}
 	setSecretRecipient = func() *age.X25519Recipient { return nil }
 	mfaIdentities = func() []*age.X25519Identity { return nil }
 	hostHMACKey = func() []byte { return nil }
@@ -150,6 +157,9 @@ func TestPGCloneCheckpointObjectCredentialValuesRecovery(t *testing.T) {
 	retention, err = f.srv.checkpointTargetRetention(t.Context(), f.lease, d)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if replay, err := store.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), f.lease, retention); err != nil || !reflect.DeepEqual(plan, replay) {
+		t.Fatal("handoff changed publication plan", err)
 	}
 	target := r.Inputs.Buckets[0].Target.TargetBucketID
 	if _, err = f.pool.Exec(t.Context(), "update object_buckets set name='changed' where id=$1", target); err != nil {
@@ -181,6 +191,9 @@ func TestPGCloneCheckpointObjectCredentialValuesRecovery(t *testing.T) {
 	}
 	if out, err := store.ProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
 		t.Fatal("tampered journal returned keys", err)
+	}
+	if out, err := store.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
+		t.Fatal("tampered journal returned publication plan", err)
 	}
 }
 
