@@ -78,8 +78,8 @@ tokens fall back to restricted files under
 `$XDG_CONFIG_HOME/gregale/profiles/<name>/token`. Managed login session
 metadata lives beside the token as `session.json`, so logging in or out of one
 connection preserves the other connections' revocation information. The default
-connection retains its existing `gregale/session.json` path. Tokens are never stored in
-`config.json` or printed by `profile list` or `context`.
+connection retains its existing `gregale/session.json` path. Tokens are never
+stored in `config.json` or printed by `profile list` or `context`.
 Completion caches are isolated by connection, endpoint, and credential.
 `FAAS_COMPLETION_CACHE_PATH` remains an explicit shared cache override.
 Regenerate installed shell completion scripts after upgrading to support the
@@ -87,6 +87,6 @@ connection prefix option and configured names for `--profile`, `profile use`,
 and `profile remove`.
 
 `profile remove <name>` removes an inactive connection and clears its locally
-stored credentials, session metadata, and completion caches. Switch away from a connection before
-removing it. Removal does not revoke a server-side session; use
+stored credentials, session metadata, and completion caches. Switch away from a
+connection before removing it. Removal does not revoke a server-side session; use
 `gregale --profile <name> logout` first when revocation is needed.

@@ -44,7 +44,8 @@ func validateProfileName(name string) error {
 		return errors.New("profile name must contain 1–64 lowercase letters, digits, underscores or hyphens")
 	}
 	for _, c := range name {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+		valid := c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_'
+		if !valid {
 			return fmt.Errorf("invalid profile name %q", name)
 		}
 	}
