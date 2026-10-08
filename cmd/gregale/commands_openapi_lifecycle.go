@@ -10,6 +10,8 @@ import (
 	"os"
 
 	"github.com/onebox-faas/faas/pkg/api"
+
+	"gopkg.in/yaml.v3"
 )
 
 const openapiDefaultSource = "manual_import"
@@ -430,13 +432,51 @@ func readOpenapiDocument(path string) (map[string]any, error) {
 		return nil, fmt.Errorf("document is empty")
 	}
 	var doc map[string]any
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, fmt.Errorf("document is not valid JSON: %w", err)
+	if jsonErr := json.Unmarshal(body, &doc); jsonErr != nil {
+		// hunt #8: OpenAPI documents are most often YAML, and `openapi
+		// import|dry-run` rejected them as "not valid JSON".
+		var raw any
+		if yamlErr := yaml.Unmarshal(body, &raw); yamlErr != nil {
+			return nil, fmt.Errorf("document is neither valid JSON (%v) nor valid YAML (%v)", jsonErr, yamlErr)
+		}
+		object, ok := openapiYAMLValue(raw).(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("document must be a JSON or YAML object")
+		}
+		doc = object
 	}
 	if doc == nil {
-		return nil, fmt.Errorf("document must be a JSON object")
+		return nil, fmt.Errorf("document must be a JSON or YAML object")
 	}
 	return doc, nil
+}
+
+// openapiYAMLValue converts decoded YAML into JSON-encodable values: YAML
+// mappings may have non-string keys (an unquoted `200:` response code), which
+// encoding/json rejects.
+func openapiYAMLValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			out[k] = openapiYAMLValue(val)
+		}
+		return out
+	case map[any]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			out[fmt.Sprint(k)] = openapiYAMLValue(val)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, val := range t {
+			out[i] = openapiYAMLValue(val)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func printOpenapiImportSummary(resp api.AppOpenAPIImportResponse) {
