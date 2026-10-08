@@ -3736,8 +3736,9 @@ paths:
       summary: Inspect acceptance, routing, and execution for one event.
       description: |
         Requires apps:read or admin. Reads the retained account/source/id receipt
-        and a bounded page of immutable acceptance-time recipients. Routing
-        counts cover the entire snapshot, including recipients without invocations.
+        and a bounded page of captured and backfilled recipients. recipient_count
+        and routing_summary cover the immutable acceptance snapshot; separate
+        backfill counts cover added consumers, including those without invocations.
         Enqueued routing does not imply handler success: keyed cancellation can
         produce a cancellation receipt instead. The original deterministic
         invocation is shown when retained; trusted generic replay lineage adds
@@ -3746,7 +3747,9 @@ paths:
         when present. Recovery actions require their existing
         write scopes and are revalidated when called. Legacy receipts without
         snapshots report snapshot_captured=false and cannot reconstruct recipients.
-        Pages follow acceptance order while outcomes may change between requests.
+        Pages follow acceptance order then append-only backfill positions, which
+        survive job pruning. Inspection order does not imply delivery order;
+        outcomes may change between requests.
       security: [{ bearerAuth: [] }]
       parameters:
         - { name: source, in: query, required: true, description: Published event source paired with the required ID for this receipt lookup., schema: { type: string, minLength: 1, maxLength: 256 } }
@@ -3770,7 +3773,7 @@ paths:
     get:
       tags: [events]
       operationId: getEventReceiptReplays
-      summary: Inspect retained handler replay history for one captured recipient.
+      summary: Inspect retained handler replay history for one captured or backfilled recipient.
       description: |
         Requires apps:read or admin. Returns generic invocation replays linked by
         ledger-owned parent/root identity, newest first by created_at and ID.
@@ -3805,7 +3808,7 @@ paths:
     get:
       tags: [events]
       operationId: getEventReceiptAttempts
-      summary: Inspect retained handler delivery attempts for one captured recipient.
+      summary: Inspect retained handler delivery attempts for one captured or backfilled recipient.
       description: |
         Requires apps:read or admin. Includes the original async invocation and
         trusted child replays, ordered by descending attempt history ID. Each
@@ -3816,7 +3819,7 @@ paths:
         Closed attempts expire after at most 30 days, earlier when result retention
         expires or their invocation is deleted. Running attempts are not pruned.
         Missing history does not establish that no delivery occurred. Unknown or
-        foreign receipts, captured recipients and current app owners return 404.
+        foreign receipts, recipients and current app owners return 404.
         Cursors bind account, source, event ID, recipient and retained receipt;
         stale or mismatched cursors return 400. New claims do not reorder older
         pages; a running outcome may settle between reads.
@@ -25286,8 +25289,10 @@ paths:
       operationId: replayEventFanoutFailure
       summary: Retry one terminal event recipient routing failure.
       description: |
-        Requeues only the named failed recipient from the immutable recipient
-        snapshot captured when the event was accepted. Other recipients and
+        Requeues only the named failed recipient captured at acceptance or
+        added by a retained historical backfill. Backfill failures must be
+        retryable and have a running or completed-with-failures job; reopening
+        a completed job observes active-job limits. Other recipients and
         their outcomes are left untouched. With independent recipient routing,
         a terminal recipient can be replayed while siblings are active and gets
         a fresh routing retry budget. Legacy receipts must settle first.
@@ -43716,6 +43721,8 @@ components:
         details_truncated: { type: boolean, description: Whether the failure code or routing diagnostic was clipped. }
         retryable: { type: boolean }
         updated_at: { type: string, format: date-time }
+        receipt_url: { type: string, format: uri-reference, description: Account-authenticated receipt inspection; omitted after the original receipt expires. }
+        attempt_history_url: { type: string, format: uri-reference, description: Handler attempt history for this consumer; omitted when retained delivery provenance or current app ownership is unavailable. }
     EventReplayBackfillItemsResponse:
       description: Stable acceptance-ordered page of per-envelope outcomes for one backfill job.
       type: object
@@ -43927,7 +43934,7 @@ components:
         retained_bytes: { type: integer, format: int64, minimum: 0, description: Logical detail bytes including a fixed per-row allowance; excludes physical storage and indexes. }
 
     EventReceiptResponse:
-      description: Acceptance and routing evidence with a bounded recipient page; execution is a separate lifecycle.
+      description: Acceptance and routing evidence with a bounded page of captured and backfilled consumers; execution is a separate lifecycle.
       type: object
       additionalProperties: false
       required: [event_id, event_source, event_type, accepted_at, snapshot_captured, routing_mode, recipient_count, routing_summary, recipients]
@@ -43947,18 +43954,26 @@ components:
           description: Counts across all captured recipients by current routing checkpoint state.
           type: object
           additionalProperties: { type: integer, minimum: 0 }
+        backfill_recipient_count: { type: integer, minimum: 0, description: Additional backfilled consumers across all pages; excluded from recipient_count. }
+        backfill_routing_summary:
+          description: Counts across added backfill consumers, separate from the immutable acceptance snapshot.
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
         recipients:
           type: array
           maxItems: 200
           items: { $ref: '#/components/schemas/EventReceiptRecipientResponse' }
-        next_after: { type: string, description: Opaque cursor for the next acceptance-ordered recipient page. }
+        next_after: { type: string, description: Opaque cursor for captured recipients followed by append-only backfill additions. Delivery order is not guaranteed. }
 
     EventReceiptRecipientResponse:
-      description: One captured recipient with independent routing, original execution or cancellation evidence, and retained generic replay recovery.
+      description: One captured or backfilled recipient with independent routing, original execution or cancellation evidence, and retained generic replay recovery.
       type: object
       additionalProperties: false
       required: [subscription_id, app_id, routing, recovery_actions]
       properties:
+        origin: { type: string, enum: [acceptance, backfill], description: Captured at acceptance or added by a historical backfill. }
+        backfill_job_id: { type: string, format: uuid, description: Originating backfill job while its metadata is retained. }
+        backfill_job_url: { type: string, format: uri-reference, description: Account-authenticated backfill job inspection while the job and current target are available. }
         subscription_id: { type: string, description: Immutable captured subscription or notification identifier. }
         workflow_name: { type: string, description: Published workflow captured as an event recipient. }
         workflow_run_id: { type: string, format: uuid, description: Durable run id after event-trigger admission. }
@@ -44027,7 +44042,7 @@ components:
       properties:
         retained_replay_count: { type: integer, format: int64, minimum: 1 }
         latest_replay: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
-        history_url: { type: string, format: uri-reference, description: Account-authenticated paginated replay history for this captured recipient. }
+        history_url: { type: string, format: uri-reference, description: Account-authenticated paginated replay history for this recipient. }
 
     EventReceiptReplayHistoryResponse:
       description: A page of retained generic replay executions for one captured event consumer.
@@ -44075,7 +44090,7 @@ components:
         attempts:
           type: array
           items: { $ref: '#/components/schemas/InvocationAttemptResponse' }
-        next_after: { type: string, description: Opaque cursor for the next page of older dispatch attempts for this captured recipient. }
+        next_after: { type: string, description: Opaque cursor for the next page of older dispatch attempts for this recipient. }
 
     EventReceiptCancellationResponse:
       description: Durable work-policy cancel_pending operation receipt, which creates no handler invocation.

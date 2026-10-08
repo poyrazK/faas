@@ -106,7 +106,7 @@ def sync_detailed(
     after: str | Unset = UNSET,
     limit: int | Unset = 100,
 ) -> Response[EventReceiptAttemptHistoryResponse | Problem]:
-    """Inspect retained handler delivery attempts for one captured recipient.
+    """Inspect retained handler delivery attempts for one captured or backfilled recipient.
 
      Requires apps:read or admin. Includes the original async invocation and
     trusted child replays, ordered by descending attempt history ID. Each
@@ -117,7 +117,7 @@ def sync_detailed(
     Closed attempts expire after at most 30 days, earlier when result retention
     expires or their invocation is deleted. Running attempts are not pruned.
     Missing history does not establish that no delivery occurred. Unknown or
-    foreign receipts, captured recipients and current app owners return 404.
+    foreign receipts, recipients and current app owners return 404.
     Cursors bind account, source, event ID, recipient and retained receipt;
     stale or mismatched cursors return 400. New claims do not reorder older
     pages; a running outcome may settle between reads.
@@ -161,7 +161,7 @@ def sync(
     after: str | Unset = UNSET,
     limit: int | Unset = 100,
 ) -> EventReceiptAttemptHistoryResponse | Problem | None:
-    """Inspect retained handler delivery attempts for one captured recipient.
+    """Inspect retained handler delivery attempts for one captured or backfilled recipient.
 
      Requires apps:read or admin. Includes the original async invocation and
     trusted child replays, ordered by descending attempt history ID. Each
@@ -172,7 +172,7 @@ def sync(
     Closed attempts expire after at most 30 days, earlier when result retention
     expires or their invocation is deleted. Running attempts are not pruned.
     Missing history does not establish that no delivery occurred. Unknown or
-    foreign receipts, captured recipients and current app owners return 404.
+    foreign receipts, recipients and current app owners return 404.
     Cursors bind account, source, event ID, recipient and retained receipt;
     stale or mismatched cursors return 400. New claims do not reorder older
     pages; a running outcome may settle between reads.
@@ -211,7 +211,7 @@ async def asyncio_detailed(
     after: str | Unset = UNSET,
     limit: int | Unset = 100,
 ) -> Response[EventReceiptAttemptHistoryResponse | Problem]:
-    """Inspect retained handler delivery attempts for one captured recipient.
+    """Inspect retained handler delivery attempts for one captured or backfilled recipient.
 
      Requires apps:read or admin. Includes the original async invocation and
     trusted child replays, ordered by descending attempt history ID. Each
@@ -222,7 +222,7 @@ async def asyncio_detailed(
     Closed attempts expire after at most 30 days, earlier when result retention
     expires or their invocation is deleted. Running attempts are not pruned.
     Missing history does not establish that no delivery occurred. Unknown or
-    foreign receipts, captured recipients and current app owners return 404.
+    foreign receipts, recipients and current app owners return 404.
     Cursors bind account, source, event ID, recipient and retained receipt;
     stale or mismatched cursors return 400. New claims do not reorder older
     pages; a running outcome may settle between reads.
@@ -264,7 +264,7 @@ async def asyncio(
     after: str | Unset = UNSET,
     limit: int | Unset = 100,
 ) -> EventReceiptAttemptHistoryResponse | Problem | None:
-    """Inspect retained handler delivery attempts for one captured recipient.
+    """Inspect retained handler delivery attempts for one captured or backfilled recipient.
 
      Requires apps:read or admin. Includes the original async invocation and
     trusted child replays, ordered by descending attempt history ID. Each
@@ -275,7 +275,7 @@ async def asyncio(
     Closed attempts expire after at most 30 days, earlier when result retention
     expires or their invocation is deleted. Running attempts are not pruned.
     Missing history does not establish that no delivery occurred. Unknown or
-    foreign receipts, captured recipients and current app owners return 404.
+    foreign receipts, recipients and current app owners return 404.
     Cursors bind account, source, event ID, recipient and retained receipt;
     stale or mismatched cursors return 400. New claims do not reorder older
     pages; a running outcome may settle between reads.

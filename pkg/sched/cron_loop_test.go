@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/netip"
 	"sync/atomic"
@@ -1122,5 +1123,29 @@ func TestCronDispatch_NeverFiringScheduleDoesNotFireEveryTick(t *testing.T) {
 	}
 	if got := synth.calls.Load(); got != 0 {
 		t.Fatalf("synth calls = %d, want 0 for a schedule that never fires", got)
+	}
+}
+
+// An app that answered the fire (a permanent invoke error, e.g. its own 404)
+// was woken a second time through the legacy wake-only path, which asked for
+// another instance and hit the scale-out cooldown (production-us H5-19).
+func TestCronDispatch_PermanentInvokeErrorSkipsLegacyWake(t *testing.T) {
+	t.Parallel()
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, err := store.CreateAccount(ctx, "permanent-invoke@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	_, cronRow := newAppAndCron(t, store, acct.ID, true)
+	eng, _ := makeEngine(t, store, &fakeWakeVMM{})
+	synth := &recordingSynth{invokeErr: fmt.Errorf("%w: application returned HTTP 404", ErrPermanentInvoke)}
+	loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth)
+	loop.runCronTick(ctx)
+	if got := synth.calls.Load(); got != 1 {
+		t.Fatalf("synth calls = %d, want 1: the delivered fire must not be retried as a wake", got)
+	}
+	if row, err := store.CronByID(ctx, cronRow.ID); err != nil || row.LastFiredAt.IsZero() {
+		t.Fatalf("cron did not record the fire: %+v err=%v", row, err)
 	}
 }
