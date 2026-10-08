@@ -597,3 +597,60 @@ receipts in owner-managed deletion/privacy workflows. Purging a snapshot removes
 that replay response and ends duplicate protection for its key. Retention
 cleanup across all users is separate from deleting one user's business data;
 coordinate those policies and communicate the retry window to clients.
+
+### Preview and grant RPC permissions
+
+The starter ships an owner-side permission tool using the **same catalog and
+signature parser as the serving runtime**. In an owner-controlled migration
+session, configure `MIGRATION_DATABASE_URL` through the migration binding, then
+run:
+
+```sh
+npm run rpc:permissions
+npm run rpc:permissions -- --apply
+```
+
+The default is a read-only preview. It reports the selected SQL role, annotated
+functions, missing explicit grants and readiness blockers. A missing grant or
+blocker produces exit status 1; a ready plan produces 0. `--apply` grants only
+supported, owner-authored `@gregale:rpc` functions to that role, atomically in one
+transaction. It does not grant table/schema access, change RLS, revoke existing
+permissions or grant execution on every function in the schema. Public execute
+permission does not substitute for the explicit binding-role grant managed by
+this tool. Output never includes database URLs, passwords, JWTs or function
+bodies; role names and function names are owner metadata.
+
+Automatic discovery uses matching Gregale migration/data_api credential scope
+markers and requires exactly one active login. During a rotation overlap,
+discovery refuses to guess and reports candidate names. Select the intended
+serving binding role explicitly, or wait for the old role to retire:
+
+```sh
+npm run rpc:permissions -- --role your_data_api_login
+npm run rpc:permissions -- --role your_data_api_login --apply
+```
+
+A retired NOLOGIN role, different credential scope, elevated role, membership,
+object ownership, schema creation, outside-schema table access or executable
+security-definer function is refused. The selected role must have the existing
+Data API statement-timeout configuration, connection/schema usage, table and
+sequence grants, and future-object default grants. Tables must have RLS enabled
+and policies configured; views must be security-invoker views. Materialized and
+foreign tables are blocked by this conservative readiness check. Unsupported,
+overloaded or foreign-owned annotated functions block apply rather than receive
+execution grants. The tool assumes the session's `current_user` owns `api`;
+an unmarked migration session requires an explicit role selection.
+
+Readiness here means ACL and catalog checks passed. It does not prove policy
+correctness, transitive function dependencies or actual two-user isolation;
+review function bodies and run application acceptance tests. Apply shares the
+migration runner's transaction advisory lock. Coordinate direct owner DDL with
+that workflow; a preview is not a reservation of catalog state. After grants,
+fresh-restart the Data API and regenerate types before compiling callers.
+Re-run for the replacement role after credential rotation. The tool does not
+publish, deploy, rotate credentials, or revoke the old role.
+
+The shared catalog files are included automatically in Gregale's scaffold and
+template archive under `migrations/rpc-runtime/`. Source-checkout acceptance
+copies the same canonical files into its temporary starter; do not maintain a
+separate eligibility implementation.

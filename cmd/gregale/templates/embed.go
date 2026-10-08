@@ -103,6 +103,14 @@ var generatedTemplateCopies = map[string]map[string]string{
 	},
 }
 
+// Share the runtime catalog implementation with the owner-side permission tool.
+var sharedTemplateCopies = map[string]map[string]string{
+	"data-api-starter": {
+		"migrations/rpc-runtime/types.mjs":  "data-api/types.mjs",
+		"migrations/rpc-runtime/config.mjs": "data-api/config.mjs",
+	},
+}
+
 // Exists reports whether name is a known template.
 func Exists(name string) bool {
 	if !NameIsValid(name) {
@@ -157,6 +165,19 @@ func Materialize(name, dest string) error {
 			return err
 		}
 		if err := os.WriteFile(path, content, 0o644); err != nil {
+			return err
+		}
+	}
+	for target, source := range sharedTemplateCopies[name] {
+		content, err := fs.ReadFile(FS, source)
+		if err != nil {
+			return err
+		}
+		targetPath := filepath.Join(dest, target)
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(targetPath, content, 0o644); err != nil {
 			return err
 		}
 	}
@@ -227,6 +248,24 @@ func TarGz(name, dest string) error {
 			continue
 		}
 		if err := copyFromFS(tw, rootFS, p); err != nil {
+			return err
+		}
+	}
+	var shared []string
+	for target := range sharedTemplateCopies[name] {
+		shared = append(shared, target)
+	}
+	sort.Strings(shared)
+	for _, target := range shared {
+		content, err := fs.ReadFile(FS, sharedTemplateCopies[name][target])
+		if err != nil {
+			return err
+		}
+		hdr := &tar.Header{Name: name + "/" + target, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if _, err := tw.Write(content); err != nil {
 			return err
 		}
 	}

@@ -23,6 +23,8 @@ npm ci --prefix sdk/data --ignore-scripts
 npm test --prefix sdk/data
 starter_dir="$runtime_dir/starter"
 cp -R cmd/gregale/templates/data-api-starter "$starter_dir"
+mkdir -p "$starter_dir/migrations/rpc-runtime"
+cp cmd/gregale/templates/data-api/{types.mjs,config.mjs} "$starter_dir/migrations/rpc-runtime/"
 npm ci --prefix "$starter_dir" --ignore-scripts
 package_file="$(cd sdk/data && npm pack --silent --pack-destination "$starter_dir")"
 node "$starter_dir/tools/install-sdk.mjs" "$starter_dir/$package_file"

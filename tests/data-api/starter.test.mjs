@@ -9,6 +9,8 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { verifyRPC, verifyRPCPolicy } from './rpc.mjs'
 import { browserOrigins, verifyBrowserCORS } from './browser-cors.mjs'
+import { createHash } from 'node:crypto'
+import { verifyPermissions } from './rpc-permissions.mjs'
 import { verifyRetention } from './retention.mjs'
 import { verifyIdempotency } from './idempotency.mjs'
 import { verifySchemaEvolution } from './schema-evolution.mjs'
@@ -37,6 +39,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   const { migrate } = await import(pathToFileURL(join(root, 'migrations/migrate.mjs')))
   const suffix = `${process.pid}_${Date.now()}`
   const database = `starter_${suffix}`
+  const scope = createHash('sha256').update(database).digest('hex').slice(0, 40)
   const schemaOwner = `starter_owner_${suffix}`
   const migrator = `starter_migration_${suffix}`
   const role = `starter_api_${suffix}`
@@ -69,6 +72,9 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
     GRANT USAGE ON SCHEMA api TO "${role}";
     ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "${role}";
     ALTER DEFAULT PRIVILEGES IN SCHEMA api GRANT USAGE, SELECT ON SEQUENCES TO "${role}";`)
+  await admin.query(`COMMENT ON ROLE "${migrator}" IS 'gregale:credential:v1:${scope}:migration';
+    COMMENT ON ROLE "${role}" IS 'gregale:credential:v1:${scope}:data_api';
+    ALTER ROLE "${role}" SET statement_timeout=${limits.queryMs}`)
   const migrationURL = new URL(ownerURL); migrationURL.username = migrator; migrationURL.password = 'test-only'
   const loginURL = new URL(ownerURL); loginURL.username = role; loginURL.password = 'test-only'
   // Exercise exactly the stable-owner migration session and restricted API role.
@@ -86,8 +92,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   finally { await rm(failedSQL) }
   assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 10)
   assert.equal((await owner.query("SELECT count(*)::integer AS count FROM information_schema.columns WHERE table_schema='api' AND column_name='rolled_back'")).rows[0].count, 0)
-  await owner.query(`GRANT EXECUTE ON FUNCTION api.create_note_with_tags(text, text[]) TO "${role}"`)
-  await owner.query(`GRANT EXECUTE ON FUNCTION api.create_note_with_tags_once(uuid, text, text[]) TO "${role}"`)
+  await verifyPermissions({ root, owner, admin, role, migrationURL: migrationURL.toString(), loginURL: loginURL.toString(), scope, database })
   await verifyRPCPolicy({ owner, inspect, loginURL: loginURL.toString(), role })
   const snapshot = await inspect(loginURL.toString(), ['api'])
   assert.deepEqual(snapshot.tables.find(table => table.name === 'comments').relationships[0].referencedColumns, ['subject', 'id'])

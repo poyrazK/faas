@@ -10,7 +10,8 @@
     "start": "node server.mjs",
     "migrate": "node migrations/migrate.mjs",
     "test": "node --test test/*.test.mjs",
-    "receipts:cleanup": "node migrations/cleanup-receipts.mjs"
+    "receipts:cleanup": "node migrations/cleanup-receipts.mjs",
+    "rpc:permissions": "node migrations/rpc-permissions.mjs"
   },
   "dependencies": {
     "pg": "8.23.1"

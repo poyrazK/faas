@@ -49,7 +49,7 @@ const functionsQuery = `SELECT n.nspname AS schema, p.proname AS name,
  FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
  WHERE n.nspname=ANY($1::text[]) AND p.prokind='f' AND NOT p.prosecdef
  AND p.provariadic=0 AND has_schema_privilege(n.oid,'USAGE')
- AND has_function_privilege(p.oid,'EXECUTE')
+ AND ($2::boolean OR has_function_privilege(p.oid,'EXECUTE'))
  AND obj_description(p.oid,'pg_proc')='@gregale:rpc'
  ORDER BY n.nspname,p.proname LIMIT ${limits.relations + 1}`
 
@@ -59,15 +59,20 @@ export async function inspect(connection, schemas) {
   try {
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
     await client.query("SELECT set_config('statement_timeout',$1,true)", [String(limits.queryMs)])
-    const columns = (await client.query(columnsQuery, [schemas])).rows
-    const types = (await client.query(typesQuery)).rows
-    const relations = (await client.query(relationsQuery, [schemas])).rows
-    if (columns.length > limits.columns || types.length > limits.types || relations.length > limits.relations) throw new Error('Schema exceeds generation limits')
-    const functions = (await client.query(functionsQuery, [schemas])).rows
-    if (functions.length > limits.relations) throw new Error('Too many opted-in functions')
+    const snapshot = await inspectClient(client, schemas)
     await client.query('COMMIT')
-    return normalize(columns, types, relations, schemas, functions)
+    return snapshot
   } finally { await client.end() }
+}
+
+export async function inspectClient(client, schemas, { includeUnexecutable = false } = {}) {
+  const columns = (await client.query(columnsQuery, [schemas])).rows
+  const types = (await client.query(typesQuery)).rows
+  const relations = (await client.query(relationsQuery, [schemas])).rows
+  if (columns.length > limits.columns || types.length > limits.types || relations.length > limits.relations) throw new Error('Schema exceeds generation limits')
+  const functions = (await client.query(functionsQuery, [schemas, includeUnexecutable])).rows
+  if (functions.length > limits.relations) throw new Error('Too many opted-in functions')
+  return normalize(columns, types, relations, schemas, functions)
 }
 
 export function normalize(columns, types, relationships, schemas, functions = []) {
