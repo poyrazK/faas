@@ -184,23 +184,6 @@ func customerCompletionFlags() []cliFlag {
 	return flags
 }
 
-func completionFlagSpellings(match func(cliFlag) bool) []string {
-	seen := make(map[string]bool)
-	var spellings []string
-	for _, flag := range customerCompletionFlags() {
-		if !match(flag) {
-			continue
-		}
-		for _, spelling := range cliFlagSpellings(flag) {
-			if !seen[spelling] {
-				seen[spelling] = true
-				spellings = append(spellings, spelling)
-			}
-		}
-	}
-	return spellings
-}
-
 // completionUnambiguousFlagSpellings returns value-taking option spellings
 // only when every manifest use of a spelling accepts the same kind of value.
 // A few common names such as --path, --source, and --profile mean either a

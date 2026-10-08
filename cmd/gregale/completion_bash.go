@@ -445,18 +445,18 @@ func renderBashClosedSetValueCompletion(w io.Writer, f cliFlag, indent string, s
 		selector += " && "
 	}
 	for _, flagName := range cliFlagSpellings(f) {
-		fmt.Fprintf(w, "%sif %s[ \"$prev\" = %q ]; then\n", indent, selector, flagName)
-		fmt.Fprintf(w, "%s  COMPREPLY=( $(compgen -W %q -- \"$cur\") )\n", indent, values)
-		fmt.Fprintf(w, "%s  return 0\n", indent)
-		fmt.Fprintf(w, "%sfi\n", indent)
-		fmt.Fprintf(w, "%sif %s[[ \"$cur\" == %s=* ]]; then\n", indent, selector, flagName)
-		fmt.Fprintf(w, "%s  local value_prefix=%q\n", indent, flagName+"=")
-		fmt.Fprintf(w, "%s  local value_part=\"${cur#*=}\"\n", indent)
-		fmt.Fprintf(w, "%s  local completion_index\n", indent)
-		fmt.Fprintf(w, "%s  COMPREPLY=( $(compgen -W %q -- \"$value_part\") )\n", indent, values)
-		fmt.Fprintf(w, "%s  for completion_index in \"${!COMPREPLY[@]}\"; do COMPREPLY[$completion_index]=\"${value_prefix}${COMPREPLY[$completion_index]}\"; done\n", indent)
-		fmt.Fprintf(w, "%s  return 0\n", indent)
-		fmt.Fprintf(w, "%sfi\n", indent)
+		_, _ = fmt.Fprintf(w, "%sif %s[ \"$prev\" = %q ]; then\n", indent, selector, flagName)
+		_, _ = fmt.Fprintf(w, "%s  COMPREPLY=( $(compgen -W %q -- \"$cur\") )\n", indent, values)
+		_, _ = fmt.Fprintf(w, "%s  return 0\n", indent)
+		_, _ = fmt.Fprintf(w, "%sfi\n", indent)
+		_, _ = fmt.Fprintf(w, "%sif %s[[ \"$cur\" == %s=* ]]; then\n", indent, selector, flagName)
+		_, _ = fmt.Fprintf(w, "%s  local value_prefix=%q\n", indent, flagName+"=")
+		_, _ = fmt.Fprintf(w, "%s  local value_part=\"${cur#*=}\"\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  local completion_index\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  COMPREPLY=( $(compgen -W %q -- \"$value_part\") )\n", indent, values)
+		_, _ = fmt.Fprintf(w, "%s  for completion_index in \"${!COMPREPLY[@]}\"; do COMPREPLY[$completion_index]=\"${value_prefix}${COMPREPLY[$completion_index]}\"; done\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  return 0\n", indent)
+		_, _ = fmt.Fprintf(w, "%sfi\n", indent)
 	}
 }
 
@@ -469,20 +469,20 @@ func renderBashFilePathValueCompletion(w io.Writer, f cliFlag, indent string, se
 		selector += " && "
 	}
 	for _, spelling := range cliFlagSpellings(f) {
-		fmt.Fprintf(w, "%sif %s[ \"$prev\" = %q ]; then\n", indent, selector, spelling)
-		fmt.Fprintf(w, "%s  COMPREPLY=()\n", indent)
-		fmt.Fprintf(w, "%s  local path_suggestion\n", indent)
-		fmt.Fprintf(w, "%s  while IFS= read -r path_suggestion; do COMPREPLY+=(\"$path_suggestion\"); done < <(compgen -f -- \"$cur\")\n", indent)
-		fmt.Fprintf(w, "%s  return 0\n", indent)
-		fmt.Fprintf(w, "%sfi\n", indent)
-		fmt.Fprintf(w, "%sif %s[[ \"$cur\" == %s=* ]]; then\n", indent, selector, spelling)
-		fmt.Fprintf(w, "%s  local value_prefix=\"${cur%%%%=*}=\"\n", indent)
-		fmt.Fprintf(w, "%s  local value_part=\"${cur#*=}\"\n", indent)
-		fmt.Fprintf(w, "%s  COMPREPLY=()\n", indent)
-		fmt.Fprintf(w, "%s  local path_suggestion\n", indent)
-		fmt.Fprintf(w, "%s  while IFS= read -r path_suggestion; do COMPREPLY+=(\"${value_prefix}${path_suggestion}\"); done < <(compgen -f -- \"$value_part\")\n", indent)
-		fmt.Fprintf(w, "%s  return 0\n", indent)
-		fmt.Fprintf(w, "%sfi\n", indent)
+		_, _ = fmt.Fprintf(w, "%sif %s[ \"$prev\" = %q ]; then\n", indent, selector, spelling)
+		_, _ = fmt.Fprintf(w, "%s  COMPREPLY=()\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  local path_suggestion\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  while IFS= read -r path_suggestion; do COMPREPLY+=(\"$path_suggestion\"); done < <(compgen -f -- \"$cur\")\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  return 0\n", indent)
+		_, _ = fmt.Fprintf(w, "%sfi\n", indent)
+		_, _ = fmt.Fprintf(w, "%sif %s[[ \"$cur\" == %s=* ]]; then\n", indent, selector, spelling)
+		_, _ = fmt.Fprintf(w, "%s  local value_prefix=\"${cur%%%%=*}=\"\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  local value_part=\"${cur#*=}\"\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  COMPREPLY=()\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  local path_suggestion\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  while IFS= read -r path_suggestion; do COMPREPLY+=(\"${value_prefix}${path_suggestion}\"); done < <(compgen -f -- \"$value_part\")\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  return 0\n", indent)
+		_, _ = fmt.Fprintf(w, "%sfi\n", indent)
 	}
 }
 
@@ -496,20 +496,20 @@ func renderBashEnvironmentValueCompletion(w io.Writer, f cliFlag, indent string,
 	}
 	values := strings.Join(f.ClosedSet, " ")
 	for _, spelling := range cliFlagSpellings(f) {
-		fmt.Fprintf(w, "%sif %s[ \"$prev\" = %q ]; then\n", indent, selector, spelling)
-		fmt.Fprintf(w, "%s  local environments=%q\n", indent, values+" $(__gregale_cache_slugs environments)")
-		fmt.Fprintf(w, "%s  COMPREPLY=( $(compgen -W \"$environments\" -- \"$cur\") )\n", indent)
-		fmt.Fprintf(w, "%s  return 0\n", indent)
-		fmt.Fprintf(w, "%sfi\n", indent)
-		fmt.Fprintf(w, "%sif %s[[ \"$cur\" == %s=* ]]; then\n", indent, selector, spelling)
-		fmt.Fprintf(w, "%s  local value_prefix=%q\n", indent, spelling+"=")
-		fmt.Fprintf(w, "%s  local value_part=\"${cur#*=}\"\n", indent)
-		fmt.Fprintf(w, "%s  local environments=%q\n", indent, values+" $(__gregale_cache_slugs environments)")
-		fmt.Fprintf(w, "%s  COMPREPLY=( $(compgen -W \"$environments\" -- \"$value_part\") )\n", indent)
-		fmt.Fprintf(w, "%s  local completion_index\n", indent)
-		fmt.Fprintf(w, "%s  for completion_index in \"${!COMPREPLY[@]}\"; do COMPREPLY[$completion_index]=\"${value_prefix}${COMPREPLY[$completion_index]}\"; done\n", indent)
-		fmt.Fprintf(w, "%s  return 0\n", indent)
-		fmt.Fprintf(w, "%sfi\n", indent)
+		_, _ = fmt.Fprintf(w, "%sif %s[ \"$prev\" = %q ]; then\n", indent, selector, spelling)
+		_, _ = fmt.Fprintf(w, "%s  local environments=%q\n", indent, values+" $(__gregale_cache_slugs environments)")
+		_, _ = fmt.Fprintf(w, "%s  COMPREPLY=( $(compgen -W \"$environments\" -- \"$cur\") )\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  return 0\n", indent)
+		_, _ = fmt.Fprintf(w, "%sfi\n", indent)
+		_, _ = fmt.Fprintf(w, "%sif %s[[ \"$cur\" == %s=* ]]; then\n", indent, selector, spelling)
+		_, _ = fmt.Fprintf(w, "%s  local value_prefix=%q\n", indent, spelling+"=")
+		_, _ = fmt.Fprintf(w, "%s  local value_part=\"${cur#*=}\"\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  local environments=%q\n", indent, values+" $(__gregale_cache_slugs environments)")
+		_, _ = fmt.Fprintf(w, "%s  COMPREPLY=( $(compgen -W \"$environments\" -- \"$value_part\") )\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  local completion_index\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  for completion_index in \"${!COMPREPLY[@]}\"; do COMPREPLY[$completion_index]=\"${value_prefix}${COMPREPLY[$completion_index]}\"; done\n", indent)
+		_, _ = fmt.Fprintf(w, "%s  return 0\n", indent)
+		_, _ = fmt.Fprintf(w, "%sfi\n", indent)
 	}
 }
 

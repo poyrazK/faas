@@ -209,13 +209,14 @@ func renderZshManifestPositionCompletions(w io.Writer, command cliCommand) {
 		condition := zshCompletionPathCondition(command, position.Path)
 		_, _ = fmt.Fprintf(w, "  if %s && (( CURRENT == %d )); then\n", condition, wordIndex)
 		values := "_gregale_cache_slugs projects"
-		if position.Role == cliCompletionEnvironmentSlug {
+		switch position.Role {
+		case cliCompletionEnvironmentSlug:
 			projectIndex := 2 + len(position.Path) + position.ProjectPosition
 			_, _ = fmt.Fprintf(w, "    local position_project=\"${words[%d]}\"\n", projectIndex)
 			values = "_gregale_cache_project_environments \"$position_project\""
-		} else if position.Role == cliCompletionBuildID {
+		case cliCompletionBuildID:
 			values = "_gregale_cache_ids builds"
-		} else if position.Role == cliCompletionDeploymentID {
+		case cliCompletionDeploymentID:
 			values = "_gregale_cache_ids deployments"
 		}
 		if len(position.Choices) > 0 {
