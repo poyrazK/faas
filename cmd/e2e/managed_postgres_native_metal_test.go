@@ -79,14 +79,22 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	if err := secretbox.WriteRecipientFile(public, identity); err != nil {
 		t.Fatal(err)
 	}
-	h := e2etest.Start(t, pool, e2etest.All,
+	environment := []string{
 		"FAAS_RELEASE_PHASE_ENABLED=1",
 		"FAAS_APP_TASK_DISPATCH=1",
-		"FAAS_HOST_KEY_PATH="+filepath.Join(keys, "host.age"),
-		"FAAS_HOST_AGE_IDENTITY_PATH="+filepath.Join(keys, "host.age"),
-		"FAAS_HOST_AGE_RECIPIENT_PATH="+public,
-		"FAAS_FLEET_AGE_RECIPIENT_PATH="+public,
-	)
+		"FAAS_HOST_KEY_PATH=" + filepath.Join(keys, "host.age"),
+		"FAAS_HOST_AGE_IDENTITY_PATH=" + filepath.Join(keys, "host.age"),
+		"FAAS_HOST_AGE_RECIPIENT_PATH=" + public,
+		"FAAS_FLEET_AGE_RECIPIENT_PATH=" + public,
+	}
+	// The daemon harness deliberately inherits a narrow environment. Forward
+	// the isolated scanner configuration explicitly; all scans remain required.
+	for _, name := range []string{"GRYPE_DB_CACHE_DIR", "GRYPE_DB_AUTO_UPDATE"} {
+		if value := os.Getenv(name); value != "" {
+			environment = append(environment, name+"="+value)
+		}
+	}
+	h := e2etest.Start(t, pool, e2etest.All, environment...)
 	key := h.SeedAccount(t.Context(), api.PlanPro)
 	store := state.NewPgStore(pool)
 	account := accountIDFromKey(t, t.Context(), pool, key)
