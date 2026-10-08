@@ -5524,6 +5524,9 @@ func cmdUsage(args []string) int {
 		return cmdUsageStorage(args[1:])
 	case "object-storage":
 		return cmdUsageObjectStorage(args[1:])
+	case "savings":
+		// Scale-to-zero savings estimate for one app.
+		return cmdUsageSavings(args[1:])
 	}
 	PrintUsage(os.Stderr, "usage: gregale usage [--month YYYY-MM] | gregale usage summary [--month YYYY-MM] | gregale usage daily [--day YYYY-MM-DD] | gregale usage storage [--day YYYY-MM-DD]", "usage")
 	printCommandValidation(os.Stderr, "unknown usage subcommand %q\n", args[0])

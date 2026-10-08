@@ -3160,6 +3160,11 @@ var cliCommands = []cliCommand{
 			{Name: "storage", Short: "Per-app storage bytes"},
 			{Name: "object-storage", Short: "Account object storage observations, safety policy and billing state"},
 			{Name: "summary", Short: "Account roll-up"},
+			{Name: "savings", Short: "Scale-to-zero savings estimate for one app", Flags: []cliFlag{
+				{Name: "app", Short: "app slug; default: the linked project", Value: "SLUG"},
+				{Name: "since", Short: "window start (RFC3339)", Value: "RFC3339"},
+				{Name: "until", Short: "window end (RFC3339)", Value: "RFC3339"},
+			}},
 		},
 		Flags: []cliFlag{
 			{Name: "month", Short: "month (YYYY-MM)", Value: "YYYY-MM"},

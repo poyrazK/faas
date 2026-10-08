@@ -7892,6 +7892,18 @@ Account object storage observations, safety policy and billing state
 
 Account roll-up
 
+### usage savings
+
+Scale-to-zero savings estimate for one app
+
+`gregale usage savings [--app <SLUG>] [--since <RFC3339>] [--until <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; default: the linked project |  |
+| `--since <RFC3339>` | window start (RFC3339) |  |
+| `--until <RFC3339>` | window end (RFC3339) |  |
+
 
 ## version
 
