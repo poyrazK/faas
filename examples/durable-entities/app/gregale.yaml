@@ -1,0 +1,4 @@
+hosting:
+  start: npm start
+  port: 8080
+  health: /healthz
