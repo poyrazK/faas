@@ -321,6 +321,30 @@ func TestEventBackfillReceiptPositionMigration(t *testing.T) {
 	if r.RecipientCount != 1 || r.BackfillRecipientCount != 1 || r.Recipients[0].Origin != "acceptance" || r.Recipients[1].Origin != "backfill" || r.Recipients[1].Position != 2 {
 		t.Fatalf("legacy positions=%+v", r)
 	}
+	// Replaying after receipt positions have advanced must preserve them, even
+	// when a partially applied schema still has an unpositioned recipient.
+	if _, err := f.pool.Exec(ctx, "UPDATE event_fanout_recipients SET receipt_position=9 WHERE subscription_id=$1", f.subscription); err != nil {
+		t.Fatal(err)
+	}
+	sub, _, err := f.store.UpsertEventSubscription(ctx, f.account, f.app, "*", "invoice.paid", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createDeliveryBackfill(t, f, sub.ID)
+	scanDeliveryBackfill(t, f)
+	admitDeliveryBackfill(t, f)
+	if _, err := f.pool.Exec(ctx, "UPDATE event_fanout_recipients SET receipt_position=NULL WHERE subscription_id=$1", sub.ID); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := f.pool.Exec(ctx, sections[0]); err != nil {
+			t.Fatal(err)
+		}
+		r = readBackfillReceipt(t, f, "migration")
+		if r.BackfillRecipientCount != 2 || len(r.Recipients) != 3 || r.Recipients[1].Position != 9 || r.Recipients[2].Position != 10 {
+			t.Fatalf("replayed positions=%+v", r)
+		}
+	}
 }
 
 func TestEventBackfillInspectionAfterAppTransfer(t *testing.T) {
