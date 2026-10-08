@@ -114,6 +114,17 @@ func TestWakePlatformBenchMetal(t *testing.T) {
 	if !apiPark {
 		setAppIdleTimeout(t, h, key, "hello", api.IdleTimeoutFloorSeconds)
 	}
+	// FAAS_WAKE_PLATFORM_BENCH_WARM_POOL=N keeps N paused, already-restored
+	// VMs, so a wake measures the in-place resume path instead of a restore.
+	if raw := os.Getenv("FAAS_WAKE_PLATFORM_BENCH_WARM_POOL"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			t.Fatalf("FAAS_WAKE_PLATFORM_BENCH_WARM_POOL=%q must be a non-negative integer", raw)
+		}
+		if raw, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/hello", api.UpdateAppRequest{WarmPoolSize: &n}); status != http.StatusOK {
+			t.Fatalf("set warm pool size: status=%d body=%s", status, raw)
+		}
+	}
 	wakeIDs := make([]string, 0, cycles)
 	clientMs := make(map[string]int64, cycles)
 	for i := 0; i < cycles; i++ {
