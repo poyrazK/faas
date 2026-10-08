@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
 import { traceRequest, markRequest, requestID, runtimeFailure } from './logging.mjs'
-import { inspect, fingerprint } from './types.mjs'
+import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
 import { runtimeConfig, limits } from './config.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
@@ -35,7 +35,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       }
     }
     if (!['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(req.method)) return problem(res, 405, 'method_not_allowed')
-    if (req.url === '/__gregale/schema' && req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
+    if (['/__gregale/schema', '/openapi.json'].includes(req.url) && req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
     const token = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1]
     if (!token) return problem(res, 401, 'token_required')
     let payload
@@ -125,8 +125,10 @@ function openAPISpec(response, res, config) {
         if (!config.functions?.some(f => f.schema === schema && f.name === path.slice(5))) delete document.paths[path]
         else for (const method of Object.keys(document.paths[path])) if (method !== 'post' && method !== 'parameters') delete document.paths[path][method]
       }
+      const output = JSON.stringify(enrichOpenAPI(document, config.snapshot, schema))
+      if (Buffer.byteLength(output) > limits.outputBytes) return problem(res, 503, 'schema_document_too_large')
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-      res.end(JSON.stringify(document))
+      res.end(output)
     } catch { problem(res, 503, 'data_api_unavailable') }
   })
 }
@@ -134,6 +136,7 @@ function openAPISpec(response, res, config) {
 export async function main(env = process.env) {
   const config = runtimeConfig(env)
   const snapshot = await inspect(config.connection, config.schemas)
+  config.snapshot = snapshot
   config.functions = snapshot.functions
   config.fingerprint = fingerprint(snapshot)
   const jwks = createRemoteJWKSet(config.auth.jwks, { timeoutDuration: 3000, cacheMaxAge: 300000 })

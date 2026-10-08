@@ -149,6 +149,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   }
   const config = runtimeConfig({ DATA_API_ALLOWED_ORIGINS: origins?.allowed ?? '', DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
   const servingSnapshot = await inspect(loginURL.toString(), ['api'])
+  config.snapshot = servingSnapshot
   config.functions = servingSnapshot.functions
   config.fingerprint = fingerprint(servingSnapshot)
   const upstream = await port(), ready = await port()

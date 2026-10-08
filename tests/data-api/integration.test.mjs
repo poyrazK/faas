@@ -87,6 +87,7 @@ test('real PostgREST, restricted SQL, JWT RLS, typed client and schema refresh',
   loginURL.username = role
   loginURL.password = 'test-only'
   const config = runtimeConfig({DATABASE_URL:loginURL.toString(),DATA_API_ISSUER:'https://issuer.example',DATA_API_JWKS_URL:'https://issuer.example/jwks',DATA_API_AUDIENCE:'notes',DATA_API_ALLOWED_ORIGINS:'https://app.example'})
+  config.snapshot = await inspect(loginURL.toString(), ['api'])
   const upstream = await port(), ready = await port()
   let childLogs = ''
   child = spawn(process.env.DATA_API_POSTGREST_BIN, [], {env:{...process.env,...config.postgrestEnv,PGRST_SERVER_PORT:String(upstream),PGRST_ADMIN_SERVER_PORT:String(ready)},stdio:['ignore','pipe','pipe']})
@@ -133,6 +134,13 @@ test('real PostgREST, restricted SQL, JWT RLS, typed client and schema refresh',
   assert.equal(openapi.host,undefined)
   assert.equal(openapi.basePath,'/rest/v1')
   assert.equal(openapi.paths['/private_notes'],undefined)
+  assert.deepEqual(openapi.definitions['api.notes.Insert'].required, ['subject', 'body'])
+  assert.equal(openapi.definitions['api.notes.Insert'].properties.id, undefined)
+  assert.deepEqual(openapi.definitions['api.notes.Row'].properties.state.enum, ['open', 'closed'])
+  assert.equal(openapi.definitions['api.notes.Row'].properties.state['x-nullable'], true)
+  assert.equal(openapi.definitions['api.notes.Insert'].properties.tags.items['x-nullable'], true)
+  assert.match(generate(config.snapshot), new RegExp(openapi['x-gregale-schema-fingerprint']))
+  assert.equal(openapi.paths['/notes'].get.responses['200'].headers['X-Request-Id'].type, 'string')
   assert.equal(openapi.paths['/rpc/echo'],undefined)
   assert.equal((await fetch(base+'/rest/v1/rpc/echo',{headers:{Authorization:`Bearer ${alice}`}})).status,404)
   const first = generate(await inspect(loginURL.toString(),['api']))

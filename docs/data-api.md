@@ -256,6 +256,24 @@ check; it never runs the migration or refresh steps.
 ## HTTP contract and bounds
 
 Relation CRUD lives at `/rest/v1/TABLE`. Supply `Authorization: Bearer JWT`.
+The authenticated OpenAPI endpoint keeps PostgREST's Swagger 2 format and adds
+schema-derived `schema.relation.Row`, `Insert`, and `Update` definitions, plus
+approved RPC argument and return schemas. These use the same normalized catalog
+as TypeScript generation; `x-gregale-schema-fingerprint` identifies that startup
+contract. `Accept-Profile` selects an exposed schema. Nullable values use
+`x-nullable`; required insert fields exclude defaults, identity and generated
+columns. Default SQL expressions are not exported. JSON and unsupported database
+types remain unconstrained, matching `Json` and `unknown` in TypeScript.
+
+Write bodies reference the single-row schema; `x-gregale-bulk-schema` describes
+bulk bodies because Swagger 2 cannot represent their union. Response schemas
+describe full rows with array media types and `Prefer: return=representation`;
+projections, embedded relations and object media types can change their shape.
+The document also describes JWT authentication, filters, pagination, gateway
+problem responses and `X-Request-Id`. Database errors retain PostgREST's error
+format. RPC routes advertise POST only. Refresh the running app after migrations
+to update this contract, as with generated types and the serving fingerprint.
+
 Authenticated `/openapi.json` describes the generated API; `/healthz` reports
 engine readiness. Browser origins must be explicitly allowed. The service
 rejects missing, expired, wrong-audience and invalid tokens with HTTP 401.

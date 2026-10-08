@@ -192,3 +192,86 @@ export async function main(env = process.env) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(() => { console.error('Data API schema generation failed'); process.exitCode = 1 })
+
+// OpenAPI uses the same normalized contract as TypeScript generation. Keep
+// PostgreSQL expressions and internal catalog identifiers out of the document.
+export function contractSchema(type) {
+  if (type.endsWith(' | null')) return { ...contractSchema(type.slice(0, -7)), 'x-nullable': true }
+  if (type.endsWith(')[]') && type.startsWith('(')) return { type: 'array', items: contractSchema(type.slice(1, -3)) }
+  const row = /^Database\[("(?:[^"\\]|\\.)*")\]\[("Tables"|"Views")\]\[("(?:[^"\\]|\\.)*")\]\['Row'\](\[\])?$/.exec(type)
+  if (row) {
+    const ref = { $ref: `#/definitions/${pointer(`${JSON.parse(row[1])}.${JSON.parse(row[3])}.Row`)}` }
+    return row[4] ? { type: 'array', items: ref } : ref
+  }
+  if (type.startsWith('"')) {
+    try { return { type: 'string', enum: JSON.parse(`[${(type.match(/"(?:[^"\\]|\\.)*"/g) ?? []).join(',')}]`) } } catch { return {} }
+  }
+  if (['string', 'number', 'boolean'].includes(type)) return { type }
+  // Json and unknown deliberately accept every JSON shape; void has no body.
+  return {}
+}
+
+function pointer(value) { return value.replaceAll('~', '~0').replaceAll('/', '~1') }
+
+export function enrichOpenAPI(document, snapshot, schema) {
+  if (!snapshot) return document
+  document['x-gregale-schema-fingerprint'] = fingerprint(snapshot)
+  document.securityDefinitions = { bearer: { type: 'apiKey', name: 'Authorization', in: 'header', description: 'Bearer <application JWT>; issuer, audience, expiry and subject are verified. Row-level security applies to the subject.' } }
+  document.security = [{ bearer: [] }]
+  document.definitions ??= {}
+  const ref = name => ({ $ref: `#/definitions/${pointer(name)}` })
+  const object = (columns, kind) => {
+    const properties = Object.fromEntries(columns.filter(c => kind === 'Row' || (kind === 'Insert' ? c.insertable : c.updatable)).map(c => [c.name, { ...contractSchema(c.type), ...(c.nullable ? { 'x-nullable': true } : {}), ...(kind === 'Insert' && c.optional ? { description: 'May be omitted; the database default or null applies.' } : {}) }]))
+    const required = columns.filter(c => kind === 'Row' || kind === 'Insert' && c.insertable && !c.optional).map(c => c.name)
+    return { type: 'object', properties, ...(required.length ? { required } : {}), ...(kind === 'Row' ? {} : { additionalProperties: false }) }
+  }
+  for (const table of snapshot.tables.filter(t => t.schema === schema)) {
+    for (const kind of table.view ? ['Row'] : ['Row', 'Insert', 'Update']) document.definitions[`${schema}.${table.name}.${kind}`] = object(table.columns, kind)
+    const path = document.paths?.[`/${table.name}`]
+    if (!path) continue
+    for (const method of ['get', 'post', 'patch', 'delete']) {
+      const operation = path[method]
+      if (!operation) continue
+      if (!table.view && (method === 'post' || method === 'patch')) {
+        const body = operation.parameters?.find(p => p.in === 'body')
+        if (body) {
+          const value = ref(`${schema}.${table.name}.${method === 'post' ? 'Insert' : 'Update'}`)
+          // Swagger 2 cannot express object-or-array unions; this extension
+          // documents PostgREST bulk bodies without dropping single-row clients.
+          body.schema = { ...value, 'x-gregale-bulk-schema': { type: 'array', items: value } }
+        }
+      }
+      for (const [status, response] of Object.entries(operation.responses ?? {})) if (/^2/.test(status) && status !== '204') response.schema = { type: 'array', items: ref(`${schema}.${table.name}.Row`) }
+      operation.description = `${operation.description ?? ''}\nRow-level security controls visibility. Use select for projections, column=operator.value for filters, order, limit and offset for pagination. Range and Prefer: count=exact enable Content-Range totals; Prefer: return=representation requests write rows. Projections and object media types change the response shape.`.trim()
+    }
+  }
+  for (const fn of (snapshot.functions ?? []).filter(f => f.schema === schema)) {
+    const operation = document.paths?.[`/rpc/${fn.name}`]?.post
+    if (!operation) continue
+    const name = `${schema}.${fn.name}.Args`
+    const required = fn.args.filter(a => !a.optional).map(a => a.name)
+    document.definitions[name] = { type: 'object', properties: Object.fromEntries(fn.args.map(a => [a.name, { ...contractSchema(a.type), 'x-nullable': true }])), ...(required.length ? { required } : {}), additionalProperties: false }
+    const body = operation.parameters?.find(p => p.in === 'body')
+    if (body) body.schema = ref(name)
+    else {
+      operation.parameters ??= []
+      operation.parameters.push({ name: 'args', in: 'body', required: required.length > 0, schema: ref(name) })
+    }
+    for (const [status, response] of Object.entries(operation.responses ?? {})) if (/^2/.test(status) && status !== '204') {
+      if (fn.returns === 'undefined') delete response.schema
+      else response.schema = contractSchema(fn.returns)
+    }
+  }
+  document.definitions.GregaleProblem = { type: 'object', properties: { type: { type: 'string' }, title: { type: 'string' }, status: { type: 'integer' }, code: { type: 'string' }, request_id: { type: 'string', format: 'uuid' } }, required: ['type', 'title', 'status', 'code', 'request_id'] }
+  for (const path of Object.values(document.paths ?? {})) for (const method of ['get', 'post', 'patch', 'delete']) {
+    const operation = path[method]
+    if (!operation) continue
+    operation.responses ??= {}
+    for (const status of ['401', '413', '503', '504']) operation.responses[status] ??= { description: 'Gateway authentication, body limit, availability or timeout failure (application/problem+json). Database failures use the PostgREST error shape.', schema: ref('GregaleProblem') }
+    for (const response of Object.values(operation.responses)) {
+      response.headers ??= {}
+      response.headers['X-Request-Id'] = { type: 'string', description: 'Server-generated UUID; correlate with data_api_request runtime logs.' }
+    }
+  }
+  return document
+}
