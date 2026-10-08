@@ -2126,6 +2126,9 @@ type EdgeRule struct {
 	CorsPresetID pgtype.UUID
 	MatchHeaders []byte
 	ManifestKey  pgtype.Text
+	Name         pgtype.Text
+	Description  pgtype.Text
+	ExpiresAt    pgtype.Timestamptz
 }
 
 type EdgeRuleChangeLog struct {

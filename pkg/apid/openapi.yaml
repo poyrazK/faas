@@ -52944,6 +52944,10 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        name: { type: string, description: Operator-facing rule name. }
+        description: { type: string, description: Operator-facing description. }
+        expires_at: { type: string, format: date-time, description: When the gateway stops applying the rule. }
+        expired: { type: boolean, description: True once expires_at has passed and the rule no longer applies. }
 
     DeploymentRoutePolicySnapshotResponse:
       description: Immutable gateway edge-rule state recorded on the deployment's first live transition.
@@ -53007,6 +53011,9 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
+        name: { type: string, maxLength: 100, description: Operator-facing rule name. }
+        description: { type: string, maxLength: 1000, description: Operator-facing description. }
+        expires_at: { type: string, format: date-time, description: When the gateway stops applying the rule. }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -53050,6 +53057,10 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
+        name: { type: string, maxLength: 100, description: Operator-facing rule name. }
+        description: { type: string, maxLength: 1000, description: Operator-facing description. }
+        expires_at: { type: string, format: date-time, description: When the gateway stops applying the rule. }
+        clear_expires_at: { type: boolean, description: Remove the expiry so the rule applies indefinitely. }
 
     EdgeRuleRouteAction:
       description: 'Re-targets the matched request to another app owned by the same account.'

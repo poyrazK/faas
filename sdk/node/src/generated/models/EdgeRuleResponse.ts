@@ -61,5 +61,21 @@ export type EdgeRuleResponse = {
   action: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction);
   created_at: string;
   updated_at: string;
+  /**
+   * Operator-facing rule name.
+   */
+  name?: string;
+  /**
+   * Operator-facing description.
+   */
+  description?: string;
+  /**
+   * When the gateway stops applying the rule.
+   */
+  expires_at?: string;
+  /**
+   * True once expires_at has passed and the rule no longer applies.
+   */
+  expired?: boolean;
 };
 

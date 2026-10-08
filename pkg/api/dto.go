@@ -9634,8 +9634,36 @@ type EdgeRuleResponse struct {
 	Kind         string            `json:"kind"`
 	ValidateMode string            `json:"validate_mode,omitempty"`
 	Action       json.RawMessage   `json:"action"`
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
+	Name         string            `json:"name,omitempty"`
+	Description  string            `json:"description,omitempty"`
+	// ExpiresAt is when the gateway stops applying the rule; Expired
+	// reports that it has passed (the row is kept for the listing).
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Expired   bool       `json:"expired,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+// Edge-rule metadata bounds; the edge_rules CHECK constraints mirror them.
+const (
+	EdgeRuleNameMaxChars        = 100
+	EdgeRuleDescriptionMaxChars = 1000
+)
+
+// ValidateEdgeRuleMetadata checks the operator-facing name, description and
+// expiry. A nil field is not being set. An expiry must lie in the future:
+// a rule created or re-armed already expired would silently never apply.
+func ValidateEdgeRuleMetadata(name, description *string, expiresAt *time.Time, now time.Time) *Problem {
+	if name != nil && utf8.RuneCountInString(strings.TrimSpace(*name)) > EdgeRuleNameMaxChars {
+		return ErrValidation(fmt.Sprintf("name exceeds %d characters", EdgeRuleNameMaxChars))
+	}
+	if description != nil && utf8.RuneCountInString(*description) > EdgeRuleDescriptionMaxChars {
+		return ErrValidation(fmt.Sprintf("description exceeds %d characters", EdgeRuleDescriptionMaxChars))
+	}
+	if expiresAt != nil && !expiresAt.After(now) {
+		return ErrValidation("expires_at must be in the future")
+	}
+	return nil
 }
 
 // CreateEdgeRuleRequest is the wire shape for POST /v1/apps/{slug}/edge-rules.
@@ -9657,6 +9685,9 @@ type CreateEdgeRuleRequest struct {
 	Kind         string            `json:"kind"`
 	ValidateMode string            `json:"validate_mode,omitempty"`
 	Action       json.RawMessage   `json:"action"`
+	Name         string            `json:"name,omitempty"`
+	Description  string            `json:"description,omitempty"`
+	ExpiresAt    *time.Time        `json:"expires_at,omitempty"`
 }
 
 // UpdateEdgeRuleRequest is the wire shape for PATCH /v1/edge-rules/{id}.
@@ -9676,6 +9707,13 @@ type UpdateEdgeRuleRequest struct {
 	Enabled      *bool              `json:"enabled,omitempty"`
 	ValidateMode *string            `json:"validate_mode,omitempty"`
 	Action       *json.RawMessage   `json:"action,omitempty"`
+	// Name / Description: an explicit "" clears the label.
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	// ExpiresAt sets a new expiry; ClearExpiresAt removes it (the rule
+	// then applies indefinitely). Setting both is rejected.
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	ClearExpiresAt bool       `json:"clear_expires_at,omitempty"`
 }
 
 const (

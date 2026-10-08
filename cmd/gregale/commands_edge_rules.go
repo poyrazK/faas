@@ -26,6 +26,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -152,8 +153,15 @@ func cmdEdgeRulesList(args []string) int {
 		if !it.Enabled {
 			enabled = secretScanOff
 		}
-		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-9d %-32s %s  [%s]\n",
-			it.ID, it.Kind, it.Priority, truncate(it.MatchHost, 32), it.MatchPath, enabled)
+		if it.Expired {
+			enabled = "expired"
+		}
+		label := ""
+		if it.Name != "" {
+			label = "  " + truncate(it.Name, 40)
+		}
+		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-9d %-32s %s  [%s]%s\n",
+			it.ID, it.Kind, it.Priority, truncate(it.MatchHost, 32), it.MatchPath, enabled, label)
 	}
 	return 0
 }
@@ -177,6 +185,10 @@ func cmdEdgeRulesCreate(args []string) int {
 	fs.Var(&matchHeaders, "match-header", "exact request header selector (Name=Value; repeat)")
 	priority := fs.Int("priority", 100, "match priority (lower wins; default 100)")
 	enabled := fs.Bool("enabled", true, "whether the rule is enabled (default true)")
+	ruleName := fs.String("name", "", "operator-facing rule name (<=100 chars)")
+	ruleDescription := fs.String("description", "", "operator-facing description (<=1000 chars)")
+	expiresIn := fs.Duration("expires-in", 0, "stop applying the rule after this duration (e.g. 2h)")
+	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
 
 	// route
 	routeTarget := fs.String("route-target-slug", "", "kind=route: target app slug (required)")
@@ -456,10 +468,17 @@ func cmdEdgeRulesCreate(args []string) int {
 		Enabled:      enabled,
 		Kind:         *kind,
 		Action:       actionBytes,
+		Name:         *ruleName,
+		Description:  *ruleDescription,
 	}
 	if *kind == "validate" {
 		req.ValidateMode = *validateMode
 	}
+	expiry, expiryErr := parseEdgeRuleExpiry(*expiresIn, *expiresAt, time.Now())
+	if expiryErr != nil {
+		return printErr("Invalid expiry", expiryErr)
+	}
+	req.ExpiresAt = expiry
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -512,6 +531,19 @@ func cmdEdgeRulesGet(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Priority:    %d\n", out.Priority)
 	_, _ = fmt.Fprintf(osStdout, "Enabled:     %t\n", out.Enabled)
 	_, _ = fmt.Fprintf(osStdout, "Kind:        %s\n", out.Kind)
+	if out.Name != "" {
+		_, _ = fmt.Fprintf(osStdout, "Name:        %s\n", out.Name)
+	}
+	if out.Description != "" {
+		_, _ = fmt.Fprintf(osStdout, "Description: %s\n", out.Description)
+	}
+	if out.ExpiresAt != nil {
+		state := "active until"
+		if out.Expired {
+			state = "expired at"
+		}
+		_, _ = fmt.Fprintf(osStdout, "Expires:     %s %s\n", state, out.ExpiresAt.Format("2006-01-02 15:04:05 MST"))
+	}
 	_, _ = fmt.Fprintf(osStdout, "Action:      %s\n", string(out.Action))
 	_, _ = fmt.Fprintf(osStdout, "Created:     %s\n", out.CreatedAt.Format("2006-01-02 15:04:05 MST"))
 	_, _ = fmt.Fprintf(osStdout, "Updated:     %s\n", out.UpdatedAt.Format("2006-01-02 15:04:05 MST"))
@@ -523,7 +555,7 @@ func cmdEdgeRulesGet(args []string) int {
 // passed with empty value" (send zero value). The triple-state
 // enabled flag is tracked via an enabledSet boolean.
 func cmdEdgeRulesUpdate(args []string) int {
-	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent", "jwt-require-exp")
+	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent", "jwt-require-exp", "clear-expiry")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
 	matchHost := fs.String("match-host", "", "new host to match")
@@ -536,6 +568,11 @@ func cmdEdgeRulesUpdate(args []string) int {
 	priority := fs.Int("priority", 0, "new priority (0 = unset)")
 	enable := fs.Bool("enable", false, "enable the rule")
 	disable := fs.Bool("disable", false, "disable the rule")
+	ruleName := fs.String("name", "", "operator-facing rule name (<=100 chars)")
+	ruleDescription := fs.String("description", "", "operator-facing description (<=1000 chars)")
+	expiresIn := fs.Duration("expires-in", 0, "stop applying the rule after this duration (e.g. 2h)")
+	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
+	clearExpiry := fs.Bool("clear-expiry", false, "remove the rule's expiry")
 	// Per-kind action re-marshaling on PATCH. PATCHing the action
 	// requires the full new action shape — no partial sub-keys.
 	kind := fs.String("kind", "", "rule kind (required when patching --*-action flags)")
@@ -680,6 +717,23 @@ func cmdEdgeRulesUpdate(args []string) int {
 	}
 
 	req := api.UpdateEdgeRuleRequest{}
+	if visited["name"] {
+		name := *ruleName
+		req.Name = &name
+	}
+	if visited["description"] {
+		description := *ruleDescription
+		req.Description = &description
+	}
+	expiry, expiryErr := parseEdgeRuleExpiry(*expiresIn, *expiresAt, time.Now())
+	if expiryErr != nil {
+		return printErr("Invalid expiry", expiryErr)
+	}
+	if expiry != nil && *clearExpiry {
+		return printErr("Invalid flags", fmt.Errorf("--clear-expiry cannot be combined with --expires-in / --expires-at"))
+	}
+	req.ExpiresAt = expiry
+	req.ClearExpiresAt = *clearExpiry
 	if visited["validate-mode"] {
 		if err := validateEdgeRuleValidateMode(*validateMode); err != nil {
 			return printErr("Invalid --validate-mode", err)
@@ -1590,3 +1644,25 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 // truncate is implemented in commands_webhooks.go:420 — re-used here
 // so the edge-rules list table column widths line up with the
 // webhooks table.
+
+// parseEdgeRuleExpiry turns --expires-in / --expires-at into an absolute
+// expiry. At most one may be set; neither means "no expiry".
+func parseEdgeRuleExpiry(in time.Duration, at string, now time.Time) (*time.Time, error) {
+	switch {
+	case in != 0 && at != "":
+		return nil, fmt.Errorf("use only one of --expires-in and --expires-at")
+	case in < 0:
+		return nil, fmt.Errorf("--expires-in must be positive")
+	case in > 0:
+		t := now.Add(in).UTC()
+		return &t, nil
+	case at != "":
+		t, err := time.Parse(time.RFC3339, at)
+		if err != nil {
+			return nil, fmt.Errorf("--expires-at: %w", err)
+		}
+		t = t.UTC()
+		return &t, nil
+	}
+	return nil, nil
+}

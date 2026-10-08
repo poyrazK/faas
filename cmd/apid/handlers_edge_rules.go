@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -84,9 +85,21 @@ func edgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 		Kind:         string(r.Kind),
 		ValidateMode: mode,
 		Action:       actionBytes,
+		Name:         r.Name,
+		Description:  r.Description,
+		ExpiresAt:    r.ExpiresAt,
+		Expired:      r.EdgeRuleExpired(time.Now()),
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 	}
+}
+
+func utcTimePtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	utc := t.UTC()
+	return &utc
 }
 
 // validateEdgeRuleAction dispatches the kind-specific Validate()
@@ -443,6 +456,9 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		// back-compat window (D2). Empty result is fine —
 		// the SQL coalesce forces 'block' on insert.
 		ValidateMode: resolveValidateMode(req.Kind, req.ValidateMode, req.Action),
+		Name:         req.Name,
+		Description:  req.Description,
+		ExpiresAt:    utcTimePtr(req.ExpiresAt),
 	}, limits)
 	if err != nil {
 		convergence.abort(r.Context())
@@ -513,6 +529,9 @@ func validateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 	}
 	if len(req.MatchPath) > 2048 {
 		return api.ErrValidation(fmt.Sprintf("match_path exceeds 2048 chars (got %d)", len(req.MatchPath)))
+	}
+	if prob := api.ValidateEdgeRuleMetadata(&req.Name, &req.Description, req.ExpiresAt, time.Now()); prob != nil {
+		return prob
 	}
 	if req.Priority != nil {
 		if *req.Priority < 0 || *req.Priority > 10000 {
@@ -848,6 +867,14 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 			return
 		}
 	}
+	if req.ExpiresAt != nil && req.ClearExpiresAt {
+		api.WriteProblem(w, api.ErrValidation("expires_at and clear_expires_at are mutually exclusive"))
+		return
+	}
+	if prob := api.ValidateEdgeRuleMetadata(req.Name, req.Description, req.ExpiresAt, time.Now()); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if req.Action != nil {
 		prob := validateEdgeRuleAction(string(row.Kind), *req.Action, acct.Plan)
 		if prob != nil {
@@ -960,6 +987,17 @@ func edgeRuleUpdateParamsFrom(req api.UpdateEdgeRuleRequest, kind state.EdgeRule
 		MatchHeaders: req.MatchHeaders,
 		Priority:     req.Priority,
 		Enabled:      req.Enabled,
+		Name:         req.Name,
+		Description:  req.Description,
+	}
+	switch {
+	case req.ClearExpiresAt:
+		var cleared *time.Time
+		out.ExpiresAt = &cleared
+	case req.ExpiresAt != nil:
+		expiresAt := req.ExpiresAt.UTC()
+		set := &expiresAt
+		out.ExpiresAt = &set
 	}
 	if req.Action != nil {
 		decoded := actionFromBody(string(kind), *req.Action)

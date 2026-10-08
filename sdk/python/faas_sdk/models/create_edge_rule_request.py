@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -74,6 +75,12 @@ class CreateEdgeRuleRequest:
     """Top-level source of truth for kind=validate (ADR-128).
     Omitted == 'block' (the SQL-side default).
     """
+    name: str | Unset = UNSET
+    """Operator-facing rule name."""
+    description: str | Unset = UNSET
+    """Operator-facing description."""
+    expires_at: datetime.datetime | Unset = UNSET
+    """When the gateway stops applying the rule."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -152,6 +159,14 @@ class CreateEdgeRuleRequest:
         if not isinstance(self.validate_mode, Unset):
             validate_mode = self.validate_mode
 
+        name = self.name
+
+        description = self.description
+
+        expires_at: str | Unset = UNSET
+        if not isinstance(self.expires_at, Unset):
+            expires_at = self.expires_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -173,6 +188,12 @@ class CreateEdgeRuleRequest:
             field_dict["enabled"] = enabled
         if validate_mode is not UNSET:
             field_dict["validate_mode"] = validate_mode
+        if name is not UNSET:
+            field_dict["name"] = name
+        if description is not UNSET:
+            field_dict["description"] = description
+        if expires_at is not UNSET:
+            field_dict["expires_at"] = expires_at
 
         return field_dict
 
@@ -381,6 +402,17 @@ class CreateEdgeRuleRequest:
         else:
             validate_mode = check_create_edge_rule_request_validate_mode(_validate_mode)
 
+        name = d.pop("name", UNSET)
+
+        description = d.pop("description", UNSET)
+
+        _expires_at = d.pop("expires_at", UNSET)
+        expires_at: datetime.datetime | Unset
+        if isinstance(_expires_at, Unset):
+            expires_at = UNSET
+        else:
+            expires_at = datetime.datetime.fromisoformat(_expires_at)
+
         create_edge_rule_request = cls(
             match_host=match_host,
             kind=kind,
@@ -391,6 +423,9 @@ class CreateEdgeRuleRequest:
             priority=priority,
             enabled=enabled,
             validate_mode=validate_mode,
+            name=name,
+            description=description,
+            expires_at=expires_at,
         )
 
         create_edge_rule_request.additional_properties = d

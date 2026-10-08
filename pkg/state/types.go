@@ -7931,8 +7931,19 @@ type EdgeRule struct {
 	// release per ADR-128 §D2 so legacy JSONB-only rows
 	// preserve the customer's intended mode.
 	ValidateMode string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// Name and Description are operator-facing labels ("" = unset).
+	Name        string
+	Description string
+	// ExpiresAt, when set, is the instant after which the gateway stops
+	// applying the rule. Expired rows are kept for the listing.
+	ExpiresAt *time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// EdgeRuleExpired reports whether the rule's expiry has passed at now.
+func (r EdgeRule) EdgeRuleExpired(now time.Time) bool {
+	return r.ExpiresAt != nil && !now.Before(*r.ExpiresAt)
 }
 
 // CorsPreset is the in-memory row mirrored from cors_presets (issue
@@ -8073,6 +8084,9 @@ type CreateEdgeRuleParams struct {
 	// re-validates via MergeCorsPresetIntoRule).
 	CorsPresetID *string
 	ValidateMode string
+	Name         string
+	Description  string
+	ExpiresAt    *time.Time
 }
 
 // UpdateEdgeRuleParams carries the optional fields of
@@ -8096,6 +8110,11 @@ type UpdateEdgeRuleParams struct {
 	Action       *EdgeRuleAction
 	CorsPresetID **string
 	ValidateMode *string
+	// Name / Description: non-nil sets the value ("" clears it).
+	Name        *string
+	Description *string
+	// ExpiresAt: non-nil sets the expiry; a non-nil pointer to nil clears it.
+	ExpiresAt **time.Time
 }
 
 // EdgeRuleQuotaError is returned by CreateEdgeRuleIfUnderQuota when

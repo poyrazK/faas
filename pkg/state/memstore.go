@@ -22265,6 +22265,9 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 		// memstore keeps the verbatim value so the in-memory
 		// mirror is byte-stable with the pgstore round-trip.
 		ValidateMode: in.ValidateMode,
+		Name:         strings.TrimSpace(in.Name),
+		Description:  in.Description,
+		ExpiresAt:    in.ExpiresAt,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -22386,6 +22389,9 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 		// matches the pgstore's column-NULL fallback (00293's
 		// NOT NULL DEFAULT 'block' kicks in on the wire round-trip).
 		ValidateMode: in.ValidateMode,
+		Name:         strings.TrimSpace(in.Name),
+		Description:  in.Description,
+		ExpiresAt:    in.ExpiresAt,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -22955,6 +22961,15 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 	if p.ValidateMode != nil {
 		r.ValidateMode = *p.ValidateMode
 	}
+	if p.Name != nil {
+		r.Name = strings.TrimSpace(*p.Name)
+	}
+	if p.Description != nil {
+		r.Description = *p.Description
+	}
+	if p.ExpiresAt != nil {
+		r.ExpiresAt = *p.ExpiresAt
+	}
 	r.UpdatedAt = time.Now()
 	stored := r
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
@@ -23021,7 +23036,7 @@ func (m *MemStore) MatchEdgeRulesForHost(_ context.Context, host string) ([]Edge
 	defer m.mu.Unlock()
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
-		if !r.Enabled {
+		if !r.Enabled || r.EdgeRuleExpired(time.Now()) {
 			continue
 		}
 		if matchHostPattern(r.MatchHost, host) {
