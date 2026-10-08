@@ -70,6 +70,7 @@ func (c *countingCPU) CPUUsageUsec(string) (uint64, bool) {
 // tick rolled only the newest closed minute, so 02:52-03:00 stayed
 // under-billed for good. A tick now catches up every closed minute after
 // the newest one it rolled in full.
+// adr: 790
 func TestSampler_CatchesUpMinutesAFailedTickLeftUnrolled(t *testing.T) {
 	ctx := context.Background()
 	mem := state.NewMemStore()
