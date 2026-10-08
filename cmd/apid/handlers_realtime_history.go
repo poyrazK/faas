@@ -18,6 +18,11 @@ func (s *server) getManagedRealtimeHistoryUsage(w http.ResponseWriter, r *http.R
 		s.notFound(w, "managed realtime history usage unavailable")
 		return
 	}
+	limits, ok := s.realtimePlanLimits(acct)
+	if !ok {
+		api.WriteProblem(w, api.ErrPlanRealtimeNotAllowed(acct.Plan))
+		return
+	}
 	reader, ok := s.store.(state.ManagedRealtimeHistoryUsageReader)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("managed realtime history usage unavailable"))
@@ -32,11 +37,16 @@ func (s *server) getManagedRealtimeHistoryUsage(w http.ResponseWriter, r *http.R
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	remainingBytes := limits.RetainedHistoryMaxPayloadBytesPerAccount - usage.StoredPayloadBytes
+	if remainingBytes < 0 {
+		remainingBytes = 0
+	}
 	writeJSON(w, http.StatusOK, api.ManagedRealtimeHistoryUsageResponse{
 		ObservedAt:    usage.ObservedAt.Format(time.RFC3339Nano),
 		EndpointCount: usage.EndpointCount, ChannelCount: usage.ChannelCount,
 		StoredMessageCount: usage.StoredMessageCount, StoredPayloadBytes: usage.StoredPayloadBytes,
 		ReplayableMessageCount: usage.ReplayableMessageCount, ReplayablePayloadBytes: usage.ReplayablePayloadBytes,
+		PayloadBytesLimit: limits.RetainedHistoryMaxPayloadBytesPerAccount, PayloadBytesRemaining: remainingBytes,
 	})
 }
 
@@ -44,6 +54,14 @@ func (s *server) managedRealtimeHistoryStore(w http.ResponseWriter) (state.Manag
 	store, ok := s.store.(state.ManagedRealtimeHistoryStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("managed realtime history store unavailable"))
+	}
+	return store, ok
+}
+
+func (s *server) managedRealtimeHistoryQuotaStore(w http.ResponseWriter) (state.ManagedRealtimeHistoryQuotaStore, bool) {
+	store, ok := s.store.(state.ManagedRealtimeHistoryQuotaStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("managed realtime history quota store unavailable"))
 	}
 	return store, ok
 }
@@ -60,6 +78,11 @@ func (s *server) appendManagedRealtimeRetainedMessage(w http.ResponseWriter, r *
 		s.notFound(w, "retained realtime messages unavailable")
 		return
 	}
+	limits, allowed := s.realtimePlanLimits(acct)
+	if !allowed {
+		api.WriteProblem(w, api.ErrPlanRealtimeNotAllowed(acct.Plan))
+		return
+	}
 	row, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)
 	if !ok {
 		return
@@ -69,7 +92,7 @@ func (s *server) appendManagedRealtimeRetainedMessage(w http.ResponseWriter, r *
 		api.WriteProblem(w, problem)
 		return
 	}
-	store, ok := s.managedRealtimeHistoryStore(w)
+	store, ok := s.managedRealtimeHistoryQuotaStore(w)
 	if !ok {
 		return
 	}
@@ -83,9 +106,9 @@ func (s *server) appendManagedRealtimeRetainedMessage(w http.ResponseWriter, r *
 		api.WriteProblem(w, api.ErrRealtimeInvalid("retained message requires valid base64 data of at most 4096 bytes and an idempotency key of at most 128 bytes"))
 		return
 	}
-	message, err := store.AppendManagedRealtimeChannelMessage(r.Context(), row.ID, channel, data, request.Binary, request.IdempotencyKey)
+	message, err := store.AppendManagedRealtimeChannelMessageWithQuota(r.Context(), acct.ID, row.ID, channel, data, request.Binary, request.IdempotencyKey, limits.RetainedHistoryMaxPayloadBytesPerAccount)
 	if err != nil {
-		s.writeManagedRealtimeHistoryError(w, r, err)
+		s.writeManagedRealtimeHistoryError(w, r, acct, err)
 		return
 	}
 	s.audit.Emit(r.Context(), "realtime.retained_message_appended", &acct.ID, map[string]any{
@@ -97,6 +120,10 @@ func (s *server) appendManagedRealtimeRetainedMessage(w http.ResponseWriter, r *
 func (s *server) readManagedRealtimeRetainedMessages(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.realtimeHistoryPreviewEnabled {
 		s.notFound(w, "retained realtime messages unavailable")
+		return
+	}
+	if _, allowed := s.realtimePlanLimits(acct); !allowed {
+		api.WriteProblem(w, api.ErrPlanRealtimeNotAllowed(acct.Plan))
 		return
 	}
 	row, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)
@@ -124,7 +151,7 @@ func (s *server) readManagedRealtimeRetainedMessages(w http.ResponseWriter, r *h
 	}
 	history, err := store.ReadManagedRealtimeChannelHistory(r.Context(), row.ID, channel, after, limit)
 	if err != nil {
-		s.writeManagedRealtimeHistoryError(w, r, err)
+		s.writeManagedRealtimeHistoryError(w, r, acct, err)
 		return
 	}
 	if history.HistoryUnavailable {
@@ -147,7 +174,12 @@ func (s *server) readManagedRealtimeRetainedMessages(w http.ResponseWriter, r *h
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *server) writeManagedRealtimeHistoryError(w http.ResponseWriter, r *http.Request, err error) {
+func (s *server) writeManagedRealtimeHistoryError(w http.ResponseWriter, r *http.Request, acct state.Account, err error) {
+	var quotaErr *state.ManagedRealtimeHistoryQuotaError
+	if errors.As(err, &quotaErr) {
+		api.WriteProblem(w, api.ErrPlanRealtimeHistoryQuota(acct.Plan, quotaErr.LimitBytes, quotaErr.UsedBytes+quotaErr.RequestedBytes))
+		return
+	}
 	switch {
 	case errors.Is(err, state.ErrManagedRealtimeHistoryInvalid):
 		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid channel, cursor, payload, or idempotency key"))

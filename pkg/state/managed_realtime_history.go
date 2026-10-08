@@ -3,22 +3,37 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Initial bounded history limits. These are deliberately lower than the live
 // frame limit: retained payloads consume durable control-plane storage.
 const (
-	ManagedRealtimeHistoryMaxPayloadBytes = 4 << 10
-	ManagedRealtimeHistoryMaxMessages     = 1024
-	ManagedRealtimeHistoryMaxChannels     = 32
+	ManagedRealtimeHistoryMaxPayloadBytes = api.RealtimeHistoryMaxPayloadBytes
+	ManagedRealtimeHistoryMaxMessages     = api.RealtimeHistoryMaxMessagesPerChannel
+	ManagedRealtimeHistoryMaxChannels     = api.RealtimeHistoryMaxChannelsPerEndpoint
 	ManagedRealtimeHistoryMaxRead         = 100
 	ManagedRealtimeHistoryRetention       = 24 * time.Hour
 )
 
 var ErrManagedRealtimeHistoryInvalid = errors.New("state: invalid managed realtime history request")
 var ErrManagedRealtimeHistoryLimit = errors.New("state: managed realtime history channel limit reached")
+
+// ManagedRealtimeHistoryQuotaError reports an append that would cross the
+// account's retained payload cap.
+type ManagedRealtimeHistoryQuotaError struct {
+	LimitBytes     int64
+	UsedBytes      int64
+	RequestedBytes int64
+}
+
+func (e *ManagedRealtimeHistoryQuotaError) Error() string {
+	return fmt.Sprintf("state: retained realtime payload quota exceeded: limit=%d used=%d requested=%d", e.LimitBytes, e.UsedBytes, e.RequestedBytes)
+}
 
 // ManagedRealtimeChannelMessage is one committed outbound channel message.
 // Sequence is scoped to endpoint and channel; it is never a connection ID or
@@ -51,6 +66,12 @@ type ManagedRealtimeHistoryStore interface {
 	ReadManagedRealtimeChannelHistory(context.Context, string, string, int64, int) (ManagedRealtimeChannelHistory, error)
 }
 
+// ManagedRealtimeHistoryQuotaStore atomically enforces an account payload cap
+// while appending retained messages.
+type ManagedRealtimeHistoryQuotaStore interface {
+	AppendManagedRealtimeChannelMessageWithQuota(context.Context, string, string, string, []byte, bool, string, int64) (ManagedRealtimeChannelMessage, error)
+}
+
 // ManagedRealtimeHistoryReaper removes rows that have passed the retention
 // window. Read and append enforce that window even before this pass runs.
 type ManagedRealtimeHistoryReaper interface {
@@ -63,6 +84,7 @@ type ManagedRealtimeHistoryReaper interface {
 type ManagedRealtimeHistoryStorageStats struct {
 	HeadsRelationBytes    int64
 	MessagesRelationBytes int64
+	UsageRelationBytes    int64
 }
 
 type ManagedRealtimeHistoryStorageObserver interface {
@@ -90,6 +112,8 @@ type ManagedRealtimeHistoryUsageReader interface {
 var (
 	_ ManagedRealtimeHistoryStore           = (*PgStore)(nil)
 	_ ManagedRealtimeHistoryStore           = (*MemStore)(nil)
+	_ ManagedRealtimeHistoryQuotaStore      = (*PgStore)(nil)
+	_ ManagedRealtimeHistoryQuotaStore      = (*MemStore)(nil)
 	_ ManagedRealtimeHistoryReaper          = (*PgStore)(nil)
 	_ ManagedRealtimeHistoryReaper          = (*MemStore)(nil)
 	_ ManagedRealtimeHistoryStorageObserver = (*PgStore)(nil)

@@ -6048,6 +6048,50 @@ END $$;
 
 
 --
+-- Name: managed_realtime_history_account_usage_delta(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.managed_realtime_history_account_usage_delta() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO public.managed_realtime_history_account_usage (account_id, payload_bytes)
+        VALUES (NEW.account_id, octet_length(NEW.data))
+        ON CONFLICT (account_id) DO UPDATE
+        SET payload_bytes = public.managed_realtime_history_account_usage.payload_bytes + EXCLUDED.payload_bytes;
+        RETURN NEW;
+    END IF;
+
+    UPDATE public.managed_realtime_history_account_usage
+    SET payload_bytes = payload_bytes - octet_length(OLD.data)
+    WHERE account_id = OLD.account_id;
+    RETURN OLD;
+END;
+$$;
+
+
+--
+-- Name: managed_realtime_history_set_message_account(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.managed_realtime_history_set_message_account() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    SELECT account_id INTO NEW.account_id
+    FROM public.managed_realtime_endpoints
+    WHERE id = NEW.endpoint_id;
+    IF NEW.account_id IS NULL THEN
+        RAISE EXCEPTION 'managed realtime endpoint does not exist'
+            USING ERRCODE = '23503';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: managed_realtime_channel_route_targets_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15975,9 +16019,21 @@ CREATE TABLE public.managed_realtime_channel_messages (
     is_binary boolean DEFAULT false NOT NULL,
     idempotency_key text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    account_id uuid NOT NULL,
     CONSTRAINT managed_realtime_channel_messages_data_check CHECK ((octet_length(data) <= 4096)),
     CONSTRAINT managed_realtime_channel_messages_idempotency_key_check CHECK (((idempotency_key IS NULL) OR ((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 128)))),
     CONSTRAINT managed_realtime_channel_messages_sequence_check CHECK ((sequence > 0))
+);
+
+
+--
+-- Name: managed_realtime_history_account_usage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_realtime_history_account_usage (
+    account_id uuid NOT NULL,
+    payload_bytes bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT managed_realtime_history_account_usage_payload_bytes_check CHECK ((payload_bytes >= 0))
 );
 
 
@@ -24064,6 +24120,14 @@ ALTER TABLE ONLY public.managed_realtime_channel_heads
 
 ALTER TABLE ONLY public.managed_realtime_channel_messages
     ADD CONSTRAINT managed_realtime_channel_messages_pkey PRIMARY KEY (endpoint_id, channel, sequence);
+
+
+--
+-- Name: managed_realtime_history_account_usage managed_realtime_history_account_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_history_account_usage
+    ADD CONSTRAINT managed_realtime_history_account_usage_pkey PRIMARY KEY (account_id);
 
 
 --
@@ -33909,6 +33973,20 @@ CREATE TRIGGER managed_realtime_channel_route_targets_routes_trg AFTER INSERT OR
 
 
 --
+-- Name: managed_realtime_channel_messages managed_realtime_history_account_usage_delta_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_realtime_history_account_usage_delta_trg AFTER INSERT OR DELETE ON public.managed_realtime_channel_messages FOR EACH ROW EXECUTE FUNCTION public.managed_realtime_history_account_usage_delta();
+
+
+--
+-- Name: managed_realtime_channel_messages managed_realtime_history_set_message_account_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_realtime_history_set_message_account_trg BEFORE INSERT ON public.managed_realtime_channel_messages FOR EACH ROW EXECUTE FUNCTION public.managed_realtime_history_set_message_account();
+
+
+--
 -- Name: goose_db_version migration_notify_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -38548,6 +38626,14 @@ ALTER TABLE ONLY public.managed_realtime_channel_heads
 
 ALTER TABLE ONLY public.managed_realtime_channel_messages
     ADD CONSTRAINT managed_realtime_channel_messages_endpoint_id_channel_fkey FOREIGN KEY (endpoint_id, channel) REFERENCES public.managed_realtime_channel_heads(endpoint_id, channel) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_realtime_history_account_usage managed_realtime_history_account_usage_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_realtime_history_account_usage
+    ADD CONSTRAINT managed_realtime_history_account_usage_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

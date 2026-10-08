@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgerrcode"
@@ -19,8 +20,9 @@ func (s *PgStore) ObserveManagedRealtimeHistoryStorage(ctx context.Context) (Man
 	var stats ManagedRealtimeHistoryStorageStats
 	err := s.pool.QueryRow(ctx, `
 		select pg_total_relation_size('managed_realtime_channel_heads'::regclass),
-		       pg_total_relation_size('managed_realtime_channel_messages'::regclass)
-	`).Scan(&stats.HeadsRelationBytes, &stats.MessagesRelationBytes)
+		       pg_total_relation_size('managed_realtime_channel_messages'::regclass),
+		       pg_total_relation_size('managed_realtime_history_account_usage'::regclass)
+	`).Scan(&stats.HeadsRelationBytes, &stats.MessagesRelationBytes, &stats.UsageRelationBytes)
 	if err != nil {
 		return ManagedRealtimeHistoryStorageStats{}, fmt.Errorf("state: observe managed realtime history storage: %w", err)
 	}
@@ -48,7 +50,6 @@ func (s *PgStore) ReadManagedRealtimeHistoryUsage(ctx context.Context, accountID
 		), channel_usage as (
 			select h.endpoint_id, h.channel,
 			       count(m.sequence) as stored_messages,
-			       coalesce(sum(octet_length(m.data)), 0) as stored_bytes,
 			       count(m.sequence) filter (where m.sequence >= expiry.visible_floor) as replayable_messages,
 			       coalesce(sum(octet_length(m.data)) filter (where m.sequence >= expiry.visible_floor), 0) as replayable_bytes
 			from scoped_heads h
@@ -62,15 +63,22 @@ func (s *PgStore) ReadManagedRealtimeHistoryUsage(ctx context.Context, accountID
 			group by h.endpoint_id, h.channel, expiry.visible_floor
 		)
 		select count(distinct endpoint_id), count(*),
-		       coalesce(sum(stored_messages), 0), coalesce(sum(stored_bytes), 0),
+		       coalesce(sum(stored_messages), 0),
 		       coalesce(sum(replayable_messages), 0), coalesce(sum(replayable_bytes), 0)
 		from channel_usage
 	`, accountID, usage.ObservedAt.Add(-ManagedRealtimeHistoryRetention)).Scan(
 		&usage.EndpointCount, &usage.ChannelCount, &usage.StoredMessageCount,
-		&usage.StoredPayloadBytes, &usage.ReplayableMessageCount, &usage.ReplayablePayloadBytes,
+		&usage.ReplayableMessageCount, &usage.ReplayablePayloadBytes,
 	)
 	if err != nil {
 		return ManagedRealtimeHistoryUsage{}, fmt.Errorf("state: read realtime history usage: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		select coalesce((
+			select payload_bytes from managed_realtime_history_account_usage where account_id = $1
+		), 0)::bigint
+	`, accountID).Scan(&usage.StoredPayloadBytes); err != nil {
+		return ManagedRealtimeHistoryUsage{}, fmt.Errorf("state: read realtime history stored payload bytes: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ManagedRealtimeHistoryUsage{}, fmt.Errorf("state: commit realtime history usage read: %w", err)
@@ -82,6 +90,17 @@ func (s *PgStore) ReadManagedRealtimeHistoryUsage(ctx context.Context, accountID
 // message in one transaction. The channel head row is the cross-replica
 // serialization point; rolled-back attempts cannot leave sequence holes.
 func (s *PgStore) AppendManagedRealtimeChannelMessage(ctx context.Context, endpointID, channel string, data []byte, binary bool, idempotencyKey string) (ManagedRealtimeChannelMessage, error) {
+	return s.appendManagedRealtimeChannelMessage(ctx, "", endpointID, channel, data, binary, idempotencyKey, 0)
+}
+
+func (s *PgStore) AppendManagedRealtimeChannelMessageWithQuota(ctx context.Context, accountID, endpointID, channel string, data []byte, binary bool, idempotencyKey string, maxAccountPayloadBytes int64) (ManagedRealtimeChannelMessage, error) {
+	if accountID == "" || maxAccountPayloadBytes <= 0 {
+		return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeHistoryInvalid
+	}
+	return s.appendManagedRealtimeChannelMessage(ctx, accountID, endpointID, channel, data, binary, idempotencyKey, maxAccountPayloadBytes)
+}
+
+func (s *PgStore) appendManagedRealtimeChannelMessage(ctx context.Context, expectedAccountID, endpointID, channel string, data []byte, binary bool, idempotencyKey string, maxAccountPayloadBytes int64) (ManagedRealtimeChannelMessage, error) {
 	if err := validateManagedRealtimeHistoryAppend(endpointID, channel, data, idempotencyKey); err != nil {
 		return ManagedRealtimeChannelMessage{}, err
 	}
@@ -90,6 +109,33 @@ func (s *PgStore) AppendManagedRealtimeChannelMessage(ctx context.Context, endpo
 		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: begin realtime history append: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var accountID string
+	if err := tx.QueryRow(ctx, `
+		select account_id::text from managed_realtime_endpoints where id = $1 for key share
+	`, endpointID).Scan(&accountID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ManagedRealtimeChannelMessage{}, ErrNotFound
+		}
+		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: resolve realtime endpoint account: %w", err)
+	}
+	if expectedAccountID != "" && accountID != expectedAccountID {
+		return ManagedRealtimeChannelMessage{}, ErrNotFound
+	}
+	// Serialize all retained writes for one account. The message triggers keep
+	// this counter correct across appends, expiry, channel trimming, and endpoint
+	// deletion; checking it under the row lock makes quota admission atomic.
+	var usedPayloadBytes int64
+	if _, err := tx.Exec(ctx, `
+		insert into managed_realtime_history_account_usage (account_id, payload_bytes)
+		values ($1, 0) on conflict (account_id) do nothing
+	`, accountID); err != nil {
+		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: initialize realtime history usage: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		select payload_bytes from managed_realtime_history_account_usage where account_id = $1 for update
+	`, accountID).Scan(&usedPayloadBytes); err != nil {
+		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: lock realtime history account usage: %w", err)
+	}
 	var exists bool
 	if err := tx.QueryRow(ctx, `
 		select exists(select 1 from managed_realtime_channel_heads where endpoint_id = $1 and channel = $2)
@@ -97,28 +143,12 @@ func (s *PgStore) AppendManagedRealtimeChannelMessage(ctx context.Context, endpo
 		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: check realtime channel head: %w", err)
 	}
 	if !exists {
-		var lockedID string
-		if err := tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id = $1 for update`, endpointID).Scan(&lockedID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ManagedRealtimeChannelMessage{}, ErrNotFound
-			}
-			return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: lock realtime endpoint: %w", err)
+		var channels int
+		if err := tx.QueryRow(ctx, `select count(*) from managed_realtime_channel_heads where endpoint_id = $1`, endpointID).Scan(&channels); err != nil {
+			return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: count realtime channels: %w", err)
 		}
-		// A concurrent request may have created this same channel while we
-		// waited for the endpoint lock. Count only if it is still new.
-		if err := tx.QueryRow(ctx, `
-			select exists(select 1 from managed_realtime_channel_heads where endpoint_id = $1 and channel = $2)
-		`, endpointID, channel).Scan(&exists); err != nil {
-			return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: recheck realtime channel head: %w", err)
-		}
-		if !exists {
-			var channels int
-			if err := tx.QueryRow(ctx, `select count(*) from managed_realtime_channel_heads where endpoint_id = $1`, endpointID).Scan(&channels); err != nil {
-				return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: count realtime channels: %w", err)
-			}
-			if channels >= ManagedRealtimeHistoryMaxChannels {
-				return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeHistoryLimit
-			}
+		if channels >= ManagedRealtimeHistoryMaxChannels {
+			return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeHistoryLimit
 		}
 	}
 	if _, err := tx.Exec(ctx, `
@@ -227,6 +257,23 @@ func (s *PgStore) AppendManagedRealtimeChannelMessage(ctx context.Context, endpo
 			where endpoint_id = $1 and channel = $2 and sequence < $3
 		`, endpointID, channel, newOldest); err != nil {
 			return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: trim realtime channel history: %w", err)
+		}
+	}
+	if maxAccountPayloadBytes > 0 {
+		if err := tx.QueryRow(ctx, `
+			select payload_bytes from managed_realtime_history_account_usage where account_id = $1
+		`, accountID).Scan(&usedPayloadBytes); err != nil {
+			return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: read realtime history account usage: %w", err)
+		}
+		requestedBytes := int64(len(data))
+		if usedPayloadBytes > maxAccountPayloadBytes {
+			usedBeforeRequest := usedPayloadBytes - requestedBytes
+			if usedBeforeRequest < 0 {
+				usedBeforeRequest = 0
+			}
+			return ManagedRealtimeChannelMessage{}, &ManagedRealtimeHistoryQuotaError{
+				LimitBytes: maxAccountPayloadBytes, UsedBytes: usedBeforeRequest, RequestedBytes: requestedBytes,
+			}
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -343,7 +390,7 @@ func (s *PgStore) PruneExpiredManagedRealtimeChannelMessages(ctx context.Context
 			where m.endpoint_id = h.endpoint_id and m.channel = h.channel and m.created_at < $1
 		)
 		order by h.endpoint_id, h.channel
-		limit $2 for update of h skip locked
+		limit $2
 	`, cutoff, batch)
 	if err != nil {
 		return 0, fmt.Errorf("state: select expired realtime channels: %w", err)
@@ -363,8 +410,70 @@ func (s *PgStore) PruneExpiredManagedRealtimeChannelMessages(ctx context.Context
 	if err != nil {
 		return 0, fmt.Errorf("state: iterate expired realtime channels: %w", err)
 	}
+	if len(keys) == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return 0, fmt.Errorf("state: commit empty realtime history prune: %w", err)
+		}
+		return 0, nil
+	}
+	endpointSet := make(map[string]struct{}, len(keys))
+	for _, item := range keys {
+		endpointSet[item.endpointID] = struct{}{}
+	}
+	endpointIDs := make([]string, 0, len(endpointSet))
+	for endpointID := range endpointSet {
+		endpointIDs = append(endpointIDs, endpointID)
+	}
+	sort.Strings(endpointIDs)
+	rows, err = tx.Query(ctx, `
+		select distinct e.account_id::text
+		from managed_realtime_endpoints e
+	join unnest($1::text[]) as candidate(endpoint_id) on e.id::text = candidate.endpoint_id
+		order by e.account_id::text
+	`, endpointIDs)
+	if err != nil {
+		return 0, fmt.Errorf("state: select realtime history prune accounts: %w", err)
+	}
+	var accountIDs []string
+	for rows.Next() {
+		var accountID string
+		if err := rows.Scan(&accountID); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("state: scan realtime history prune account: %w", err)
+		}
+		accountIDs = append(accountIDs, accountID)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return 0, fmt.Errorf("state: iterate realtime history prune accounts: %w", err)
+	}
+	for _, accountID := range accountIDs {
+		if _, err := tx.Exec(ctx, `
+			insert into managed_realtime_history_account_usage (account_id, payload_bytes)
+			values ($1, 0) on conflict (account_id) do nothing
+		`, accountID); err != nil {
+			return 0, fmt.Errorf("state: initialize realtime history prune usage: %w", err)
+		}
+		var ignored int64
+		if err := tx.QueryRow(ctx, `
+			select payload_bytes from managed_realtime_history_account_usage where account_id = $1 for update
+		`, accountID).Scan(&ignored); err != nil {
+			return 0, fmt.Errorf("state: lock realtime history prune usage: %w", err)
+		}
+	}
 	var removed int64
 	for _, item := range keys {
+		var lockedEndpointID string
+		if err := tx.QueryRow(ctx, `
+			select endpoint_id::text from managed_realtime_channel_heads
+			where endpoint_id = $1 and channel = $2 for update skip locked
+		`, item.endpointID, item.channel).Scan(&lockedEndpointID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			return 0, fmt.Errorf("state: lock expired realtime channel: %w", err)
+		}
 		var expiryFloor int64
 		if err := tx.QueryRow(ctx, `
 			select coalesce(max(sequence) + 1, 1)

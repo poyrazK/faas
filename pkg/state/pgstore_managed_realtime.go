@@ -228,12 +228,41 @@ func (s *PgStore) UpdateManagedRealtimeEndpoint(ctx context.Context, id string, 
 }
 
 func (s *PgStore) DeleteManagedRealtimeEndpoint(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `delete from managed_realtime_endpoints where id = $1`, id)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin realtime endpoint delete: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var accountID string
+	if err := tx.QueryRow(ctx, `
+		select account_id::text from managed_realtime_endpoints where id = $1 for update
+	`, id).Scan(&accountID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("state: lock realtime endpoint for delete: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into managed_realtime_history_account_usage (account_id, payload_bytes)
+		values ($1, 0) on conflict (account_id) do nothing
+	`, accountID); err != nil {
+		return fmt.Errorf("state: initialize realtime history usage for endpoint delete: %w", err)
+	}
+	var ignored int64
+	if err := tx.QueryRow(ctx, `
+		select payload_bytes from managed_realtime_history_account_usage where account_id = $1 for update
+	`, accountID).Scan(&ignored); err != nil {
+		return fmt.Errorf("state: lock realtime history usage for endpoint delete: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `delete from managed_realtime_endpoints where id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("state: delete realtime endpoint: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit realtime endpoint delete: %w", err)
 	}
 	return nil
 }

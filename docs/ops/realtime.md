@@ -260,8 +260,11 @@ The retained-message management API and resumable publish path are an early
 preview. They are disabled by default; set
 `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1` on apid and
 `FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1` on realtimed to exercise live resume
-delivery in a controlled environment. This feature has no finalized plan
-entitlement or storage pricing. A normal `:publish` stays live-only. Add
+delivery in a controlled environment. Retained writes enforce an account
+payload cap derived from each plan's existing per-app endpoint allowance:
+Hobby 256 MiB, Pro 1.25 GiB, and Scale 3.125 GiB. These are capacity limits,
+not billable usage or a price commitment; pricing is not finalized. A normal
+`:publish` stays live-only. Add
 `?delivery=retained` to that publish route to commit the message before live
 fan-out; retained publishes require an `Idempotency-Key`, accept at most 4 KiB,
 and return `durable: true` with the channel `sequence`. A best-effort wake
@@ -281,16 +284,21 @@ remains an append-only storage operation. `GET` on the same path with
 `after=<last sequence>` returns a page and the current retention bounds; an
 expired cursor returns `410 history_unavailable` so a caller can rebuild its
 state. The storage window is capped at 1,024 messages of 4 KiB each per channel
-and 32 channels per endpoint. Messages remain available for up to 24 hours.
+and 32 channels per endpoint. The account cap equals one app's full endpoint
+allowance at the current per-endpoint maximum of 128 MiB: 256 MiB for Hobby,
+1.25 GiB for Pro, and 3.125 GiB for Scale. A write that crosses the account
+cap returns `403 plan_realtime_quota`. Expired rows count against the cap until
+inline expiry or the reaper physically removes them. Messages remain available
+for up to 24 hours.
 The publish API's idempotency response is retained for 24 hours; append-only
 message keys deduplicate only while their messages remain in history. Do not
-use this preview as a production reconnect contract until plan entitlements,
-billing rules, and fleet qualification are complete.
+use this preview as a production reconnect contract until billing rules and
+pricing receive product review and the fleet is qualified.
 
-Apid samples the physical PostgreSQL storage allocated to the history head
-and message relations after each one-minute expiry pass. The
-`apid_realtime_history_relation_bytes{relation="heads|messages"}` gauges include
-indexes and space awaiting vacuum. `apid_realtime_history_sample_success` and
+Apid samples the physical PostgreSQL storage allocated to the history heads,
+messages, and account usage relations after each one-minute expiry pass. The
+`apid_realtime_history_relation_bytes{relation="heads|messages|usage"}` gauges
+include indexes and space awaiting vacuum. `apid_realtime_history_sample_success` and
 `apid_realtime_history_last_sample_timestamp_seconds` identify stale samples;
 `apid_realtime_history_pruned_messages_total` and
 `apid_realtime_history_prune_failures_total` show cleanup activity. Every apid
@@ -311,7 +319,9 @@ history preview enabled and the `usage:read` scope. It returns one account's
 current channel-head count, message-row count, and decoded payload bytes.
 `stored_*` includes expired rows until the reaper removes them;
 `replayable_*` applies the same contiguous expiry floor used by subscription
-resume. This snapshot excludes row and index overhead and is not a billable
+resume. The response also returns `payload_bytes_limit` and
+`payload_bytes_remaining` for the account's plan. The quota tracks decoded
+payload bytes, so it excludes row and index overhead and is not a billable
 byte-hour meter. Use the global relation metric above to watch actual database
 allocation; the account view is for tenant attribution and preview evaluation.
 

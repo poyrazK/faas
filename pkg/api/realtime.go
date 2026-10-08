@@ -7,20 +7,46 @@ import (
 	"time"
 )
 
-// RealtimeLimits describes the managed realtime endpoint allowance for a plan.
+// RealtimeLimits describes managed realtime endpoint and retained-history
+// allowances for a plan.
 // It is kept separate from Limits so adding the opt-in realtime surface does
 // not change the long-lived Limits struct consumed by every daemon.
 type RealtimeLimits struct {
-	Plan                Plan
-	EndpointsPerApp     int
-	EndpointsPerAccount int
+	Plan                                     Plan
+	EndpointsPerApp                          int
+	EndpointsPerAccount                      int
+	// RetainedHistoryMaxPayloadBytesPerAccount is the account-wide decoded
+	// payload cap for stored channel history. It allows one app to fill its
+	// current endpoint allowance at the maximum per-endpoint history size.
+	RetainedHistoryMaxPayloadBytesPerAccount int64
 }
 
+// RealtimeHistoryMaxPayloadBytesPerEndpoint is the maximum decoded payload
+// retained by one endpoint under the current per-channel history bounds.
+const (
+	RealtimeHistoryMaxPayloadBytes            = 4 << 10
+	RealtimeHistoryMaxMessagesPerChannel      = 1024
+	RealtimeHistoryMaxChannelsPerEndpoint     = 32
+	RealtimeHistoryMaxPayloadBytesPerEndpoint = int64(RealtimeHistoryMaxPayloadBytes) *
+		int64(RealtimeHistoryMaxMessagesPerChannel) * int64(RealtimeHistoryMaxChannelsPerEndpoint)
+)
+
+// Each paid plan can fill one app's endpoint allowance under the current
+// per-endpoint history bounds; this cap does not define a storage price.
 var realtimeLimits = map[Plan]RealtimeLimits{
-	PlanFree:  {Plan: PlanFree},
-	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10},
-	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50},
-	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250},
+	PlanFree: {Plan: PlanFree},
+	PlanHobby: {
+		Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10,
+		RetainedHistoryMaxPayloadBytesPerAccount: 2 * RealtimeHistoryMaxPayloadBytesPerEndpoint,
+	},
+	PlanPro: {
+		Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50,
+		RetainedHistoryMaxPayloadBytesPerAccount: 10 * RealtimeHistoryMaxPayloadBytesPerEndpoint,
+	},
+	PlanScale: {
+		Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250,
+		RetainedHistoryMaxPayloadBytesPerAccount: 25 * RealtimeHistoryMaxPayloadBytesPerEndpoint,
+	},
 }
 
 func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
@@ -180,7 +206,7 @@ type ManagedRealtimeRetainedHistoryResponse struct {
 }
 
 // ManagedRealtimeHistoryUsageResponse is an account-scoped snapshot of
-// retained payloads. It is informational and does not define billed usage.
+// retained payloads and the current plan cap. It does not define billed usage.
 type ManagedRealtimeHistoryUsageResponse struct {
 	ObservedAt             string `json:"observed_at"`
 	EndpointCount          int64  `json:"endpoint_count"`
@@ -189,6 +215,8 @@ type ManagedRealtimeHistoryUsageResponse struct {
 	StoredPayloadBytes     int64  `json:"stored_payload_bytes"`
 	ReplayableMessageCount int64  `json:"replayable_message_count"`
 	ReplayablePayloadBytes int64  `json:"replayable_payload_bytes"`
+	PayloadBytesLimit      int64  `json:"payload_bytes_limit"`
+	PayloadBytesRemaining  int64  `json:"payload_bytes_remaining"`
 }
 
 // ManagedRealtimeConnectionResponse is the safe control-plane projection of

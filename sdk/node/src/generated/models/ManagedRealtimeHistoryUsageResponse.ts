@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Account-scoped point-in-time retained history payload counts; not billing meters.
+ * Account-scoped retained payload snapshot and plan cap; not a billable usage meter.
  */
 export type ManagedRealtimeHistoryUsageResponse = {
   observed_at: string;
@@ -31,5 +31,13 @@ export type ManagedRealtimeHistoryUsageResponse = {
    * Decoded payload bytes eligible for replay.
    */
   replayable_payload_bytes: number;
+  /**
+   * Plan-specific account cap for physically stored retained payload bytes.
+   */
+  payload_bytes_limit?: number;
+  /**
+   * Remaining account payload allowance; expired rows count until cleanup.
+   */
+  payload_bytes_remaining?: number;
 };
 

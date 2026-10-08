@@ -85,7 +85,7 @@ func TestPgStoreManagedRealtimeHistoryStorageObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.HeadsRelationBytes <= 0 || stats.MessagesRelationBytes <= 0 {
+	if stats.HeadsRelationBytes <= 0 || stats.MessagesRelationBytes <= 0 || stats.UsageRelationBytes <= 0 {
 		t.Fatalf("physical history allocation = %+v, want both relations allocated", stats)
 	}
 }

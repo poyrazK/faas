@@ -823,6 +823,11 @@ func (s *server) publishManagedRealtimeChannel(w http.ResponseWriter, r *http.Re
 			s.notFound(w, "retained realtime publishing unavailable")
 			return
 		}
+		limits, allowed := s.realtimePlanLimits(acct)
+		if !allowed {
+			api.WriteProblem(w, api.ErrPlanRealtimeNotAllowed(acct.Plan))
+			return
+		}
 		keys := r.Header.Values("Idempotency-Key")
 		if len(keys) != 1 || keys[0] == "" {
 			api.WriteProblem(w, api.ErrRealtimeInvalid("delivery=retained requires exactly one Idempotency-Key header"))
@@ -836,13 +841,13 @@ func (s *server) publishManagedRealtimeChannel(w http.ResponseWriter, r *http.Re
 			api.WriteProblem(w, api.ErrRealtimeInvalid("message exceeds this endpoint's max_message_bytes"))
 			return
 		}
-		store, ok := s.managedRealtimeHistoryStore(w)
+		store, ok := s.managedRealtimeHistoryQuotaStore(w)
 		if !ok {
 			return
 		}
-		retained, err := store.AppendManagedRealtimeChannelMessage(r.Context(), row.ID, channel, message.Data, message.Binary, keys[0])
+		retained, err := store.AppendManagedRealtimeChannelMessageWithQuota(r.Context(), acct.ID, row.ID, channel, message.Data, message.Binary, keys[0], limits.RetainedHistoryMaxPayloadBytesPerAccount)
 		if err != nil {
-			s.writeManagedRealtimeHistoryError(w, r, err)
+			s.writeManagedRealtimeHistoryError(w, r, acct, err)
 			return
 		}
 		retainedSequence = retained.Sequence

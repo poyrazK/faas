@@ -7,12 +7,14 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="ManagedRealtimeHistoryUsageResponse")
 
 
 @_attrs_define
 class ManagedRealtimeHistoryUsageResponse:
-    """Account-scoped point-in-time retained history payload counts; not billing meters."""
+    """Account-scoped retained payload snapshot and plan cap; not a billable usage meter."""
 
     observed_at: datetime.datetime
     endpoint_count: int
@@ -27,6 +29,10 @@ class ManagedRealtimeHistoryUsageResponse:
     """Rows at or above each channel's current contiguous retention floor."""
     replayable_payload_bytes: int
     """Decoded payload bytes eligible for replay."""
+    payload_bytes_limit: int | Unset = UNSET
+    """Plan-specific account cap for physically stored retained payload bytes."""
+    payload_bytes_remaining: int | Unset = UNSET
+    """Remaining account payload allowance; expired rows count until cleanup."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -44,6 +50,10 @@ class ManagedRealtimeHistoryUsageResponse:
 
         replayable_payload_bytes = self.replayable_payload_bytes
 
+        payload_bytes_limit = self.payload_bytes_limit
+
+        payload_bytes_remaining = self.payload_bytes_remaining
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -57,6 +67,10 @@ class ManagedRealtimeHistoryUsageResponse:
                 "replayable_payload_bytes": replayable_payload_bytes,
             }
         )
+        if payload_bytes_limit is not UNSET:
+            field_dict["payload_bytes_limit"] = payload_bytes_limit
+        if payload_bytes_remaining is not UNSET:
+            field_dict["payload_bytes_remaining"] = payload_bytes_remaining
 
         return field_dict
 
@@ -77,6 +91,10 @@ class ManagedRealtimeHistoryUsageResponse:
 
         replayable_payload_bytes = d.pop("replayable_payload_bytes")
 
+        payload_bytes_limit = d.pop("payload_bytes_limit", UNSET)
+
+        payload_bytes_remaining = d.pop("payload_bytes_remaining", UNSET)
+
         managed_realtime_history_usage_response = cls(
             observed_at=observed_at,
             endpoint_count=endpoint_count,
@@ -85,6 +103,8 @@ class ManagedRealtimeHistoryUsageResponse:
             stored_payload_bytes=stored_payload_bytes,
             replayable_message_count=replayable_message_count,
             replayable_payload_bytes=replayable_payload_bytes,
+            payload_bytes_limit=payload_bytes_limit,
+            payload_bytes_remaining=payload_bytes_remaining,
         )
 
         managed_realtime_history_usage_response.additional_properties = d

@@ -4250,6 +4250,7 @@
   {
     "table": "managed_realtime_channel_messages",
     "columns": [
+      "account_id",
       "channel",
       "created_at",
       "data",
@@ -4383,6 +4384,14 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_history_account_usage",
+    "columns": [
+      "account_id",
+      "payload_bytes"
+    ],
+    "kind": "operational"
   },
   {
     "table": "meter_gateway_usage_events",

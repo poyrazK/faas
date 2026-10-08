@@ -43,7 +43,7 @@ func newManagedRealtimeHistoryMetrics(registry *prometheus.Registry, prefix stri
 			Help: "Failed managed realtime history reaper passes on this apid replica.",
 		}),
 	}
-	for _, relation := range []string{"heads", "messages"} {
+	for _, relation := range []string{"heads", "messages", "usage"} {
 		m.relationBytes.WithLabelValues(relation)
 	}
 	if err := registry.Register(m.relationBytes); err != nil {
@@ -108,6 +108,7 @@ func (m *managedRealtimeHistoryMetrics) observeStorage(stats state.ManagedRealti
 	}
 	m.relationBytes.WithLabelValues("heads").Set(float64(stats.HeadsRelationBytes))
 	m.relationBytes.WithLabelValues("messages").Set(float64(stats.MessagesRelationBytes))
+	m.relationBytes.WithLabelValues("usage").Set(float64(stats.UsageRelationBytes))
 	m.lastSample.Set(float64(at.Unix()))
 	m.sampleSuccess.Set(1)
 }

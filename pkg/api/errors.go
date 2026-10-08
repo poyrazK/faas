@@ -4198,6 +4198,16 @@ func ErrPlanRealtimeQuota(plan Plan, scope string, limit, observed int) *Problem
 		WithDocs(docsBase + "/plans#realtime")
 }
 
+// ErrPlanRealtimeHistoryQuota reports an account-wide retained payload cap.
+func ErrPlanRealtimeHistoryQuota(plan Plan, limitBytes, observedBytes int64) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanRealtimeQuota,
+		"Managed realtime history quota reached",
+		fmt.Sprintf("%s plan allows %d bytes of retained realtime payload per account; the request would use %d bytes. Delete retained messages or wait for expired history to be pruned.",
+			plan, limitBytes, observedBytes)).
+		WithLimit(limitBytes, observedBytes).
+		WithDocs(docsBase + "/plans#realtime")
+}
+
 func ErrRealtimeInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeRealtimeInvalid,
 		"Invalid managed realtime endpoint", reason)

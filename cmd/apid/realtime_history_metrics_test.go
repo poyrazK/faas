@@ -22,7 +22,7 @@ func (s *observedHistoryStore) PruneExpiredManagedRealtimeChannelMessages(contex
 
 func (s *observedHistoryStore) ObserveManagedRealtimeHistoryStorage(context.Context) (state.ManagedRealtimeHistoryStorageStats, error) {
 	close(s.observed)
-	return state.ManagedRealtimeHistoryStorageStats{HeadsRelationBytes: 8_192, MessagesRelationBytes: 16_384}, nil
+	return state.ManagedRealtimeHistoryStorageStats{HeadsRelationBytes: 8_192, MessagesRelationBytes: 16_384, UsageRelationBytes: 4_096}, nil
 }
 
 func TestManagedRealtimeHistoryMetricsKeepLastGoodStorageSample(t *testing.T) {
@@ -32,7 +32,7 @@ func TestManagedRealtimeHistoryMetricsKeepLastGoodStorageSample(t *testing.T) {
 	metrics := newManagedRealtimeHistoryMetrics(registry, "apid")
 	at := time.Unix(1_800_000_000, 0)
 	metrics.observeStorage(state.ManagedRealtimeHistoryStorageStats{
-		HeadsRelationBytes: 12_288, MessagesRelationBytes: 32_768,
+		HeadsRelationBytes: 12_288, MessagesRelationBytes: 32_768, UsageRelationBytes: 4_096,
 	}, at)
 	metrics.observePrune(3, nil)
 	metrics.observePrune(0, errors.New("database unavailable"))
@@ -42,6 +42,9 @@ func TestManagedRealtimeHistoryMetricsKeepLastGoodStorageSample(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(metrics.relationBytes.WithLabelValues("messages")); got != 32_768 {
 		t.Fatalf("message bytes = %v", got)
+	}
+	if got := testutil.ToFloat64(metrics.relationBytes.WithLabelValues("usage")); got != 4_096 {
+		t.Fatalf("usage bytes = %v", got)
 	}
 	if got := testutil.ToFloat64(metrics.sampleSuccess); got != 0 {
 		t.Fatalf("sample success = %v after failed observation", got)

@@ -57079,7 +57079,7 @@ components:
 
     ManagedRealtimeHistoryUsageResponse:
       type: object
-      description: Account-scoped point-in-time retained history payload counts; not billing meters.
+      description: Account-scoped retained payload snapshot and plan cap; not a billable usage meter.
       required: [observed_at, endpoint_count, channel_count, stored_message_count, stored_payload_bytes, replayable_message_count, replayable_payload_bytes]
       properties:
         observed_at: { type: string, format: date-time }
@@ -57089,6 +57089,8 @@ components:
         stored_payload_bytes: { type: integer, format: int64, minimum: 0, description: 'Decoded payload bytes in physically present rows; excludes database overhead.' }
         replayable_message_count: { type: integer, format: int64, minimum: 0, description: "Rows at or above each channel's current contiguous retention floor." }
         replayable_payload_bytes: { type: integer, format: int64, minimum: 0, description: 'Decoded payload bytes eligible for replay.' }
+        payload_bytes_limit: { type: integer, format: int64, minimum: 0, description: 'Plan-specific account cap for physically stored retained payload bytes.' }
+        payload_bytes_remaining: { type: integer, format: int64, minimum: 0, description: 'Remaining account payload allowance; expired rows count until cleanup.' }
 
     AppLogDrainResponse:
       type: object

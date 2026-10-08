@@ -56,16 +56,44 @@ func (m *MemStore) ReadManagedRealtimeHistoryUsage(ctx context.Context, accountI
 }
 
 func (m *MemStore) AppendManagedRealtimeChannelMessage(_ context.Context, endpointID, channel string, data []byte, binary bool, idempotencyKey string) (ManagedRealtimeChannelMessage, error) {
+	return m.appendManagedRealtimeChannelMessage(endpointID, "", channel, data, binary, idempotencyKey, 0)
+}
+
+func (m *MemStore) AppendManagedRealtimeChannelMessageWithQuota(_ context.Context, accountID, endpointID, channel string, data []byte, binary bool, idempotencyKey string, maxAccountPayloadBytes int64) (ManagedRealtimeChannelMessage, error) {
+	if accountID == "" || maxAccountPayloadBytes <= 0 {
+		return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeHistoryInvalid
+	}
+	return m.appendManagedRealtimeChannelMessage(endpointID, accountID, channel, data, binary, idempotencyKey, maxAccountPayloadBytes)
+}
+
+func (m *MemStore) appendManagedRealtimeChannelMessage(endpointID, expectedAccountID, channel string, data []byte, binary bool, idempotencyKey string, maxAccountPayloadBytes int64) (ManagedRealtimeChannelMessage, error) {
 	if err := validateManagedRealtimeHistoryAppend(endpointID, channel, data, idempotencyKey); err != nil {
 		return ManagedRealtimeChannelMessage{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.managedRealtimeEndpoints[endpointID]; !ok {
+	endpoint, ok := m.managedRealtimeEndpoints[endpointID]
+	if !ok {
+		return ManagedRealtimeChannelMessage{}, ErrNotFound
+	}
+	if expectedAccountID != "" && endpoint.AccountID != expectedAccountID {
 		return ManagedRealtimeChannelMessage{}, ErrNotFound
 	}
 	key := managedRealtimeHistoryKey{endpointID: endpointID, channel: channel}
 	state := m.managedRealtimeHistory[key]
+	if state != nil {
+		state.trimExpired(time.Now().UTC().Add(-ManagedRealtimeHistoryRetention))
+	}
+	if state != nil && idempotencyKey != "" {
+		for _, existing := range state.messages {
+			if existing.IdempotencyKey == idempotencyKey {
+				if existing.Binary != binary || !bytes.Equal(existing.Data, data) {
+					return ManagedRealtimeChannelMessage{}, ErrConflict
+				}
+				return cloneManagedRealtimeChannelMessage(existing), nil
+			}
+		}
+	}
 	if state == nil {
 		channels := 0
 		for existing := range m.managedRealtimeHistory {
@@ -76,19 +104,27 @@ func (m *MemStore) AppendManagedRealtimeChannelMessage(_ context.Context, endpoi
 		if channels >= ManagedRealtimeHistoryMaxChannels {
 			return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeHistoryLimit
 		}
-		state = &managedRealtimeHistoryState{next: 1, oldest: 1}
-		m.managedRealtimeHistory[key] = state
 	}
-	state.trimExpired(time.Now().UTC().Add(-ManagedRealtimeHistoryRetention))
-	if idempotencyKey != "" {
-		for _, existing := range state.messages {
-			if existing.IdempotencyKey == idempotencyKey {
-				if existing.Binary != binary || !bytes.Equal(existing.Data, data) {
-					return ManagedRealtimeChannelMessage{}, ErrConflict
-				}
-				return cloneManagedRealtimeChannelMessage(existing), nil
+	if maxAccountPayloadBytes > 0 {
+		usedPayloadBytes := m.managedRealtimeHistoryAccountBytesLocked(endpoint.AccountID)
+		var evictedBytes int64
+		if state != nil && len(state.messages) >= ManagedRealtimeHistoryMaxMessages {
+			evictedBytes = int64(len(state.messages[0].Data))
+		}
+		if evictedBytes > usedPayloadBytes {
+			evictedBytes = usedPayloadBytes
+		}
+		usedAfterEviction := usedPayloadBytes - evictedBytes
+		requestedBytes := int64(len(data))
+		if usedAfterEviction > maxAccountPayloadBytes || requestedBytes > maxAccountPayloadBytes-usedAfterEviction {
+			return ManagedRealtimeChannelMessage{}, &ManagedRealtimeHistoryQuotaError{
+				LimitBytes: maxAccountPayloadBytes, UsedBytes: usedAfterEviction, RequestedBytes: requestedBytes,
 			}
 		}
+	}
+	if state == nil {
+		state = &managedRealtimeHistoryState{next: 1, oldest: 1}
+		m.managedRealtimeHistory[key] = state
 	}
 	message := ManagedRealtimeChannelMessage{
 		EndpointID: endpointID, Channel: channel, Sequence: state.next,
@@ -103,6 +139,20 @@ func (m *MemStore) AppendManagedRealtimeChannelMessage(_ context.Context, endpoi
 		state.oldest++
 	}
 	return cloneManagedRealtimeChannelMessage(message), nil
+}
+
+func (m *MemStore) managedRealtimeHistoryAccountBytesLocked(accountID string) int64 {
+	var used int64
+	for key, channel := range m.managedRealtimeHistory {
+		endpoint, exists := m.managedRealtimeEndpoints[key.endpointID]
+		if !exists || endpoint.AccountID != accountID {
+			continue
+		}
+		for _, message := range channel.messages {
+			used += int64(len(message.Data))
+		}
+	}
+	return used
 }
 
 func (m *MemStore) ReadManagedRealtimeChannelHistory(_ context.Context, endpointID, channel string, after int64, limit int) (ManagedRealtimeChannelHistory, error) {

@@ -3734,6 +3734,12 @@ type ManagedRealtimeChannelMessage struct {
 	IsBinary       bool
 	IdempotencyKey pgtype.Text
 	CreatedAt      pgtype.Timestamptz
+	AccountID      pgtype.UUID
+}
+
+type ManagedRealtimeHistoryAccountUsage struct {
+	AccountID    pgtype.UUID
+	PayloadBytes int64
 }
 
 type ManagedRealtimeChannelRoute struct {
