@@ -197,3 +197,78 @@ func (e *Engine) parkForCapacity(ctx context.Context, appID, trigger string, err
 	}
 	return false
 }
+
+// parkZeroTrafficSibling parks one idle instance of the same app whose live
+// deployment receives no weighted traffic, after an admission was refused at
+// the app's concurrency cap (production-us hunt #6, H5-59). A rollout moves
+// the previous deployment of a traffic split to 0%, but its warm instance
+// kept a concurrency slot until its idle timeout (600 s on Scale): with the
+// serving instance it filled max_concurrency plus the ADR-199 rollout grant,
+// every smoke wake of the new candidate was refused, and the deploy failed
+// as "verification unavailable". Such an instance can only serve exact
+// revision or preview requests, and parking snapshots it, so one of those
+// still restores it (ADR-005).
+//
+// requested is the deployment the refused admission was for; it and every
+// deployment with traffic, its own floor, or a non-live status (a rollout
+// candidate) keep their instances. It reports whether it parked something.
+func (e *Engine) parkZeroTrafficSibling(ctx context.Context, appID, requested string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		return false
+	}
+	now := time.Now()
+	if e.now != nil {
+		now = e.now()
+	}
+	routed := map[string]bool{}
+	routesTraffic := func(deploymentID string) bool {
+		if v, ok := routed[deploymentID]; ok {
+			return v
+		}
+		dep, depErr := e.store.DeploymentByID(ctx, deploymentID)
+		v := depErr != nil || dep.Status != state.DeployLive || dep.TrafficPercent != 0 || dep.EffectiveMinInstances() > 0
+		routed[deploymentID] = v
+		return v
+	}
+	var pick *state.Instance
+	for i := range instances {
+		ins := &instances[i]
+		if state.State(ins.State) != state.StateRunning || ins.DeploymentID == "" || ins.DeploymentID == requested {
+			continue
+		}
+		if mode := state.InstanceMode(ins.Mode); mode != "" && mode != state.InstanceModeNormal {
+			continue
+		}
+		if now.Sub(ins.StartedAt) < MinInstanceAge || now.Sub(ins.LastRequestAt) < PressureParkIdle {
+			continue
+		}
+		if routesTraffic(ins.DeploymentID) {
+			continue
+		}
+		if pick == nil || ins.LastRequestAt.Before(pick.LastRequestAt) {
+			pick = ins
+		}
+	}
+	if pick == nil {
+		return false
+	}
+	if parkErr := e.Park(ctx, pick.ID); parkErr != nil {
+		e.log.Warn("sched: park a zero-traffic instance for a refused admission", "app", appID, "instance", pick.ID, "err", parkErr)
+		return false
+	}
+	e.log.Info("sched: parked an idle zero-traffic instance for a refused admission",
+		"app", appID, "parked_instance", pick.ID, "parked_deployment", pick.DeploymentID,
+		"requested_deployment", requested, "idle_s", int(now.Sub(pick.LastRequestAt).Seconds()))
+	plan := ""
+	if _, acct, _, acctErr := e.resolveAppAccount(ctx, appID); acctErr == nil {
+		plan = string(acct.Plan)
+	}
+	if counter := e.ops.EvictionFired(plan, "zero_traffic"); counter != nil {
+		counter.Inc()
+	}
+	return true
+}

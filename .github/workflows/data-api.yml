@@ -56,6 +56,10 @@ jobs:
           chmod +x "$DATA_API_POSTGREST_BIN"
       - name: Verify generated API, JWT RLS and client contract
         run: make data-api-acceptance
+      - name: Enable TLS for durable SQL credential acceptance
+        env:
+          POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
+        run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
       - name: Verify credential qualification, lifecycle and CLI integration
         env:
           FAAS_PGTEST_TEMPLATE_DATABASE: "1"

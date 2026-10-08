@@ -535,7 +535,7 @@ func cmdApp(args []string) int {
 				return printErr("Could not fetch app", err)
 			}
 			req.PublicAuth = openPublicAuthAfterTokenRemoval(current)
-			if req.PublicAuth == nil {
+			if req.PublicAuth == nil && current.PublicAuth.Mode != api.AppPublicAuthModeOpen {
 				fmt.Fprintf(os.Stderr, "Public URL access stays %s; pass --public-auth open to remove it.\n", current.PublicAuth.Mode)
 			}
 		}
@@ -912,6 +912,9 @@ func cmdApp(args []string) int {
 		return jsonOut(writeJSON(updated))
 	}
 	PrintOK(osStdout, "Updated")
+	if hint := requireAuthnStillOnHint(req, updated); hint != "" {
+		fmt.Fprintln(os.Stderr, hint)
+	}
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure: the customer just updated an app
 		// successfully, don't surface an unrelated auth/network blip
@@ -1277,6 +1280,16 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 // opens. An access control the owner chose (ip_allowlist, basic,
 // internal_only) stays: resetting it opened IP-restricted apps to everyone
 // (production-us hunt #5, H5-37).
+// requireAuthnStillOnHint explains why opening the public URL did not open
+// the app: require_authn (on by default for new apps) is a separate gate
+// that still answers 401 without a Gregale bearer token (hunt #6, H5-58).
+func requireAuthnStillOnHint(req api.UpdateAppRequest, updated api.AppResponse) string {
+	if req.PublicAuth == nil || req.PublicAuth.Mode != api.AppPublicAuthModeOpen || !updated.RequireAuthn {
+		return ""
+	}
+	return "Requests still need a Gregale bearer token: require_authn is on. Pass --no-require-authn to make the app public."
+}
+
 func openPublicAuthAfterTokenRemoval(current api.AppResponse) *api.PublicAuthBlock {
 	switch current.PublicAuth.Mode {
 	case "", api.AppPublicAuthModeBearer:
