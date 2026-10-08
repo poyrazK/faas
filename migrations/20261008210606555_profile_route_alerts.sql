@@ -14,7 +14,7 @@ ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_eve
  'issue.created','issue.assigned','issue.resolved','issue.reopened','issue.ignored','issue.regressed','issue.impact_threshold_reached',
  'routes.requirements.violated','routes.requirements.recovered','routes.requirements.changed',
  'routes.health.blocked','routes.health.resumed','routes.health.aborted',
- 'routes.monitor.violated','routes.monitor.recovered','workflow.finished',
+ 'routes.monitor.violated','routes.monitor.escalated','routes.monitor.recovered','workflow.finished',
  'profile.route_regressed','profile.route_recovered'
 ));
 -- +goose Down
