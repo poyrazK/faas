@@ -63,6 +63,12 @@ type AppWindowSummary struct {
 	NetTxBytes     int64
 	BuilderSeconds float64 // informational; surfaced as builder_seconds on the wire
 	ColdBootCount  int64
+	// FirstUsageHour is the earliest UTC hour in the window with
+	// non-zero MBSeconds for this app, or the zero time when the app
+	// billed nothing. The savings estimate starts its always-on
+	// counterfactual here so an app is never credited for hours
+	// before it first ran.
+	FirstUsageHour time.Time
 }
 
 // UsageSummaryStore is the minimal store surface BuildAppWindowSummary
@@ -121,6 +127,10 @@ func BuildAppWindowSummary(
 		// multiply by 3600.
 		sum.BuilderSeconds += CPUHours(u.CPUUsec) * 3600
 		sum.ColdBootCount += u.ColdBootCount
+		if u.MBSeconds > 0 && (sum.FirstUsageHour.IsZero() || u.Month.Before(sum.FirstUsageHour)) {
+			// UsageByHour carries the hour bucket in the Month field.
+			sum.FirstUsageHour = u.Month.UTC()
+		}
 	}
 	sum.GBHours = float64(int64(GBHours(sum.MBSeconds)*1e6+0.5)) / 1e6
 	return sum, "usage_minutes", nil

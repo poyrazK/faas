@@ -190,6 +190,8 @@ from .app_response_workload_class import AppResponseWorkloadClass
 from .app_restart_response import AppRestartResponse
 from .app_routes_response import AppRoutesResponse
 from .app_routes_response_source import AppRoutesResponseSource
+from .app_savings_response import AppSavingsResponse
+from .app_savings_response_source import AppSavingsResponseSource
 from .app_secret_export_response import AppSecretExportResponse
 from .app_secret_list_response import AppSecretListResponse
 from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecretsByScope
@@ -2980,6 +2982,8 @@ __all__ = (
     "AppRoutesResponseSource",
     "ApproveEnvironmentGitRevisionRequest",
     "ApproveEnvironmentGitRevisionResponse",
+    "AppSavingsResponse",
+    "AppSavingsResponseSource",
     "AppSecretExportResponse",
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",

@@ -9625,6 +9625,85 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/savings:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppSavings
+      summary: Per-app scale-to-zero savings estimate (trailing 30d by default).
+      description: |
+        Estimates how much RAM-time and money scale-to-zero saved this
+        app: billed usage compared with keeping `max(min_instances, 1)`
+        instances running from the app's first billed hour in the
+        window. Plan-gated Hobby+ with the same 402 as `/usage`.
+
+        Window resolution matches `/usage` (RFC3339, UTC-midnight
+        snaps, default trailing 30d), except `since` clamps to
+        `until - 30d`: actual usage comes from `usage_minutes`
+        (ADR-048, 30d retention), and a longer window would
+        undercount it and overstate the saving.
+
+        The figure is a conservative estimate, never an invoice line:
+        companion sidecars are left out of the always-on baseline, and
+        a burst above the baseline clamps the saving to zero.
+      parameters:
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: "RFC3339 lower bound. Default and floor: `until - 30d`."
+        - name: until
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: "RFC3339 exclusive end of the savings window, snapped to UTC midnight. Default: today's UTC midnight."
+      responses:
+        '200':
+          description: The savings estimate.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppSavingsResponse'
+              example:
+                slug: "my-api"
+                period_start: "2026-09-01T00:00:00Z"
+                period_end: "2026-09-03T00:00:00Z"
+                baseline_start: "2026-09-01T00:00:00Z"
+                baseline_instances: 1
+                billable_ram_mb: 520
+                always_on_mb_seconds: 89856000
+                actual_mb_seconds: 1872000
+                saved_mb_seconds: 87984000
+                always_on_gb_hours: 24.375
+                actual_gb_hours: 0.507813
+                saved_gb_hours: 23.867188
+                price_millicents_per_gb_hour: 1000
+                always_on_millicents: 24375
+                actual_millicents: 508
+                saved_millicents: 23867
+                parked_ratio: 0.979167
+                methodology: "Estimate: billed RAM-time compared with keeping the app's minimum instance count (at least one) running from its first billed hour in the window, valued at the plan overage rate. Companion sidecars are excluded from the always-on baseline."
+                source: "usage_minutes"
+                as_of: "2026-09-03T08:00:00.123456Z"
+        '400':
+          description: The savings window is invalid (a bound is not RFC3339, or `since` is after `until`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Plan does not unlock the per-app usage summary (Free). Same gate as `/usage`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/analytics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -53509,6 +53588,85 @@ components:
           type: string
           format: date-time
           description: "RFC3339Nano UTC stamping the envelope's authoritative 'as of' instant."
+
+    AppSavingsResponse:
+      description: |
+        Wire shape for `GET /v1/apps/{slug}/savings?since=&until=`.
+        A scale-to-zero savings estimate: billed RAM-time compared
+        with an always-on counterfactual of `baseline_instances`
+        instances of `billable_ram_mb` running from `baseline_start`
+        to `period_end`. `saved_* = max(0, always_on_* - actual_*)`.
+        Money fields are integer millicents at
+        `price_millicents_per_gb_hour` (the plan overage rate). This
+        is an estimate, not an invoice line; `methodology` carries
+        the sentence clients print under the figure.
+      type: object
+      required: [slug, period_start, period_end, baseline_start, baseline_instances, billable_ram_mb, always_on_mb_seconds, actual_mb_seconds, saved_mb_seconds, always_on_gb_hours, actual_gb_hours, saved_gb_hours, price_millicents_per_gb_hour, always_on_millicents, actual_millicents, saved_millicents, parked_ratio, methodology, source, as_of]
+      properties:
+        slug:
+          type: string
+          pattern: "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
+        period_start:
+          type: string
+          format: date-time
+          description: "Inclusive lower bound of the resolved window, UTC midnight, never earlier than period_end - 30d."
+        period_end:
+          type: string
+          format: date-time
+          description: "Exclusive upper bound of the resolved window, UTC midnight."
+        baseline_start:
+          type: string
+          format: date-time
+          description: "Start of the always-on counterfactual: the later of period_start and the app's first billed hour. Equals period_end when the app billed nothing."
+        baseline_instances:
+          type: integer
+          minimum: 1
+          description: "max(min_instances, 1) — the always-on instance floor."
+        billable_ram_mb:
+          type: integer
+          description: "Per-instance plan RAM + per-VM overhead used for the counterfactual. Companion sidecars are excluded, so the estimate is conservative."
+        always_on_mb_seconds:
+          type: integer
+          format: int64
+        actual_mb_seconds:
+          type: integer
+          format: int64
+          description: "Billed mb_seconds in the window (same source as /usage)."
+        saved_mb_seconds:
+          type: integer
+          format: int64
+        always_on_gb_hours:
+          type: number
+        actual_gb_hours:
+          type: number
+        saved_gb_hours:
+          type: number
+          description: "GB-hour fields are rounded to 6 decimal places."
+        price_millicents_per_gb_hour:
+          type: integer
+          format: int64
+        always_on_millicents:
+          type: integer
+          format: int64
+        actual_millicents:
+          type: integer
+          format: int64
+        saved_millicents:
+          type: integer
+          format: int64
+        parked_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: "saved_mb_seconds / always_on_mb_seconds."
+        methodology:
+          type: string
+        source:
+          type: string
+          enum: [usage_minutes, usage_daily, mixed]
+        as_of:
+          type: string
+          format: date-time
 
     RequestAnalyticsRoute:
       type: object

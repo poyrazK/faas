@@ -1716,6 +1716,9 @@ func (s *server) handler() http.Handler {
 	// loadApp). Plan-gated Hobby+ via AppUsageSummaryAllowed —
 	// same 402 contract as /metrics and /wake-timeline.
 	mux.HandleFunc("GET /v1/apps/{slug}/usage", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppUsage)))
+	// Scale-to-zero savings estimate (handlers_savings.go). Same auth
+	// chain and Hobby+ gate as /usage; window clamped to 30d retention.
+	mux.HandleFunc("GET /v1/apps/{slug}/savings", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppSavings)))
 	// ADR-093: per-route observability reader. Same auth chain
 	// as /v1/apps/{slug}/metrics (read-only, no MFA, primary
 	// caller is an API key with ScopesReadSurface). The handler

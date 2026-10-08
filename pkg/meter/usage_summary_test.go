@@ -134,3 +134,33 @@ func TestBuildAppWindowSummary_SourceIsUsageMinutes(t *testing.T) {
 		t.Errorf("source = %q, want usage_minutes (today's rollup reader)", source)
 	}
 }
+
+// spec: §4.7
+// TestBuildAppWindowSummary_FirstUsageHour pins the savings clamp
+// input: the earliest hour with non-zero MBSeconds for the app, in
+// UTC, ignoring other apps and zero-RAM rows (e.g. request-only
+// hours). An app that billed nothing reports the zero time.
+func TestBuildAppWindowSummary_FirstUsageHour(t *testing.T) {
+	day := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	store := stubStore{rows: []state.Usage{
+		{AppID: "app-1", Month: day.Add(5 * time.Hour), MBSeconds: 10},
+		{AppID: "app-2", Month: day.Add(1 * time.Hour), MBSeconds: 10},
+		{AppID: "app-1", Month: day.Add(2 * time.Hour), Requests: 3},
+		{AppID: "app-1", Month: day.Add(3 * time.Hour), MBSeconds: 10},
+	}}
+	sum, _, err := BuildAppWindowSummary(context.Background(), store, "acct-1", "app-1", day, day.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := day.Add(3 * time.Hour); !sum.FirstUsageHour.Equal(want) {
+		t.Errorf("FirstUsageHour = %v, want %v", sum.FirstUsageHour, want)
+	}
+
+	idle, _, err := BuildAppWindowSummary(context.Background(), store, "acct-1", "app-3", day, day.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !idle.FirstUsageHour.IsZero() {
+		t.Errorf("idle app FirstUsageHour = %v, want zero", idle.FirstUsageHour)
+	}
+}

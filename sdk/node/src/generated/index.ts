@@ -119,6 +119,7 @@ export type { AppRestartResponse } from './models/AppRestartResponse.js';
 export type { AppRoutesResponse } from './models/AppRoutesResponse.js';
 export type { ApproveEnvironmentGitRevisionRequest } from './models/ApproveEnvironmentGitRevisionRequest.js';
 export type { ApproveEnvironmentGitRevisionResponse } from './models/ApproveEnvironmentGitRevisionResponse.js';
+export type { AppSavingsResponse } from './models/AppSavingsResponse.js';
 export type { AppSecretExportResponse } from './models/AppSecretExportResponse.js';
 export type { AppSecretListResponse } from './models/AppSecretListResponse.js';
 export type { AppSecretReferenceListResponse } from './models/AppSecretReferenceListResponse.js';

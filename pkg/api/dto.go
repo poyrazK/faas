@@ -6482,6 +6482,52 @@ type AppUsageSummaryResponse struct {
 	AsOf                string  `json:"as_of"`
 }
 
+// AppSavingsResponse is the wire shape for GET /v1/apps/{slug}/savings
+// — a scale-to-zero savings estimate for one app. Same plan gate and
+// window vocabulary as AppUsageSummaryResponse, with the window
+// clamped to the 30d usage_minutes retention so the actual figure is
+// never undercounted (which would overstate the saving).
+//
+// Field-by-field:
+//   - PeriodStart / PeriodEnd: the resolved half-open window.
+//   - BaselineStart: where the always-on counterfactual starts — the
+//     later of PeriodStart and the app's first billed hour in the
+//     window. Equal to PeriodEnd when the app never ran.
+//   - BaselineInstances: max(min_instances, 1), the always-on floor.
+//   - BillableRAMMB: per-instance plan RAM + per-VM overhead used for
+//     the counterfactual (companion sidecars excluded, so the
+//     estimate is conservative).
+//   - AlwaysOn* / Actual* / Saved*: MB-seconds, GB-hours (6 dp) and
+//     integer millicents. Saved = max(0, AlwaysOn - Actual).
+//   - PriceMillicentsPerGBHour: the rate the money fields use (the
+//     plan overage rate, €0.01/GB-h today).
+//   - ParkedRatio: Saved / AlwaysOn in [0, 1].
+//   - Methodology: one human sentence the dashboard and CLI print
+//     under the figure so the estimate is never mistaken for an
+//     invoice line.
+type AppSavingsResponse struct {
+	Slug                     string    `json:"slug"`
+	PeriodStart              time.Time `json:"period_start"`
+	PeriodEnd                time.Time `json:"period_end"`
+	BaselineStart            time.Time `json:"baseline_start"`
+	BaselineInstances        int       `json:"baseline_instances"`
+	BillableRAMMB            int       `json:"billable_ram_mb"`
+	AlwaysOnMBSeconds        int64     `json:"always_on_mb_seconds"`
+	ActualMBSeconds          int64     `json:"actual_mb_seconds"`
+	SavedMBSeconds           int64     `json:"saved_mb_seconds"`
+	AlwaysOnGBHours          float64   `json:"always_on_gb_hours"`
+	ActualGBHours            float64   `json:"actual_gb_hours"`
+	SavedGBHours             float64   `json:"saved_gb_hours"`
+	PriceMillicentsPerGBHour int64     `json:"price_millicents_per_gb_hour"`
+	AlwaysOnMillicents       int64     `json:"always_on_millicents"`
+	ActualMillicents         int64     `json:"actual_millicents"`
+	SavedMillicents          int64     `json:"saved_millicents"`
+	ParkedRatio              float64   `json:"parked_ratio"`
+	Methodology              string    `json:"methodology"`
+	Source                   string    `json:"source"`
+	AsOf                     string    `json:"as_of"`
+}
+
 // WakeTimelineJSONRow is one row of AppWakeTimelineResponse.Rows.
 // Mirrors pkg/dashboard/views.WakeTimelineRow's fields so the JSON
 // mirror can render the same dashboard page 1:1 — the only

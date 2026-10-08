@@ -96,6 +96,7 @@ export type { AppResponse } from './AppResponse.js';
 export type { AppRestartResponse } from './AppRestartResponse.js';
 export type { AppRoutesResponse } from './AppRoutesResponse.js';
 export type { AppSLOResponse } from './AppSLOResponse.js';
+export type { AppSavingsResponse } from './AppSavingsResponse.js';
 export type { AppSecretExportResponse } from './AppSecretExportResponse.js';
 export type { AppSecretListResponse } from './AppSecretListResponse.js';
 export type { AppSecretReferenceListResponse } from './AppSecretReferenceListResponse.js';

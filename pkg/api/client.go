@@ -4579,6 +4579,25 @@ func (c *Client) GetAppUsageSummary(ctx context.Context, slug string, opts AppUs
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppSavings returns the scale-to-zero savings estimate for slug.
+// Same window options and Hobby+ gate as GetAppUsageSummary; the server
+// clamps the window to the trailing 30d usage_minutes retention.
+func (c *Client) GetAppSavings(ctx context.Context, slug string, opts AppUsageSummaryOptions) (AppSavingsResponse, error) {
+	var out AppSavingsResponse
+	path := "/v1/apps/" + slug + "/savings"
+	q := url.Values{}
+	if opts.Since != "" {
+		q.Set("since", opts.Since)
+	}
+	if opts.Until != "" {
+		q.Set("until", opts.Until)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetAppRequestAnalytics returns the bounded historical request analytics
 // overview for slug. Since is a duration such as "24h" or "7d"; the server
 // clamps it to the plan's request-telemetry retention and reports that fact

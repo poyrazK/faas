@@ -10,6 +10,7 @@ import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { AppRestartResponse } from '../models/AppRestartResponse.js';
 import type { AppRoutesResponse } from '../models/AppRoutesResponse.js';
+import type { AppSavingsResponse } from '../models/AppSavingsResponse.js';
 import type { AppSLOResponse } from '../models/AppSLOResponse.js';
 import type { AppsMetricsResponse } from '../models/AppsMetricsResponse.js';
 import type { AppStreamingStatus } from '../models/AppStreamingStatus.js';
@@ -1379,6 +1380,66 @@ export class AppsService {
         BEFORE \`loadApp\` so a Free customer probing a slug
         never gets a 404 (slug-leak guard).
         `,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Per-app scale-to-zero savings estimate (trailing 30d by default).
+   * Estimates how much RAM-time and money scale-to-zero saved this
+   * app: billed usage compared with keeping `max(min_instances, 1)`
+   * instances running from the app's first billed hour in the
+   * window. Plan-gated Hobby+ with the same 402 as `/usage`.
+   *
+   * Window resolution matches `/usage` (RFC3339, UTC-midnight
+   * snaps, default trailing 30d), except `since` clamps to
+   * `until - 30d`: actual usage comes from `usage_minutes`
+   * (ADR-048, 30d retention), and a longer window would
+   * undercount it and overstate the saving.
+   *
+   * The figure is a conservative estimate, never an invoice line:
+   * companion sidecars are left out of the always-on baseline, and
+   * a burst above the baseline clamps the saving to zero.
+   *
+   * @returns AppSavingsResponse The savings estimate.
+   * @throws ApiError
+   */
+  public static getAppSavings({
+    slug,
+    since,
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * RFC3339 lower bound. Default and floor: `until - 30d`.
+     */
+    since?: string,
+    /**
+     * RFC3339 exclusive end of the savings window, snapped to UTC midnight. Default: today's UTC midnight.
+     */
+    until?: string,
+  }): CancelablePromise<AppSavingsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/savings',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+      },
+      errors: {
+        400: `The savings window is invalid (a bound is not RFC3339, or \`since\` is after \`until\`).`,
+        401: `code: unauthorized`,
+        402: `Plan does not unlock the per-app usage summary (Free). Same gate as \`/usage\`.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

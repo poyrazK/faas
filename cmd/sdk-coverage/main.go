@@ -1228,6 +1228,7 @@ var methodRouteMap = map[string]string{
 	// (AppUsageSummary) for the noun.
 	"GET /v1/apps/{slug}/wake-timeline":             "GetAppWakeTimeline",
 	"GET /v1/apps/{slug}/usage":                     "GetAppUsageSummary",
+	"GET /v1/apps/{slug}/savings":                   "GetAppSavings",
 	"GET /v1/apps/{slug}/analytics":                 "GetAppRequestAnalytics",
 	"GET /v1/apps/{slug}/analytics/timeseries":      "GetAppRequestAnalyticsTimeseries",
 	"GET /v1/apps/{slug}/analytics/route-customers": "GetAppRouteCustomerUsage",
