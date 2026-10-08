@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -5777,6 +5778,16 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 	// so the wake.readiness_200 emit can carry the elapsed_ms
 	// field. Keep it local: one JailerVMM serves many concurrent instances.
 	readinessStartedAt := time.Now()
+	// A guest that stops during startup (crash-looped workload, guest-init
+	// exit) can never become ready: stop probing at once and report what the
+	// workload printed instead of waiting out the whole startup deadline.
+	ctx, stopGuestWatch := v.cancelOnGuestStop(ctx, l.Instance)
+	defer stopGuestWatch()
+	defer func() {
+		if err != nil && errors.Is(context.Cause(ctx), errGuestStopped) && !v.guestStopRequested(l.Instance) {
+			err = v.guestStoppedDuringStartup(l)
+		}
+	}()
 
 	if healthcheckGRPC {
 		conn, connErr := grpc.NewClient("passthrough:///"+addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -6048,6 +6059,89 @@ func characterizationReadinessMismatch(report api.CharacterizationReport, execut
 		}
 	}
 	return nil
+}
+
+// errGuestStopped is the readiness context's cancel cause when the
+// Firecracker process of the instance exits before the guest became ready.
+var errGuestStopped = errors.New("guest stopped during startup")
+
+// cancelOnGuestStop derives a context that is cancelled with errGuestStopped
+// when the instance's Firecracker process exits. production-us hunt #8: a
+// public nginx image crash-looped and guest-init exited (kernel panic) 1.5 s
+// after boot, yet readiness probed the dead guest for its full 2-minute
+// deadline and then reported "app_not_listening" with no app output.
+func (v *JailerVMM) cancelOnGuestStop(ctx context.Context, instance string) (context.Context, func()) {
+	v.mu.Lock()
+	rec := v.recs[instance]
+	v.mu.Unlock()
+	if rec == nil || rec.done == nil {
+		return ctx, func() {}
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	stop := make(chan struct{})
+	go func() {
+		select {
+		case <-rec.done:
+			cancel(errGuestStopped)
+		case <-stop:
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() {
+		close(stop)
+		cancel(nil)
+	}
+}
+
+// guestStopRequested reports whether vmmd itself stopped the instance (an
+// explicit destroy owns that exit and its error).
+func (v *JailerVMM) guestStopRequested(instance string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	rec := v.recs[instance]
+	return rec != nil && rec.stopping
+}
+
+// guestStoppedDuringStartup reports a guest that stopped before readiness,
+// with the workload's own last output lines, in the same form as a
+// characterization report of a workload that exited during startup.
+func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
+	var lines []string
+	if ring := v.LogRing(l.Instance); ring != nil {
+		for _, line := range ring.Snapshot(0) {
+			lines = append(lines, line.Line)
+		}
+	}
+	if tail := workloadOutputTail(lines, 20); tail != "" {
+		return fmt.Errorf("workload stopped during startup (guest %s exited before becoming ready): %s", l.Instance, tail)
+	}
+	return fmt.Errorf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance)
+}
+
+// kernelLogLine matches guest kernel messages ("[    1.445781] ...") that the
+// serial console interleaves with workload output.
+var kernelLogLine = regexp.MustCompile(`^\[\s*\d+\.\d+\]`)
+
+// workloadOutputTail keeps the last max non-empty lines that are not guest
+// kernel messages (a guest-init exit ends in a kernel panic trace that would
+// otherwise push the workload's own error out of the tail).
+func workloadOutputTail(lines []string, max int) string {
+	kept := make([]string, 0, max)
+	for i := len(lines) - 1; i >= 0 && len(kept) < max; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || kernelLogLine.MatchString(line) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	for i, j := 0, len(kept)-1; i < j; i, j = i+1, j-1 {
+		kept[i], kept[j] = kept[j], kept[i]
+	}
+	tail := []rune(strings.Join(kept, "\n"))
+	if len(tail) > 4096 {
+		tail = tail[len(tail)-4096:]
+	}
+	return string(tail)
 }
 
 // notReadyProblem shapes the deadline-expired error from the TCP
