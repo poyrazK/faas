@@ -96,7 +96,7 @@ func TestOperationManifestHTTPOnlyAndAtomicResolution(t *testing.T) {
 	}
 }
 
-// ADR-638: source declarations pin HTTP transaction negotiation into the revision.
+// ADR-713: source declarations pin HTTP transaction negotiation into the revision.
 func TestOperationManifestHTTPTransactionVersion(t *testing.T) {
 	for _, format := range []string{"yaml", "toml"} {
 		t.Run(format, func(t *testing.T) {
@@ -223,7 +223,7 @@ func mustWorkflowRevision(t *testing.T, spec api.OperationDefinitionSpec) string
 	return contract.Revision
 }
 
-// ADR-639: deployment bundles capture an independent business-reference declaration.
+// ADR-714: deployment bundles capture an independent business-reference declaration.
 func TestOperationManifestSubjects(t *testing.T) {
 	for _, source := range []string{
 		"operations:\n  - name: fulfill-order\n    method: POST\n    path: /orders\n    owner: platform_tenant\n    input_schema: input.json\n    output_schema: output.json\n    progress_stages: [complete]\n    subject: {type: order, id_from: /order_id}\n",

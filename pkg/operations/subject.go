@@ -1,4 +1,4 @@
-// ADR-639: business references are immutable correlation metadata, not ownership.
+// ADR-714: business references are immutable correlation metadata, not ownership.
 package operations
 
 import (

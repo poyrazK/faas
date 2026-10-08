@@ -1,10 +1,10 @@
-# ADR-644: explicit customer Operation workflow state
+# ADR-719: explicit customer Operation workflow state
 
 Status: accepted for the internal HTTP implementation.
 
 ## Context
 
-ADR-640 retains application-reported business milestones, and ADR-641 maps
+ADR-715 retains application-reported business milestones, and ADR-716 maps
 those facts into named workflows. The timeline can show observed events, but
 applications need a direct way to report the current business state they have
 committed.

@@ -222,7 +222,7 @@ def test_operation_completion_retry_receipt_contract() -> None:
     assert report.business_state == "succeeded" and report.state == "dead" and report.replay_generation == 0
 
 
-# ADR-639: public references are independent of caller identity and stay opaque.
+# ADR-714: public references are independent of caller identity and stay opaque.
 def test_operation_business_reference_wire_contract() -> None:
     from faas_sdk.api.operations import list_account_operations, list_platform_tenant_self_operations
     from faas_sdk.models.operation_subject import OperationSubject

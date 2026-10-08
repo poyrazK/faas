@@ -1,4 +1,4 @@
-// ADR-638: authorize business access before the receipt helper, including replays.
+// ADR-713: authorize business access before the receipt helper, including replays.
 import {customerOperationRequestFromHeaders} from './sdk.mjs';
 
 export class OrderRequestError extends Error {

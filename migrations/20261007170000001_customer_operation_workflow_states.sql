@@ -1,5 +1,5 @@
 -- filename: 20261007170000001_customer_operation_workflow_states.sql
--- ADR-644: app-declared workflow state and monotonic current snapshots.
+-- ADR-719: app-declared workflow state and monotonic current snapshots.
 -- +goose Up
 CREATE TABLE customer_operation_workflow_state_reports (
     operation_id uuid NOT NULL REFERENCES customer_operations(id) ON DELETE CASCADE,

@@ -1,10 +1,10 @@
-# ADR-645: declared customer Operation workflow transitions
+# ADR-720: declared customer Operation workflow transitions
 
 Status: accepted for the internal HTTP implementation.
 
 ## Context
 
-ADR-644 lets applications report a state from the same transaction as a
+ADR-719 lets applications report a state from the same transaction as a
 business write. A declared state vocabulary catches misspelled values, but it
 does not describe which state changes belong to the workflow.
 

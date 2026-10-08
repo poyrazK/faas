@@ -1,5 +1,5 @@
 -- filename: 20261007190000001_customer_operation_workflow_transitions.sql
--- ADR-645: retain the declared source state with each transition report.
+-- ADR-720: retain the declared source state with each transition report.
 -- +goose Up
 ALTER TABLE customer_operation_workflow_state_reports
     ADD COLUMN from_state text NOT NULL DEFAULT ''

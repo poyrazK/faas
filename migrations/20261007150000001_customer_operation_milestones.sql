@@ -1,5 +1,5 @@
 -- filename: 20261007150000001_customer_operation_milestones.sql
--- ADR-640: retained public business facts and cross-generation deduplication.
+-- ADR-715: retained public business facts and cross-generation deduplication.
 -- +goose Up
 CREATE TABLE customer_operation_milestones (
     operation_id uuid NOT NULL REFERENCES customer_operations(id) ON DELETE CASCADE,

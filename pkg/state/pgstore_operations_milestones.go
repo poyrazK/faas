@@ -1,4 +1,4 @@
-// ADR-640: milestone identity outlives the publishing execution claim.
+// ADR-715: milestone identity outlives the publishing execution claim.
 package state
 
 import (

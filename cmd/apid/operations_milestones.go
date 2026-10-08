@@ -1,4 +1,4 @@
-// ADR-640: public business facts share existing owner and execution boundaries.
+// ADR-715: public business facts share existing owner and execution boundaries.
 package main
 
 import (

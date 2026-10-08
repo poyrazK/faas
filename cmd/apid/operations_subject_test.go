@@ -1,4 +1,4 @@
-// ADR-639: subject queries use the existing authenticated history boundary.
+// ADR-714: subject queries use the existing authenticated history boundary.
 package main
 
 import (

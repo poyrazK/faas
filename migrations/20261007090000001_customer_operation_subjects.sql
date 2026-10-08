@@ -1,5 +1,5 @@
 -- filename: 20261007090000001_customer_operation_subjects.sql
--- ADR-639: immutable, application-selected business correlation metadata.
+-- ADR-714: immutable, application-selected business correlation metadata.
 
 -- +goose Up
 ALTER TABLE customer_operations ADD CONSTRAINT customer_operation_subject_valid CHECK (

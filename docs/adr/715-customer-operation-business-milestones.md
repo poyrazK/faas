@@ -1,4 +1,4 @@
-# ADR-640: Transaction-backed Customer Operation milestones
+# ADR-715: Transaction-backed Customer Operation milestones
 
 - **Status:** accepted for internal implementation; production admission stays disabled
 - **Date:** 2026-10-07
@@ -14,6 +14,6 @@ A dedicated platform ledger retains facts for the Operation result lifetime, ind
 
 Read APIs provide a single Operation feed or an exact business-reference feed within an explicit app and environment. Tenant routes derive ownership from credentials and omit account-operator tenant metadata. Account routes use existing account/app/MFA boundaries with an optional customer filter. Descending keyset cursors use first publication time, Operation ID, and milestone ID; fingerprints bind purpose, owner, app, environment, and selectors. Occurrence time describes application timing, not cross-Operation causality. Immutable business references come from the admitted Operation rather than report bodies.
 
-The Go/Node/Python SDKs, CLI, and dashboard expose these feeds. Dashboard payloads use normal HTML escaping and only come from declared, validated public facts. Applications must choose customer-visible fields and authorize the underlying entity before receipt replay, as required by ADR-638 and ADR-639.
+The Go/Node/Python SDKs, CLI, and dashboard expose these feeds. Dashboard payloads use normal HTML escaping and only come from declared, validated public facts. Applications must choose customer-visible fields and authorize the underlying entity before receipt replay, as required by ADR-713 and ADR-714.
 
 Portable acceptance kills the actual order example after business commit and before first publication. Authorized recovery publishes the saved fact once, returns the original result, and leaves one business write. Additional memory/PostgreSQL and Node tests cover changed-ID replay conflicts, schema rollback, lost publication acknowledgements, stale claims, bounded JSON encoding, immutable snapshots, quota enforcement, and customer/filter isolation. Native preview qualification remains a separate rollout gate.

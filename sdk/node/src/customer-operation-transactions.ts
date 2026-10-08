@@ -1,4 +1,4 @@
-// ADR-638: result-only receipts for customer Operation HTTP executions.
+// ADR-713: result-only receipts for customer Operation HTTP executions.
 import { createHash } from 'node:crypto';
 import { OPERATION_REQUEST_BYTES, OPERATION_IDENTITY_BYTES, OPERATION_RESPONSE_BYTES } from './operation-contract.js';
 import { operationHeaders, operationExecutionContext, type OperationRequestHeaders } from './operation-execution-context.js';

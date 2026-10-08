@@ -1,4 +1,4 @@
-// ADR-640: stable milestone IDs cross execution generations, while publication remains fenced.
+// ADR-715: stable milestone IDs cross execution generations, while publication remains fenced.
 package state
 
 import (

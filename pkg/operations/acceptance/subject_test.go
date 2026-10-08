@@ -1,4 +1,4 @@
-// ADR-639: reference lookup preserves owner, environment, replay and recovery.
+// ADR-714: reference lookup preserves owner, environment, replay and recovery.
 package acceptance_test
 
 import (

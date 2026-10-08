@@ -1,4 +1,4 @@
-// ADR-640: publication receipts belong to logical work, not its reporting attempt.
+// ADR-715: publication receipts belong to logical work, not its reporting attempt.
 package state
 
 import (

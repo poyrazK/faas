@@ -1,4 +1,4 @@
-// ADR-640: commit facts with business writes, then publish under a fresh execution fence.
+// ADR-715: commit facts with business writes, then publish under a fresh execution fence.
 import { randomUUID } from 'node:crypto';
 import { OPERATION_MILESTONE_PAYLOAD_BYTES, OPERATION_MILESTONE_BATCH_BYTES, OPERATION_MILESTONES } from './operation-contract.js';
 import { customerOperationRequestDigest, type CustomerOperationTransactionRequest } from './customer-operation-transactions.js';

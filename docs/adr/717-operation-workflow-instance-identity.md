@@ -1,10 +1,10 @@
-# ADR-642: identify workflow instances from public milestone facts
+# ADR-717: identify workflow instances from public milestone facts
 
 Status: accepted for the internal HTTP implementation.
 
 ## Context
 
-ADR-641 groups observed facts by workflow name and business reference. When the
+ADR-716 groups observed facts by workflow name and business reference. When the
 same process runs more than once for one reference, the timeline can combine
 facts from separate runs.
 

@@ -43,7 +43,7 @@ execution contract:
   transport while retaining their independent authorization and delivery
   policies. Retrying delivery does not regenerate a business result.
 - The internal Node/PostgreSQL adapter in
-  [ADR-638](adr/638-customer-operation-http-transactions.md) explicitly opts in
+  [ADR-713](adr/713-customer-operation-http-transactions.md) explicitly opts in
   through `http_transaction_version: 1`. It negotiates a result-only customer
   receipt protocol, with a separate table and lock namespace. Its response is
   the full business JSON result, so existing schema validation and fenced
@@ -597,7 +597,7 @@ ledger entry after the same DDL has already applied. No merged migration was
 edited. Focused race tests and migrated PostgreSQL validation qualify these
 changes separately; final current-head repository CI remains the release gate.
 
-## Business-reference continuation (ADR-639)
+## Business-reference continuation (ADR-714)
 
 HTTP definitions may declare `subject: {type: order, id_from: /order_id}`.
 New admissions extract a bounded public string reference after input validation;
@@ -622,7 +622,7 @@ Node/PostgreSQL order acceptance passed commit-before-lost-response recovery and
 customer-isolated lookup by order ID. Native fleet qualification and production
 admission remain gated.
 
-## Durable business milestones continuation (ADR-640)
+## Durable business milestones continuation (ADR-715)
 
 HTTP transaction definitions may declare source-bundled public milestone schemas.
 The Node transaction helper validates a bounded batch before committing business

@@ -1,10 +1,10 @@
-# ADR-641: read-only customer Operation business workflows
+# ADR-716: read-only customer Operation business workflows
 
 Status: accepted for the internal HTTP implementation.
 
 ## Context
 
-ADR-640 retains schema-validated business milestones and associates them with
+ADR-715 retains schema-validated business milestones and associates them with
 an Operation's immutable business reference. Applications can report facts
 across several Operations for one entity, but clients do not know how those
 facts map to named business processes or their step order.

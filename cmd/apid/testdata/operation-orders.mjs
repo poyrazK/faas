@@ -1,4 +1,4 @@
-// ADR-640: kill after business commit and durable outbox, before first publication.
+// ADR-715: kill after business commit and durable outbox, before first publication.
 import pg from '../../../examples/customer-operation-orders/node_modules/pg/lib/index.js';
 import {createOrderServer} from '../../../examples/customer-operation-orders/server.mjs';
 import {GregaleOperations} from '../../../sdk/node/dist/index.js';

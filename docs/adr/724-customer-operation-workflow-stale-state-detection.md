@@ -1,4 +1,4 @@
-# ADR-649: Detect stale customer workflow states
+# ADR-724: Detect stale customer workflow states
 
 ## Status
 

@@ -1,4 +1,4 @@
--- ADR-638. Application-owned schema; install explicitly as the database owner.
+-- ADR-713. Application-owned schema; install explicitly as the database owner.
 -- Retain receipts while the original customer Operation can replay.
 CREATE TABLE IF NOT EXISTS public.gregale_customer_operation_inbox (
     operation_id uuid PRIMARY KEY,
@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS public.gregale_customer_operation_inbox (
     created_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
--- ADR-640. Pending public milestones share the business/receipt transaction.
+-- ADR-715. Pending public milestones share the business/receipt transaction.
 -- Install this additive table before opting a definition into milestones.
 CREATE TABLE IF NOT EXISTS public.gregale_customer_operation_milestones (
     operation_id uuid NOT NULL REFERENCES public.gregale_customer_operation_inbox(operation_id)
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS public.gregale_customer_operation_milestones (
     PRIMARY KEY (operation_id, id)
 );
 
--- ADR-644. State revisions and their publication outbox share the business
+-- ADR-719. State revisions and their publication outbox share the business
 -- transaction, so recovery can replay a committed update without rerunning it.
 CREATE TABLE IF NOT EXISTS public.gregale_customer_operation_workflow_state_counters (
     platform_tenant_id uuid NOT NULL,

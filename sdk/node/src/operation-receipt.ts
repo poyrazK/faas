@@ -1,4 +1,4 @@
-// Shared application PostgreSQL receipt engine (ADR-586, ADR-638).
+// Shared application PostgreSQL receipt engine (ADR-586, ADR-713).
 export interface OperationTransaction {
   query(sql: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
 }

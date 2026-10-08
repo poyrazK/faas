@@ -1,4 +1,4 @@
-# ADR-639: Customer Operation business references
+# ADR-714: Customer Operation business references
 
 - **Status:** accepted for internal implementation; production admission stays disabled
 - **Date:** 2026-10-07

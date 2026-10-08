@@ -1,4 +1,4 @@
-# ADR-647: Check workflow transition continuity in the application transaction
+# ADR-722: Check workflow transition continuity in the application transaction
 
 ## Status
 

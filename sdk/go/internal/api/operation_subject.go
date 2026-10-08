@@ -1,4 +1,4 @@
-// ADR-639: public operation business references.
+// ADR-714: public operation business references.
 package api
 
 type OperationSubjectSpec struct {

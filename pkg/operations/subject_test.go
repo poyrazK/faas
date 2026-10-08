@@ -1,4 +1,4 @@
-// ADR-639: bounded immutable business correlation metadata.
+// ADR-714: bounded immutable business correlation metadata.
 package operations
 
 import (

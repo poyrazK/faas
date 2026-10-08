@@ -1,4 +1,4 @@
-// ADR-640: durable business facts are independent of execution attempts.
+// ADR-715: durable business facts are independent of execution attempts.
 package api
 
 import (

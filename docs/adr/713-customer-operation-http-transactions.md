@@ -1,4 +1,4 @@
-# ADR-638: Customer Operation HTTP transactions
+# ADR-713: Customer Operation HTTP transactions
 
 - **Status:** accepted for internal implementation; production admission stays disabled
 - **Date:** 2026-10-07

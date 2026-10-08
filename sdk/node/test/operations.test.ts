@@ -173,7 +173,7 @@ test('default browser fetch retains its global receiver for customer requests', 
 });
 
 
-// ADR-639: business references stay opaque, paired and scoped by tenant credentials.
+// ADR-714: business references stay opaque, paired and scoped by tenant credentials.
 test('business reference lookup encodes exact IDs and rejects partial or oversized selectors', async () => {
   let calls = 0;
   const subject = {type: 'order', id: 'ord/42?&é😀'};

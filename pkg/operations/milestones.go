@@ -1,4 +1,4 @@
-// ADR-640: immutable declarations validate public, transaction-backed milestones.
+// ADR-715: immutable declarations validate public, transaction-backed milestones.
 package operations
 
 import (

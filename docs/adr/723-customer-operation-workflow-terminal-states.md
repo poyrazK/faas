@@ -1,4 +1,4 @@
-# ADR-648: Declare terminal business workflow states
+# ADR-723: Declare terminal business workflow states
 
 ## Status
 

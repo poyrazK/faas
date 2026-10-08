@@ -1,4 +1,4 @@
-// ADR-638: source-declared transactions recover committed order fulfillment without repeating business writes.
+// ADR-713: source-declared transactions recover committed order fulfillment without repeating business writes.
 //go:build !no_pg
 
 package main
@@ -33,7 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/operations"
-	"github.com/onebox-faas/faas/pkg/sched" //nolint:depguard // ADR-638 portable acceptance drives the scheduler; production apid only records intent.
+	"github.com/onebox-faas/faas/pkg/sched" //nolint:depguard // ADR-713 portable acceptance drives the scheduler; production apid only records intent.
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )

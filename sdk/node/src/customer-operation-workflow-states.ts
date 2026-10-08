@@ -1,4 +1,4 @@
-// ADR-644/647: app-owned workflow state snapshots with transactional continuity.
+// ADR-719/647: app-owned workflow state snapshots with transactional continuity.
 import { randomUUID } from 'node:crypto';
 import { OPERATION_MILESTONE_BATCH_BYTES, OPERATION_WORKFLOW_STATE_REPORTS } from './operation-contract.js';
 import type { CustomerOperationTransactionRequest } from './customer-operation-transactions.js';

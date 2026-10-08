@@ -1,10 +1,10 @@
-# ADR-643: read one customer Operation workflow instance
+# ADR-718: read one customer Operation workflow instance
 
 Status: accepted for the internal HTTP implementation.
 
 ## Context
 
-ADR-642 gives each observed workflow mapping a stable app-provided instance ID.
+ADR-717 gives each observed workflow mapping a stable app-provided instance ID.
 Clients can currently list every retained milestone for a business reference
 and group those facts themselves.
 
