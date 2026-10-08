@@ -1,6 +1,6 @@
 // Package durableentity implements SQL-free logical state using immutable
 // snapshots and an ownership/state manifest committed by compare-and-swap.
-// It is an internal prototype, not a customer execution runtime (ADR-678).
+// It is an internal prototype, not a customer execution runtime (ADR-712).
 package durableentity
 
 import (

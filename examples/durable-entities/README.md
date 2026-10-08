@@ -8,7 +8,7 @@ execution owner; repeating a request ID and the same delta replays the original
 result without incrementing again.
 
 This contains the trusted storage harness and a disabled-by-default invocation
-preview from [ADR-678](../../docs/adr/678-object-storage-durable-entities.md).
+preview from [ADR-712](../../docs/adr/712-object-storage-durable-entities.md).
 The Go command runs a trusted callback locally. The `app/` counter receives
 transitions through Gregale's normal scheduler and microVM invocation path.
 Neither is a generally available production feature.
@@ -172,7 +172,7 @@ fixed categories and omit identities and keys. Upload bytes measure acknowledged
 encoded transfers, including manifest rewrites, rather than retained bucket bytes.
 Cleanup deletes current keys and preserves all committed retry results. Plan
 quotas, pricing, billing and real-provider operational qualification remain pending.
-See [ADR-678](../../docs/adr/678-object-storage-durable-entities.md) for exact metric names.
+See [ADR-712](../../docs/adr/712-object-storage-durable-entities.md) for exact metric names.
 
 ## Inspect storage and configure a preview cap
 

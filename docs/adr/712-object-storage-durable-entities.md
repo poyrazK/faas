@@ -1,4 +1,4 @@
-# ADR-678 · Object-storage durable entities
+# ADR-712 · Object-storage durable entities
 
 - **Status:** accepted for an internal prototype and opt-in invocation/alarm/maintenance/inventory preview; native runtime and provider qualification pending
 - **Date:** 2026-10-07
