@@ -76,6 +76,7 @@ const (
 	platformTenantsFile           = "platform_tenants.go"            // ADR-226 account-level platform customers
 	platformTenantCredentialsFile = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
 	runtimePolicyFile             = "runtime_policy.go"              // app and traffic control-plane convergence status
+	serviceMapFile                = "service_map.go"                 // ADR-732 account service map DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -1120,6 +1121,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
+		filepath.Join(root, "pkg", "api", serviceMapFile),
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
