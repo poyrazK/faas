@@ -1050,6 +1050,8 @@ type Handler struct {
 	// func(Target) http.Handler — the wire defaulting at vmmd
 	// keeps pre-PR-C targets (Port=0) reaching 8080.
 	proxyByNode func(t Target) http.Handler
+	// crashThrottle limits ADR-733 crash capture requests per app.
+	crashThrottle crashCaptureThrottle
 	// rawByNode (issue #676 / ADR-080) is the Upgrade-traffic
 	// counterpart of proxyByNode. When non-nil, the handler
 	// dispatches inbound Connection: Upgrade + Upgrade: <token>
@@ -7394,6 +7396,10 @@ haveApp:
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}
+	// ADR-733: a serving instance that answered 5xx may be captured for a
+	// crash snapshot. Asynchronous and throttled; never affects this
+	// response.
+	h.maybeRequestCrashCapture(r, app, target, rec.status)
 	// Issue #471 / ADR-047 PR-A buffered-fallback AC. The
 	// per-app streaming_enabled flag (ap.StreamingEnabled,
 	// propagated through pgRouter.toApp) is the load-bearing

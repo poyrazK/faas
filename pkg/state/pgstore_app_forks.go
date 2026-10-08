@@ -41,10 +41,19 @@ func (s *PgStore) CreateAppFork(ctx context.Context, params CreateAppForkParams)
 	if err := appForkLimitExceeded(p, int(counts.AppActive), int(counts.AccountActive)); err != nil {
 		return AppFork{}, err
 	}
-	row, err := q.InsertAppFork(ctx, tx, sqlc.InsertAppForkParams{
-		RequestedBy: p.RequestedBy, TtlSeconds: int32(p.TTLSeconds), CreatedAt: createdAt, //nolint:gosec // validated 60..86400
-		AppID: appID, AccountID: accountID, DeploymentID: deploymentID, AccessTokenHash: p.AccessTokenHash,
-	})
+	var row sqlc.AppFork
+	if p.CrashCaptureID != "" {
+		row, err = q.InsertAppForkFromCrashCapture(ctx, tx, sqlc.InsertAppForkFromCrashCaptureParams{
+			RequestedBy: p.RequestedBy, TtlSeconds: int32(p.TTLSeconds), CreatedAt: createdAt, //nolint:gosec // validated 60..86400
+			AccessTokenHash: p.AccessTokenHash, CrashCaptureID: mustPgUUID(p.CrashCaptureID),
+			AppID: appID, AccountID: accountID,
+		})
+	} else {
+		row, err = q.InsertAppFork(ctx, tx, sqlc.InsertAppForkParams{
+			RequestedBy: p.RequestedBy, TtlSeconds: int32(p.TTLSeconds), CreatedAt: createdAt, //nolint:gosec // validated 60..86400
+			AppID: appID, AccountID: accountID, DeploymentID: deploymentID, AccessTokenHash: p.AccessTokenHash,
+		})
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppFork{}, ErrAppForkDeploymentUnavailable
 	}
@@ -122,5 +131,6 @@ func appForkFromSQLC(row sqlc.AppFork) AppFork {
 		StartedAt: timestamptzToTimePtr(row.StartedAt), FinishedAt: timestamptzToTimePtr(row.FinishedAt),
 		CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(),
 		AccessTokenHash: row.AccessTokenHash,
+		CrashCaptureID:  executionUUIDPtr(row.CrashCaptureID),
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -65,10 +66,11 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 	if err != nil {
 		return ForkRestore{}, err
 	}
-	choice := e.chooseWakeSnapshot(ctx, dep.ID, string(acct.Plan), app.RAMMB, app.AppProtocol)
-	if !choice.ok || choice.snap.StorageKey == "" {
-		return ForkRestore{}, ErrForkNoCapture
+	snap, err := e.forkSnapshot(ctx, fork, dep, string(acct.Plan), app)
+	if err != nil {
+		return ForkRestore{}, err
 	}
+	choice := wakeSnapshotChoice{snap: snap, ok: true}
 	limits := api.MustLimitsFor(acct.Plan)
 	placement, err := e.choosePlacementLocked(ctx, Request{
 		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU,
@@ -99,6 +101,29 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 		return ForkRestore{}, err
 	}
 	return ForkRestore{InstanceID: ins.ID, SnapshotID: choice.snap.ID, NodeID: placement.NodeID}, nil
+}
+
+// forkSnapshot picks what a fork restores: its ADR-733 crash capture when it
+// is pinned to one (which must still be ready and unexpired), otherwise the
+// deployment's newest compatible snapshot.
+func (e *Engine) forkSnapshot(ctx context.Context, fork state.AppFork, dep state.Deployment, plan string, app state.App) (state.Snapshot, error) {
+	if fork.CrashCaptureID != nil {
+		capture, err := e.store.CrashCaptureForRestore(ctx, *fork.CrashCaptureID)
+		if err != nil || capture.AppID != fork.AppID || capture.DeploymentID != dep.ID ||
+			capture.ExpiresAt == nil || !capture.ExpiresAt.After(time.Now()) {
+			return state.Snapshot{}, ErrForkNoCapture
+		}
+		snap, ok := capture.Snapshot()
+		if !ok || snap.FCVersion != e.fcVer {
+			return state.Snapshot{}, ErrForkNoCapture
+		}
+		return snap, nil
+	}
+	choice := e.chooseWakeSnapshot(ctx, dep.ID, plan, app.RAMMB, app.AppProtocol)
+	if !choice.ok || choice.snap.StorageKey == "" {
+		return state.Snapshot{}, ErrForkNoCapture
+	}
+	return choice.snap, nil
 }
 
 // resolveForkTarget loads the fork's app, pinned deployment and account,

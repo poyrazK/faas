@@ -1579,6 +1579,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			return gateway.Target{}, false, nil
 		}).
+		// ADR-733: a 5xx asks for a crash capture; the store applies opt-in,
+		// one-in-flight and cooldown. Off unless FAAS_CRASH_SNAPSHOTS=1.
+		WithCrashCaptureRequester(crashCaptureRequester(pgStore, os.Getenv("FAAS_CRASH_SNAPSHOTS"))).
 		// ADR-732: route a fork request only when the fork, its token and
 		// its instance all check out (gateway.ForkTargetFromState).
 		WithForkTargetLoader(func(ctx context.Context, appID, forkID, token string) (gateway.Target, bool, error) {

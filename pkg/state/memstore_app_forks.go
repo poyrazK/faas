@@ -41,8 +41,13 @@ func (m *MemStore) CreateAppFork(_ context.Context, params CreateAppForkParams) 
 	if !ok || app.AccountID != p.AccountID || app.Status == AppDeleted {
 		return AppFork{}, ErrAppForkDeploymentUnavailable
 	}
-	deployment, ok := m.deployments[p.DeploymentID]
-	if !ok || deployment.AppID != p.AppID || deployment.Status != DeployLive {
+	if p.CrashCaptureID != "" {
+		deploymentID, ok := m.forkTargetForCaptureLocked(p)
+		if !ok {
+			return AppFork{}, ErrAppForkDeploymentUnavailable
+		}
+		p.DeploymentID = deploymentID
+	} else if deployment, ok := m.deployments[p.DeploymentID]; !ok || deployment.AppID != p.AppID || deployment.Status != DeployLive {
 		return AppFork{}, ErrAppForkDeploymentUnavailable
 	}
 
@@ -55,6 +60,10 @@ func (m *MemStore) CreateAppFork(_ context.Context, params CreateAppForkParams) 
 	}
 	if p.AccessTokenHash == nil {
 		fork.AccessTokenHash = nil
+	}
+	if p.CrashCaptureID != "" {
+		captureID := p.CrashCaptureID
+		fork.CrashCaptureID = &captureID
 	}
 	m.appForks[fork.ID] = fork
 	return fork, nil

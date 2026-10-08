@@ -2187,7 +2187,7 @@ WHERE account_id = $2::uuid
   AND app_id = $3::uuid
   AND id = $4::uuid
   AND status IN ('queued', 'restoring', 'running')
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id
 `
 
 type CancelAppForkParams struct {
@@ -2230,6 +2230,7 @@ func (q *Queries) CancelAppFork(ctx context.Context, db DBTX, arg CancelAppForkP
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AccessTokenHash,
+		&i.CrashCaptureID,
 	)
 	return i, err
 }
@@ -3473,7 +3474,7 @@ WHERE id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id
 `
 
 type ClaimNextAppForkParams struct {
@@ -3509,6 +3510,48 @@ func (q *Queries) ClaimNextAppFork(ctx context.Context, db DBTX, arg ClaimNextAp
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AccessTokenHash,
+		&i.CrashCaptureID,
+	)
+	return i, err
+}
+
+const claimNextCrashCapture = `-- name: ClaimNextCrashCapture :one
+UPDATE crash_captures
+SET status = 'capturing', updated_at = greatest(updated_at, $1::timestamptz)
+WHERE id = (
+    SELECT candidate.id FROM crash_captures candidate
+    WHERE candidate.status = 'requested'
+    ORDER BY candidate.requested_at, candidate.id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at
+`
+
+func (q *Queries) ClaimNextCrashCapture(ctx context.Context, db DBTX, now pgtype.Timestamptz) (CrashCapture, error) {
+	row := db.QueryRow(ctx, claimNextCrashCapture, now)
+	var i CrashCapture
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.InstanceID,
+		&i.Trigger,
+		&i.StatusCode,
+		&i.Route,
+		&i.Status,
+		&i.StorageKey,
+		&i.VmstateStorageKey,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.RequestedAt,
+		&i.CapturedAt,
+		&i.FinishedAt,
+		&i.ExpiresAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -5398,6 +5441,66 @@ func (q *Queries) CompleteAutomaticRouteCheck(ctx context.Context, db DBTX, arg 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const completeCrashCapture = `-- name: CompleteCrashCapture :one
+UPDATE crash_captures
+SET status = 'ready',
+    storage_key = $1::text,
+    vmstate_storage_key = $2::text,
+    fc_version = $3::text,
+    mem_bytes = $4::bigint,
+    captured_at = $5::timestamptz,
+    expires_at = $6::timestamptz,
+    updated_at = greatest(updated_at, $5::timestamptz)
+WHERE id = $7::uuid AND status = 'capturing'
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at
+`
+
+type CompleteCrashCaptureParams struct {
+	StorageKey        string
+	VmstateStorageKey string
+	FcVersion         string
+	MemBytes          int64
+	Now               pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
+	CaptureID         pgtype.UUID
+}
+
+func (q *Queries) CompleteCrashCapture(ctx context.Context, db DBTX, arg CompleteCrashCaptureParams) (CrashCapture, error) {
+	row := db.QueryRow(ctx, completeCrashCapture,
+		arg.StorageKey,
+		arg.VmstateStorageKey,
+		arg.FcVersion,
+		arg.MemBytes,
+		arg.Now,
+		arg.ExpiresAt,
+		arg.CaptureID,
+	)
+	var i CrashCapture
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.InstanceID,
+		&i.Trigger,
+		&i.StatusCode,
+		&i.Route,
+		&i.Status,
+		&i.StorageKey,
+		&i.VmstateStorageKey,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.RequestedAt,
+		&i.CapturedAt,
+		&i.FinishedAt,
+		&i.ExpiresAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const completeCustomerOperationBlobCleanup = `-- name: CompleteCustomerOperationBlobCleanup :execrows
@@ -12584,6 +12687,47 @@ func (q *Queries) ExistsManagedPostgresLifecycleDatabase(ctx context.Context, db
 	return exists, err
 }
 
+const expireCrashCapture = `-- name: ExpireCrashCapture :one
+UPDATE crash_captures
+SET status = 'expired', finished_at = $1::timestamptz,
+    updated_at = greatest(updated_at, $1::timestamptz)
+WHERE id = $2::uuid AND status = 'ready'
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at
+`
+
+type ExpireCrashCaptureParams struct {
+	Now       pgtype.Timestamptz
+	CaptureID pgtype.UUID
+}
+
+func (q *Queries) ExpireCrashCapture(ctx context.Context, db DBTX, arg ExpireCrashCaptureParams) (CrashCapture, error) {
+	row := db.QueryRow(ctx, expireCrashCapture, arg.Now, arg.CaptureID)
+	var i CrashCapture
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.InstanceID,
+		&i.Trigger,
+		&i.StatusCode,
+		&i.Route,
+		&i.Status,
+		&i.StorageKey,
+		&i.VmstateStorageKey,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.RequestedAt,
+		&i.CapturedAt,
+		&i.FinishedAt,
+		&i.ExpiresAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const expireOrgInvitations = `-- name: ExpireOrgInvitations :execrows
 update org_invitations
 set revoked_at = now()
@@ -12650,7 +12794,7 @@ SET status = CASE WHEN cancel_requested_at IS NULL THEN 'expired' ELSE 'cancelle
     updated_at = greatest(updated_at, $1::timestamptz)
 WHERE status = 'queued'
   AND (expires_at <= $1::timestamptz OR cancel_requested_at IS NOT NULL)
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id
 `
 
 // Queued forks that reached expires_at, or were cancelled, before any
@@ -12686,6 +12830,7 @@ func (q *Queries) ExpireUnclaimedAppForks(ctx context.Context, db DBTX, now pgty
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AccessTokenHash,
+			&i.CrashCaptureID,
 		); err != nil {
 			return nil, err
 		}
@@ -12815,6 +12960,57 @@ func (q *Queries) FailCheckedRollbackTarget(ctx context.Context, db DBTX, target
 	return err
 }
 
+const failCrashCapture = `-- name: FailCrashCapture :one
+UPDATE crash_captures
+SET status = 'failed',
+    failure_code = $1::text,
+    failure_message = $2::text,
+    finished_at = $3::timestamptz,
+    updated_at = greatest(updated_at, $3::timestamptz)
+WHERE id = $4::uuid AND status IN ('requested', 'capturing')
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at
+`
+
+type FailCrashCaptureParams struct {
+	FailureCode    string
+	FailureMessage string
+	Now            pgtype.Timestamptz
+	CaptureID      pgtype.UUID
+}
+
+func (q *Queries) FailCrashCapture(ctx context.Context, db DBTX, arg FailCrashCaptureParams) (CrashCapture, error) {
+	row := db.QueryRow(ctx, failCrashCapture,
+		arg.FailureCode,
+		arg.FailureMessage,
+		arg.Now,
+		arg.CaptureID,
+	)
+	var i CrashCapture
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.InstanceID,
+		&i.Trigger,
+		&i.StatusCode,
+		&i.Route,
+		&i.Status,
+		&i.StorageKey,
+		&i.VmstateStorageKey,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.RequestedAt,
+		&i.CapturedAt,
+		&i.FinishedAt,
+		&i.ExpiresAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const failNotificationClaim = `-- name: FailNotificationClaim :execrows
 WITH owned AS MATERIALIZED (
     SELECT id, lease_until FROM notification_outbox
@@ -12851,6 +13047,63 @@ func (q *Queries) FailNotificationClaim(ctx context.Context, db DBTX, arg FailNo
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const failStaleCrashCaptures = `-- name: FailStaleCrashCaptures :many
+UPDATE crash_captures
+SET status = 'failed', failure_code = 'capture_timeout',
+    failure_message = 'the capture did not finish in time',
+    finished_at = $1::timestamptz,
+    updated_at = greatest(updated_at, $1::timestamptz)
+WHERE status = 'capturing' AND updated_at < $2::timestamptz
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at
+`
+
+type FailStaleCrashCapturesParams struct {
+	Now    pgtype.Timestamptz
+	Cutoff pgtype.Timestamptz
+}
+
+// A capture still capturing after the timeout lost its scheduler.
+func (q *Queries) FailStaleCrashCaptures(ctx context.Context, db DBTX, arg FailStaleCrashCapturesParams) ([]CrashCapture, error) {
+	rows, err := db.Query(ctx, failStaleCrashCaptures, arg.Now, arg.Cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CrashCapture{}
+	for rows.Next() {
+		var i CrashCapture
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.InstanceID,
+			&i.Trigger,
+			&i.StatusCode,
+			&i.Route,
+			&i.Status,
+			&i.StorageKey,
+			&i.VmstateStorageKey,
+			&i.FcVersion,
+			&i.MemBytes,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.RequestedAt,
+			&i.CapturedAt,
+			&i.FinishedAt,
+			&i.ExpiresAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const failedCheckedRollbackTarget = `-- name: FailedCheckedRollbackTarget :one
@@ -13138,7 +13391,7 @@ WHERE id = $5::uuid
   AND lease_token = $6::uuid
   AND status IN ('restoring', 'running')
   AND $1::text IN ('expired', 'cancelled', 'failed')
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id
 `
 
 type FinishAppForkParams struct {
@@ -13182,6 +13435,7 @@ func (q *Queries) FinishAppFork(ctx context.Context, db DBTX, arg FinishAppForkP
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AccessTokenHash,
+		&i.CrashCaptureID,
 	)
 	return i, err
 }
@@ -14378,7 +14632,7 @@ func (q *Queries) GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErro
 }
 
 const getAppFork = `-- name: GetAppFork :one
-SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash FROM app_forks
+SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id FROM app_forks
 WHERE account_id = $1::uuid
   AND app_id = $2::uuid
   AND id = $3::uuid
@@ -14415,12 +14669,13 @@ func (q *Queries) GetAppFork(ctx context.Context, db DBTX, arg GetAppForkParams)
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AccessTokenHash,
+		&i.CrashCaptureID,
 	)
 	return i, err
 }
 
 const getAppForkForApp = `-- name: GetAppForkForApp :one
-SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash FROM app_forks
+SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id FROM app_forks
 WHERE app_id = $1::uuid
   AND id = $2::uuid
 `
@@ -14457,6 +14712,7 @@ func (q *Queries) GetAppForkForApp(ctx context.Context, db DBTX, arg GetAppForkF
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AccessTokenHash,
+		&i.CrashCaptureID,
 	)
 	return i, err
 }
@@ -14494,6 +14750,100 @@ func (q *Queries) GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAp
 		&i.Scope,
 		&i.Key,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getCrashCapture = `-- name: GetCrashCapture :one
+SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at FROM crash_captures
+WHERE account_id = $1::uuid AND app_id = $2::uuid
+  AND id = $3::uuid
+`
+
+type GetCrashCaptureParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	CaptureID pgtype.UUID
+}
+
+func (q *Queries) GetCrashCapture(ctx context.Context, db DBTX, arg GetCrashCaptureParams) (CrashCapture, error) {
+	row := db.QueryRow(ctx, getCrashCapture, arg.AccountID, arg.AppID, arg.CaptureID)
+	var i CrashCapture
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.InstanceID,
+		&i.Trigger,
+		&i.StatusCode,
+		&i.Route,
+		&i.Status,
+		&i.StorageKey,
+		&i.VmstateStorageKey,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.RequestedAt,
+		&i.CapturedAt,
+		&i.FinishedAt,
+		&i.ExpiresAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getCrashCaptureByID = `-- name: GetCrashCaptureByID :one
+SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at FROM crash_captures WHERE id = $1::uuid
+`
+
+func (q *Queries) GetCrashCaptureByID(ctx context.Context, db DBTX, captureID pgtype.UUID) (CrashCapture, error) {
+	row := db.QueryRow(ctx, getCrashCaptureByID, captureID)
+	var i CrashCapture
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.InstanceID,
+		&i.Trigger,
+		&i.StatusCode,
+		&i.Route,
+		&i.Status,
+		&i.StorageKey,
+		&i.VmstateStorageKey,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.RequestedAt,
+		&i.CapturedAt,
+		&i.FinishedAt,
+		&i.ExpiresAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getCrashSnapshotSettings = `-- name: GetCrashSnapshotSettings :one
+SELECT app_id, account_id, enabled, updated_at FROM crash_snapshot_settings
+WHERE app_id = $1::uuid AND account_id = $2::uuid
+`
+
+type GetCrashSnapshotSettingsParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) GetCrashSnapshotSettings(ctx context.Context, db DBTX, arg GetCrashSnapshotSettingsParams) (CrashSnapshotSetting, error) {
+	row := db.QueryRow(ctx, getCrashSnapshotSettings, arg.AppID, arg.AccountID)
+	var i CrashSnapshotSetting
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.Enabled,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -16824,7 +17174,7 @@ WHERE a.id = $5::uuid
   AND a.status <> 'deleted'
   AND d.id = $7::uuid
   AND d.status = 'live'
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id
 `
 
 type InsertAppForkParams struct {
@@ -16870,6 +17220,74 @@ func (q *Queries) InsertAppFork(ctx context.Context, db DBTX, arg InsertAppForkP
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AccessTokenHash,
+		&i.CrashCaptureID,
+	)
+	return i, err
+}
+
+const insertAppForkFromCrashCapture = `-- name: InsertAppForkFromCrashCapture :one
+INSERT INTO app_forks (account_id, app_id, deployment_id, requested_by, ttl_seconds,
+                       expires_at, created_at, updated_at, access_token_hash, crash_capture_id)
+SELECT c.account_id, c.app_id, c.deployment_id, $1::text, $2::integer,
+       $3::timestamptz + make_interval(secs => $2::integer),
+       $3::timestamptz, $3::timestamptz,
+       $4::bytea, c.id
+FROM crash_captures c
+JOIN apps a ON a.id = c.app_id AND a.status <> 'deleted'
+WHERE c.id = $5::uuid
+  AND c.app_id = $6::uuid
+  AND c.account_id = $7::uuid
+  AND c.status = 'ready'
+  AND c.expires_at > $3::timestamptz
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id
+`
+
+type InsertAppForkFromCrashCaptureParams struct {
+	RequestedBy     string
+	TtlSeconds      int32
+	CreatedAt       pgtype.Timestamptz
+	AccessTokenHash []byte
+	CrashCaptureID  pgtype.UUID
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+}
+
+// ADR-733: a fork pinned to a ready, unexpired crash capture of the app. The
+// fork's deployment is the capture's, which may no longer be live.
+func (q *Queries) InsertAppForkFromCrashCapture(ctx context.Context, db DBTX, arg InsertAppForkFromCrashCaptureParams) (AppFork, error) {
+	row := db.QueryRow(ctx, insertAppForkFromCrashCapture,
+		arg.RequestedBy,
+		arg.TtlSeconds,
+		arg.CreatedAt,
+		arg.AccessTokenHash,
+		arg.CrashCaptureID,
+		arg.AppID,
+		arg.AccountID,
+	)
+	var i AppFork
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.TtlSeconds,
+		&i.ExpiresAt,
+		&i.SnapshotID,
+		&i.InstanceID,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AccessTokenHash,
+		&i.CrashCaptureID,
 	)
 	return i, err
 }
@@ -24200,7 +24618,7 @@ func (q *Queries) ListAppErrorRequests(ctx context.Context, db DBTX, arg ListApp
 }
 
 const listAppForks = `-- name: ListAppForks :many
-SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash FROM app_forks
+SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id FROM app_forks
 WHERE account_id = $1::uuid
   AND app_id = $2::uuid
 ORDER BY created_at DESC, id DESC
@@ -24244,6 +24662,7 @@ func (q *Queries) ListAppForks(ctx context.Context, db DBTX, arg ListAppForksPar
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AccessTokenHash,
+			&i.CrashCaptureID,
 		); err != nil {
 			return nil, err
 		}
@@ -24256,7 +24675,7 @@ func (q *Queries) ListAppForks(ctx context.Context, db DBTX, arg ListAppForksPar
 }
 
 const listAppForksDueForTeardown = `-- name: ListAppForksDueForTeardown :many
-SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash FROM app_forks
+SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id FROM app_forks
 WHERE lease_owner = $1::text
   AND status IN ('restoring', 'running')
   AND (expires_at <= $2::timestamptz OR cancel_requested_at IS NOT NULL)
@@ -24302,6 +24721,7 @@ func (q *Queries) ListAppForksDueForTeardown(ctx context.Context, db DBTX, arg L
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AccessTokenHash,
+			&i.CrashCaptureID,
 		); err != nil {
 			return nil, err
 		}
@@ -25018,6 +25438,60 @@ func (q *Queries) ListComputeNodeHeartbeats(ctx context.Context, db DBTX, arg Li
 			&i.ReceivedAt,
 			&i.LastHeartbeatAt,
 			&i.Source,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCrashCaptures = `-- name: ListCrashCaptures :many
+SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at FROM crash_captures
+WHERE account_id = $1::uuid AND app_id = $2::uuid
+ORDER BY requested_at DESC, id DESC
+LIMIT $3::integer
+`
+
+type ListCrashCapturesParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	RowLimit  int32
+}
+
+func (q *Queries) ListCrashCaptures(ctx context.Context, db DBTX, arg ListCrashCapturesParams) ([]CrashCapture, error) {
+	rows, err := db.Query(ctx, listCrashCaptures, arg.AccountID, arg.AppID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CrashCapture{}
+	for rows.Next() {
+		var i CrashCapture
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.InstanceID,
+			&i.Trigger,
+			&i.StatusCode,
+			&i.Route,
+			&i.Status,
+			&i.StorageKey,
+			&i.VmstateStorageKey,
+			&i.FcVersion,
+			&i.MemBytes,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.RequestedAt,
+			&i.CapturedAt,
+			&i.FinishedAt,
+			&i.ExpiresAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -27067,6 +27541,59 @@ func (q *Queries) ListExclusiveWorkPolicies(ctx context.Context, db DBTX, accoun
 			&i.Configuration,
 			&i.Retired,
 			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExpiredCrashCaptures = `-- name: ListExpiredCrashCaptures :many
+SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at FROM crash_captures
+WHERE status = 'ready' AND expires_at <= $1::timestamptz
+ORDER BY expires_at, id
+LIMIT $2::integer
+`
+
+type ListExpiredCrashCapturesParams struct {
+	Now      pgtype.Timestamptz
+	RowLimit int32
+}
+
+func (q *Queries) ListExpiredCrashCaptures(ctx context.Context, db DBTX, arg ListExpiredCrashCapturesParams) ([]CrashCapture, error) {
+	rows, err := db.Query(ctx, listExpiredCrashCaptures, arg.Now, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CrashCapture{}
+	for rows.Next() {
+		var i CrashCapture
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.InstanceID,
+			&i.Trigger,
+			&i.StatusCode,
+			&i.Route,
+			&i.Status,
+			&i.StorageKey,
+			&i.VmstateStorageKey,
+			&i.FcVersion,
+			&i.MemBytes,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.RequestedAt,
+			&i.CapturedAt,
+			&i.FinishedAt,
+			&i.ExpiresAt,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -34909,7 +35436,7 @@ SET status = 'running',
 WHERE id = $4::uuid
   AND lease_token = $5::uuid
   AND status = 'restoring'
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id
 `
 
 type MarkAppForkRunningParams struct {
@@ -34951,6 +35478,7 @@ func (q *Queries) MarkAppForkRunning(ctx context.Context, db DBTX, arg MarkAppFo
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AccessTokenHash,
+		&i.CrashCaptureID,
 	)
 	return i, err
 }
@@ -54294,7 +54822,7 @@ SET lease_expires_at = $1::timestamptz,
 WHERE id = $3::uuid
   AND lease_token = $4::uuid
   AND status IN ('restoring', 'running')
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id
 `
 
 type RenewAppForkLeaseParams struct {
@@ -54334,6 +54862,7 @@ func (q *Queries) RenewAppForkLease(ctx context.Context, db DBTX, arg RenewAppFo
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AccessTokenHash,
+		&i.CrashCaptureID,
 	)
 	return i, err
 }
@@ -54661,6 +55190,75 @@ func (q *Queries) RequestEnvironmentGitOpsRuntimeRefresh(ctx context.Context, db
 	return err
 }
 
+const requestHTTPCrashCapture = `-- name: RequestHTTPCrashCapture :one
+INSERT INTO crash_captures (account_id, app_id, deployment_id, instance_id, trigger,
+                            status_code, route, requested_at, updated_at)
+SELECT a.account_id, a.id, i.deployment_id, i.id, 'http_5xx',
+       $1::integer, left($2::text, 512),
+       $3::timestamptz, $3::timestamptz
+FROM instances i
+JOIN apps a ON a.id = i.app_id
+JOIN crash_snapshot_settings s ON s.app_id = a.id AND s.enabled
+WHERE i.id = $4::uuid
+  AND i.app_id = $5::uuid
+  AND i.state = 'running' AND i.mode <> 'fork' AND a.status <> 'deleted'
+  AND NOT EXISTS (
+      SELECT 1 FROM crash_captures c
+      WHERE c.app_id = a.id
+        AND (c.status IN ('requested', 'capturing')
+             OR c.requested_at > $3::timestamptz - make_interval(secs => $6::integer))
+  )
+ON CONFLICT DO NOTHING
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at
+`
+
+type RequestHTTPCrashCaptureParams struct {
+	StatusCode      int32
+	Route           string
+	Now             pgtype.Timestamptz
+	InstanceID      pgtype.UUID
+	AppID           pgtype.UUID
+	CooldownSeconds int32
+}
+
+// gatewayd-internal, after a serving instance answered 5xx. Succeeds only
+// when the app opted in, the instance is a running non-fork instance of the
+// app, nothing is in flight and the cooldown has passed.
+func (q *Queries) RequestHTTPCrashCapture(ctx context.Context, db DBTX, arg RequestHTTPCrashCaptureParams) (CrashCapture, error) {
+	row := db.QueryRow(ctx, requestHTTPCrashCapture,
+		arg.StatusCode,
+		arg.Route,
+		arg.Now,
+		arg.InstanceID,
+		arg.AppID,
+		arg.CooldownSeconds,
+	)
+	var i CrashCapture
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.InstanceID,
+		&i.Trigger,
+		&i.StatusCode,
+		&i.Route,
+		&i.Status,
+		&i.StorageKey,
+		&i.VmstateStorageKey,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.RequestedAt,
+		&i.CapturedAt,
+		&i.FinishedAt,
+		&i.ExpiresAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const requestLayerArtifactDeletion = `-- name: RequestLayerArtifactDeletion :exec
 UPDATE layer_artifact_retention SET delete_requested_at = coalesce(delete_requested_at, clock_timestamp())
 WHERE storage_key = $1::text
@@ -54685,6 +55283,71 @@ type RequestManagedPostgresCutoverVerificationParams struct {
 func (q *Queries) RequestManagedPostgresCutoverVerification(ctx context.Context, db DBTX, arg RequestManagedPostgresCutoverVerificationParams) error {
 	_, err := db.Exec(ctx, requestManagedPostgresCutoverVerification, arg.Now, arg.ID)
 	return err
+}
+
+const requestManualCrashCapture = `-- name: RequestManualCrashCapture :one
+INSERT INTO crash_captures (account_id, app_id, deployment_id, instance_id, trigger,
+                            route, requested_at, updated_at)
+SELECT a.account_id, a.id, i.deployment_id, i.id, 'manual', '',
+       $1::timestamptz, $1::timestamptz
+FROM apps a
+JOIN LATERAL (
+    SELECT ins.id, ins.deployment_id FROM instances ins
+    WHERE ins.app_id = a.id AND ins.state = 'running' AND ins.mode <> 'fork'
+    ORDER BY ins.started_at DESC NULLS LAST, ins.id
+    LIMIT 1
+) i ON true
+WHERE a.id = $2::uuid AND a.account_id = $3::uuid AND a.status <> 'deleted'
+  AND NOT EXISTS (
+      SELECT 1 FROM crash_captures c
+      WHERE c.app_id = a.id
+        AND (c.status IN ('requested', 'capturing')
+             OR c.requested_at > $1::timestamptz - make_interval(secs => $4::integer))
+  )
+ON CONFLICT DO NOTHING
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at
+`
+
+type RequestManualCrashCaptureParams struct {
+	Now             pgtype.Timestamptz
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	CooldownSeconds int32
+}
+
+// apid, on an explicit customer request: the app's newest running
+// non-fork instance, with the same in-flight and cooldown rules.
+func (q *Queries) RequestManualCrashCapture(ctx context.Context, db DBTX, arg RequestManualCrashCaptureParams) (CrashCapture, error) {
+	row := db.QueryRow(ctx, requestManualCrashCapture,
+		arg.Now,
+		arg.AppID,
+		arg.AccountID,
+		arg.CooldownSeconds,
+	)
+	var i CrashCapture
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.InstanceID,
+		&i.Trigger,
+		&i.StatusCode,
+		&i.Route,
+		&i.Status,
+		&i.StorageKey,
+		&i.VmstateStorageKey,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.RequestedAt,
+		&i.CapturedAt,
+		&i.FinishedAt,
+		&i.ExpiresAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const requestTelemetryAnalyticsByDeployment = `-- name: RequestTelemetryAnalyticsByDeployment :many
@@ -59168,6 +59831,42 @@ func (q *Queries) SetCommitSourceEnabled(ctx context.Context, db DBTX, arg SetCo
 	return err
 }
 
+const setCrashSnapshotSettings = `-- name: SetCrashSnapshotSettings :one
+
+INSERT INTO crash_snapshot_settings (app_id, account_id, enabled, updated_at)
+SELECT a.id, a.account_id, $1::boolean, $2::timestamptz
+FROM apps a
+WHERE a.id = $3::uuid AND a.account_id = $4::uuid
+ON CONFLICT (app_id) DO UPDATE
+SET enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at
+RETURNING app_id, account_id, enabled, updated_at
+`
+
+type SetCrashSnapshotSettingsParams struct {
+	Enabled   bool
+	Now       pgtype.Timestamptz
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+// ADR-733 crash snapshots.
+func (q *Queries) SetCrashSnapshotSettings(ctx context.Context, db DBTX, arg SetCrashSnapshotSettingsParams) (CrashSnapshotSetting, error) {
+	row := db.QueryRow(ctx, setCrashSnapshotSettings,
+		arg.Enabled,
+		arg.Now,
+		arg.AppID,
+		arg.AccountID,
+	)
+	var i CrashSnapshotSetting
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.Enabled,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const setCustomerOperationExecutionIdentity = `-- name: SetCustomerOperationExecutionIdentity :exec
 UPDATE invocations SET operation_id=$1::uuid
 WHERE id=$2::uuid AND operation_id IS NULL
@@ -60095,7 +60794,7 @@ WHERE id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id
 `
 
 type TakeOverAbandonedAppForkParams struct {
@@ -60131,6 +60830,7 @@ func (q *Queries) TakeOverAbandonedAppFork(ctx context.Context, db DBTX, arg Tak
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AccessTokenHash,
+		&i.CrashCaptureID,
 	)
 	return i, err
 }

@@ -1725,6 +1725,46 @@ $$;
 
 
 --
+-- Name: enforce_crash_capture_status_transition(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_crash_capture_status_transition() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.status IN ('failed', 'expired') THEN
+        IF NEW IS DISTINCT FROM OLD THEN
+            RAISE EXCEPTION 'terminal crash capture % is immutable', OLD.id USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF NEW.account_id IS DISTINCT FROM OLD.account_id
+        OR NEW.app_id IS DISTINCT FROM OLD.app_id
+        OR NEW.deployment_id IS DISTINCT FROM OLD.deployment_id
+        OR NEW.instance_id IS DISTINCT FROM OLD.instance_id
+        OR NEW.trigger IS DISTINCT FROM OLD.trigger
+        OR NEW.status_code IS DISTINCT FROM OLD.status_code
+        OR NEW.route IS DISTINCT FROM OLD.route
+        OR NEW.requested_at IS DISTINCT FROM OLD.requested_at THEN
+        RAISE EXCEPTION 'crash capture % request is immutable', OLD.id USING ERRCODE = '23514';
+    END IF;
+    IF NEW.status = OLD.status THEN
+        RETURN NEW;
+    END IF;
+    IF NOT (
+        (OLD.status = 'requested' AND NEW.status IN ('capturing', 'failed'))
+        OR (OLD.status = 'capturing' AND NEW.status IN ('ready', 'failed'))
+        OR (OLD.status = 'ready' AND NEW.status = 'expired')
+    ) THEN
+        RAISE EXCEPTION 'invalid crash capture % transition from % to %',
+            OLD.id, OLD.status, NEW.status USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+
+--
 -- Name: enforce_execution_profile_identity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10271,6 +10311,7 @@ CREATE TABLE public.app_forks (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     access_token_hash bytea,
+    crash_capture_id uuid,
     CONSTRAINT app_forks_access_token_hash_chk CHECK (((access_token_hash IS NULL) OR (octet_length(access_token_hash) = 32))),
     CONSTRAINT app_forks_expires_chk CHECK ((expires_at = (created_at + make_interval(secs => (ttl_seconds)::double precision)))),
     CONSTRAINT app_forks_failure_shape_chk CHECK ((((failure_code IS NULL) = (failure_message IS NULL)) AND ((failure_code IS NULL) OR (status = 'failed'::text)) AND ((status <> 'failed'::text) OR (failure_code IS NOT NULL)) AND ((failure_code IS NULL) OR ((octet_length(failure_code) >= 1) AND (octet_length(failure_code) <= 64))) AND ((failure_message IS NULL) OR (octet_length(failure_message) <= 4096)))),
@@ -11886,6 +11927,55 @@ CREATE TABLE public.cors_presets (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT cors_presets_max_age_check CHECK (((max_age_seconds >= 0) AND (max_age_seconds <= 86400))),
     CONSTRAINT cors_presets_name_check CHECK (((length(name) >= 1) AND (length(name) <= 64)))
+);
+
+
+--
+-- Name: crash_captures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.crash_captures (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    trigger text NOT NULL,
+    status_code integer,
+    route text DEFAULT ''::text NOT NULL,
+    status text DEFAULT 'requested'::text NOT NULL,
+    storage_key text,
+    vmstate_storage_key text,
+    fc_version text,
+    mem_bytes bigint,
+    failure_code text,
+    failure_message text,
+    requested_at timestamp with time zone NOT NULL,
+    captured_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    expires_at timestamp with time zone,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT crash_captures_failure_shape_chk CHECK ((((failure_code IS NULL) = (failure_message IS NULL)) AND ((status = 'failed'::text) = (failure_code IS NOT NULL)) AND ((failure_code IS NULL) OR ((octet_length(failure_code) >= 1) AND (octet_length(failure_code) <= 64))) AND ((failure_message IS NULL) OR (octet_length(failure_message) <= 4096)))),
+    CONSTRAINT crash_captures_finished_chk CHECK (((status = ANY (ARRAY['failed'::text, 'expired'::text])) = (finished_at IS NOT NULL))),
+    CONSTRAINT crash_captures_keys_chk CHECK ((((storage_key IS NULL) OR ((octet_length(storage_key) >= 1) AND (octet_length(storage_key) <= 1024))) AND ((vmstate_storage_key IS NULL) OR ((octet_length(vmstate_storage_key) >= 1) AND (octet_length(vmstate_storage_key) <= 1024))) AND ((fc_version IS NULL) OR ((octet_length(fc_version) >= 1) AND (octet_length(fc_version) <= 64))) AND ((mem_bytes IS NULL) OR (mem_bytes >= 0)))),
+    CONSTRAINT crash_captures_order_chk CHECK (((updated_at >= requested_at) AND ((captured_at IS NULL) OR (captured_at >= requested_at)) AND ((finished_at IS NULL) OR (finished_at >= requested_at)) AND ((expires_at IS NULL) OR (captured_at IS NULL) OR (expires_at > captured_at)))),
+    CONSTRAINT crash_captures_ready_shape_chk CHECK (((status <> ALL (ARRAY['ready'::text, 'expired'::text])) OR ((storage_key IS NOT NULL) AND (vmstate_storage_key IS NOT NULL) AND (fc_version IS NOT NULL) AND (mem_bytes IS NOT NULL) AND (captured_at IS NOT NULL) AND (expires_at IS NOT NULL)))),
+    CONSTRAINT crash_captures_route_chk CHECK ((octet_length(route) <= 512)),
+    CONSTRAINT crash_captures_status_chk CHECK ((status = ANY (ARRAY['requested'::text, 'capturing'::text, 'ready'::text, 'failed'::text, 'expired'::text]))),
+    CONSTRAINT crash_captures_status_code_chk CHECK ((((trigger = 'http_5xx'::text) = (status_code IS NOT NULL)) AND ((status_code IS NULL) OR ((status_code >= 500) AND (status_code <= 599))))),
+    CONSTRAINT crash_captures_trigger_chk CHECK ((trigger = ANY (ARRAY['http_5xx'::text, 'manual'::text])))
+);
+
+
+--
+-- Name: crash_snapshot_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.crash_snapshot_settings (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    enabled boolean NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -22544,6 +22634,22 @@ ALTER TABLE ONLY public.cors_presets
 
 
 --
+-- Name: crash_captures crash_captures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crash_captures
+    ADD CONSTRAINT crash_captures_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: crash_snapshot_settings crash_snapshot_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crash_snapshot_settings
+    ADD CONSTRAINT crash_snapshot_settings_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: credit_ledger credit_ledger_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28012,6 +28118,34 @@ CREATE UNIQUE INDEX cors_presets_unique_name ON public.cors_presets USING btree 
 
 
 --
+-- Name: crash_captures_account_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX crash_captures_account_app_idx ON public.crash_captures USING btree (account_id, app_id, requested_at DESC, id DESC);
+
+
+--
+-- Name: crash_captures_claim_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX crash_captures_claim_idx ON public.crash_captures USING btree (requested_at, id) WHERE (status = 'requested'::text);
+
+
+--
+-- Name: crash_captures_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX crash_captures_expiry_idx ON public.crash_captures USING btree (expires_at, id) WHERE (status = 'ready'::text);
+
+
+--
+-- Name: crash_captures_one_in_flight_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX crash_captures_one_in_flight_uniq ON public.crash_captures USING btree (app_id) WHERE (status = ANY (ARRAY['requested'::text, 'capturing'::text]));
+
+
+--
 -- Name: credit_ledger_account_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33330,6 +33464,13 @@ CREATE TRIGGER cors_presets_set_updated_at_trg BEFORE UPDATE ON public.cors_pres
 
 
 --
+-- Name: crash_captures crash_captures_status_transition; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER crash_captures_status_transition BEFORE UPDATE ON public.crash_captures FOR EACH ROW EXECUTE FUNCTION public.enforce_crash_capture_status_transition();
+
+
+--
 -- Name: crons crons_delete_exclusive_binding; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -35883,6 +36024,14 @@ ALTER TABLE ONLY public.app_forks
 
 
 --
+-- Name: app_forks app_forks_crash_capture_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_forks
+    ADD CONSTRAINT app_forks_crash_capture_id_fkey FOREIGN KEY (crash_capture_id) REFERENCES public.crash_captures(id) ON DELETE SET NULL;
+
+
+--
 -- Name: app_issue_impact_alert_policies app_issue_impact_alert_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -36632,6 +36781,46 @@ ALTER TABLE ONLY public.cors_presets
 
 ALTER TABLE ONLY public.cors_presets
     ADD CONSTRAINT cors_presets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: crash_captures crash_captures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crash_captures
+    ADD CONSTRAINT crash_captures_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: crash_captures crash_captures_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crash_captures
+    ADD CONSTRAINT crash_captures_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: crash_captures crash_captures_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crash_captures
+    ADD CONSTRAINT crash_captures_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: crash_snapshot_settings crash_snapshot_settings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crash_snapshot_settings
+    ADD CONSTRAINT crash_snapshot_settings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: crash_snapshot_settings crash_snapshot_settings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crash_snapshot_settings
+    ADD CONSTRAINT crash_snapshot_settings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

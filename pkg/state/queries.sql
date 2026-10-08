@@ -15456,3 +15456,156 @@ WHERE id = (
     LIMIT 1
 )
 RETURNING *;
+
+-- ADR-733 crash snapshots.
+
+-- name: SetCrashSnapshotSettings :one
+INSERT INTO crash_snapshot_settings (app_id, account_id, enabled, updated_at)
+SELECT a.id, a.account_id, sqlc.arg(enabled)::boolean, sqlc.arg(now)::timestamptz
+FROM apps a
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.account_id = sqlc.arg(account_id)::uuid
+ON CONFLICT (app_id) DO UPDATE
+SET enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at
+RETURNING *;
+
+-- name: GetCrashSnapshotSettings :one
+SELECT * FROM crash_snapshot_settings
+WHERE app_id = sqlc.arg(app_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;
+
+-- name: RequestHTTPCrashCapture :one
+-- gatewayd-internal, after a serving instance answered 5xx. Succeeds only
+-- when the app opted in, the instance is a running non-fork instance of the
+-- app, nothing is in flight and the cooldown has passed.
+INSERT INTO crash_captures (account_id, app_id, deployment_id, instance_id, trigger,
+                            status_code, route, requested_at, updated_at)
+SELECT a.account_id, a.id, i.deployment_id, i.id, 'http_5xx',
+       sqlc.arg(status_code)::integer, left(sqlc.arg(route)::text, 512),
+       sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
+FROM instances i
+JOIN apps a ON a.id = i.app_id
+JOIN crash_snapshot_settings s ON s.app_id = a.id AND s.enabled
+WHERE i.id = sqlc.arg(instance_id)::uuid
+  AND i.app_id = sqlc.arg(app_id)::uuid
+  AND i.state = 'running' AND i.mode <> 'fork' AND a.status <> 'deleted'
+  AND NOT EXISTS (
+      SELECT 1 FROM crash_captures c
+      WHERE c.app_id = a.id
+        AND (c.status IN ('requested', 'capturing')
+             OR c.requested_at > sqlc.arg(now)::timestamptz - make_interval(secs => sqlc.arg(cooldown_seconds)::integer))
+  )
+ON CONFLICT DO NOTHING
+RETURNING *;
+
+-- name: RequestManualCrashCapture :one
+-- apid, on an explicit customer request: the app's newest running
+-- non-fork instance, with the same in-flight and cooldown rules.
+INSERT INTO crash_captures (account_id, app_id, deployment_id, instance_id, trigger,
+                            route, requested_at, updated_at)
+SELECT a.account_id, a.id, i.deployment_id, i.id, 'manual', '',
+       sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
+FROM apps a
+JOIN LATERAL (
+    SELECT ins.id, ins.deployment_id FROM instances ins
+    WHERE ins.app_id = a.id AND ins.state = 'running' AND ins.mode <> 'fork'
+    ORDER BY ins.started_at DESC NULLS LAST, ins.id
+    LIMIT 1
+) i ON true
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.account_id = sqlc.arg(account_id)::uuid AND a.status <> 'deleted'
+  AND NOT EXISTS (
+      SELECT 1 FROM crash_captures c
+      WHERE c.app_id = a.id
+        AND (c.status IN ('requested', 'capturing')
+             OR c.requested_at > sqlc.arg(now)::timestamptz - make_interval(secs => sqlc.arg(cooldown_seconds)::integer))
+  )
+ON CONFLICT DO NOTHING
+RETURNING *;
+
+-- name: ClaimNextCrashCapture :one
+UPDATE crash_captures
+SET status = 'capturing', updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = (
+    SELECT candidate.id FROM crash_captures candidate
+    WHERE candidate.status = 'requested'
+    ORDER BY candidate.requested_at, candidate.id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING *;
+
+-- name: CompleteCrashCapture :one
+UPDATE crash_captures
+SET status = 'ready',
+    storage_key = sqlc.arg(storage_key)::text,
+    vmstate_storage_key = sqlc.arg(vmstate_storage_key)::text,
+    fc_version = sqlc.arg(fc_version)::text,
+    mem_bytes = sqlc.arg(mem_bytes)::bigint,
+    captured_at = sqlc.arg(now)::timestamptz,
+    expires_at = sqlc.arg(expires_at)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(capture_id)::uuid AND status = 'capturing'
+RETURNING *;
+
+-- name: FailCrashCapture :one
+UPDATE crash_captures
+SET status = 'failed',
+    failure_code = sqlc.arg(failure_code)::text,
+    failure_message = sqlc.arg(failure_message)::text,
+    finished_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(capture_id)::uuid AND status IN ('requested', 'capturing')
+RETURNING *;
+
+-- name: FailStaleCrashCaptures :many
+-- A capture still capturing after the timeout lost its scheduler.
+UPDATE crash_captures
+SET status = 'failed', failure_code = 'capture_timeout',
+    failure_message = 'the capture did not finish in time',
+    finished_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE status = 'capturing' AND updated_at < sqlc.arg(cutoff)::timestamptz
+RETURNING *;
+
+-- name: ListExpiredCrashCaptures :many
+SELECT * FROM crash_captures
+WHERE status = 'ready' AND expires_at <= sqlc.arg(now)::timestamptz
+ORDER BY expires_at, id
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ExpireCrashCapture :one
+UPDATE crash_captures
+SET status = 'expired', finished_at = sqlc.arg(now)::timestamptz,
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE id = sqlc.arg(capture_id)::uuid AND status = 'ready'
+RETURNING *;
+
+-- name: ListCrashCaptures :many
+SELECT * FROM crash_captures
+WHERE account_id = sqlc.arg(account_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+ORDER BY requested_at DESC, id DESC
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: GetCrashCapture :one
+SELECT * FROM crash_captures
+WHERE account_id = sqlc.arg(account_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+  AND id = sqlc.arg(capture_id)::uuid;
+
+-- name: GetCrashCaptureByID :one
+SELECT * FROM crash_captures WHERE id = sqlc.arg(capture_id)::uuid;
+
+-- name: InsertAppForkFromCrashCapture :one
+-- ADR-733: a fork pinned to a ready, unexpired crash capture of the app. The
+-- fork's deployment is the capture's, which may no longer be live.
+INSERT INTO app_forks (account_id, app_id, deployment_id, requested_by, ttl_seconds,
+                       expires_at, created_at, updated_at, access_token_hash, crash_capture_id)
+SELECT c.account_id, c.app_id, c.deployment_id, sqlc.arg(requested_by)::text, sqlc.arg(ttl_seconds)::integer,
+       sqlc.arg(created_at)::timestamptz + make_interval(secs => sqlc.arg(ttl_seconds)::integer),
+       sqlc.arg(created_at)::timestamptz, sqlc.arg(created_at)::timestamptz,
+       sqlc.narg(access_token_hash)::bytea, c.id
+FROM crash_captures c
+JOIN apps a ON a.id = c.app_id AND a.status <> 'deleted'
+WHERE c.id = sqlc.arg(crash_capture_id)::uuid
+  AND c.app_id = sqlc.arg(app_id)::uuid
+  AND c.account_id = sqlc.arg(account_id)::uuid
+  AND c.status = 'ready'
+  AND c.expires_at > sqlc.arg(created_at)::timestamptz
+RETURNING *;

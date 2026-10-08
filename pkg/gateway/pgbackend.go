@@ -338,6 +338,9 @@ type PGBackend struct {
 	// forkTargetLoader resolves an ADR-732 fork request to its instance; it
 	// validates the token and fork state (ForkTargetFromState).
 	forkTargetLoader func(ctx context.Context, appID, forkID, token string) (Target, bool, error)
+	// crashCaptureRequest records an ADR-733 crash capture request; nil
+	// when crash snapshots are disabled on this node.
+	crashCaptureRequest func(ctx context.Context, appID, instanceID string, statusCode int, route string)
 	// liveTargetHydration coalesces cache-reconciliation reads for the same
 	// app. A gateway restart can receive a burst before the first request has
 	// populated the process-local picker; those requests must share one
@@ -544,6 +547,22 @@ func (b *PGBackend) WithForkTargetLoader(fn func(context.Context, string, string
 		b.forkTargetLoader = fn
 	}
 	return b
+}
+
+// WithCrashCaptureRequester installs the ADR-733 5xx trigger.
+func (b *PGBackend) WithCrashCaptureRequester(fn func(context.Context, string, string, int, string)) *PGBackend {
+	if b != nil {
+		b.crashCaptureRequest = fn
+	}
+	return b
+}
+
+// RequestCrashCapture forwards a 5xx to the installed requester, if any.
+func (b *PGBackend) RequestCrashCapture(ctx context.Context, appID, instanceID string, statusCode int, route string) {
+	if b == nil || b.crashCaptureRequest == nil {
+		return
+	}
+	b.crashCaptureRequest(ctx, appID, instanceID, statusCode, route)
 }
 
 // ResolveForkTarget routes a fork request. It always reads durable state:

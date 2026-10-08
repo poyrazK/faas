@@ -514,6 +514,9 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 		}
 	}
 	l.removeLocalSnapshotOrphans(ctx, now)
+	// ADR-733: crash captures are evidence with a fixed retention, not
+	// cache; they expire on time regardless of disk pressure.
+	l.expireCrashCaptures(ctx, now)
 	if !pressure {
 		return
 	}

@@ -3551,6 +3551,8 @@ type Store interface {
 	// an app's newest capture. apid admits; schedd owns the lifecycle.
 	AppForkStore
 	AppForkLifecycleStore
+	// ADR-733 crash snapshots: captures of running instances, opened as forks.
+	CrashCaptureStore
 
 	// Sanitized runtime snapshot catalog (ADR-171 follow-up). Publication is
 	// trusted and insert-only; scheduler reads may observe retired rows and

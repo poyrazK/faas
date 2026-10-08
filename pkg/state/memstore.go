@@ -645,6 +645,9 @@ type MemStore struct {
 	appTasks map[string]AppTask
 	// appForks are production fork intents (ADR-732), keyed by fork id.
 	appForks map[string]AppFork
+	// crashCaptures / crashSettings are ADR-733 crash snapshots.
+	crashCaptures map[string]CrashCapture
+	crashSettings map[string]CrashSnapshotSettings
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
 	// immutable compatibility catalog keys; retirement only changes state.
 	runtimeSnapshots map[string]RuntimeSnapshotRecord
