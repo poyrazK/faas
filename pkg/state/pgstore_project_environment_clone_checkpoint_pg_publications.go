@@ -132,7 +132,8 @@ func (s *PgStore) ProjectEnvironmentCloneCheckpointPgPublicationInputs(ctx conte
 				return ErrConflict
 			}
 			out.Publication = &publication
-			return nil
+			out.Preparations, err = checkpointPgWorkloadPreparations(op, out.Activation, publication)
+			return err
 		}
 		if !errors.Is(err, ErrNotFound) {
 			return err

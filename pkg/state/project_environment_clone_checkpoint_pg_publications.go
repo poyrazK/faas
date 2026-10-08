@@ -17,6 +17,9 @@ type ProjectEnvironmentCloneCheckpointPgPublicationInputs struct {
 	Connections []ProjectEnvironmentCloneCheckpointPgConnectionValue
 	Credentials []ProjectEnvironmentCloneCheckpointPostgresCredential
 	Publication *ProjectEnvironmentCloneCheckpointPgPublication
+	// Committed, authenticated workload-value preparations, indexed by the
+	// original source binding. These do not establish resource publication proof.
+	Preparations map[string]ProjectEnvironmentClonePostgresBindingPreparation
 }
 type ProjectEnvironmentCloneCheckpointPgPublicationStore interface {
 	ProjectEnvironmentCloneCheckpointPgPublicationInputs(context.Context, ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneCheckpointPgPublicationInputs, error)

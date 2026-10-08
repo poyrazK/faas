@@ -100,6 +100,19 @@ func TestPGCloneCheckpointPgPublicationLostReplyAndKeylessRecovery(t *testing.T)
 		t.Fatal("expected lost publication reply", err)
 	}
 	before := assertCheckpointPgPublication(t, f, s, "published")
+	inputs, err := s.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
+	if err != nil || len(inputs.Preparations) != len(before.Plan.Secrets) || len(inputs.Credentials) != 0 || len(inputs.Connections) != 0 {
+		t.Fatal("committed workload preparations", err)
+	}
+	for i, member := range inputs.Activation.Plan.Bindings {
+		c := member.Connection.Credential
+		prepared := inputs.Preparations[c.SourceBindingID]
+		secret := before.Plan.Secrets[i]
+		secret.ManagedPostgresAccess = "" // canonical workload preparation format
+		if prepared.Binding.ID != c.TargetBindingID || prepared.Binding.DatabaseID != c.Runtime.Verification.Isolation.OwnerID || prepared.Hash == "" || !reflect.DeepEqual(prepared.Secret, secret) {
+			t.Fatal("workload preparation changed original publication")
+		}
+	}
 	for _, secret := range before.Plan.Secrets {
 		values, err := secretbox.Open(d.key, secret.Ciphertext)
 		if err != nil || len(values) != 1 || !strings.Contains(values[secret.Key], "sslmode=verify-full") {
@@ -115,6 +128,10 @@ func TestPGCloneCheckpointPgPublicationLostReplyAndKeylessRecovery(t *testing.T)
 		t.Fatal("keyless publication recovery", err)
 	}
 	after := assertCheckpointPgPublication(t, f, s, "published")
+	recovered, err := s.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
+	if err != nil || !reflect.DeepEqual(inputs.Preparations, recovered.Preparations) {
+		t.Fatal("keyless handoff changed workload preparations", err)
+	}
 	if !reflect.DeepEqual(before.Plan, after.Plan) || d.activates != 1 || !reflect.DeepEqual(original.Resources, f.lease.Operation.Resources) {
 		t.Fatal("recovery changed original ownership")
 	}
@@ -281,6 +298,9 @@ func TestPGCloneCheckpointPgPublicationRejectsChangedOwnedRows(t *testing.T) {
 			}
 			if _, err = f.srv.publishCheckpointPgBindings(t.Context(), f.lease, d); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("changed publication replay accepted", err)
+			}
+			if _, err = s.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+				t.Fatal("changed publication supplied workload preparations", err)
 			}
 			compensateCheckpointCredentialFixture(t, f, s.checkpointCredentialFailureStore)
 			if err = s.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {

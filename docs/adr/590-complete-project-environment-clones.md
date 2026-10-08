@@ -8400,3 +8400,38 @@ migration regression groups also passed. State/schema tests and SQLC, encoding,
 shell-quoting and ADR-number checks pass; targeted lint reports zero issues.
 Native effects use the protocol test driver and do not establish live provider
 qualification or complete stage publication.
+
+### Checkpoint PostgreSQL workload-value preparation bridge
+
+Committed private PostgreSQL publication inputs now include canonical workload
+preparations indexed by the original source binding. The transaction authenticates
+and locks the original activation, credential/runtime graph, publication journal
+and live owned rows before projecting any preparations. Each preparation retains
+its original independent target database, fresh binding/identity, target app/scope,
+environment key, access, generation and committed encrypted envelope. The standard
+workload-value preparation hash covers the resulting normalized metadata. The
+projection copies ciphertext buffers and neither decrypts nor reseals secrets.
+
+The bridge requires the complete original manifest, matching activation and
+publication digests, and exact operation/account/project/scope/revision ownership.
+It rejects withdrawn or inactive publication, missing or duplicate source owners,
+and changed secret ownership. Before publication, inputs still contain only the
+original connection/credential preparation material; they provide no committed
+workload preparations. Keyless worker handoff recovers the same canonical set.
+
+These preparations allow the existing workload-value calculation to substitute
+fresh PostgreSQL envelopes while preserving captured customer variables. They do
+not create a legacy restore ledger or provide independent resource publication
+proof. Configuration materialization and final release publication remain gated;
+the private helper is not yet wired to a qualified full-stage worker. Object-storage
+publication, the complete common resource graph and qualified native adapters
+remain prerequisites. Live R2/OVH qualification remains deferred.
+
+Validation: focused unit tests pass committed-envelope substitution, captured
+variable preservation, ciphertext buffer ownership, and rejection of inactive,
+withdrawn, partial, duplicate or changed operation/account/scope/generation and
+digest ownership. PostgreSQL publication tests pass original-envelope projection,
+lost replies, keyless handoff and rejection of changed ciphertext, scope and
+binding access, alongside the existing publication/withdrawal suite. Existing
+workload-value and resource-publication fence regressions pass. Native effects
+use the protocol test driver; this is not live provider qualification.
