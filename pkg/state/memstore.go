@@ -22317,10 +22317,7 @@ func (m *MemStore) ListEdgeRulesForAccount(_ context.Context, accountID string) 
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Priority != out[j].Priority {
-			return out[i].Priority < out[j].Priority
-		}
-		return out[i].CreatedAt.After(out[j].CreatedAt)
+		return edgeRuleMatchOrderLess(out[i], out[j])
 	})
 	return out, nil
 }
@@ -22336,10 +22333,7 @@ func (m *MemStore) ListEdgeRulesForApp(_ context.Context, appID string) ([]EdgeR
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Priority != out[j].Priority {
-			return out[i].Priority < out[j].Priority
-		}
-		return out[i].CreatedAt.After(out[j].CreatedAt)
+		return edgeRuleMatchOrderLess(out[i], out[j])
 	})
 	return out, nil
 }
@@ -22939,12 +22933,23 @@ func (m *MemStore) MatchEdgeRulesForHost(_ context.Context, host string) ([]Edge
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Priority != out[j].Priority {
-			return out[i].Priority < out[j].Priority
-		}
-		return out[i].CreatedAt.Before(out[j].CreatedAt)
+		return edgeRuleMatchOrderLess(out[i], out[j])
 	})
 	return out, nil
+}
+
+// edgeRuleMatchOrderLess is the one edge-rule evaluation order: priority,
+// then oldest first, then id. Listings, deployment snapshots, and the
+// gateway read all use it, so the order a customer sees is the order the
+// gateway applies. Mirrors the pgstore ORDER BY.
+func edgeRuleMatchOrderLess(a, b EdgeRule) bool {
+	if a.Priority != b.Priority {
+		return a.Priority < b.Priority
+	}
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.Before(b.CreatedAt)
+	}
+	return a.ID < b.ID
 }
 
 // matchHostPattern mirrors the pgstore LIKE: "*" → every host;

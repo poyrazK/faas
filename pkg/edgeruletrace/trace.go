@@ -550,7 +550,10 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		if sorted[i].Priority != sorted[j].Priority {
 			return sorted[i].Priority < sorted[j].Priority
 		}
-		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
+		if !sorted[i].CreatedAt.Equal(sorted[j].CreatedAt) {
+			return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
+		}
+		return sorted[i].ID < sorted[j].ID
 	})
 	result := Result{
 		Project: input.Project, Environment: input.Environment,
