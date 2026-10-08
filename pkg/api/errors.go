@@ -3079,12 +3079,12 @@ func ErrDomainCertNotIssued(domain, reason string) *Problem {
 // FAAS_DOMAIN_DOCTOR_ENABLED is unset. The route stays
 // registered (per the pre-#911 pattern in api/flags.go) so
 // the CLI gets a deterministic error code rather than a
-// generic 404. The detail line is the operator-facing
-// "set FAAS_DOMAIN_DOCTOR_ENABLED=1" hint.
+// generic 404. The detail stays customer-facing; operators key on
+// the stable code, not on FAAS_DOMAIN_DOCTOR_ENABLED in the text.
 func ErrDoctorDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeDoctorDisabled,
 		"Domain doctor is dark-launched",
-		"the FAAS_DOMAIN_DOCTOR_ENABLED flag is not set on this cluster; ask the operator to enable it or use `gregale domains verify` for a one-shot check").
+		"the domain doctor is not available on this Gregale installation right now; use `gregale domains verify` for a one-shot check or contact support").
 		WithDocs(docsBase + "/domains/doctor")
 }
 
@@ -4366,7 +4366,7 @@ func ErrTenantSurfacesNotEnabled() *Problem {
 func ErrStaticEgressIPNotEnabled() *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodeStaticEgressIPNotEnabled,
 		"Static egress IP feature is not enabled on this cluster",
-		"the FAAS_STATIC_EGRESS_IP_ENABLED env var is not set; ask the cluster operator to enable the static egress IP surface.").
+		"static egress IPs are not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/static-egress-ip")
 }
 
@@ -4375,7 +4375,7 @@ func ErrStaticEgressIPNotEnabled() *Problem {
 func ErrPrivateNetworkNotEnabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodePrivateNetworkNotEnabled,
 		"Private network attachments are not enabled on this cluster",
-		"the FAAS_PRIVATE_NETWORK_ENABLED env var is not enabled; ask the cluster operator to enable the private-network attachment surface.").
+		"private network attachments are not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/networking")
 }
 

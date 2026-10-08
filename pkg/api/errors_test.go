@@ -1086,3 +1086,19 @@ func TestOrgSlugPattern(t *testing.T) {
 		})
 	}
 }
+
+// TestDisabledFeatureErrorsStayCustomerFacing keeps operator environment
+// variable names out of every dark-launch detail a customer can receive.
+func TestDisabledFeatureErrorsStayCustomerFacing(t *testing.T) {
+	for name, p := range map[string]*Problem{
+		"api contract diff": ErrAPIContractDiffDisabled(),
+		"tenant surfaces":   ErrTenantSurfacesNotEnabled(),
+		"domain doctor":     ErrDoctorDisabled(),
+		"static egress ip":  ErrStaticEgressIPNotEnabled(),
+		"private network":   ErrPrivateNetworkNotEnabled(),
+	} {
+		if strings.Contains(p.Detail, "FAAS_") || !strings.Contains(p.Detail, "Gregale installation") {
+			t.Errorf("%s detail is operator-facing: %q", name, p.Detail)
+		}
+	}
+}
