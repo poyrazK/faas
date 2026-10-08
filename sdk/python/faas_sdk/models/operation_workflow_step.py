@@ -29,6 +29,7 @@ class OperationWorkflowStep:
     milestone: str
     position: int
     allow_reconciliation: bool | Unset = UNSET
+    """Explicit permission for evidence-backed state reconciliation snapshots."""
     version: int | Unset = UNSET
     """Explicit workflow contract version. Legacy definitions that omit it have effective version 1."""
     states: list[str] | Unset = UNSET
@@ -58,6 +59,8 @@ class OperationWorkflowStep:
         milestone = self.milestone
 
         position = self.position
+
+        allow_reconciliation = self.allow_reconciliation
 
         version = self.version
 
@@ -98,6 +101,8 @@ class OperationWorkflowStep:
                 "position": position,
             }
         )
+        if allow_reconciliation is not UNSET:
+            field_dict["allow_reconciliation"] = allow_reconciliation
         if version is not UNSET:
             field_dict["version"] = version
         if states is not UNSET:
@@ -115,7 +120,6 @@ class OperationWorkflowStep:
         if instance_id is not UNSET:
             field_dict["instance_id"] = instance_id
 
-        if self.allow_reconciliation is not UNSET: field_dict["allow_reconciliation"]=self.allow_reconciliation
         return field_dict
 
     @classmethod
@@ -137,6 +141,8 @@ class OperationWorkflowStep:
         milestone = d.pop("milestone")
 
         position = d.pop("position")
+
+        allow_reconciliation = d.pop("allow_reconciliation", UNSET)
 
         version = d.pop("version", UNSET)
 
@@ -170,12 +176,12 @@ class OperationWorkflowStep:
 
         operation_workflow_step = cls(
             workflow=workflow,
-            allow_reconciliation=d.pop("allow_reconciliation",UNSET),
             title=title,
             step=step,
             label=label,
             milestone=milestone,
             position=position,
+            allow_reconciliation=allow_reconciliation,
             version=version,
             states=states,
             terminal_states=terminal_states,

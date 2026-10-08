@@ -149,14 +149,14 @@ func customerOperationInputFromHTTP(request *http.Request, originalBody []byte) 
 		return customerOperationInput{}, ErrInvalidCustomerOperationRequest
 	}
 	allowedOperationHeaders := map[string]bool{
-		"x-gregale-operation-attempt": true,
+		"x-gregale-operation-attempt":    true,
 		"x-gregale-operation-capability": true,
 	}
 	allowedCustomerHeaders := map[string]bool{
-		"x-gregale-customer-operation-id": true,
+		"x-gregale-customer-operation-id":                  true,
 		"x-gregale-customer-operation-transaction-version": true,
-		"x-gregale-customer-operation-result-max-bytes": true,
-		"x-gregale-customer-operation-milestone-version": true,
+		"x-gregale-customer-operation-result-max-bytes":    true,
+		"x-gregale-customer-operation-milestone-version":   true,
 	}
 	for key := range request.Header {
 		name := strings.ToLower(key)

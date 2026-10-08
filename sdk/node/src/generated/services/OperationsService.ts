@@ -1,11 +1,3 @@
-import type { OperationWorkflowActionPreviewRequest } from '../models/OperationWorkflowActionPreviewRequest.js';
-import type { OperationWorkflowActionPreviewResponse } from '../models/OperationWorkflowActionPreviewResponse.js';
-import type { OperationWorkflowReadinessRequest } from '../models/OperationWorkflowReadinessRequest.js';
-import type { OperationWorkflowReadinessResponse } from '../models/OperationWorkflowReadinessResponse.js';
-import type {OperationWorkflowOutcomesResponse} from '../models/OperationWorkflowOutcomesResponse.js';
-import type {OperationWorkflowOutcomeSummary} from '../models/OperationWorkflowOutcomeSummary.js';
-import type {OperationWorkflowAttentionSummary} from '../models/OperationWorkflowAttentionSummary.js';
-import type { OperationWorkflowAttentionResponse } from '../models/OperationWorkflowAttentionResponse.js';
 /* generated using openapi-typescript-codegen -- do not edit */
 /* istanbul ignore file */
 /* tslint:disable */
@@ -34,6 +26,14 @@ import type { OperationReportRequest } from '../models/OperationReportRequest.js
 import type { OperationResponse } from '../models/OperationResponse.js';
 import type { OperationStartRequest } from '../models/OperationStartRequest.js';
 import type { OperationTenantIdentity } from '../models/OperationTenantIdentity.js';
+import type { OperationWorkflowActionPreviewRequest } from '../models/OperationWorkflowActionPreviewRequest.js';
+import type { OperationWorkflowActionPreviewResponse } from '../models/OperationWorkflowActionPreviewResponse.js';
+import type { OperationWorkflowAttentionResponse } from '../models/OperationWorkflowAttentionResponse.js';
+import type { OperationWorkflowAttentionSummary } from '../models/OperationWorkflowAttentionSummary.js';
+import type { OperationWorkflowOutcomesResponse } from '../models/OperationWorkflowOutcomesResponse.js';
+import type { OperationWorkflowOutcomeSummary } from '../models/OperationWorkflowOutcomeSummary.js';
+import type { OperationWorkflowReadinessRequest } from '../models/OperationWorkflowReadinessRequest.js';
+import type { OperationWorkflowReadinessResponse } from '../models/OperationWorkflowReadinessResponse.js';
 import type { OperationWorkflowStateReport } from '../models/OperationWorkflowStateReport.js';
 import type { OperationWorkflowStateReportResponse } from '../models/OperationWorkflowStateReportResponse.js';
 import type { OperationWorkflowStateValidationRequest } from '../models/OperationWorkflowStateValidationRequest.js';
@@ -434,6 +434,670 @@ export class OperationsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         410: `The retained result expired; its identity remains reserved for the deduplication window.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List completed workflows with explicit business outcomes.
+   * Requires account read scope and MFA. Optional tenant selection remains within account ownership. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
+   * @returns OperationWorkflowOutcomesResponse A bounded page ordered by latest report publication time descending.
+   * @throws ApiError
+   */
+  public static listAccountWorkflowOutcomes({
+    slug,
+    scope,
+    workflow,
+    code,
+    tenantId,
+    limit = 20,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    workflow?: string,
+    code?: string,
+    /**
+     * Optional account-owned customer selector on an operator milestone timeline.
+     */
+    tenantId?: string,
+    /**
+     * Maximum retained public facts in a milestone page.
+     */
+    limit?: number,
+    /**
+     * Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+     */
+    cursor?: string,
+  }): CancelablePromise<OperationWorkflowOutcomesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-outcomes',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'workflow': workflow,
+        'code': code,
+        'tenant_id': tenantId,
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Summarize completed workflows with explicit business outcomes.
+   * Requires account read scope and MFA. Optional tenant selection remains within account ownership. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
+   * @returns OperationWorkflowOutcomeSummary All matching workflow count and a bounded group page ordered by value ascending.
+   * @throws ApiError
+   */
+  public static summarizeAccountWorkflowOutcomes({
+    slug,
+    scope,
+    workflow,
+    code,
+    tenantId,
+    groupBy = 'outcome',
+    limit = 20,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    workflow?: string,
+    code?: string,
+    /**
+     * Optional account-owned customer selector on an operator milestone timeline.
+     */
+    tenantId?: string,
+    groupBy?: 'outcome' | 'workflow' | 'customer',
+    /**
+     * Maximum retained public facts in a milestone page.
+     */
+    limit?: number,
+    /**
+     * Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+     */
+    cursor?: string,
+  }): CancelablePromise<OperationWorkflowOutcomeSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-outcomes/summary',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'workflow': workflow,
+        'code': code,
+        'tenant_id': tenantId,
+        'group_by': groupBy,
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List completed workflows with explicit business outcomes.
+   * Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
+   * @returns OperationWorkflowOutcomesResponse A bounded page ordered by latest report publication time descending.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowOutcomes({
+    appId,
+    scope,
+    workflow,
+    code,
+    limit = 20,
+    cursor,
+  }: {
+    /**
+     * App selected within the authenticated customer's milestone feed.
+     */
+    appId: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    workflow?: string,
+    code?: string,
+    /**
+     * Maximum retained public facts in a milestone page.
+     */
+    limit?: number,
+    /**
+     * Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+     */
+    cursor?: string,
+  }): CancelablePromise<OperationWorkflowOutcomesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-outcomes',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'workflow': workflow,
+        'code': code,
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Summarize completed workflows with explicit business outcomes.
+   * Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
+   * @returns OperationWorkflowOutcomeSummary All matching workflow count and a bounded group page ordered by value ascending.
+   * @throws ApiError
+   */
+  public static summarizePlatformTenantSelfWorkflowOutcomes({
+    appId,
+    scope,
+    workflow,
+    code,
+    groupBy = 'outcome',
+    limit = 20,
+    cursor,
+  }: {
+    /**
+     * App selected within the authenticated customer's milestone feed.
+     */
+    appId: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    workflow?: string,
+    code?: string,
+    groupBy?: 'outcome' | 'workflow',
+    /**
+     * Maximum retained public facts in a milestone page.
+     */
+    limit?: number,
+    /**
+     * Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+     */
+    cursor?: string,
+  }): CancelablePromise<OperationWorkflowOutcomeSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-outcomes/summary',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'workflow': workflow,
+        'code': code,
+        'group_by': groupBy,
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Preview business workflow actions
+   * Read-only candidates from the retained current state, evaluated with an empty evidence plan. Does not execute, authorize, reserve, or mutate an action. At most 100 actions; optional operation filter. Application must recheck locked rows and readiness before writing.
+   * @returns OperationWorkflowActionPreviewResponse Observed transition readiness including reasons and advisories.
+   * @throws ApiError
+   */
+  public static previewAccountWorkflowActions({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: OperationWorkflowActionPreviewRequest,
+  }): CancelablePromise<OperationWorkflowActionPreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-actions/preview',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Preview business workflow actions
+   * Read-only candidates from the retained current state, evaluated with an empty evidence plan. Does not execute, authorize, reserve, or mutate an action. At most 100 actions; optional operation filter. Application must recheck locked rows and readiness before writing.
+   * @returns OperationWorkflowActionPreviewResponse Observed transition readiness including reasons and advisories.
+   * @throws ApiError
+   */
+  public static previewPlatformTenantSelfWorkflowActions({
+    requestBody,
+  }: {
+    requestBody: OperationWorkflowActionPreviewRequest,
+  }): CancelablePromise<OperationWorkflowActionPreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflow-actions/preview',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Check reported requirements for a proposed workflow transition.
+   * Requires account read scope and MFA. tenant_id is mandatory and app_id must be omitted; the path selects the owned application. Evaluates a proposed declared edge against retained state, target-specific blockers, direct prerequisites and planned milestone names. Ready is observational and grants no execution authority. Planned names are not committed evidence; transaction-time business checks and report validation still apply. A denied readiness result is a successful HTTP 200 response.
+   * @returns OperationWorkflowReadinessResponse Observed transition readiness including reasons and advisories.
+   * @throws ApiError
+   */
+  public static checkAccountWorkflowReadiness({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: OperationWorkflowReadinessRequest,
+  }): CancelablePromise<OperationWorkflowReadinessResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-readiness',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Check reported requirements for a proposed workflow transition.
+   * Requires platform-tenant operations read scope. app_id is mandatory and tenant_id must be omitted; ownership comes from the authenticated customer. Evaluates a proposed declared edge against retained state, target-specific blockers, direct prerequisites and planned milestone names. Ready is observational and grants no execution authority. Planned names are not committed evidence; transaction-time business checks and report validation still apply. A denied readiness result is a successful HTTP 200 response.
+   * @returns OperationWorkflowReadinessResponse Observed transition readiness including reasons and advisories.
+   * @throws ApiError
+   */
+  public static checkPlatformTenantSelfWorkflowReadiness({
+    requestBody,
+  }: {
+    requestBody: OperationWorkflowReadinessRequest,
+  }): CancelablePromise<OperationWorkflowReadinessResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflow-readiness',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List retained blocked, stale, overdue, or dependency-waiting business workflow instances.
+   * Requires account read scope and MFA. Optional tenant selection remains within account ownership. Explicit app and environment selectors are required. Staleness and overdue deadlines are evaluated at the first page time carried by the cursor; current reports and retention can change during browsing. Unknown/unreported state is not enumerated. Target Operations match reported blockers or applicable selected-contract edges on stale or overdue workflows. The queue grants no execution authority.
+   * @returns OperationWorkflowAttentionResponse One bounded page ordered by latest report publication time descending.
+   * @throws ApiError
+   */
+  public static listAccountWorkflowAttention({
+    slug,
+    scope,
+    workflow,
+    targetOperation,
+    dependencyStatus,
+    requiredOutcomeCode,
+    blockerCode,
+    reason,
+    tenantId,
+    limit = 20,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    workflow?: string,
+    targetOperation?: string,
+    /**
+     * Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
+     */
+    dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch',
+    requiredOutcomeCode?: string,
+    blockerCode?: string,
+    reason?: 'blocked' | 'stale' | 'overdue' | 'dependency',
+    /**
+     * Optional account-owned customer selector on an operator milestone timeline.
+     */
+    tenantId?: string,
+    /**
+     * Maximum retained public facts in a milestone page.
+     */
+    limit?: number,
+    /**
+     * Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+     */
+    cursor?: string,
+  }): CancelablePromise<OperationWorkflowAttentionResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-attention',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'workflow': workflow,
+        'target_operation': targetOperation,
+        'dependency_status': dependencyStatus,
+        'required_outcome_code': requiredOutcomeCode,
+        'blocker_code': blockerCode,
+        'reason': reason,
+        'tenant_id': tenantId,
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Summarize all matching retained workflow attention.
+   * Requires account read scope and MFA. Optional tenant selection remains within account ownership. Explicit app and environment selectors are required. Staleness and overdue deadlines are evaluated at the first page time carried by the cursor; current reports and retention can change during browsing. Unknown/unreported state is not enumerated. Target Operations match reported blockers or applicable selected-contract edges on stale or overdue workflows. Totals cover all matching retained snapshots regardless of group pagination. Groups may overlap and should not be added together. Blocker statistics within code and target groups cover that code or target only. Ages derive from application-reported first_observed_at; missing ages are counted separately. Group cursors are separate from queue cursors. The summary grants no execution authority.
+   * @returns OperationWorkflowAttentionSummary Totals over all matching workflows and one bounded page of groups ordered by value ascending.
+   * @throws ApiError
+   */
+  public static summarizeAccountWorkflowAttention({
+    slug,
+    scope,
+    groupBy = 'workflow',
+    workflow,
+    targetOperation,
+    dependencyStatus,
+    requiredOutcomeCode,
+    blockerCode,
+    reason,
+    tenantId,
+    limit = 20,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    groupBy?: 'workflow' | 'blocker_code' | 'target_operation' | 'customer' | 'dependency_status' | 'required_outcome_code',
+    workflow?: string,
+    targetOperation?: string,
+    /**
+     * Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
+     */
+    dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch',
+    requiredOutcomeCode?: string,
+    blockerCode?: string,
+    reason?: 'blocked' | 'stale' | 'overdue' | 'dependency',
+    /**
+     * Optional account-owned customer selector on an operator milestone timeline.
+     */
+    tenantId?: string,
+    /**
+     * Maximum retained public facts in a milestone page.
+     */
+    limit?: number,
+    /**
+     * Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+     */
+    cursor?: string,
+  }): CancelablePromise<OperationWorkflowAttentionSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-attention/summary',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'group_by': groupBy,
+        'workflow': workflow,
+        'target_operation': targetOperation,
+        'dependency_status': dependencyStatus,
+        'required_outcome_code': requiredOutcomeCode,
+        'blocker_code': blockerCode,
+        'reason': reason,
+        'tenant_id': tenantId,
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List retained blocked, stale, overdue, or dependency-waiting business workflow instances.
+   * Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue deadlines are evaluated at the first page time carried by the cursor; current reports and retention can change during browsing. Unknown/unreported state is not enumerated. Target Operations match reported blockers or applicable selected-contract edges on stale or overdue workflows. The queue grants no execution authority.
+   * @returns OperationWorkflowAttentionResponse One bounded page ordered by latest report publication time descending.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowAttention({
+    appId,
+    scope,
+    workflow,
+    targetOperation,
+    dependencyStatus,
+    requiredOutcomeCode,
+    blockerCode,
+    reason,
+    limit = 20,
+    cursor,
+  }: {
+    /**
+     * App selected within the authenticated customer's milestone feed.
+     */
+    appId: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    workflow?: string,
+    targetOperation?: string,
+    /**
+     * Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
+     */
+    dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch',
+    requiredOutcomeCode?: string,
+    blockerCode?: string,
+    reason?: 'blocked' | 'stale' | 'overdue' | 'dependency',
+    /**
+     * Maximum retained public facts in a milestone page.
+     */
+    limit?: number,
+    /**
+     * Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+     */
+    cursor?: string,
+  }): CancelablePromise<OperationWorkflowAttentionResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-attention',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'workflow': workflow,
+        'target_operation': targetOperation,
+        'dependency_status': dependencyStatus,
+        'required_outcome_code': requiredOutcomeCode,
+        'blocker_code': blockerCode,
+        'reason': reason,
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Summarize all matching retained workflow attention.
+   * Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue deadlines are evaluated at the first page time carried by the cursor; current reports and retention can change during browsing. Unknown/unreported state is not enumerated. Target Operations match reported blockers or applicable selected-contract edges on stale or overdue workflows. Totals cover all matching retained snapshots regardless of group pagination. Groups may overlap and should not be added together. Blocker statistics within code and target groups cover that code or target only. Ages derive from application-reported first_observed_at; missing ages are counted separately. Group cursors are separate from queue cursors. The summary grants no execution authority.
+   * @returns OperationWorkflowAttentionSummary Totals over all matching workflows and one bounded page of groups ordered by value ascending.
+   * @throws ApiError
+   */
+  public static summarizePlatformTenantSelfWorkflowAttention({
+    appId,
+    scope,
+    groupBy = 'workflow',
+    workflow,
+    targetOperation,
+    dependencyStatus,
+    requiredOutcomeCode,
+    blockerCode,
+    reason,
+    limit = 20,
+    cursor,
+  }: {
+    /**
+     * App selected within the authenticated customer's milestone feed.
+     */
+    appId: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    groupBy?: 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code',
+    workflow?: string,
+    targetOperation?: string,
+    /**
+     * Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
+     */
+    dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch',
+    requiredOutcomeCode?: string,
+    blockerCode?: string,
+    reason?: 'blocked' | 'stale' | 'overdue' | 'dependency',
+    /**
+     * Maximum retained public facts in a milestone page.
+     */
+    limit?: number,
+    /**
+     * Continuation for the same milestone feed, identity, workflow filter, and other selectors.
+     */
+    cursor?: string,
+  }): CancelablePromise<OperationWorkflowAttentionSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-attention/summary',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'group_by': groupBy,
+        'workflow': workflow,
+        'target_operation': targetOperation,
+        'dependency_status': dependencyStatus,
+        'required_outcome_code': requiredOutcomeCode,
+        'blocker_code': blockerCode,
+        'reason': reason,
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
@@ -1807,58 +2471,5 @@ export class OperationsService {
         `,
       },
     });
-  }
-  /** Account-owned, MFA-protected queue of blocked or stale workflow instances. */
-  public static listAccountWorkflowAttention({slug, scope, workflow, targetOperation, reason, tenantId, limit, cursor, dependencyStatus, requiredOutcomeCode, blockerCode}: {
-    slug: string; scope: string; workflow?: string; targetOperation?: string; reason?: 'blocked' | 'stale' | 'overdue' | 'dependency'; tenantId?: string; limit?: number; cursor?: string; dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch'; requiredOutcomeCode?: string; blockerCode?: string;
-  }): CancelablePromise<OperationWorkflowAttentionResponse> {
-    return __request(OpenAPI, {method: 'GET', url: '/v1/apps/{slug}/workflow-attention', path: {'slug': slug},
-      query: {scope, workflow, target_operation: targetOperation, reason, tenant_id: tenantId, limit, cursor, dependency_status: dependencyStatus, required_outcome_code: requiredOutcomeCode, blocker_code: blockerCode},
-      errors: {400: 'Invalid selectors or cursor', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not found', 503: 'Unavailable'}});
-  }
-  /** Queue restricted to the customer identity from credentials. */
-  public static listPlatformTenantSelfWorkflowAttention({appId, scope, workflow, targetOperation, reason, limit, cursor, dependencyStatus, requiredOutcomeCode, blockerCode}: {
-    appId: string; scope: string; workflow?: string; targetOperation?: string; reason?: 'blocked' | 'stale' | 'overdue' | 'dependency'; limit?: number; cursor?: string; dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch'; requiredOutcomeCode?: string; blockerCode?: string;
-  }): CancelablePromise<OperationWorkflowAttentionResponse> {
-    return __request(OpenAPI, {method: 'GET', url: '/v1/platform-tenant-self/workflow-attention',
-      query: {app_id: appId, scope, workflow, target_operation: targetOperation, reason, limit, cursor, dependency_status: dependencyStatus, required_outcome_code: requiredOutcomeCode, blocker_code: blockerCode},
-      errors: {400: 'Invalid selectors or cursor', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not found', 503: 'Unavailable'}});
-  }
-  /** Account-owned, MFA-protected queue of blocked or stale workflow instances. */
-  public static summarizeAccountWorkflowAttention({slug, scope, workflow, targetOperation, reason, tenantId, limit, cursor, dependencyStatus, requiredOutcomeCode, blockerCode, groupBy}: {
-    slug: string; scope: string; workflow?: string; targetOperation?: string; reason?: 'blocked' | 'stale' | 'overdue' | 'dependency'; tenantId?: string; limit?: number; cursor?: string; dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch'; requiredOutcomeCode?: string; blockerCode?: string; groupBy?: 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code' | 'customer';
-  }): CancelablePromise<OperationWorkflowAttentionSummary> {
-    return __request(OpenAPI, {method: 'GET', url: '/v1/apps/{slug}/workflow-attention/summary', path: {'slug': slug},
-      query: {scope, workflow, target_operation: targetOperation, reason, tenant_id: tenantId, limit, cursor, dependency_status: dependencyStatus, required_outcome_code: requiredOutcomeCode, blocker_code: blockerCode, group_by: groupBy},
-      errors: {400: 'Invalid selectors or cursor', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not found', 503: 'Unavailable'}});
-  }
-  /** Queue restricted to the customer identity from credentials. */
-  public static summarizePlatformTenantSelfWorkflowAttention({appId, scope, workflow, targetOperation, reason, limit, cursor, dependencyStatus, requiredOutcomeCode, blockerCode, groupBy}: {
-    appId: string; scope: string; workflow?: string; targetOperation?: string; reason?: 'blocked' | 'stale' | 'overdue' | 'dependency'; limit?: number; cursor?: string; dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch'; requiredOutcomeCode?: string; blockerCode?: string; groupBy?: 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code';
-  }): CancelablePromise<OperationWorkflowAttentionSummary> {
-    return __request(OpenAPI, {method: 'GET', url: '/v1/platform-tenant-self/workflow-attention/summary',
-      query: {app_id: appId, scope, workflow, target_operation: targetOperation, reason, limit, cursor, dependency_status: dependencyStatus, required_outcome_code: requiredOutcomeCode, blocker_code: blockerCode, group_by: groupBy},
-      errors: {400: 'Invalid selectors or cursor', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not found', 503: 'Unavailable'}});
-  }
-
- public static listAccountWorkflowOutcomes({slug, scope, workflow, code, limit, cursor, tenantId}:{slug: string; scope: string; workflow?: string; code?: string; limit?: number; cursor?: string; tenantId?: string;}): CancelablePromise<OperationWorkflowOutcomesResponse> {return __request(OpenAPI,{method:'GET',url:'/v1/apps/{slug}/workflow-outcomes',path:{slug},query:{tenant_id: tenantId, scope, workflow, code, limit, cursor},errors:{400:'Invalid selectors or cursor',401:'Unauthorized',403:'Forbidden',404:'Not found',503:'Unavailable'}});}
-
- public static summarizeAccountWorkflowOutcomes({slug, scope, workflow, code, limit, cursor, groupBy, tenantId}:{slug: string; scope: string; workflow?: string; code?: string; limit?: number; cursor?: string; groupBy?: 'outcome' | 'workflow' | 'customer'; tenantId?: string;}): CancelablePromise<OperationWorkflowOutcomeSummary> {return __request(OpenAPI,{method:'GET',url:'/v1/apps/{slug}/workflow-outcomes/summary',path:{slug},query:{tenant_id: tenantId, scope, workflow, code, limit, cursor, group_by: groupBy},errors:{400:'Invalid selectors or cursor',401:'Unauthorized',403:'Forbidden',404:'Not found',503:'Unavailable'}});}
-
- public static listPlatformTenantSelfWorkflowOutcomes({appId, scope, workflow, code, limit, cursor}:{appId: string; scope: string; workflow?: string; code?: string; limit?: number; cursor?: string;}): CancelablePromise<OperationWorkflowOutcomesResponse> {return __request(OpenAPI,{method:'GET',url:'/v1/platform-tenant-self/workflow-outcomes',query:{app_id: appId, scope, workflow, code, limit, cursor},errors:{400:'Invalid selectors or cursor',401:'Unauthorized',403:'Forbidden',404:'Not found',503:'Unavailable'}});}
-
- public static summarizePlatformTenantSelfWorkflowOutcomes({appId, scope, workflow, code, limit, cursor, groupBy}:{appId: string; scope: string; workflow?: string; code?: string; limit?: number; cursor?: string; groupBy?: 'outcome' | 'workflow';}): CancelablePromise<OperationWorkflowOutcomeSummary> {return __request(OpenAPI,{method:'GET',url:'/v1/platform-tenant-self/workflow-outcomes/summary',query:{app_id: appId, scope, workflow, code, limit, cursor, group_by: groupBy},errors:{400:'Invalid selectors or cursor',401:'Unauthorized',403:'Forbidden',404:'Not found',503:'Unavailable'}});}
-
-  public static checkAccountWorkflowReadiness({slug, requestBody}: {slug: string; requestBody: OperationWorkflowReadinessRequest}): CancelablePromise<OperationWorkflowReadinessResponse> {
-    return __request(OpenAPI, {method: 'POST', url: '/v1/apps/{slug}/workflow-readiness', path: {slug}, body: requestBody, mediaType: 'application/json'});
-  }
-  public static checkPlatformTenantSelfWorkflowReadiness({requestBody}: {requestBody: OperationWorkflowReadinessRequest}): CancelablePromise<OperationWorkflowReadinessResponse> {
-    return __request(OpenAPI, {method: 'POST', url: '/v1/platform-tenant-self/workflow-readiness', body: requestBody, mediaType: 'application/json'});
-  }
-  public static previewAccountWorkflowActions({slug, requestBody}: {slug: string; requestBody: OperationWorkflowActionPreviewRequest}): CancelablePromise<OperationWorkflowActionPreviewResponse> {
-    return __request(OpenAPI, {method: 'POST', url: '/v1/apps/{slug}/workflow-actions/preview', path: {slug}, body: requestBody, mediaType: 'application/json'});
-  }
-  public static previewPlatformTenantSelfWorkflowActions({requestBody}: {requestBody: OperationWorkflowActionPreviewRequest}): CancelablePromise<OperationWorkflowActionPreviewResponse> {
-    return __request(OpenAPI, {method: 'POST', url: '/v1/platform-tenant-self/workflow-actions/preview', body: requestBody, mediaType: 'application/json'});
   }
 }

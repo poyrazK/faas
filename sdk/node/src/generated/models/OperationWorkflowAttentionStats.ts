@@ -1,1 +1,19 @@
-export interface OperationWorkflowAttentionStats { dependency_workflow_count: number; dependency_count: number; overdue_workflow_count: number; earliest_overdue_deadline_at?: string; longest_overdue_seconds?: number; workflow_count: number; blocked_workflow_count: number; stale_workflow_count: number; blocker_count: number; unknown_age_blockers: number; oldest_blocker_at?: string; oldest_blocker_age_seconds?: number }
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+export type OperationWorkflowAttentionStats = {
+  dependency_workflow_count: number;
+  dependency_count: number;
+  overdue_workflow_count: number;
+  earliest_overdue_deadline_at?: string;
+  longest_overdue_seconds?: number;
+  workflow_count: number;
+  blocked_workflow_count: number;
+  stale_workflow_count: number;
+  blocker_count: number;
+  unknown_age_blockers: number;
+  oldest_blocker_at?: string;
+  oldest_blocker_age_seconds?: number;
+};
+

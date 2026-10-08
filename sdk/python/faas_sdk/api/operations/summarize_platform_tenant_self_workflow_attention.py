@@ -8,6 +8,15 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.operation_workflow_attention_summary import OperationWorkflowAttentionSummary
 from ...models.problem import Problem
+from ...models.summarize_platform_tenant_self_workflow_attention_dependency_status import (
+    SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus,
+)
+from ...models.summarize_platform_tenant_self_workflow_attention_group_by import (
+    SummarizePlatformTenantSelfWorkflowAttentionGroupBy,
+)
+from ...models.summarize_platform_tenant_self_workflow_attention_reason import (
+    SummarizePlatformTenantSelfWorkflowAttentionReason,
+)
 from ...types import UNSET, Response, Unset
 
 
@@ -15,15 +24,15 @@ def _get_kwargs(
     *,
     app_id: UUID,
     scope: str,
+    group_by: SummarizePlatformTenantSelfWorkflowAttentionGroupBy | Unset = "workflow",
     workflow: str | Unset = UNSET,
-    limit: int | Unset = 20,
-    cursor: str | Unset = UNSET,
     target_operation: str | Unset = UNSET,
-    reason: str | Unset = UNSET,
-    dependency_status: str | Unset = UNSET,
+    dependency_status: SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
-    group_by: str | Unset = UNSET,
+    reason: SummarizePlatformTenantSelfWorkflowAttentionReason | Unset = UNSET,
+    limit: int | Unset = 20,
+    cursor: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -33,19 +42,35 @@ def _get_kwargs(
 
     params["scope"] = scope
 
+    json_group_by: str | Unset = UNSET
+    if not isinstance(group_by, Unset):
+        json_group_by = group_by
+
+    params["group_by"] = json_group_by
+
     params["workflow"] = workflow
+
+    params["target_operation"] = target_operation
+
+    json_dependency_status: str | Unset = UNSET
+    if not isinstance(dependency_status, Unset):
+        json_dependency_status = dependency_status
+
+    params["dependency_status"] = json_dependency_status
+
+    params["required_outcome_code"] = required_outcome_code
+
+    params["blocker_code"] = blocker_code
+
+    json_reason: str | Unset = UNSET
+    if not isinstance(reason, Unset):
+        json_reason = reason
+
+    params["reason"] = json_reason
 
     params["limit"] = limit
 
     params["cursor"] = cursor
-
-    params["target_operation"] = target_operation
-
-    params["reason"] = reason
-    params["dependency_status"] = dependency_status
-    params["required_outcome_code"] = required_outcome_code
-    params["blocker_code"] = blocker_code
-    params["group_by"] = group_by
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -86,11 +111,6 @@ def _parse_response(
 
         return response_404
 
-    if response.status_code == 410:
-        response_410 = Problem.from_dict(response.json())
-
-        return response_410
-
     if response.status_code == 503:
         response_503 = Problem.from_dict(response.json())
 
@@ -118,30 +138,62 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     app_id: UUID,
     scope: str,
+    group_by: SummarizePlatformTenantSelfWorkflowAttentionGroupBy | Unset = "workflow",
     workflow: str | Unset = UNSET,
-    limit: int | Unset = 20,
-    cursor: str | Unset = UNSET,
     target_operation: str | Unset = UNSET,
-    reason: str | Unset = UNSET,
-    dependency_status: str | Unset = UNSET,
+    dependency_status: SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
-    group_by: str | Unset = UNSET,
+    reason: SummarizePlatformTenantSelfWorkflowAttentionReason | Unset = UNSET,
+    limit: int | Unset = 20,
+    cursor: str | Unset = UNSET,
 ) -> Response[OperationWorkflowAttentionSummary | Problem]:
-    """Summarize all matching retained blocked or stale workflows within the authenticated ownership boundary."""
+    """Summarize all matching retained workflow attention.
+
+     Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant
+    overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue
+    deadlines are evaluated at the first page time carried by the cursor; current reports and retention
+    can change during browsing. Unknown/unreported state is not enumerated. Target Operations match
+    reported blockers or applicable selected-contract edges on stale or overdue workflows. Totals cover
+    all matching retained snapshots regardless of group pagination. Groups may overlap and should not be
+    added together. Blocker statistics within code and target groups cover that code or target only.
+    Ages derive from application-reported first_observed_at; missing ages are counted separately. Group
+    cursors are separate from queue cursors. The summary grants no execution authority.
+
+    Args:
+        app_id (UUID):
+        scope (str):
+        group_by (SummarizePlatformTenantSelfWorkflowAttentionGroupBy | Unset):  Default:
+            'workflow'.
+        workflow (str | Unset):
+        target_operation (str | Unset):
+        dependency_status (SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset):
+        required_outcome_code (str | Unset):
+        blocker_code (str | Unset):
+        reason (SummarizePlatformTenantSelfWorkflowAttentionReason | Unset):
+        limit (int | Unset):  Default: 20.
+        cursor (str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[OperationWorkflowAttentionSummary | Problem]
+    """
 
     kwargs = _get_kwargs(
         app_id=app_id,
         scope=scope,
+        group_by=group_by,
         workflow=workflow,
-        limit=limit,
-        cursor=cursor,
         target_operation=target_operation,
-        reason=reason,
         dependency_status=dependency_status,
         required_outcome_code=required_outcome_code,
         blocker_code=blocker_code,
-        group_by=group_by,
+        reason=reason,
+        limit=limit,
+        cursor=cursor,
     )
 
     response = client.get_httpx_client().request(
@@ -156,31 +208,63 @@ def sync(
     client: AuthenticatedClient | Client,
     app_id: UUID,
     scope: str,
+    group_by: SummarizePlatformTenantSelfWorkflowAttentionGroupBy | Unset = "workflow",
     workflow: str | Unset = UNSET,
-    limit: int | Unset = 20,
-    cursor: str | Unset = UNSET,
     target_operation: str | Unset = UNSET,
-    reason: str | Unset = UNSET,
-    dependency_status: str | Unset = UNSET,
+    dependency_status: SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
-    group_by: str | Unset = UNSET,
+    reason: SummarizePlatformTenantSelfWorkflowAttentionReason | Unset = UNSET,
+    limit: int | Unset = 20,
+    cursor: str | Unset = UNSET,
 ) -> OperationWorkflowAttentionSummary | Problem | None:
-    """Summarize all matching retained blocked or stale workflows within the authenticated ownership boundary."""
+    """Summarize all matching retained workflow attention.
+
+     Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant
+    overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue
+    deadlines are evaluated at the first page time carried by the cursor; current reports and retention
+    can change during browsing. Unknown/unreported state is not enumerated. Target Operations match
+    reported blockers or applicable selected-contract edges on stale or overdue workflows. Totals cover
+    all matching retained snapshots regardless of group pagination. Groups may overlap and should not be
+    added together. Blocker statistics within code and target groups cover that code or target only.
+    Ages derive from application-reported first_observed_at; missing ages are counted separately. Group
+    cursors are separate from queue cursors. The summary grants no execution authority.
+
+    Args:
+        app_id (UUID):
+        scope (str):
+        group_by (SummarizePlatformTenantSelfWorkflowAttentionGroupBy | Unset):  Default:
+            'workflow'.
+        workflow (str | Unset):
+        target_operation (str | Unset):
+        dependency_status (SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset):
+        required_outcome_code (str | Unset):
+        blocker_code (str | Unset):
+        reason (SummarizePlatformTenantSelfWorkflowAttentionReason | Unset):
+        limit (int | Unset):  Default: 20.
+        cursor (str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        OperationWorkflowAttentionSummary | Problem
+    """
 
     return sync_detailed(
         client=client,
         app_id=app_id,
         scope=scope,
+        group_by=group_by,
         workflow=workflow,
-        limit=limit,
-        cursor=cursor,
         target_operation=target_operation,
-        reason=reason,
         dependency_status=dependency_status,
         required_outcome_code=required_outcome_code,
         blocker_code=blocker_code,
-        group_by=group_by,
+        reason=reason,
+        limit=limit,
+        cursor=cursor,
     ).parsed
 
 
@@ -189,30 +273,62 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     app_id: UUID,
     scope: str,
+    group_by: SummarizePlatformTenantSelfWorkflowAttentionGroupBy | Unset = "workflow",
     workflow: str | Unset = UNSET,
-    limit: int | Unset = 20,
-    cursor: str | Unset = UNSET,
     target_operation: str | Unset = UNSET,
-    reason: str | Unset = UNSET,
-    dependency_status: str | Unset = UNSET,
+    dependency_status: SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
-    group_by: str | Unset = UNSET,
+    reason: SummarizePlatformTenantSelfWorkflowAttentionReason | Unset = UNSET,
+    limit: int | Unset = 20,
+    cursor: str | Unset = UNSET,
 ) -> Response[OperationWorkflowAttentionSummary | Problem]:
-    """Summarize all matching retained blocked or stale workflows within the authenticated ownership boundary."""
+    """Summarize all matching retained workflow attention.
+
+     Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant
+    overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue
+    deadlines are evaluated at the first page time carried by the cursor; current reports and retention
+    can change during browsing. Unknown/unreported state is not enumerated. Target Operations match
+    reported blockers or applicable selected-contract edges on stale or overdue workflows. Totals cover
+    all matching retained snapshots regardless of group pagination. Groups may overlap and should not be
+    added together. Blocker statistics within code and target groups cover that code or target only.
+    Ages derive from application-reported first_observed_at; missing ages are counted separately. Group
+    cursors are separate from queue cursors. The summary grants no execution authority.
+
+    Args:
+        app_id (UUID):
+        scope (str):
+        group_by (SummarizePlatformTenantSelfWorkflowAttentionGroupBy | Unset):  Default:
+            'workflow'.
+        workflow (str | Unset):
+        target_operation (str | Unset):
+        dependency_status (SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset):
+        required_outcome_code (str | Unset):
+        blocker_code (str | Unset):
+        reason (SummarizePlatformTenantSelfWorkflowAttentionReason | Unset):
+        limit (int | Unset):  Default: 20.
+        cursor (str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[OperationWorkflowAttentionSummary | Problem]
+    """
 
     kwargs = _get_kwargs(
         app_id=app_id,
         scope=scope,
+        group_by=group_by,
         workflow=workflow,
-        limit=limit,
-        cursor=cursor,
         target_operation=target_operation,
-        reason=reason,
         dependency_status=dependency_status,
         required_outcome_code=required_outcome_code,
         blocker_code=blocker_code,
-        group_by=group_by,
+        reason=reason,
+        limit=limit,
+        cursor=cursor,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -225,31 +341,63 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     app_id: UUID,
     scope: str,
+    group_by: SummarizePlatformTenantSelfWorkflowAttentionGroupBy | Unset = "workflow",
     workflow: str | Unset = UNSET,
-    limit: int | Unset = 20,
-    cursor: str | Unset = UNSET,
     target_operation: str | Unset = UNSET,
-    reason: str | Unset = UNSET,
-    dependency_status: str | Unset = UNSET,
+    dependency_status: SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
-    group_by: str | Unset = UNSET,
+    reason: SummarizePlatformTenantSelfWorkflowAttentionReason | Unset = UNSET,
+    limit: int | Unset = 20,
+    cursor: str | Unset = UNSET,
 ) -> OperationWorkflowAttentionSummary | Problem | None:
-    """Summarize all matching retained blocked or stale workflows within the authenticated ownership boundary."""
+    """Summarize all matching retained workflow attention.
+
+     Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant
+    overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue
+    deadlines are evaluated at the first page time carried by the cursor; current reports and retention
+    can change during browsing. Unknown/unreported state is not enumerated. Target Operations match
+    reported blockers or applicable selected-contract edges on stale or overdue workflows. Totals cover
+    all matching retained snapshots regardless of group pagination. Groups may overlap and should not be
+    added together. Blocker statistics within code and target groups cover that code or target only.
+    Ages derive from application-reported first_observed_at; missing ages are counted separately. Group
+    cursors are separate from queue cursors. The summary grants no execution authority.
+
+    Args:
+        app_id (UUID):
+        scope (str):
+        group_by (SummarizePlatformTenantSelfWorkflowAttentionGroupBy | Unset):  Default:
+            'workflow'.
+        workflow (str | Unset):
+        target_operation (str | Unset):
+        dependency_status (SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset):
+        required_outcome_code (str | Unset):
+        blocker_code (str | Unset):
+        reason (SummarizePlatformTenantSelfWorkflowAttentionReason | Unset):
+        limit (int | Unset):  Default: 20.
+        cursor (str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        OperationWorkflowAttentionSummary | Problem
+    """
 
     return (
         await asyncio_detailed(
             client=client,
             app_id=app_id,
             scope=scope,
+            group_by=group_by,
             workflow=workflow,
+            target_operation=target_operation,
+            dependency_status=dependency_status,
+            required_outcome_code=required_outcome_code,
+            blocker_code=blocker_code,
+            reason=reason,
             limit=limit,
             cursor=cursor,
-            target_operation=target_operation,
-            reason=reason,
-        dependency_status=dependency_status,
-        required_outcome_code=required_outcome_code,
-        blocker_code=blocker_code,
-        group_by=group_by,
         )
     ).parsed

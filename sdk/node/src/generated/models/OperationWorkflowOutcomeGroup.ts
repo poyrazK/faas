@@ -1,1 +1,9 @@
-export interface OperationWorkflowOutcomeGroup { value: string; workflow_count: number }
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+export type OperationWorkflowOutcomeGroup = {
+  value: string;
+  workflow_count: number;
+};
+

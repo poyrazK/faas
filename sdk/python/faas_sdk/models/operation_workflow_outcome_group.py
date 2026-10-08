@@ -1,12 +1,44 @@
 from __future__ import annotations
+
 from collections.abc import Mapping
 from typing import Any, TypeVar
-from attrs import define
+
+from attrs import define as _attrs_define
+
 T = TypeVar("T", bound="OperationWorkflowOutcomeGroup")
-@define
+
+
+@_attrs_define
 class OperationWorkflowOutcomeGroup:
     value: str
     workflow_count: int
-    def to_dict(self) -> dict[str, Any]: return {"value":self.value,"workflow_count":self.workflow_count}
+
+    def to_dict(self) -> dict[str, Any]:
+        value = self.value
+
+        workflow_count = self.workflow_count
+
+        field_dict: dict[str, Any] = {}
+
+        field_dict.update(
+            {
+                "value": value,
+                "workflow_count": workflow_count,
+            }
+        )
+
+        return field_dict
+
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T: return cls(value=src_dict["value"],workflow_count=src_dict["workflow_count"])
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        d = dict(src_dict)
+        value = d.pop("value")
+
+        workflow_count = d.pop("workflow_count")
+
+        operation_workflow_outcome_group = cls(
+            value=value,
+            workflow_count=workflow_count,
+        )
+
+        return operation_workflow_outcome_group

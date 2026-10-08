@@ -17,10 +17,10 @@ def _get_kwargs(
     *,
     scope: str,
     workflow: str | Unset = UNSET,
+    code: str | Unset = UNSET,
     tenant_id: UUID | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
-    code: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -28,6 +28,8 @@ def _get_kwargs(
     params["scope"] = scope
 
     params["workflow"] = workflow
+
+    params["code"] = code
 
     json_tenant_id: str | Unset = UNSET
     if not isinstance(tenant_id, Unset):
@@ -37,9 +39,6 @@ def _get_kwargs(
     params["limit"] = limit
 
     params["cursor"] = cursor
-
-
-    params["code"] = code
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -82,11 +81,6 @@ def _parse_response(
 
         return response_404
 
-    if response.status_code == 410:
-        response_410 = Problem.from_dict(response.json())
-
-        return response_410
-
     if response.status_code == 503:
         response_503 = Problem.from_dict(response.json())
 
@@ -115,21 +109,45 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     scope: str,
     workflow: str | Unset = UNSET,
+    code: str | Unset = UNSET,
     tenant_id: UUID | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
-    code: str | Unset = UNSET,
 ) -> Response[OperationWorkflowOutcomesResponse | Problem]:
-    """Read completed workflows with explicit outcomes within the authenticated ownership boundary."""
+    """List completed workflows with explicit business outcomes.
+
+     Requires account read scope and MFA. Optional tenant selection remains within account ownership.
+    Explicit app and environment are required. Only latest retained terminal snapshots with reported
+    outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier
+    outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals
+    cover all matching instances independently of group pagination; cursors are separate from the
+    attention queue. Reports and retention may change during browsing.
+
+    Args:
+        slug (str):
+        scope (str):
+        workflow (str | Unset):
+        code (str | Unset):
+        tenant_id (UUID | Unset):
+        limit (int | Unset):  Default: 20.
+        cursor (str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[OperationWorkflowOutcomesResponse | Problem]
+    """
 
     kwargs = _get_kwargs(
         slug=slug,
         scope=scope,
         workflow=workflow,
+        code=code,
         tenant_id=tenant_id,
         limit=limit,
         cursor=cursor,
-        code=code,
     )
 
     response = client.get_httpx_client().request(
@@ -145,22 +163,46 @@ def sync(
     client: AuthenticatedClient | Client,
     scope: str,
     workflow: str | Unset = UNSET,
+    code: str | Unset = UNSET,
     tenant_id: UUID | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
-    code: str | Unset = UNSET,
 ) -> OperationWorkflowOutcomesResponse | Problem | None:
-    """Read completed workflows with explicit outcomes within the authenticated ownership boundary."""
+    """List completed workflows with explicit business outcomes.
+
+     Requires account read scope and MFA. Optional tenant selection remains within account ownership.
+    Explicit app and environment are required. Only latest retained terminal snapshots with reported
+    outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier
+    outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals
+    cover all matching instances independently of group pagination; cursors are separate from the
+    attention queue. Reports and retention may change during browsing.
+
+    Args:
+        slug (str):
+        scope (str):
+        workflow (str | Unset):
+        code (str | Unset):
+        tenant_id (UUID | Unset):
+        limit (int | Unset):  Default: 20.
+        cursor (str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        OperationWorkflowOutcomesResponse | Problem
+    """
 
     return sync_detailed(
         slug=slug,
         client=client,
         scope=scope,
         workflow=workflow,
+        code=code,
         tenant_id=tenant_id,
         limit=limit,
         cursor=cursor,
-        code=code,
     ).parsed
 
 
@@ -170,21 +212,45 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     scope: str,
     workflow: str | Unset = UNSET,
+    code: str | Unset = UNSET,
     tenant_id: UUID | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
-    code: str | Unset = UNSET,
 ) -> Response[OperationWorkflowOutcomesResponse | Problem]:
-    """Read completed workflows with explicit outcomes within the authenticated ownership boundary."""
+    """List completed workflows with explicit business outcomes.
+
+     Requires account read scope and MFA. Optional tenant selection remains within account ownership.
+    Explicit app and environment are required. Only latest retained terminal snapshots with reported
+    outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier
+    outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals
+    cover all matching instances independently of group pagination; cursors are separate from the
+    attention queue. Reports and retention may change during browsing.
+
+    Args:
+        slug (str):
+        scope (str):
+        workflow (str | Unset):
+        code (str | Unset):
+        tenant_id (UUID | Unset):
+        limit (int | Unset):  Default: 20.
+        cursor (str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[OperationWorkflowOutcomesResponse | Problem]
+    """
 
     kwargs = _get_kwargs(
         slug=slug,
         scope=scope,
         workflow=workflow,
+        code=code,
         tenant_id=tenant_id,
         limit=limit,
         cursor=cursor,
-        code=code,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -198,12 +264,36 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     scope: str,
     workflow: str | Unset = UNSET,
+    code: str | Unset = UNSET,
     tenant_id: UUID | Unset = UNSET,
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
-    code: str | Unset = UNSET,
 ) -> OperationWorkflowOutcomesResponse | Problem | None:
-    """Read completed workflows with explicit outcomes within the authenticated ownership boundary."""
+    """List completed workflows with explicit business outcomes.
+
+     Requires account read scope and MFA. Optional tenant selection remains within account ownership.
+    Explicit app and environment are required. Only latest retained terminal snapshots with reported
+    outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier
+    outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals
+    cover all matching instances independently of group pagination; cursors are separate from the
+    attention queue. Reports and retention may change during browsing.
+
+    Args:
+        slug (str):
+        scope (str):
+        workflow (str | Unset):
+        code (str | Unset):
+        tenant_id (UUID | Unset):
+        limit (int | Unset):  Default: 20.
+        cursor (str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        OperationWorkflowOutcomesResponse | Problem
+    """
 
     return (
         await asyncio_detailed(
@@ -211,9 +301,9 @@ async def asyncio(
             client=client,
             scope=scope,
             workflow=workflow,
+            code=code,
             tenant_id=tenant_id,
             limit=limit,
             cursor=cursor,
-        code=code,
         )
     ).parsed

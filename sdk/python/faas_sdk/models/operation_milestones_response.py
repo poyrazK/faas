@@ -31,9 +31,11 @@ class OperationMilestonesResponse:
     """Retained app-reported changes for the exact workflow run when paired workflow selectors are supplied,
     ordered by app-assigned revision."""
     workflow_instance: OperationWorkflowInstanceSnapshot | Unset = UNSET
-    """Grouped view of the declared steps, current explicit state, and transition-history page for one workflow
-    instance. Page-scoped facts follow the milestone cursor; retention-wide step summaries cover all matching facts
-    still retained under the normal Operation retention rules."""
+    """Grouped view of the selected contract's declared steps and allowed transitions, current explicit state, and
+    transition-history page for one workflow instance. Allowed transitions are contract edges by target Operation;
+    the application still checks its business row and authorization before using one. Page-scoped facts follow the
+    milestone cursor; retention-wide step summaries cover all matching facts still retained under the normal
+    Operation retention rules."""
     next_cursor: str | Unset = UNSET
     """Opaque continuation bound to the same account"""
     next_workflow_state_cursor: str | Unset = UNSET

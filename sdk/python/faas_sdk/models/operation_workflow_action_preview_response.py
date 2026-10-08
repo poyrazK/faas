@@ -1,31 +1,147 @@
 from __future__ import annotations
-from attrs import define
+
 import datetime
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from attrs import define as _attrs_define
+
+from ..models.operation_workflow_action_preview_response_reason import (
+    OperationWorkflowActionPreviewResponseReason,
+    check_operation_workflow_action_preview_response_reason,
+)
 from ..types import UNSET, Unset
-from .operation_subject import OperationSubject
-from .operation_workflow_state import OperationWorkflowState
-from .operation_workflow_transition_readiness import OperationWorkflowTransitionReadiness
-@define
+
+if TYPE_CHECKING:
+    from ..models.operation_subject import OperationSubject
+    from ..models.operation_workflow_state import OperationWorkflowState
+    from ..models.operation_workflow_transition_readiness import OperationWorkflowTransitionReadiness
+
+
+T = TypeVar("T", bound="OperationWorkflowActionPreviewResponse")
+
+
+@_attrs_define
 class OperationWorkflowActionPreviewResponse:
     subject: OperationSubject
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
     workflow: str
     instance_id: str
     evaluated_at: datetime.datetime
     contract_version: int
-    reason: str
+    reason: OperationWorkflowActionPreviewResponseReason
     actions: list[OperationWorkflowTransitionReadiness]
+    """Declared candidates evaluated with no planned milestones or decisions. Availability does not mean readiness
+    or authorization."""
     action_count: int
     has_more: bool
+    """The 100-action cap was reached. Filter by operation to narrow the preview; this endpoint has no cursor."""
     state: OperationWorkflowState | Unset = UNSET
+    """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
     state_revision: int | Unset = UNSET
-    def to_dict(self):
-        result={key:getattr(self,key) for key in ("workflow","instance_id","contract_version","reason","action_count","has_more")}
-        result["subject"]=self.subject.to_dict();result["evaluated_at"]=self.evaluated_at.isoformat()
-        result["actions"]=[v.to_dict() for v in self.actions]
-        if self.state is not UNSET: result["state"]=self.state.to_dict()
-        if self.state_revision is not UNSET: result["state_revision"]=self.state_revision
-        return result
+
+    def to_dict(self) -> dict[str, Any]:
+        subject = self.subject.to_dict()
+
+        workflow = self.workflow
+
+        instance_id = self.instance_id
+
+        evaluated_at = self.evaluated_at.isoformat()
+
+        contract_version = self.contract_version
+
+        reason: str = self.reason
+
+        actions = []
+        for actions_item_data in self.actions:
+            actions_item = actions_item_data.to_dict()
+            actions.append(actions_item)
+
+        action_count = self.action_count
+
+        has_more = self.has_more
+
+        state: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.state, Unset):
+            state = self.state.to_dict()
+
+        state_revision = self.state_revision
+
+        field_dict: dict[str, Any] = {}
+
+        field_dict.update(
+            {
+                "subject": subject,
+                "workflow": workflow,
+                "instance_id": instance_id,
+                "evaluated_at": evaluated_at,
+                "contract_version": contract_version,
+                "reason": reason,
+                "actions": actions,
+                "action_count": action_count,
+                "has_more": has_more,
+            }
+        )
+        if state is not UNSET:
+            field_dict["state"] = state
+        if state_revision is not UNSET:
+            field_dict["state_revision"] = state_revision
+
+        return field_dict
+
     @classmethod
-    def from_dict(cls,data):
-        values={key:data[key] for key in ("workflow","instance_id","contract_version","reason","action_count","has_more")}
-        return cls(**values,subject=OperationSubject.from_dict(data["subject"]),evaluated_at=datetime.datetime.fromisoformat(data["evaluated_at"].replace("Z","+00:00")),actions=[OperationWorkflowTransitionReadiness.from_dict(v) for v in data["actions"]],state=OperationWorkflowState.from_dict(data["state"]) if "state" in data else UNSET,state_revision=data.get("state_revision",UNSET))
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_subject import OperationSubject
+        from ..models.operation_workflow_state import OperationWorkflowState
+        from ..models.operation_workflow_transition_readiness import OperationWorkflowTransitionReadiness
+
+        d = dict(src_dict)
+        subject = OperationSubject.from_dict(d.pop("subject"))
+
+        workflow = d.pop("workflow")
+
+        instance_id = d.pop("instance_id")
+
+        evaluated_at = datetime.datetime.fromisoformat(d.pop("evaluated_at"))
+
+        contract_version = d.pop("contract_version")
+
+        reason = check_operation_workflow_action_preview_response_reason(d.pop("reason"))
+
+        actions = []
+        _actions = d.pop("actions")
+        for actions_item_data in _actions:
+            actions_item = OperationWorkflowTransitionReadiness.from_dict(actions_item_data)
+
+            actions.append(actions_item)
+
+        action_count = d.pop("action_count")
+
+        has_more = d.pop("has_more")
+
+        _state = d.pop("state", UNSET)
+        state: OperationWorkflowState | Unset
+        if isinstance(_state, Unset):
+            state = UNSET
+        else:
+            state = OperationWorkflowState.from_dict(_state)
+
+        state_revision = d.pop("state_revision", UNSET)
+
+        operation_workflow_action_preview_response = cls(
+            subject=subject,
+            workflow=workflow,
+            instance_id=instance_id,
+            evaluated_at=evaluated_at,
+            contract_version=contract_version,
+            reason=reason,
+            actions=actions,
+            action_count=action_count,
+            has_more=has_more,
+            state=state,
+            state_revision=state_revision,
+        )
+
+        return operation_workflow_action_preview_response

@@ -1,13 +1,50 @@
 from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import Any, TypeVar
-from attrs import define
-from .operation_workflow_attention_stats import OperationWorkflowAttentionStats
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from attrs import define as _attrs_define
+
+if TYPE_CHECKING:
+    from ..models.operation_workflow_attention_stats import OperationWorkflowAttentionStats
+
+
 T = TypeVar("T", bound="OperationWorkflowAttentionGroup")
-@define
+
+
+@_attrs_define
 class OperationWorkflowAttentionGroup:
     value: str
     stats: OperationWorkflowAttentionStats
-    def to_dict(self) -> dict[str, Any]: return {"value":self.value,"stats":self.stats.to_dict()}
+
+    def to_dict(self) -> dict[str, Any]:
+        value = self.value
+
+        stats = self.stats.to_dict()
+
+        field_dict: dict[str, Any] = {}
+
+        field_dict.update(
+            {
+                "value": value,
+                "stats": stats,
+            }
+        )
+
+        return field_dict
+
     @classmethod
-    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T: return cls(value=src_dict["value"],stats=OperationWorkflowAttentionStats.from_dict(src_dict["stats"]))
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_attention_stats import OperationWorkflowAttentionStats
+
+        d = dict(src_dict)
+        value = d.pop("value")
+
+        stats = OperationWorkflowAttentionStats.from_dict(d.pop("stats"))
+
+        operation_workflow_attention_group = cls(
+            value=value,
+            stats=stats,
+        )
+
+        return operation_workflow_attention_group

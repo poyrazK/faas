@@ -826,6 +826,15 @@ export type { OperationAcceptedResponse } from './models/OperationAcceptedRespon
 export type { OperationAfter } from './models/OperationAfter.js';
 export type { OperationArtifact } from './models/OperationArtifact.js';
 export type { OperationArtifactRequest } from './models/OperationArtifactRequest.js';
+export type { OperationBusinessCompensation } from './models/OperationBusinessCompensation.js';
+export type { OperationBusinessCompensationPayload } from './models/OperationBusinessCompensationPayload.js';
+export type { OperationBusinessDecision } from './models/OperationBusinessDecision.js';
+export type { OperationBusinessDecisionPayload } from './models/OperationBusinessDecisionPayload.js';
+export type { OperationBusinessEffect } from './models/OperationBusinessEffect.js';
+export type { OperationBusinessEffectPayload } from './models/OperationBusinessEffectPayload.js';
+export type { OperationBusinessEffectReference } from './models/OperationBusinessEffectReference.js';
+export type { OperationBusinessInvariant } from './models/OperationBusinessInvariant.js';
+export type { OperationBusinessInvariantPayload } from './models/OperationBusinessInvariantPayload.js';
 export type { OperationCancellationRequest } from './models/OperationCancellationRequest.js';
 export type { OperationDefinitionResponse } from './models/OperationDefinitionResponse.js';
 export type { OperationDefinitionSpec } from './models/OperationDefinitionSpec.js';
@@ -876,11 +885,42 @@ export type { OperationSubject } from './models/OperationSubject.js';
 export type { OperationSubjectSpec } from './models/OperationSubjectSpec.js';
 export type { OperationSummary } from './models/OperationSummary.js';
 export type { OperationTenantIdentity } from './models/OperationTenantIdentity.js';
+export type { OperationWorkflowActionPreviewRequest } from './models/OperationWorkflowActionPreviewRequest.js';
+export type { OperationWorkflowActionPreviewResponse } from './models/OperationWorkflowActionPreviewResponse.js';
+export type { OperationWorkflowAttentionEntry } from './models/OperationWorkflowAttentionEntry.js';
+export type { OperationWorkflowAttentionGroup } from './models/OperationWorkflowAttentionGroup.js';
+export type { OperationWorkflowAttentionResponse } from './models/OperationWorkflowAttentionResponse.js';
+export type { OperationWorkflowAttentionStats } from './models/OperationWorkflowAttentionStats.js';
+export type { OperationWorkflowAttentionSummary } from './models/OperationWorkflowAttentionSummary.js';
+export type { OperationWorkflowBlocker } from './models/OperationWorkflowBlocker.js';
+export type { OperationWorkflowBlockerResolution } from './models/OperationWorkflowBlockerResolution.js';
+export type { OperationWorkflowDecision } from './models/OperationWorkflowDecision.js';
+export type { OperationWorkflowDependency } from './models/OperationWorkflowDependency.js';
+export type { OperationWorkflowDependencyFinding } from './models/OperationWorkflowDependencyFinding.js';
+export type { OperationWorkflowDependencyImpact } from './models/OperationWorkflowDependencyImpact.js';
+export type { OperationWorkflowDependencyTrace } from './models/OperationWorkflowDependencyTrace.js';
+export type { OperationWorkflowDependentInstance } from './models/OperationWorkflowDependentInstance.js';
+export type { OperationWorkflowEffectRequirement } from './models/OperationWorkflowEffectRequirement.js';
 export type { OperationWorkflowEvidenceMilestone } from './models/OperationWorkflowEvidenceMilestone.js';
 export type { OperationWorkflowInstanceMilestoneRef } from './models/OperationWorkflowInstanceMilestoneRef.js';
 export type { OperationWorkflowInstanceSnapshot } from './models/OperationWorkflowInstanceSnapshot.js';
 export type { OperationWorkflowInstanceStep } from './models/OperationWorkflowInstanceStep.js';
 export type { OperationWorkflowInstanceTransition } from './models/OperationWorkflowInstanceTransition.js';
+export type { OperationWorkflowInvariantRequirement } from './models/OperationWorkflowInvariantRequirement.js';
+export type { OperationWorkflowOutcomeEntry } from './models/OperationWorkflowOutcomeEntry.js';
+export type { OperationWorkflowOutcomeGroup } from './models/OperationWorkflowOutcomeGroup.js';
+export type { OperationWorkflowOutcomesResponse } from './models/OperationWorkflowOutcomesResponse.js';
+export type { OperationWorkflowOutcomeSummary } from './models/OperationWorkflowOutcomeSummary.js';
+export type { OperationWorkflowPlannedDecision } from './models/OperationWorkflowPlannedDecision.js';
+export type { OperationWorkflowPlannedEffect } from './models/OperationWorkflowPlannedEffect.js';
+export type { OperationWorkflowPlannedInvariant } from './models/OperationWorkflowPlannedInvariant.js';
+export type { OperationWorkflowPolicyRequirement } from './models/OperationWorkflowPolicyRequirement.js';
+export type { OperationWorkflowReadinessOverview } from './models/OperationWorkflowReadinessOverview.js';
+export type { OperationWorkflowReadinessRequest } from './models/OperationWorkflowReadinessRequest.js';
+export type { OperationWorkflowReadinessResponse } from './models/OperationWorkflowReadinessResponse.js';
+export type { OperationWorkflowReconciliation } from './models/OperationWorkflowReconciliation.js';
+export type { OperationWorkflowReconciliationPayload } from './models/OperationWorkflowReconciliationPayload.js';
+export type { OperationWorkflowRelatedInstance } from './models/OperationWorkflowRelatedInstance.js';
 export type { OperationWorkflowStaleOnly } from './models/OperationWorkflowStaleOnly.js';
 export type { OperationWorkflowState } from './models/OperationWorkflowState.js';
 export type { OperationWorkflowStateCursor } from './models/OperationWorkflowStateCursor.js';
@@ -891,6 +931,9 @@ export type { OperationWorkflowStateValidationRequest } from './models/Operation
 export type { OperationWorkflowStateValidationResponse } from './models/OperationWorkflowStateValidationResponse.js';
 export type { OperationWorkflowStep } from './models/OperationWorkflowStep.js';
 export type { OperationWorkflowTransition } from './models/OperationWorkflowTransition.js';
+export type { OperationWorkflowTransitionReadiness } from './models/OperationWorkflowTransitionReadiness.js';
+export type { OperationWorkflowUnmetEffect } from './models/OperationWorkflowUnmetEffect.js';
+export type { OperationWorkflowUnmetInvariant } from './models/OperationWorkflowUnmetInvariant.js';
 export type { OperationXFaasInvocationId } from './models/OperationXFaasInvocationId.js';
 export type { OperationXGregaleOperationAttempt } from './models/OperationXGregaleOperationAttempt.js';
 export type { OperationXGregaleOperationCapability } from './models/OperationXGregaleOperationCapability.js';
@@ -1526,72 +1569,3 @@ export { UpstreamsService } from './services/UpstreamsService.js';
 export { UsageService } from './services/UsageService.js';
 export { WebhooksService } from './services/WebhooksService.js';
 export { WorkflowsService } from './services/WorkflowsService.js';
-
-export type { OperationWorkflowDecision } from './models/OperationWorkflowDecision.js';
-
-export type { OperationWorkflowBlocker } from './models/OperationWorkflowBlocker.js';
-
-export type { OperationWorkflowAttentionEntry } from './models/OperationWorkflowAttentionEntry.js';
-
-export type { OperationWorkflowAttentionResponse } from './models/OperationWorkflowAttentionResponse.js';
-
-export type { OperationWorkflowBlockerResolution } from './models/OperationWorkflowBlockerResolution.js';
-
-export type { OperationWorkflowAttentionStats } from './models/OperationWorkflowAttentionStats.js';
-
-export type { OperationWorkflowAttentionGroup } from './models/OperationWorkflowAttentionGroup.js';
-
-export type { OperationWorkflowAttentionSummary } from './models/OperationWorkflowAttentionSummary.js';
-
-export type {OperationWorkflowOutcomeEntry} from './models/OperationWorkflowOutcomeEntry.js';
-
-export type {OperationWorkflowOutcomesResponse} from './models/OperationWorkflowOutcomesResponse.js';
-
-export type {OperationWorkflowOutcomeGroup} from './models/OperationWorkflowOutcomeGroup.js';
-
-export type {OperationWorkflowOutcomeSummary} from './models/OperationWorkflowOutcomeSummary.js';
-
-export type {OperationWorkflowDependency} from './models/OperationWorkflowDependency.js';
-
-export type {OperationWorkflowRelatedInstance} from './models/OperationWorkflowRelatedInstance.js';
-
-export type { OperationWorkflowDependencyImpact } from './models/OperationWorkflowDependencyImpact.js';
-export type { OperationWorkflowDependentInstance } from './models/OperationWorkflowDependentInstance.js';
-
-export type { OperationWorkflowDependencyTrace } from './models/OperationWorkflowDependencyTrace.js';
-export type { OperationWorkflowDependencyFinding } from './models/OperationWorkflowDependencyFinding.js';
-
-export type { OperationWorkflowReadinessRequest } from './models/OperationWorkflowReadinessRequest.js';
-export type { OperationWorkflowTransitionReadiness } from './models/OperationWorkflowTransitionReadiness.js';
-export type { OperationWorkflowReadinessResponse } from './models/OperationWorkflowReadinessResponse.js';
-export type { OperationWorkflowReadinessOverview } from './models/OperationWorkflowReadinessOverview.js';
-
-export type { OperationWorkflowPolicyRequirement } from './models/OperationWorkflowPolicyRequirement.js';
-
-export type { OperationWorkflowPlannedDecision } from './models/OperationWorkflowPlannedDecision.js';
-
-export type { OperationWorkflowActionPreviewRequest } from './models/OperationWorkflowActionPreviewRequest.js';
-
-export type { OperationWorkflowActionPreviewResponse } from './models/OperationWorkflowActionPreviewResponse.js';
-
-export type { OperationWorkflowInvariantRequirement } from './models/OperationWorkflowInvariantRequirement.js';
-
-export type { OperationWorkflowPlannedInvariant } from './models/OperationWorkflowPlannedInvariant.js';
-
-export type { OperationWorkflowUnmetInvariant } from './models/OperationWorkflowUnmetInvariant.js';
-
-export type { OperationWorkflowEffectRequirement } from './models/OperationWorkflowEffectRequirement.js';
-
-export type { OperationWorkflowPlannedEffect } from './models/OperationWorkflowPlannedEffect.js';
-
-export type { OperationWorkflowUnmetEffect } from './models/OperationWorkflowUnmetEffect.js';
-
-export type { OperationBusinessEffect } from './models/OperationBusinessEffect.js';
-
-export type { OperationBusinessEffectPayload } from './models/OperationBusinessEffectPayload.js';
-
-export type { OperationBusinessEffectReference } from './models/OperationBusinessEffectReference.js';
-
-export type { OperationBusinessCompensation } from './models/OperationBusinessCompensation.js';
-
-export type { OperationBusinessCompensationPayload } from './models/OperationBusinessCompensationPayload.js';
