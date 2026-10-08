@@ -62,6 +62,7 @@ const dashboardAccountPath = "/dashboard/account"
 //
 //	GET /dashboard/                  → index
 //	GET /dashboard/apps              → apps list
+//	GET /dashboard/app-costs         → account-wide app cost ranking
 //	GET /dashboard/apps/{slug}       → app detail
 //	GET /dashboard/apps/{slug}/logs  → live + archived app logs
 //	GET /dashboard/apps/{slug}/env|secrets → environment + secrets editor
@@ -100,6 +101,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderIndex(w, r, log, acct)
 		case path == "/dashboard/apps":
 			s.renderAppsList(w, r, log, acct)
+		case path == "/dashboard/app-costs":
+			s.renderAppCostsOverview(w, r, log, acct)
 		case path == "/dashboard/jobs":
 			s.renderJobsQueues(w, r, log, acct, r.URL.Query().Get("app"))
 		case strings.HasPrefix(path, dashboardAsyncInvocationPath):
@@ -130,6 +133,18 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderDeveloperEnvironments(w, r, log, acct)
 		case len(path) > len("/dashboard/apps/") && path[:len("/dashboard/apps/")] == "/dashboard/apps/":
 			slug := path[len("/dashboard/apps/"):]
+			if costSlug, ok := parseAppCostTrendCSVPath(slug); ok {
+				s.renderAppCostTrendCSV(w, r, log, acct, costSlug)
+				return
+			}
+			if costSlug, ok := parseAppCostsCSVPath(slug); ok {
+				s.renderAppCostsCSV(w, r, log, acct, costSlug)
+				return
+			}
+			if costSlug, ok := parseAppCostTrendPath(slug); ok {
+				s.renderAppCostTrend(w, r, log, acct, costSlug)
+				return
+			}
 			if oslug, id, ok := parseAppCustomerOperationsPath(slug); ok {
 				s.renderAppCustomerOperations(w, r, log, acct, oslug, id)
 				return
@@ -191,6 +206,10 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 					return
 				}
 				s.renderJobsQueues(w, r, log, acct, qslug)
+				return
+			}
+			if rslug, wakeID, ok := parseAppRestartProgressPath(slug); ok {
+				s.renderAppRestartProgress(w, r, log, acct, rslug, wakeID)
 				return
 			}
 			// G6 / issue #1397 — per-app instances and lifecycle controls.
@@ -570,6 +589,30 @@ func attachSLOBadges(items []dashboard.AppListItem, badges map[string]views.SLOB
 	}
 }
 
+func (s *server) renderAppCostTrend(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	app, err := s.store.AppBySlug(r.Context(), slug)
+	if err != nil || app.AccountID != acct.ID {
+		http.NotFound(w, r)
+		return
+	}
+	month, notice := dashboardCostMonth(r.URL.Query(), time.Now().UTC())
+	trend := dashboard.AppCostTrendData{}
+	if notice != "" {
+		trend.Unavailable = notice
+	} else {
+		route, method, _ := parseRequestAnalyticsRouteFilter(r.URL.Query().Get("analytics_route"), r.URL.Query().Get("analytics_method"))
+		groupBy, _ := parseRequestAnalyticsGroupBy(r.URL.Query().Get("analytics_by"), "route")
+		trend = s.dashboardAppCostTrend(r.Context(), log, acct, app, month, groupBy, route, method)
+	}
+	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), dashboard.Page{Title: app.Slug + " cost trend", Body: "app_cost_trend", Data: trend}); err != nil {
+		renderProblem(w, log, err)
+	}
+}
+
 // renderAppDetail renders /dashboard/apps/{slug} — the app's plan
 // settings, recent deployments (with rollback forms), and the
 // deployment list view. Logs have a dedicated /logs drill-down page.
@@ -848,9 +891,20 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	}
 	analyticsRoute, analyticsMethod, _ := parseRequestAnalyticsRouteFilter(r.URL.Query().Get("analytics_route"), r.URL.Query().Get("analytics_method"))
 	analyticsGroupBy, _ := parseRequestAnalyticsGroupBy(r.URL.Query().Get("analytics_by"), "route")
+	costMonth, costMonthNotice := dashboardCostMonth(r.URL.Query(), time.Now().UTC())
 	githubConnection := s.dashboardGitHubConnection(ctx, log, w, acct, app, githubDashboardFlash(r))
+	operational := s.appOperationalSummary(ctx, acct, app)
+	appCosts := s.dashboardAppCosts(ctx, log, acct, app, costMonth, costMonthNotice)
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
-		App:              appRow,
+		Operational: &operational,
+		App:         appRow,
+		AppCosts:    appCosts,
+		RefreshQuery: dashboardAppDetailRefreshQuery(
+			costMonth.Format("2006-01"), analyticsGroupBy, analyticsRoute, analyticsMethod,
+		),
+		AnalyticsGroupBy: analyticsGroupBy,
+		AnalyticsRoute:   analyticsRoute,
+		AnalyticsMethod:  analyticsMethod,
 		Manifest:         dashboardManifestView(app),
 		GitHubConnection: githubConnection,
 		EffectiveLimits:  appEffectiveLimits(app, acct.Plan),

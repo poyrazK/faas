@@ -68,7 +68,7 @@ func TestDurableEntityAlarmDispatchCommitReplayAndWorkerSweep(t *testing.T) {
 	request := entityRequest("schedule")
 	request.Environment = "staging"
 	alarm := scheduleAPIAlarm(t, e, request)
-	if _, err := e.s.sweepDurableEntityAlarms(t.Context(), ""); err != nil {
+	if _, err := e.s.sweepDurableEntityAlarms(t.Context(), alarmSweepCursor{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.s.deliverDurableEntityAlarm(t.Context(), alarm); err != nil {
@@ -175,7 +175,7 @@ func TestDurableEntityAlarmRechecksCustomerAndRuntimeAdmission(t *testing.T) {
 }
 
 func TestDurableEntityAlarmFailedGuestKeepsDeadline(t *testing.T) {
-	e, _, dispatch, _ := entityAPIFixture(t, false)
+	e, _, dispatch, bucket := entityAPIFixture(t, false)
 	e.s.durableEntityAlarmsEnabled = true
 	alarm := scheduleAPIAlarm(t, e, entityRequest("schedule"))
 	dispatch.badBody.Store(true)
@@ -187,6 +187,14 @@ func TestDurableEntityAlarmFailedGuestKeepsDeadline(t *testing.T) {
 		t.Fatal("invalid guest consumed alarm", view, err)
 	}
 	dispatch.badBody.Store(false)
+	if err := e.s.deliverDurableEntityAlarm(t.Context(), alarm); !errors.Is(err, durableentity.ErrAlarmBackoff) {
+		t.Fatal("alarm ignored durable retry backoff", err)
+	}
+	engine, err := durableentity.Open(t.Context(), bucket, durableentity.Options{Now: func() time.Time { return time.Now().Add(api.DurableEntityAlarmRetryBase) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.s.durableEntities = engine
 	if err := e.s.deliverDurableEntityAlarm(t.Context(), alarm); err != nil {
 		t.Fatal(err)
 	}

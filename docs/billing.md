@@ -72,6 +72,24 @@ Reports exceeding 10,000 allocation groups fail with 422 instead of returning
 truncated totals. Financial history is retained independently of minute-level
 usage cleanup and is erased with the owning account's final deletion.
 
+For a single application, `gregale app <slug> costs [--month YYYY-MM]` shows
+retained compute and egress allocations whose stable app ID matches that app.
+The app detail dashboard lets customers select a UTC month, and shows source
+coverage and the largest workload allocations. Closed months compare as full
+months; the current month compares with the same elapsed part of the previous
+month, capped at its end. Comparisons appear only when both periods have
+complete, fresh, priced data for every meter. Costs include the app's allocated
+share of the account's included usage allowance. The on-demand six month trend
+shows per-meter bars only for complete, fresh, priced periods; incomplete
+periods include coverage details. The **App costs** dashboard page ranks apps
+for a selected month by retained compute and egress costs. CSV downloads include
+selected-period meter totals, workload allocations, and source coverage; a
+separate six month trend export includes those rows for each month and marks unavailable months.
+Separately attributed jobs,
+unallocated usage, account-wide charges, and missing bill components are not
+included in the app subtotal. This app-scoped view does not provide a forecast
+or invoice total.
+
 ## Budget previews
 
 ```bash

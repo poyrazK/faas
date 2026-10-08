@@ -1200,6 +1200,29 @@ func (q *Queries) AppObjectStorageBindingInventory(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const appOpenMonitorIncident = `-- name: AppOpenMonitorIncident :one
+SELECT i.id,i.deployment_id,i.opened_at FROM route_monitor_incidents i JOIN apps a ON a.id=i.app_id
+ WHERE i.app_id=$1 AND a.account_id=$2 AND a.status<>'deleted' AND i.status='open'
+`
+
+type AppOpenMonitorIncidentParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type AppOpenMonitorIncidentRow struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	OpenedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) AppOpenMonitorIncident(ctx context.Context, db DBTX, arg AppOpenMonitorIncidentParams) (AppOpenMonitorIncidentRow, error) {
+	row := db.QueryRow(ctx, appOpenMonitorIncident, arg.AppID, arg.AccountID)
+	var i AppOpenMonitorIncidentRow
+	err := row.Scan(&i.ID, &i.DeploymentID, &i.OpenedAt)
+	return i, err
+}
+
 const appQueueBindingConsumerInventory = `-- name: AppQueueBindingConsumerInventory :many
 SELECT b.id AS binding_id, COALESCE(consumer.id::text, '') AS consumer_id,
        COALESCE(consumer.enabled, false) AS consumer_enabled,
@@ -25136,6 +25159,102 @@ func (q *Queries) ListAppHealthHistory(ctx context.Context, db DBTX, arg ListApp
 	return items, nil
 }
 
+const listAppPendingRestarts = `-- name: ListAppPendingRestarts :many
+WITH latest AS (
+ SELECT DISTINCT ON (o.payload::jsonb->>'wake_id')
+  (o.payload::jsonb->>'wake_id')::text AS wake_id,o.state,o.attempts,o.last_error,o.created_at,o.delivered_at,o.id
+ FROM notification_outbox o JOIN apps a ON a.id=$2 AND a.account_id=$3 AND a.status<>'deleted'
+ WHERE o.channel='runtime_config_restart' AND o.payload::jsonb->>'app_id'=a.id::text
+  AND COALESCE(o.payload::jsonb->>'wake_id','')<>''
+ ORDER BY o.payload::jsonb->>'wake_id',o.id DESC
+)
+SELECT wake_id,
+ CASE state WHEN 'pending' THEN CASE WHEN attempts>0 THEN 'retrying' ELSE 'queued' END
+  WHEN 'processing' THEN 'running' WHEN 'dead_letter' THEN 'failed' ELSE 'unknown' END::text AS status,
+ attempts,
+ CASE WHEN COALESCE(last_error,'')='' THEN ''
+  WHEN position('reason=telemetry_missing' in last_error)>0 THEN 'telemetry_missing'
+  WHEN position('reason=requests_active' in last_error)>0 THEN 'requests_active'
+  WHEN position('reason=quiet_period_not_elapsed' in last_error)>0 THEN 'quiet_period_not_elapsed'
+  ELSE 'restart_attempt_failed' END::text AS failure_reason,
+ created_at AS requested_at,delivered_at AS completed_at
+FROM latest WHERE state<>'delivered' ORDER BY created_at DESC,id DESC LIMIT $1
+`
+
+type ListAppPendingRestartsParams struct {
+	RowLimit  int32
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type ListAppPendingRestartsRow struct {
+	WakeID        string
+	Status        string
+	Attempts      int32
+	FailureReason string
+	RequestedAt   pgtype.Timestamptz
+	CompletedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ListAppPendingRestarts(ctx context.Context, db DBTX, arg ListAppPendingRestartsParams) ([]ListAppPendingRestartsRow, error) {
+	rows, err := db.Query(ctx, listAppPendingRestarts, arg.RowLimit, arg.AppID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppPendingRestartsRow{}
+	for rows.Next() {
+		var i ListAppPendingRestartsRow
+		if err := rows.Scan(
+			&i.WakeID,
+			&i.Status,
+			&i.Attempts,
+			&i.FailureReason,
+			&i.RequestedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppPendingRollbacks = `-- name: ListAppPendingRollbacks :many
+SELECT r.receipt FROM deployment_rollback_operations r JOIN apps a ON a.id=r.app_id
+ WHERE r.app_id=$1 AND a.account_id=$2 AND a.status<>'deleted'
+ AND r.status NOT IN ('complete','failed') ORDER BY r.updated_at DESC,r.id DESC LIMIT $3
+`
+
+type ListAppPendingRollbacksParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	RowLimit  int32
+}
+
+func (q *Queries) ListAppPendingRollbacks(ctx context.Context, db DBTX, arg ListAppPendingRollbacksParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listAppPendingRollbacks, arg.AppID, arg.AccountID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var receipt []byte
+		if err := rows.Scan(&receipt); err != nil {
+			return nil, err
+		}
+		items = append(items, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAppSecretRevocationTargets = `-- name: ListAppSecretRevocationTargets :many
 SELECT instance_id::text, workload_name, runtime_state, reload_support,
        status, coalesce(ack_revision, ''), ack_at, coalesce(error_code, '')
@@ -30283,6 +30402,111 @@ func (q *Queries) ListRecentEventsForAccount(ctx context.Context, db DBTX, arg L
 			&i.Kind,
 			&i.Subject,
 			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRequestTelemetryByAccountTrace = `-- name: ListRequestTelemetryByAccountTrace :many
+SELECT DISTINCT ON (app_id)
+       app_id, id, deployment_id, route, method, status, latency_ms, count,
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest
+FROM request_telemetry
+WHERE account_id = $1
+  AND trace_id = $2::text
+  AND received_at >= $3
+  AND received_at <  $4
+ORDER BY app_id, received_at DESC
+`
+
+type ListRequestTelemetryByAccountTraceParams struct {
+	AccountID     pgtype.UUID
+	TraceID       string
+	ReceivedFrom  pgtype.Timestamptz
+	ReceivedUntil pgtype.Timestamptz
+}
+
+type ListRequestTelemetryByAccountTraceRow struct {
+	AppID               pgtype.UUID
+	ID                  pgtype.UUID
+	DeploymentID        pgtype.UUID
+	Route               string
+	Method              string
+	Status              int32
+	LatencyMs           int32
+	Count               int32
+	ColdBoot            bool
+	TraceID             pgtype.Text
+	ReceivedAt          pgtype.Timestamptz
+	SpansSummary        []byte
+	WakeID              pgtype.Text
+	InstanceID          pgtype.Text
+	GuestDurationMs     int32
+	GuestRuntime        string
+	GuestOutcome        string
+	GuestErrorClass     string
+	ConsumerID          pgtype.UUID
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
+}
+
+// Account-wide `gregale trace` lookup: the newest retained row per app for
+// one public trace id, in a single read through request_telemetry_trace_idx.
+// The caller validates the id as 32 lowercase hex characters, so the row-UUID
+// alias GetRequestTelemetryByAppAndIdentifier also accepts can never match.
+func (q *Queries) ListRequestTelemetryByAccountTrace(ctx context.Context, db DBTX, arg ListRequestTelemetryByAccountTraceParams) ([]ListRequestTelemetryByAccountTraceRow, error) {
+	rows, err := db.Query(ctx, listRequestTelemetryByAccountTrace,
+		arg.AccountID,
+		arg.TraceID,
+		arg.ReceivedFrom,
+		arg.ReceivedUntil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRequestTelemetryByAccountTraceRow{}
+	for rows.Next() {
+		var i ListRequestTelemetryByAccountTraceRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.ID,
+			&i.DeploymentID,
+			&i.Route,
+			&i.Method,
+			&i.Status,
+			&i.LatencyMs,
+			&i.Count,
+			&i.ColdBoot,
+			&i.TraceID,
+			&i.ReceivedAt,
+			&i.SpansSummary,
+			&i.WakeID,
+			&i.InstanceID,
+			&i.GuestDurationMs,
+			&i.GuestRuntime,
+			&i.GuestOutcome,
+			&i.GuestErrorClass,
+			&i.ConsumerID,
+			&i.NodeID,
+			&i.Region,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
+			&i.ImageDigest,
 		); err != nil {
 			return nil, err
 		}

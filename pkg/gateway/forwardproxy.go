@@ -76,6 +76,7 @@ func guestReceivesFaasHeader(ctx context.Context, name string) bool {
 		strings.EqualFold(name, api.InvocationIDHeader) ||
 		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsWorkflowStepHeader(name))) ||
 		api.IsGuestIdentityHeader(name) ||
+		api.IsOutboundWebhookHeader(name) ||
 		strings.EqualFold(name, wire.ClientIPHeader)
 }
 

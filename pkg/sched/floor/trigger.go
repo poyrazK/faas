@@ -352,6 +352,39 @@ func (t *Trigger) manages(app state.App) bool {
 	return t.ownsApp == nil || t.ownsApp(app)
 }
 
+// servingScopes returns the (app, scope) pairs that have a live deployment
+// receiving weighted traffic.
+func servingScopes(deps []state.Deployment) map[string]bool {
+	out := map[string]bool{}
+	for _, d := range deps {
+		if d.Status == state.DeployLive && d.TrafficPercent > 0 {
+			out[deploymentScopeKey(d)] = true
+		}
+	}
+	return out
+}
+
+func deploymentScopeKey(d state.Deployment) string {
+	scope := d.Scope
+	if scope == "" {
+		scope = state.DefaultEnvScope
+	}
+	return d.AppID + "\x00" + scope
+}
+
+// inheritsNoFloor reports a live deployment at 0% traffic while a sibling in
+// the same app and scope serves. ADR-072 lets every live deployment inherit
+// the app's min_instances, but since traffic splits (ADR-198/199) a demoted
+// release, a rollback source or an aborted canary stays live at 0%. On
+// production-us `--min 2` kept 2 warm instances of each of four live
+// deployments of h6-lab, the deliberately broken aborted canary among them:
+// 8 billed GB instead of 2 (hunt #7, H5-68). Such a deployment keeps only an
+// explicit per-deployment floor. A sole live deployment always inherits,
+// whatever its stored traffic weight.
+func inheritsNoFloor(d state.Deployment, serving map[string]bool) bool {
+	return d.TrafficPercent == 0 && serving[deploymentScopeKey(d)]
+}
+
 // floorRunsFor keeps the floor off apps that are not active. An explicitly
 // parked app (evicted_cold) stays parked until a real wake reactivates it:
 // the floor's admissions do not reactivate it, so the reaper parked every
@@ -490,6 +523,7 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 		residentRAM = t.ledger.ResidentRAM()
 		headroom = t.ledger.HeadroomMB()
 	}
+	serving := servingScopes(deps)
 	for _, d := range deps {
 		// A configured floor is serviceable only after the deployment is
 		// live. ListAllDeployments intentionally includes historical and
@@ -510,6 +544,9 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 			continue
 		}
 		effective := app.EffectiveMinInstances()
+		if inheritsNoFloor(d, serving) {
+			effective = 0
+		}
 		if dFloor := d.EffectiveMinInstances(); dFloor > effective {
 			effective = dFloor
 		}

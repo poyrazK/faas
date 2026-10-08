@@ -194,6 +194,14 @@ from .app_open_api_policy_preview_route_method import AppOpenAPIPolicyPreviewRou
 from .app_open_api_policy_preview_route_status import AppOpenAPIPolicyPreviewRouteStatus
 from .app_open_api_policy_preview_rule import AppOpenAPIPolicyPreviewRule
 from .app_open_api_policy_preview_rule_action import AppOpenAPIPolicyPreviewRuleAction
+from .app_operational_incident import AppOperationalIncident
+from .app_operational_monitoring import AppOperationalMonitoring
+from .app_operational_recommendation import AppOperationalRecommendation
+from .app_operational_recommendation_severity import AppOperationalRecommendationSeverity
+from .app_operational_recovery import AppOperationalRecovery
+from .app_operational_rollback import AppOperationalRollback
+from .app_operational_summary import AppOperationalSummary
+from .app_operational_summary_version import AppOperationalSummaryVersion
 from .app_private_network_attachment import AppPrivateNetworkAttachment
 from .app_private_network_attachment_request import AppPrivateNetworkAttachmentRequest
 from .app_private_network_attachment_response import AppPrivateNetworkAttachmentResponse
@@ -1047,6 +1055,10 @@ from .filter_criteria_op import FilterCriteriaOp
 from .finalize_managed_realtime_auth_response import FinalizeManagedRealtimeAuthResponse
 from .finalize_managed_realtime_auth_response_auth_mode import FinalizeManagedRealtimeAuthResponseAuthMode
 from .financial_allocation import FinancialAllocation
+from .financial_app_cost_allocation import FinancialAppCostAllocation
+from .financial_app_costs_response import FinancialAppCostsResponse
+from .financial_app_costs_response_currency import FinancialAppCostsResponseCurrency
+from .financial_app_meter_costs import FinancialAppMeterCosts
 from .financial_attribution import FinancialAttribution
 from .financial_budget_history_response import FinancialBudgetHistoryResponse
 from .financial_budget_list_response import FinancialBudgetListResponse
@@ -3022,6 +3034,14 @@ __all__ = (
     "AppOpenAPIPolicyPreviewRouteStatus",
     "AppOpenAPIPolicyPreviewRule",
     "AppOpenAPIPolicyPreviewRuleAction",
+    "AppOperationalIncident",
+    "AppOperationalMonitoring",
+    "AppOperationalRecommendation",
+    "AppOperationalRecommendationSeverity",
+    "AppOperationalRecovery",
+    "AppOperationalRollback",
+    "AppOperationalSummary",
+    "AppOperationalSummaryVersion",
     "AppPrivateNetworkAttachment",
     "AppPrivateNetworkAttachmentRequest",
     "AppPrivateNetworkAttachmentResponse",
@@ -3829,6 +3849,10 @@ __all__ = (
     "FinalizeManagedRealtimeAuthResponse",
     "FinalizeManagedRealtimeAuthResponseAuthMode",
     "FinancialAllocation",
+    "FinancialAppCostAllocation",
+    "FinancialAppCostsResponse",
+    "FinancialAppCostsResponseCurrency",
+    "FinancialAppMeterCosts",
     "FinancialAttribution",
     "FinancialBudgetHistoryResponse",
     "FinancialBudgetListResponse",

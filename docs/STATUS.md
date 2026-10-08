@@ -44,6 +44,14 @@ runtime qualification; the dedicated acceptance project is suspended.
   a gated operator preview. These landed after the older milestone prose below
   and should not be inferred from its historical PR list.
 
+Durable entity alarm update (2026-10-08): the opt-in object-storage preview adds
+an advisory time-ordered alarm index with bounded repair scans, fenced retry
+reservations with backoff and exhaustion, and exact-scope private operator
+inspection. Manifest schema 4 requires stopping older entity writers before
+upgrade. Native-host and live-provider qualification remain pending; this does
+not promote the preview to production availability
+([ADR-712](adr/712-object-storage-durable-entities.md)).
+
 Image readiness update (2026-10-07): newly assembled primary image deployments
 require a fresh successful effective OCI/Compose command healthcheck before
 serving readiness, in addition to existing readiness and route verification.
