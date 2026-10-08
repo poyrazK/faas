@@ -31,6 +31,7 @@ const (
 	appTaskManifestKind                = "app_task"
 	appTaskManifestVersion             = 1
 	appTaskTerminationGrace            = 2 * time.Second
+	appTaskResultDeliveryGrace         = 5 * time.Second
 )
 
 type appTaskManifest struct {
@@ -90,7 +91,36 @@ func serveAppTaskOnce(ctx context.Context, ln net.Listener, handler apptaskproto
 		return fmt.Errorf("app task vsock accept: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	return apptaskproto.Serve(ctx, conn, handler)
+	if err := apptaskproto.Serve(ctx, conn, handler); err != nil {
+		return err
+	}
+	return awaitAppTaskHostClose(ctx, conn)
+}
+
+// A successful vsock write only queues the terminal frame. Powering off here
+// can discard it before the host reads it. The one-shot host closes its session
+// after consuming the result; wait for that close before halting the guest.
+// A missing or stalled host must still leave this disposable VM bounded.
+func awaitAppTaskHostClose(ctx context.Context, conn net.Conn) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	deliveryCtx, cancel := context.WithTimeout(ctx, appTaskResultDeliveryGrace)
+	defer cancel()
+	stop := context.AfterFunc(deliveryCtx, func() { _ = conn.Close() })
+	defer stop()
+	var extra [1]byte
+	n, err := io.ReadFull(conn, extra[:])
+	if n != 0 {
+		return errors.New("app task host sent data after the terminal result")
+	}
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if contextErr := deliveryCtx.Err(); contextErr != nil {
+		return contextErr
+	}
+	return err
 }
 
 var poweroffAppTask = func() error {
