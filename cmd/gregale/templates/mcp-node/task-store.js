@@ -673,13 +673,16 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs, m
       return task && !task.busy ? rowTask(task, payloadKey, namespace, true) : null;
     },
     async heartbeat(taskID, leaseToken, leaseMs) {
-      const result = await pool.query(`
+      const result = await withTransaction(pool, async client => {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${TABLE}:execution:${namespace}`]);
+        return client.query(`
         UPDATE ${TABLE}
            SET lease_expires_at = clock_timestamp() + ($4::bigint * interval '1 millisecond')
          WHERE namespace = $1 AND task_id = $2::uuid AND lease_token = $3::uuid AND status = 'running'
            AND lease_expires_at > clock_timestamp() AND expires_at > clock_timestamp()
          RETURNING cancel_requested_at
       `, [namespace, taskID, leaseToken, leaseMs]);
+      });
       if (!result.rows?.[0]) return { owned: false, cancelRequested: false };
       return { owned: true, cancelRequested: result.rows[0].cancel_requested_at != null };
     },

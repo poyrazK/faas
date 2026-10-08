@@ -762,3 +762,27 @@ test('owner saturation leaves capacity for other owners and cancellation release
   await store.requestInputs({ taskID: bob.task_id, leaseToken: bobLease.lease_token, requests: { approval: { method: 'elicitation/create', params: { mode: 'form', message: 'Approve?' } } } });
   assert.equal((await store.queueMetrics()).runningTasks, 1, 'input pauses release their running slot');
 });
+
+test('heartbeat renewal waits for the capacity lock and rechecks lease expiration', postgresOnly, async t => {
+  const { pool, namespace, store } = await harness(t);
+  await create(store, 'alice');
+  const lease = await store.claim(3, 60_000);
+  const lock = await pool.connect();
+  let renewal;
+  try {
+    await lock.query('BEGIN');
+    await lock.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`gregale_mcp_tasks:execution:${namespace}`]);
+    renewal = store.heartbeat(lease.task_id, lease.lease_token, 60_000);
+    await eventually(async () => {
+      const result = await pool.query("SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = (hashtextextended($1, 0) & 4294967295)::oid AND classid = ((hashtextextended($1, 0) >> 32) & 4294967295)::oid", [`gregale_mcp_tasks:execution:${namespace}`]);
+      return result.rows.length > 0;
+    }, 'heartbeat should wait for the namespace capacity lock');
+    await lock.query("UPDATE gregale_mcp_tasks SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE namespace = $1", [namespace]);
+    await lock.query('COMMIT');
+    assert.deepEqual(await renewal, { owned: false, cancelRequested: false });
+  } finally {
+    await lock.query('ROLLBACK').catch(() => {});
+    lock.release();
+    await renewal;
+  }
+});
