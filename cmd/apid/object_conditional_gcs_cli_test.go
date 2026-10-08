@@ -29,11 +29,12 @@ import (
 )
 
 type conditionalGCSWire struct {
-	mu          sync.Mutex
-	bytes       string
-	headers     http.Header
-	generation  int64
-	heads, puts int
+	mu                 sync.Mutex
+	bytes              string
+	headers            http.Header
+	generation         int64
+	heads, puts        int
+	tokens, signatures int
 }
 
 func (f *conditionalGCSWire) serve(w http.ResponseWriter, r *http.Request) {
@@ -41,10 +42,12 @@ func (f *conditionalGCSWire) serve(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	switch r.URL.Path {
 	case "/token":
+		f.tokens++
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"access_token":"local-fixture-token","token_type":"Bearer","expires_in":3600}`)
 		return
 	case "/iam":
+		f.signatures++
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"signedBlob":"bG9jYWwtZml4dHVyZS1zaWduYXR1cmU="}`)
 		return
@@ -120,6 +123,7 @@ func conditionalGCSCLIJourney(t *testing.T, s *server, st state.Store, account s
 	// The real GCS adapter and its OAuth/IAM signer run against bounded local
 	// wire fixtures. Refuse every remote destination; no provider is contacted.
 	previous := http.DefaultTransport
+	previousClientTransport := http.DefaultClient.Transport
 	u, _ := url.Parse(provider.URL)
 	http.DefaultTransport = objectCLIWireTransport(func(r *http.Request) (*http.Response, error) {
 		switch r.URL.Hostname() {
@@ -140,7 +144,13 @@ func conditionalGCSCLIJourney(t *testing.T, s *server, st state.Store, account s
 		}
 		return previous.RoundTrip(r)
 	})
-	t.Cleanup(func() { http.DefaultTransport = previous })
+	// OAuth uses DefaultClient, which an earlier fixture may have pinned to
+	// the original transport. Bound both entry points to the same local wire.
+	http.DefaultClient.Transport = http.DefaultTransport
+	t.Cleanup(func() {
+		http.DefaultClient.Transport = previousClientTransport
+		http.DefaultTransport = previous
+	})
 	var gateway http.Handler
 	public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gateway.ServeHTTP(w, r) }))
 	defer public.Close()
@@ -270,6 +280,9 @@ func conditionalGCSCLIJourney(t *testing.T, s *server, st state.Store, account s
 		t.Fatal("budget-exhausted observation admitted", response.StatusCode)
 	}
 	native.mu.Lock()
+	if native.tokens == 0 || native.signatures == 0 {
+		t.Fatal("OAuth and IAM signing did not use the local wire", native.tokens, native.signatures)
+	}
 	if native.generation != 2 || native.puts != 3 || native.heads != 2 {
 		t.Fatal("GCS CLI request bounds", native.generation, native.puts, native.heads)
 	}
