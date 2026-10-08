@@ -1,7 +1,8 @@
-package sched
-
-// adr: 230, 462 — recovery and notifications cannot boot customer processes
+// adr: 462
+// Recovery and notifications cannot boot customer processes
 // before the exact deployment's migration release has succeeded.
+
+package sched
 
 import (
 	"context"
