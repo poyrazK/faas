@@ -17,8 +17,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const devSessionTTL = 24 * time.Hour
-
 // devSessionSlug creates a stable, globally unique app slug for one account,
 // project, and local developer workspace. An empty workspace ID deliberately
 // retains the pre-workspace digest so older CLIs can refresh and destroy the
@@ -36,6 +34,26 @@ func devSessionSlug(accountID, project, workspaceID string) string {
 		readable = strings.Trim(readable[:maxProjectLen], "-")
 	}
 	return "dev-" + readable + "-" + suffix
+}
+
+// devSessionLease resolves the lease a developer session renews on this
+// request. Omission keeps the original 24-hour lease so older CLIs behave as
+// before; an explicit value is bounded below by DeveloperLeaseMin and above
+// by the plan's DeveloperLeaseMaxHours.
+func devSessionLease(leaseSeconds int64, limits api.Limits) (time.Duration, *api.Problem) {
+	if leaseSeconds == 0 {
+		return api.DeveloperLeaseDefault, nil
+	}
+	minSeconds := int64(api.DeveloperLeaseMin / time.Second)
+	if leaseSeconds < minSeconds {
+		return 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid lease", fmt.Sprintf("lease_seconds must be at least %d (%s)", minSeconds, api.DeveloperLeaseMin))
+	}
+	// Compare in seconds so an absurd value cannot overflow time.Duration.
+	if leaseSeconds > int64(limits.Plan.DeveloperLeaseMax()/time.Second) {
+		return 0, api.ErrPlanLimitDeveloperLease(limits, leaseSeconds)
+	}
+	return time.Duration(leaseSeconds) * time.Second, nil
 }
 
 func validDevWorkspaceID(workspaceID string) bool {
@@ -75,9 +93,14 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 
-	slug := devSessionSlug(acct.ID, project, req.WorkspaceID)
-	expiresAt := time.Now().UTC().Add(devSessionTTL)
 	limits := api.MustLimitsFor(acct.Plan)
+	lease, prob := devSessionLease(req.LeaseSeconds, limits)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	slug := devSessionSlug(acct.ID, project, req.WorkspaceID)
+	expiresAt := time.Now().UTC().Add(lease)
 	app, prob := s.buildApp(acct, api.CreateAppRequest{Slug: slug, Type: req.Type, Runtime: req.Runtime}, limits)
 	if prob != nil {
 		api.WriteProblem(w, prob)

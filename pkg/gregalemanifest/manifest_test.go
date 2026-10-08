@@ -292,6 +292,7 @@ func TestLoad_DevProfile(t *testing.T) {
   service_override_file: .env.services.local
   postgres: true
   postgres_region: eu-central-1
+  ttl: 72h
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +300,7 @@ func TestLoad_DevProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || m.Dev == nil || m.Dev.EnvFile != ".env.dev" || m.Dev.ServiceOverrideFile != ".env.services.local" || m.Dev.Postgres == nil || !*m.Dev.Postgres || m.Dev.PostgresRegion != "eu-central-1" {
+	if !ok || m.Dev == nil || m.Dev.EnvFile != ".env.dev" || m.Dev.ServiceOverrideFile != ".env.services.local" || m.Dev.Postgres == nil || !*m.Dev.Postgres || m.Dev.PostgresRegion != "eu-central-1" || m.Dev.TTL != "72h" {
 		t.Fatalf("dev profile = %+v, want parsed developer defaults", m.Dev)
 	}
 	if err := m.Validate(); err != nil {
@@ -316,6 +317,9 @@ func TestLoad_DevProfileRejectsUnsafePathsAndOrphanedRegion(t *testing.T) {
 		{name: "absolute path", body: "dev:\n  env_file: /tmp/.env\n", want: "relative"},
 		{name: "escape path", body: "dev:\n  env_file: ../.env\n", want: "inside"},
 		{name: "orphaned region", body: "dev:\n  postgres_region: eu-central-1\n", want: "requires postgres"},
+		{name: "unparseable ttl", body: "dev:\n  ttl: three days\n", want: "dev.ttl"},
+		{name: "ttl below minimum", body: "dev:\n  ttl: 30m\n", want: "at least 1h0m0s"},
+		{name: "fractional-second ttl", body: "dev:\n  ttl: 1h0.5s\n", want: "whole number of seconds"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

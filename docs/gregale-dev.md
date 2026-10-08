@@ -51,6 +51,7 @@ gregale dev --service-override-file .env.services.local # opt in to service URL 
 gregale dev --postgres         # provision an isolated database and inject DATABASE_URL
 gregale dev --postgres --postgres-region eu-central-1 # choose database placement
 gregale dev --once --json      # emit one machine-readable edit-to-live receipt
+gregale dev --ttl 72h          # keep the environment 72h after the latest sync
 ```
 
 For a repeatable team setup, put non-secret developer defaults in the
@@ -62,6 +63,7 @@ dev:
   service_override_file: .env.services.local
   postgres: true
   postgres_region: eu-central-1
+  ttl: 72h
 ```
 
 These paths are relative to the selected source root. The files must still be
@@ -122,8 +124,8 @@ database for this local workspace and binds its sealed credential to the
 developer app as `DATABASE_URL`. The database is reused on later starts, and
 the binding is refreshed asynchronously if the provider is still provisioning.
 The safe database and binding states appear in human output and `--json`
-receipts; credentials and connection URLs never do. `--stop` and the 24-hour
-developer lease clean up the binding and database together.
+receipts; credentials and connection URLs never do. `--stop` and the developer
+lease clean up the binding and database together.
 
 Watch mode attaches one app-level runtime log stream after the first live sync.
 It follows the stable developer URL across later redeploys, prefixes lines with
@@ -160,12 +162,20 @@ same one. The non-secret local identity lives in the Gregale config directory;
 `FAAS_DEVELOPER_ID` can override it with 32 lowercase hexadecimal characters
 for reproducible automation.
 
-Each sync renews a 24-hour lease; the existing preview janitor tears down an
-expired environment. Stopping the watcher with Ctrl-C leaves the environment
-available—use `--stop` from the same source directory when it should be removed
-immediately.
+Each sync renews the environment's lease; the existing preview janitor tears
+down an expired environment. The lease is 24 hours unless `--ttl` (or `dev.ttl`
+in `gregale.yaml`) chooses another Go duration such as `8h` or `72h`. A lease
+must be at least one hour and at most the plan's developer lease maximum (see
+[Plans](plans.md#developer-environments)); a longer request fails with
+`plan_limit_developer_lease` before the environment is created or refreshed.
+The CLI validates the value locally and prints the effective lease when the
+environment starts; `gregale dev setup` includes it in the start command.
+Because every sync renews the lease with the requested value, the most recent
+start wins: running without `--ttl` returns the environment to 24 hours.
+Stopping the watcher with Ctrl-C leaves the environment available—use `--stop`
+from the same source directory when it should be removed immediately.
 
 Developer environments have a separate per-plan quota from production apps and
 pull-request previews. They are still backed by the same preview lifecycle and
-24-hour lease; `gregale dev status` reports the account-wide budget so a local
+lease; `gregale dev status` reports the account-wide budget so a local
 workspace cannot unexpectedly block a deploy or PR preview.

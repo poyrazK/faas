@@ -750,6 +750,10 @@ type UpsertDevSessionRequest struct {
 	Runtime     string              `json:"runtime,omitempty"`      // required for functions
 	WorkspaceID string              `json:"workspace_id,omitempty"` // opaque, CLI-derived local workspace identity
 	Postgres    *DevPostgresRequest `json:"postgres,omitempty"`
+	// LeaseSeconds chooses how long the environment survives after its
+	// latest sync. Zero (omitted) keeps api.DeveloperLeaseDefault; any other
+	// value must lie within [DeveloperLeaseMin, plan DeveloperLeaseMax].
+	LeaseSeconds int64 `json:"lease_seconds,omitempty"`
 }
 
 // DevPostgresRequest opts a developer session into an isolated managed
