@@ -56,4 +56,14 @@ func TestTrafficLeavesAcceptSlugEitherWay(t *testing.T) {
 	if code := cmdTraffic([]string{"promote", "demo", "--deployment", "v7", "extra"}); code == 0 {
 		t.Fatal("a trailing positional after the flags must still be rejected")
 	}
+	// hunt #8: the generated usage prints the slug after the flags.
+	_, restore = captureStdout(t)
+	trailing := cmdTraffic([]string{"set", "--deployment", "v7", "--percent", "50", "demo"})
+	restore()
+	if trailing != 0 {
+		t.Fatalf("set --deployment v7 --percent 50 demo exit=%d, want 0 (the documented order)", trailing)
+	}
+	if code := cmdTraffic([]string{"set", "--deployment", "v7", "--percent", "50", "demo", "extra"}); code == 0 {
+		t.Fatal("two trailing positionals must be rejected")
+	}
 }

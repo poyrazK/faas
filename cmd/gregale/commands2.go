@@ -4513,7 +4513,8 @@ func cmdTrafficSet(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	slug, ok := takeTrailingSlug(fs, slug)
+	if !ok {
 		return 1
 	}
 	if err := mergeLeadingSlug(app, slug); err != nil {
@@ -4574,7 +4575,8 @@ func cmdTrafficPromote(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	slug, ok := takeTrailingSlug(fs, slug)
+	if !ok {
 		return 1
 	}
 	if err := mergeLeadingSlug(app, slug); err != nil {
@@ -4738,6 +4740,18 @@ func peelLeadingSlug(args []string) (string, []string) {
 		return args[0], args[1:]
 	}
 	return "", args
+}
+
+// takeTrailingSlug also accepts the slug after the flags, the order the
+// generated usage prints ("traffic set --deployment <ID> --percent <N>
+// [<slug>]"); hunt #8 found that form rejected. Exactly one trailing word is
+// taken, and only when no leading slug was given; anything else is still
+// reported by rejectUnexpectedFlagArgs.
+func takeTrailingSlug(fs *flag.FlagSet, leading string) (string, bool) {
+	if leading == "" && fs.NArg() == 1 && !strings.HasPrefix(fs.Arg(0), "-") {
+		return fs.Arg(0), true
+	}
+	return leading, !rejectUnexpectedFlagArgs(fs)
 }
 
 // mergeLeadingSlug folds a peeled slug into --app, refusing two different apps.
