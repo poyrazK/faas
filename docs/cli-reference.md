@@ -2112,7 +2112,7 @@ Rename an app
 
 Request a snapshot restart, or track a fresh runtime-configuration restart
 
-`gregale app <slug> restart [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
+`gregale app <slug> restart <status> [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
