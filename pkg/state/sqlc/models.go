@@ -599,6 +599,29 @@ type AppErrorRequest struct {
 	ImageDigest         string
 }
 
+type AppFork struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	DeploymentID      pgtype.UUID
+	RequestedBy       string
+	Status            string
+	TtlSeconds        int32
+	ExpiresAt         pgtype.Timestamptz
+	SnapshotID        pgtype.UUID
+	InstanceID        pgtype.UUID
+	LeaseToken        pgtype.UUID
+	LeaseOwner        pgtype.Text
+	LeaseExpiresAt    pgtype.Timestamptz
+	CancelRequestedAt pgtype.Timestamptz
+	FailureCode       pgtype.Text
+	FailureMessage    pgtype.Text
+	StartedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
+
 type AppIssue struct {
 	ID                       pgtype.UUID
 	AccountID                pgtype.UUID

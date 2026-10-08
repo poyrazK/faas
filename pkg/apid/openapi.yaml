@@ -4195,6 +4195,119 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/forks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listAppForks
+      summary: List production forks for an app.
+      description: |
+        Returns the app's production forks, newest first (ADR-732). Answers
+        501 `app_forks_not_enabled` until the operator enables forks.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+          description: Maximum number of forks to return.
+      responses:
+        '200':
+          description: The app's forks, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [apps]
+      operationId: createAppFork
+      summary: Fork the app's live deployment into a quarantined debug copy.
+      description: |
+        Queues a production fork (ADR-732): a restore of the app's newest
+        capture of its live deployment into an instance that never serves
+        traffic, cannot reach the network, and is destroyed at its TTL.
+        The fork holds a copy of production memory, secrets included, so
+        the key needs `secrets:read` as well as `deploy:write`, and every
+        create is audited. Pro and Scale only; one active fork per app and
+        two per account. Answers 501 `app_forks_not_enabled` until the
+        operator enables forks.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppForkRequest' }
+      responses:
+        '202':
+          description: Fork admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: An active-fork limit is full (`app_fork_limit`, with `limit` and `observed`), or the app has no live deployment (`app_fork_unavailable`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppForkID'
+    get:
+      tags: [apps]
+      operationId: getAppFork
+      summary: Read one production fork.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The fork.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    delete:
+      tags: [apps]
+      operationId: cancelAppFork
+      summary: Cancel a production fork.
+      description: |
+        Cancels a queued fork immediately. For a restoring or running fork
+        it records the request; the scheduler destroys the instance. A fork
+        that has already ended is returned unchanged.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Cancellation recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/apps/{slug}/tasks:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -31153,6 +31266,12 @@ components:
       required: true
       schema: { type: string, format: uuid }
       description: Canonical UUID for a deployment-attached app task.
+    AppForkID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Canonical UUID for a production fork.
     ManagedPostgresID:
       name: id
       in: path
@@ -55008,6 +55127,59 @@ components:
       properties:
         code: { type: string, maxLength: 64 }
         message: { type: string, maxLength: 4096 }
+
+    CreateAppForkRequest:
+      description: Body of `POST /v1/apps/{slug}/forks`. Every field is optional.
+      type: object
+      additionalProperties: false
+      properties:
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 14400
+          description: "How long the fork lives. Default 3600 (1 h), maximum 14400 (4 h)."
+    AppForkResponse:
+      description: |
+        One production fork (ADR-732). `status` moves from `queued` through
+        `restoring` to `running`, and ends as `expired`, `cancelled` or
+        `failed`. Scheduler leases and instance identifiers are never
+        returned.
+      type: object
+      required: [id, app_id, deployment_id, status, ttl_seconds, expires_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        deployment_id:
+          type: string
+          format: uuid
+          description: The live deployment pinned when the fork was requested.
+        status:
+          type: string
+          enum: [queued, restoring, running, expired, cancelled, failed]
+        ttl_seconds: { type: integer }
+        expires_at:
+          type: string
+          format: date-time
+          description: When the fork is destroyed (created_at + ttl_seconds).
+        cancel_requested_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        failure:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AppForkListResponse:
+      description: An app's production forks, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AppForkResponse' }
 
     AppTaskResponse:
       description: |

@@ -558,6 +558,10 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/tasks":                 "CreateAppTask",
 	"GET /v1/apps/{slug}/tasks/{id}":             "GetAppTask",
 	"DELETE /v1/apps/{slug}/tasks/{id}":          "CancelAppTask",
+	"GET /v1/apps/{slug}/forks":                  "ListAppForks",
+	"POST /v1/apps/{slug}/forks":                 "CreateAppFork",
+	"GET /v1/apps/{slug}/forks/{id}":             "GetAppFork",
+	"DELETE /v1/apps/{slug}/forks/{id}":          "CancelAppFork",
 	"POST /v1/account/restore":                   "RestoreAccount",
 	"GET /v1/account/overage-cap":                "GetOverageCap",   // saved monthly spend cap
 	"POST /v1/account/overage-cap":               "RaiseOverageCap", // issue #561 spend cap

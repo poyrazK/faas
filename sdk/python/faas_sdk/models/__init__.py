@@ -128,6 +128,10 @@ from .app_error_sample_response_headers_sample import AppErrorSampleResponseHead
 from .app_error_summary_item import AppErrorSummaryItem
 from .app_error_summary_item_error_class import AppErrorSummaryItemErrorClass
 from .app_errors_summary_response import AppErrorsSummaryResponse
+from .app_fork_list_response import AppForkListResponse
+from .app_fork_response import AppForkResponse
+from .app_fork_response_failure import AppForkResponseFailure
+from .app_fork_response_status import AppForkResponseStatus
 from .app_log_drain_analytics_bucket import AppLogDrainAnalyticsBucket
 from .app_log_drain_analytics_response import AppLogDrainAnalyticsResponse
 from .app_log_drain_analytics_response_bucket_interval import AppLogDrainAnalyticsResponseBucketInterval
@@ -428,6 +432,7 @@ from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowS
 from .create_api_consumer_rate_card_request import CreateAPIConsumerRateCardRequest
 from .create_api_consumer_request import CreateAPIConsumerRequest
 from .create_api_consumer_usage_statement_request import CreateAPIConsumerUsageStatementRequest
+from .create_app_fork_request import CreateAppForkRequest
 from .create_app_log_drain_request import CreateAppLogDrainRequest
 from .create_app_log_drain_request_kind import CreateAppLogDrainRequestKind
 from .create_app_request import CreateAppRequest
@@ -2890,6 +2895,10 @@ __all__ = (
     "AppErrorsSummaryResponse",
     "AppErrorSummaryItem",
     "AppErrorSummaryItemErrorClass",
+    "AppForkListResponse",
+    "AppForkResponse",
+    "AppForkResponseFailure",
+    "AppForkResponseStatus",
     "AppliedBuild",
     "AppLogDrainAnalyticsBucket",
     "AppLogDrainAnalyticsResponse",
@@ -3190,6 +3199,7 @@ __all__ = (
     "CreateAPIConsumerRateCardRequest",
     "CreateAPIConsumerRequest",
     "CreateAPIConsumerUsageStatementRequest",
+    "CreateAppForkRequest",
     "CreateAppLogDrainRequest",
     "CreateAppLogDrainRequestKind",
     "CreateAppRequest",

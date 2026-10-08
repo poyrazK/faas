@@ -78,6 +78,9 @@ export type { AppErrorRequestsResponse } from './models/AppErrorRequestsResponse
 export type { AppErrorSampleResponse } from './models/AppErrorSampleResponse.js';
 export type { AppErrorsSummaryResponse } from './models/AppErrorsSummaryResponse.js';
 export type { AppErrorSummaryItem } from './models/AppErrorSummaryItem.js';
+export type { AppForkID } from './models/AppForkID.js';
+export type { AppForkListResponse } from './models/AppForkListResponse.js';
+export type { AppForkResponse } from './models/AppForkResponse.js';
 export type { AppliedBuild } from './models/AppliedBuild.js';
 export type { AppLogDrainAnalyticsBucket } from './models/AppLogDrainAnalyticsBucket.js';
 export type { AppLogDrainAnalyticsResponse } from './models/AppLogDrainAnalyticsResponse.js';
@@ -231,6 +234,7 @@ export type { CreateAlertRuleRequest } from './models/CreateAlertRuleRequest.js'
 export type { CreateAPIConsumerRateCardRequest } from './models/CreateAPIConsumerRateCardRequest.js';
 export type { CreateAPIConsumerRequest } from './models/CreateAPIConsumerRequest.js';
 export type { CreateAPIConsumerUsageStatementRequest } from './models/CreateAPIConsumerUsageStatementRequest.js';
+export type { CreateAppForkRequest } from './models/CreateAppForkRequest.js';
 export type { CreateAppLogDrainRequest } from './models/CreateAppLogDrainRequest.js';
 export type { CreateAppRequest } from './models/CreateAppRequest.js';
 export type { CreateAppTaskRequest } from './models/CreateAppTaskRequest.js';

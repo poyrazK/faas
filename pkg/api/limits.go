@@ -2333,6 +2333,15 @@ type Limits struct {
 	// api.ErrPlanAppUsageSummaryNotAllowed.
 	AppUsageSummaryAllowed bool
 
+	// AppForkMaxActivePerApp / AppForkMaxActivePerAccount (ADR-732) cap
+	// production forks that are queued, restoring or running. Zero means
+	// the plan has no forks: Free and Hobby. A fork holds tenant RAM
+	// outside max_concurrency, so the caps also bound how much of the
+	// 47,600 MB admission ceiling forks can take. Enforced atomically by
+	// state.CreateAppFork.
+	AppForkMaxActivePerApp     int
+	AppForkMaxActivePerAccount int
+
 	// AppErrorsAllowed (issue #TBD / ADR-TBD) gates whether the
 	// per-app error-fingerprint read is on for an account. The
 	// surface covers GET /v1/apps/{slug}/errors/summary (top
@@ -2821,11 +2830,14 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: false,
 		AppErrorsAllowed:       false,
 		JobsAllowed:            false,
-		WorkflowsAllowed:       false,
-		WorkflowMaxPerApp:      0,
-		WorkflowMaxConcurrent:  0,
-		WorkflowStepMaxTimeout: 0,
-		WorkflowMaxWaitDays:    0,
+		// ADR-732: no production forks below Pro.
+		AppForkMaxActivePerApp:     0,
+		AppForkMaxActivePerAccount: 0,
+		WorkflowsAllowed:           false,
+		WorkflowMaxPerApp:          0,
+		WorkflowMaxConcurrent:      0,
+		WorkflowStepMaxTimeout:     0,
+		WorkflowMaxWaitDays:        0,
 	},
 	PlanHobby: {
 		Plan:                      PlanHobby,
@@ -3232,11 +3244,14 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: true,
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
-		WorkflowsAllowed:       true,
-		WorkflowMaxPerApp:      3,
-		WorkflowMaxConcurrent:  10,
-		WorkflowStepMaxTimeout: 10 * time.Minute,
-		WorkflowMaxWaitDays:    30,
+		// ADR-732: no production forks below Pro.
+		AppForkMaxActivePerApp:     0,
+		AppForkMaxActivePerAccount: 0,
+		WorkflowsAllowed:           true,
+		WorkflowMaxPerApp:          3,
+		WorkflowMaxConcurrent:      10,
+		WorkflowStepMaxTimeout:     10 * time.Minute,
+		WorkflowMaxWaitDays:        30,
 	},
 	PlanPro: {
 		Plan:                      PlanPro,
@@ -3605,11 +3620,14 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: true,
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
-		WorkflowsAllowed:       true,
-		WorkflowMaxPerApp:      10,
-		WorkflowMaxConcurrent:  50,
-		WorkflowStepMaxTimeout: 30 * time.Minute,
-		WorkflowMaxWaitDays:    90,
+		// ADR-732: one active fork per app, two per account.
+		AppForkMaxActivePerApp:     1,
+		AppForkMaxActivePerAccount: 2,
+		WorkflowsAllowed:           true,
+		WorkflowMaxPerApp:          10,
+		WorkflowMaxConcurrent:      50,
+		WorkflowStepMaxTimeout:     30 * time.Minute,
+		WorkflowMaxWaitDays:        90,
 	},
 	PlanScale: {
 		Plan:                      PlanScale,
@@ -4011,11 +4029,14 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: true,
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
-		WorkflowsAllowed:       true,
-		WorkflowMaxPerApp:      50,
-		WorkflowMaxConcurrent:  200,
-		WorkflowStepMaxTimeout: 2 * time.Hour,
-		WorkflowMaxWaitDays:    365,
+		// ADR-732: one active fork per app, two per account.
+		AppForkMaxActivePerApp:     1,
+		AppForkMaxActivePerAccount: 2,
+		WorkflowsAllowed:           true,
+		WorkflowMaxPerApp:          50,
+		WorkflowMaxConcurrent:      200,
+		WorkflowStepMaxTimeout:     2 * time.Hour,
+		WorkflowMaxWaitDays:        365,
 	},
 }
 
@@ -4090,6 +4111,13 @@ const (
 
 	// Metering (spec §1, §10).
 	OverageMillicentsPerGBHour = 1_000 // €0.01 per GB-RAM-hour
+
+	// Production forks (ADR-732). A fork is destroyed at its TTL; the
+	// caller may ask for less than the default, never more than the max.
+	// Both stay inside the app_forks_ttl_chk backstop (60 s .. 24 h).
+	AppForkDefaultTTL = time.Hour
+	AppForkMinTTL     = time.Minute
+	AppForkMaxTTL     = 4 * time.Hour
 
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect
@@ -6533,6 +6561,17 @@ func (p Plan) AppUsageSummaryAllowed() bool {
 		return false
 	}
 	return l.AppUsageSummaryAllowed
+}
+
+// AppForkLimits returns the active production-fork caps per app and per
+// account (ADR-732). Zero means the plan has no forks; unknown plans get
+// none.
+func (p Plan) AppForkLimits() (perApp, perAccount int) {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0, 0
+	}
+	return l.AppForkMaxActivePerApp, l.AppForkMaxActivePerAccount
 }
 
 // AppErrorsAllowed returns whether the per-app error-fingerprint

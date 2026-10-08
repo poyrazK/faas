@@ -643,6 +643,8 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appForks are production fork intents (ADR-732), keyed by fork id.
+	appForks map[string]AppFork
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
 	// immutable compatibility catalog keys; retirement only changes state.
 	runtimeSnapshots map[string]RuntimeSnapshotRecord
@@ -6366,6 +6368,11 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, task := range m.appTasks {
 		if task.AppID == id {
 			delete(m.appTasks, key)
+		}
+	}
+	for key, fork := range m.appForks {
+		if fork.AppID == id {
+			delete(m.appForks, key)
 		}
 	}
 	for key, v := range m.crons {

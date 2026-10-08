@@ -1509,6 +1509,52 @@ $$;
 
 
 --
+-- Name: enforce_app_fork_status_transition(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_app_fork_status_transition() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.status IN ('expired', 'cancelled', 'failed') THEN
+        IF NEW IS DISTINCT FROM OLD THEN
+            RAISE EXCEPTION 'terminal app fork % is immutable', OLD.id USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF NEW.account_id IS DISTINCT FROM OLD.account_id
+        OR NEW.app_id IS DISTINCT FROM OLD.app_id
+        OR NEW.deployment_id IS DISTINCT FROM OLD.deployment_id
+        OR NEW.requested_by IS DISTINCT FROM OLD.requested_by
+        OR NEW.ttl_seconds IS DISTINCT FROM OLD.ttl_seconds
+        OR NEW.expires_at IS DISTINCT FROM OLD.expires_at
+        OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+        RAISE EXCEPTION 'app fork % intent is immutable', OLD.id USING ERRCODE = '23514';
+    END IF;
+
+    IF NEW.status = OLD.status THEN
+        RETURN NEW;
+    END IF;
+
+    IF NOT (
+        (OLD.status = 'queued' AND NEW.status IN ('restoring', 'expired', 'cancelled'))
+        OR
+        (OLD.status = 'restoring' AND NEW.status IN ('queued', 'running', 'expired',
+                                                     'cancelled', 'failed'))
+        OR
+        (OLD.status = 'running' AND NEW.status IN ('expired', 'cancelled', 'failed'))
+    ) THEN
+        RAISE EXCEPTION 'invalid app fork % transition from % to %',
+            OLD.id, OLD.status, NEW.status USING ERRCODE = '23514';
+    END IF;
+
+    RETURN NEW;
+END
+$$;
+
+
+--
 -- Name: enforce_app_task_status_transition(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10196,6 +10242,45 @@ CREATE TABLE public.app_errors (
     CONSTRAINT app_errors_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT app_errors_http_status_check CHECK (((http_status >= 400) AND (http_status <= 599))),
     CONSTRAINT app_errors_sample_message_check CHECK ((pg_column_size(sample_message) <= 512))
+);
+
+
+--
+-- Name: app_forks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_forks (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    requested_by text NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    ttl_seconds integer NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    snapshot_id uuid,
+    instance_id uuid,
+    lease_token uuid,
+    lease_owner text,
+    lease_expires_at timestamp with time zone,
+    cancel_requested_at timestamp with time zone,
+    failure_code text,
+    failure_message text,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_forks_expires_chk CHECK ((expires_at = (created_at + make_interval(secs => (ttl_seconds)::double precision)))),
+    CONSTRAINT app_forks_failure_shape_chk CHECK ((((failure_code IS NULL) = (failure_message IS NULL)) AND ((failure_code IS NULL) OR (status = 'failed'::text)) AND ((status <> 'failed'::text) OR (failure_code IS NOT NULL)) AND ((failure_code IS NULL) OR ((octet_length(failure_code) >= 1) AND (octet_length(failure_code) <= 64))) AND ((failure_message IS NULL) OR (octet_length(failure_message) <= 4096)))),
+    CONSTRAINT app_forks_instance_chk CHECK (((status = 'running'::text) <= ((instance_id IS NOT NULL) AND (snapshot_id IS NOT NULL)))),
+    CONSTRAINT app_forks_lease_owner_chk CHECK (((lease_owner IS NULL) OR ((octet_length(lease_owner) >= 1) AND (octet_length(lease_owner) <= 256)))),
+    CONSTRAINT app_forks_lease_shape_chk CHECK ((((lease_token IS NULL) AND (lease_owner IS NULL) AND (lease_expires_at IS NULL)) OR ((lease_token IS NOT NULL) AND (lease_owner IS NOT NULL) AND (lease_expires_at IS NOT NULL)))),
+    CONSTRAINT app_forks_lease_status_chk CHECK (((status = ANY (ARRAY['restoring'::text, 'running'::text])) = (lease_token IS NOT NULL))),
+    CONSTRAINT app_forks_lifecycle_order_chk CHECK (((updated_at >= created_at) AND ((started_at IS NULL) OR (started_at >= created_at)) AND ((finished_at IS NULL) OR (finished_at >= created_at)) AND ((started_at IS NULL) OR (finished_at IS NULL) OR (finished_at >= started_at)) AND ((cancel_requested_at IS NULL) OR (cancel_requested_at >= created_at)) AND ((lease_expires_at IS NULL) OR (lease_expires_at > created_at)))),
+    CONSTRAINT app_forks_requested_by_chk CHECK (((octet_length(requested_by) >= 1) AND (octet_length(requested_by) <= 256))),
+    CONSTRAINT app_forks_status_chk CHECK ((status = ANY (ARRAY['queued'::text, 'restoring'::text, 'running'::text, 'expired'::text, 'cancelled'::text, 'failed'::text]))),
+    CONSTRAINT app_forks_timestamps_chk CHECK ((((status = ANY (ARRAY['queued'::text, 'restoring'::text])) AND (started_at IS NULL) AND (finished_at IS NULL)) OR ((status = 'running'::text) AND (started_at IS NOT NULL) AND (finished_at IS NULL)) OR ((status = ANY (ARRAY['expired'::text, 'cancelled'::text, 'failed'::text])) AND (finished_at IS NOT NULL)))),
+    CONSTRAINT app_forks_ttl_chk CHECK (((ttl_seconds >= 60) AND (ttl_seconds <= 86400)))
 );
 
 
@@ -21865,6 +21950,14 @@ ALTER TABLE ONLY public.app_errors
 
 
 --
+-- Name: app_forks app_forks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_forks
+    ADD CONSTRAINT app_forks_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: app_issue_impact_alert_policies app_issue_impact_alert_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26976,6 +27069,27 @@ CREATE INDEX app_errors_account_app_last_seen_idx ON public.app_errors USING btr
 --
 
 CREATE UNIQUE INDEX app_errors_dedupe_uniq ON public.app_errors USING btree (account_id, app_id, fingerprint);
+
+
+--
+-- Name: app_forks_account_app_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_forks_account_app_created_idx ON public.app_forks USING btree (account_id, app_id, created_at DESC, id DESC);
+
+
+--
+-- Name: app_forks_active_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_forks_active_expiry_idx ON public.app_forks USING btree (expires_at, id) WHERE (status = ANY (ARRAY['queued'::text, 'restoring'::text, 'running'::text]));
+
+
+--
+-- Name: app_forks_claim_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_forks_claim_idx ON public.app_forks USING btree (created_at, id) WHERE ((status = 'queued'::text) AND (cancel_requested_at IS NULL));
 
 
 --
@@ -32710,6 +32824,13 @@ CREATE TRIGGER api_keys_preserve_runs_principal BEFORE INSERT ON public.api_keys
 
 
 --
+-- Name: app_forks app_forks_status_transition; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_forks_status_transition BEFORE UPDATE ON public.app_forks FOR EACH ROW EXECUTE FUNCTION public.enforce_app_fork_status_transition();
+
+
+--
 -- Name: apps app_managed_postgres_bindings_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -35733,6 +35854,30 @@ ALTER TABLE ONLY public.app_errors
 
 ALTER TABLE ONLY public.app_errors
     ADD CONSTRAINT app_errors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_forks app_forks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_forks
+    ADD CONSTRAINT app_forks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_forks app_forks_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_forks
+    ADD CONSTRAINT app_forks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_forks app_forks_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_forks
+    ADD CONSTRAINT app_forks_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

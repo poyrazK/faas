@@ -2177,6 +2177,62 @@ func (q *Queries) BumpInstanceTailCount(ctx context.Context, db DBTX, arg BumpIn
 	return tail_count, err
 }
 
+const cancelAppFork = `-- name: CancelAppFork :one
+UPDATE app_forks
+SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+    finished_at = CASE WHEN status = 'queued' THEN $1::timestamptz ELSE finished_at END,
+    cancel_requested_at = coalesce(cancel_requested_at, $1::timestamptz),
+    updated_at = greatest(updated_at, $1::timestamptz)
+WHERE account_id = $2::uuid
+  AND app_id = $3::uuid
+  AND id = $4::uuid
+  AND status IN ('queued', 'restoring', 'running')
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+`
+
+type CancelAppForkParams struct {
+	Now       pgtype.Timestamptz
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	ForkID    pgtype.UUID
+}
+
+// A queued fork has no instance yet and is cancelled directly. A restoring or
+// running fork only records the request; schedd destroys the instance and
+// writes the terminal status under its lease.
+func (q *Queries) CancelAppFork(ctx context.Context, db DBTX, arg CancelAppForkParams) (AppFork, error) {
+	row := db.QueryRow(ctx, cancelAppFork,
+		arg.Now,
+		arg.AccountID,
+		arg.AppID,
+		arg.ForkID,
+	)
+	var i AppFork
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.TtlSeconds,
+		&i.ExpiresAt,
+		&i.SnapshotID,
+		&i.InstanceID,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const cancelCustomerOperationExecution = `-- name: CancelCustomerOperationExecution :exec
 UPDATE invocations SET state='cancelled',quota_reserved=false,completed_at=$1::timestamptz
 WHERE id=$2::uuid AND state='pending'
@@ -5736,6 +5792,33 @@ func (q *Queries) CopyProjectEnvironmentSecretSuppressions(ctx context.Context, 
 		arg.SourceSlug,
 	)
 	return err
+}
+
+const countActiveAppForks = `-- name: CountActiveAppForks :one
+SELECT count(*) FILTER (WHERE app_id = $1::uuid)::integer AS app_active,
+       count(*)::integer AS account_active
+FROM app_forks
+WHERE account_id = $2::uuid
+  AND status IN ('queued', 'restoring', 'running')
+  AND expires_at > $3::timestamptz
+`
+
+type CountActiveAppForksParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Now       pgtype.Timestamptz
+}
+
+type CountActiveAppForksRow struct {
+	AppActive     int32
+	AccountActive int32
+}
+
+func (q *Queries) CountActiveAppForks(ctx context.Context, db DBTX, arg CountActiveAppForksParams) (CountActiveAppForksRow, error) {
+	row := db.QueryRow(ctx, countActiveAppForks, arg.AppID, arg.AccountID, arg.Now)
+	var i CountActiveAppForksRow
+	err := row.Scan(&i.AppActive, &i.AccountActive)
+	return i, err
 }
 
 const countActiveMirrorSlotLeases = `-- name: CountActiveMirrorSlotLeases :one
@@ -14122,6 +14205,47 @@ func (q *Queries) GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErro
 	return i, err
 }
 
+const getAppFork = `-- name: GetAppFork :one
+SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at FROM app_forks
+WHERE account_id = $1::uuid
+  AND app_id = $2::uuid
+  AND id = $3::uuid
+`
+
+type GetAppForkParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	ForkID    pgtype.UUID
+}
+
+func (q *Queries) GetAppFork(ctx context.Context, db DBTX, arg GetAppForkParams) (AppFork, error) {
+	row := db.QueryRow(ctx, getAppFork, arg.AccountID, arg.AppID, arg.ForkID)
+	var i AppFork
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.TtlSeconds,
+		&i.ExpiresAt,
+		&i.SnapshotID,
+		&i.InstanceID,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getAppSecretRevocation = `-- name: GetAppSecretRevocation :one
 SELECT id::text, account_id::text, app_id::text, scope, key, created_at
   FROM app_secret_revocations
@@ -16469,6 +16593,66 @@ func (q *Queries) InsertAppErrorRequest(ctx context.Context, db DBTX, arg Insert
 		arg.ImageDigest,
 	)
 	return err
+}
+
+const insertAppFork = `-- name: InsertAppFork :one
+INSERT INTO app_forks (account_id, app_id, deployment_id, requested_by, ttl_seconds,
+                       expires_at, created_at, updated_at)
+SELECT a.account_id, a.id, d.id, $1::text, $2::integer,
+       $3::timestamptz + make_interval(secs => $2::integer),
+       $3::timestamptz, $3::timestamptz
+FROM apps a
+JOIN deployments d ON d.app_id = a.id
+WHERE a.id = $4::uuid
+  AND a.account_id = $5::uuid
+  AND a.status <> 'deleted'
+  AND d.id = $6::uuid
+  AND d.status = 'live'
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at
+`
+
+type InsertAppForkParams struct {
+	RequestedBy  string
+	TtlSeconds   int32
+	CreatedAt    pgtype.Timestamptz
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) InsertAppFork(ctx context.Context, db DBTX, arg InsertAppForkParams) (AppFork, error) {
+	row := db.QueryRow(ctx, insertAppFork,
+		arg.RequestedBy,
+		arg.TtlSeconds,
+		arg.CreatedAt,
+		arg.AppID,
+		arg.AccountID,
+		arg.DeploymentID,
+	)
+	var i AppFork
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.TtlSeconds,
+		&i.ExpiresAt,
+		&i.SnapshotID,
+		&i.InstanceID,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const insertCheckedRollback = `-- name: InsertCheckedRollback :exec
@@ -23796,6 +23980,61 @@ func (q *Queries) ListAppErrorRequests(ctx context.Context, db DBTX, arg ListApp
 	return items, nil
 }
 
+const listAppForks = `-- name: ListAppForks :many
+SELECT id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at FROM app_forks
+WHERE account_id = $1::uuid
+  AND app_id = $2::uuid
+ORDER BY created_at DESC, id DESC
+LIMIT $3::integer
+`
+
+type ListAppForksParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	RowLimit  int32
+}
+
+func (q *Queries) ListAppForks(ctx context.Context, db DBTX, arg ListAppForksParams) ([]AppFork, error) {
+	rows, err := db.Query(ctx, listAppForks, arg.AccountID, arg.AppID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppFork{}
+	for rows.Next() {
+		var i AppFork
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.RequestedBy,
+			&i.Status,
+			&i.TtlSeconds,
+			&i.ExpiresAt,
+			&i.SnapshotID,
+			&i.InstanceID,
+			&i.LeaseToken,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.CancelRequestedAt,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAppSecretRevocationTargets = `-- name: ListAppSecretRevocationTargets :many
 SELECT instance_id::text, workload_name, runtime_state, reload_support,
        status, coalesce(ack_revision, ''), ack_at, coalesce(error_code, '')
@@ -30431,6 +30670,19 @@ func (q *Queries) ListWorkflowScheduleCursors(ctx context.Context, db DBTX, appI
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAccountAppForks = `-- name: LockAccountAppForks :exec
+
+SELECT pg_advisory_xact_lock(hashtextextended('app-forks:' || $1::uuid::text, 0))
+`
+
+// ADR-732: production fork intent (app_forks). apid admits forks under a
+// per-account advisory lock so the active-fork limits hold under concurrent
+// requests; expired-but-unswept rows do not count against the limits.
+func (q *Queries) LockAccountAppForks(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, lockAccountAppForks, accountID)
+	return err
 }
 
 const lockAlertRollback = `-- name: LockAlertRollback :one

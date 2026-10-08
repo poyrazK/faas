@@ -342,6 +342,17 @@
       "acceptance_test": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted"
     },
     {
+      "id": "production-forks",
+      "name": "Production forks",
+      "category": "runtime",
+      "description": "Restore a copy of an app's live deployment into a quarantined, non-serving debug instance that is destroyed at its TTL.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/732-production-forks",
+      "operator_flag": "FAAS_APP_FORKS",
+      "acceptance_test": "cmd/apid/handlers_app_forks_test.go::TestAppForks_CreateGetListAndLimit"
+    },
+    {
       "id": "progressive-rollouts",
       "name": "Progressive rollouts and rollback",
       "category": "delivery",

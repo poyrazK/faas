@@ -15296,3 +15296,61 @@ WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uui
       (r.revision,r.created_at,r.operation_id,r.id)>
       (sqlc.narg(after_revision)::bigint,sqlc.narg(after_published_at)::timestamptz,sqlc.narg(after_operation_id)::uuid,sqlc.narg(after_id)::uuid))
 ORDER BY r.revision,r.created_at,r.operation_id,r.id LIMIT sqlc.arg(page_limit)::integer;
+
+-- ADR-732: production fork intent (app_forks). apid admits forks under a
+-- per-account advisory lock so the active-fork limits hold under concurrent
+-- requests; expired-but-unswept rows do not count against the limits.
+
+-- name: LockAccountAppForks :exec
+SELECT pg_advisory_xact_lock(hashtextextended('app-forks:' || sqlc.arg(account_id)::uuid::text, 0));
+
+-- name: CountActiveAppForks :one
+SELECT count(*) FILTER (WHERE app_id = sqlc.arg(app_id)::uuid)::integer AS app_active,
+       count(*)::integer AS account_active
+FROM app_forks
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND status IN ('queued', 'restoring', 'running')
+  AND expires_at > sqlc.arg(now)::timestamptz;
+
+-- name: InsertAppFork :one
+INSERT INTO app_forks (account_id, app_id, deployment_id, requested_by, ttl_seconds,
+                       expires_at, created_at, updated_at)
+SELECT a.account_id, a.id, d.id, sqlc.arg(requested_by)::text, sqlc.arg(ttl_seconds)::integer,
+       sqlc.arg(created_at)::timestamptz + make_interval(secs => sqlc.arg(ttl_seconds)::integer),
+       sqlc.arg(created_at)::timestamptz, sqlc.arg(created_at)::timestamptz
+FROM apps a
+JOIN deployments d ON d.app_id = a.id
+WHERE a.id = sqlc.arg(app_id)::uuid
+  AND a.account_id = sqlc.arg(account_id)::uuid
+  AND a.status <> 'deleted'
+  AND d.id = sqlc.arg(deployment_id)::uuid
+  AND d.status = 'live'
+RETURNING *;
+
+-- name: GetAppFork :one
+SELECT * FROM app_forks
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND app_id = sqlc.arg(app_id)::uuid
+  AND id = sqlc.arg(fork_id)::uuid;
+
+-- name: ListAppForks :many
+SELECT * FROM app_forks
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND app_id = sqlc.arg(app_id)::uuid
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: CancelAppFork :one
+-- A queued fork has no instance yet and is cancelled directly. A restoring or
+-- running fork only records the request; schedd destroys the instance and
+-- writes the terminal status under its lease.
+UPDATE app_forks
+SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
+    finished_at = CASE WHEN status = 'queued' THEN sqlc.arg(now)::timestamptz ELSE finished_at END,
+    cancel_requested_at = coalesce(cancel_requested_at, sqlc.arg(now)::timestamptz),
+    updated_at = greatest(updated_at, sqlc.arg(now)::timestamptz)
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND app_id = sqlc.arg(app_id)::uuid
+  AND id = sqlc.arg(fork_id)::uuid
+  AND status IN ('queued', 'restoring', 'running')
+RETURNING *;

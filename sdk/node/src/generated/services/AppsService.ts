@@ -6,6 +6,8 @@ import type { AppBindingInventory } from '../models/AppBindingInventory.js';
 import type { AppErrorRequestsResponse } from '../models/AppErrorRequestsResponse.js';
 import type { AppErrorSampleResponse } from '../models/AppErrorSampleResponse.js';
 import type { AppErrorsSummaryResponse } from '../models/AppErrorsSummaryResponse.js';
+import type { AppForkListResponse } from '../models/AppForkListResponse.js';
+import type { AppForkResponse } from '../models/AppForkResponse.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { AppRestartResponse } from '../models/AppRestartResponse.js';
@@ -20,6 +22,7 @@ import type { AutomaticRouteCheck } from '../models/AutomaticRouteCheck.js';
 import type { BindingReleasePolicy } from '../models/BindingReleasePolicy.js';
 import type { CanaryRouteGate } from '../models/CanaryRouteGate.js';
 import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirementsRequest.js';
+import type { CreateAppForkRequest } from '../models/CreateAppForkRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
 import type { CreateIssueIngestTokenRequest } from '../models/CreateIssueIngestTokenRequest.js';
@@ -258,6 +261,194 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * List production forks for an app.
+   * Returns the app's production forks, newest first (ADR-732). Answers
+   * 501 `app_forks_not_enabled` until the operator enables forks.
+   *
+   * @returns AppForkListResponse The app's forks, newest first.
+   * @throws ApiError
+   */
+  public static listAppForks({
+    slug,
+    limit = 100,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Maximum number of forks to return.
+     */
+    limit?: number,
+  }): CancelablePromise<AppForkListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/forks',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Fork the app's live deployment into a quarantined debug copy.
+   * Queues a production fork (ADR-732): a restore of the app's newest
+   * capture of its live deployment into an instance that never serves
+   * traffic, cannot reach the network, and is destroyed at its TTL.
+   * The fork holds a copy of production memory, secrets included, so
+   * the key needs `secrets:read` as well as `deploy:write`, and every
+   * create is audited. Pro and Scale only; one active fork per app and
+   * two per account. Answers 501 `app_forks_not_enabled` until the
+   * operator enables forks.
+   *
+   * @returns AppForkResponse Fork admitted and queued.
+   * @throws ApiError
+   */
+  public static createAppFork({
+    slug,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    requestBody?: CreateAppForkRequest,
+  }): CancelablePromise<AppForkResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/forks',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `An active-fork limit is full (\`app_fork_limit\`, with \`limit\` and \`observed\`), or the app has no live deployment (\`app_fork_unavailable\`).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Read one production fork.
+   * @returns AppForkResponse The fork.
+   * @throws ApiError
+   */
+  public static getAppFork({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+  }): CancelablePromise<AppForkResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/forks/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Cancel a production fork.
+   * Cancels a queued fork immediately. For a restoring or running fork
+   * it records the request; the scheduler destroys the instance. A fork
+   * that has already ended is returned unchanged.
+   *
+   * @returns AppForkResponse Cancellation recorded.
+   * @throws ApiError
+   */
+  public static cancelAppFork({
+    slug,
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AppForkResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/forks/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
     });
   }

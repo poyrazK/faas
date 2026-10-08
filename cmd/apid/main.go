@@ -232,6 +232,12 @@ func appTaskAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_APP_TASK_API_ENABLED")) == "1"
 }
 
+// appForksEnabledFromEnv is the fail-closed operator gate for production
+// forks (ADR-732). It stays off until schedd can restore quarantined forks.
+func appForksEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_APP_FORKS")) == "1"
+}
+
 func githubDeploysAvailabilityProbe(getenv func(string) string) func(context.Context) bool {
 	base := strings.TrimRight(strings.TrimSpace(getenv("FAAS_GITHUBD_LOOPBACK")), "/")
 	if base == "" {
@@ -1421,6 +1427,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithAppForksEnabled(appForksEnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
 	if cfg.OutboundProbeGatewayURL != "" && !api.ValidOutboundProbeGateway(cfg.OutboundProbeGatewayURL) {
