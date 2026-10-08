@@ -150,12 +150,16 @@ func TestManagedInvocationUncertainRenewalAndPartitionCancelPublication(t *testi
 
 func TestManagedInvocationTakeoverCancelsLateGuest(t *testing.T) {
 	f := managedLeaseFixture(t, newMemoryStore(), "success")
+	replacement := openManager(t, f.store, f.clock)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	_, err := f.m.Invoke(ctx, f.id, "obsolete", request("late"), func(ctx context.Context, view View) (Transition, error) {
 		f.clock.Add(int64(api.DurableEntityInvocationLease + time.Second))
-		replacement := openManager(t, f.store, f.clock)
-		if _, err := replacement.Invoke(t.Context(), f.id, "replacement", request("winner"), increment); err != nil {
+		// The competing owner inherits values but must outlive cancellation of
+		// the obsolete worker it is replacing.
+		competitorCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer stop()
+		if _, err := replacement.Invoke(competitorCtx, f.id, "replacement", request("winner"), increment); err != nil {
 			return Transition{}, err
 		}
 		<-ctx.Done()
