@@ -228,8 +228,8 @@ func customerOperationInputFromHTTP(request *http.Request, originalBody []byte) 
 	if err != nil || !customerOperationAttemptPattern.MatchString(attemptRaw) {
 		return customerOperationInput{}, ErrInvalidCustomerOperationRequest
 	}
-	attempt, err := strconv.ParseInt(attemptRaw, 10, 64)
-	if err != nil || attempt > 9007199254740991 || int64(int(attempt)) != attempt || strconv.FormatInt(attempt, 10) != attemptRaw {
+	attempt, err := strconv.Atoi(attemptRaw)
+	if err != nil || int64(attempt) > 9007199254740991 || strconv.Itoa(attempt) != attemptRaw {
 		return customerOperationInput{}, ErrInvalidCustomerOperationRequest
 	}
 	capability, err := customerHeader(request.Header, "X-Gregale-Operation-Capability", false)
@@ -245,7 +245,7 @@ func customerOperationInputFromHTTP(request *http.Request, originalBody []byte) 
 		operationID: operationID, accountID: accountID, appID: appID, platformTenantID: platformTenantID,
 		resultMaxBytes: resultMaxBytes, milestonesEnabled: milestoneVersion == "1", method: request.Method,
 		path: request.RequestURI, body: append([]byte(nil), originalBody...),
-		proof: operationapi.OperationRuntimeProof{InvocationID: invocationID, Attempt: int(attempt), Capability: capability},
+		proof: operationapi.OperationRuntimeProof{InvocationID: invocationID, Attempt: attempt, Capability: capability},
 	}, nil
 }
 
