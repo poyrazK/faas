@@ -501,10 +501,11 @@ Configure, release and inspect durable task workers
 
 Deploy and resume a gated web and worker release
 
-`gregale mcp tasks release --plan <PATH> --state <PATH> [run|status]`
+`gregale mcp tasks release [--resume] --plan <PATH> --state <PATH> [run|status|recover|restore]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--resume` | resume a healthy failed rollout (recover only) |  |
 | `--plan <PATH>` | native deployment plan JSON | required |
 | `--state <PATH>` | persistent release journal outside source directories | required |
 

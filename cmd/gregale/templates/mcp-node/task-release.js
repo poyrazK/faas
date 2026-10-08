@@ -78,3 +78,31 @@ export async function checkMcpTaskReplacementReadiness({ pool, namespace, handle
       AND expires_at > clock_timestamp() AND heartbeat_at > clock_timestamp() - interval '45 seconds'`, [namespace, workerIDs]);
   return workerIDs.every(id => result.rows.some(row => row.worker_id === id && inventory.every(handler => row.handlers.some(item => item.name === handler.name && item.version === handler.version))));
 }
+
+// Restoration shares the release lock and makes no schema or admission changes.
+export async function restoreMcpTasks({ pool, namespace, handlers, restore }) {
+  const inventory = mcpTaskHandlerInventory(handlers);
+  const lock = await pool.connect();
+  let locked = false;
+  const report = { ok: false, stage: 'release_lock' };
+  try {
+    const result = await lock.query('SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired', [`gregale_mcp_release:${namespace}`]);
+    if (!result.rows[0].acquired) throw new Error('Release already running');
+    locked = true;
+    report.stage = 'restore_compatibility';
+    if (!(await checkMcpTaskCompatibility({ pool, namespace, handlers })).ok) throw new Error('Retained handlers incompatible');
+    const admission = await createMcpTaskAdmissionController({ pool, namespace }).status();
+    if (!admission.enforced || admission.versions.some(entry => entry.state === 'allowed' && !inventory.some(handler => handler.name === entry.tool && handler.version === entry.version))) throw new Error('Admitted handlers incompatible');
+    report.stage = 'restore_web';
+    await restore();
+    report.stage = 'web_restored';
+    report.ok = true;
+  } catch {
+    // Keep credentials and child diagnostics out of the report.
+  } finally {
+    try {
+      if (locked) await lock.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [`gregale_mcp_release:${namespace}`]);
+    } finally { lock.release(); }
+  }
+  return report;
+}

@@ -1409,3 +1409,33 @@ test('native replacement recheck rejects stale, draining and unsupported registr
   await pool.query("UPDATE gregale_mcp_task_workers SET heartbeat_at=clock_timestamp()-interval '50 seconds' WHERE namespace=$1 AND worker_id=$2", [namespace, id]);
   assert.equal(await check(), false);
 });
+
+test('restore gate serializes with releases, checks retained and admitted handlers, and sanitizes hook failure', postgresOnly, async t => {
+  const { restoreMcpTasks } = await import('../task-release.js');
+  const { pool, namespace, store } = await harness(t);
+  const handlers = { build_report: { version: '2', previousVersions: { '1': async () => ({}) }, execute: async () => ({}) } };
+  const denied = await restoreMcpTasks({ pool, namespace, handlers: { build_report: { version: '1', execute: async () => ({}) } }, restore: async () => { throw new Error('must not restore'); } });
+  assert.deepEqual(denied, { ok: false, stage: 'restore_compatibility' });
+  await create(store, 'restore-owner');
+  let restored = 0;
+  const base = { pool, namespace, handlers, restore: async () => { restored++; } };
+  const held = await pool.connect();
+  try {
+    await held.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [`gregale_mcp_release:${namespace}`]);
+    const busy = await restoreMcpTasks(base);
+    assert.deepEqual(busy, { ok: false, stage: 'release_lock' });
+    assert.equal(restored, 0);
+  } finally {
+    await held.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [`gregale_mcp_release:${namespace}`]);
+    held.release();
+  }
+  const missing = await restoreMcpTasks({ ...base, handlers: { build_report: { version: '2', execute: async () => ({}) } } });
+  assert.deepEqual(missing, { ok: false, stage: 'restore_compatibility' });
+  assert.equal(restored, 0);
+  const failed = await restoreMcpTasks({ ...base, restore: async () => { throw new Error('postgres://credential'); } });
+  assert.deepEqual(failed, { ok: false, stage: 'restore_web' });
+  const success = await restoreMcpTasks(base);
+  assert.deepEqual(success, { ok: true, stage: 'web_restored' });
+  assert.equal(restored, 1);
+  assert.equal((await store.get({ taskID: (await pool.query('SELECT task_id FROM gregale_mcp_tasks WHERE namespace=$1', [namespace])).rows[0].task_id, authInfo: principal('restore-owner'), authMode: 'external-oauth' })).status, 'queued');
+});

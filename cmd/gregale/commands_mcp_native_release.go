@@ -212,12 +212,13 @@ func cmdMCPTaskRelease(args []string) int {
 	}
 	flags := newFlagSet("mcp-tasks-release", flag.ContinueOnError)
 	planPath := flags.String("plan", "", "native release plan JSON")
+	resume := flags.Bool("resume", false, "resume a healthy failed rollout (recover only)")
 	statePath := flags.String("state", "", "persistent release journal outside source directories")
 	if err := flags.Parse(args); err != nil {
 		return 1
 	}
-	if flags.NArg() != 0 || *planPath == "" || *statePath == "" || (action != "run" && action != "start" && action != "drain" && action != "status") {
-		return printErr("MCP release", errors.New("use release [run|status] --plan PATH --state PATH"))
+	if flags.NArg() != 0 || *planPath == "" || *statePath == "" || (action != "run" && action != "start" && action != "drain" && action != "restore-hook" && action != "status" && action != "recover" && action != "restore") {
+		return printErr("MCP release", errors.New("use release [run|status|recover|restore] --plan PATH --state PATH"))
 	}
 	p, err := readMCPNativePlan(*planPath)
 	if err != nil {
@@ -241,6 +242,15 @@ func cmdMCPTaskRelease(args []string) int {
 	if err != nil {
 		return printErr("MCP release state", err)
 	}
+	if *resume && action != "recover" {
+		return printErr("MCP recovery", errors.New("--resume requires recover"))
+	}
+	if action == "recover" {
+		return recoverMCPNativeRelease(p, s, absoluteState, *planPath, *resume)
+	}
+	if action == "restore" {
+		return runMCPNativeRestore(p, s, absoluteState, *planPath)
+	}
 	if action == "status" {
 		return jsonOut(writeJSON(s))
 	}
@@ -257,9 +267,12 @@ func cmdMCPTaskRelease(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.TimeoutSeconds)*time.Second)
 	defer cancel()
-	if action == "start" {
+	switch action {
+	case "restore-hook":
+		err = restoreMCPNativeWeb(ctx, c, p, &s, absoluteState)
+	case "start":
 		err = startMCPNativeRelease(ctx, c, p, &s, absoluteState)
-	} else {
+	default:
 		err = drainMCPNativeRelease(ctx, c, p, &s, absoluteState)
 	}
 	if err != nil {
@@ -268,6 +281,9 @@ func cmdMCPTaskRelease(args []string) int {
 	return jsonOut(writeJSON(map[string]any{"workerIDs": s.WorkerIDs, "stage": s.Stage}))
 }
 func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state, plan string) int {
+	if s.Stage == "restore_pending" || s.Stage == "web_restored" {
+		return printErr("MCP release", errors.New("restoration started; finish restore instead of resuming this rollout"))
+	}
 	if s.Stage == "complete" {
 		return jsonOut(writeJSON(s))
 	}

@@ -1109,3 +1109,38 @@ worker draining is incomplete. Check both journals and the recorded deployments,
 restore health, and resume. Log retention must include worker startup records;
 missing records fail readiness. No production deployment is performed by local
 verification tests.
+
+### Recovering a failed native Task rollout
+
+`gregale mcp tasks release recover --plan release.json --state release-state.json`
+reads the actual serving revision, candidate endpoint and worker health, observer
+freshness, and previous worker readiness. It makes no control-plane changes.
+Add `--resume` to continue the original release through its namespace-locked gate
+when candidate health and the serving-generation checks pass.
+
+For an incomplete rollout that already promoted its candidate web revision, use
+`gregale mcp tasks release restore --plan release.json --state release-state.json`.
+Restoration holds the same PostgreSQL namespace lock as deployment, verifies
+retained and admitted handlers, checks fresh previous workers, probes the exact
+previous web artifact against the pinned configuration and role policy, and
+restores traffic with a compare-and-swap expecting the candidate revision. It
+then verifies the canonical endpoint. A lost traffic response is reconciled
+against the actual serving revision; rerun `restore` after repairing health.
+
+Restoration is deliberately conservative: every original worker app must still
+have its captured generation running, must not have been parked, and must cover
+**every handler version in the candidate inventory**, including previous versions.
+Missing registrations, stale heartbeats, changed traffic or worker generations,
+incompatible admission, and failed endpoint checks stop recovery. Restoration
+cannot recover capacity after old workers have been parked; use a separate reviewed recovery/deployment plan once that capacity has been
+retired.
+
+Restoration preserves candidate workers and Tasks, changes no admission policy,
+and performs no schema rollback. Its journal stages are `restore_pending` and
+`web_restored`; either blocks the original rollout's `run`/`recover --resume`
+path. After successful restoration, inspect capacity and make a new release plan
+and journal for future deployment. Do not restart the old release or reuse its
+`.gate` checkpoint. If a post-switch canonical check fails, `restore_pending`
+remains recorded so restoration can be retried without repeating the traffic
+switch. Recovery requires the updated starter's restore and readiness scripts;
+keep the sources pinned and do not modify a running release's journal or sources.
