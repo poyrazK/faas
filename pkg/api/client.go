@@ -896,6 +896,24 @@ func (c *Client) PutDevSessionsProject(ctx context.Context, project string, req 
 	return out, c.do(ctx, "PUT", "/v1/dev/sessions/"+project, req, &out)
 }
 
+// GetDevSession reads a developer environment without renewing its lease.
+// Pass an empty workspaceID only for a legacy account+project session.
+func (c *Client) GetDevSession(ctx context.Context, project, workspaceID string) (DevSessionResponse, error) {
+	return c.GetDevSessionsProject(ctx, project, workspaceID)
+}
+
+// GetDevSessionsProject is the path-shaped SDK method for
+// GET /v1/dev/sessions/{project}.
+func (c *Client) GetDevSessionsProject(ctx context.Context, project string, workspaceID ...string) (DevSessionResponse, error) {
+	path := "/v1/dev/sessions/" + project
+	if len(workspaceID) > 0 && workspaceID[0] != "" {
+		query := url.Values{"workspace_id": {workspaceID[0]}}
+		path += "?" + query.Encode()
+	}
+	var out DevSessionResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // DestroyDevSession tears down the developer preview for a project. Passing a
 // workspace ID targets an isolated developer workspace; omission retains the
 // legacy account+project behavior.

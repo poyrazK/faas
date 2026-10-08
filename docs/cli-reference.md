@@ -3849,6 +3849,54 @@ show edit-to-live timings and SLO guidance
 | `--name <PROJECT>` | developer-session project name |  |
 | `--limit <N>` | number of recent syncs to show |  |
 
+### dev info
+
+show the developer environment URL, app slug, lease, and database without renewing it
+
+`gregale dev info [--path <DIR>] [--name <PROJECT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <DIR>` | source directory |  |
+| `--name <PROJECT>` | developer-session project name |  |
+
+### dev trigger
+
+invoke the developer app, fire a declared cron route, or schedule a delayed task
+
+`gregale dev trigger [--path <DIR>] [--name <PROJECT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <DIR>` | source directory (before the verb) |  |
+| `--name <PROJECT>` | developer-session project name (before the verb) |  |
+
+Examples:
+
+```sh
+gregale dev trigger invoke --method POST --path /orders --payload @order.json
+gregale dev trigger cron /jobs/nightly
+gregale dev trigger delayed-task --delay 5m --path /reminders
+```
+
+#### dev trigger invoke
+
+run `gregale invoke` against the developer app
+
+`gregale dev trigger invoke`
+
+#### dev trigger cron
+
+POST to a cron route declared for this app in gregale.yaml
+
+`gregale dev trigger cron [ROUTE]`
+
+#### dev trigger delayed-task
+
+run `gregale delayed-task add` against the developer app
+
+`gregale dev trigger delayed-task`
+
 ### dev setup
 
 preflight a project and prepare the first developer environment

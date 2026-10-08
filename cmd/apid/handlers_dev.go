@@ -200,6 +200,41 @@ func (s *server) destroyDevSession(w http.ResponseWriter, r *http.Request, acct 
 	s.destroyPreviewApp(w, r, acct, app, "dev_session.destroyed")
 }
 
+// getDevSession reports the developer environment selected by the account,
+// project, and optional workspace identity. It is read-only: unlike the PUT
+// upsert it never renews the lease or provisions PostgreSQL, so scripts and
+// `gregale dev info` can inspect an environment without extending it.
+func (s *server) getDevSession(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	project := r.PathValue("project")
+	if !validSlug(project) {
+		s.notFound(w, "no such developer session")
+		return
+	}
+	workspaceID := r.URL.Query().Get("workspace_id")
+	if !validDevWorkspaceID(workspaceID) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid workspace ID", "workspace_id must be 32 lowercase hexadecimal characters"))
+		return
+	}
+	app, ok := s.developerSessionApp(r, acct, project, workspaceID)
+	if !ok {
+		s.notFound(w, "no such developer session")
+		return
+	}
+	postgres, err := s.describeDevPostgres(r.Context(), app)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("load developer PostgreSQL"))
+		return
+	}
+	var expiresAt time.Time
+	if app.PreviewExpiresAt != nil {
+		expiresAt = app.PreviewExpiresAt.UTC()
+	}
+	writeJSON(w, http.StatusOK, api.DevSessionResponse{
+		App: s.appResponseWithContext(r.Context(), app, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
+	})
+}
+
 const (
 	devSyncHistoryDefaultLimit = 20
 	devSyncHistoryMaxLimit     = 100
