@@ -6217,6 +6217,7 @@ type RouteMonitor struct {
 	UpdatedAt             pgtype.Timestamptz
 	NextCheckAt           pgtype.Timestamptz
 	LastDeploymentID      pgtype.UUID
+	LastHealthyDeployment []byte
 	ActiveIncidentID      pgtype.UUID
 	CustomerGroupBy       string
 	CustomerRecoveryState []byte

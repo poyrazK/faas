@@ -430,6 +430,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/outbound/integrations/{integration}/credential":                       "DeleteOutboundCredential",
 	"GET /v1/apps/{slug}/route-monitor":                                               "GetRouteMonitor",
 	"PUT /v1/apps/{slug}/route-monitor":                                               "SetRouteMonitor",
+	"POST /v1/apps/{slug}/route-monitor/preview":                                      "PreviewRouteMonitor",
 	"GET /v1/apps/{slug}/route-monitor/report":                                        "GetRouteMonitorReport",
 	"GET /v1/apps/{slug}/route-monitor/incidents":                                     "ListRouteMonitorIncidents",
 	"GET /v1/apps/{slug}/route-monitor/incidents/{incident}":                          "GetRouteMonitorIncident",

@@ -48,7 +48,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
-| [`routes`](#routes) | Analyze source changes and plan or apply route policies |
+| [`routes`](#routes) | Analyze route changes, migrations, lifecycle and production policies |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
 | [`init`](#init) | Scaffold a project from a built-in template |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context) |
@@ -4187,6 +4187,123 @@ gregale preview review pr-42-api pr-42-worker --source-impact pr-42-api=api-impa
 gregale preview review pr-42-api pr-42-worker --test-report pr-42-api=api-tests.json --fail-on-breaking --fail-on-incomplete
 ```
 
+### preview customers
+
+Build customer impact rosters and track route migrations
+
+`gregale preview customers --report <PATH> [--by <consumer|tenant>] [--format <FORMAT>] [--out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--report <PATH>` | preview report or multi-app release review JSON with --customer-details | required |
+| `--by <consumer|tenant>` | group by consumer (app scoped) or tenant (account scoped; default consumer) | one of `consumer` · `tenant` |
+| `--format <FORMAT>` | text, Markdown, or CSV output (default text; --json emits machine-readable JSON) | one of `text` · `markdown` · `csv` |
+| `--out <PATH>` | write a machine-readable roster to a new JSON file |  |
+
+Examples:
+
+```sh
+gregale preview customers --report route-report.json --by consumer --format markdown
+gregale preview customers --report release-review.json --by tenant --format csv
+gregale preview customers track --roster customer-roster.json --mapping route-successors.json --deployment checkout=00000000-0000-4000-8000-000000000001
+```
+
+#### preview customers track
+
+Compare a saved cohort with current route-customer telemetry
+
+`gregale preview customers track --roster <PATH> --mapping <PATH> --deployment <APP=ID>... [--since <DURATION>] [--format <FORMAT>] [--out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--roster <PATH>` | version 1 customer roster JSON produced by preview customers | required |
+| `--mapping <PATH>` | version 1 explicit old-to-successor route mapping JSON | required |
+| `--deployment <APP=ID>` | immutable current deployment as APP=ID; repeat for each app | required |
+| `--since <DURATION>` | post-release observation window (duration or RFC3339 timestamp; default 14d) |  |
+| `--format <FORMAT>` | text, Markdown, or CSV output (default text; --json emits machine-readable JSON) | one of `text` · `markdown` · `csv` |
+| `--out <PATH>` | write the full machine-readable tracker to a new JSON file |  |
+
+Examples:
+
+```sh
+gregale preview customers track --roster customer-roster.json --mapping route-successors.json --deployment checkout=00000000-0000-4000-8000-000000000001 --since 14d --format markdown
+```
+
+#### preview customers progress
+
+Measure sustained old-route traffic and customer migration progress across saved tracker windows
+
+`gregale preview customers progress --snapshot <PATH>... [--grace-period <DURATION>] [--min-windows <COUNT>] [--max-staleness <DURATION>] [--format <FORMAT>] [--out <PATH>] [--fail-on-incomplete] [--fail-on-not-ready]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--snapshot <PATH>` | saved route customer tracker JSON; repeat for each observation window | required |
+| `--grace-period <DURATION>` | minimum continuous zero-traffic period before owner review (default 30d) |  |
+| `--min-windows <COUNT>` | minimum distinct complete observation windows (default 2) |  |
+| `--max-staleness <DURATION>` | maximum age of the latest telemetry watermark (default 72h) |  |
+| `--format <FORMAT>` | text or Markdown output (default text; --json emits machine-readable JSON) | one of `text` · `markdown` |
+| `--out <PATH>` | write the full machine-readable progress report to a new JSON file |  |
+| `--fail-on-incomplete` | exit 1 when evidence is incomplete |  |
+| `--fail-on-not-ready` | exit 1 unless every route is ready for owner review |  |
+
+Examples:
+
+```sh
+gregale preview customers progress --snapshot migration-week-1.json --snapshot migration-week-2.json --grace-period 30d --format markdown
+```
+
+#### preview customers migration
+
+Join contract compatibility with customer cutover evidence
+
+`gregale preview customers migration`
+
+##### preview customers migration review
+
+Review contract compatibility and customer-by-customer route migration progress
+
+`gregale preview customers migration review --contract-review <PATH> --snapshot <PATH>... [--grace-period <DURATION>] [--min-windows <COUNT>] [--max-staleness <DURATION>] [--format <FORMAT>] [--out <PATH>] [--fail-on-breaking] [--fail-on-incomplete] [--fail-on-not-ready]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--contract-review <PATH>` | version 1 JSON from gregale routes migration review | required |
+| `--snapshot <PATH>` | saved route customer tracker JSON; repeat for each observation window | required |
+| `--grace-period <DURATION>` | minimum continuous zero-traffic period before owner review (default 30d) |  |
+| `--min-windows <COUNT>` | minimum distinct complete observation windows (default 2) |  |
+| `--max-staleness <DURATION>` | maximum age of the latest telemetry watermark (default 72h) |  |
+| `--format <FORMAT>` | text, Markdown, or prioritized CSV action queue (default text; --json emits machine-readable JSON) | one of `text` · `markdown` · `csv` |
+| `--out <PATH>` | write the full machine-readable cutover review to a new JSON file |  |
+| `--fail-on-breaking` | exit 1 when any mapped successor has a declared breaking change |  |
+| `--fail-on-incomplete` | exit 1 when contract or telemetry evidence is incomplete |  |
+| `--fail-on-not-ready` | exit 1 unless every route is ready for owner review |  |
+
+Examples:
+
+```sh
+gregale preview customers migration review --contract-review migration-review.json --snapshot migration-week-1.json --snapshot migration-week-2.json --grace-period 30d --format markdown
+gregale preview customers migration review --contract-review migration-review.json --snapshot migration-week-1.json --snapshot migration-week-2.json --format csv
+```
+
+##### preview customers migration diff
+
+Compare customer migration evidence between two cutover reviews
+
+`gregale preview customers migration diff --before <PATH> --after <PATH> [--format <FORMAT>] [--out <PATH>] [--fail-on-regression]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <PATH>` | previous version 1 customer migration cutover review JSON | required |
+| `--after <PATH>` | current version 1 customer migration cutover review JSON | required |
+| `--format <FORMAT>` | text, Markdown, or CSV output (default text; --json emits machine-readable JSON) | one of `text` · `markdown` · `csv` |
+| `--out <PATH>` | write the machine-readable migration diff to a new JSON file |  |
+| `--fail-on-regression` | exit 1 when confirmed customer migration regressions are found |  |
+
+Examples:
+
+```sh
+gregale preview customers migration diff --before migration-last-week.json --after migration-today.json --fail-on-regression --format markdown
+```
+
 ### preview wait
 
 Wait for a preview deployment to become ready
@@ -4657,7 +4774,7 @@ Remove the imported app OpenAPI document
 
 ## routes
 
-Analyze source changes and plan or apply route policies
+Analyze route changes, migrations, lifecycle and production policies
 
 `gregale routes [<subcommand>] [<slug>]`
 
@@ -4702,6 +4819,25 @@ Read production route budgets and revision
 
 `gregale routes monitor get <slug>`
 
+#### routes monitor preview
+
+Evaluate proposed budgets against recent production traffic without saving them
+
+`gregale routes monitor preview --routes <PATH> [--customer-group-by <DIMENSION>] [--customer-details] [--fail-on-unhealthy] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--routes <PATH>` | JSON array of proposed exact route budgets | required |
+| `--customer-group-by <DIMENSION>` | optionally evaluate budgets per tenant or consumer | one of `tenant` · `consumer` |
+| `--customer-details` | include observed tenant or consumer IDs (when enabled) |  |
+| `--fail-on-unhealthy` | exit nonzero unless all proposed budgets are healthy |  |
+
+Examples:
+
+```sh
+gregale routes monitor preview my-api --routes production-routes.json --customer-group-by tenant
+```
+
 #### routes monitor set
 
 Save advisory production route budgets
@@ -4737,14 +4873,21 @@ List retained production route incidents
 
 #### routes monitor explain
 
-Inspect saved incident windows, request links and dependency timings
+Inspect a saved incident and optionally correlate affected customers and changed route owners
 
-`gregale routes monitor explain --incident <ID> [--out <PATH>] <slug>`
+`gregale routes monitor explain --incident <ID> [--out <PATH>] [--source-impact <PATH|auto>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--incident <ID>` | saved incident UUID | required |
 | `--out <PATH>` | save incident evidence JSON to a new file |  |
+| `--source-impact <PATH|auto>` | correlate source, aggregate customer impact, and candidate-commit CODEOWNERS from the matching local repository |  |
+
+Examples:
+
+```sh
+gregale routes monitor explain api --incident INCIDENT_UUID --source-impact auto
+```
 
 ### routes lifecycle
 
@@ -4768,6 +4911,32 @@ Examples:
 
 ```sh
 gregale routes lifecycle review api --deployment DEPLOYMENT_UUID --since 14d --source-impact impact.json --out lifecycle-review.json
+```
+
+### routes migration
+
+Check mapped route successors against immutable deployment contracts
+
+#### routes migration review
+
+Compare method, path parameters, request, response and security contracts
+
+`gregale routes migration review --mapping <PATH> --from-deployment <APP=ID>... --to-deployment <APP=ID>... [--format <FORMAT>] [--out <PATH>] [--fail-on-breaking] [--fail-on-incomplete]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--mapping <PATH>` | version 1 explicit old-to-successor route mapping JSON | required |
+| `--from-deployment <APP=ID>` | immutable baseline deployment as APP=ID; repeat for each app | required |
+| `--to-deployment <APP=ID>` | immutable successor deployment as APP=ID; repeat for each app | required |
+| `--format <FORMAT>` | text or Markdown output (default text; --json emits machine-readable JSON) | one of `text` · `markdown` |
+| `--out <PATH>` | save the full JSON review to a new file |  |
+| `--fail-on-breaking` | exit nonzero when any successor has a declared breaking change |  |
+| `--fail-on-incomplete` | exit nonzero when any route lacks complete contract evidence |  |
+
+Examples:
+
+```sh
+gregale routes migration review --mapping route-successors.json --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --format markdown --out migration-review.json
 ```
 
 ### routes health
