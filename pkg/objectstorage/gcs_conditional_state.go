@@ -62,7 +62,9 @@ func validGCSStateVersion(version string) bool {
 }
 
 func (s *googleGCSStore) ReadStateObject(ctx context.Context, bucket, key string, maxBytes int64) ([]byte, string, error) {
-	object := s.client.Bucket(bucket).Object(key).ReadCompressed(true).Retryer(storage.WithPolicy(storage.RetryNever))
+	// JSON media reads cannot use ReadCompressed: the generated API transport
+	// rejects its Accept-Encoding header. Reject transcoding from reader attrs.
+	object := s.client.Bucket(bucket).Object(key).Retryer(storage.WithPolicy(storage.RetryNever))
 	reader, err := object.NewReader(ctx)
 	if err != nil {
 		return nil, "", err
