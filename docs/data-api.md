@@ -111,17 +111,30 @@ PostgREST filters, projections, pagination and relationship queries.
 ## Refresh after a migration
 
 ```sh
-gregale data-api refresh notes-data
-# Wait for fresh-restart completion and verify the serving revision's /healthz.
+gregale data-api refresh notes-data --wait --timeout 5m
 gregale data-api types notes-data --output src/database.types.ts
+# Run your application's TypeScript checks before deploying the new client.
 ```
 
 Refresh requests the existing fresh app restart, which rebuilds the schema
-cache. It may interrupt in-flight requests. Its success response confirms
-restart admission, not completion; inspect the app's restart status and health
-before using newly added fields. Use backward-compatible migrations during
-rollouts. Type generation and `--check` read the current database; neither
-command refreshes a live PostgREST cache.
+cache. It may interrupt in-flight requests. With `--wait`, success requires the
+accepted restart to complete and the Data API's public HTTPS `/healthz` to return
+`{"ready":true}`. The CLI uses the app's canonical URL, falling back to its
+platform URL, and sends no account credentials to the health endpoint. Your
+ingress settings must allow the CLI to reach it.
+
+One deadline covers app lookup, restart admission, completion and readiness.
+It defaults to five minutes; `--timeout` accepts a positive duration up to one
+hour and requires `--wait`. Failure or timeout exits nonzero. Timing out stops
+the local wait; an accepted restart continues. `--json --wait` emits one receipt
+with the `wake_id`, `status: "completed"` and `ready: true` only after both checks
+pass. Without `--wait`, success still confirms restart admission only.
+
+Use backward-compatible migrations during rollouts. Generate types after a
+successful refresh, then run your application's type checks. Keep
+`gregale data-api types notes-data --output src/database.types.ts --check` in
+application CI to detect schema drift. Type generation and `--check` read the
+current database; neither command refreshes a live PostgREST cache.
 
 ## HTTP contract and bounds
 

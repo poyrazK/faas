@@ -130,10 +130,9 @@ export class Canary {
     await this.wait(() => this.exec(['postgres', 'bindings', 'get', binding.id]), x => x.state === 'ready')
   }
   async refresh(app) {
-    const receipt = await this.exec(['data-api', 'refresh', app.slug])
+    const receipt = await this.exec(['data-api', 'refresh', app.slug, '--wait', '--timeout', '5m'])
     requireValue(receipt.wake_id, 'restart_receipt_missing')
-    await this.wait(() => this.request(`/v1/apps/${app.slug}/runtime-config-restarts/${receipt.wake_id}`), x => x.status === 'completed')
-    await this.wait(async () => ({ ready: (await this.publicFetch(this.appURL(app) + '/healthz')).status === 200 }), x => x.ready)
+    requireValue(receipt.status === 'completed' && receipt.ready === true, 'schema_refresh_not_ready')
   }
   publicFetch(input, init = {}) {
     return fetch(input, { ...init, redirect: 'error', signal: this.signal ? AbortSignal.any([this.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) })

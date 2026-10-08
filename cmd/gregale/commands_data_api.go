@@ -35,22 +35,60 @@ func cmdDataAPI(args []string) int {
 // A snapshot restart would preserve PostgREST's stale schema cache. Use the
 // existing fresh-restart lifecycle to rebuild it on every active instance.
 func cmdDataAPIRefresh(args []string) int {
-	if len(args) != 1 || !api.ValidAppSlug(args[0]) {
-		PrintUsage(os.Stderr, "usage: gregale data-api refresh NAME", "data-api")
+	fs := newFlagSet("data-api refresh", flag.ContinueOnError)
+	wait := fs.Bool("wait", false, "wait for fresh-restart completion and Data API readiness")
+	timeout := fs.Duration("timeout", 5*time.Minute, "deadline for the complete refresh wait (maximum 1h)")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
+	}
+	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *timeout <= 0 || *timeout > time.Hour {
+		PrintUsage(os.Stderr, "usage: gregale data-api refresh NAME [--wait [--timeout DURATION]]", "data-api")
+		return 1
+	}
+	var explicitTimeout bool
+	fs.Visit(func(f *flag.Flag) { explicitTimeout = explicitTimeout || f.Name == "timeout" })
+	if explicitTimeout && !*wait {
+		return printErr("Invalid flags", errors.New("--timeout requires --wait"))
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	result, err := client.RestartAppFresh(context.Background(), args[0])
+	ctx := context.Background()
+	if *wait {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+		defer cancel()
+	}
+	var healthURL string
+	if *wait {
+		app, getErr := client.GetApp(ctx, fs.Arg(0))
+		if getErr != nil {
+			return printErr("Could not inspect Data API app", getErr)
+		}
+		healthURL, err = dataAPIReadinessURL(app)
+		if err != nil {
+			return printErr("Could not check Data API readiness", err)
+		}
+	}
+	result, err := client.RestartAppFresh(ctx, fs.Arg(0))
 	if err != nil {
 		return printErr("Could not refresh Data API schema", err)
+	}
+	if *wait {
+		if err = waitDataAPIRefresh(ctx, client, fs.Arg(0), result.WakeID, healthURL, time.Second); err != nil {
+			return printErr("Could not verify Data API schema refresh", dataAPIRefreshDiagnostic(err))
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(dataAPIRefreshReceipt{AppRestartResponse: result, Status: "completed", Ready: true}))
+		}
+		PrintOK(osStdout, "Schema refresh completed for %s (wake_id=%s); Data API is ready", fs.Arg(0), result.WakeID)
+		return 0
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
 	}
-	PrintOK(osStdout, "Schema refresh requested for %s; verify /healthz before using the new contract", args[0])
+	PrintOK(osStdout, "Schema refresh requested for %s; verify /healthz before using the new contract", fs.Arg(0))
 	return 0
 }
 

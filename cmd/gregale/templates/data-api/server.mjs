@@ -51,7 +51,7 @@ function problem(res, status, code) {
 function readiness(res, port) {
   const request = http.get({ hostname: '127.0.0.1', port, path: '/ready', timeout: 2000 }, upstream => {
     upstream.resume()
-    res.writeHead(upstream.statusCode === 200 ? 200 : 503, { 'Content-Type': 'application/json' })
+    res.writeHead(upstream.statusCode === 200 ? 200 : 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
     res.end(JSON.stringify({ ready: upstream.statusCode === 200 }))
   })
   request.on('timeout', () => request.destroy())

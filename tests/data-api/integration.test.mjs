@@ -102,6 +102,9 @@ test('real PostgREST, restricted SQL, JWT RLS, typed client and schema refresh',
     await new Promise(r=>setTimeout(r,50))
   }
   assert.equal(available,true,childLogs)
+  const health = await fetch(base+'/healthz')
+  assert.equal(health.headers.get('cache-control'), 'no-store')
+  assert.deepEqual(await health.json(), { ready: true })
   const alice = await sign('alice'), bob = await sign('bob')
   assert.equal((await fetch(base+'/rest/v1/notes')).status,401)
   const wrongAudience = await new SignJWT({sub:'alice'}).setProtectedHeader({alg:'ES256'}).setIssuer(config.auth.issuer).setAudience('wrong').setExpirationTime('5m').sign(privateKey)

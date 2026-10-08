@@ -6619,7 +6619,18 @@ Generate types in an owner-authenticated app task
 
 Request a fresh restart to reload the database schema
 
-`gregale data-api refresh <name>`
+`gregale data-api refresh [--wait] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for fresh-restart completion and Data API readiness |  |
+| `--timeout <DURATION>` | complete wait deadline (default 5m, maximum 1h; requires --wait) |  |
+
+Examples:
+
+```sh
+gregale data-api refresh notes-data --wait --timeout 5m
+```
 
 
 ## ps

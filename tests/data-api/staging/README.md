@@ -60,6 +60,7 @@ Checks cover typed CRUD, signed SQL-role override, two-subject RLS reads/writes,
 wrong-audience rejection, authenticated OpenAPI, observed parking followed by an
 authenticated wake, a second schema migration, completed fresh restart, updated
 type/REST contracts, and credential rotation preserving data.
+Refresh completion and readiness are verified by `gregale data-api refresh --wait`.
 
 Evidence is atomically written with mode 0600 and contains stable check names,
 deployment/build/source and parked/running instance identities, and cleanup

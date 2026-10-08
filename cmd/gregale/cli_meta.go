@@ -2612,7 +2612,10 @@ var cliCommands = []cliCommand{
 				{Name: "check", Short: "fail if the output file is stale"},
 				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
 			}},
-			{Name: "refresh", Short: "Request a fresh restart to reload the database schema", Positionals: []string{"<name>"}},
+			{Name: "refresh", Short: "Request a fresh restart to reload the database schema", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "wait", Short: "wait for fresh-restart completion and Data API readiness"},
+				{Name: "timeout", Value: "DURATION", Short: "complete wait deadline (default 5m, maximum 1h; requires --wait)"},
+			}, Examples: []string{"gregale data-api refresh notes-data --wait --timeout 5m"}},
 		},
 	},
 	{

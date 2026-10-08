@@ -77,15 +77,19 @@ test('a live receipt without matching native builder provenance cannot pass', as
 })
 
 test('restart admission does not count as schema refresh completion', async t => {
-  const seen = []
-  const runner = await fixture(t, { request: async path => { seen.push(path); return { status: 'pending' } } })
-  runner.exec = async () => ({ wake_id: 'accepted-wake' })
-  runner.wait = async (read, ready) => {
-    assert.equal(ready(await read()), false)
-    throw new Error('operation_timeout')
+  const runner = await fixture(t)
+  for (const receipt of [
+    { wake_id: 'accepted-wake', status: 'queued', ready: true },
+    { wake_id: 'accepted-wake', status: 'completed', ready: false },
+  ]) {
+    runner.exec = async args => {
+      assert.deepEqual(args, ['data-api', 'refresh', 'owned', '--wait', '--timeout', '5m'])
+      return receipt
+    }
+    await assert.rejects(runner.refresh({ slug: 'owned' }), /schema_refresh_not_ready/)
   }
-  await assert.rejects(runner.refresh({ slug: 'owned' }), /operation_timeout/)
-  assert.deepEqual(seen, ['/v1/apps/owned/runtime-config-restarts/accepted-wake'])
+  runner.exec = async () => ({ wake_id: 'completed-wake', status: 'completed', ready: true })
+  await runner.refresh({ slug: 'owned' })
 })
 
 test('migration binding readiness is awaited before a release can consume it', async t => {
