@@ -172,6 +172,26 @@ credentials, or log output. Runtime views support level, text, and follow;
 HTTP views support status, route, and page size. Supply only an app target
 alongside `--view`; inspect or replace the saved view to change its filters.
 
+## Guided project linking
+
+```sh
+gregale link --interactive
+# Skip the project chooser when you know the project:
+gregale link my-project --interactive
+```
+
+Choose a project, default app, and default environment. The flow shows current
+checkout defaults and the proposed replacement, marks protected environments,
+and asks before saving. You can choose no default app or environment. Selecting
+an environment sets the scope used by commands that support linked environment
+defaults; protection requirements still apply to future operations.
+
+The guide saves the existing local project context and adds `.gregale/` to the
+repository `.gitignore` if needed. Pass `--no-gitignore` to skip that update.
+It requires an interactive terminal; for scripts, use
+`gregale link PROJECT --app APP --environment ENV`. Run `gregale context` to
+inspect saved defaults or `gregale unlink` to remove them.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

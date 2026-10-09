@@ -7538,13 +7538,22 @@ printf '%s' "$GREGALE_TOKEN" | gregale login --token-stdin
 
 Link this checkout to a Gregale project
 
-`gregale link <project-slug> [--app <slug>] [--environment <environment>] [--no-gitignore]`
+`gregale link [<project-slug>] [--interactive] [--app <slug>] [--environment <environment>] [--no-gitignore]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | choose project, app, and environment, review defaults, and confirm saving |  |
 | `--app <slug>` | workload/app slug for app-scoped commands |  |
 | `--environment <environment>` | default project environment scope |  |
 | `--no-gitignore` | do not add .gregale/ to .gitignore |  |
+
+Examples:
+
+```sh
+gregale link --interactive
+gregale link my-project --interactive
+gregale link my-project --app my-api --environment staging
+```
 
 
 ## logout

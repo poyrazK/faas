@@ -2984,8 +2984,10 @@ var cliCommands = []cliCommand{
 		Name:        "link",
 		DocSlug:     "link",
 		Short:       "Link this checkout to a Gregale project",
-		Positionals: []string{"<project-slug>"},
+		Positionals: []string{"[<project-slug>]"},
+		Examples:    []string{"gregale link --interactive", "gregale link my-project --interactive", "gregale link my-project --app my-api --environment staging"},
 		Flags: []cliFlag{
+			{Name: "interactive", Short: "choose project, app, and environment, review defaults, and confirm saving", Bool: true},
 			{Name: "app", Short: "workload/app slug for app-scoped commands", Value: "slug"},
 			{Name: "environment", Short: "default project environment scope", Value: "environment"},
 			{Name: "no-gitignore", Short: "do not add .gregale/ to .gitignore"},
