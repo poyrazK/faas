@@ -39,6 +39,8 @@ type mcpNativeReleasePlan struct {
 	TimeoutSeconds     int      `json:"timeout_seconds"`
 }
 type mcpNativeReleaseState struct {
+	Revision            uint64 `json:"revision,omitempty"`
+	journalExists       bool
 	ReleaseID           string            `json:"release_id,omitempty"`
 	Version             int               `json:"version"`
 	Fingerprint         string            `json:"fingerprint"`
@@ -164,29 +166,6 @@ func mcpNativeFingerprint(p mcpNativeReleasePlan) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
-func saveMCPNativeState(path string, s mcpNativeReleaseState) error {
-	b, err := json.Marshal(s)
-	if err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".mcp-release-*")
-	if err != nil {
-		return err
-	}
-	temp := f.Name()
-	defer func() { _ = os.Remove(temp) }()
-	if _, err = f.Write(b); err == nil {
-		err = f.Sync()
-	}
-	closeErr := f.Close()
-	if err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	return os.Rename(temp, path)
-}
 func loadMCPNativeState(path, fingerprint string) (mcpNativeReleaseState, error) {
 	s := mcpNativeReleaseState{Version: 1, Fingerprint: fingerprint, Stage: "prepared", PreviousDeployments: map[string]string{}, Parked: map[string]bool{}}
 	b, err := os.ReadFile(path)
@@ -202,6 +181,7 @@ func loadMCPNativeState(path, fingerprint string) (mcpNativeReleaseState, error)
 	if s.PreviousDeployments == nil || s.Parked == nil {
 		return s, errors.New("invalid release journal")
 	}
+	s.journalExists = true
 	return s, nil
 }
 func cmdMCPTaskRelease(args []string) int {
@@ -228,6 +208,14 @@ func cmdMCPTaskRelease(args []string) int {
 	if err != nil {
 		return printErr("MCP release state", err)
 	}
+	stateDir, err := filepath.EvalSymlinks(filepath.Dir(absoluteState))
+	if err != nil {
+		return printErr("MCP release state", err)
+	}
+	absoluteState = filepath.Join(stateDir, filepath.Base(absoluteState))
+	if info, e := os.Lstat(absoluteState); e == nil && !info.Mode().IsRegular() || e != nil && !errors.Is(e, os.ErrNotExist) {
+		return printErr("MCP release state", errors.New("journal must be a regular file"))
+	}
 	for _, root := range []string{p.WebPath, p.WorkerPath} {
 		relative, e := filepath.Rel(root, absoluteState)
 		if e != nil || (relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator))) {
@@ -237,6 +225,14 @@ func cmdMCPTaskRelease(args []string) int {
 	fingerprint, err := mcpNativeFingerprint(p)
 	if err != nil {
 		return printErr("MCP release source", err)
+	}
+	adapter := action == "start" || action == "drain" || action == "restore-hook" || action == "retire-check" || action == "retire-hook"
+	if action != "status" && (action != "recover" || *resume) {
+		release, e := ownMCPJournal(absoluteState, adapter)
+		if e != nil {
+			return printErr("MCP release ownership", e)
+		}
+		defer release()
 	}
 	s, err := loadMCPNativeState(absoluteState, fingerprint)
 	if err != nil {
@@ -309,21 +305,8 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 			return printErr("MCP release recovery", err)
 		}
 	}
-	if _, err := os.Stat(state); os.IsNotExist(err) {
-		body, _ := json.Marshal(s)
-		f, err := os.OpenFile(state, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if err != nil {
-			return printErr("MCP release journal", err)
-		}
-		_, err = f.Write(body)
-		if err == nil {
-			err = f.Sync()
-		}
-		closeErr := f.Close()
-		if err == nil {
-			err = closeErr
-		}
-		if err != nil {
+	if !s.journalExists {
+		if err := saveMCPNativeState(state, &s); err != nil {
 			return printErr("MCP release journal", err)
 		}
 	}
@@ -372,7 +355,7 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 			return printErr("MCP release journal", err)
 		}
 		s.Stage = "complete"
-		if err = saveMCPNativeState(state, s); err != nil {
+		if err = saveMCPNativeState(state, &s); err != nil {
 			return printErr("MCP release journal", err)
 		}
 	}
@@ -495,7 +478,7 @@ func reconcileMCPNativeSubmission(ctx context.Context, c *Client, p mcpNativeRel
 		s.WorkerDeployment = id
 	}
 	s.PendingSubmission = ""
-	return saveMCPNativeState(state, *s)
+	return saveMCPNativeState(state, s)
 }
 
 func mcpNativeDeploy(ctx context.Context, c *Client, path, app string, web bool, s *mcpNativeReleaseState, state string) error {
@@ -519,7 +502,7 @@ func mcpNativeDeploy(ctx context.Context, c *Client, path, app string, web bool,
 		s.ReleaseID = hex.EncodeToString(entropy[:])
 	}
 	s.PendingSubmission = kind
-	if err := saveMCPNativeState(state, *s); err != nil {
+	if err := saveMCPNativeState(state, s); err != nil {
 		return err
 	}
 	args := []string{"--path", path, "--source=worktree", "--name", app, "--app", "--wait", "--timeout", "600", "--reason", "mcp-release-" + s.ReleaseID + "-" + kind, "--idempotency-key", "mcp-release-" + s.ReleaseID + "-" + kind}
@@ -534,7 +517,7 @@ func mcpNativeDeploy(ctx context.Context, c *Client, path, app string, web bool,
 			s.WorkerDeployment = dep.ID
 		}
 		s.PendingSubmission = ""
-		journalErr = saveMCPNativeState(state, *s)
+		journalErr = saveMCPNativeState(state, s)
 	}})
 	if journalErr != nil {
 		return journalErr
@@ -800,19 +783,19 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 			}
 		}
 		s.ServingCaptured = true
-		if err := saveMCPNativeState(state, *s); err != nil {
+		if err := saveMCPNativeState(state, s); err != nil {
 			return err
 		}
 	}
 	s.Stage = "deploying_worker"
-	if err := saveMCPNativeState(state, *s); err != nil {
+	if err := saveMCPNativeState(state, s); err != nil {
 		return err
 	}
 	if err := mcpNativeDeploy(ctx, c, p.WorkerPath, p.WorkerApp, false, s, state); err != nil {
 		return err
 	}
 	s.Stage = "deploying_web"
-	if err := saveMCPNativeState(state, *s); err != nil {
+	if err := saveMCPNativeState(state, s); err != nil {
 		return err
 	}
 	if err := mcpNativeDeploy(ctx, c, p.WebPath, p.WebApp, true, s, state); err != nil {
@@ -829,7 +812,7 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		if err == nil {
 			s.WorkerIDs = ids
 			s.Stage = "replacements_started"
-			return saveMCPNativeState(state, *s)
+			return saveMCPNativeState(state, s)
 		}
 		select {
 		case <-ctx.Done():
@@ -919,7 +902,7 @@ func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		}
 		s.Promoted = true
 		s.Stage = "web_promoted"
-		if err := saveMCPNativeState(state, *s); err != nil {
+		if err := saveMCPNativeState(state, s); err != nil {
 			return err
 		}
 	}
@@ -950,10 +933,10 @@ func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		}
 		s.Parked[slug] = true
 		s.Stage = "draining_previous"
-		if err := saveMCPNativeState(state, *s); err != nil {
+		if err := saveMCPNativeState(state, s); err != nil {
 			return err
 		}
 	}
 	s.Stage = "previous_parked"
-	return saveMCPNativeState(state, *s)
+	return saveMCPNativeState(state, s)
 }

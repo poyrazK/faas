@@ -120,7 +120,7 @@ func TestMCPControlPlaneRejectsGatesBeforeSideEffects(t *testing.T) {
 			s := mcpNativeReleaseState{Version: 1, Stage: "web_restored", Fingerprint: "fixture", WorkerIDs: []string{"captured-worker"}, PreviousDeployments: map[string]string{}, Parked: map[string]bool{}}
 			if action == "release" {
 				s.Stage = "prepared"
-			} else if err := saveMCPNativeState(state, s); err != nil {
+			} else if err := saveMCPNativeState(state, &s); err != nil {
 				t.Fatal(err)
 			}
 			p := mcpNativeReleasePlan{WorkerPath: root}

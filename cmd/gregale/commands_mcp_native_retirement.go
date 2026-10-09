@@ -91,7 +91,7 @@ func retireMCPNativeWorker(ctx context.Context, c *Client, p mcpNativeReleasePla
 		return errors.New("candidate stop grace must exceed the Task shutdown deadline")
 	}
 	s.Stage = "retirement_pending"
-	if err := saveMCPNativeState(state, *s); err != nil {
+	if err := saveMCPNativeState(state, s); err != nil {
 		return err
 	}
 	if err := c.ParkIfDeployment(ctx, p.WorkerApp, s.WorkerDeployment); err != nil {
@@ -146,7 +146,7 @@ func runMCPNativeRetirement(p mcpNativeReleasePlan, s mcpNativeReleaseState, sta
 		} else {
 			s.Stage = "quarantined"
 		}
-		if err := saveMCPNativeState(state, s); err != nil {
+		if err := saveMCPNativeState(state, &s); err != nil {
 			return printErr("MCP retirement journal", err)
 		}
 	}

@@ -130,7 +130,7 @@ func restoreMCPNativeWeb(ctx context.Context, c *Client, p mcpNativeReleasePlan,
 	}
 	if current != s.ServingDeployment {
 		s.Stage = "restore_pending"
-		if err := saveMCPNativeState(state, *s); err != nil {
+		if err := saveMCPNativeState(state, s); err != nil {
 			return err
 		}
 		if err := checkMCPNativePrevious(ctx, c, p, s); err != nil {
@@ -149,5 +149,5 @@ func restoreMCPNativeWeb(ctx context.Context, c *Client, p mcpNativeReleasePlan,
 	}
 	s.Stage = "web_restored"
 	s.Promoted = false
-	return saveMCPNativeState(state, *s)
+	return saveMCPNativeState(state, s)
 }

@@ -1196,3 +1196,20 @@ check; failed discovery is unknown readiness and missing support includes upgrad
 guidance. Upgrade all control-plane instances before retrying. Capability reports
 are preflight signals: mixed-version fleets still rely on the dedicated conditional
 parking endpoint and never fall back to ordinary parking.
+
+Native release journals include a monotonic `revision`. Mutating commands
+(`run`, `recover --resume`, `restore`, `quarantine`, and `retire`) exclusively own
+the journal before reading it. A second command fails with ownership guidance;
+`status` and read-only `recover` remain available. Gate adapters inherit a private
+owner token and serialize their operations, so an orphaned or stale adapter
+cannot join a replacement command. An active adapter prevents takeover if its
+parent exits. OS locks release when processes exit; leave the `.owner.lock`,
+`.adapter.lock`, and `.write.lock` files in place rather than deleting them.
+
+Each save checks the loaded revision under a write lock, syncs the temporary
+file, atomically replaces the journal, and syncs its directory on Unix. Stale
+writes stop instead of overwriting newer stages. If persistence fails, reload
+the journal before retrying: replacement may already have happened. Existing
+version-1 journals without a revision remain readable and receive a revision on
+their next save. Temporary `.mcp-release-*` files left by an interrupted process
+are ignored; the journal remains the recovery source of truth.

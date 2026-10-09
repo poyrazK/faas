@@ -64,7 +64,7 @@ func TestMCPNativeReleasePlanAndJournal(t *testing.T) {
 	}
 	s.WorkerDeployment = "pinned"
 	s.PendingSubmission = "web"
-	if err := saveMCPNativeState(statePath, s); err != nil {
+	if err := saveMCPNativeState(statePath, &s); err != nil {
 		t.Fatal(err)
 	}
 	restored, err := loadMCPNativeState(statePath, fingerprint)
