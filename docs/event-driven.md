@@ -2799,3 +2799,32 @@ Both reject query parameters. Go methods are
 Node and Python expose the generated equivalents. The request body limit is
 64 KiB. Apply migration `20261009152823630_event_recovery_notification_retries.sql`
 before API rollout. See [ADR-838](adr/838-selective-recovery-notification-retries.md).
+
+### Inspect saved notification retry decisions
+
+List saved decisions for a retained recovery job:
+
+```bash
+gregale events recovery-notification-retry-history JOB_ID
+gregale events recovery-notification-retry-history JOB_ID --json
+```
+
+Inspect one request and compare its frozen queued/skipped result with the latest
+retained delivery state:
+
+```bash
+gregale events recovery-notification-retry-history JOB_ID --request-id REQUEST_ID
+```
+
+The summary shows decision time and queued/skipped counts. Detail shows each
+original receiver decision and reason alongside current status and replay
+generation. `current_status_observed_at` identifies when that read occurred.
+A missing or pruned delivery is `unavailable`; it does not alter the saved result.
+The endpoints are
+`GET /v1/event-recoveries/{jobID}/notification-retry-decisions` and
+`GET /v1/event-recoveries/{jobID}/notification-retry-decisions/{requestID}`.
+Both require read scope or admin and MFA, reject query parameters, and return
+only metadata. History is bounded at the existing 100 decisions per retained
+job and disappears when job retention prunes that job. No migration is required.
+Go, Node, and Python expose list and detail methods. See
+[ADR-839](adr/839-recovery-notification-retry-history.md).

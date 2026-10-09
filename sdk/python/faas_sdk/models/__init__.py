@@ -1056,6 +1056,11 @@ from .event_recovery_notification_receiver import EventRecoveryNotificationRecei
 from .event_recovery_notification_receiver_status import EventRecoveryNotificationReceiverStatus
 from .event_recovery_notification_retry_candidate import EventRecoveryNotificationRetryCandidate
 from .event_recovery_notification_retry_candidate_kind import EventRecoveryNotificationRetryCandidateKind
+from .event_recovery_notification_retry_decision import EventRecoveryNotificationRetryDecision
+from .event_recovery_notification_retry_decision_detail import EventRecoveryNotificationRetryDecisionDetail
+from .event_recovery_notification_retry_decision_state import EventRecoveryNotificationRetryDecisionState
+from .event_recovery_notification_retry_decision_summary import EventRecoveryNotificationRetryDecisionSummary
+from .event_recovery_notification_retry_history import EventRecoveryNotificationRetryHistory
 from .event_recovery_notification_retry_preview import EventRecoveryNotificationRetryPreview
 from .event_recovery_notification_retry_request import EventRecoveryNotificationRetryRequest
 from .event_recovery_notification_retry_response import EventRecoveryNotificationRetryResponse
@@ -4102,6 +4107,11 @@ __all__ = (
     "EventRecoveryNotificationReceiverStatus",
     "EventRecoveryNotificationRetryCandidate",
     "EventRecoveryNotificationRetryCandidateKind",
+    "EventRecoveryNotificationRetryDecision",
+    "EventRecoveryNotificationRetryDecisionDetail",
+    "EventRecoveryNotificationRetryDecisionState",
+    "EventRecoveryNotificationRetryDecisionSummary",
+    "EventRecoveryNotificationRetryHistory",
     "EventRecoveryNotificationRetryPreview",
     "EventRecoveryNotificationRetryRequest",
     "EventRecoveryNotificationRetryResponse",

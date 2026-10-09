@@ -27718,6 +27718,109 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/event-recoveries/{jobID}/notification-retry-decisions:
+    get:
+      tags: [events]
+      operationId: listEventRecoveryNotificationRetryHistory
+      summary: List saved recovery notification retry decisions.
+      description: Requires apps:read or admin and MFA. Lists at most 100 immutable request summaries in decision time order for the retained owned recovery job. Query parameters are not accepted. Decisions expire when the job is pruned.
+      security: [{ bearerAuth: [] }]
+      parameters:
+      - name: jobID
+        in: path
+        required: true
+        description: Retained recovery job identifier whose retry decisions are listed.
+        schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Saved retry request summaries and counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryNotificationRetryHistory' }
+        '400':
+          description: Invalid job identifier or unsupported query parameters for retry history.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401':
+          description: Authentication required to list retry decisions.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403':
+          description: Read scope or MFA required to list retry decisions.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: Recovery job not found or not owned for retry history.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Retry history request rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '500':
+          description: Saved retry history could not be read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/event-recoveries/{jobID}/notification-retry-decisions/{requestID}:
+    get:
+      tags: [events]
+      operationId: getEventRecoveryNotificationRetryDecision
+      summary: Inspect a saved recovery notification retry decision.
+      description: Requires apps:read or admin and MFA. Returns the original queued or skipped decision for each target and current retained delivery status observed now. Missing or pruned deliveries are unavailable; original decisions remain unchanged. Query parameters are not accepted.
+      security: [{ bearerAuth: [] }]
+      parameters:
+      - name: jobID
+        in: path
+        required: true
+        description: Retained recovery job that owns the saved retry decision.
+        schema: { type: string, format: uuid }
+      - name: requestID
+        in: path
+        required: true
+        description: Canonical request identifier returned by retry history.
+        schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Frozen decision and latest retained delivery status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryNotificationRetryDecisionDetail' }
+        '400':
+          description: Invalid request or recovery identifier or unsupported query parameters.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401':
+          description: Authentication required to inspect a saved retry decision.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403':
+          description: Read scope or MFA required to inspect a saved retry decision.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: Recovery job or saved request not found or not owned.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Retry decision detail request rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '500':
+          description: Saved retry decision could not be read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/event-recoveries/{jobID}/history:
     get:
       tags: [events]
@@ -47657,6 +47760,54 @@ components:
           type: string
           enum: [capacity, legacy_claim]
           description: Most recently recorded admission wait; cleared on tracked progress.
+    EventRecoveryNotificationRetryDecisionSummary:
+      type: object
+      description: Compact immutable retry request count and decision time; use the detail endpoint for original per receiver outcomes and current delivery state.
+      required: [request_id, decided_at, target_count, queued_count, skipped_count]
+      properties:
+        request_id: { type: string, format: uuid }
+        decided_at: { type: string, format: date-time }
+        target_count: { type: integer, minimum: 0, maximum: 100 }
+        queued_count: { type: integer, minimum: 0, maximum: 100 }
+        skipped_count: { type: integer, minimum: 0, maximum: 100 }
+    EventRecoveryNotificationRetryHistory:
+      type: object
+      description: All retained explicit retry decisions for one recovery job, newest first. The job stores at most 100 decisions and pruning removes this history.
+      required: [job_id, app_id, observed_at, decisions]
+      properties:
+        job_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        decisions:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventRecoveryNotificationRetryDecisionSummary' }
+    EventRecoveryNotificationRetryDecision:
+      type: object
+      description: Immutable original receiver decision alongside current retained delivery status. An unavailable current row does not rewrite or invalidate the original result.
+      required: [target, state, current_delivery_status]
+      properties:
+        target: { $ref: '#/components/schemas/EventRecoveryNotificationRetryTarget' }
+        state: { type: string, enum: [queued, skipped] }
+        reason: { type: string }
+        replay_generation: { type: integer, minimum: 0 }
+        current_delivery_status: { type: string }
+        current_replay_generation: { type: integer, minimum: 0 }
+    EventRecoveryNotificationRetryDecisionDetail:
+      type: object
+      description: Saved per receiver decision for one retry request, with a separate timestamp for the read of current retained delivery state.
+      required: [job_id, app_id, request_id, decided_at, current_status_observed_at, decisions]
+      properties:
+        job_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid }
+        decided_at: { type: string, format: date-time }
+        current_status_observed_at: { type: string, format: date-time }
+        decisions:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventRecoveryNotificationRetryDecision' }
     EventRecoveryNotificationRetryTarget:
       type: object
       additionalProperties: false

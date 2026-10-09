@@ -518,6 +518,10 @@ export type { EventRecoveryNotificationHealthCounts } from './EventRecoveryNotif
 export type { EventRecoveryNotificationJobHealth } from './EventRecoveryNotificationJobHealth.js';
 export type { EventRecoveryNotificationReceiver } from './EventRecoveryNotificationReceiver.js';
 export type { EventRecoveryNotificationRetryCandidate } from './EventRecoveryNotificationRetryCandidate.js';
+export type { EventRecoveryNotificationRetryDecision } from './EventRecoveryNotificationRetryDecision.js';
+export type { EventRecoveryNotificationRetryDecisionDetail } from './EventRecoveryNotificationRetryDecisionDetail.js';
+export type { EventRecoveryNotificationRetryDecisionSummary } from './EventRecoveryNotificationRetryDecisionSummary.js';
+export type { EventRecoveryNotificationRetryHistory } from './EventRecoveryNotificationRetryHistory.js';
 export type { EventRecoveryNotificationRetryPreview } from './EventRecoveryNotificationRetryPreview.js';
 export type { EventRecoveryNotificationRetryRequest } from './EventRecoveryNotificationRetryRequest.js';
 export type { EventRecoveryNotificationRetryResponse } from './EventRecoveryNotificationRetryResponse.js';

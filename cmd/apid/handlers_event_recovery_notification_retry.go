@@ -52,3 +52,40 @@ func (s *server) retryEventRecoveryNotifications(w http.ResponseWriter, r *http.
 	}
 	s.writeEventRecovery(w, r, http.StatusOK, out, err)
 }
+
+func (s *server) listEventRecoveryNotificationRetryHistory(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	_, r, cancel, ok := s.eventRecoveryStore(w, r)
+	if !ok {
+		return
+	}
+	defer cancel()
+	if r.URL.RawQuery != "" {
+		s.writeEventRecovery(w, r, 0, nil, state.ErrEventRecoveryQuery)
+		return
+	}
+	store, ok := s.store.(state.EventRecoveryNotificationRetryHistoryStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("notification retry history"))
+		return
+	}
+	out, err := store.GetEventRecoveryNotificationRetryHistory(r.Context(), acct.ID, r.PathValue("jobID"), time.Now().UTC())
+	s.writeEventRecovery(w, r, http.StatusOK, out, err)
+}
+func (s *server) getEventRecoveryNotificationRetryDecision(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	_, r, cancel, ok := s.eventRecoveryStore(w, r)
+	if !ok {
+		return
+	}
+	defer cancel()
+	if r.URL.RawQuery != "" {
+		s.writeEventRecovery(w, r, 0, nil, state.ErrEventRecoveryQuery)
+		return
+	}
+	store, ok := s.store.(state.EventRecoveryNotificationRetryHistoryStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("notification retry history"))
+		return
+	}
+	out, err := store.GetEventRecoveryNotificationRetryDecision(r.Context(), acct.ID, r.PathValue("jobID"), r.PathValue("requestID"), time.Now().UTC())
+	s.writeEventRecovery(w, r, http.StatusOK, out, err)
+}

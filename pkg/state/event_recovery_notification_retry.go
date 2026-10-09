@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -16,7 +17,10 @@ type EventRecoveryNotificationRetryStore interface {
 	RetryEventRecoveryNotifications(context.Context, string, string, api.EventRecoveryNotificationRetryRequest, time.Time) (api.EventRecoveryNotificationRetryResponse, error)
 }
 
-var ErrEventRecoveryNotificationRetryLimit = fmt.Errorf("recovery notification retry decision limit reached")
+var (
+	ErrEventRecoveryNotificationRetryLimit            = fmt.Errorf("recovery notification retry decision limit reached")
+	ErrEventRecoveryNotificationRetryDecisionNotFound = fmt.Errorf("recovery notification retry decision not found")
+)
 
 type recoveryNotificationRetryReceipt struct {
 	ActorKind string                                     `json:"actor_kind"`
@@ -107,4 +111,71 @@ func validateRecoveryNotificationRetry(account, id string, now time.Time, req *a
 func recoveryNotificationRetryAllowed(plan api.Plan) bool {
 	limits, ok := api.LimitsFor(plan)
 	return ok && limits.WebhookPerApp > 0
+}
+
+type EventRecoveryNotificationRetryHistoryStore interface {
+	GetEventRecoveryNotificationRetryHistory(context.Context, string, string, time.Time) (api.EventRecoveryNotificationRetryHistory, error)
+	GetEventRecoveryNotificationRetryDecision(context.Context, string, string, string, time.Time) (api.EventRecoveryNotificationRetryDecisionDetail, error)
+}
+
+func recoveryNotificationRetryReceipts(raw []byte) (map[string]json.RawMessage, error) {
+	receipts := map[string]json.RawMessage{}
+	if err := json.Unmarshal(raw, &receipts); err != nil {
+		return nil, err
+	}
+	return receipts, nil
+}
+func recoveryNotificationRetryHistory(job, app string, now time.Time, receipts map[string]json.RawMessage) (api.EventRecoveryNotificationRetryHistory, error) {
+	out := api.EventRecoveryNotificationRetryHistory{JobID: job, AppID: app, ObservedAt: now, Decisions: []api.EventRecoveryNotificationRetryDecisionSummary{}}
+	for id, raw := range receipts {
+		var saved recoveryNotificationRetryReceipt
+		if err := json.Unmarshal(raw, &saved); err != nil {
+			return out, err
+		}
+		if saved.Response.RequestID != id || saved.Response.JobID != job || saved.Response.AppID != app || saved.Response.DecidedAt.IsZero() {
+			return out, fmt.Errorf("invalid retained notification retry decision")
+		}
+		summary := api.EventRecoveryNotificationRetryDecisionSummary{RequestID: id, DecidedAt: saved.Response.DecidedAt, TargetCount: len(saved.Response.Results)}
+		for _, result := range saved.Response.Results {
+			switch result.State {
+			case "queued":
+				summary.QueuedCount++
+			case "skipped":
+				summary.SkippedCount++
+			default:
+				return out, fmt.Errorf("invalid retained notification retry result")
+			}
+		}
+		out.Decisions = append(out.Decisions, summary)
+	}
+	sort.Slice(out.Decisions, func(i, j int) bool {
+		if out.Decisions[i].DecidedAt.Equal(out.Decisions[j].DecidedAt) {
+			return out.Decisions[i].RequestID < out.Decisions[j].RequestID
+		}
+		return out.Decisions[i].DecidedAt.After(out.Decisions[j].DecidedAt)
+	})
+	return out, nil
+}
+func recoveryNotificationRetryDecisionDetail(job, app, requestID string, now time.Time, saved recoveryNotificationRetryReceipt, report api.EventRecoveryNotifications) (api.EventRecoveryNotificationRetryDecisionDetail, error) {
+	response := saved.Response
+	if response.RequestID != requestID || response.JobID != job || response.AppID != app || response.DecidedAt.IsZero() {
+		return api.EventRecoveryNotificationRetryDecisionDetail{}, fmt.Errorf("invalid retained notification retry decision")
+	}
+	out := api.EventRecoveryNotificationRetryDecisionDetail{JobID: job, AppID: app, RequestID: requestID, DecidedAt: response.DecidedAt, CurrentStatusObservedAt: now, Decisions: []api.EventRecoveryNotificationRetryDecision{}}
+	for _, result := range response.Results {
+		row := api.EventRecoveryNotificationRetryDecision{Target: result.Target, State: result.State, Reason: result.Reason, ReplayGeneration: result.ReplayGeneration, CurrentDeliveryStatus: "unavailable"}
+		for _, notice := range report.Notifications {
+			if notice.Kind == result.Target.Kind {
+				for _, receiver := range notice.Receivers {
+					if receiver.WebhookID == result.Target.WebhookID && receiver.DeliveryID == result.Target.DeliveryID {
+						row.CurrentDeliveryStatus = receiver.Status
+						n := receiver.ReplayGeneration
+						row.CurrentReplayGeneration = &n
+					}
+				}
+			}
+		}
+		out.Decisions = append(out.Decisions, row)
+	}
+	return out, nil
 }

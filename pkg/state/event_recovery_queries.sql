@@ -441,3 +441,7 @@ WHERE id=sqlc.arg(delivery_id)::uuid AND webhook_id=sqlc.arg(webhook_id)::uuid A
 -- name: EventRecoveryNotificationRetryReset :execrows
 UPDATE app_webhook_deliveries SET status='pending',attempt=0,replay_generation=replay_generation+1,last_error='',last_response_code=0,next_attempt_at=sqlc.arg(now_at)::timestamptz,updated_at=sqlc.arg(now_at)::timestamptz
 WHERE id=sqlc.arg(delivery_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND webhook_id=sqlc.arg(webhook_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND event=sqlc.arg(event)::text AND source_event_id=sqlc.arg(event_id)::uuid AND status='dead' AND replay_generation=sqlc.arg(expected_generation)::integer;
+
+-- name: EventRecoveryNotificationRetryHistoryOwner :one
+SELECT app_id,notification_retry_receipts FROM event_recovery_jobs
+WHERE id=sqlc.arg(job_id)::uuid AND account_id=sqlc.arg(account_id)::uuid;

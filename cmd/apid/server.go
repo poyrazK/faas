@@ -2353,6 +2353,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/event-recoveries/{jobID}/notifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventRecoveryNotifications))))
 	mux.HandleFunc("GET /v1/event-recoveries/{jobID}/notifications/retry-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewEventRecoveryNotificationRetry))))
 	mux.HandleFunc("POST /v1/event-recoveries/{jobID}/notifications/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryEventRecoveryNotifications))))
+	mux.HandleFunc("GET /v1/event-recoveries/{jobID}/notification-retry-decisions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventRecoveryNotificationRetryHistory))))
+	mux.HandleFunc("GET /v1/event-recoveries/{jobID}/notification-retry-decisions/{requestID}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventRecoveryNotificationRetryDecision))))
 	mux.HandleFunc("GET /v1/event-recoveries/{jobID}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventRecoveryHistory))))
 	mux.HandleFunc("GET /v1/event-recoveries/{jobID}/items", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventRecoveryItems))))
 	mux.HandleFunc("POST /v1/event-recoveries/{jobID}/pause", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.pauseEventRecovery))))

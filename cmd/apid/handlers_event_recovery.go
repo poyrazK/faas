@@ -36,6 +36,8 @@ func (s *server) writeEventRecovery(w http.ResponseWriter, r *http.Request, stat
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Recovery request conflicts", err.Error()))
 	case errors.Is(err, state.ErrEventRecoveryState):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Event recovery is no longer active", "completed, cancelled, and expired jobs cannot be paused, resumed, or rate-adjusted"))
+	case errors.Is(err, state.ErrEventRecoveryNotificationRetryDecisionNotFound):
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Retry decision not found", "the request identifier is not retained for this recovery job"))
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Event recovery not found", "the recovery target does not belong to this account"))
 	case errors.Is(err, state.ErrEventRecoveryNotificationRetryLimit):

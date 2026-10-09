@@ -18,6 +18,8 @@ import type { EventRecoveryHistory } from '../models/EventRecoveryHistory.js';
 import type { EventRecoveryItems } from '../models/EventRecoveryItems.js';
 import type { EventRecoveryJob } from '../models/EventRecoveryJob.js';
 import type { EventRecoveryJobs } from '../models/EventRecoveryJobs.js';
+import type { EventRecoveryNotificationRetryDecisionDetail } from '../models/EventRecoveryNotificationRetryDecisionDetail.js';
+import type { EventRecoveryNotificationRetryHistory } from '../models/EventRecoveryNotificationRetryHistory.js';
 import type { EventRecoveryNotificationRetryPreview } from '../models/EventRecoveryNotificationRetryPreview.js';
 import type { EventRecoveryNotificationRetryRequest } from '../models/EventRecoveryNotificationRetryRequest.js';
 import type { EventRecoveryNotificationRetryResponse } from '../models/EventRecoveryNotificationRetryResponse.js';
@@ -2152,6 +2154,72 @@ export class EventsService {
         429: `Notification retry request rate limited.`,
         500: `Notification retry storage failure.`,
         504: `Notification retry request exceeded its time budget.`,
+      },
+    });
+  }
+  /**
+   * List saved recovery notification retry decisions.
+   * Requires apps:read or admin and MFA. Lists at most 100 immutable request summaries in decision time order for the retained owned recovery job. Query parameters are not accepted. Decisions expire when the job is pruned.
+   * @returns EventRecoveryNotificationRetryHistory Saved retry request summaries and counts.
+   * @throws ApiError
+   */
+  public static listEventRecoveryNotificationRetryHistory({
+    jobId,
+  }: {
+    /**
+     * Retained recovery job identifier whose retry decisions are listed.
+     */
+    jobId: string,
+  }): CancelablePromise<EventRecoveryNotificationRetryHistory> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/notification-retry-decisions',
+      path: {
+        'jobID': jobId,
+      },
+      errors: {
+        400: `Invalid job identifier or unsupported query parameters for retry history.`,
+        401: `Authentication required to list retry decisions.`,
+        403: `Read scope or MFA required to list retry decisions.`,
+        404: `Recovery job not found or not owned for retry history.`,
+        429: `Retry history request rate limited.`,
+        500: `Saved retry history could not be read.`,
+      },
+    });
+  }
+  /**
+   * Inspect a saved recovery notification retry decision.
+   * Requires apps:read or admin and MFA. Returns the original queued or skipped decision for each target and current retained delivery status observed now. Missing or pruned deliveries are unavailable; original decisions remain unchanged. Query parameters are not accepted.
+   * @returns EventRecoveryNotificationRetryDecisionDetail Frozen decision and latest retained delivery status.
+   * @throws ApiError
+   */
+  public static getEventRecoveryNotificationRetryDecision({
+    jobId,
+    requestId,
+  }: {
+    /**
+     * Retained recovery job that owns the saved retry decision.
+     */
+    jobId: string,
+    /**
+     * Canonical request identifier returned by retry history.
+     */
+    requestId: string,
+  }): CancelablePromise<EventRecoveryNotificationRetryDecisionDetail> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/notification-retry-decisions/{requestID}',
+      path: {
+        'jobID': jobId,
+        'requestID': requestId,
+      },
+      errors: {
+        400: `Invalid request or recovery identifier or unsupported query parameters.`,
+        401: `Authentication required to inspect a saved retry decision.`,
+        403: `Read scope or MFA required to inspect a saved retry decision.`,
+        404: `Recovery job or saved request not found or not owned.`,
+        429: `Retry decision detail request rate limited.`,
+        500: `Saved retry decision could not be read.`,
       },
     });
   }

@@ -416,3 +416,11 @@ queued or skipped decisions atomically. Repeating identical intent returns the
 original decisions; use a new ID and current evidence for later failures.
 Decisions expire with the recovery job. See the events documentation for limits
 and migration rollout.
+
+### Recovery notification retry history
+
+Use the retry history methods to list saved request summaries or inspect one
+request by ID. Detail preserves each receiver’s original queued or skipped
+decision and shows its current retained delivery status with a separate read
+timestamp. Missing deliveries are reported as unavailable; job pruning removes
+the history.

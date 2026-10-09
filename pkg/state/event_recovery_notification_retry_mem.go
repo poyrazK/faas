@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"github.com/google/uuid"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -119,4 +120,67 @@ func (m *MemStore) RetryEventRecoveryNotifications(ctx context.Context, account,
 	}
 	entry.NotificationRetryReceipts[req.RequestID] = raw
 	return out, nil
+}
+
+func (m *MemStore) GetEventRecoveryNotificationRetryHistory(ctx context.Context, account, id string, now time.Time) (api.EventRecoveryNotificationRetryHistory, error) {
+	ctx, cancel := context.WithTimeout(ctx, api.EventRecoveryRequestTimeout)
+	defer cancel()
+	var out api.EventRecoveryNotificationRetryHistory
+	if err := eventRecoveryIDs(account, id); err != nil {
+		return out, err
+	}
+	if now.IsZero() {
+		return out, ErrEventRecoveryQuery
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
+	entry, err := m.eventRecoveryJobLocked(account, id)
+	if err != nil {
+		return out, err
+	}
+	receipts := map[string]json.RawMessage{}
+	for key, raw := range entry.NotificationRetryReceipts {
+		receipts[key] = json.RawMessage(raw)
+	}
+	return recoveryNotificationRetryHistory(entry.Job.ID, entry.Job.AppID, now, receipts)
+}
+func (m *MemStore) GetEventRecoveryNotificationRetryDecision(ctx context.Context, account, id, requestID string, now time.Time) (api.EventRecoveryNotificationRetryDecisionDetail, error) {
+	ctx, cancel := context.WithTimeout(ctx, api.EventRecoveryRequestTimeout)
+	defer cancel()
+	var out api.EventRecoveryNotificationRetryDecisionDetail
+	if err := eventRecoveryIDs(account, id); err != nil {
+		return out, err
+	}
+	if now.IsZero() {
+		return out, ErrEventRecoveryQuery
+	}
+	parsed, err := uuid.Parse(requestID)
+	if err != nil || parsed == uuid.Nil || parsed.String() != requestID {
+		return out, ErrEventRecoveryQuery
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
+	entry, err := m.eventRecoveryJobLocked(account, id)
+	if err != nil {
+		return out, err
+	}
+	raw, ok := entry.NotificationRetryReceipts[requestID]
+	if !ok {
+		return out, ErrEventRecoveryNotificationRetryDecisionNotFound
+	}
+	var saved recoveryNotificationRetryReceipt
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		return out, err
+	}
+	report, err := m.recoveryNotificationReportLocked(ctx, entry, now)
+	if err != nil {
+		return out, err
+	}
+	return recoveryNotificationRetryDecisionDetail(entry.Job.ID, entry.Job.AppID, requestID, now, saved, report)
 }

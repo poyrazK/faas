@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/google/uuid"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -148,4 +149,81 @@ func retryRecoveryNotificationTarget(ctx context.Context, q *sqlc.Queries, db sq
 	result.State = "queued"
 	result.ReplayGeneration = &n
 	return result, nil
+}
+
+func (s *PgStore) GetEventRecoveryNotificationRetryHistory(ctx context.Context, account, id string, now time.Time) (api.EventRecoveryNotificationRetryHistory, error) {
+	ctx, cancel := context.WithTimeout(ctx, api.EventRecoveryRequestTimeout)
+	defer cancel()
+	var out api.EventRecoveryNotificationRetryHistory
+	if err := eventRecoveryIDs(account, id); err != nil {
+		return out, err
+	}
+	if now.IsZero() {
+		return out, ErrEventRecoveryQuery
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return out, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	owner, err := q.EventRecoveryNotificationRetryHistoryOwner(ctx, tx, sqlc.EventRecoveryNotificationRetryHistoryOwnerParams{JobID: mustPgUUID(id), AccountID: mustPgUUID(account)})
+	if err != nil {
+		return out, mapErr(err)
+	}
+	receipts, err := recoveryNotificationRetryReceipts(owner.NotificationRetryReceipts)
+	if err != nil {
+		return out, err
+	}
+	out, err = recoveryNotificationRetryHistory(uuidString(mustPgUUID(id)), uuidString(owner.AppID), now, receipts)
+	if err != nil {
+		return out, err
+	}
+	return out, tx.Commit(ctx)
+}
+func (s *PgStore) GetEventRecoveryNotificationRetryDecision(ctx context.Context, account, id, requestID string, now time.Time) (api.EventRecoveryNotificationRetryDecisionDetail, error) {
+	ctx, cancel := context.WithTimeout(ctx, api.EventRecoveryRequestTimeout)
+	defer cancel()
+	var out api.EventRecoveryNotificationRetryDecisionDetail
+	if err := eventRecoveryIDs(account, id); err != nil {
+		return out, err
+	}
+	if now.IsZero() {
+		return out, ErrEventRecoveryQuery
+	}
+	parsed, err := uuid.Parse(requestID)
+	if err != nil || parsed == uuid.Nil || parsed.String() != requestID {
+		return out, ErrEventRecoveryQuery
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return out, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	owner, err := q.EventRecoveryNotificationRetryHistoryOwner(ctx, tx, sqlc.EventRecoveryNotificationRetryHistoryOwnerParams{JobID: mustPgUUID(id), AccountID: mustPgUUID(account)})
+	if err != nil {
+		return out, mapErr(err)
+	}
+	receipts, err := recoveryNotificationRetryReceipts(owner.NotificationRetryReceipts)
+	if err != nil {
+		return out, err
+	}
+	raw, ok := receipts[requestID]
+	if !ok {
+		return out, ErrEventRecoveryNotificationRetryDecisionNotFound
+	}
+	var saved recoveryNotificationRetryReceipt
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		return out, err
+	}
+	report, err := getEventRecoveryNotifications(ctx, q, tx, account, id, now)
+	if err != nil {
+		return out, err
+	}
+	out, err = recoveryNotificationRetryDecisionDetail(uuidString(mustPgUUID(id)), uuidString(owner.AppID), requestID, now, saved, report)
+	if err != nil {
+		return out, err
+	}
+	return out, tx.Commit(ctx)
 }

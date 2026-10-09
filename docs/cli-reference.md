@@ -1939,6 +1939,16 @@ Inspect recovery notification capture and receiver acknowledgements
 
 `gregale events recovery-notifications <job-id>`
 
+### events recovery-notification-retry-history
+
+Inspect saved retry decisions and current delivery status
+
+`gregale events recovery-notification-retry-history [--request-id <UUID>] <job-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <UUID>` | Show one saved retry request in detail |  |
+
 ### events recovery-notification-retry-preview
 
 Preview eligible recovery notification receivers

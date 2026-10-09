@@ -1324,6 +1324,28 @@ func (q *Queries) EventRecoveryNotificationRetryDeliveryLock(ctx context.Context
 	return i, err
 }
 
+const eventRecoveryNotificationRetryHistoryOwner = `-- name: EventRecoveryNotificationRetryHistoryOwner :one
+SELECT app_id,notification_retry_receipts FROM event_recovery_jobs
+WHERE id=$1::uuid AND account_id=$2::uuid
+`
+
+type EventRecoveryNotificationRetryHistoryOwnerParams struct {
+	JobID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type EventRecoveryNotificationRetryHistoryOwnerRow struct {
+	AppID                     pgtype.UUID
+	NotificationRetryReceipts []byte
+}
+
+func (q *Queries) EventRecoveryNotificationRetryHistoryOwner(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryHistoryOwnerParams) (EventRecoveryNotificationRetryHistoryOwnerRow, error) {
+	row := db.QueryRow(ctx, eventRecoveryNotificationRetryHistoryOwner, arg.JobID, arg.AccountID)
+	var i EventRecoveryNotificationRetryHistoryOwnerRow
+	err := row.Scan(&i.AppID, &i.NotificationRetryReceipts)
+	return i, err
+}
+
 const eventRecoveryNotificationRetryHookLock = `-- name: EventRecoveryNotificationRetryHookLock :one
 SELECT enabled FROM app_webhooks WHERE id=$1::uuid AND account_id=$2::uuid AND app_id=$3::uuid AND scope='app' FOR SHARE
 `

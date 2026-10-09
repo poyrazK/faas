@@ -931,6 +931,7 @@ var cliCommands = []cliCommand{
 				{Name: "reason", Short: "optional operator reason (at most 512 bytes)", Value: "TEXT"}, {Name: "yes", Short: "confirm creating a recovery job", Bool: true, Req: true}}},
 			{Name: "recovery-preflight", Short: "Assess frozen recovery eligibility and optimistic timing", Positionals: []string{"<job-id>"}},
 			{Name: "recovery-notifications", Short: "Inspect recovery notification capture and receiver acknowledgements", Positionals: []string{"<job-id>"}},
+			{Name: "recovery-notification-retry-history", Short: "Inspect saved retry decisions and current delivery status", Positionals: []string{"<job-id>"}, Flags: []cliFlag{{Name: "request-id", Value: "UUID", Short: "Show one saved retry request in detail"}}},
 			{Name: "recovery-notification-retry-preview", Short: "Preview eligible recovery notification receivers", Positionals: []string{"<job-id>"}},
 			{Name: "recovery-notification-retry", Short: "Retry an explicit recovery notification receiver selection", Positionals: []string{"<job-id>"}, Flags: []cliFlag{{Name: "request-file", Req: true, Value: "PATH", Short: "JSON request with stable request_id and explicit targets"}}},
 			{Name: "recovery-health", Short: "Inspect active recovery progress and expiry risk", Positionals: []string{"<app>"}},
