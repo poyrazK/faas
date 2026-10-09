@@ -386,6 +386,16 @@ func TestPGCloneCheckpointSourceCompensationAtomicFinishAndMigration(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A real downgrade first removes the newer capture-retirement journal.
+	// Its FK deliberately protects the original source-compensation evidence.
+	retirementRaw, err := migrations.FS.ReadFile("20261009195949878_clone_checkpoint_capture_retirements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retirementParts := strings.SplitN(string(retirementRaw), "-- +goose Down", 2)
+	if _, err = tx.Exec(t.Context(), retirementParts[1]); err != nil {
+		t.Fatal("empty newer retirement downgrade", err)
+	}
 	for _, sql := range []string{parts[1], parts[0], parts[1], parts[0]} {
 		if _, err = tx.Exec(t.Context(), sql); err != nil {
 			t.Fatal("empty migration round trip", err)

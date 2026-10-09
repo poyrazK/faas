@@ -8274,6 +8274,29 @@ Only then can whole-stage reconciliation authenticate this evidence alongside
 publication withdrawal and target cleanup. Public full-stage admission remains
 closed; live R2/OVH qualification remains deferred.
 
+### Private capture-retirement worker coordination
+
+The private worker now drives capture retirement through the authenticated store
+journal and a qualified native-driver seam. It renews the compensating lease,
+reserves the store-derived original plan, and commits its dispatch claim before
+native IO. Driver calls share the worker deadline and receive separate deep copies
+of the entire nested source-compensation plan and proof. Admission is checked
+around dispatch, observation and terminal persistence.
+
+Requested recovery only observes the original native request. Lost claim replies,
+native acknowledgements and worker handoff never authorize another dispatch;
+provider not-found leaves cleanup requested rather than fabricating a terminal
+proof. A saved terminal proof is replayed through the authenticated store without
+fresh native mutation or observation, including after a lost finish reply.
+
+Recovery tests cover unused, unknown and known pre-adoption captures, durable claim
+ordering, adapter mutation, lost reservation/claim/native/observation/finish replies,
+worker handoff, stale and cancelled workers, incomplete native proof, admission
+failure, pending source compensation and adopted-capture rejection. This remains
+an internal seam with no built-in qualified R2/OVH driver or public full-stage
+admission. Authenticated retirement of adopted snapshots/manifests and final
+whole-stage reconciliation remain outstanding; live qualification stays deferred.
+
 ### Durable pre-adoption capture retirement
 
 Capture retirement now has a bounded durable journal with an immutable original
