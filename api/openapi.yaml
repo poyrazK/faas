@@ -47539,6 +47539,49 @@ components:
           type: string
           enum: [capacity, legacy_claim]
           description: Most recently recorded admission wait; cleared on tracked progress.
+    EventRecoveryNotificationsHealth:
+      type: object
+      description: Bounded retained notification candidates, oldest admission completion first. Candidate-set completeness is separate from phase evidence completeness. Counts describe jobs and can overlap; reads do not capture or retry notifications.
+      required: [coverage, observed_jobs, counts_complete, job_limit, overdue_grace_seconds, admission, execution, jobs]
+      properties:
+        coverage: { type: string, enum: [bounded_retained_notification_jobs] }
+        observed_jobs: { type: integer, format: int64, minimum: 0 }
+        counts_complete: { type: boolean }
+        job_limit: { type: integer, enum: [50] }
+        overdue_grace_seconds: { type: integer, format: int64, minimum: 0 }
+        admission: { $ref: '#/components/schemas/EventRecoveryNotificationHealthCounts' }
+        execution: { $ref: '#/components/schemas/EventRecoveryNotificationHealthCounts' }
+        jobs:
+          type: array
+          maxItems: 3
+          items: { $ref: '#/components/schemas/EventRecoveryNotificationJobHealth' }
+    EventRecoveryNotificationHealthCounts:
+      type: object
+      description: Per-phase notification job counts. Incomplete evidence or candidate truncation makes these lower bounds; partial observations cannot clear alerts and can only trigger satisfied greater-than comparisons.
+      required: [counts_complete, overdue_jobs, dead_jobs, unknown_jobs, no_receivers_jobs]
+      properties:
+        counts_complete: { type: boolean }
+        overdue_jobs: { type: integer, format: int64, minimum: 0 }
+        dead_jobs: { type: integer, format: int64, minimum: 0 }
+        unknown_jobs: { type: integer, format: int64, minimum: 0 }
+        no_receivers_jobs: { type: integer, format: int64, minimum: 0 }
+    EventRecoveryNotificationJobHealth:
+      type: object
+      description: Diagnostic notification sample. Overdue requires a known unacknowledged receiver and a capture timestamp at least fifteen minutes old. Missing receiver history does not prove delivery failure.
+      required: [job_id, kind, capture_status, acknowledgement_status, evidence_source, overdue, dead, unknown, no_receivers]
+      properties:
+        job_id: { type: string, format: uuid }
+        kind: { type: string, enum: [admission, execution] }
+        event: { type: string }
+        capture_status: { type: string }
+        acknowledgement_status: { type: string }
+        evidence_source: { type: string }
+        captured_at: { type: string, format: date-time }
+        unacknowledged_age_seconds: { type: number, minimum: 0 }
+        overdue: { type: boolean }
+        dead: { type: boolean }
+        unknown: { type: boolean }
+        no_receivers: { type: boolean }
     EventRecoveryExecutionHealth:
       type: object
       description: Oldest retained terminal admission jobs still missing exact saved execution
@@ -47882,6 +47925,7 @@ components:
       additionalProperties: false
       required: [capacity_wait_warning_seconds, capacity_waiting_jobs, prolonged_capacity_wait_jobs, app_id, observed_at, stall_grace_seconds, expiry_warning_seconds, running_jobs, paused_jobs, stalled_jobs, expiring_jobs, paused_expiring_jobs, jobs]
       properties:
+        notifications: { $ref: '#/components/schemas/EventRecoveryNotificationsHealth' }
         execution:
           $ref: '#/components/schemas/EventRecoveryExecutionHealth'
         capacity_wait_warning_seconds: { type: integer, format: int64, minimum: 1 }
@@ -53206,6 +53250,14 @@ components:
             - event_recovery_execution_prolonged_wait_jobs
             - event_recovery_execution_unknown_jobs
             - event_recovery_execution_retention_risk_jobs
+            - event_recovery_notification_admission_overdue_jobs
+            - event_recovery_notification_admission_dead_jobs
+            - event_recovery_notification_admission_unknown_jobs
+            - event_recovery_notification_admission_no_receivers_jobs
+            - event_recovery_notification_execution_overdue_jobs
+            - event_recovery_notification_execution_dead_jobs
+            - event_recovery_notification_execution_unknown_jobs
+            - event_recovery_notification_execution_no_receivers_jobs
             - event_retention_expiring_receipts
             - event_storage_utilization_pct
             - workflow_failures
@@ -53267,7 +53319,7 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -53307,7 +53359,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }

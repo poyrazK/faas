@@ -4,10 +4,12 @@
 /* eslint-disable */
 import type { EventRecoveryExecutionHealth } from './EventRecoveryExecutionHealth.js';
 import type { EventRecoveryJobHealth } from './EventRecoveryJobHealth.js';
+import type { EventRecoveryNotificationsHealth } from './EventRecoveryNotificationsHealth.js';
 /**
  * Application admission health and bounded unresolved execution health with sampled actionable jobs.
  */
 export type EventRecoveryHealth = {
+  notifications?: EventRecoveryNotificationsHealth;
   execution?: EventRecoveryExecutionHealth;
   capacity_wait_warning_seconds: number;
   /**

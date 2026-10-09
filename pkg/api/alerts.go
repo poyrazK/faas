@@ -103,6 +103,15 @@ func TruncateRunes(s string, maxRunes int) string {
 // Issue #1395 B3 adds three durable observability metrics backed by
 // app_errors, request_telemetry, and usage_daily.
 var AllowedAlertRuleMetrics = []string{
+	"event_recovery_notification_admission_overdue_jobs",
+	"event_recovery_notification_admission_dead_jobs",
+	"event_recovery_notification_admission_unknown_jobs",
+	"event_recovery_notification_admission_no_receivers_jobs",
+	"event_recovery_notification_execution_overdue_jobs",
+	"event_recovery_notification_execution_dead_jobs",
+	"event_recovery_notification_execution_unknown_jobs",
+	"event_recovery_notification_execution_no_receivers_jobs",
+
 	"event_retention_expiring_receipts",
 	"event_storage_utilization_pct",
 	"event_execution_dead_letters",

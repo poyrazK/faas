@@ -390,3 +390,26 @@ ORDER BY d.webhook_id,d.id LIMIT sqlc.arg(receiver_limit)::integer;
 -- name: EventRecoveryNotificationReceivers :many
 SELECT id FROM app_webhooks WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
  AND scope='app' AND id=ANY(sqlc.arg(webhook_ids)::uuid[]);
+
+-- name: EventRecoveryNotificationHealthJobs :many
+SELECT j.id FROM event_recovery_jobs j
+WHERE j.account_id=sqlc.arg(account_id)::uuid AND j.app_id=sqlc.arg(app_id)::uuid
+ AND j.state IN ('completed','cancelled') AND j.completed_at<=sqlc.arg(now_at)::timestamptz
+ AND (
+  NOT j.notification_receipts ?| ARRAY['event_recovery.completed','event_recovery.cancelled','event_recovery.expired']::text[]
+  OR (SELECT count(*) FROM jsonb_object_keys(j.notification_receipts) key WHERE key IN ('event_recovery.completed','event_recovery.cancelled','event_recovery.expired'))>1
+  OR (j.execution_finished_at IS NOT NULL AND NOT j.notification_receipts ? 'event_recovery.execution_finished')
+  OR EXISTS (
+   SELECT 1 FROM jsonb_each(j.notification_receipts) receipt
+   WHERE receipt.value->>'captured_at' IS NULL OR receipt.value->>'event_id' IS NULL
+    OR coalesce(jsonb_array_length(receipt.value->'recipient_webhook_ids'),0)=0
+    OR jsonb_array_length(receipt.value->'recipient_webhook_ids')>sqlc.arg(receiver_limit)::integer
+    OR EXISTS (
+     SELECT 1 FROM jsonb_array_elements_text(receipt.value->'recipient_webhook_ids') selected(webhook_id)
+     LEFT JOIN app_webhook_deliveries d ON d.source_event_id=(receipt.value->>'event_id')::uuid
+      AND d.webhook_id=selected.webhook_id::uuid AND d.event=receipt.key AND d.account_id=j.account_id AND d.app_id=j.app_id
+     WHERE d.id IS NULL OR d.status<>'succeeded'
+    )
+  )
+ )
+ORDER BY j.completed_at,j.id LIMIT sqlc.arg(job_limit)::integer;

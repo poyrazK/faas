@@ -9425,3 +9425,9 @@ const (
 
 // EventRecoveryNotificationReceiversMax bounds each notification report.
 const EventRecoveryNotificationReceiversMax = 100
+
+const (
+	EventRecoveryNotificationHealthJobsMax   = 50
+	EventRecoveryNotificationHealthSampleMax = 3
+	EventRecoveryNotificationOverdueGrace    = 15 * time.Minute
+)

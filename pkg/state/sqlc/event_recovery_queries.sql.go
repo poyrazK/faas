@@ -1139,6 +1139,64 @@ func (q *Queries) EventRecoveryNotificationEvidence(ctx context.Context, db DBTX
 	return i, err
 }
 
+const eventRecoveryNotificationHealthJobs = `-- name: EventRecoveryNotificationHealthJobs :many
+SELECT j.id FROM event_recovery_jobs j
+WHERE j.account_id=$1::uuid AND j.app_id=$2::uuid
+ AND j.state IN ('completed','cancelled') AND j.completed_at<=$3::timestamptz
+ AND (
+  NOT j.notification_receipts ?| ARRAY['event_recovery.completed','event_recovery.cancelled','event_recovery.expired']::text[]
+  OR (SELECT count(*) FROM jsonb_object_keys(j.notification_receipts) key WHERE key IN ('event_recovery.completed','event_recovery.cancelled','event_recovery.expired'))>1
+  OR (j.execution_finished_at IS NOT NULL AND NOT j.notification_receipts ? 'event_recovery.execution_finished')
+  OR EXISTS (
+   SELECT 1 FROM jsonb_each(j.notification_receipts) receipt
+   WHERE receipt.value->>'captured_at' IS NULL OR receipt.value->>'event_id' IS NULL
+    OR coalesce(jsonb_array_length(receipt.value->'recipient_webhook_ids'),0)=0
+    OR jsonb_array_length(receipt.value->'recipient_webhook_ids')>$4::integer
+    OR EXISTS (
+     SELECT 1 FROM jsonb_array_elements_text(receipt.value->'recipient_webhook_ids') selected(webhook_id)
+     LEFT JOIN app_webhook_deliveries d ON d.source_event_id=(receipt.value->>'event_id')::uuid
+      AND d.webhook_id=selected.webhook_id::uuid AND d.event=receipt.key AND d.account_id=j.account_id AND d.app_id=j.app_id
+     WHERE d.id IS NULL OR d.status<>'succeeded'
+    )
+  )
+ )
+ORDER BY j.completed_at,j.id LIMIT $5::integer
+`
+
+type EventRecoveryNotificationHealthJobsParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	NowAt         pgtype.Timestamptz
+	ReceiverLimit int32
+	JobLimit      int32
+}
+
+func (q *Queries) EventRecoveryNotificationHealthJobs(ctx context.Context, db DBTX, arg EventRecoveryNotificationHealthJobsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, eventRecoveryNotificationHealthJobs,
+		arg.AccountID,
+		arg.AppID,
+		arg.NowAt,
+		arg.ReceiverLimit,
+		arg.JobLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const eventRecoveryNotificationJob = `-- name: EventRecoveryNotificationJob :one
 SELECT account_id FROM event_recovery_jobs WHERE id=$1::uuid
 `

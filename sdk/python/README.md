@@ -397,3 +397,12 @@ of admission/execution capture and each selected receiver's current delivery.
 Missing selection or pruned delivery evidence remains unknown; capture alone
 does not prove acknowledgement. Retained dead deliveries link to independent
 retry. See [notification delivery reports](../../docs/adr/836-recovery-notification-delivery-report.md).
+
+### Recovery notification health
+
+Recovery health responses include `notifications`, with separate admission and execution
+counts for overdue, dead, unknown, and no-receiver jobs. Overdue requires known
+unacknowledged delivery evidence at least 15 minutes after capture. Phase
+`counts_complete` flags cover evidence uncertainty and the 50-job candidate bound;
+partial observations cannot clear alerts. Use the notification report for receiver
+details. New alert metrics are optional and require the notification health migration.

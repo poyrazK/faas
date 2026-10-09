@@ -110,6 +110,10 @@ func (s *PgStore) GetEventRecoveryHealth(ctx context.Context, account, app strin
 	if err != nil {
 		return out, err
 	}
+	out.Notifications, err = observeRecoveryNotificationHealth(ctx, q, tx, account, app, now)
+	if err != nil {
+		return out, err
+	}
 	return out, tx.Commit(ctx)
 }
 func (m *MemStore) GetEventRecoveryHealth(ctx context.Context, account, app string, now time.Time) (api.EventRecoveryHealth, error) {
@@ -158,6 +162,10 @@ func (m *MemStore) GetEventRecoveryHealth(ctx context.Context, account, app stri
 	}
 	var err error
 	out.Execution, err = m.recoveryExecutionHealthLocked(ctx, account, app, now)
+	if err != nil {
+		return out, err
+	}
+	out.Notifications, err = m.recoveryNotificationHealthLocked(ctx, account, app, now)
 	return out, err
 }
 

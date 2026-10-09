@@ -213,6 +213,12 @@ func (m *MemStore) GetEventRecoveryNotifications(ctx context.Context, account, i
 	if err != nil {
 		return out, err
 	}
+	return m.recoveryNotificationReportLocked(ctx, entry, now)
+}
+
+func (m *MemStore) recoveryNotificationReportLocked(ctx context.Context, entry *memEventRecoveryJob, now time.Time) (api.EventRecoveryNotifications, error) {
+	var out api.EventRecoveryNotifications
+	account, id := entry.AccountID, entry.Job.ID
 	// Copy metadata and counts without the legacy running-to-completed response helper.
 	job := entry.Job
 	job.QueuedCount = 0

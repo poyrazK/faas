@@ -372,6 +372,20 @@ func cmdEventsRecoveryHealth(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "%s | %s | waiting %.0fs | queued/running/retrying: %d/%d/%d | unknown: %d | missing saved results: %d | retain until: %s | notification pending: %t\n", oneLine(job.JobID), oneLine(job.Status), job.WaitAgeSeconds, job.Execution.Queued, job.Execution.Running, job.Execution.Retrying, job.UnknownCount, job.UnresolvedCount, job.RetainUntil.Format(time.RFC3339), job.NotificationPending)
 		}
 	}
+	if notifications := out.Notifications; notifications != nil {
+		for _, phase := range []struct {
+			name   string
+			counts api.EventRecoveryNotificationHealthCounts
+		}{{"admission", notifications.Admission}, {"execution", notifications.Execution}} {
+			_, _ = fmt.Fprintf(osStdout, "Notification %s: overdue: %d | dead: %d | unknown: %d | no receivers: %d | complete: %t\n", phase.name, phase.counts.OverdueJobs, phase.counts.DeadJobs, phase.counts.UnknownJobs, phase.counts.NoReceiversJobs, phase.counts.CountsComplete)
+		}
+		if !notifications.CountsComplete || !notifications.Admission.CountsComplete || !notifications.Execution.CountsComplete {
+			_, _ = fmt.Fprintf(osStdout, "Partial notification counts: up to %d oldest candidate jobs; counts are lower bounds and cannot clear alerts.\n", notifications.JobLimit)
+		}
+		for _, job := range notifications.Jobs {
+			_, _ = fmt.Fprintf(osStdout, "%s | %s notification | overdue: %t | dead: %t | unknown: %t | no receivers: %t\n  Details: gregale events recovery-notifications %s\n", oneLine(job.JobID), oneLine(job.Kind), job.Overdue, job.Dead, job.Unknown, job.NoReceivers, oneLine(job.JobID))
+		}
+	}
 	return 0
 }
 

@@ -27,12 +27,20 @@ func (s *PgStore) GetEventRecoveryNotifications(ctx context.Context, account, id
 		return out, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	q := sqlc.New()
-	job, err := getEventRecoveryMetadata(ctx, q, tx, account, id)
+	out, err = getEventRecoveryNotifications(ctx, sqlc.New(), tx, account, id, now)
 	if err != nil {
 		return out, err
 	}
-	info, err := q.EventRecoveryNotificationEvidence(ctx, tx, sqlc.EventRecoveryNotificationEvidenceParams{AccountID: mustPgUUID(account), JobID: mustPgUUID(id)})
+	return out, tx.Commit(ctx)
+}
+
+func getEventRecoveryNotifications(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, account, id string, now time.Time) (api.EventRecoveryNotifications, error) {
+	var out api.EventRecoveryNotifications
+	job, err := getEventRecoveryMetadata(ctx, q, db, account, id)
+	if err != nil {
+		return out, err
+	}
+	info, err := q.EventRecoveryNotificationEvidence(ctx, db, sqlc.EventRecoveryNotificationEvidenceParams{AccountID: mustPgUUID(account), JobID: mustPgUUID(id)})
 	if err != nil {
 		return out, mapErr(err)
 	}
@@ -43,7 +51,7 @@ func (s *PgStore) GetEventRecoveryNotifications(ctx context.Context, account, id
 	if err := validateRecoveryNotificationReceipts(job.ID, evidence.Receipts); err != nil {
 		return out, err
 	}
-	retained, err := q.EventRecoveryNotificationOutbox(ctx, tx, sqlc.EventRecoveryNotificationOutboxParams{JobID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(job.AppID)})
+	retained, err := q.EventRecoveryNotificationOutbox(ctx, db, sqlc.EventRecoveryNotificationOutboxParams{JobID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(job.AppID)})
 	if err != nil {
 		return out, err
 	}
@@ -71,7 +79,7 @@ func (s *PgStore) GetEventRecoveryNotifications(ctx context.Context, account, id
 	for recipient := range ids {
 		hooks = append(hooks, mustPgUUID(recipient))
 	}
-	available, err := q.EventRecoveryNotificationReceivers(ctx, tx, sqlc.EventRecoveryNotificationReceiversParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(job.AppID), WebhookIds: hooks})
+	available, err := q.EventRecoveryNotificationReceivers(ctx, db, sqlc.EventRecoveryNotificationReceiversParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(job.AppID), WebhookIds: hooks})
 	if err != nil {
 		return out, err
 	}
@@ -79,7 +87,7 @@ func (s *PgStore) GetEventRecoveryNotifications(ctx context.Context, account, id
 		evidence.Available[uuidString(hook)] = true
 	}
 	for _, event := range recoveryNotificationEvents {
-		rows, err := q.EventRecoveryNotificationDeliveries(ctx, tx, sqlc.EventRecoveryNotificationDeliveriesParams{EventID: mustPgUUID(recoveryNotificationEventID(job.ID, event)), Event: event, AccountID: mustPgUUID(account), AppID: mustPgUUID(job.AppID), ReceiverLimit: api.EventRecoveryNotificationReceiversMax + 1})
+		rows, err := q.EventRecoveryNotificationDeliveries(ctx, db, sqlc.EventRecoveryNotificationDeliveriesParams{EventID: mustPgUUID(recoveryNotificationEventID(job.ID, event)), Event: event, AccountID: mustPgUUID(account), AppID: mustPgUUID(job.AppID), ReceiverLimit: api.EventRecoveryNotificationReceiversMax + 1})
 		if err != nil {
 			return out, err
 		}
@@ -92,5 +100,5 @@ func (s *PgStore) GetEventRecoveryNotifications(ctx context.Context, account, id
 	if err != nil {
 		return out, err
 	}
-	return out, tx.Commit(ctx)
+	return out, nil
 }

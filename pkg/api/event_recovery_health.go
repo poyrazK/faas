@@ -68,20 +68,21 @@ type EventRecoveryExecutionJobHealth struct {
 	Execution                 EventRecoveryExecutionSummary `json:"execution"`
 }
 type EventRecoveryHealth struct {
-	Execution                  *EventRecoveryExecutionHealth `json:"execution,omitempty"`
-	CapacityWaitWarningSeconds int64                         `json:"capacity_wait_warning_seconds"`
-	CapacityWaitingJobs        int64                         `json:"capacity_waiting_jobs"`
-	ProlongedCapacityWaitJobs  int64                         `json:"prolonged_capacity_wait_jobs"`
-	AppID                      string                        `json:"app_id"`
-	ObservedAt                 time.Time                     `json:"observed_at"`
-	StallGraceSeconds          int64                         `json:"stall_grace_seconds"`
-	ExpiryWarningSeconds       int64                         `json:"expiry_warning_seconds"`
-	RunningJobs                int64                         `json:"running_jobs"`
-	PausedJobs                 int64                         `json:"paused_jobs"`
-	StalledJobs                int64                         `json:"stalled_jobs"`
-	ExpiringJobs               int64                         `json:"expiring_jobs"`
-	PausedExpiringJobs         int64                         `json:"paused_expiring_jobs"`
-	Jobs                       []EventRecoveryJobHealth      `json:"jobs"`
+	Notifications              *EventRecoveryNotificationsHealth `json:"notifications,omitempty"`
+	Execution                  *EventRecoveryExecutionHealth     `json:"execution,omitempty"`
+	CapacityWaitWarningSeconds int64                             `json:"capacity_wait_warning_seconds"`
+	CapacityWaitingJobs        int64                             `json:"capacity_waiting_jobs"`
+	ProlongedCapacityWaitJobs  int64                             `json:"prolonged_capacity_wait_jobs"`
+	AppID                      string                            `json:"app_id"`
+	ObservedAt                 time.Time                         `json:"observed_at"`
+	StallGraceSeconds          int64                             `json:"stall_grace_seconds"`
+	ExpiryWarningSeconds       int64                             `json:"expiry_warning_seconds"`
+	RunningJobs                int64                             `json:"running_jobs"`
+	PausedJobs                 int64                             `json:"paused_jobs"`
+	StalledJobs                int64                             `json:"stalled_jobs"`
+	ExpiringJobs               int64                             `json:"expiring_jobs"`
+	PausedExpiringJobs         int64                             `json:"paused_expiring_jobs"`
+	Jobs                       []EventRecoveryJobHealth          `json:"jobs"`
 }
 
 func (c *Client) GetEventRecoveryHealth(ctx context.Context, app string) (EventRecoveryHealth, error) {
@@ -90,7 +91,7 @@ func (c *Client) GetEventRecoveryHealth(ctx context.Context, app string) (EventR
 	return out, err
 }
 func IsEventRecoveryAlertMetric(metric string) bool {
-	return IsEventRecoveryExecutionAlertMetric(metric) || metric == "event_recovery_capacity_wait_jobs" || metric == "event_recovery_stalled_jobs" || metric == "event_recovery_expiring_jobs"
+	return IsEventRecoveryNotificationAlertMetric(metric) || IsEventRecoveryExecutionAlertMetric(metric) || metric == "event_recovery_capacity_wait_jobs" || metric == "event_recovery_stalled_jobs" || metric == "event_recovery_expiring_jobs"
 }
 
 func IsEventRecoveryExecutionAlertMetric(metric string) bool {

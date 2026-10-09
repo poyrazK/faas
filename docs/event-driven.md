@@ -2708,3 +2708,31 @@ Node `EventsService.getEventRecoveryNotifications`, and Python
 `20261009140935781` before API/scheduler upgrades. See
 [ADR-836](adr/836-recovery-notification-delivery-report.md) for historical evidence
 and downgrade limits.
+
+### Recovery notification delivery health
+
+`gregale events recovery-health APP` also reports separate admission and execution
+notification counts: overdue, dead, unknown, and no receivers. These count jobs,
+not receivers, and may overlap. A dead delivery can also be overdue. Overdue means
+at least one known unacknowledged receiver and a known capture timestamp at least
+15 minutes old. Missing history does not establish an overdue delivery. A frozen
+empty selection is no receivers, rather than acknowledged.
+
+The view observes up to 50 oldest terminal candidate jobs and samples up to three
+problem notices. Fully acknowledged saved selections are excluded. The top-level
+notification `counts_complete` describes candidate truncation; admission and
+execution completeness additionally describe missing evidence. Partial counts
+are lower bounds. Historical jobs can remain unknown until retention pruning.
+The bound limits report observations, while finding candidates can scan retained
+metadata within the existing five-second request budget. Reads do not capture,
+relay, retry, or mutate notification state. Use
+`gregale events recovery-notifications JOB_ID` for each receiver's evidence.
+
+Eight optional app-scoped webhook alert metrics are available:
+`event_recovery_notification_{admission,execution}_{overdue,dead,unknown,no_receivers}_jobs`.
+Create rules explicitly, including no-receiver rules when receivers are expected.
+These are current retained counts; rule windows do not accumulate notifications.
+Partial observations can only trigger satisfied `gt`/`gte` lower bounds and cannot
+clear alerts or send recovery notifications. Other partial comparisons degrade.
+Apply migration `20261009144740163_event_recovery_notification_health.sql` before
+API and evaluator rollout. See [ADR-837](adr/837-recovery-notification-health-alerts.md).

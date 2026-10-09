@@ -1048,10 +1048,16 @@ from .event_recovery_notification_acknowledgement_status import EventRecoveryNot
 from .event_recovery_notification_capture_status import EventRecoveryNotificationCaptureStatus
 from .event_recovery_notification_event import EventRecoveryNotificationEvent
 from .event_recovery_notification_evidence_source import EventRecoveryNotificationEvidenceSource
+from .event_recovery_notification_health_counts import EventRecoveryNotificationHealthCounts
+from .event_recovery_notification_job_health import EventRecoveryNotificationJobHealth
+from .event_recovery_notification_job_health_kind import EventRecoveryNotificationJobHealthKind
 from .event_recovery_notification_kind import EventRecoveryNotificationKind
 from .event_recovery_notification_receiver import EventRecoveryNotificationReceiver
 from .event_recovery_notification_receiver_status import EventRecoveryNotificationReceiverStatus
 from .event_recovery_notifications import EventRecoveryNotifications
+from .event_recovery_notifications_health import EventRecoveryNotificationsHealth
+from .event_recovery_notifications_health_coverage import EventRecoveryNotificationsHealthCoverage
+from .event_recovery_notifications_health_job_limit import EventRecoveryNotificationsHealthJobLimit
 from .event_recovery_notifications_receiver_limit import EventRecoveryNotificationsReceiverLimit
 from .event_recovery_preflight import EventRecoveryPreflight
 from .event_recovery_preflight_capacity_scopes import EventRecoveryPreflightCapacityScopes
@@ -4079,10 +4085,16 @@ __all__ = (
     "EventRecoveryNotificationCaptureStatus",
     "EventRecoveryNotificationEvent",
     "EventRecoveryNotificationEvidenceSource",
+    "EventRecoveryNotificationHealthCounts",
+    "EventRecoveryNotificationJobHealth",
+    "EventRecoveryNotificationJobHealthKind",
     "EventRecoveryNotificationKind",
     "EventRecoveryNotificationReceiver",
     "EventRecoveryNotificationReceiverStatus",
     "EventRecoveryNotifications",
+    "EventRecoveryNotificationsHealth",
+    "EventRecoveryNotificationsHealthCoverage",
+    "EventRecoveryNotificationsHealthJobLimit",
     "EventRecoveryNotificationsReceiverLimit",
     "EventRecoveryPreflight",
     "EventRecoveryPreflightCapacityScopes",
