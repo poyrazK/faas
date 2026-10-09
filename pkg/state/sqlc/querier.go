@@ -448,6 +448,7 @@ type Querier interface {
 	// 100 rows/fingerprint cap evicts oldest request rows first).
 	DeleteAppErrorRequestsOlderThan(ctx context.Context, db DBTX, arg DeleteAppErrorRequestsOlderThanParams) error
 	DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) error
+	DeleteAppSLO(ctx context.Context, db DBTX, arg DeleteAppSLOParams) (int64, error)
 	DeleteAutomation(ctx context.Context, db DBTX, arg DeleteAutomationParams) error
 	DeleteAutomationScheduleCursor(ctx context.Context, db DBTX, arg DeleteAutomationScheduleCursorParams) error
 	DeleteCron(ctx context.Context, db DBTX, arg DeleteCronParams) error
@@ -887,6 +888,7 @@ type Querier interface {
 	// headers_sample + redactions for the wire-side "we redacted
 	// X / Y / Z" badge.
 	GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErrorSampleParams) (GetAppErrorSampleRow, error)
+	GetAppSLO(ctx context.Context, db DBTX, arg GetAppSLOParams) (AppSlo, error)
 	GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAppSecretRevocationParams) (GetAppSecretRevocationRow, error)
 	GetArtifactRuntimeRelease(ctx context.Context, db DBTX, arg GetArtifactRuntimeReleaseParams) (RuntimeRelease, error)
 	GetBuildRuntimeBaseRef(ctx context.Context, db DBTX, buildID pgtype.UUID) (string, error)
@@ -1071,6 +1073,10 @@ type Querier interface {
 	// call; the read path derives the joined total at query time.
 	InsertAppErrorRequest(ctx context.Context, db DBTX, arg InsertAppErrorRequestParams) error
 	InsertAppHealthHistory(ctx context.Context, db DBTX, arg InsertAppHealthHistoryParams) error
+	// ADR-747: customer-defined SLO definitions (apid is the only writer).
+	// The per-app cap is enforced inside the insert, so two concurrent creates
+	// cannot both pass a count taken before either row exists.
+	InsertAppSLO(ctx context.Context, db DBTX, arg InsertAppSLOParams) (AppSlo, error)
 	InsertBlockedLifecycleHistory(ctx context.Context, db DBTX, arg InsertBlockedLifecycleHistoryParams) error
 	InsertCheckedRollback(ctx context.Context, db DBTX, arg InsertCheckedRollbackParams) error
 	InsertClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg InsertClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error)
@@ -1497,6 +1503,7 @@ type Querier interface {
 	ListAppHealthHistory(ctx context.Context, db DBTX, arg ListAppHealthHistoryParams) ([][]byte, error)
 	ListAppPendingRestarts(ctx context.Context, db DBTX, arg ListAppPendingRestartsParams) ([]ListAppPendingRestartsRow, error)
 	ListAppPendingRollbacks(ctx context.Context, db DBTX, arg ListAppPendingRollbacksParams) ([][]byte, error)
+	ListAppSLOs(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppSlo, error)
 	ListAppSecretRevocationTargets(ctx context.Context, db DBTX, revocationID pgtype.UUID) ([]ListAppSecretRevocationTargetsRow, error)
 	ListAppSecretRuntimeProcessObservations(ctx context.Context, db DBTX, arg ListAppSecretRuntimeProcessObservationsParams) ([]ListAppSecretRuntimeProcessObservationsRow, error)
 	// Build the complete active roster for each secret from the deployment's

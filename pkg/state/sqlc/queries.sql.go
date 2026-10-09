@@ -9229,6 +9229,23 @@ func (q *Queries) DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []
 	return err
 }
 
+const deleteAppSLO = `-- name: DeleteAppSLO :execrows
+DELETE FROM app_slos WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type DeleteAppSLOParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) DeleteAppSLO(ctx context.Context, db DBTX, arg DeleteAppSLOParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteAppSLO, arg.AppID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteAutomation = `-- name: DeleteAutomation :exec
 DELETE FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2
 `
@@ -15069,6 +15086,33 @@ func (q *Queries) GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErro
 	return i, err
 }
 
+const getAppSLO = `-- name: GetAppSLO :one
+SELECT id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at FROM app_slos WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type GetAppSLOParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) GetAppSLO(ctx context.Context, db DBTX, arg GetAppSLOParams) (AppSlo, error) {
+	row := db.QueryRow(ctx, getAppSLO, arg.AppID, arg.ID)
+	var i AppSlo
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Sli,
+		&i.LatencyThresholdMs,
+		&i.ObjectiveBp,
+		&i.WindowDays,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getAppSecretRevocation = `-- name: GetAppSecretRevocation :one
 SELECT id::text, account_id::text, app_id::text, scope, key, created_at
   FROM app_secret_revocations
@@ -18395,6 +18439,56 @@ func (q *Queries) InsertAppHealthHistory(ctx context.Context, db DBTX, arg Inser
 		arg.Entry,
 	)
 	return err
+}
+
+const insertAppSLO = `-- name: InsertAppSLO :one
+
+INSERT INTO app_slos (account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days)
+SELECT $1::uuid, $2::uuid, $3::text, $4::text,
+ $5::integer, $6::integer, $7::integer
+WHERE (SELECT count(*) FROM app_slos WHERE app_id = $2::uuid) < $8::integer
+RETURNING id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at
+`
+
+type InsertAppSLOParams struct {
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	Sli                string
+	LatencyThresholdMs pgtype.Int4
+	ObjectiveBp        int32
+	WindowDays         int32
+	MaxPerApp          int32
+}
+
+// ADR-747: customer-defined SLO definitions (apid is the only writer).
+// The per-app cap is enforced inside the insert, so two concurrent creates
+// cannot both pass a count taken before either row exists.
+func (q *Queries) InsertAppSLO(ctx context.Context, db DBTX, arg InsertAppSLOParams) (AppSlo, error) {
+	row := db.QueryRow(ctx, insertAppSLO,
+		arg.AccountID,
+		arg.AppID,
+		arg.Name,
+		arg.Sli,
+		arg.LatencyThresholdMs,
+		arg.ObjectiveBp,
+		arg.WindowDays,
+		arg.MaxPerApp,
+	)
+	var i AppSlo
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Sli,
+		&i.LatencyThresholdMs,
+		&i.ObjectiveBp,
+		&i.WindowDays,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const insertBlockedLifecycleHistory = `-- name: InsertBlockedLifecycleHistory :exec
@@ -26721,6 +26815,41 @@ func (q *Queries) ListAppPendingRollbacks(ctx context.Context, db DBTX, arg List
 			return nil, err
 		}
 		items = append(items, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppSLOs = `-- name: ListAppSLOs :many
+SELECT id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at FROM app_slos WHERE app_id = $1::uuid ORDER BY name
+`
+
+func (q *Queries) ListAppSLOs(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppSlo, error) {
+	rows, err := db.Query(ctx, listAppSLOs, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSlo{}
+	for rows.Next() {
+		var i AppSlo
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Sli,
+			&i.LatencyThresholdMs,
+			&i.ObjectiveBp,
+			&i.WindowDays,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

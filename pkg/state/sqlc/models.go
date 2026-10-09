@@ -886,6 +886,19 @@ type AppServiceAddressCursor struct {
 	LastIndex int32
 }
 
+type AppSlo struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	Sli                string
+	LatencyThresholdMs pgtype.Int4
+	ObjectiveBp        int32
+	WindowDays         int32
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type AppTask struct {
 	ID                   pgtype.UUID
 	AccountID            pgtype.UUID

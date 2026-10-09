@@ -29,6 +29,7 @@ import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirem
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
 import type { CreateIssueIngestTokenRequest } from '../models/CreateIssueIngestTokenRequest.js';
+import type { CreateSLORequest } from '../models/CreateSLORequest.js';
 import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerRequest.js';
 import type { CreateUDPListenerRequest } from '../models/CreateUDPListenerRequest.js';
 import type { CustomMetricListResponse } from '../models/CustomMetricListResponse.js';
@@ -117,6 +118,7 @@ import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequ
 import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
 import type { SetRouteRemovalPolicyRequest } from '../models/SetRouteRemovalPolicyRequest.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
+import type { SLOResponse } from '../models/SLOResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
 import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
@@ -1177,6 +1179,129 @@ export class AppsService {
         'name': name,
       },
       errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List the app's customer-defined SLOs (ADR-747)
+   * Returns every SLO defined on the app, name-ordered. Distinct from GET /v1/apps/{slug}/slo, which reports ADR-082's fixed 99.5% availability panel.
+   * @returns SLOResponse The app's SLO definitions.
+   * @throws ApiError
+   */
+  public static listSlOs({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<Array<SLOResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/slos',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Define an SLO on the app (ADR-747)
+   * Creates an availability or latency SLO with an objective between 90% and 99.99% over a rolling 7- or 30-day window. Latency thresholds are limited to the gateway histogram bucket bounds so attainment is exact. An app can hold at most 10 SLOs.
+   * @returns SLOResponse The SLO was created.
+   * @throws ApiError
+   */
+  public static createSlo({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateSLORequest,
+  }): CancelablePromise<SLOResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/slos',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `The app already has an SLO with this name.`,
+        422: `The app is at its SLO cap; the problem carries limit and observed.`,
+      },
+    });
+  }
+  /**
+   * Get one customer-defined SLO (ADR-747)
+   * Returns one SLO definition. An id belonging to another app returns 404.
+   * @returns SLOResponse The SLO definition.
+   * @throws ApiError
+   */
+  public static getSlo({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * SLO identifier returned when the SLO was created.
+     */
+    id: string,
+  }): CancelablePromise<SLOResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/slos/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Delete a customer-defined SLO (ADR-747)
+   * Removes the SLO and frees a slot against the per-app cap.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteSlo({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * SLO identifier returned when the SLO was created.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/slos/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
       },
     });

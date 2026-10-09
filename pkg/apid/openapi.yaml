@@ -10557,6 +10557,84 @@ paths:
         '204':
           description: "Deleted. Also returned when the metric did not exist: the caller's intent is already satisfied, and a 404 would make a retry of a successful delete look like a failure."
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/slos:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: listSLOs
+      summary: List the app's customer-defined SLOs (ADR-747)
+      description: "Returns every SLO defined on the app, name-ordered. Distinct from GET /v1/apps/{slug}/slo, which reports ADR-082's fixed 99.5% availability panel."
+      tags: [apps]
+      responses:
+        '200':
+          description: The app's SLO definitions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SLOResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: createSLO
+      summary: Define an SLO on the app (ADR-747)
+      description: "Creates an availability or latency SLO with an objective between 90% and 99.99% over a rolling 7- or 30-day window. Latency thresholds are limited to the gateway histogram bucket bounds so attainment is exact. An app can hold at most 10 SLOs."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSLORequest' }
+      responses:
+        '201':
+          description: The SLO was created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SLOResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The app already has an SLO with this name.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The app is at its SLO cap; the problem carries limit and observed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/slos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: "SLO identifier returned when the SLO was created."
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getSLO
+      summary: Get one customer-defined SLO (ADR-747)
+      description: "Returns one SLO definition. An id belonging to another app returns 404."
+      tags: [apps]
+      responses:
+        '200':
+          description: The SLO definition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SLOResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteSLO
+      summary: Delete a customer-defined SLO (ADR-747)
+      description: "Removes the SLO and frees a slot against the per-app cap."
+      tags: [apps]
+      responses:
+        '204':
+          description: The SLO was deleted.
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/pre-auth-observations:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -46739,6 +46817,49 @@ components:
           type: number
           minimum: 0
           example: 1284
+    CreateSLORequest:
+      description: 'Defines a customer SLO on an app (ADR-747).'
+      type: object
+      required: [name, sli, objective_pct, window_days]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,62}$'
+          description: 'Unique per app; lowercase letters, digits, dashes and underscores.'
+          example: checkout-latency
+        sli:
+          type: string
+          enum: [availability, latency]
+          description: 'availability counts non-5xx responses among 2xx and 5xx; latency counts requests completing within latency_threshold_ms.'
+        latency_threshold_ms:
+          type: integer
+          enum: [5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000]
+          description: 'Required for the latency SLI and rejected otherwise; one of the gateway histogram bucket bounds.'
+        objective_pct:
+          type: number
+          format: double
+          minimum: 90
+          maximum: 99.99
+          description: 'Target share of good requests, as a percentage with at most two decimals.'
+          example: 99.9
+        window_days:
+          type: integer
+          enum: [7, 30]
+          description: 'Rolling window over which the error budget is measured.'
+    SLOResponse:
+      description: 'One customer-defined SLO (ADR-747).'
+      type: object
+      required: [id, name, sli, objective_pct, window_days, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: checkout-latency }
+        sli: { type: string, enum: [availability, latency] }
+        latency_threshold_ms:
+          type: integer
+          description: 'Threshold for a latency SLO; absent for availability.'
+        objective_pct: { type: number, format: double, example: 99.9 }
+        window_days: { type: integer, enum: [7, 30] }
+        created_at: { type: string, format: date-time }
     CustomMetricResponse:
       description: "One stored ADR-202 gauge."
       type: object

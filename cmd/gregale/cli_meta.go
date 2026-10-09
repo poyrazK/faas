@@ -136,7 +136,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
 		return "Delivery"
-	case "alerts", "analytics", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
+	case "alerts", "analytics", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "slos", "status", "tail", "throttle-suggestions", "trace":
 		return "Observe"
 	default:
 		return "Core"
@@ -742,6 +742,27 @@ var cliCommands = []cliCommand{
 			}},
 		},
 		Positionals: []string{"<uuid>", "<cents>"},
+	},
+	{
+		Name:    "slos",
+		DocSlug: "slos",
+		Short:   "Customer-defined SLOs and error budgets (slos list|create|rm --app <slug>)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List the app's SLOs", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}},
+			{Name: "create", Short: "Define an availability or latency SLO", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "name", Short: "SLO name, unique per app", Req: true, Value: "NAME"},
+				{Name: "objective", Short: "objective percentage, 90 to 99.99", Req: true, Value: "PCT"},
+				{Name: "sli", Short: "service level indicator", Value: "SLI", ClosedSet: []string{"availability", "latency"}},
+				{Name: "latency-threshold-ms", Short: "latency threshold (5|10|25|50|100|250|500|1000|2000|5000|10000)", Value: "MS"},
+				{Name: "window-days", Short: "rolling window", Value: "DAYS", ClosedSet: []string{"7", "30"}},
+			}},
+			{Name: "rm", Short: "Delete one SLO", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<slo-id>"}},
+		},
 	},
 	{
 		Name:    "alerts",

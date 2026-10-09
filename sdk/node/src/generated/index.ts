@@ -302,6 +302,7 @@ export type { CreateProjectEnvironmentApprovalRequest } from './models/CreatePro
 export type { CreateProjectEnvironmentQualificationRequest } from './models/CreateProjectEnvironmentQualificationRequest.js';
 export type { CreateProjectEnvironmentRequest } from './models/CreateProjectEnvironmentRequest.js';
 export type { CreateQueueBindingRequest } from './models/CreateQueueBindingRequest.js';
+export type { CreateSLORequest } from './models/CreateSLORequest.js';
 export type { CreateTCPListenerRequest } from './models/CreateTCPListenerRequest.js';
 export type { CreateTenantSurfaceRequest } from './models/CreateTenantSurfaceRequest.js';
 export type { CreateTriggerBatchRequest } from './models/CreateTriggerBatchRequest.js';
@@ -1547,6 +1548,7 @@ export type { SidecarTimelineStatus } from './models/SidecarTimelineStatus.js';
 export type { SimulateAutomationRequest } from './models/SimulateAutomationRequest.js';
 export type { SimulateAutomationResponse } from './models/SimulateAutomationResponse.js';
 export type { SLODuration } from './models/SLODuration.js';
+export type { SLOResponse } from './models/SLOResponse.js';
 export type { Slug } from './models/Slug.js';
 export type { SourceRefDeployRequest } from './models/SourceRefDeployRequest.js';
 export type { SourceTarballDeployRequest } from './models/SourceTarballDeployRequest.js';

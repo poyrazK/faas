@@ -596,6 +596,10 @@ from .create_project_environment_request import CreateProjectEnvironmentRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
 from .create_queue_binding_request_workload_class import CreateQueueBindingRequestWorkloadClass
+from .create_slo_request import CreateSLORequest
+from .create_slo_request_latency_threshold_ms import CreateSLORequestLatencyThresholdMs
+from .create_slo_request_sli import CreateSLORequestSli
+from .create_slo_request_window_days import CreateSLORequestWindowDays
 from .create_tcp_listener_request import CreateTCPListenerRequest
 from .create_tenant_surface_request import CreateTenantSurfaceRequest
 from .create_tenant_surface_request_cert_kind import CreateTenantSurfaceRequestCertKind
@@ -2877,6 +2881,9 @@ from .simulate_automation_request_mock_item_outputs import SimulateAutomationReq
 from .simulate_automation_request_mock_outputs import SimulateAutomationRequestMockOutputs
 from .simulate_automation_response import SimulateAutomationResponse
 from .slo_duration import SLODuration
+from .slo_response import SLOResponse
+from .slo_response_sli import SLOResponseSli
+from .slo_response_window_days import SLOResponseWindowDays
 from .source_ref_deploy_request import SourceRefDeployRequest
 from .source_ref_deploy_request_format import SourceRefDeployRequestFormat
 from .source_ref_deploy_request_tag import SourceRefDeployRequestTag
@@ -3773,6 +3780,10 @@ __all__ = (
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
     "CreateQueueBindingRequestWorkloadClass",
+    "CreateSLORequest",
+    "CreateSLORequestLatencyThresholdMs",
+    "CreateSLORequestSli",
+    "CreateSLORequestWindowDays",
     "CreateTCPListenerRequest",
     "CreateTenantSurfaceRequest",
     "CreateTenantSurfaceRequestCertKind",
@@ -5978,6 +5989,9 @@ __all__ = (
     "SimulateAutomationRequestMockOutputs",
     "SimulateAutomationResponse",
     "SLODuration",
+    "SLOResponse",
+    "SLOResponseSli",
+    "SLOResponseWindowDays",
     "SourceRefDeployRequest",
     "SourceRefDeployRequestFormat",
     "SourceRefDeployRequestTag",

@@ -496,6 +496,9 @@ func run(args []string) (status int) {
 		return cmdGithubWebhookSecret(args[1:])
 	case "account":
 		return cmdAccount(args[1:])
+	case "slos":
+		// ADR-747: customer-defined SLO definitions (distinct from `slo`).
+		return cmdSLOs(args[1:])
 	case "alerts":
 		// Tier C: per-app alert rules (list|add|info|update|rm|
 		// rotate-secret). Mirrors `webhooks` for dispatcher shape;

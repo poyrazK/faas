@@ -13,6 +13,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
+| [`slos`](#slos) | Customer-defined SLOs and error budgets (slos list\|create\|rm --app &lt;slug&gt;) |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset\|actions --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`commit`](#commit) | Manage transactional PostgreSQL outbox sources (internal) |
@@ -1337,6 +1338,48 @@ gregale bindings smoke public-api billing --caller-deployment v12 --target-deplo
 Show feature maturity and plan availability
 
 `gregale capabilities`
+
+
+## slos
+
+Customer-defined SLOs and error budgets (slos list|create|rm --app &lt;slug&gt;)
+
+`gregale slos [<subcommand>]`
+
+### slos list
+
+List the app&#39;s SLOs
+
+`gregale slos list --app <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+
+### slos create
+
+Define an availability or latency SLO
+
+`gregale slos create --app <slug> --name <NAME> --objective <PCT> [--sli <SLI>] [--latency-threshold-ms <MS>] [--window-days <DAYS>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--name <NAME>` | SLO name, unique per app | required |
+| `--objective <PCT>` | objective percentage, 90 to 99.99 | required |
+| `--sli <SLI>` | service level indicator | one of `availability` · `latency` |
+| `--latency-threshold-ms <MS>` | latency threshold (5\|10\|25\|50\|100\|250\|500\|1000\|2000\|5000\|10000) |  |
+| `--window-days <DAYS>` | rolling window | one of `7` · `30` |
+
+### slos rm
+
+Delete one SLO
+
+`gregale slos rm --app <slug> <slo-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
 
 
 ## alerts

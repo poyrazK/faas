@@ -2067,6 +2067,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/custom-metrics/{name}", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.putCustomMetric)))
 	mux.HandleFunc("GET /v1/apps/{slug}/custom-metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listCustomMetrics)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/custom-metrics/{name}", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.deleteCustomMetric)))
+	// ADR-747: customer-defined SLO definitions.
+	mux.HandleFunc("GET /v1/apps/{slug}/slos", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listSLOs)))
+	mux.HandleFunc("POST /v1/apps/{slug}/slos", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createSLO))))
+	mux.HandleFunc("GET /v1/apps/{slug}/slos/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getSLO)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/slos/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteSLO)))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOpenAPIDoc))))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/route-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeploymentRoutePolicySnapshot))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.patchOpenAPIDoc))))

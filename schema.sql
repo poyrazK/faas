@@ -12219,6 +12219,29 @@ CREATE TABLE public.app_custom_metrics (
 
 
 --
+-- Name: app_slos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_slos (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    sli text NOT NULL,
+    latency_threshold_ms integer,
+    objective_bp integer NOT NULL,
+    window_days integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_slos_latency_chk CHECK ((((sli = 'availability'::text) AND (latency_threshold_ms IS NULL)) OR ((sli = 'latency'::text) AND (latency_threshold_ms = ANY (ARRAY[5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000]))))),
+    CONSTRAINT app_slos_name_shape CHECK ((name ~ '^[a-z][a-z0-9_-]{0,62}$'::text)),
+    CONSTRAINT app_slos_objective_chk CHECK (((objective_bp >= 9000) AND (objective_bp <= 9999))),
+    CONSTRAINT app_slos_sli_chk CHECK ((sli = ANY (ARRAY['availability'::text, 'latency'::text]))),
+    CONSTRAINT app_slos_window_chk CHECK ((window_days = ANY (ARRAY[7, 30])))
+);
+
+
+--
 -- Name: app_default_domains; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25431,6 +25454,22 @@ ALTER TABLE ONLY public.app_cpu_policy_node_status
 
 ALTER TABLE ONLY public.app_custom_metrics
     ADD CONSTRAINT app_custom_metrics_pkey PRIMARY KEY (app_id, name);
+
+
+--
+-- Name: app_slos app_slos_app_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_slos
+    ADD CONSTRAINT app_slos_app_name_uniq UNIQUE (app_id, name);
+
+
+--
+-- Name: app_slos app_slos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_slos
+    ADD CONSTRAINT app_slos_pkey PRIMARY KEY (id);
 
 
 --
@@ -40933,6 +40972,14 @@ ALTER TABLE ONLY public.app_cpu_policy_node_status
 
 ALTER TABLE ONLY public.app_custom_metrics
     ADD CONSTRAINT app_custom_metrics_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_slos app_slos_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_slos
+    ADD CONSTRAINT app_slos_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

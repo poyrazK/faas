@@ -815,11 +815,16 @@ var methodRouteMap = map[string]string{
 	// The other 5 entries exist because the SDK names them after the
 	// resource noun (AlertRule) rather than the path placeholder
 	// concatenation (AppsSlugAlerts) — same convention as crons.
-	"GET /v1/apps/{slug}/alerts":                     "ListAlertRules",
-	"POST /v1/apps/{slug}/alerts":                    "CreateAlertRule",
-	"GET /v1/apps/{slug}/alerts/{id}":                "GetAlertRule",
-	"PATCH /v1/apps/{slug}/alerts/{id}":              "UpdateAlertRule",
-	"DELETE /v1/apps/{slug}/alerts/{id}":             "DeleteAlertRule",
+	"GET /v1/apps/{slug}/alerts":         "ListAlertRules",
+	"POST /v1/apps/{slug}/alerts":        "CreateAlertRule",
+	"GET /v1/apps/{slug}/alerts/{id}":    "GetAlertRule",
+	"PATCH /v1/apps/{slug}/alerts/{id}":  "UpdateAlertRule",
+	"DELETE /v1/apps/{slug}/alerts/{id}": "DeleteAlertRule",
+	// ADR-747 customer SLOs are named after the resource noun.
+	"GET /v1/apps/{slug}/slos":                       "ListSLOs",
+	"POST /v1/apps/{slug}/slos":                      "CreateSLO",
+	"GET /v1/apps/{slug}/slos/{id}":                  "GetSLO",
+	"DELETE /v1/apps/{slug}/slos/{id}":               "DeleteSLO",
 	"POST /v1/apps/{slug}/alerts/{id}/rotate-secret": "RotateAlertRuleSecret",
 	// ADR-123 PR-D — operator pane for one rule's recent
 	// alert_deliveries rows. ?include_test=true toggles the IsTest

@@ -297,6 +297,7 @@ export type { CreateProjectEnvironmentApprovalRequest } from './CreateProjectEnv
 export type { CreateProjectEnvironmentQualificationRequest } from './CreateProjectEnvironmentQualificationRequest.js';
 export type { CreateProjectEnvironmentRequest } from './CreateProjectEnvironmentRequest.js';
 export type { CreateQueueBindingRequest } from './CreateQueueBindingRequest.js';
+export type { CreateSLORequest } from './CreateSLORequest.js';
 export type { CreateTCPListenerRequest } from './CreateTCPListenerRequest.js';
 export type { CreateTenantSurfaceRequest } from './CreateTenantSurfaceRequest.js';
 export type { CreateTriggerBatchRequest } from './CreateTriggerBatchRequest.js';
@@ -1471,6 +1472,7 @@ export type { RuntimePolicyStatusResponse } from './RuntimePolicyStatusResponse.
 export type { RuntimeReleaseResponse } from './RuntimeReleaseResponse.js';
 export type { RuntimeUpgradePreviewResponse } from './RuntimeUpgradePreviewResponse.js';
 export type { SLODuration } from './SLODuration.js';
+export type { SLOResponse } from './SLOResponse.js';
 export type { SaveAutomationDraftRequest } from './SaveAutomationDraftRequest.js';
 export type { SaveProfileDeploymentPolicyRequest } from './SaveProfileDeploymentPolicyRequest.js';
 export type { SaveProfileInvestigationRequest } from './SaveProfileInvestigationRequest.js';

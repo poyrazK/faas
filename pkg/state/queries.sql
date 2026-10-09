@@ -17282,3 +17282,23 @@ FROM recipients WHERE cardinality(ids)>0 ON CONFLICT(event,source_id) DO NOTHING
 SELECT d.scope::text FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=sqlc.arg(deployment_id)::text::uuid AND a.id=sqlc.arg(app_id)::text::uuid
  AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted';
+
+-- ADR-747: customer-defined SLO definitions (apid is the only writer).
+
+-- name: InsertAppSLO :one
+-- The per-app cap is enforced inside the insert, so two concurrent creates
+-- cannot both pass a count taken before either row exists.
+INSERT INTO app_slos (account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days)
+SELECT sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(name)::text, sqlc.arg(sli)::text,
+ sqlc.narg(latency_threshold_ms)::integer, sqlc.arg(objective_bp)::integer, sqlc.arg(window_days)::integer
+WHERE (SELECT count(*) FROM app_slos WHERE app_id = sqlc.arg(app_id)::uuid) < sqlc.arg(max_per_app)::integer
+RETURNING *;
+
+-- name: ListAppSLOs :many
+SELECT * FROM app_slos WHERE app_id = sqlc.arg(app_id)::uuid ORDER BY name;
+
+-- name: GetAppSLO :one
+SELECT * FROM app_slos WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid;
+
+-- name: DeleteAppSLO :execrows
+DELETE FROM app_slos WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid;

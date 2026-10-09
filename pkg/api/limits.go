@@ -9437,3 +9437,19 @@ const (
 	EventConsumerExecutionRootsMax       = 1000
 	EventConsumerExecutionInvocationsMax = 5000
 )
+
+// Customer-defined SLOs (ADR-747). The latency thresholds are the gateway
+// request-duration histogram bucket bounds, so attainment is exact; the
+// rollup backfills at most SLORollupBackfillHours from Prometheus.
+const (
+	MaxSLOsPerApp          = 10
+	SLOObjectiveMinBP      = 9000
+	SLOObjectiveMaxBP      = 9999
+	SLORollupBackfillHours = 14 * 24
+)
+
+// SLOLatencyThresholdsMS and SLOWindowDays are the closed sets app_slos accepts.
+var (
+	SLOLatencyThresholdsMS = []int{5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000}
+	SLOWindowDays          = []int{7, 30}
+)
