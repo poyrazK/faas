@@ -127,6 +127,40 @@ func TestSimulateEvaluatesMatchConditions(t *testing.T) {
 	}
 }
 
+// adr: 833 — in_list conditions evaluate against the lists the caller
+// supplies; a list that was not supplied never matches, as on the gateway.
+func TestSimulateEvaluatesListConditions(t *testing.T) {
+	rules := append(proposalTestRules(), api.EdgeRuleResponse{
+		ID: "office-maint", AppID: "app", Enabled: true, Kind: "maintenance",
+		MatchHost: "*", MatchPath: "/old/*", Priority: 1,
+		Match:  &api.EdgeRuleMatchExpr{Field: "client_ip", Op: "in_list", List: "office"},
+		Action: json.RawMessage(`{"maintenance":{"message":"office only"}}`),
+	})
+	if got := edgeruletrace.ReferencedEdgeRuleLists(rules); len(got) != 1 || got[0] != "office" {
+		t.Fatalf("referenced lists = %v", got)
+	}
+	office := []api.EdgeRuleListResponse{{Name: "office", Kind: "ip", Items: []string{"203.0.113.0/24"}}}
+	for name, tc := range map[string]struct {
+		ip    string
+		lists []api.EdgeRuleListResponse
+		want  string
+	}{
+		"office ip":       {"203.0.113.9", office, "maintenance"},
+		"other ip":        {"198.51.100.9", office, "redirect"},
+		"list not loaded": {"203.0.113.9", nil, "redirect"},
+	} {
+		input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/old/page", Method: http.MethodGet,
+			AppMaintenanceLoaded: true, ClientIP: tc.ip, EdgeRuleLists: tc.lists}
+		result, err := edgeruletrace.Simulate(input, rules)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if result.Simulation.Outcome != tc.want {
+			t.Fatalf("%s: outcome = %q, want %q", name, result.Simulation.Outcome, tc.want)
+		}
+	}
+}
+
 // adr: 830 — a log-mode rule is reported as logged and leaves the outcome to
 // the enforced rules, exactly as the gateway counts it without acting.
 func TestSimulateLogModeRuleDoesNotChangeOutcome(t *testing.T) {

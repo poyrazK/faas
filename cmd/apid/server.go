@@ -2558,6 +2558,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEdgeRuleSetVersions))))
 	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/versions/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleSetVersion))))
 	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/stats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleStats))))
+	// ADR-833 reusable edge-rule lists (account scope).
+	mux.HandleFunc("GET /v1/edge-rule-lists", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEdgeRuleLists))))
+	mux.HandleFunc("POST /v1/edge-rule-lists", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createEdgeRuleList)))))
+	mux.HandleFunc("GET /v1/edge-rule-lists/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleList))))
+	mux.HandleFunc("PATCH /v1/edge-rule-lists/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateEdgeRuleList))))
+	mux.HandleFunc("DELETE /v1/edge-rule-lists/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteEdgeRuleList))))
 	mux.HandleFunc("POST /v1/apps/{slug}/edge-rules/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rollbackEdgeRules)))))
 
 	// Traffic mirroring (issue #72 / ADR-125 PR-A2). Six routes

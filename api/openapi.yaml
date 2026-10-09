@@ -23627,6 +23627,130 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/edge-rule-lists:
+    get:
+      tags: [edge_rules]
+      operationId: listEdgeRuleLists
+      summary: List the account's reusable edge-rule lists.
+      description: |
+        ADR-833. Items are omitted here; fetch one list for its items.
+        referenced_by names the rules whose match conditions use the list.
+      responses:
+        '200':
+          description: The account's lists, by name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListEdgeRuleListsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [edge_rules]
+      operationId: createEdgeRuleList
+      summary: Create a reusable edge-rule list.
+      description: |
+        ADR-833. Items are validated for the list kind and stored
+        canonicalized, deduplicated and sorted. Lists per account and items
+        per list are plan limits.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEdgeRuleListRequest' }
+      responses:
+        '201':
+          description: The created list.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: plan_limit_edge_rule_lists | plan_limit_edge_rule_list_items'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: 'code: edge_rule_list_exists'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/edge-rule-lists/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{0,63}$' }
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeRuleList
+      summary: Get one edge-rule list with its items.
+      responses:
+        '200':
+          description: The list.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: 'code: edge_rule_list_not_found'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [edge_rules]
+      operationId: updateEdgeRuleList
+      summary: Edit an edge-rule list.
+      description: |
+        ADR-833. items replaces the list; add and remove edit it in place
+        (remove applies after add) and cannot be combined with items.
+        Gateways pick up the change for every referencing rule within a few
+        seconds; no rule-set version is recorded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateEdgeRuleListRequest' }
+      responses:
+        '200':
+          description: The updated list.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: plan_limit_edge_rule_list_items'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: 'code: edge_rule_list_not_found'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [edge_rules]
+      operationId: deleteEdgeRuleList
+      summary: Delete an unreferenced edge-rule list.
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: 'code: edge_rule_list_not_found'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: 'code: edge_rule_list_in_use (rules still reference the list)'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/edge-rules:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -53240,7 +53364,8 @@ components:
         is exactly one of all, any, not, or a field/op leaf. Fields: method,
         path, host, client_ip, country, header:<name>, cookie:<name>,
         query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,
-        exists, missing, regex (RE2), cidr (client_ip only). Depth at most 4,
+        exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-833:
+        list names an account list whose kind fits the field). Depth at most 4,
         at most 32 nodes, 64 values per leaf, values and regexes at most 256
         bytes. An untrusted client IP or country is absent.
       type: object
@@ -53255,11 +53380,70 @@ components:
         field: { type: string, example: "cookie:beta" }
         op:
           type: string
-          enum: [eq, ne, in, not_in, prefix, suffix, contains, exists, missing, regex, cidr]
+          enum: [eq, ne, in, not_in, prefix, suffix, contains, exists, missing, regex, cidr, in_list]
         value: { type: string, maxLength: 256 }
         values:
           type: array
           maxItems: 64
+          items: { type: string, maxLength: 256 }
+        list: { type: string, description: Account list name for op in_list. }
+
+    EdgeRuleListResponse:
+      description: A reusable account-level list (ADR-833).
+      type: object
+      required: [id, name, kind, item_count, referenced_by, created_at, updated_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [ip, country, host, string] }
+        description: { type: string }
+        item_count: { type: integer, minimum: 0 }
+        items:
+          type: array
+          description: Present when one list is fetched.
+          items: { type: string }
+        referenced_by:
+          type: array
+          description: IDs of rules whose match conditions use the list.
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ListEdgeRuleListsResponse:
+      type: object
+      required: [lists]
+      properties:
+        lists:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleListResponse' }
+
+    CreateEdgeRuleListRequest:
+      type: object
+      required: [name, kind]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{0,63}$' }
+        kind:
+          type: string
+          enum: [ip, country, host, string]
+          description: ip (addresses and CIDRs, for client_ip), country (ISO 3166-1 alpha-2), host (exact hosts and *.suffix patterns), string (exact values, for path, header, cookie and query fields).
+        description: { type: string, maxLength: 500 }
+        items:
+          type: array
+          items: { type: string, maxLength: 256 }
+
+    UpdateEdgeRuleListRequest:
+      type: object
+      properties:
+        description: { type: string, maxLength: 500 }
+        items:
+          type: array
+          description: Replace every item. Cannot be combined with add or remove.
+          items: { type: string, maxLength: 256 }
+        add:
+          type: array
+          items: { type: string, maxLength: 256 }
+        remove:
+          type: array
           items: { type: string, maxLength: 256 }
 
     EdgeRuleStatsResponse:

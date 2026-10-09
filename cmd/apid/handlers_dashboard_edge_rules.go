@@ -137,6 +137,17 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			for _, rule := range rules {
 				apiRules = append(apiRules, edgeRuleResponse(rule))
 			}
+			if names := edgeruletrace.ReferencedEdgeRuleLists(apiRules); len(names) > 0 {
+				if store, ok := s.store.(state.EdgeRuleListStore); ok {
+					lists, listErr := store.EdgeRuleListsByName(ctx, acct.ID, names)
+					if listErr != nil {
+						log.Warn("dashboard edge rules: load edge rule lists", "account_id", acct.ID, "err", listErr)
+					}
+					for _, l := range lists {
+						traceContext.EdgeRuleLists = append(traceContext.EdgeRuleLists, edgeRuleListResponse(l, nil, true))
+					}
+				}
+			}
 			result, traceErr := edgeruletrace.Simulate(traceContext, apiRules)
 			if traceErr != nil {
 				data.Trace.ErrorMessage = "The request could not be simulated. Check the request fields and try again."

@@ -223,6 +223,17 @@ func cmdEdgeRulesTrace(args []string) int {
 		}
 		input.CorsPresets = presets.Presets
 	}
+	if names := edgeruletrace.ReferencedEdgeRuleLists(contextRules); len(names) > 0 {
+		for _, name := range names {
+			list, listErr := client.GetEdgeRuleList(context.Background(), name)
+			if listErr != nil && !isNotFound(listErr) {
+				return printErr("Edge rule list lookup failed", listErr)
+			}
+			if listErr == nil {
+				input.EdgeRuleLists = append(input.EdgeRuleLists, list)
+			}
+		}
+	}
 	if !proposal.Empty() {
 		comparison, cmpErr := edgeruletrace.SimulateProposal(input, rules, proposal, time.Now())
 		if cmpErr != nil {

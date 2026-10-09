@@ -432,6 +432,9 @@ func run(args []string) (status int) {
 		// itself is cmdEdgeRules. --json round-trips through the
 		// pkg/api SDK methods (ListEdgeRules / CreateEdgeRule / etc.).
 		return cmdEdgeRules(args[1:])
+	case "edge-rule-lists":
+		// ADR-833 reusable lists referenced from edge-rule match conditions.
+		return cmdEdgeRuleLists(args[1:])
 	case "openapi":
 		// Issue #976 / ADR-122 / SAFE-RELEASES-D: pre-publish
 		// schema-drift gate. Single subcommand `diff`

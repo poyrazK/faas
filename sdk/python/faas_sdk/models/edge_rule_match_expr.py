@@ -18,7 +18,8 @@ class EdgeRuleMatchExpr:
     is exactly one of all, any, not, or a field/op leaf. Fields: method,
     path, host, client_ip, country, header:<name>, cookie:<name>,
     query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,
-    exists, missing, regex (RE2), cidr (client_ip only). Depth at most 4,
+    exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-833:
+    list names an account list whose kind fits the field). Depth at most 4,
     at most 32 nodes, 64 values per leaf, values and regexes at most 256
     bytes. An untrusted client IP or country is absent.
 
@@ -31,7 +32,8 @@ class EdgeRuleMatchExpr:
     is exactly one of all, any, not, or a field/op leaf. Fields: method,
     path, host, client_ip, country, header:<name>, cookie:<name>,
     query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,
-    exists, missing, regex (RE2), cidr (client_ip only). Depth at most 4,
+    exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-833:
+    list names an account list whose kind fits the field). Depth at most 4,
     at most 32 nodes, 64 values per leaf, values and regexes at most 256
     bytes. An untrusted client IP or country is absent.
     """
@@ -39,6 +41,8 @@ class EdgeRuleMatchExpr:
     op: EdgeRuleMatchExprOp | Unset = UNSET
     value: str | Unset = UNSET
     values: list[str] | Unset = UNSET
+    list_: str | Unset = UNSET
+    """Account list name for op in_list."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -72,6 +76,8 @@ class EdgeRuleMatchExpr:
         if not isinstance(self.values, Unset):
             values = self.values
 
+        list_ = self.list_
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -89,6 +95,8 @@ class EdgeRuleMatchExpr:
             field_dict["value"] = value
         if values is not UNSET:
             field_dict["values"] = values
+        if list_ is not UNSET:
+            field_dict["list"] = list_
 
         return field_dict
 
@@ -133,6 +141,8 @@ class EdgeRuleMatchExpr:
 
         values = cast(list[str], d.pop("values", UNSET))
 
+        list_ = d.pop("list", UNSET)
+
         edge_rule_match_expr = cls(
             all_=all_,
             any_=any_,
@@ -141,6 +151,7 @@ class EdgeRuleMatchExpr:
             op=op,
             value=value,
             values=values,
+            list_=list_,
         )
 
         edge_rule_match_expr.additional_properties = d

@@ -420,6 +420,10 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.validateEdgeRuleMatchLists(r.Context(), acct.ID, req.Match); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.validateEdgeRuleAsyncDestinations(r.Context(), app.ID, acct.ID, req.Kind, req.Action); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -903,6 +907,10 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	if prob := api.ValidateEdgeRuleMatch(req.Match); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.validateEdgeRuleMatchLists(r.Context(), acct.ID, req.Match); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}

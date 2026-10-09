@@ -2,13 +2,17 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CreateEdgeRuleListRequest } from '../models/CreateEdgeRuleListRequest.js';
 import type { CreateEdgeRuleRequest } from '../models/CreateEdgeRuleRequest.js';
 import type { DeploymentRoutePolicySnapshotResponse } from '../models/DeploymentRoutePolicySnapshotResponse.js';
+import type { EdgeRuleListResponse } from '../models/EdgeRuleListResponse.js';
 import type { EdgeRuleResponse } from '../models/EdgeRuleResponse.js';
 import type { EdgeRuleSetVersionResponse } from '../models/EdgeRuleSetVersionResponse.js';
 import type { EdgeRuleStatsResponse } from '../models/EdgeRuleStatsResponse.js';
+import type { ListEdgeRuleListsResponse } from '../models/ListEdgeRuleListsResponse.js';
 import type { RollbackEdgeRulesRequest } from '../models/RollbackEdgeRulesRequest.js';
 import type { ThrottleSuggestionsResponse } from '../models/ThrottleSuggestionsResponse.js';
+import type { UpdateEdgeRuleListRequest } from '../models/UpdateEdgeRuleListRequest.js';
 import type { UpdateEdgeRuleRequest } from '../models/UpdateEdgeRuleRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -66,6 +70,153 @@ export class EdgeRulesService {
       url: '/v1/edge-rules',
       errors: {
         401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the account's reusable edge-rule lists.
+   * ADR-833. Items are omitted here; fetch one list for its items.
+   * referenced_by names the rules whose match conditions use the list.
+   *
+   * @returns ListEdgeRuleListsResponse The account's lists, by name.
+   * @throws ApiError
+   */
+  public static listEdgeRuleLists(): CancelablePromise<ListEdgeRuleListsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/edge-rule-lists',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Create a reusable edge-rule list.
+   * ADR-833. Items are validated for the list kind and stored
+   * canonicalized, deduplicated and sorted. Lists per account and items
+   * per list are plan limits.
+   *
+   * @returns EdgeRuleListResponse The created list.
+   * @throws ApiError
+   */
+  public static createEdgeRuleList({
+    requestBody,
+  }: {
+    requestBody: CreateEdgeRuleListRequest,
+  }): CancelablePromise<EdgeRuleListResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/edge-rule-lists',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: plan_limit_edge_rule_lists | plan_limit_edge_rule_list_items`,
+        409: `code: edge_rule_list_exists`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get one edge-rule list with its items.
+   * @returns EdgeRuleListResponse The list.
+   * @throws ApiError
+   */
+  public static getEdgeRuleList({
+    name,
+  }: {
+    name: string,
+  }): CancelablePromise<EdgeRuleListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/edge-rule-lists/{name}',
+      path: {
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: edge_rule_list_not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Edit an edge-rule list.
+   * ADR-833. items replaces the list; add and remove edit it in place
+   * (remove applies after add) and cannot be combined with items.
+   * Gateways pick up the change for every referencing rule within a few
+   * seconds; no rule-set version is recorded.
+   *
+   * @returns EdgeRuleListResponse The updated list.
+   * @throws ApiError
+   */
+  public static updateEdgeRuleList({
+    name,
+    requestBody,
+  }: {
+    name: string,
+    requestBody: UpdateEdgeRuleListRequest,
+  }): CancelablePromise<EdgeRuleListResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/edge-rule-lists/{name}',
+      path: {
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: plan_limit_edge_rule_list_items`,
+        404: `code: edge_rule_list_not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete an unreferenced edge-rule list.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteEdgeRuleList({
+    name,
+  }: {
+    name: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/edge-rule-lists/{name}',
+      path: {
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: edge_rule_list_not_found`,
+        409: `code: edge_rule_list_in_use (rules still reference the list)`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

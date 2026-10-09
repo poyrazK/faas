@@ -14896,6 +14896,25 @@ CREATE TABLE public.edge_rule_hit_counts (
 
 
 --
+-- Name: edge_rule_lists; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_rule_lists (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    kind text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    items text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT edge_rule_lists_description_check CHECK ((length(description) <= 500)),
+    CONSTRAINT edge_rule_lists_kind_check CHECK ((kind = ANY (ARRAY['ip'::text, 'country'::text, 'host'::text, 'string'::text]))),
+    CONSTRAINT edge_rule_lists_name_check CHECK ((name ~ '^[a-z0-9][a-z0-9_-]{0,63}$'::text))
+);
+
+
+--
 -- Name: edge_rule_set_versions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25828,6 +25847,22 @@ ALTER TABLE ONLY public.edge_rule_change_log
 
 ALTER TABLE ONLY public.edge_rule_hit_counts
     ADD CONSTRAINT edge_rule_hit_counts_pkey PRIMARY KEY (rule_id, bucket_start, outcome);
+
+
+--
+-- Name: edge_rule_lists edge_rule_lists_account_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_lists
+    ADD CONSTRAINT edge_rule_lists_account_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: edge_rule_lists edge_rule_lists_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_lists
+    ADD CONSTRAINT edge_rule_lists_pkey PRIMARY KEY (id);
 
 
 --
@@ -41605,6 +41640,14 @@ ALTER TABLE ONLY public.domain_doctor_observations
 
 ALTER TABLE ONLY public.domain_doctor_observations
     ADD CONSTRAINT domain_doctor_observations_surface_id_fkey FOREIGN KEY (surface_id) REFERENCES public.tenant_surfaces(id) ON DELETE SET NULL;
+
+
+--
+-- Name: edge_rule_lists edge_rule_lists_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_lists
+    ADD CONSTRAINT edge_rule_lists_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

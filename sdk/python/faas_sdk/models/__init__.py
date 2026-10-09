@@ -511,6 +511,8 @@ from .create_deployment_request_tag_type_2_type_1 import CreateDeploymentRequest
 from .create_deployment_request_tag_type_3_type_1 import CreateDeploymentRequestTagType3Type1
 from .create_dev_bridge_request import CreateDevBridgeRequest
 from .create_dev_bridge_response import CreateDevBridgeResponse
+from .create_edge_rule_list_request import CreateEdgeRuleListRequest
+from .create_edge_rule_list_request_kind import CreateEdgeRuleListRequestKind
 from .create_edge_rule_request import CreateEdgeRuleRequest
 from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
@@ -854,6 +856,8 @@ from .edge_rule_jwt_action import EdgeRuleJWTAction
 from .edge_rule_jwt_action_algorithms_item import EdgeRuleJWTActionAlgorithmsItem
 from .edge_rule_jwt_action_required_claims import EdgeRuleJWTActionRequiredClaims
 from .edge_rule_limit_action import EdgeRuleLimitAction
+from .edge_rule_list_response import EdgeRuleListResponse
+from .edge_rule_list_response_kind import EdgeRuleListResponseKind
 from .edge_rule_maintenance_action import EdgeRuleMaintenanceAction
 from .edge_rule_match_expr import EdgeRuleMatchExpr
 from .edge_rule_match_expr_op import EdgeRuleMatchExprOp
@@ -1409,6 +1413,7 @@ from .list_delayed_tasks_response import ListDelayedTasksResponse
 from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
 from .list_dev_bridges_response import ListDevBridgesResponse
+from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
 from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_event_recoveries_mode import ListEventRecoveriesMode
 from .list_event_recoveries_state import ListEventRecoveriesState
@@ -2855,6 +2860,7 @@ from .update_deployment_open_api_doc_response_200_doc import UpdateDeploymentOpe
 from .update_deployment_open_api_doc_response_200_source import UpdateDeploymentOpenAPIDocResponse200Source
 from .update_deployment_request import UpdateDeploymentRequest
 from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
+from .update_edge_rule_list_request import UpdateEdgeRuleListRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
 from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
 from .update_edge_rule_request_mode import UpdateEdgeRuleRequestMode
@@ -3540,6 +3546,8 @@ __all__ = (
     "CreateDeployTokenRequest",
     "CreateDevBridgeRequest",
     "CreateDevBridgeResponse",
+    "CreateEdgeRuleListRequest",
+    "CreateEdgeRuleListRequestKind",
     "CreateEdgeRuleRequest",
     "CreateEdgeRuleRequestKind",
     "CreateEdgeRuleRequestMatchHeaders",
@@ -3867,6 +3875,8 @@ __all__ = (
     "EdgeRuleJWTActionAlgorithmsItem",
     "EdgeRuleJWTActionRequiredClaims",
     "EdgeRuleLimitAction",
+    "EdgeRuleListResponse",
+    "EdgeRuleListResponseKind",
     "EdgeRuleMaintenanceAction",
     "EdgeRuleMatchExpr",
     "EdgeRuleMatchExprOp",
@@ -4418,6 +4428,7 @@ __all__ = (
     "ListDeploymentAuditResponse",
     "ListDeployTokensResponse",
     "ListDevBridgesResponse",
+    "ListEdgeRuleListsResponse",
     "ListEventDeliveriesState",
     "ListEventRecoveriesMode",
     "ListEventRecoveriesState",
@@ -5804,6 +5815,7 @@ __all__ = (
     "UpdateDeploymentOpenAPIDocResponse200Source",
     "UpdateDeploymentRequest",
     "UpdateDeploymentTrafficRequest",
+    "UpdateEdgeRuleListRequest",
     "UpdateEdgeRuleRequest",
     "UpdateEdgeRuleRequestMatchHeaders",
     "UpdateEdgeRuleRequestMode",

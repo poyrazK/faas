@@ -48,6 +48,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`preview`](#preview) | Manage preview environments for pull requests |
 | [`flags`](#flags) | Release application behavior to selected customers |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
+| [`edge-rule-lists`](#edge-rule-lists) | Reusable IP/country/host/string lists for edge-rule match conditions (edge-rule-lists list\|get\|create\|update\|rm) |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|history\|rollback\|stats --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`routes`](#routes) | Analyze route changes, migrations, lifecycle and production policies |
@@ -5477,6 +5478,63 @@ Restore linked credentials and hostnames
 | Flag | Meaning | |
 |---|---|---|
 | `--id <UUID>` | platform tenant UUID | required |
+
+
+## edge-rule-lists
+
+Reusable IP/country/host/string lists for edge-rule match conditions (edge-rule-lists list|get|create|update|rm)
+
+`gregale edge-rule-lists [<subcommand>]`
+
+### edge-rule-lists list
+
+List the account&#39;s edge-rule lists
+
+### edge-rule-lists get
+
+Show one list with its items
+
+`gregale edge-rule-lists get <name>`
+
+### edge-rule-lists create
+
+Create a list
+
+`gregale edge-rule-lists create --kind <KIND> [--item <VALUE>] [--items-file <path|->] [--description <TEXT>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--kind <KIND>` | list kind | required; one of `ip` · `country` · `host` · `string` |
+| `--item <VALUE>` | list item (repeat) |  |
+| `--items-file <path|->` | file with one item per line (# comments allowed), or - for stdin |  |
+| `--description <TEXT>` | free-text description |  |
+
+Examples:
+
+```sh
+gregale edge-rule-lists create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1
+gregale edge-rule-lists create blocked --kind country --items-file countries.txt
+gregale edge-rules create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'
+```
+
+### edge-rule-lists update
+
+Edit a list; referencing rules pick up the change within seconds
+
+`gregale edge-rule-lists update [--add <VALUE>] [--remove <VALUE>] [--replace-file <path|->] [--description <TEXT>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--add <VALUE>` | item to add (repeat) |  |
+| `--remove <VALUE>` | item to remove (repeat) |  |
+| `--replace-file <path|->` | replace every item from a file, or - for stdin |  |
+| `--description <TEXT>` | new description |  |
+
+### edge-rule-lists rm
+
+Delete a list no rule references
+
+`gregale edge-rule-lists rm <name>`
 
 
 ## edge-rules

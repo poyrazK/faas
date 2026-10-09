@@ -1,7 +1,7 @@
 from typing import Literal
 
 EdgeRuleMatchExprOp = Literal[
-    "cidr", "contains", "eq", "exists", "in", "missing", "ne", "not_in", "prefix", "regex", "suffix"
+    "cidr", "contains", "eq", "exists", "in", "in_list", "missing", "ne", "not_in", "prefix", "regex", "suffix"
 ]
 
 EDGE_RULE_MATCH_EXPR_OP_VALUES: set[EdgeRuleMatchExprOp] = {
@@ -10,6 +10,7 @@ EDGE_RULE_MATCH_EXPR_OP_VALUES: set[EdgeRuleMatchExprOp] = {
     "eq",
     "exists",
     "in",
+    "in_list",
     "missing",
     "ne",
     "not_in",

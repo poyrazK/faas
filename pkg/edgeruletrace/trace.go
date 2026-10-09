@@ -55,6 +55,10 @@ type Input struct {
 	// rules. Missing or cross-account presets remain incomplete instead of
 	// being guessed.
 	CorsPresets []api.CorsPresetResponse
+	// EdgeRuleLists supplies the account lists (with items) that rule
+	// conditions reference through in_list (ADR-833). A referenced list
+	// missing here never matches, as on the gateway.
+	EdgeRuleLists []api.EdgeRuleListResponse
 	// AppCORSDefaultsLoaded distinguishes a known-disabled app setting from
 	// app metadata that was not available to the caller. When a request has an
 	// Origin but no matching edge-rule CORS rule, missing app settings stop the
@@ -2468,7 +2472,7 @@ func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, 
 	if rule.Match == nil {
 		return true
 	}
-	program, err := api.CompileEdgeRuleMatch(rule.Match)
+	program, err := api.CompileEdgeRuleMatchWithLists(rule.Match, traceEdgeRuleLists(rule.Match, input.EdgeRuleLists))
 	if err != nil {
 		return false
 	}
@@ -2476,6 +2480,43 @@ func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, 
 		Method: method, Path: requestPath, Host: input.Host, Headers: headers,
 		ClientIP: net.ParseIP(input.ClientIP), Country: input.Country,
 	})
+}
+
+// ReferencedEdgeRuleLists returns the distinct list names the rules'
+// conditions reference, so callers load only those (ADR-833).
+func ReferencedEdgeRuleLists(rules []api.EdgeRuleResponse) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, r := range rules {
+		for _, name := range api.EdgeRuleMatchListRefs(r.Match) {
+			if _, ok := seen[name]; !ok {
+				seen[name] = struct{}{}
+				out = append(out, name)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// traceEdgeRuleLists compiles the supplied lists that expr references.
+func traceEdgeRuleLists(expr *api.EdgeRuleMatchExpr, supplied []api.EdgeRuleListResponse) api.EdgeRuleLists {
+	names := api.EdgeRuleMatchListRefs(expr)
+	if len(names) == 0 {
+		return nil
+	}
+	out := make(api.EdgeRuleLists, len(names))
+	for _, name := range names {
+		for _, l := range supplied {
+			if l.Name != name {
+				continue
+			}
+			if compiled, err := api.CompileEdgeRuleList(l.Kind, l.Items); err == nil {
+				out[name] = compiled
+			}
+		}
+	}
+	return out
 }
 
 // HostMatches is the gateway's match_host comparison (case-insensitive,

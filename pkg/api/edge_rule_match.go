@@ -87,6 +87,9 @@ type matchNode struct {
 type matchCompiler struct {
 	nodes int
 	lists EdgeRuleLists
+	// shapeOnly accepts unresolved list references (ValidateEdgeRuleMatch);
+	// such a program is never evaluated.
+	shapeOnly bool
 }
 
 // CompileEdgeRuleMatch validates expr and compiles it. A nil expr compiles
@@ -118,9 +121,17 @@ func NeverMatchingEdgeRuleProgram() *EdgeRuleMatchProgram {
 }
 
 // ValidateEdgeRuleMatch reports a validation Problem for an invalid
-// condition (nil is valid).
+// condition (nil is valid). It checks shape only: in_list references are
+// accepted unresolved; apid resolves them with ValidateEdgeRuleMatchWithLists.
 func ValidateEdgeRuleMatch(expr *EdgeRuleMatchExpr) *Problem {
-	return ValidateEdgeRuleMatchWithLists(expr, nil)
+	if expr == nil {
+		return nil
+	}
+	c := &matchCompiler{shapeOnly: true}
+	if _, err := c.node(*expr, 1, "match"); err != nil {
+		return ErrValidation(err.Error())
+	}
+	return nil
 }
 
 // ValidateEdgeRuleMatchWithLists is ValidateEdgeRuleMatch with in_list
@@ -280,8 +291,14 @@ func (c *matchCompiler) listLeaf(n matchNode, e EdgeRuleMatchExpr, at string) (m
 	if e.List == "" || e.Value != "" || len(e.Values) > 0 {
 		return matchNode{}, fmt.Errorf("%s: op in_list takes a list name and no value", at)
 	}
+	if err := ValidateEdgeRuleListName(e.List); err != nil {
+		return matchNode{}, fmt.Errorf("%s: %w", at, err)
+	}
 	list, ok := c.lists[e.List]
 	if !ok || list == nil {
+		if c.shapeOnly {
+			return n, nil
+		}
 		return matchNode{}, fmt.Errorf("%s: unknown list %q", at, e.List)
 	}
 	if !edgeRuleListFits(list.Kind, n.field) {
@@ -361,6 +378,9 @@ func (n *matchNode) evalLeaf(in EdgeRuleMatchInput) bool {
 		return !present
 	}
 	if !present {
+		return false
+	}
+	if n.op == "in_list" && n.list == nil {
 		return false
 	}
 	if n.op == "in_list" && n.field == fieldClientIP {

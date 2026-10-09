@@ -131,9 +131,17 @@ func TestEdgeRuleMatchInListValidation(t *testing.T) {
 			t.Errorf("case %d: err=%v, want %q", i, err, tc.wantErr)
 		}
 	}
-	// Without lists, any in_list reference fails to compile.
-	if _, err := CompileEdgeRuleMatch(&EdgeRuleMatchExpr{Field: "client_ip", Op: "in_list", List: "office"}); err == nil {
+	// Without lists, any in_list reference fails to compile, but passes the
+	// shape-only check the CLI runs before sending.
+	ref := &EdgeRuleMatchExpr{Field: "client_ip", Op: "in_list", List: "office"}
+	if _, err := CompileEdgeRuleMatch(ref); err == nil {
 		t.Fatal("in_list compiled without lists")
+	}
+	if prob := ValidateEdgeRuleMatch(ref); prob != nil {
+		t.Fatalf("shape-only validation rejected a list reference: %v", prob.Detail)
+	}
+	if prob := ValidateEdgeRuleMatch(&EdgeRuleMatchExpr{Field: "client_ip", Op: "in_list", List: "Bad Name"}); prob == nil {
+		t.Fatal("shape-only validation accepted an invalid list name")
 	}
 }
 

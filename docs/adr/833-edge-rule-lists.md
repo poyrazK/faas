@@ -18,7 +18,9 @@ account-level lists referenced from rule expressions.
    account) and typed: `ip` (addresses and CIDRs), `country` (ISO 3166-1
    alpha-2), `host` (exact hosts and `*.suffix` patterns) or `string` (exact
    values). Items are validated and canonicalized on write. Counts are plan
-   limits in `pkg/api/limits.go` (lists per account, items per list).
+   limits in `pkg/api/limits.go`: `EdgeRuleListsPerAccount` /
+   `EdgeRuleListMaxItems` are Free 0/0 · Hobby 5/100 · Pro 20/1,000 ·
+   Scale 100/10,000.
 
 2. **Reference:** a condition leaf uses `{"op": "in_list", "list": "<name>"}`
    on a field the list type fits: `client_ip` for `ip`, `country` for

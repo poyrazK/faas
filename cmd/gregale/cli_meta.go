@@ -2284,6 +2284,32 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "edge-rule-lists",
+		DocSlug: "edge-rules",
+		Short:   "Reusable IP/country/host/string lists for edge-rule match conditions (edge-rule-lists list|get|create|update|rm)",
+		Subcommands: []cliSub{
+			{Name: subList, Short: "List the account's edge-rule lists"},
+			{Name: subGet, Short: "Show one list with its items", Positionals: []string{"<name>"}},
+			{Name: subCreate, Short: "Create a list", Positionals: []string{"<name>"}, Examples: []string{
+				"gregale edge-rule-lists create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1",
+				"gregale edge-rule-lists create blocked --kind country --items-file countries.txt",
+				`gregale edge-rules create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'`,
+			}, Flags: []cliFlag{
+				{Name: "kind", Short: "list kind", Value: "KIND", Req: true, ClosedSet: []string{"ip", "country", "host", "string"}},
+				{Name: "item", Short: "list item (repeat)", Value: "VALUE"},
+				{Name: "items-file", Short: "file with one item per line (# comments allowed), or - for stdin", Value: "path|-"},
+				{Name: "description", Short: "free-text description", Value: "TEXT"},
+			}},
+			{Name: subUpdate, Short: "Edit a list; referencing rules pick up the change within seconds", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "add", Short: "item to add (repeat)", Value: "VALUE"},
+				{Name: "remove", Short: "item to remove (repeat)", Value: "VALUE"},
+				{Name: "replace-file", Short: "replace every item from a file, or - for stdin", Value: "path|-"},
+				{Name: "description", Short: "new description", Value: "TEXT"},
+			}},
+			{Name: subRm, Short: "Delete a list no rule references", Positionals: []string{"<name>"}},
+		},
+	},
+	{
 		Name:    "edge-rules",
 		DocSlug: "edge-rules",
 		Short:   "Per-app edge rules (edge-rules list|trace|create|get|update|history|rollback|stats --app <slug>; edge-rules rm <id>)",

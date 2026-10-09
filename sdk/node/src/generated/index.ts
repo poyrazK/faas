@@ -263,6 +263,7 @@ export type { CreateDeploymentRequest } from './models/CreateDeploymentRequest.j
 export type { CreateDeployTokenRequest } from './models/CreateDeployTokenRequest.js';
 export type { CreateDevBridgeRequest } from './models/CreateDevBridgeRequest.js';
 export type { CreateDevBridgeResponse } from './models/CreateDevBridgeResponse.js';
+export type { CreateEdgeRuleListRequest } from './models/CreateEdgeRuleListRequest.js';
 export type { CreateEdgeRuleRequest } from './models/CreateEdgeRuleRequest.js';
 export type { CreateEnvironmentGitSourceRequest } from './models/CreateEnvironmentGitSourceRequest.js';
 export type { CreateExecutionArtifactGrantRequest } from './models/CreateExecutionArtifactGrantRequest.js';
@@ -436,6 +437,7 @@ export type { EdgeRuleHitStatsResponse } from './models/EdgeRuleHitStatsResponse
 export type { EdgeRuleIPAction } from './models/EdgeRuleIPAction.js';
 export type { EdgeRuleJWTAction } from './models/EdgeRuleJWTAction.js';
 export type { EdgeRuleLimitAction } from './models/EdgeRuleLimitAction.js';
+export type { EdgeRuleListResponse } from './models/EdgeRuleListResponse.js';
 export type { EdgeRuleMaintenanceAction } from './models/EdgeRuleMaintenanceAction.js';
 export type { EdgeRuleMatchExpr } from './models/EdgeRuleMatchExpr.js';
 export type { EdgeRuleRedirectAction } from './models/EdgeRuleRedirectAction.js';
@@ -713,6 +715,7 @@ export type { ListDelayedTasksResponse } from './models/ListDelayedTasksResponse
 export type { ListDeploymentAuditResponse } from './models/ListDeploymentAuditResponse.js';
 export type { ListDeployTokensResponse } from './models/ListDeployTokensResponse.js';
 export type { ListDevBridgesResponse } from './models/ListDevBridgesResponse.js';
+export type { ListEdgeRuleListsResponse } from './models/ListEdgeRuleListsResponse.js';
 export type { ListInstancesResponse } from './models/ListInstancesResponse.js';
 export type { ListInvocationsResponse } from './models/ListInvocationsResponse.js';
 export type { ListIssueIngestTokensResponse } from './models/ListIssueIngestTokensResponse.js';
@@ -1511,6 +1514,7 @@ export type { UpdateCorsPresetRequest } from './models/UpdateCorsPresetRequest.j
 export type { UpdateCronRequest } from './models/UpdateCronRequest.js';
 export type { UpdateDeploymentRequest } from './models/UpdateDeploymentRequest.js';
 export type { UpdateDeploymentTrafficRequest } from './models/UpdateDeploymentTrafficRequest.js';
+export type { UpdateEdgeRuleListRequest } from './models/UpdateEdgeRuleListRequest.js';
 export type { UpdateEdgeRuleRequest } from './models/UpdateEdgeRuleRequest.js';
 export type { UpdateFeatureFlagsRequest } from './models/UpdateFeatureFlagsRequest.js';
 export type { UpdateFinancialBudgetRequest } from './models/UpdateFinancialBudgetRequest.js';
