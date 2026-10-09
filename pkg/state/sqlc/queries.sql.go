@@ -2795,13 +2795,14 @@ func (q *Queries) CheckpointRuntimeUpgradeVerification(ctx context.Context, db D
 const claimAppHealth = `-- name: ClaimAppHealth :one
 WITH candidate AS (
  SELECT a.id, a.account_id FROM apps a
+ JOIN accounts acct ON acct.id = a.account_id
  LEFT JOIN app_health_collection_state h ON h.app_id = a.id
  WHERE a.status <> 'deleted' AND a.deleted_at IS NULL
  AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
  AND (h.next_check_at IS NULL OR h.next_check_at <= $1::timestamptz)
  AND (h.lease_until IS NULL OR h.lease_until <= $1::timestamptz)
  ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
- LIMIT 1 FOR UPDATE OF a SKIP LOCKED
+ LIMIT 1 FOR UPDATE OF a SKIP LOCKED FOR KEY SHARE OF acct SKIP LOCKED
 )
 INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
 SELECT id, account_id, $1::timestamptz, $2::text, $1::timestamptz, $3::timestamptz FROM candidate
@@ -2824,6 +2825,10 @@ type ClaimAppHealthRow struct {
 	LeaseUntil     pgtype.Timestamptz
 }
 
+// Lock order matches ApplyProjectPlan (account, then its apps). The insert's
+// account_id foreign key needs a key-share lock on the account; taking it
+// here with SKIP LOCKED skips an app whose account is mid-apply instead of
+// holding the app row while waiting for the account (deadlock 40P01).
 func (q *Queries) ClaimAppHealth(ctx context.Context, db DBTX, arg ClaimAppHealthParams) (ClaimAppHealthRow, error) {
 	row := db.QueryRow(ctx, claimAppHealth, arg.CheckedNow, arg.Token, arg.ExpiresAt)
 	var i ClaimAppHealthRow
@@ -32931,6 +32936,18 @@ func (q *Queries) LockAppEnvironmentSecretReferenceScope(ctx context.Context, db
 	var i LockAppEnvironmentSecretReferenceScopeRow
 	err := row.Scan(&i.ID, &i.ProjectID)
 	return i, err
+}
+
+const lockAppHealthAccount = `-- name: LockAppHealthAccount :exec
+SELECT 1 FROM accounts WHERE id = $1::text::uuid FOR KEY SHARE
+`
+
+// FinishAppHealth takes the account first, before history inserts reach the
+// app and account rows through their foreign keys, in the same order as
+// ApplyProjectPlan.
+func (q *Queries) LockAppHealthAccount(ctx context.Context, db DBTX, accountID string) error {
+	_, err := db.Exec(ctx, lockAppHealthAccount, accountID)
+	return err
 }
 
 const lockAppHealthCollection = `-- name: LockAppHealthCollection :one

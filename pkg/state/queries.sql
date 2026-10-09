@@ -15391,21 +15391,32 @@ SELECT now()::timestamptz AS observed_at,ac.plan,
 FROM current_run selected JOIN apps a ON a.id=selected.app_id JOIN accounts ac ON ac.id=a.account_id;
 
 -- name: ClaimAppHealth :one
+-- Lock order matches ApplyProjectPlan (account, then its apps). The insert's
+-- account_id foreign key needs a key-share lock on the account; taking it
+-- here with SKIP LOCKED skips an app whose account is mid-apply instead of
+-- holding the app row while waiting for the account (deadlock 40P01).
 WITH candidate AS (
  SELECT a.id, a.account_id FROM apps a
+ JOIN accounts acct ON acct.id = a.account_id
  LEFT JOIN app_health_collection_state h ON h.app_id = a.id
  WHERE a.status <> 'deleted' AND a.deleted_at IS NULL
  AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
  AND (h.next_check_at IS NULL OR h.next_check_at <= sqlc.arg(checked_now)::timestamptz)
  AND (h.lease_until IS NULL OR h.lease_until <= sqlc.arg(checked_now)::timestamptz)
  ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
- LIMIT 1 FOR UPDATE OF a SKIP LOCKED
+ LIMIT 1 FOR UPDATE OF a SKIP LOCKED FOR KEY SHARE OF acct SKIP LOCKED
 )
 INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
 SELECT id, account_id, sqlc.arg(checked_now)::timestamptz, sqlc.arg(token)::text, sqlc.arg(checked_now)::timestamptz, sqlc.arg(expires_at)::timestamptz FROM candidate
 ON CONFLICT (app_id) DO UPDATE SET lease_token = EXCLUDED.lease_token, lease_started_at = EXCLUDED.lease_started_at, lease_until = EXCLUDED.lease_until
 WHERE app_health_collection_state.lease_until IS NULL OR app_health_collection_state.lease_until <= sqlc.arg(checked_now)::timestamptz
 RETURNING app_id::text, account_id::text, lease_token, lease_started_at, lease_until;
+
+-- name: LockAppHealthAccount :exec
+-- FinishAppHealth takes the account first, before history inserts reach the
+-- app and account rows through their foreign keys, in the same order as
+-- ApplyProjectPlan.
+SELECT 1 FROM accounts WHERE id = sqlc.arg(account_id)::text::uuid FOR KEY SHARE;
 
 -- name: LockAppHealthCollection :one
 SELECT h.assessment, h.assessment_key, h.checked_at, h.notification_state FROM app_health_collection_state h

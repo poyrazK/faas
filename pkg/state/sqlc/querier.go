@@ -165,6 +165,10 @@ type Querier interface {
 	CheckedRollbackTargetFacts(ctx context.Context, db DBTX, arg CheckedRollbackTargetFactsParams) ([]byte, error)
 	CheckpointRuntimeUpgradeOperationControl(ctx context.Context, db DBTX, arg CheckpointRuntimeUpgradeOperationControlParams) (RuntimeUpgradeOperation, error)
 	CheckpointRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg CheckpointRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
+	// Lock order matches ApplyProjectPlan (account, then its apps). The insert's
+	// account_id foreign key needs a key-share lock on the account; taking it
+	// here with SKIP LOCKED skips an app whose account is mid-apply instead of
+	// holding the app row while waiting for the account (deadlock 40P01).
 	ClaimAppHealth(ctx context.Context, db DBTX, arg ClaimAppHealthParams) (ClaimAppHealthRow, error)
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
 	ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db DBTX, arg ClaimClonePostgresMaintenanceDispatchParams) (ManagedPostgresCheckpointMaintenance, error)
@@ -1770,6 +1774,10 @@ type Querier interface {
 	LockAlertRollbackFireApp(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]pgtype.UUID, error)
 	LockAlertRollbackRule(ctx context.Context, db DBTX, ruleID pgtype.UUID) (pgtype.UUID, error)
 	LockAppEnvironmentSecretReferenceScope(ctx context.Context, db DBTX, arg LockAppEnvironmentSecretReferenceScopeParams) (LockAppEnvironmentSecretReferenceScopeRow, error)
+	// FinishAppHealth takes the account first, before history inserts reach the
+	// app and account rows through their foreign keys, in the same order as
+	// ApplyProjectPlan.
+	LockAppHealthAccount(ctx context.Context, db DBTX, accountID string) error
 	LockAppHealthCollection(ctx context.Context, db DBTX, arg LockAppHealthCollectionParams) (LockAppHealthCollectionRow, error)
 	LockAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg LockAppSecretRuntimeProcessParams) (LockAppSecretRuntimeProcessRow, error)
 	LockBindingPromotionRevision(ctx context.Context, db DBTX, arg LockBindingPromotionRevisionParams) (string, error)
