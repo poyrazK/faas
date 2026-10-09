@@ -258,7 +258,7 @@ and cost qualification remain pending.
 
 ## Internal outbox commit contract — 2026-10-09
 
-[ADR-829](829-object-storage-entity-outbox-contract.md) adds bounded outgoing
+[ADR-843](843-object-storage-entity-outbox-contract.md) adds bounded outgoing
 intents to the private Go engine transition. State, alarm, receipt and pending
 messages publish through the same manifest CAS. Later transitions, receipt
 replays, restart and cleanup preserve pending work. Deterministic message IDs

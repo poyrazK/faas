@@ -306,7 +306,7 @@ Queue/cap rejection publishes neither new state nor outgoing messages.
 This is an engine contract, with no delivery worker, acknowledgement/removal or
 customer messaging API. Guest protocol v1 rejects an `outbox` field; handlers
 remain pure. Registered-webhook admission and deduplicated relay acceptance
-must precede guest enablement. See [ADR-829](../../docs/adr/829-object-storage-entity-outbox-contract.md).
+must precede guest enablement. See [ADR-843](../../docs/adr/843-object-storage-entity-outbox-contract.md).
 
 ## Deploy the counter invocation preview
 
