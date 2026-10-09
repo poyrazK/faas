@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
     from ..models.edge_protection_response_rejections_item import EdgeProtectionResponseRejectionsItem
     from ..models.edge_protection_response_validation_failures_item import EdgeProtectionResponseValidationFailuresItem
+    from ..models.edge_protection_response_waf import EdgeProtectionResponseWaf
 
 
 T = TypeVar("T", bound="EdgeProtectionResponse")
@@ -32,6 +33,8 @@ class EdgeProtectionResponse:
     """kind=validate mismatches by validate_mode (block, observe, warn); zero counts are omitted."""
     rejections: list[EdgeProtectionResponseRejectionsItem]
     """Requests answered by an edge gate, largest count first; zero counts are omitted."""
+    waf: EdgeProtectionResponseWaf
+    """kind=waf inspections (observe-only, ADR-831 step 1). Detections are not rejections."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +58,8 @@ class EdgeProtectionResponse:
             rejections_item = rejections_item_data.to_dict()
             rejections.append(rejections_item)
 
+        waf = self.waf.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -66,6 +71,7 @@ class EdgeProtectionResponse:
                 "pre_auth": pre_auth,
                 "validation_failures": validation_failures,
                 "rejections": rejections,
+                "waf": waf,
             }
         )
 
@@ -78,6 +84,7 @@ class EdgeProtectionResponse:
         from ..models.edge_protection_response_validation_failures_item import (
             EdgeProtectionResponseValidationFailuresItem,
         )
+        from ..models.edge_protection_response_waf import EdgeProtectionResponseWaf
 
         d = dict(src_dict)
         app_id = d.pop("app_id")
@@ -106,6 +113,8 @@ class EdgeProtectionResponse:
 
             rejections.append(rejections_item)
 
+        waf = EdgeProtectionResponseWaf.from_dict(d.pop("waf"))
+
         edge_protection_response = cls(
             app_id=app_id,
             range_=range_,
@@ -114,6 +123,7 @@ class EdgeProtectionResponse:
             pre_auth=pre_auth,
             validation_failures=validation_failures,
             rejections=rejections,
+            waf=waf,
         )
 
         edge_protection_response.additional_properties = d

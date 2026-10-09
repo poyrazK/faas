@@ -842,6 +842,9 @@ from .edge_protection_response_rejections_item import EdgeProtectionResponseReje
 from .edge_protection_response_rejections_item_gate import EdgeProtectionResponseRejectionsItemGate
 from .edge_protection_response_rejections_item_status import EdgeProtectionResponseRejectionsItemStatus
 from .edge_protection_response_validation_failures_item import EdgeProtectionResponseValidationFailuresItem
+from .edge_protection_response_waf import EdgeProtectionResponseWaf
+from .edge_protection_response_waf_categories_item import EdgeProtectionResponseWafCategoriesItem
+from .edge_protection_response_waf_top_rules_item import EdgeProtectionResponseWafTopRulesItem
 from .edge_rule_async_action import EdgeRuleAsyncAction
 from .edge_rule_async_action_retry_policy import EdgeRuleAsyncActionRetryPolicy
 from .edge_rule_budget_action import EdgeRuleBudgetAction
@@ -885,6 +888,8 @@ from .edge_rule_validate_parameters import EdgeRuleValidateParameters
 from .edge_rule_validate_parameters_headers import EdgeRuleValidateParametersHeaders
 from .edge_rule_validate_parameters_path import EdgeRuleValidateParametersPath
 from .edge_rule_validate_parameters_query import EdgeRuleValidateParametersQuery
+from .edge_rule_waf_action import EdgeRuleWAFAction
+from .edge_rule_waf_action_mode import EdgeRuleWAFActionMode
 from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .egress_flow_log_entry import EgressFlowLogEntry
@@ -3858,6 +3863,9 @@ __all__ = (
     "EdgeProtectionResponseRejectionsItemGate",
     "EdgeProtectionResponseRejectionsItemStatus",
     "EdgeProtectionResponseValidationFailuresItem",
+    "EdgeProtectionResponseWaf",
+    "EdgeProtectionResponseWafCategoriesItem",
+    "EdgeProtectionResponseWafTopRulesItem",
     "EdgeRuleAsyncAction",
     "EdgeRuleAsyncActionRetryPolicy",
     "EdgeRuleBudgetAction",
@@ -3901,6 +3909,8 @@ __all__ = (
     "EdgeRuleValidateParametersHeaders",
     "EdgeRuleValidateParametersPath",
     "EdgeRuleValidateParametersQuery",
+    "EdgeRuleWAFAction",
+    "EdgeRuleWAFActionMode",
     "EgressCircuitBreakerPolicy",
     "EgressCircuitBreakerPolicyState",
     "EgressFlowLogEntry",

@@ -38,5 +38,39 @@ export type EdgeProtectionResponse = {
     status: '401' | '403' | '413' | '429' | '503' | 'other';
     count: number;
   }>;
+  /**
+   * kind=waf inspections (observe-only, ADR-831 step 1). Detections are not rejections.
+   */
+  waf: {
+    /**
+     * Requests scored by the OWASP CRS.
+     */
+    inspected: number;
+    /**
+     * Inspected requests at or above the rule's anomaly threshold.
+     */
+    detected: number;
+    /**
+     * Matched requests skipped to protect the node (budget, full queue, or error).
+     */
+    not_inspected: number;
+    /**
+     * Detections by CRS attack category, largest first; one detection may count several.
+     */
+    categories: Array<{
+      name: string;
+      count: number;
+    }>;
+    /**
+     * CRS rule IDs that scored most, largest first, for tuning exclude_rule_ids.
+     */
+    top_rules: Array<{
+      /**
+       * CRS rule ID.
+       */
+      name: string;
+      count: number;
+    }>;
+  };
 };
 

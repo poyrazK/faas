@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from ..models.edge_rule_route_action import EdgeRuleRouteAction
     from ..models.edge_rule_throttle_action import EdgeRuleThrottleAction
     from ..models.edge_rule_validate_action import EdgeRuleValidateAction
+    from ..models.edge_rule_waf_action import EdgeRuleWAFAction
     from ..models.update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
 
 
@@ -70,12 +71,14 @@ class UpdateEdgeRuleRequest:
         | EdgeRuleRouteAction
         | EdgeRuleThrottleAction
         | EdgeRuleValidateAction
+        | EdgeRuleWAFAction
         | Unset
     ) = UNSET
     """Replaces the jsonb column whole."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.edge_rule_async_action import EdgeRuleAsyncAction
         from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
         from ..models.edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
         from ..models.edge_rule_cors_action import EdgeRuleCORSAction
@@ -148,6 +151,8 @@ class UpdateEdgeRuleRequest:
             action = self.action.to_dict()
         elif isinstance(self.action, EdgeRuleCircuitBreakerAction):
             action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleAsyncAction):
+            action = self.action.to_dict()
         else:
             action = self.action.to_dict()
 
@@ -192,6 +197,7 @@ class UpdateEdgeRuleRequest:
         from ..models.edge_rule_route_action import EdgeRuleRouteAction
         from ..models.edge_rule_throttle_action import EdgeRuleThrottleAction
         from ..models.edge_rule_validate_action import EdgeRuleValidateAction
+        from ..models.edge_rule_waf_action import EdgeRuleWAFAction
         from ..models.update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
 
         d = dict(src_dict)
@@ -239,6 +245,7 @@ class UpdateEdgeRuleRequest:
             | EdgeRuleRouteAction
             | EdgeRuleThrottleAction
             | EdgeRuleValidateAction
+            | EdgeRuleWAFAction
             | Unset
         ):
             if isinstance(data, Unset):
@@ -371,11 +378,19 @@ class UpdateEdgeRuleRequest:
                 return action_type_15
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_16 = EdgeRuleAsyncAction.from_dict(data)
+
+                return action_type_16
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
             if not isinstance(data, dict):
                 raise TypeError()
-            action_type_16 = EdgeRuleAsyncAction.from_dict(data)
+            action_type_17 = EdgeRuleWAFAction.from_dict(data)
 
-            return action_type_16
+            return action_type_17
 
         action = _parse_action(d.pop("action", UNSET))
 

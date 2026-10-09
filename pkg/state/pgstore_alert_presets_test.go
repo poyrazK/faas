@@ -106,10 +106,10 @@ func TestPg_AlertPresetCatalog_ListOrdered(t *testing.T) {
 		t.Fatalf("rows.Err: %v", err)
 	}
 	// The base seed (migrations/00348_alert_presets_seed.sql) plus the
-	// safe-releases, B3, O2, login-abuse and automation-backlog seeds ship
-	// 21 rows. This test pins the count and (category, name) ordering shape.
-	if len(got) != 21 {
-		t.Errorf("catalog row count = %d; want 21 (base + safe-releases + B3 + O2 + login-abuse + automation backlog + edge security seeds)", len(got))
+	// safe-releases, B3, O2, login-abuse, automation-backlog, edge security and edge WAF seeds ship
+	// 22 rows. This test pins the count and (category, name) ordering shape.
+	if len(got) != 22 {
+		t.Errorf("catalog row count = %d; want 22 (base + safe-releases + B3 + O2 + login-abuse + automation backlog + edge security + edge WAF seeds)", len(got))
 	}
 	// Verify (category, name) order is sorted.
 	for i := 1; i < len(got); i++ {
