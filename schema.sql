@@ -3369,9 +3369,9 @@ CREATE FUNCTION public.event_backlog_waiting_reason(routing_state text, capacity
     AS $$
 SELECT CASE
  WHEN routing_state = 'processing' THEN 'routing_in_progress'
- WHEN routing_mode = 'event' AND lease_until > observed_at THEN 'receipt_processing'
  WHEN blocker IS NOT NULL THEN 'ordering_blocked'
  WHEN routing_state = 'pending' AND capacity_scope <> '' THEN 'capacity_' || capacity_scope
+ WHEN routing_mode = 'event' AND lease_until > observed_at THEN 'receipt_processing'
  WHEN next_attempt_at > observed_at THEN 'retry_backoff'
  WHEN consumer_kind = 'workflow' THEN 'workflow_routing'
  ELSE 'ready' END;

@@ -165,14 +165,14 @@ func backlogObservation(r *api.EventBacklogRecipient, now time.Time) {
 	switch {
 	case r.State == "processing":
 		r.WaitingReason = "routing_in_progress"
-	case r.RoutingMode == "event" && r.LeaseUntil != nil && r.LeaseUntil.After(now):
-		r.WaitingReason = "receipt_processing"
 	case r.DeliveryControlReason != "":
 		r.WaitingReason = r.DeliveryControlReason
 	case r.OrderingBlocker != nil:
 		r.WaitingReason = "ordering_blocked"
 	case r.State == "pending" && r.CapacityScope != "":
 		r.WaitingReason = "capacity_" + r.CapacityScope
+	case r.RoutingMode == "event" && r.LeaseUntil != nil && r.LeaseUntil.After(now):
+		r.WaitingReason = "receipt_processing"
 	case r.NextAttemptAt != nil && r.NextAttemptAt.After(now):
 		r.WaitingReason = "retry_backoff"
 	case r.ConsumerKind == "workflow":
