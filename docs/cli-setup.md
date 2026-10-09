@@ -301,6 +301,28 @@ settings. Deployment command tasks and advanced policies continue to use the
 explicit `crons add` flags. Scripts can use, for example,
 `gregale crons add --app my-api --schedule '0 * * * *' --path /tasks/hourly --timezone UTC`.
 
+## Edit a scheduled HTTP task
+
+```sh
+gregale crons update --app my-api --interactive
+# Use the linked app, or choose one:
+gregale crons update --interactive
+```
+
+Choose an existing HTTP task. The guide displays its current configuration,
+prefills the path, timezone, and five-field schedule, and lets you enable or
+disable it. Enter keeps the displayed value. Review only the proposed changes
+and the next three expression times before confirming. Disabled or suspended
+tasks do not run merely because expression times are shown; advanced policies
+may also skip occurrences or delay execution.
+
+Only changed fields are submitted. Existing overlap settings, schedule policies,
+and failure rules are preserved. Keeping all settings unchanged exits without
+an update. The guide rechecks configuration before saving and stops if it changed
+during review. An equivalent command is printed for reuse. `--app` is accepted
+only in interactive mode; scripts and advanced settings continue to use
+`gregale crons update ID` with explicit update flags.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

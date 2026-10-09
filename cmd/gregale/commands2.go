@@ -5232,6 +5232,8 @@ func formatCronCommand(c api.CronResponse) string {
 // the server's validCron so a bad expression fails fast.
 func cmdCronsUpdate(args []string) int {
 	fs := newFlagSet("crons-update", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose and edit an HTTP task")
+	app := fs.String("app", "", "app slug for interactive task selection")
 	schedule := fs.String("schedule", "", "cron expression (5 fields)")
 	path := fs.String("path", "", "request path")
 	timezone := fs.String("timezone", "", "IANA timezone (empty resets to UTC)")
@@ -5245,6 +5247,28 @@ func cmdCronsUpdate(args []string) int {
 	failureRulesJSON := fs.String("failure-rules", "", "replace versioned retry/failure rules JSON")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
+	}
+	if *interactive {
+		invalid := fs.NArg() != 0
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "interactive" && f.Name != "app" {
+				invalid = true
+			}
+		})
+		if invalid {
+			return printErr("Invalid interactive cron flags", errors.New("use crons update --interactive with optional --app; choose the task and settings in the flow"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", errors.New("use crons update ID with explicit flags for scripts"))
+		}
+		slug, err := resolveReadAppTarget(*app)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		return cmdCronsUpdateInteractive(slug)
+	}
+	if logsFlagWasSet(fs, "app") {
+		return printErr("Invalid app flag", errors.New("--app is only accepted with --interactive; use a task ID for explicit updates"))
 	}
 	if fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
@@ -5342,7 +5366,11 @@ func cmdCronsUpdate(args []string) int {
 		}
 		req.FailureRules = rules
 	}
-	updated, err := client.UpdateCron(context.Background(), id, req)
+	return updateCronAndRender(context.Background(), client, id, req)
+}
+
+func updateCronAndRender(ctx context.Context, client *Client, id string, req api.UpdateCronRequest) int {
+	updated, err := client.UpdateCron(ctx, id, req)
 	if err != nil {
 		return printErr("Update failed", err)
 	}

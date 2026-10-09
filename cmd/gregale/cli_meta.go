@@ -1334,7 +1334,9 @@ var cliCommands = []cliCommand{
 				{Name: "failure-rules", Short: "versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
 			{Name: "info", Short: "Show one cron rule", Positionals: []string{"<id>"}},
-			{Name: "update", Short: "Update one cron rule", Positionals: []string{"<id>"}, Flags: []cliFlag{
+			{Name: "update", Short: "Update one cron rule", Positionals: []string{"[<id>]"}, Examples: []string{"gregale crons update --app my-api --interactive"}, Flags: []cliFlag{
+				{Name: "interactive", Short: "choose an HTTP task, edit current values, preview times, and confirm changes", Bool: true},
+				{Name: "app", Short: "app slug for interactive task selection (linked app or picker by default)", Value: "SLUG"},
 				{Name: "schedule", Short: "new five-field cron expression", Value: "EXPR"},
 				{Name: "path", Short: "HTTP request path", Value: "PATH"},
 				{Name: "timezone", Short: "IANA timezone", Value: "TZ"},

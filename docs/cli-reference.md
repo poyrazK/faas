@@ -3290,10 +3290,12 @@ Show one cron rule
 
 Update one cron rule
 
-`gregale crons update [--schedule <EXPR>] [--path <PATH>] [--timezone <TZ>] [--enable] [--disable] [--skip-if-running] [--allow-overlap] [--retry-max] [--retry-backoff-seconds <N>] [--schedule-policy <JSON>] [--failure-rules <JSON>] <id>`
+`gregale crons update [--interactive] [--app <SLUG>] [--schedule <EXPR>] [--path <PATH>] [--timezone <TZ>] [--enable] [--disable] [--skip-if-running] [--allow-overlap] [--retry-max] [--retry-backoff-seconds <N>] [--schedule-policy <JSON>] [--failure-rules <JSON>] [<id>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | choose an HTTP task, edit current values, preview times, and confirm changes |  |
+| `--app <SLUG>` | app slug for interactive task selection (linked app or picker by default) |  |
 | `--schedule <EXPR>` | new five-field cron expression |  |
 | `--path <PATH>` | HTTP request path |  |
 | `--timezone <TZ>` | IANA timezone |  |
@@ -3305,6 +3307,12 @@ Update one cron rule
 | `--retry-backoff-seconds <N>` | base retry delay; doubles per attempt |  |
 | `--schedule-policy <JSON>` | replace versioned schedule policy JSON |  |
 | `--failure-rules <JSON>` | replace versioned failure and outcome-code rules JSON |  |
+
+Examples:
+
+```sh
+gregale crons update --app my-api --interactive
+```
 
 ### crons rm
 
