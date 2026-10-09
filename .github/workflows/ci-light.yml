@@ -341,7 +341,10 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Cold race compilation precedes the per-package 12m test timeout.
+    # Allow both to finish, plus container setup and cleanup; the 15m cap
+    # interrupted passing packages before the scheduler suite completed.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
