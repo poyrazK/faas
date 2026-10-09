@@ -46,12 +46,13 @@ permissions:
 
 env:
   # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
-  # and the go.mod `go 1.25.13` directive resolve to the same Go runtime.
-  # go1.25.12 carries 7 stdlib vulnerabilities (GO-2026-5026/5972/6088/
-  # 6089/6090/6091/6218) fixed in go1.25.13 — the supply-chain gate fails
-  # closed when the runner resolves "1.25" to a vulnerable patch. Bump
-  # in lock-step with the go.mod `go` directive.
-  GO_VERSION: "1.25.13"
+  # and the go.mod `go 1.26.9` directive resolve to the same Go runtime.
+  # Go 1.26.9 fixes the reachable stdlib advisories reported by the
+  # October 2026 supply-chain gate. Keep all runtime/build pins aligned
+  # with the go.mod `go` directive.
+  GO_VERSION: "1.26.9"
+  # Bound cold CLI compilation just as the apid compiler guard below does.
+  GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
   # vacuum is the OpenAPI ruleset linter used by `make spec-check`.
   # Both the version and the SHA-256 pin are mirrored from the upstream
   # checksum file at https://github.com/daveshanley/vacuum/releases — never
@@ -67,8 +68,7 @@ env:
   # has a `make sqlc` guard for local devs; CI uses the binary download
   # because the `go install` path cross-compiles sqlc (with its cgo
   # pganalyze/pg_query_go tree) from source on every cold runner (~30 s)
-  # and v1.31.1's go.mod requires Go >= 1.26, which the ubuntu-latest
-  # runner (Go 1.25.13) cannot satisfy under GOTOOLCHAIN=local.
+  # and avoids compiling the large sqlc dependency tree in every job.
   # Same supply-chain pin pattern as vacuum above and every binary in the
   # EX44 ansible roles.
   SQLC_VERSION: "1.31.1"
@@ -174,9 +174,7 @@ jobs:
         run: scripts/ci/cve-monitor_test.sh
 
       # golangci-lint replaces bare gofmt + go vet with a curated set of
-      # checks. v2.4.0+ is built with Go 1.25 and supports a go.mod
-      # targeting Go 1.25 (golangci-lint v1.x is built with Go 1.23 and
-      # refuses go.mod 'go 1.25.0' — see golangci/golangci-lint#5873).
+      # checks. v2.10.0 supports the patched Go 1.26 toolchain.
       # action v8 requires golangci-lint >= v2.1.0; v9 is current.
       # S4 PR-4a advisory: a useful regression pin should fail on the
       # merge-base. This report is intentionally non-blocking while the
@@ -184,7 +182,7 @@ jobs:
       # that are absent or already passing on the base.
       - name: advisory regression pin report
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
@@ -194,13 +192,13 @@ jobs:
       - name: lint (golangci-lint v8)
         uses: golangci/golangci-lint-action@v9
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           # Bound analysis memory after repeated hosted-runner shutdowns.
           GOMEMLIMIT: 3GiB
           GOGC: 75
           GOMAXPROCS: 2
         with:
-          version: v2.4.0
+          version: v2.10.0
           # The expanded repository exceeded the twenty-minute cold-cache
           # deadline under these memory bounds. Retain every rule and give
           # the complete analysis a bounded thirty-minute deadline.
@@ -216,7 +214,7 @@ jobs:
         run: test -z "$(gofmt -l $(find . -name '*.go'))" || (gofmt -l $(find . -name '*.go'); exit 1)
       - name: vet
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
@@ -634,7 +632,7 @@ jobs:
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit test debug metadata and serialize its backend; keep optimization.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
@@ -859,6 +857,9 @@ jobs:
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
       - name: unit tests (pg shard 2${{ matrix.id }})
         env:
+          GOGC: 10
+          GOMEMLIMIT: 2GiB
+          GOMAXPROCS: 2
           GREGALE_GITOPS_ACCEPTANCE: ${{ matrix.gitops_acceptance && '1' || '' }}
         run: |
           mkdir -p coverage
@@ -1166,7 +1167,7 @@ jobs:
     # memory and the runner was shut down (exit 143) right after pkg/vmmdgrpc
     # in 12 of 22 runs, main included. Mirror unit-tests-pg-1's bounds.
     env:
-      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
       GOMEMLIMIT: 2GiB
       GOGC: 10
       GOMAXPROCS: 2
@@ -1239,7 +1240,7 @@ jobs:
     env:
       GOVULNCHECK_VERSION: "1.7.0"
       # Several contract gates compile the APID test package.
-      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
       GOMEMLIMIT: 2GiB
       GOGC: 10
       GOMAXPROCS: 2
@@ -1831,7 +1832,7 @@ jobs:
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit test debug metadata and serialize its backend; keep optimization.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
@@ -1877,7 +1878,7 @@ jobs:
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit test debug metadata and serialize its backend; keep optimization.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2

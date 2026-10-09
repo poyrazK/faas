@@ -3,10 +3,8 @@
 # codebase (errcheck fired for us before; staticcheck catches shadowing,
 # type-mismatch flags, etc.).
 #
-# Schema v2 — required by golangci-lint >= v2.0. Action v8 pins v2.4.0
-# which is built with Go 1.25 and supports our go.mod's 'go 1.25.0'
-# directive (v1.x was built with Go 1.23 and rejected the bump — see
-# golangci/golangci-lint#5873).
+# Schema v2 — required by golangci-lint >= v2.0. Action v9 pins v2.10.0
+# which is built with Go 1.26 and supports our patched Go 1.26 toolchain.
 version: "2"
 
 # Disable default linters — explicit allow-list below.
@@ -128,7 +126,7 @@ linters:
     #
     # NOTE on local noise: golangci-lint 2.12.x (Homebrew default)
     # ships a default forbidigo rule banning fmt.Print*; the action
-    # pins v2.4.0 which does NOT include that default. Local `make
+    # pins v2.10.0 which does NOT include that default. Local `make
     # lint` may report fmt.Print* findings that CI will not — these
     # are pre-existing on main and unrelated to this PR.
     forbidigo:

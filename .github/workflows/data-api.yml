@@ -29,6 +29,9 @@ concurrency:
 
 permissions:
   contents: read
+env:
+  GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+
 jobs:
   packaging:
     runs-on: ubuntu-latest
