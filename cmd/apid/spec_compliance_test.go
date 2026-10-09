@@ -321,9 +321,11 @@ func init() {
 var dtoExclude = map[string]bool{
 	// Version listing carries these fields as individual query parameters,
 	// documented on the GET route; it has no JSON request body.
-	"ObjectVersionListRequest":      true,
-	"EventReplayPreviewOptions":     true, // client-only query options; the wire parameters are declared on the route
-	"EventReplayBackfillItemsQuery": true, // client-only pagination/filter options; the wire parameters are declared on the route
+	"ObjectVersionListRequest":          true,
+	"EventRecoveryListQuery":            true, // client-only recovery pagination and filters; wire parameters live on the route
+	"WorkflowEventReplayPreviewOptions": true, // client-only preview query options; wire parameters live on the route
+	"EventReplayPreviewOptions":         true, // client-only query options; the wire parameters are declared on the route
+	"EventReplayBackfillItemsQuery":     true, // client-only pagination/filter options; the wire parameters are declared on the route
 	// ADR-563 native adapter primitives. Customer per-version lock management
 	// is not part of the ADR-564 bucket API capability.
 	"ObjectVersionRetention": true,
@@ -1025,6 +1027,20 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
 		filepath.Join(root, "pkg", "api", "event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", eventReplayBackfillFile),
+		filepath.Join(root, "pkg", "api", "event_circuit_breaker.go"),
+		filepath.Join(root, "pkg", "api", "event_consumer_execution_health.go"),
+		filepath.Join(root, "pkg", "api", "event_consumer_health.go"),
+		filepath.Join(root, "pkg", "api", "event_recovery.go"),
+		filepath.Join(root, "pkg", "api", "event_recovery_health.go"),
+		filepath.Join(root, "pkg", "api", "event_recovery_history.go"),
+		filepath.Join(root, "pkg", "api", "event_recovery_list.go"),
+		filepath.Join(root, "pkg", "api", "event_recovery_notifications.go"),
+		filepath.Join(root, "pkg", "api", "event_recovery_preflight.go"),
+		filepath.Join(root, "pkg", "api", "event_routing_retry_policy.go"),
+		filepath.Join(root, "pkg", "api", "event_schema_rollout.go"),
+		filepath.Join(root, "pkg", "api", "event_schema_versions.go"),
+		filepath.Join(root, "pkg", "api", "event_subscription_control.go"),
+		filepath.Join(root, "pkg", "api", "workflow_event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", "app_operational_summary.go"),
 		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),

@@ -2978,12 +2978,15 @@
       "attempts",
       "capacity_deferrals",
       "capacity_scope",
+      "consumer_kind",
       "lease_until",
       "next_attempt_at",
+      "origin",
       "outbox_id",
       "routing_mode",
       "routing_state",
-      "subscription_id"
+      "subscription_id",
+      "workflow_name"
     ],
     "kind": "operational"
   },
