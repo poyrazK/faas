@@ -2499,6 +2499,19 @@ type EventFanoutRecipient struct {
 	DeliveryDeadlineAt          pgtype.Timestamptz
 }
 
+type EventRecoveryExecutionResult struct {
+	JobID              pgtype.UUID
+	Position           int64
+	ReplayInvocationID pgtype.UUID
+	ReplayGeneration   int64
+	ReplayCreatedAt    pgtype.Timestamptz
+	State              string
+	Attempts           int32
+	CompletedAt        pgtype.Timestamptz
+	RecordedAt         pgtype.Timestamptz
+	EvidenceSource     string
+}
+
 type EventRecoveryHistory struct {
 	ID            int64
 	JobID         pgtype.UUID

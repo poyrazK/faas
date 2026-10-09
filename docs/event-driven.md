@@ -2157,15 +2157,20 @@ includes `replay_invocation_id`, `replay_generation` (including zero), and an
 completion time, and evidence source. Routing recovery, previews, and items
 that were not admitted omit execution observations.
 
-`execution.source` is `invocation` when the exact retained generation is present,
-`attempt_history` when retained terminal attempt evidence describes it, or
-`unavailable` when neither is present. Later manual replay generations and child
+`execution.source` is `recovery_result` when confirmed terminal evidence has
+been saved for this exact replay. Saved results include `recorded_at` (capture
+time) and `evidence_source` (`invocation` or `attempt_history`), while
+`observed_at` remains the time of the current read. Otherwise the source is
+`invocation` for the retained generation, `attempt_history` for retained attempt
+evidence, or `unavailable` when neither is present. Later manual replay generations and child
 invocations cannot replace this job's tracked outcome. Missing or expired
 history, uncertain outcomes, and admissions made before tracking was introduced
 report `unknown`. A retry attempt alone does not prove a final result; an
-expired or superseded invocation without a terminal attempt may become unknown
-once its row is pruned. These observations describe retained history, so a
-previously known result can become unknown after retention.
+expired or superseded invocation without saved evidence may become unknown
+once its row is pruned. Confirmed saved results survive invocation and attempt
+history pruning until their recovery job is pruned. `execution.saved_results`
+in the job summary counts this subset of `tracked_count`; it is not another
+state bucket. Item output shows the evidence source and capture time.
 
 Job `state`, `queued_count`, and `completed_at` continue to describe admission.
 For example, a job can be `completed` while its execution summary shows ten
@@ -2175,6 +2180,49 @@ observable. Handler success does not guarantee exactly-once business effects.
 The API and Go/Node/Python SDKs return these fields through the existing job and
 item endpoints. See [ADR-807](adr/807-recovery-execution-outcomes.md).
 
+
+### Durable terminal recovery results
+
+Terminal results are captured atomically with invocation transitions, including
+completion, failure, dead-lettering, expiry, cancellation and supersession. The
+saved identity includes invocation id, replay generation and creation time,
+scoped to the recovery job's account and app. The first confirmed result wins;
+a later replay cannot replace this job's earlier result. Capturing also covers
+identity registration and terminal evidence before invocation deletion or an
+in-place generation change. Pending, running, retry and uncertain states never
+create a saved result. Missing completion timestamps remain absent.
+
+Read existing commands; no write or refresh is needed:
+
+```sh
+gregale events recovery-status JOB_ID
+gregale events recovery-items JOB_ID --limit 100 --json
+```
+
+Saved result metadata follows the existing recovery job lifetime and pruning:
+terminal jobs are retained for 30 days after admission completion/cancellation.
+Handler completion does not extend that deadline. Job state continues to describe
+admission, so a completed job may still have running handlers. Saved results do
+not keep invocation rows, payloads, errors or attempt history alive, and they do
+not prove exactly-once business effects. Results are removed with their owning
+recovery items when the job is pruned. Receipt holds remain a separate opt-in.
+
+The migration backfills only exact tracked identities with retained confirmed
+terminal evidence. If that exact invocation is absent or has advanced to another
+generation, only the latest still-retained finished terminal attempt qualifies.
+History fallback also requires the retained invocation owner to prove the
+original creation time, preventing attribution to a reused identifier.
+An uncertain exact invocation, later running/retry/unknown attempt, expired
+history or legacy admission without a tracked identity cannot produce a saved
+result. There is no reconstruction of already-lost outcomes.
+
+Apply the migration before upgrading API and scheduler binaries. Upgrade SDK
+consumers that validate `execution.source` to accept `recovery_result` first.
+Reads remain
+read-only repeatable-read snapshots; no polling worker or new endpoint is added.
+Downgrade binaries before migration rollback; rollback deletes saved results and
+can return observations to `unknown` when underlying history has expired. See
+[ADR-832](adr/832-durable-recovery-terminal-results.md).
 
 ### Protect receipts during bulk recovery
 

@@ -45,9 +45,9 @@ class EventRecoveryJob:
     paused_at: datetime.datetime | Unset = UNSET
     """Start time of the current pause; present only while paused."""
     execution: EventRecoveryExecutionSummary | Unset = UNSET
-    """Current observations of admitted execution-mode items, including legacy admissions as unknown. Counts sum to
-    tracked_count and are separate from job admission state. Omitted for routing recovery. Retention can turn a
-    previously known outcome into unknown."""
+    """Observations of admitted execution-mode items, preferring saved terminal results over live records. Legacy
+    admissions without evidence remain unknown. Counts sum to tracked_count and are separate from job admission
+    state. Omitted for routing recovery. Saved results share recovery job retention."""
     completed_at: datetime.datetime | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

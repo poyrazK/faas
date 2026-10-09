@@ -11,12 +11,14 @@ T = TypeVar("T", bound="EventRecoveryExecutionSummary")
 
 @_attrs_define
 class EventRecoveryExecutionSummary:
-    """Current observations of admitted execution-mode items, including legacy admissions as unknown. Counts sum to
-    tracked_count and are separate from job admission state. Omitted for routing recovery. Retention can turn a
-    previously known outcome into unknown.
+    """Observations of admitted execution-mode items, preferring saved terminal results over live records. Legacy
+    admissions without evidence remain unknown. Counts sum to tracked_count and are separate from job admission state.
+    Omitted for routing recovery. Saved results share recovery job retention.
 
     """
 
+    saved_results: int
+    """Subset of tracked_count with saved confirmed terminal evidence. Not an additional state bucket."""
     observed_at: datetime.datetime
     tracked_count: int
     queued: int
@@ -31,6 +33,8 @@ class EventRecoveryExecutionSummary:
     unknown: int
 
     def to_dict(self) -> dict[str, Any]:
+        saved_results = self.saved_results
+
         observed_at = self.observed_at.isoformat()
 
         tracked_count = self.tracked_count
@@ -59,6 +63,7 @@ class EventRecoveryExecutionSummary:
 
         field_dict.update(
             {
+                "saved_results": saved_results,
                 "observed_at": observed_at,
                 "tracked_count": tracked_count,
                 "queued": queued,
@@ -79,6 +84,8 @@ class EventRecoveryExecutionSummary:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        saved_results = d.pop("saved_results")
+
         observed_at = datetime.datetime.fromisoformat(d.pop("observed_at"))
 
         tracked_count = d.pop("tracked_count")
@@ -104,6 +111,7 @@ class EventRecoveryExecutionSummary:
         unknown = d.pop("unknown")
 
         event_recovery_execution_summary = cls(
+            saved_results=saved_results,
             observed_at=observed_at,
             tracked_count=tracked_count,
             queued=queued,

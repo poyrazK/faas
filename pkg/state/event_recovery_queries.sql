@@ -115,6 +115,9 @@ WHERE job_id=sqlc.arg(job_id)::uuid AND position=sqlc.arg(position)::bigint AND 
 -- name: EventRecoveryExecutionObservations :many
 -- Exact replay identity and generation, never the latest descendant's outcome.
 SELECT item.position,
+ coalesce(result.state,'')::text AS result_state,coalesce(result.attempts,0)::integer AS result_attempts,
+ result.completed_at AS result_completed_at,result.recorded_at AS result_recorded_at,
+ coalesce(result.evidence_source,'')::text AS result_evidence_source,
  coalesce(inv.state,'')::text AS invocation_state,
  coalesce(inv.attempts,0)::integer AS invocation_attempts,
  coalesce(inv.outcome,'')::text AS invocation_outcome,
@@ -124,8 +127,11 @@ SELECT item.position,
  h.finished_at AS attempt_finished_at
 FROM event_recovery_items item
 JOIN event_recovery_jobs job ON job.id=item.job_id
+LEFT JOIN event_recovery_execution_results result ON result.job_id=item.job_id AND result.position=item.position
+ AND result.replay_invocation_id=item.replay_invocation_id AND result.replay_generation=item.replay_generation
+ AND result.replay_created_at=item.replay_created_at AND result.recorded_at<=sqlc.arg(now_at)::timestamptz
 LEFT JOIN invocations inv ON inv.id=item.replay_invocation_id AND inv.account_id=job.account_id AND inv.app_id=job.app_id
- AND inv.replay_generation=item.replay_generation AND inv.created_at=item.replay_created_at
+ AND inv.replay_generation=item.replay_generation AND inv.created_at=item.replay_created_at AND result.job_id IS NULL
 LEFT JOIN LATERAL (
  SELECT history.outcome,history.attempt,history.finished_at
  FROM invocation_attempt_history history
@@ -133,8 +139,10 @@ LEFT JOIN LATERAL (
   AND history.account_id=job.account_id AND history.app_id=job.app_id
   AND history.started_at>=item.replay_created_at AND history.started_at<=sqlc.arg(now_at)::timestamptz
   AND history.retain_until>sqlc.arg(now_at)::timestamptz
+  AND EXISTS (SELECT 1 FROM invocations owner WHERE owner.id=item.replay_invocation_id AND owner.account_id=job.account_id
+   AND owner.app_id=job.app_id AND owner.created_at=item.replay_created_at)
  ORDER BY history.attempt DESC LIMIT 1
-) h ON inv.id IS NULL
+) h ON inv.id IS NULL AND result.job_id IS NULL
 WHERE job.id=sqlc.arg(job_id)::uuid AND job.account_id=sqlc.arg(account_id)::uuid
  AND job.selection->>'mode'='execution' AND item.state='queued'
  AND item.position>sqlc.arg(after_position)::bigint AND item.position<=sqlc.arg(through_position)::bigint

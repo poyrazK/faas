@@ -405,6 +405,9 @@ func (m *MemStore) ProcessNextEventRecovery(ctx context.Context, now time.Time) 
 				item.State = "queued"
 			}
 		}
+		if item.State == "queued" && item.ReplayInvocationID != "" {
+			m.captureRecoveryInvocationResultLocked(m.invocations[item.ReplayInvocationID], now)
+		}
 		job.Job.UpdatedAt = now
 		if !job.WindowStartedAt.Add(time.Second).After(now) {
 			job.WindowStartedAt = now
@@ -454,6 +457,11 @@ func (m *MemStore) PruneEventRecoveries(ctx context.Context, now time.Time, limi
 			break
 		}
 		if job.Job.CompletedAt != nil && job.Job.CompletedAt.Before(now.Add(-api.EventRecoveryJobRetention)) {
+			for key := range m.eventRecoveryExecutionResults {
+				if key.JobID == id {
+					delete(m.eventRecoveryExecutionResults, key)
+				}
+			}
 			delete(m.eventRecoveryJobs, id)
 			removed++
 		}

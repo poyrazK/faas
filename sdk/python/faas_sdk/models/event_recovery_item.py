@@ -40,9 +40,10 @@ class EventRecoveryItem:
     replay_generation: int | Unset = UNSET
     """Frozen admitted generation including zero for new replay children."""
     execution: EventRecoveryExecution | Unset = UNSET
-    """Read-only observation of this job's admitted replay generation. Later replays are not attributed to this
-    item. Missing history, untracked legacy items, or uncertain outcomes report unknown. Omitted for routing
-    recovery and items not admitted."""
+    """Read-only observation of this job's exact admitted replay generation. Saved confirmed terminal results take
+    precedence and survive execution-history pruning until recovery job retention. Later replays never replace them.
+    Missing evidence, untracked legacy items, or uncertain outcomes report unknown. Omitted for routing recovery and
+    items not admitted."""
     reason: EventRecoveryItemReason | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

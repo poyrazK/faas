@@ -149,22 +149,26 @@ func writeEventRecoveryJob(out api.EventRecoveryJob) {
 		_, _ = fmt.Fprintf(osStdout, "Paused at: %s\n", out.PausedAt.Format(time.RFC3339))
 	}
 	if e := out.Execution; e != nil {
-		_, _ = fmt.Fprintf(osStdout, "Execution: tracked %d | queued %d | running %d | retrying %d | succeeded %d | failed %d | dead letters %d | expired %d | cancelled %d | superseded %d | unknown %d\n", e.TrackedCount, e.Queued, e.Running, e.Retrying, e.Succeeded, e.Failed, e.DeadLettered, e.Expired, e.Cancelled, e.Superseded, e.Unknown)
+		_, _ = fmt.Fprintf(osStdout, "Execution: tracked %d | saved results %d | queued %d | running %d | retrying %d | succeeded %d | failed %d | dead letters %d | expired %d | cancelled %d | superseded %d | unknown %d\n", e.TrackedCount, e.SavedResults, e.Queued, e.Running, e.Retrying, e.Succeeded, e.Failed, e.DeadLettered, e.Expired, e.Cancelled, e.Superseded, e.Unknown)
 	}
 
 }
 func writeEventRecoveryItems(items []api.EventRecoveryItem) {
-	_, _ = fmt.Fprintln(osStdout, "POSITION\tINVOCATION\tREPLAY\tGENERATION\tSOURCE\tEVENT\tSUBSCRIPTION\tFAILURE\tFAILED AT\tSTATE\tEXECUTION\tATTEMPTS\tREASON")
+	_, _ = fmt.Fprintln(osStdout, "POSITION\tINVOCATION\tREPLAY\tGENERATION\tSOURCE\tEVENT\tSUBSCRIPTION\tFAILURE\tFAILED AT\tSTATE\tEXECUTION\tATTEMPTS\tSOURCE\tRECORDED AT\tREASON")
 	for _, item := range items {
-		generation, execution, attempts := "", "", ""
+		generation, execution, attempts, source, recorded := "", "", "", "", ""
 		if item.ReplayGeneration != nil {
 			generation = fmt.Sprint(*item.ReplayGeneration)
 		}
 		if item.Execution != nil {
 			execution = item.Execution.State
 			attempts = fmt.Sprint(item.Execution.Attempts)
+			source = item.Execution.Source
+			if item.Execution.RecordedAt != nil {
+				recorded = item.Execution.RecordedAt.Format(time.RFC3339)
+			}
 		}
-		_, _ = fmt.Fprintf(osStdout, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.Position, oneLine(item.InvocationID), oneLine(item.ReplayInvocationID), generation, oneLine(item.EventSource), oneLine(item.EventID), oneLine(item.SubscriptionID), oneLine(item.FailureCode), item.FailedAt.Format(time.RFC3339), oneLine(item.State), oneLine(execution), attempts, oneLine(item.Reason))
+		_, _ = fmt.Fprintf(osStdout, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.Position, oneLine(item.InvocationID), oneLine(item.ReplayInvocationID), generation, oneLine(item.EventSource), oneLine(item.EventID), oneLine(item.SubscriptionID), oneLine(item.FailureCode), item.FailedAt.Format(time.RFC3339), oneLine(item.State), oneLine(execution), attempts, oneLine(source), recorded, oneLine(item.Reason))
 	}
 }
 

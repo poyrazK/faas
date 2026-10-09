@@ -1037,6 +1037,33 @@ $$;
 
 
 --
+-- Name: capture_event_recovery_invocation_result(uuid, uuid, uuid, timestamp with time zone, bigint, text, text, integer, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_event_recovery_invocation_result(p_invocation uuid, p_account uuid, p_app uuid, p_created timestamp with time zone, p_generation bigint, p_state text, p_outcome text, p_attempts integer, p_completed timestamp with time zone) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+ observed timestamptz := clock_timestamp();
+ terminal text := CASE p_state WHEN 'completed' THEN 'succeeded' WHEN 'failed' THEN 'failed'
+  WHEN 'dead_letter' THEN 'dead_lettered' WHEN 'expired' THEN 'expired'
+  WHEN 'cancelled' THEN 'cancelled' WHEN 'superseded' THEN 'superseded' END;
+BEGIN
+ IF terminal IS NULL OR p_outcome='uncertain' OR p_created>observed
+  OR p_completed>observed OR p_completed<p_created THEN RETURN; END IF;
+ INSERT INTO event_recovery_execution_results(job_id,position,replay_invocation_id,replay_generation,replay_created_at,
+  state,attempts,completed_at,recorded_at,evidence_source)
+ SELECT item.job_id,item.position,p_invocation,p_generation,p_created,terminal,p_attempts,p_completed,observed,'invocation'
+ FROM event_recovery_items item JOIN event_recovery_jobs job ON job.id=item.job_id
+ WHERE item.state='queued' AND job.selection->>'mode'='execution' AND job.account_id=p_account AND job.app_id=p_app
+  AND item.replay_invocation_id=p_invocation AND item.replay_generation=p_generation AND item.replay_created_at=p_created
+ ORDER BY item.job_id,item.position
+ FOR KEY SHARE OF item
+ ON CONFLICT (job_id,position) DO NOTHING;
+END $$;
+
+
+--
 -- Name: capture_instance_billing_interval(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9479,6 +9506,50 @@ $$;
 
 
 --
+-- Name: record_event_recovery_admitted_result(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_event_recovery_admitted_result() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state<>'queued' OR NEW.replay_invocation_id IS NULL THEN RETURN NEW; END IF;
+ PERFORM capture_event_recovery_invocation_result(inv.id,inv.account_id,inv.app_id,inv.created_at,inv.replay_generation,
+  inv.state,inv.outcome,inv.attempts,inv.completed_at)
+ FROM invocations inv JOIN event_recovery_jobs job ON job.id=NEW.job_id
+ WHERE job.selection->>'mode'='execution' AND inv.id=NEW.replay_invocation_id AND inv.account_id=job.account_id
+  AND inv.app_id=job.app_id AND inv.replay_generation=NEW.replay_generation AND inv.created_at=NEW.replay_created_at;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: record_event_recovery_invocation_result(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_event_recovery_invocation_result() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  PERFORM capture_event_recovery_invocation_result(OLD.id,OLD.account_id,OLD.app_id,OLD.created_at,OLD.replay_generation,
+   OLD.state,OLD.outcome,OLD.attempts,OLD.completed_at);
+  RETURN OLD;
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF (OLD.id,OLD.account_id,OLD.app_id,OLD.created_at,OLD.replay_generation)
+   IS DISTINCT FROM (NEW.id,NEW.account_id,NEW.app_id,NEW.created_at,NEW.replay_generation) THEN
+   PERFORM capture_event_recovery_invocation_result(OLD.id,OLD.account_id,OLD.app_id,OLD.created_at,OLD.replay_generation,
+    OLD.state,OLD.outcome,OLD.attempts,OLD.completed_at);
+  END IF;
+ END IF;
+ PERFORM capture_event_recovery_invocation_result(NEW.id,NEW.account_id,NEW.app_id,NEW.created_at,NEW.replay_generation,
+  NEW.state,NEW.outcome,NEW.attempts,NEW.completed_at);
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: record_invocation_attempt_history(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15621,6 +15692,31 @@ CREATE TABLE public.event_fanout_recipients (
     CONSTRAINT event_fanout_recipients_receipt_position_check CHECK ((receipt_position > 0)),
     CONSTRAINT event_fanout_recipients_recipient_check CHECK ((jsonb_typeof(recipient) = 'object'::text)),
     CONSTRAINT event_fanout_recipients_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'filtered'::text, 'enqueued'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: event_recovery_execution_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_recovery_execution_results (
+    job_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    replay_invocation_id uuid NOT NULL,
+    replay_generation bigint NOT NULL,
+    replay_created_at timestamp with time zone NOT NULL,
+    state text NOT NULL,
+    attempts integer NOT NULL,
+    completed_at timestamp with time zone,
+    recorded_at timestamp with time zone NOT NULL,
+    evidence_source text NOT NULL,
+    CONSTRAINT event_recovery_execution_results_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT event_recovery_execution_results_check CHECK ((recorded_at >= replay_created_at)),
+    CONSTRAINT event_recovery_execution_results_check1 CHECK (((completed_at IS NULL) OR ((completed_at >= replay_created_at) AND (completed_at <= recorded_at)))),
+    CONSTRAINT event_recovery_execution_results_evidence_source_check CHECK ((evidence_source = ANY (ARRAY['invocation'::text, 'attempt_history'::text]))),
+    CONSTRAINT event_recovery_execution_results_position_check CHECK (("position" > 0)),
+    CONSTRAINT event_recovery_execution_results_replay_generation_check CHECK ((replay_generation >= 0)),
+    CONSTRAINT event_recovery_execution_results_state_check CHECK ((state = ANY (ARRAY['succeeded'::text, 'failed'::text, 'dead_lettered'::text, 'expired'::text, 'cancelled'::text, 'superseded'::text])))
 );
 
 
@@ -26214,6 +26310,14 @@ ALTER TABLE ONLY public.event_fanout_recipients
 
 
 --
+-- Name: event_recovery_execution_results event_recovery_execution_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_recovery_execution_results
+    ADD CONSTRAINT event_recovery_execution_results_pkey PRIMARY KEY (job_id, "position");
+
+
+--
 -- Name: event_recovery_history event_recovery_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -32316,6 +32420,13 @@ CREATE INDEX event_recovery_history_job_idx ON public.event_recovery_history USI
 
 
 --
+-- Name: event_recovery_items_execution_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_items_execution_identity_idx ON public.event_recovery_items USING btree (replay_invocation_id, replay_generation, replay_created_at) WHERE ((state = 'queued'::text) AND (replay_invocation_id IS NOT NULL));
+
+
+--
 -- Name: event_recovery_items_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -37650,6 +37761,20 @@ CREATE TRIGGER event_fanout_workflow_code_guard AFTER INSERT OR UPDATE OF recipi
 
 
 --
+-- Name: event_recovery_items event_recovery_admitted_result; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_recovery_admitted_result AFTER INSERT OR UPDATE OF state, replay_invocation_id, replay_generation, replay_created_at ON public.event_recovery_items FOR EACH ROW EXECUTE FUNCTION public.record_event_recovery_admitted_result();
+
+
+--
+-- Name: invocations event_recovery_invocation_result; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_recovery_invocation_result AFTER INSERT OR DELETE OR UPDATE OF state, attempts, replay_generation, completed_at, outcome ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.record_event_recovery_invocation_result();
+
+
+--
 -- Name: event_fanout_recipients event_routing_backlog_recipient; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -42114,6 +42239,14 @@ ALTER TABLE ONLY public.event_fanout_recipients
 
 ALTER TABLE ONLY public.event_fanout_recipients
     ADD CONSTRAINT event_fanout_recipients_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_recovery_execution_results event_recovery_execution_results_job_id_position_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_recovery_execution_results
+    ADD CONSTRAINT event_recovery_execution_results_job_id_position_fkey FOREIGN KEY (job_id, "position") REFERENCES public.event_recovery_items(job_id, "position") ON DELETE CASCADE;
 
 
 --

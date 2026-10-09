@@ -56,13 +56,16 @@ func (r EventRecoveryRequest) Validate() error {
 }
 
 type EventRecoveryExecution struct {
-	ObservedAt  time.Time  `json:"observed_at"`
-	State       string     `json:"state"`
-	Source      string     `json:"source"`
-	Attempts    int        `json:"attempts"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	RecordedAt     *time.Time `json:"recorded_at,omitempty"`
+	EvidenceSource string     `json:"evidence_source,omitempty"`
+	ObservedAt     time.Time  `json:"observed_at"`
+	State          string     `json:"state"`
+	Source         string     `json:"source"`
+	Attempts       int        `json:"attempts"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
 }
 type EventRecoveryExecutionSummary struct {
+	SavedResults int64     `json:"saved_results"`
 	ObservedAt   time.Time `json:"observed_at"`
 	TrackedCount int64     `json:"tracked_count"`
 	Queued       int64     `json:"queued"`

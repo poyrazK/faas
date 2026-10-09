@@ -764,3 +764,12 @@ Set `protect_receipts: true` when creating an event recovery job (Go:
 items are pending and the job is active, until its original 24-hour expiry.
 Preview reserves nothing. Held receipts continue counting against account
 storage limits. See [recovery protection](../../docs/event-driven.md#protect-receipts-during-bulk-recovery).
+
+## Durable recovery outcomes
+
+Existing recovery status and item reads prefer saved terminal results for the
+exact admitted replay generation. `execution.source` is `recovery_result`, with
+`recorded_at` and original `evidence_source`; job execution summaries include
+`saved_results`. These results survive execution-history pruning until the
+recovery job is pruned. Uncertain outcomes remain unknown. See
+[terminal recovery results](../../docs/event-driven.md#durable-terminal-recovery-results).

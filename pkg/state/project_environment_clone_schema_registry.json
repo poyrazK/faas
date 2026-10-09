@@ -2853,6 +2853,22 @@
     "kind": "operational"
   },
   {
+    "table": "event_recovery_execution_results",
+    "columns": [
+      "attempts",
+      "completed_at",
+      "evidence_source",
+      "job_id",
+      "position",
+      "recorded_at",
+      "replay_created_at",
+      "replay_generation",
+      "replay_invocation_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_recovery_history",
     "columns": [
       "action",

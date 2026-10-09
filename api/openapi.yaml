@@ -47262,21 +47262,24 @@ components:
     EventRecoveryExecution:
       type: object
       additionalProperties: false
-      description: Read-only observation of this job's admitted replay generation. Later replays are not attributed to this item. Missing history, untracked legacy items, or uncertain outcomes report unknown. Omitted for routing recovery and items not admitted.
+      description: Read-only observation of this job's exact admitted replay generation. Saved confirmed terminal results take precedence and survive execution-history pruning until recovery job retention. Later replays never replace them. Missing evidence, untracked legacy items, or uncertain outcomes report unknown. Omitted for routing recovery and items not admitted.
       required: [observed_at, state, source, attempts]
       properties:
+        recorded_at: { type: string, format: date-time, description: When terminal evidence was saved; present only for recovery_result. }
+        evidence_source: { type: string, enum: [invocation, attempt_history], description: Original source of a saved terminal result; present only for recovery_result. }
         observed_at: { type: string, format: date-time }
         state: { type: string, enum: [queued, running, retrying, succeeded, failed, dead_lettered, expired, cancelled, superseded, unknown] }
-        source: { type: string, enum: [invocation, attempt_history, unavailable] }
+        source: { type: string, enum: [invocation, attempt_history, recovery_result, unavailable] }
         attempts: { type: integer, minimum: 0, description: Recorded dispatch attempt count for the tracked generation. }
         completed_at: { type: string, format: date-time, description: Recorded terminal completion time when available. }
 
     EventRecoveryExecutionSummary:
       type: object
       additionalProperties: false
-      description: Current observations of admitted execution-mode items, including legacy admissions as unknown. Counts sum to tracked_count and are separate from job admission state. Omitted for routing recovery. Retention can turn a previously known outcome into unknown.
-      required: [observed_at, tracked_count, queued, running, retrying, succeeded, failed, dead_lettered, expired, cancelled, superseded, unknown]
+      description: Observations of admitted execution-mode items, preferring saved terminal results over live records. Legacy admissions without evidence remain unknown. Counts sum to tracked_count and are separate from job admission state. Omitted for routing recovery. Saved results share recovery job retention.
+      required: [observed_at, tracked_count, saved_results, queued, running, retrying, succeeded, failed, dead_lettered, expired, cancelled, superseded, unknown]
       properties:
+        saved_results: { type: integer, format: int64, minimum: 0, maximum: 10000, description: Subset of tracked_count with saved confirmed terminal evidence. Not an additional state bucket. }
         observed_at: { type: string, format: date-time }
         tracked_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
         queued: { type: integer, format: int64, minimum: 0 }

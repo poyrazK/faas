@@ -996,6 +996,7 @@ from .event_recovery_capacity_wait_gate import EventRecoveryCapacityWaitGate
 from .event_recovery_capacity_wait_scope import EventRecoveryCapacityWaitScope
 from .event_recovery_control_request import EventRecoveryControlRequest
 from .event_recovery_execution import EventRecoveryExecution
+from .event_recovery_execution_evidence_source import EventRecoveryExecutionEvidenceSource
 from .event_recovery_execution_source import EventRecoveryExecutionSource
 from .event_recovery_execution_state import EventRecoveryExecutionState
 from .event_recovery_execution_summary import EventRecoveryExecutionSummary
@@ -4004,6 +4005,7 @@ __all__ = (
     "EventRecoveryCapacityWaitScope",
     "EventRecoveryControlRequest",
     "EventRecoveryExecution",
+    "EventRecoveryExecutionEvidenceSource",
     "EventRecoveryExecutionSource",
     "EventRecoveryExecutionState",
     "EventRecoveryExecutionSummary",
