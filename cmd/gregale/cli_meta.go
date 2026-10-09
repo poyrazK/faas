@@ -1351,7 +1351,11 @@ var cliCommands = []cliCommand{
 				{Name: "failure-rules", Short: "replace versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
 			{Name: "rm", Short: "Delete one cron rule", Positionals: []string{"<id>"}},
-			{Name: "run", Short: "Fire one cron immediately", Positionals: []string{"<cron-id>"}},
+			{Name: "run", Short: "Fire one cron immediately or choose and follow a manual request", Positionals: []string{"[<cron-id>]"}, Examples: []string{"gregale crons run --app my-api --interactive"}, Flags: []cliFlag{
+				{Name: "interactive", Short: "choose a task, review and confirm one manual run, then follow its request", Bool: true},
+				{Name: "app", Short: "app slug for interactive selection (linked app or picker by default)", Value: "SLUG"},
+				{Name: "timeout", Short: "maximum interactive follow duration (default 2m)", Value: "DURATION"},
+			}},
 			{Name: "fire-now", Short: "Show the status of a manual fire request", Positionals: []string{"<request-id>"}},
 			{Name: "runs", Short: "Show execution history", Positionals: []string{"[<id>]"}, Examples: []string{"gregale crons runs --app my-api --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Short: "choose a task, browse runs, and inspect command output", Bool: true},

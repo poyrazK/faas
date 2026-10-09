@@ -3339,9 +3339,21 @@ Delete one cron rule
 
 ### crons run
 
-Fire one cron immediately
+Fire one cron immediately or choose and follow a manual request
 
-`gregale crons run <cron-id>`
+`gregale crons run [--interactive] [--app <SLUG>] [--timeout <DURATION>] [<cron-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--interactive` | choose a task, review and confirm one manual run, then follow its request |  |
+| `--app <SLUG>` | app slug for interactive selection (linked app or picker by default) |  |
+| `--timeout <DURATION>` | maximum interactive follow duration (default 2m) |  |
+
+Examples:
+
+```sh
+gregale crons run --app my-api --interactive
+```
 
 ### crons fire-now
 

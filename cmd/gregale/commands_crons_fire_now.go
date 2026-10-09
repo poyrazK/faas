@@ -31,6 +31,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -64,18 +65,38 @@ const (
 //
 // Async-by-design: the POST returns 202 + request_id, and the row
 // becomes terminal only after schedd dispatches the cron. We never
-// poll from inside `crons run` — the operator is expected to follow
-// up with `crons fire-now <request-id>` (or pipe to it).
+// poll from the explicit-ID path; interactive mode follows the request
+// after reviewing and confirming the selected task.
 func cmdCronsRun(args []string) int {
 	fs := newFlagSet("crons-run", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	interactive := fs.Bool("interactive", false, "choose a task, confirm one manual run, and follow its request")
+	app := fs.String("app", "", "app slug for interactive task selection")
+	timeout := fs.Duration("timeout", 2*time.Minute, "maximum interactive fire-now wait")
+	flags, pos := splitArgsForFlags(args, "interactive")
+	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if *interactive {
+		if len(pos) != 0 || *timeout <= 0 {
+			return printErr("Invalid interactive run flags", fmt.Errorf("use crons run --interactive with optional --app and a positive --timeout; choose the task in the flow"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", fmt.Errorf("use crons run ID for scripts"))
+		}
+		slug, err := resolveReadAppTarget(*app)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		return cmdCronsRunInteractive(slug, *timeout)
+	}
+	if logsFlagWasSet(fs, "app") || logsFlagWasSet(fs, "timeout") {
+		return printErr("Invalid run flags", fmt.Errorf("--app and --timeout require --interactive"))
+	}
+	if len(pos) != 1 {
 		printCommandValidation(os.Stderr, "usage: gregale crons run <id>\n")
 		return 1
 	}
-	id := fs.Arg(0)
+	id := pos[0]
 	if !cronIDPattern.MatchString(id) {
 		printCommandValidation(os.Stderr, "usage: gregale crons run <id>\n")
 		return 1

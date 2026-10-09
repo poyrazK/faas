@@ -371,6 +371,31 @@ per task and produces a nonzero exit status while retaining other results.
 Tasks using host-local `Local` timezone need an explicit IANA timezone for a
 reliable preview. Scripts need an explicit or linked app and never prompt.
 
+## Run a scheduled task now
+
+```sh
+gregale crons run --app my-api --interactive
+gregale crons run --app my-api --interactive --timeout 5m
+```
+
+Choose an HTTP or command task and review its current path or command, schedule,
+and state before confirming one manual fire-now request. The guide rechecks
+configuration before submitting, then follows the returned request for up to
+two minutes by default. It prints commands to inspect that exact request,
+browse task history, and inspect the resulting command run when available.
+The active connection profile is included in these commands.
+
+Following uses read requests and never submits another manual run. Timeout
+exits with status 3; Ctrl-C stops following without cancelling the submitted
+request. Use the printed `crons fire-now REQUEST_ID` command to inspect its
+current status. A completed fire-now request is distinct from the resulting
+run's execution details. Server admission rules still apply, including the
+current task state and plan restrictions.
+
+The guide requires an interactive terminal. Scripts can continue using
+`gregale crons run ID`, then `gregale crons fire-now REQUEST_ID`. The `--app`
+and `--timeout` flags apply only to interactive mode.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
