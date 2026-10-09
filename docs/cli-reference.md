@@ -5366,7 +5366,7 @@ Show one API consumer
 
 ### consumers revoke
 
-Revoke an API consumer and its keys
+Revoke an API consumer; its keys stop authenticating
 
 `gregale consumers revoke <slug> <consumer-id>`
 

@@ -2245,7 +2245,7 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "consumer display name", Value: "TEXT", Req: true},
 			}},
 			{Name: "info", Short: "Show one API consumer", Positionals: []string{"<slug>", "<consumer-id>"}},
-			{Name: "revoke", Short: "Revoke an API consumer and its keys", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "revoke", Short: "Revoke an API consumer; its keys stop authenticating", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "keys", Short: "List a consumer's API keys", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "key-create", Short: "Issue a consumer API key (secret shown once)", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "name", Short: "key display name", Value: "TEXT", Req: true},
