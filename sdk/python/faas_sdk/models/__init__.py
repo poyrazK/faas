@@ -115,6 +115,10 @@ from .api_key_response_status import APIKeyResponseStatus
 from .app_binding_inventory import AppBindingInventory
 from .app_binding_inventory_item import AppBindingInventoryItem
 from .app_binding_inventory_item_type import AppBindingInventoryItemType
+from .app_change_event import AppChangeEvent
+from .app_change_event_source import AppChangeEventSource
+from .app_change_timeline_response import AppChangeTimelineResponse
+from .app_change_timeline_response_unavailable_sources_item import AppChangeTimelineResponseUnavailableSourcesItem
 from .app_configured_resources import AppConfiguredResources
 from .app_configured_resources_cpu_millicores import AppConfiguredResourcesCpuMillicores
 from .app_effective_limits import AppEffectiveLimits
@@ -3133,6 +3137,10 @@ __all__ = (
     "AppBindingInventory",
     "AppBindingInventoryItem",
     "AppBindingInventoryItemType",
+    "AppChangeEvent",
+    "AppChangeEventSource",
+    "AppChangeTimelineResponse",
+    "AppChangeTimelineResponseUnavailableSourcesItem",
     "AppConfiguredResources",
     "AppConfiguredResourcesCpuMillicores",
     "AppEffectiveLimits",

@@ -9396,3 +9396,11 @@ const (
 	EventConsumerExecutionRootsMax       = 1000
 	EventConsumerExecutionInvocationsMax = 5000
 )
+
+// Change timeline bounds (ADR-741). Each source is read with the event cap so
+// one busy source cannot starve the others before the newest-first merge.
+const (
+	ChangeTimelineDefaultWindow = 24 * time.Hour
+	ChangeTimelineMaxWindow     = 7 * 24 * time.Hour
+	ChangeTimelineMaxEvents     = 200
+)

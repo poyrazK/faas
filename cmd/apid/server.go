@@ -64,6 +64,7 @@ type server struct {
 	durableEntityMaintenanceEnabled bool
 	durableEntityMetrics            *durableEntityMetrics
 	devBridgeEnabled                bool
+	changeTimelineEnabled           bool
 	devBridgeURL                    string
 	devBridgeObserver               *devbridge.Observer
 	// Private fixture fallback; startup always installs the scoped preview gate.
@@ -1703,6 +1704,8 @@ func (s *server) handler() http.Handler {
 	// data.
 	mux.HandleFunc("GET /v1/apps/{slug}/health", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppHealth)))
 	mux.HandleFunc("GET /v1/apps/{slug}/health/history", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listAppHealthHistory)))
+	// ADR-741 — app change timeline; same read-only chain as health above.
+	mux.HandleFunc("GET /v1/apps/{slug}/changes", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppChangeTimeline)))
 	mux.HandleFunc("GET /v1/apps/{slug}/metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppMetrics)))
 	// Security policy observations are available on every plan where the
 	// optional pre-auth guard can be configured, including Free.

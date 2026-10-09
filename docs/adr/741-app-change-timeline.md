@@ -24,10 +24,10 @@
     | --- | --- | --- |
     | `deployment` | `deployment_audit` joined to the app's deployments | the table's closed `deploy.*` set (created, traffic changed, rollout started/completed/aborted, canary step, rolled back, removed, health probe failed/recovered, alert fired, scan regressed) |
     | `edge_rule` | `edge_rule_change_log` | the row's `operation` |
-    | `runtime_config` | `app_runtime_config_changes` | `runtime_config.changed` (timestamp only; the table carries no detail) |
+    | `runtime_config` | `app_runtime_config_changes` | `runtime_config.changed` (one upserted row per app, so only the latest change exists, and it carries no detail) |
     | `incident` | `route_monitor_incidents` | `incident.opened`, `incident.closed` |
-    | `health` | `app_health_history` (ADR-734) | the recorded transition kind |
-    | `audit` | customer audit events filtered by `data.app_id` | existing audit kinds, e.g. `env.set`, `env.deleted` |
+    | `health` | `app_health_history` (ADR-734) | `health.<recorded kind>` |
+    | `activity` | org activity filtered by app | `env.set`, `env.deleted`, `domain.added`, `domain.removed`, `domain.tls_issued`; `deploy.*` activity is skipped because `deployment_audit` already records it |
 
   - Window defaults to the last 24 hours and is capped at 7 days
     (`ChangeTimelineMaxWindow`). The merged result is capped at
@@ -39,9 +39,10 @@
     "nothing changed"; failing the whole request would hide the sources that
     did answer.
   - Events carry `at`, `source`, `kind`, optional `deployment_id`, a short
-    platform-generated `summary`, and an optional dashboard `link`. Raw
-    `data` payloads, actor emails, secret names' values, and error text are
-    never projected; audit summaries name the changed key, not its value.
+    platform-generated `summary`. Raw `data` payloads, actors, values, and
+    error text are never projected. Activity summaries use the org-activity
+    resource label (the variable name or domain), which that read model
+    already guarantees carries no value or credential.
   - Same authorization as `GET /v1/apps/{slug}/health`: `ScopesReadSurface`
     and app ownership. Available on every plan, like ADR-734's structural
     observations, because every event is the customer's own control-plane
@@ -54,8 +55,10 @@
   - *Include `feature_flag_versions`.* Flags are scoped to a project
     environment, not an app; mapping an app to the environments that evaluate
     it is a separate decision. Follow-up.
-  - *Include the legacy `audit_log`.* It has no app key, so filtering would
-    scan JSON across the account without a bound.
+  - *Include the legacy `audit_log` or the customer events table.* `audit_log`
+    has no app key, so filtering would scan JSON across the account without a
+    bound; the events table mixes changes with high-volume operational events
+    such as every wake.
   - *Overlay metrics in the API response.* Error-rate and latency series
     already have endpoints (`/v1/apps/{slug}/metrics`, request analytics); the
     dashboard joins them client-side. Keeping metrics out keeps this endpoint

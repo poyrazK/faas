@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppBindingInventory } from '../models/AppBindingInventory.js';
+import type { AppChangeTimelineResponse } from '../models/AppChangeTimelineResponse.js';
 import type { AppErrorRequestsResponse } from '../models/AppErrorRequestsResponse.js';
 import type { AppErrorSampleResponse } from '../models/AppErrorSampleResponse.js';
 import type { AppErrorsSummaryResponse } from '../models/AppErrorsSummaryResponse.js';
@@ -1299,6 +1300,55 @@ export class AppsService {
       query: {
         'limit': limit,
         'before': before,
+      },
+    });
+  }
+  /**
+   * Read an app's change timeline.
+   * ADR-741 internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
+   * otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+   * admin; no MFA required.
+   *
+   * Merges deployment audit, edge-rule changes, the latest runtime-config
+   * change, route incidents, recorded health transitions, and environment
+   * and domain activity into one newest-first list. The window defaults to
+   * the last 24 hours, `until` is clamped to now, and the window is at most
+   * 7 days. At most 200 events are returned (`truncated: true` when more
+   * exist). A source that cannot be read is named in `unavailable_sources`
+   * and the remaining sources are still returned. Summaries never contain
+   * values, credentials, actors, or raw error text.
+   *
+   * @returns AppChangeTimelineResponse The change timeline; Cache-Control no-store.
+   * @returns Problem Invalid window, access denial, or the preview is disabled.
+   * @throws ApiError
+   */
+  public static getAppChangeTimeline({
+    slug,
+    since,
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Window start (RFC 3339). Defaults to 24 hours before until.
+     */
+    since?: string,
+    /**
+     * Window end (RFC 3339), exclusive. Defaults to and is clamped to now.
+     */
+    until?: string,
+  }): CancelablePromise<AppChangeTimelineResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/changes',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
       },
     });
   }

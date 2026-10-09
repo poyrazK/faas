@@ -63,6 +63,8 @@ export type { AlertRollbackDeploymentEvidence } from './AlertRollbackDeploymentE
 export type { AlertRuleResponse } from './AlertRuleResponse.js';
 export type { AppBindingInventory } from './AppBindingInventory.js';
 export type { AppBindingInventoryItem } from './AppBindingInventoryItem.js';
+export type { AppChangeEvent } from './AppChangeEvent.js';
+export type { AppChangeTimelineResponse } from './AppChangeTimelineResponse.js';
 export type { AppConfiguredResources } from './AppConfiguredResources.js';
 export type { AppEffectiveLimits } from './AppEffectiveLimits.js';
 export type { AppEnvListResponse } from './AppEnvListResponse.js';

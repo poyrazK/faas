@@ -9557,6 +9557,46 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/changes:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppChangeTimeline
+      summary: Read an app's change timeline.
+      description: |
+        ADR-741 internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
+        otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+        admin; no MFA required.
+
+        Merges deployment audit, edge-rule changes, the latest runtime-config
+        change, route incidents, recorded health transitions, and environment
+        and domain activity into one newest-first list. The window defaults to
+        the last 24 hours, `until` is clamped to now, and the window is at most
+        7 days. At most 200 events are returned (`truncated: true` when more
+        exist). A source that cannot be read is named in `unavailable_sources`
+        and the remaining sources are still returned. Summaries never contain
+        values, credentials, actors, or raw error text.
+      parameters:
+        - name: since
+          in: query
+          description: Window start (RFC 3339). Defaults to 24 hours before until.
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: Window end (RFC 3339), exclusive. Defaults to and is clamped to now.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: The change timeline; Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppChangeTimelineResponse' }
+        default:
+          description: Invalid window, access denial, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/metrics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -55520,6 +55560,33 @@ components:
           type: array
           items: { type: string }
         history_path: { type: string, description: Authenticated cursor-paged history; locate transition_id while retained. }
+    AppChangeTimelineResponse:
+      description: ADR-741 change timeline for one app over [since, until), newest first.
+      type: object
+      required: [app_id, app_slug, since, until, events, truncated, unavailable_sources]
+      properties:
+        app_id: { type: string }
+        app_slug: { type: string }
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/AppChangeEvent' }
+        truncated: { type: boolean, description: Older events in the window were dropped at the 200-event cap. }
+        unavailable_sources:
+          type: array
+          description: Sources that could not be read; their events are missing, not absent.
+          items: { type: string, enum: [deployment, edge_rule, runtime_config, incident, health, activity] }
+    AppChangeEvent:
+      description: One change timeline entry with a platform-generated summary.
+      type: object
+      required: [at, source, kind, summary]
+      properties:
+        at: { type: string, format: date-time }
+        source: { type: string, enum: [deployment, edge_rule, runtime_config, incident, health, activity] }
+        kind: { type: string, description: Source-specific kind such as deploy.rolled_back or env.set. }
+        deployment_id: { type: string }
+        summary: { type: string }
     AppHealthHistoryPage:
       description: Retained default HTTP health observations with independent background collection freshness.
       type: object

@@ -1408,6 +1408,10 @@ type Querier interface {
 	// the handler so the handler can pass an empty string for "no
 	// subject filter" without a NULL literal.
 	ListAllEventsPaged(ctx context.Context, db DBTX, arg ListAllEventsPagedParams) ([]ListAllEventsPagedRow, error)
+	// ADR-741 change timeline: one app's deployment_audit rows in [since, until).
+	ListAppDeploymentAuditBetween(ctx context.Context, db DBTX, arg ListAppDeploymentAuditBetweenParams) ([]ListAppDeploymentAuditBetweenRow, error)
+	// ADR-741 change timeline: one app's edge-rule mutations in [since, until).
+	ListAppEdgeRuleChangesBetween(ctx context.Context, db DBTX, arg ListAppEdgeRuleChangesBetweenParams) ([]ListAppEdgeRuleChangesBetweenRow, error)
 	// Nightly retention purge read path (cmd/apid/app_errors_purge.go).
 	// Returns IDs of app_errors rows for an account older than
 	// `cutoff`. Capped at 10000 per call so the DELETE loop can

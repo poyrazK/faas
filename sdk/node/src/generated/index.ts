@@ -69,6 +69,8 @@ export type { APIKeyExportResponse } from './models/APIKeyExportResponse.js';
 export type { APIKeyResponse } from './models/APIKeyResponse.js';
 export type { AppBindingInventory } from './models/AppBindingInventory.js';
 export type { AppBindingInventoryItem } from './models/AppBindingInventoryItem.js';
+export type { AppChangeEvent } from './models/AppChangeEvent.js';
+export type { AppChangeTimelineResponse } from './models/AppChangeTimelineResponse.js';
 export type { AppConfiguredResources } from './models/AppConfiguredResources.js';
 export type { AppEffectiveLimits } from './models/AppEffectiveLimits.js';
 export type { AppEnvListResponse } from './models/AppEnvListResponse.js';

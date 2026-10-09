@@ -25298,6 +25298,125 @@ func (q *Queries) ListAllEventsPaged(ctx context.Context, db DBTX, arg ListAllEv
 	return items, nil
 }
 
+const listAppDeploymentAuditBetween = `-- name: ListAppDeploymentAuditBetween :many
+SELECT da.id, da.deployment_id::text AS deployment_id, da.kind, da.at
+FROM deployment_audit da
+JOIN deployments d ON d.id = da.deployment_id
+JOIN apps a ON a.id = d.app_id
+WHERE a.id = $1::text::uuid
+  AND a.account_id = $2::text::uuid
+  AND da.at >= $3::timestamptz
+  AND da.at < $4::timestamptz
+ORDER BY da.at DESC, da.id DESC
+LIMIT $5::int
+`
+
+type ListAppDeploymentAuditBetweenParams struct {
+	AppID     string
+	AccountID string
+	Since     pgtype.Timestamptz
+	Until     pgtype.Timestamptz
+	RowLimit  int32
+}
+
+type ListAppDeploymentAuditBetweenRow struct {
+	ID           int64
+	DeploymentID string
+	Kind         string
+	At           pgtype.Timestamptz
+}
+
+// ADR-741 change timeline: one app's deployment_audit rows in [since, until).
+func (q *Queries) ListAppDeploymentAuditBetween(ctx context.Context, db DBTX, arg ListAppDeploymentAuditBetweenParams) ([]ListAppDeploymentAuditBetweenRow, error) {
+	rows, err := db.Query(ctx, listAppDeploymentAuditBetween,
+		arg.AppID,
+		arg.AccountID,
+		arg.Since,
+		arg.Until,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppDeploymentAuditBetweenRow{}
+	for rows.Next() {
+		var i ListAppDeploymentAuditBetweenRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.Kind,
+			&i.At,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppEdgeRuleChangesBetween = `-- name: ListAppEdgeRuleChangesBetween :many
+SELECT e.id, e.rule_id::text AS rule_id, e.operation, e.created_at
+FROM edge_rule_change_log e
+JOIN apps a ON a.id = e.app_id
+WHERE a.id = $1::text::uuid
+  AND a.account_id = $2::text::uuid
+  AND e.created_at >= $3::timestamptz
+  AND e.created_at < $4::timestamptz
+ORDER BY e.created_at DESC, e.id DESC
+LIMIT $5::int
+`
+
+type ListAppEdgeRuleChangesBetweenParams struct {
+	AppID     string
+	AccountID string
+	Since     pgtype.Timestamptz
+	Until     pgtype.Timestamptz
+	RowLimit  int32
+}
+
+type ListAppEdgeRuleChangesBetweenRow struct {
+	ID        int64
+	RuleID    string
+	Operation string
+	CreatedAt pgtype.Timestamptz
+}
+
+// ADR-741 change timeline: one app's edge-rule mutations in [since, until).
+func (q *Queries) ListAppEdgeRuleChangesBetween(ctx context.Context, db DBTX, arg ListAppEdgeRuleChangesBetweenParams) ([]ListAppEdgeRuleChangesBetweenRow, error) {
+	rows, err := db.Query(ctx, listAppEdgeRuleChangesBetween,
+		arg.AppID,
+		arg.AccountID,
+		arg.Since,
+		arg.Until,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppEdgeRuleChangesBetweenRow{}
+	for rows.Next() {
+		var i ListAppEdgeRuleChangesBetweenRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RuleID,
+			&i.Operation,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAppErrorFingerprintsForPurge = `-- name: ListAppErrorFingerprintsForPurge :many
 SELECT id FROM app_errors
 WHERE account_id = $1

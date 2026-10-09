@@ -278,6 +278,8 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	// ADR-741: the change timeline reads as one noun, not "apps slug changes".
+	"GET /v1/apps/{slug}/changes": "GetAppChangeTimeline",
 	// Profiling routes use domain-specific SDK names and hyphenated segments.
 	"GET /v1/apps/{slug}/profiles":                            "GetAppProfiles",
 	"POST /v1/apps/{slug}/profiles/compare":                   "CompareAppProfiles",
