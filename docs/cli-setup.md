@@ -420,6 +420,27 @@ distinct from the resulting run's execution details.
 It also returns the appropriate exit status, so scripts can handle unfinished
 requests without parsing human progress messages.
 
+## Set up an alert preset
+
+```sh
+gregale alerts preset enable --app my-api --interactive
+# Use the linked app, or choose one:
+gregale alerts preset enable --interactive
+```
+
+Choose an enabled catalog preset and review its metric, comparison, threshold,
+time window, default cooldown, and minimum plan. Enter an HTTPS webhook receiver
+URL and a signing secret with hidden input, then review the app and rule before
+confirming creation. The signing secret is neither printed nor placed in command
+arguments. The guide creates a new enabled webhook alert using preset defaults
+and rechecks the selected catalog entry before creating it. Server plan and
+admission checks still apply.
+
+Only `--app` can accompany `--interactive`. For cooldown overrides, disabled
+rules, other actions, or scripts, use the explicit preset flags with
+`--webhook-secret-stdin`. Guided setup requires terminal input and output.
+After creation, it prints a command to inspect the rule.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

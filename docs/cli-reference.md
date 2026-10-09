@@ -1464,19 +1464,26 @@ List the global alert preset catalog
 
 #### alerts preset enable
 
-Create an app alert from a preset; supply a webhook secret via stdin or --webhook-secret
+Create an app alert from a preset or choose one interactively
 
-`gregale alerts preset enable --app <slug> --webhook-url <URL> [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--action <ACTION>] [--cooldown-minutes <N>] [--enabled] <preset-name>`
+`gregale alerts preset enable [--interactive] [--app <slug>] [--webhook-url <URL>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--action <ACTION>] [--cooldown-minutes <N>] [--enabled] [<preset-name>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
-| `--webhook-url <URL>` | HTTPS webhook receiver URL | required |
+| `--interactive` | choose a preset, review its rule, and enter a hidden signing secret |  |
+| `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
+| `--webhook-url <URL>` | HTTPS webhook receiver URL (required unless interactive) |  |
 | `--webhook-secret-stdin` | read the webhook signing secret from stdin |  |
 | `--webhook-secret <VALUE>` | signing secret (prefer --webhook-secret-stdin) |  |
 | `--action <ACTION>` | alert action (default webhook) | one of `webhook` · `rollback` · `demote` · `promote` |
 | `--cooldown-minutes <N>` | cooldown override; 0 uses the preset default |  |
 | `--enabled` | rule is enabled by default; --enabled=false disables it |  |
+
+Examples:
+
+```sh
+gregale alerts preset enable --app my-api --interactive
+```
 
 
 ## audit-events
