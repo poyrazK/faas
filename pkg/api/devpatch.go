@@ -5,6 +5,17 @@ package api
 // applied as a live patch and, when the operator enables delivery, publishes
 // it for vmmd to serve to the running developer instances.
 
+// Remote debugger attach for developer environments (ADR-741). The CLI sets
+// DevDebugEnv on its developer app only; guest-init then starts the runtime's
+// debugger listener on DevDebugNodePort, which only the authenticated
+// /v1/apps/{slug}/debug tunnel can reach.
+const (
+	DevDebugEnv            = "FAAS_DEV_DEBUG"
+	DevDebugRuntimeNode    = "node"
+	DevDebugNodePort       = 9229
+	DevDebugNodePortString = "9229"
+)
+
 // DevPatchStatusResponse states.
 const (
 	DevPatchStatePending = "pending"

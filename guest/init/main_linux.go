@@ -503,6 +503,9 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// for warm handlers uses the traceparent HTTP header at the guest
 	// boundary. Empty = no OTel configured, the env is unchanged.
 	env = StampTraceparentEnv(env, GetResumeTraceparent())
+	// ADR-741: `gregale dev --debug` starts the Node inspector for the main
+	// workload only.
+	env = StampDevDebugEnv(env)
 	// exec.Command resolves a bare argv[0] immediately using guest-init's
 	// own PATH. Direct OCI images expect Docker semantics: resolution uses
 	// the image's PATH. Resolve against the mounted image after pivot_root,
