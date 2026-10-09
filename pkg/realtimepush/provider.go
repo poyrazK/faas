@@ -16,7 +16,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
-	"math/big"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -289,12 +288,11 @@ func vapidKey(raw string) (*ecdsa.PrivateKey, error) {
 	if err != nil || len(data) != 32 {
 		return nil, errors.New("invalid VAPID private key")
 	}
-	d := new(big.Int).SetBytes(data)
-	if d.Sign() == 0 || d.Cmp(elliptic.P256().Params().N) >= 0 {
+	key, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), data)
+	if err != nil {
 		return nil, errors.New("invalid VAPID scalar")
 	}
-	x, y := elliptic.P256().ScalarBaseMult(data)
-	return &ecdsa.PrivateKey{PublicKey: ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}, D: d}, nil
+	return key, nil
 }
 func signJWT(key *ecdsa.PrivateKey, header map[string]string, claims map[string]any) (string, error) {
 	h, _ := json.Marshal(header)
