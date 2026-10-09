@@ -343,7 +343,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Cold compilation and migrated-schema fixtures need time outside the
-    # unchanged 12-minute per-process test deadline.
+    # bounded package and split-suite test deadlines.
     strategy:
       fail-fast: false
       matrix:
@@ -444,7 +444,9 @@ jobs:
           for pkg in $SPLIT; do
             run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
             echo "testing: $pkg (test shard $SHARD/3)"
-            go test -race -count=1 -timeout=12m -run "$run" "$pkg" &
+            # Large PostgreSQL partitions use the mega tier's process
+            # budget; package tests above keep their 12-minute deadline.
+            go test -race -count=1 -timeout=20m -run "$run" "$pkg" &
             pids+=("$!")
           done
           status=0
