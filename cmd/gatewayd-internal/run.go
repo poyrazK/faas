@@ -2385,7 +2385,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	var chaosMatchRecorder *scenarioChaosMatchRecorder
 	if deps.pgStore != nil {
-		chaosMatchRecorder = newScenarioChaosMatchRecorder(deps.pgStore, log)
+		chaosMatchRecorder = newScenarioChaosMatchRecorder(ctx, deps.pgStore, log)
 		defer chaosMatchRecorder.Close()
 	}
 	// DEPLOY-1 / ADR-075 capdecl gate. gatewayd-internal is

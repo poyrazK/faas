@@ -28,7 +28,7 @@ type scenarioChaosMatchRecorder struct {
 	once    sync.Once
 }
 
-func newScenarioChaosMatchRecorder(store state.Store, log *slog.Logger) *scenarioChaosMatchRecorder {
+func newScenarioChaosMatchRecorder(ctx context.Context, store state.Store, log *slog.Logger) *scenarioChaosMatchRecorder {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -36,7 +36,7 @@ func newScenarioChaosMatchRecorder(store state.Store, log *slog.Logger) *scenari
 		store: store, log: log, pending: make(map[scenarioChaosMatchKey]int64),
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
-	go recorder.run()
+	go recorder.run(ctx)
 	return recorder
 }
 
@@ -52,22 +52,25 @@ func (r *scenarioChaosMatchRecorder) Observe(runID, callerAppID, generation stri
 	r.mu.Unlock()
 }
 
-func (r *scenarioChaosMatchRecorder) run() {
+func (r *scenarioChaosMatchRecorder) run(ctx context.Context) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	defer close(r.done)
 	for {
 		select {
 		case <-ticker.C:
-			r.flush()
+			r.flush(ctx)
+		case <-ctx.Done():
+			r.flush(context.WithoutCancel(ctx))
+			return
 		case <-r.stop:
-			r.flush()
+			r.flush(context.WithoutCancel(ctx))
 			return
 		}
 	}
 }
 
-func (r *scenarioChaosMatchRecorder) flush() {
+func (r *scenarioChaosMatchRecorder) flush(ctx context.Context) {
 	r.mu.Lock()
 	if len(r.pending) == 0 {
 		r.mu.Unlock()
@@ -84,8 +87,8 @@ func (r *scenarioChaosMatchRecorder) flush() {
 			RuleID: key.ruleID, Count: count,
 		})
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	err := r.store.RecordScenarioTestChaosInjections(ctx, batch)
+	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	err := r.store.RecordScenarioTestChaosInjections(writeCtx, batch)
 	cancel()
 	if err == nil {
 		return

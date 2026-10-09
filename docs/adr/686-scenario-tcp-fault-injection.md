@@ -1,4 +1,4 @@
-# ADR-640 · Scenario TCP fault injection
+# ADR-686 · Scenario TCP fault injection
 
 - **Status:** accepted
 - **Date:** 2026-10-07

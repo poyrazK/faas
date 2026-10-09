@@ -271,7 +271,7 @@ func compareTestStagedLoadRelative(baselineStep string, baseline, current *testL
 		after, currentFound := testLoadMetricsForStep(current, configured.CurrentStep)
 		if !baselineFound || !currentFound {
 			result.Status = "failed"
-			message := "missing per-request load evidence"
+			var message string
 			if !baselineFound && !currentFound {
 				message = fmt.Sprintf("baseline HTTP step %q and current HTTP step %q have no load evidence", configured.BaselineStep, configured.CurrentStep)
 			} else if !baselineFound {

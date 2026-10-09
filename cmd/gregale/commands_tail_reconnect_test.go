@@ -44,14 +44,28 @@ func TestGregaleTail_ReconnectsWhenStreamEnds(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 
 	stdout, restore := captureStdout(t)
-	defer restore()
+	t.Cleanup(restore)
 	done := make(chan int, 1)
 	go func() { done <- cmdTail(nil) }()
+	tailExited := false
+	t.Cleanup(func() {
+		if tailExited {
+			return
+		}
+		_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+		select {
+		case <-done:
+			tailExited = true
+		case <-time.After(time.Second):
+			t.Error("cmdTail did not stop during cleanup")
+		}
+	})
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && !strings.Contains(stdout.String(), "i-3 a1 completed") {
 		select {
 		case code := <-done:
+			tailExited = true
 			t.Fatalf("cmdTail exited with %d after the stream ended; want it to reconnect. stdout=%q", code, stdout.String())
 		case <-time.After(20 * time.Millisecond):
 		}
@@ -65,6 +79,7 @@ func TestGregaleTail_ReconnectsWhenStreamEnds(t *testing.T) {
 		}
 		select {
 		case code := <-done:
+			tailExited = true
 			if code != 130 {
 				t.Fatalf("cmdTail exit = %d, want 130", code)
 			}

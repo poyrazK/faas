@@ -1605,7 +1605,7 @@ func runTestScenarioSteps(ctx context.Context, client *Client, sourceDir, baseUR
 			evidenceCancel()
 			if captureErr != nil {
 				if stepErr != nil {
-					stepErr = fmt.Errorf("%v; %w", stepErr, captureErr)
+					stepErr = fmt.Errorf("%w; %w", stepErr, captureErr)
 				} else {
 					stepErr = captureErr
 				}

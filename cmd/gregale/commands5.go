@@ -1848,19 +1848,17 @@ func tailStreamOnce(ctx context.Context, client *Client, filter tailFilter) (att
 			return true, 130
 		case e, ok := <-dec.Events():
 			if !ok {
+				// The decoder publishes its terminal error before closing
+				// Events. Drain the event channel first so a clean EOF cannot
+				// win a select against a frame that is already buffered.
+				if err, ok := <-dec.Errors(); ok && err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
+					PrintWarn(os.Stderr, "stream closed: %v", err)
+				}
 				return true, -1
 			}
 			if writeErr := writeTailFrame(e, filter); writeErr != nil {
 				return true, printErr("Could not write event", writeErr)
 			}
-		case err := <-dec.Errors():
-			if err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
-				PrintWarn(os.Stderr, "stream closed: %v", err)
-			}
-			if ctx.Err() != nil {
-				return true, 130
-			}
-			return true, -1
 		}
 	}
 }
