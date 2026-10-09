@@ -2828,3 +2828,9 @@ only metadata. History is bounded at the existing 100 decisions per retained
 job and disappears when job retention prunes that job. No migration is required.
 Go, Node, and Python expose list and detail methods. See
 [ADR-839](adr/839-recovery-notification-retry-history.md).
+
+### Notification retry generation outcomes
+
+Request-specific notification retry history also reports `retry_outcome` for the originally queued `replay_generation`: `pending`, `succeeded`, `failed`, or `unknown`. Skipped decisions report `not_applicable`. Retained terminal attempts establish success/failure and `completed_at`; a later delivery generation cannot establish the earlier generation's outcome. Removed evidence reports unknown.
+
+`retained_attempt_count` counts completed attempts from that generation only. `attempt_count_complete` indicates whether the retained sequence is complete for the known outcome; unknown outcomes always report false. Attempts still in flight are excluded. Read these fields using `gregale events recovery-notification-retry-history JOB_ID --request-id REQUEST_ID --json` or the existing request detail API/SDK method.

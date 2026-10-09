@@ -1058,6 +1058,7 @@ from .event_recovery_notification_retry_candidate import EventRecoveryNotificati
 from .event_recovery_notification_retry_candidate_kind import EventRecoveryNotificationRetryCandidateKind
 from .event_recovery_notification_retry_decision import EventRecoveryNotificationRetryDecision
 from .event_recovery_notification_retry_decision_detail import EventRecoveryNotificationRetryDecisionDetail
+from .event_recovery_notification_retry_decision_retry_outcome import EventRecoveryNotificationRetryDecisionRetryOutcome
 from .event_recovery_notification_retry_decision_state import EventRecoveryNotificationRetryDecisionState
 from .event_recovery_notification_retry_decision_summary import EventRecoveryNotificationRetryDecisionSummary
 from .event_recovery_notification_retry_history import EventRecoveryNotificationRetryHistory
@@ -4109,6 +4110,7 @@ __all__ = (
     "EventRecoveryNotificationRetryCandidateKind",
     "EventRecoveryNotificationRetryDecision",
     "EventRecoveryNotificationRetryDecisionDetail",
+    "EventRecoveryNotificationRetryDecisionRetryOutcome",
     "EventRecoveryNotificationRetryDecisionState",
     "EventRecoveryNotificationRetryDecisionSummary",
     "EventRecoveryNotificationRetryHistory",

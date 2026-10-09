@@ -1324,6 +1324,56 @@ func (q *Queries) EventRecoveryNotificationRetryDeliveryLock(ctx context.Context
 	return i, err
 }
 
+const eventRecoveryNotificationRetryGenerationOutcome = `-- name: EventRecoveryNotificationRetryGenerationOutcome :one
+SELECT count(*)::integer AS retained_count,
+       coalesce(max(a.attempt_number),0)::integer AS highest_attempt,
+       coalesce(max(a.outcome) FILTER (WHERE a.outcome IN ('succeeded','dead')),'')::text AS terminal_outcome,
+       (max(a.finished_at) FILTER (WHERE a.outcome IN ('succeeded','dead')))::timestamptz AS completed_at
+FROM app_webhook_delivery_attempts a
+JOIN app_webhook_deliveries d ON d.id=a.delivery_id
+WHERE d.id=$1::uuid AND d.webhook_id=$2::uuid
+ AND d.account_id=$3::uuid AND d.app_id=$4::uuid
+ AND d.event=$5::text AND d.source_event_id=$6::uuid
+ AND a.replay_generation=$7::integer
+`
+
+type EventRecoveryNotificationRetryGenerationOutcomeParams struct {
+	DeliveryID pgtype.UUID
+	WebhookID  pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	Event      string
+	EventID    pgtype.UUID
+	Generation int32
+}
+
+type EventRecoveryNotificationRetryGenerationOutcomeRow struct {
+	RetainedCount   int32
+	HighestAttempt  int32
+	TerminalOutcome string
+	CompletedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) EventRecoveryNotificationRetryGenerationOutcome(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryGenerationOutcomeParams) (EventRecoveryNotificationRetryGenerationOutcomeRow, error) {
+	row := db.QueryRow(ctx, eventRecoveryNotificationRetryGenerationOutcome,
+		arg.DeliveryID,
+		arg.WebhookID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Event,
+		arg.EventID,
+		arg.Generation,
+	)
+	var i EventRecoveryNotificationRetryGenerationOutcomeRow
+	err := row.Scan(
+		&i.RetainedCount,
+		&i.HighestAttempt,
+		&i.TerminalOutcome,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
 const eventRecoveryNotificationRetryHistoryOwner = `-- name: EventRecoveryNotificationRetryHistoryOwner :one
 SELECT app_id,notification_retry_receipts FROM event_recovery_jobs
 WHERE id=$1::uuid AND account_id=$2::uuid

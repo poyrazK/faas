@@ -445,3 +445,15 @@ WHERE id=sqlc.arg(delivery_id)::uuid AND account_id=sqlc.arg(account_id)::uuid A
 -- name: EventRecoveryNotificationRetryHistoryOwner :one
 SELECT app_id,notification_retry_receipts FROM event_recovery_jobs
 WHERE id=sqlc.arg(job_id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: EventRecoveryNotificationRetryGenerationOutcome :one
+SELECT count(*)::integer AS retained_count,
+       coalesce(max(a.attempt_number),0)::integer AS highest_attempt,
+       coalesce(max(a.outcome) FILTER (WHERE a.outcome IN ('succeeded','dead')),'')::text AS terminal_outcome,
+       (max(a.finished_at) FILTER (WHERE a.outcome IN ('succeeded','dead')))::timestamptz AS completed_at
+FROM app_webhook_delivery_attempts a
+JOIN app_webhook_deliveries d ON d.id=a.delivery_id
+WHERE d.id=sqlc.arg(delivery_id)::uuid AND d.webhook_id=sqlc.arg(webhook_id)::uuid
+ AND d.account_id=sqlc.arg(account_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
+ AND d.event=sqlc.arg(event)::text AND d.source_event_id=sqlc.arg(event_id)::uuid
+ AND a.replay_generation=sqlc.arg(generation)::integer;

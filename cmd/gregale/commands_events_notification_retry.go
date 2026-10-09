@@ -147,13 +147,21 @@ func cmdEventsRecoveryNotificationRetryHistory(args []string) int {
 			return printErr("Notification retry history failed", err)
 		}
 		_, _ = fmt.Fprintf(osStdout, "Recovery %s | request: %s | decided: %s | current status observed: %s\n", oneLine(out.JobID), oneLine(out.RequestID), out.DecidedAt.Format(time.RFC3339), out.CurrentStatusObservedAt.Format(time.RFC3339))
-		_, _ = fmt.Fprintln(osStdout, "KIND\tWEBHOOK\tDELIVERY\tORIGINAL\tREASON\tCURRENT\tGENERATION")
+		_, _ = fmt.Fprintln(osStdout, "KIND\tWEBHOOK\tDELIVERY\tORIGINAL\tREASON\tCURRENT\tCURRENT GENERATION\tREQUESTED GENERATION\tRETRY OUTCOME\tRETAINED ATTEMPTS\tCOUNT COMPLETE\tCOMPLETED")
 		for _, d := range out.Decisions {
 			generation := "unavailable"
 			if d.CurrentReplayGeneration != nil {
 				generation = fmt.Sprint(*d.CurrentReplayGeneration)
 			}
-			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(d.Target.Kind), oneLine(d.Target.WebhookID), oneLine(d.Target.DeliveryID), oneLine(d.State), oneLine(d.Reason), oneLine(d.CurrentDeliveryStatus), generation)
+			requestedGeneration := "-"
+			if d.ReplayGeneration != nil {
+				requestedGeneration = fmt.Sprint(*d.ReplayGeneration)
+			}
+			completed := "-"
+			if d.CompletedAt != nil {
+				completed = d.CompletedAt.Format(time.RFC3339)
+			}
+			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%t\t%s\n", oneLine(d.Target.Kind), oneLine(d.Target.WebhookID), oneLine(d.Target.DeliveryID), oneLine(d.State), oneLine(d.Reason), oneLine(d.CurrentDeliveryStatus), generation, requestedGeneration, oneLine(d.RetryOutcome), d.RetainedAttemptCount, d.AttemptCountComplete, completed)
 		}
 		return 0
 	}

@@ -163,7 +163,11 @@ func recoveryNotificationRetryDecisionDetail(job, app, requestID string, now tim
 	}
 	out := api.EventRecoveryNotificationRetryDecisionDetail{JobID: job, AppID: app, RequestID: requestID, DecidedAt: response.DecidedAt, CurrentStatusObservedAt: now, Decisions: []api.EventRecoveryNotificationRetryDecision{}}
 	for _, result := range response.Results {
-		row := api.EventRecoveryNotificationRetryDecision{Target: result.Target, State: result.State, Reason: result.Reason, ReplayGeneration: result.ReplayGeneration, CurrentDeliveryStatus: "unavailable"}
+		row := api.EventRecoveryNotificationRetryDecision{Target: result.Target, State: result.State, Reason: result.Reason, ReplayGeneration: result.ReplayGeneration, CurrentDeliveryStatus: "unavailable", RetryOutcome: "not_applicable", AttemptCountComplete: true}
+		if result.State == "queued" {
+			row.RetryOutcome = "unknown"
+			row.AttemptCountComplete = false
+		}
 		for _, notice := range report.Notifications {
 			if notice.Kind == result.Target.Kind {
 				for _, receiver := range notice.Receivers {
@@ -178,4 +182,27 @@ func recoveryNotificationRetryDecisionDetail(job, app, requestID string, now tim
 		out.Decisions = append(out.Decisions, row)
 	}
 	return out, nil
+}
+
+// Only the requested generation's retained terminal attempt proves completion.
+func recoveryNotificationRetryOutcome(row *api.EventRecoveryNotificationRetryDecision, count, highest int, outcome string, completed *time.Time) {
+	row.RetainedAttemptCount = count
+	row.AttemptCountComplete = count == highest
+	switch outcome {
+	case "succeeded":
+		row.RetryOutcome = "succeeded"
+		row.CompletedAt = completed
+	case "dead":
+		row.RetryOutcome = "failed"
+		row.CompletedAt = completed
+	default:
+		if row.ReplayGeneration != nil && row.CurrentReplayGeneration != nil && *row.ReplayGeneration == *row.CurrentReplayGeneration && (row.CurrentDeliveryStatus == "pending" || row.CurrentDeliveryStatus == "in_flight") {
+			row.RetryOutcome = "pending"
+		}
+	}
+	// A later generation or missing delivery with no terminal evidence may have
+	// lost attempts, including its terminal row. Zero retained rows is not proof.
+	if row.RetryOutcome == "unknown" {
+		row.AttemptCountComplete = false
+	}
 }

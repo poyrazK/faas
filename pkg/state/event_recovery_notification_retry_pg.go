@@ -225,5 +225,28 @@ func (s *PgStore) GetEventRecoveryNotificationRetryDecision(ctx context.Context,
 	if err != nil {
 		return out, err
 	}
+	for i := range out.Decisions {
+		row := &out.Decisions[i]
+		if row.State != "queued" || row.ReplayGeneration == nil {
+			continue
+		}
+		_, event, reason := recoveryNotificationRetryReceiver(report, row.Target)
+		if reason != "" {
+			continue
+		}
+		evidence, err := q.EventRecoveryNotificationRetryGenerationOutcome(ctx, tx, sqlc.EventRecoveryNotificationRetryGenerationOutcomeParams{
+			DeliveryID: mustPgUUID(row.Target.DeliveryID), WebhookID: mustPgUUID(row.Target.WebhookID), AccountID: mustPgUUID(account), AppID: owner.AppID,
+			Event: event, EventID: mustPgUUID(recoveryNotificationEventID(out.JobID, event)), Generation: int32(*row.ReplayGeneration),
+		})
+		if err != nil {
+			return out, err
+		}
+		var completed *time.Time
+		if evidence.CompletedAt.Valid {
+			t := evidence.CompletedAt.Time
+			completed = &t
+		}
+		recoveryNotificationRetryOutcome(row, int(evidence.RetainedCount), int(evidence.HighestAttempt), evidence.TerminalOutcome, completed)
+	}
 	return out, tx.Commit(ctx)
 }

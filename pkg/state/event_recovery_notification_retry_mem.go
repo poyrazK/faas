@@ -182,5 +182,38 @@ func (m *MemStore) GetEventRecoveryNotificationRetryDecision(ctx context.Context
 	if err != nil {
 		return out, err
 	}
-	return recoveryNotificationRetryDecisionDetail(entry.Job.ID, entry.Job.AppID, requestID, now, saved, report)
+	out, err = recoveryNotificationRetryDecisionDetail(entry.Job.ID, entry.Job.AppID, requestID, now, saved, report)
+	if err != nil {
+		return out, err
+	}
+	for i := range out.Decisions {
+		row := &out.Decisions[i]
+		if row.State != "queued" || row.ReplayGeneration == nil {
+			continue
+		}
+		_, event, reason := recoveryNotificationRetryReceiver(report, row.Target)
+		d, exists := m.appWebhookDeliveries[row.Target.DeliveryID]
+		if reason != "" || !exists || d.AccountID != account || d.AppID != entry.Job.AppID || d.WebhookID != row.Target.WebhookID || string(d.Event) != event || entry.NotificationDeliveryIDs[event][row.Target.WebhookID] != d.ID {
+			continue
+		}
+		count, highest := 0, 0
+		outcome := ""
+		var completed *time.Time
+		for _, attempt := range m.appWebhookDeliveryAttempts[d.ID] {
+			if attempt.ReplayGeneration != *row.ReplayGeneration {
+				continue
+			}
+			count++
+			if attempt.AttemptNumber > highest {
+				highest = attempt.AttemptNumber
+			}
+			if attempt.Outcome == "succeeded" || attempt.Outcome == "dead" {
+				outcome = attempt.Outcome
+				t := attempt.FinishedAt
+				completed = &t
+			}
+		}
+		recoveryNotificationRetryOutcome(row, count, highest, outcome, completed)
+	}
+	return out, ctx.Err()
 }

@@ -47785,7 +47785,7 @@ components:
     EventRecoveryNotificationRetryDecision:
       type: object
       description: Immutable original receiver decision alongside current retained delivery status. An unavailable current row does not rewrite or invalidate the original result.
-      required: [target, state, current_delivery_status]
+      required: [target, state, current_delivery_status, retry_outcome, retained_attempt_count, attempt_count_complete]
       properties:
         target: { $ref: '#/components/schemas/EventRecoveryNotificationRetryTarget' }
         state: { type: string, enum: [queued, skipped] }
@@ -47793,6 +47793,22 @@ components:
         replay_generation: { type: integer, minimum: 0 }
         current_delivery_status: { type: string }
         current_replay_generation: { type: integer, minimum: 0 }
+        retry_outcome:
+          type: string
+          enum: [not_applicable, pending, succeeded, failed, unknown]
+          description: Outcome of the originally queued generation. Retained terminal attempts prove success or failure; matching active delivery proves pending. Missing evidence is unknown and skipped decisions are not applicable.
+        retained_attempt_count:
+          type: integer
+          minimum: 0
+          description: Number of retained completed attempts for the originally queued generation, excluding other generations and in-flight attempts.
+        attempt_count_complete:
+          type: boolean
+          description: True when retained attempt numbers form a complete sequence through the known outcome; unknown outcomes always report false. Not applicable decisions have a complete zero count.
+        completed_at:
+          type: string
+          format: date-time
+          description: Finish time of the retained terminal attempt for the originally queued generation, present only for succeeded or failed outcomes.
+
     EventRecoveryNotificationRetryDecisionDetail:
       type: object
       description: Saved per receiver decision for one retry request, with a separate timestamp for the read of current retained delivery state.

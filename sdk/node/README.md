@@ -829,3 +829,8 @@ request by ID. Detail preserves each receiver’s original queued or skipped
 decision and shows its current retained delivery status with a separate read
 timestamp. Missing deliveries are reported as unavailable; job pruning removes
 the history.
+
+Retry history detail also exposes `retry_outcome` for the original queued
+generation, `retained_attempt_count`, `attempt_count_complete`, and optional
+`completed_at`. Later retries do not establish an earlier generation's outcome.
+Missing terminal evidence reports unknown; skipped decisions are not applicable.

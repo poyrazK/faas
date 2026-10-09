@@ -25,6 +25,10 @@ type EventRecoveryNotificationRetryDecision struct {
 	State                   string                               `json:"state"`
 	Reason                  string                               `json:"reason,omitempty"`
 	ReplayGeneration        *int                                 `json:"replay_generation,omitempty"`
+	RetryOutcome            string                               `json:"retry_outcome"`
+	RetainedAttemptCount    int                                  `json:"retained_attempt_count"`
+	AttemptCountComplete    bool                                 `json:"attempt_count_complete"`
+	CompletedAt             *time.Time                           `json:"completed_at,omitempty"`
 	CurrentDeliveryStatus   string                               `json:"current_delivery_status"`
 	CurrentReplayGeneration *int                                 `json:"current_replay_generation,omitempty"`
 }
