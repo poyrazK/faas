@@ -762,6 +762,9 @@ type Engine struct {
 	// memory: a restart forgets it, and the pool then holds its size for
 	// one window before shrinking.
 	workerScaleIn *workerScaleInStabilizer
+	// workerStops tracks worker stops the pool reconciler runs in the
+	// background (see worker_stop.go).
+	workerStops *workerStopTracker
 
 	// nodeKeys is the in-memory (key_id → *ecdsa.PublicKey)
 	// registry the ReportCapacity handler consults to verify
@@ -908,6 +911,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		nodePresence:             newNodePresenceTracker(),
 		usageCache:               NewNodeUsageCache(),
 		workerScaleIn:            newWorkerScaleInStabilizer(time.Duration(api.WorkerScaleInStabilizationSeconds) * time.Second),
+		workerStops:              newWorkerStopTracker(),
 		now:                      time.Now, // tests override post-construction
 	}
 	// Resolve default-local. Use a bounded context so a wedged DB

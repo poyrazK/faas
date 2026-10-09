@@ -113,6 +113,12 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 			if state.State(ins.State) == state.StateMigrating {
 				return fmt.Errorf("worker environment %s is migrating: %w", scope, state.ErrConflict)
 			}
+			// A background stop already owns this worker. Leaving it out of
+			// the plan means it is neither kept nor stopped twice, while the
+			// account cap still counts it until teardown commits.
+			if e.workerStopping(ins.ID) {
+				continue
+			}
 			planFor(scope).workers = append(planFor(scope).workers, ins)
 		}
 	}
@@ -225,7 +231,7 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 			kept++
 			continue
 		}
-		stopErr = errors.Join(stopErr, e.stopManagedWorker(ctx, ins.ID, e.workerStopOptions(app)))
+		stopErr = errors.Join(stopErr, e.beginWorkerStop(ctx, ins, e.workerStopOptions(app)))
 	}
 	if stopErr != nil {
 		return stopErr

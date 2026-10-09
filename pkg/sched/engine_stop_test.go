@@ -320,6 +320,7 @@ func TestWorker_ScaleDown_AppliesConfiguredDrainTimeoutAndSignal(t *testing.T) {
 	if err := e.ReconcileWorkerPool(ctx, app.ID, 1, TriggerWorkerPool); err != nil {
 		t.Fatalf("ReconcileWorkerPool: %v", err)
 	}
+	e.WaitWorkerStops()
 
 	rec.mu.Lock()
 	defer rec.mu.Unlock()

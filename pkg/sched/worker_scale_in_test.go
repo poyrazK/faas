@@ -97,6 +97,7 @@ func TestWorkerPoolScaleInWaitsForStabilizationWindow(t *testing.T) {
 		if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
 			t.Fatal(err)
 		}
+		engine.WaitWorkerStops()
 		if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 2 || vmm.stopInstanceOnNodeN != 0 {
 			t.Fatalf("t+%s: empty queue scaled in early: workers=%d stops=%d", offset, got, vmm.stopInstanceOnNodeN)
 		}
@@ -105,6 +106,7 @@ func TestWorkerPoolScaleInWaitsForStabilizationWindow(t *testing.T) {
 	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 0 || vmm.stopInstanceOnNodeN != 2 {
 		t.Fatalf("stable empty queue did not scale in: workers=%d stops=%d", got, vmm.stopInstanceOnNodeN)
 	}
@@ -124,6 +126,7 @@ func TestWorkerPoolExplicitReplicaCountBypassesStabilization(t *testing.T) {
 	if err := engine.ReconcileWorkerPoolForScope(ctx, app.ID, "default", 1, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	if got := scopedWorkerCounts(t, store, app.ID)["default"]; got != 1 || vmm.stopInstanceOnNodeN != 1 {
 		t.Fatalf("explicit replica count was stabilized: workers=%d stops=%d", got, vmm.stopInstanceOnNodeN)
 	}
@@ -161,6 +164,7 @@ func TestWorkerPoolScaleInStopsIdleWorkerBeforeBusyOne(t *testing.T) {
 	if err := engine.ReconcileWorkerPoolForScope(ctx, app.ID, "default", 1, TriggerWorkerPool); err != nil {
 		t.Fatal(err)
 	}
+	engine.WaitWorkerStops()
 	afterIdle, _ := store.InstanceByID(ctx, idle.ID)
 	afterBusy, _ := store.InstanceByID(ctx, busy.ID)
 	if afterIdle.State != string(state.StateStopped) || afterBusy.State != string(state.StateRunning) {
