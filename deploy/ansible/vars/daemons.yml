@@ -21,6 +21,13 @@ faas_compute_only_units:
   - faas-builderd.service
   - faas-imaged.service
 
+# Units the playbooks install but leave disabled until an operator configures
+# and enables them (roles/profiled_service: profiling stays operator-only until
+# native lifecycle acceptance passes). Strict fleet verification requires them
+# only once enabled; enabled units are still health-probed like the rest.
+faas_operator_enabled_units:
+  - faas-profiled.service
+
 faas_legacy_units:
   - faas-gatewayd.service
   - faas-spool-sync.service
