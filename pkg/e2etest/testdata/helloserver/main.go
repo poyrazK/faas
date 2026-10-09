@@ -65,6 +65,7 @@ func main() {
 	probeContract := flag.Bool("probe-contract", false, "report this exec probe process to the local fixture server")
 	noHealthz := flag.Bool("no-healthz", false, "omit the /healthz endpoint")
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
+	crashCapture := flag.Bool("crash-capture", false, "serve /boom, which asks for an ADR-733 crash capture of itself")
 	flag.Parse()
 	if *addr == "" {
 		port := os.Getenv("PORT")
@@ -121,6 +122,9 @@ func main() {
 	mux := http.NewServeMux()
 	if *durableCounter {
 		mux.HandleFunc("/__gregale/entities", serveDurableCounter)
+	}
+	if *crashCapture {
+		serveCrashCapture(mux)
 	}
 	if *contract {
 		var mu sync.Mutex

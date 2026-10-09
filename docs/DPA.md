@@ -64,8 +64,9 @@ keeping (tax invoices: 7 years).
 - Only on Controller's instruction (Pro and Scale): restoring a copy
   of a running instance's memory into an isolated, non-serving debug
   instance (a production fork), and capturing such a copy when an
-  instance answers a request with a server error (a crash snapshot,
-  off by default per app).
+  instance answers a request with a server error or when Controller's
+  application asks for one from its own code (a crash snapshot, off by
+  default per app).
 
 ## 3. Categories of data subjects
 
@@ -90,7 +91,8 @@ keeping (tax invoices: 7 years).
   writable disk layer at one moment, which can contain any personal
   data the application held in memory, including end users' data and
   credentials. A crash snapshot records the triggering status code
-  and request path. Crash snapshots are encrypted at rest with a key
+  and request path, or the label and path Controller's application
+  supplied when it asked for the snapshot. Crash snapshots are encrypted at rest with a key
   unique to each snapshot and deleted with that key after 7 days;
   they are decrypted only while Controller has a fork of them open.
   A fork cannot reach the network, never receives production traffic,

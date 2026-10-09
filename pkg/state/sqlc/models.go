@@ -1563,6 +1563,7 @@ type CrashCapture struct {
 	PlaintextState    string
 	SealedKey         []byte
 	EncryptedAt       pgtype.Timestamptz
+	Reason            string
 }
 
 type CrashSnapshotSetting struct {

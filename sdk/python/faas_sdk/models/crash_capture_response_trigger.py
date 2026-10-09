@@ -1,10 +1,11 @@
 from typing import Literal
 
-CrashCaptureResponseTrigger = Literal["http_5xx", "manual"]
+CrashCaptureResponseTrigger = Literal["http_5xx", "manual", "sdk"]
 
 CRASH_CAPTURE_RESPONSE_TRIGGER_VALUES: set[CrashCaptureResponseTrigger] = {
     "http_5xx",
     "manual",
+    "sdk",
 }
 
 

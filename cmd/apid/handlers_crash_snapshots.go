@@ -157,7 +157,7 @@ func crashSettingsResponse(settings state.CrashSnapshotSettings) api.CrashSnapsh
 func crashCaptureResponse(c state.CrashCapture) api.CrashCaptureResponse {
 	resp := api.CrashCaptureResponse{
 		ID: c.ID, AppID: c.AppID, DeploymentID: c.DeploymentID, Trigger: c.Trigger,
-		StatusCode: c.StatusCode, Route: c.Route, Status: string(c.Status), MemBytes: c.MemBytes,
+		StatusCode: c.StatusCode, Route: c.Route, Reason: c.Reason, Status: string(c.Status), MemBytes: c.MemBytes,
 		RequestedAt: c.RequestedAt.UTC().Format(time.RFC3339Nano),
 		CapturedAt:  appTaskTimeResponse(c.CapturedAt),
 		ExpiresAt:   appTaskTimeResponse(c.ExpiresAt),

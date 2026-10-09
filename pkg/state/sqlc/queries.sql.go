@@ -2121,7 +2121,7 @@ WHERE c.id = $2::uuid AND c.status = 'ready'
   AND NOT EXISTS (
       SELECT 1 FROM app_forks f
       WHERE f.crash_capture_id = c.id AND f.status IN ('queued', 'restoring', 'running'))
-RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
 `
 
 type BeginCrashCapturePurgeParams struct {
@@ -2158,6 +2158,7 @@ func (q *Queries) BeginCrashCapturePurge(ctx context.Context, db DBTX, arg Begin
 		&i.PlaintextState,
 		&i.SealedKey,
 		&i.EncryptedAt,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -2170,7 +2171,7 @@ WHERE c.id = $2::uuid AND c.status = 'ready'
   AND EXISTS (
       SELECT 1 FROM app_forks f
       WHERE f.crash_capture_id = c.id AND f.status IN ('queued', 'restoring', 'running'))
-RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
 `
 
 type BeginCrashCaptureStageParams struct {
@@ -2205,6 +2206,7 @@ func (q *Queries) BeginCrashCaptureStage(ctx context.Context, db DBTX, arg Begin
 		&i.PlaintextState,
 		&i.SealedKey,
 		&i.EncryptedAt,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -4934,7 +4936,7 @@ WHERE id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
 `
 
 func (q *Queries) ClaimNextCrashCapture(ctx context.Context, db DBTX, now pgtype.Timestamptz) (CrashCapture, error) {
@@ -4964,6 +4966,7 @@ func (q *Queries) ClaimNextCrashCapture(ctx context.Context, db DBTX, now pgtype
 		&i.PlaintextState,
 		&i.SealedKey,
 		&i.EncryptedAt,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -7779,7 +7782,7 @@ SET status = 'ready',
     expires_at = $6::timestamptz,
     updated_at = greatest(updated_at, $5::timestamptz)
 WHERE id = $7::uuid AND status = 'capturing'
-RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
 `
 
 type CompleteCrashCaptureParams struct {
@@ -7827,6 +7830,7 @@ func (q *Queries) CompleteCrashCapture(ctx context.Context, db DBTX, arg Complet
 		&i.PlaintextState,
 		&i.SealedKey,
 		&i.EncryptedAt,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -16253,7 +16257,7 @@ SET status = 'expired', finished_at = $1::timestamptz,
     sealed_key = NULL, plaintext_state = 'absent',
     updated_at = greatest(updated_at, $1::timestamptz)
 WHERE id = $2::uuid AND status = 'ready'
-RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
 `
 
 type ExpireCrashCaptureParams struct {
@@ -16289,6 +16293,7 @@ func (q *Queries) ExpireCrashCapture(ctx context.Context, db DBTX, arg ExpireCra
 		&i.PlaintextState,
 		&i.SealedKey,
 		&i.EncryptedAt,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -16538,7 +16543,7 @@ SET status = 'failed',
     finished_at = $3::timestamptz,
     updated_at = greatest(updated_at, $3::timestamptz)
 WHERE id = $4::uuid AND status IN ('requested', 'capturing')
-RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
 `
 
 type FailCrashCaptureParams struct {
@@ -16580,6 +16585,7 @@ func (q *Queries) FailCrashCapture(ctx context.Context, db DBTX, arg FailCrashCa
 		&i.PlaintextState,
 		&i.SealedKey,
 		&i.EncryptedAt,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -16629,7 +16635,7 @@ SET status = 'failed', failure_code = 'capture_timeout',
     finished_at = $1::timestamptz,
     updated_at = greatest(updated_at, $1::timestamptz)
 WHERE status = 'capturing' AND updated_at < $2::timestamptz
-RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
 `
 
 type FailStaleCrashCapturesParams struct {
@@ -16671,6 +16677,7 @@ func (q *Queries) FailStaleCrashCaptures(ctx context.Context, db DBTX, arg FailS
 			&i.PlaintextState,
 			&i.SealedKey,
 			&i.EncryptedAt,
+			&i.Reason,
 		); err != nil {
 			return nil, err
 		}
@@ -17747,7 +17754,7 @@ const finishCrashCapturePurge = `-- name: FinishCrashCapturePurge :one
 UPDATE crash_captures
 SET plaintext_state = 'absent', updated_at = greatest(updated_at, $1::timestamptz)
 WHERE id = $2::uuid AND status = 'ready' AND plaintext_state = 'purging'
-RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
 `
 
 type FinishCrashCapturePurgeParams struct {
@@ -17782,6 +17789,7 @@ func (q *Queries) FinishCrashCapturePurge(ctx context.Context, db DBTX, arg Fini
 		&i.PlaintextState,
 		&i.SealedKey,
 		&i.EncryptedAt,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -17790,7 +17798,7 @@ const finishCrashCaptureStage = `-- name: FinishCrashCaptureStage :one
 UPDATE crash_captures
 SET plaintext_state = 'staged', updated_at = greatest(updated_at, $1::timestamptz)
 WHERE id = $2::uuid AND status = 'ready' AND plaintext_state = 'staging'
-RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
 `
 
 type FinishCrashCaptureStageParams struct {
@@ -17825,6 +17833,7 @@ func (q *Queries) FinishCrashCaptureStage(ctx context.Context, db DBTX, arg Fini
 		&i.PlaintextState,
 		&i.SealedKey,
 		&i.EncryptedAt,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -19313,7 +19322,7 @@ func (q *Queries) GetCloneCheckpointWakeDispatch(ctx context.Context, db DBTX, i
 }
 
 const getCrashCapture = `-- name: GetCrashCapture :one
-SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at FROM crash_captures
+SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason FROM crash_captures
 WHERE account_id = $1::uuid AND app_id = $2::uuid
   AND id = $3::uuid
 `
@@ -19351,12 +19360,13 @@ func (q *Queries) GetCrashCapture(ctx context.Context, db DBTX, arg GetCrashCapt
 		&i.PlaintextState,
 		&i.SealedKey,
 		&i.EncryptedAt,
+		&i.Reason,
 	)
 	return i, err
 }
 
 const getCrashCaptureByID = `-- name: GetCrashCaptureByID :one
-SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at FROM crash_captures WHERE id = $1::uuid
+SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason FROM crash_captures WHERE id = $1::uuid
 `
 
 func (q *Queries) GetCrashCaptureByID(ctx context.Context, db DBTX, captureID pgtype.UUID) (CrashCapture, error) {
@@ -19386,6 +19396,7 @@ func (q *Queries) GetCrashCaptureByID(ctx context.Context, db DBTX, captureID pg
 		&i.PlaintextState,
 		&i.SealedKey,
 		&i.EncryptedAt,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -34579,7 +34590,7 @@ func (q *Queries) ListComputeNodeHeartbeats(ctx context.Context, db DBTX, arg Li
 }
 
 const listCrashCaptures = `-- name: ListCrashCaptures :many
-SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at FROM crash_captures
+SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason FROM crash_captures
 WHERE account_id = $1::uuid AND app_id = $2::uuid
 ORDER BY requested_at DESC, id DESC
 LIMIT $3::integer
@@ -34624,6 +34635,7 @@ func (q *Queries) ListCrashCaptures(ctx context.Context, db DBTX, arg ListCrashC
 			&i.PlaintextState,
 			&i.SealedKey,
 			&i.EncryptedAt,
+			&i.Reason,
 		); err != nil {
 			return nil, err
 		}
@@ -34636,7 +34648,7 @@ func (q *Queries) ListCrashCaptures(ctx context.Context, db DBTX, arg ListCrashC
 }
 
 const listCrashCapturesToEncrypt = `-- name: ListCrashCapturesToEncrypt :many
-SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at FROM crash_captures
+SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason FROM crash_captures
 WHERE status = 'ready' AND plaintext_state = 'present'
   AND expires_at > $1::timestamptz
 ORDER BY captured_at, id
@@ -34681,6 +34693,7 @@ func (q *Queries) ListCrashCapturesToEncrypt(ctx context.Context, db DBTX, arg L
 			&i.PlaintextState,
 			&i.SealedKey,
 			&i.EncryptedAt,
+			&i.Reason,
 		); err != nil {
 			return nil, err
 		}
@@ -34693,7 +34706,7 @@ func (q *Queries) ListCrashCapturesToEncrypt(ctx context.Context, db DBTX, arg L
 }
 
 const listCrashCapturesToPurge = `-- name: ListCrashCapturesToPurge :many
-SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at FROM crash_captures c
+SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason FROM crash_captures c
 WHERE c.status = 'ready'
   AND (c.plaintext_state = 'purging'
        OR (c.plaintext_state IN ('staging', 'staged') AND NOT EXISTS (
@@ -34736,6 +34749,7 @@ func (q *Queries) ListCrashCapturesToPurge(ctx context.Context, db DBTX, rowLimi
 			&i.PlaintextState,
 			&i.SealedKey,
 			&i.EncryptedAt,
+			&i.Reason,
 		); err != nil {
 			return nil, err
 		}
@@ -34748,7 +34762,7 @@ func (q *Queries) ListCrashCapturesToPurge(ctx context.Context, db DBTX, rowLimi
 }
 
 const listCrashCapturesToStage = `-- name: ListCrashCapturesToStage :many
-SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at FROM crash_captures c
+SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason FROM crash_captures c
 WHERE c.status = 'ready' AND c.plaintext_state IN ('absent', 'staging')
   AND c.expires_at > $1::timestamptz
   AND EXISTS (
@@ -34796,6 +34810,7 @@ func (q *Queries) ListCrashCapturesToStage(ctx context.Context, db DBTX, arg Lis
 			&i.PlaintextState,
 			&i.SealedKey,
 			&i.EncryptedAt,
+			&i.Reason,
 		); err != nil {
 			return nil, err
 		}
@@ -37755,7 +37770,7 @@ func (q *Queries) ListExclusiveWorkPolicies(ctx context.Context, db DBTX, accoun
 }
 
 const listExpiredCrashCaptures = `-- name: ListExpiredCrashCaptures :many
-SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at FROM crash_captures
+SELECT id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason FROM crash_captures
 WHERE status = 'ready' AND expires_at <= $1::timestamptz
 ORDER BY expires_at, id
 LIMIT $2::integer
@@ -37799,6 +37814,7 @@ func (q *Queries) ListExpiredCrashCaptures(ctx context.Context, db DBTX, arg Lis
 			&i.PlaintextState,
 			&i.SealedKey,
 			&i.EncryptedAt,
+			&i.Reason,
 		); err != nil {
 			return nil, err
 		}
@@ -47574,7 +47590,7 @@ SET plaintext_state = CASE WHEN EXISTS (
     encrypted_at = $2::timestamptz,
     updated_at = greatest(c.updated_at, $2::timestamptz)
 WHERE c.id = $3::uuid AND c.status = 'ready' AND c.plaintext_state = 'present'
-RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
 `
 
 type MarkCrashCaptureEncryptedParams struct {
@@ -47612,6 +47628,7 @@ func (q *Queries) MarkCrashCaptureEncrypted(ctx context.Context, db DBTX, arg Ma
 		&i.PlaintextState,
 		&i.SealedKey,
 		&i.EncryptedAt,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -71146,7 +71163,7 @@ WHERE i.id = $4::uuid
              OR c.requested_at > $3::timestamptz - make_interval(secs => $6::integer))
   )
 ON CONFLICT DO NOTHING
-RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
 `
 
 type RequestHTTPCrashCaptureParams struct {
@@ -71195,6 +71212,7 @@ func (q *Queries) RequestHTTPCrashCapture(ctx context.Context, db DBTX, arg Requ
 		&i.PlaintextState,
 		&i.SealedKey,
 		&i.EncryptedAt,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -71245,7 +71263,7 @@ WHERE a.id = $2::uuid AND a.account_id = $3::uuid AND a.status <> 'deleted'
              OR c.requested_at > $1::timestamptz - make_interval(secs => $4::integer))
   )
 ON CONFLICT DO NOTHING
-RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
 `
 
 type RequestManualCrashCaptureParams struct {
@@ -71289,6 +71307,81 @@ func (q *Queries) RequestManualCrashCapture(ctx context.Context, db DBTX, arg Re
 		&i.PlaintextState,
 		&i.SealedKey,
 		&i.EncryptedAt,
+		&i.Reason,
+	)
+	return i, err
+}
+
+const requestSDKCrashCapture = `-- name: RequestSDKCrashCapture :one
+INSERT INTO crash_captures (account_id, app_id, deployment_id, instance_id, trigger,
+                            route, reason, requested_at, updated_at)
+SELECT a.account_id, a.id, i.deployment_id, i.id, 'sdk',
+       left($1::text, 512), left($2::text, 256),
+       $3::timestamptz, $3::timestamptz
+FROM instances i
+JOIN apps a ON a.id = i.app_id
+JOIN crash_snapshot_settings s ON s.app_id = a.id AND s.enabled
+WHERE i.id = $4::uuid
+  AND i.app_id = $5::uuid
+  AND i.state = 'running' AND i.mode <> 'fork' AND a.status <> 'deleted'
+  AND NOT EXISTS (
+      SELECT 1 FROM crash_captures c
+      WHERE c.app_id = a.id
+        AND (c.status IN ('requested', 'capturing')
+             OR c.requested_at > $3::timestamptz - make_interval(secs => $6::integer))
+  )
+ON CONFLICT DO NOTHING
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
+`
+
+type RequestSDKCrashCaptureParams struct {
+	Route           string
+	Reason          string
+	Now             pgtype.Timestamptz
+	InstanceID      pgtype.UUID
+	AppID           pgtype.UUID
+	CooldownSeconds int32
+}
+
+// vmmd, when an app asks for a capture of its own instance from inside its
+// error handler (guest metadata endpoint). vmmd names the instance from the
+// vsock listener that accepted the request. Same rules as the 5xx trigger:
+// opt-in, a running non-fork instance, nothing in flight, cooldown passed.
+func (q *Queries) RequestSDKCrashCapture(ctx context.Context, db DBTX, arg RequestSDKCrashCaptureParams) (CrashCapture, error) {
+	row := db.QueryRow(ctx, requestSDKCrashCapture,
+		arg.Route,
+		arg.Reason,
+		arg.Now,
+		arg.InstanceID,
+		arg.AppID,
+		arg.CooldownSeconds,
+	)
+	var i CrashCapture
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.InstanceID,
+		&i.Trigger,
+		&i.StatusCode,
+		&i.Route,
+		&i.Status,
+		&i.StorageKey,
+		&i.VmstateStorageKey,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.RequestedAt,
+		&i.CapturedAt,
+		&i.FinishedAt,
+		&i.ExpiresAt,
+		&i.UpdatedAt,
+		&i.PlaintextState,
+		&i.SealedKey,
+		&i.EncryptedAt,
+		&i.Reason,
 	)
 	return i, err
 }

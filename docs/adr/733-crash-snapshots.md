@@ -19,6 +19,23 @@
       never blocks or fails the request for it.
     - **Manual.** `POST /v1/apps/{slug}/crash-snapshots` captures the app's
       newest running instance now, under the same rules.
+    - **SDK.** The app asks from inside its error handler, before the
+      error unwinds: `POST http://169.254.169.254/v1/crash-snapshots:capture`
+      on the guest metadata endpoint (helpers in the Node, Python and Go
+      SDKs). guest-init forwards it on a new request/response vsock port
+      (1032, `pkg/crashcapturewire`) and vmmd writes the request row with
+      `trigger='sdk'`, an optional `reason` (≤256 bytes) and `route`, under
+      the 5xx rules (opt-in, running non-fork instance, one in flight,
+      cooldown). vmmd names the instance from the vsock listener that
+      accepted the stream, never from the frame, so an app can only capture
+      itself. vmmd answers `requested` with the capture ID, then holds the
+      stream and polls the row until it is ready or failed (default 15 s,
+      at most 30 s), so the app's handler is captured mid-call with its
+      state intact. In a fork of that capture the stream is reset; once the
+      restore hook has run, guest-init answers `captured` with
+      `in_fork: true` and the handler continues in the fork. A new writer
+      of request rows: vmmd, which already persists in-guest event
+      publishes the same way.
   - **Capture.** schedd's `CrashCaptureCoordinator` claims requested rows
     and, under the app lock, captures the still-running instance with the
     existing pause → snapshot → resume path (`WarmSnapshot`) into a fresh
@@ -70,9 +87,14 @@
     added latency. The cooldown and one-in-flight rule bound how often.
   - Captures use disk on the node until they expire (about the app's RAM
     each, sparse).
-  - The capture is taken after the failing response, not at the instant of
-    the fault; state that unwinds on error is gone. An SDK hook that asks
-    for a capture from inside the error handler is a follow-up.
+  - A 5xx capture is taken after the failing response, not at the instant
+    of the fault; state that unwinds on error is gone. The SDK trigger
+    closes that gap for apps that call it from their error handler.
+  - An SDK capture holds the calling request for up to the wait (≤30 s)
+    and one of the instance's 64 concurrent vsock streams on its port.
+    A live migration mid-call would also reset the stream and run the
+    restore hook, and is reported as `in_fork`; captures and migrations
+    are both rare enough that this is accepted.
   - A capture sits in plaintext for up to one imaged pass after it is
     taken, and in plaintext again for as long as a fork of it is active.
   - The key is per capture, not per account: deleting a capture destroys

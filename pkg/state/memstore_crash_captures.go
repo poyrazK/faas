@@ -61,9 +61,7 @@ func (m *MemStore) crashCaptureBlockedLocked(appID string, cooldown time.Duratio
 }
 
 func (m *MemStore) insertCrashCaptureLocked(app App, ins Instance, trigger string, statusCode *int, route string, now time.Time) CrashCapture {
-	if len(route) > 512 {
-		route = route[:512]
-	}
+	route = truncateUTF8(route, 512)
 	at := memTime(now)
 	c := CrashCapture{
 		ID: uuid.NewString(), AccountID: app.AccountID, AppID: app.ID, DeploymentID: ins.DeploymentID,
@@ -90,6 +88,23 @@ func (m *MemStore) RequestHTTPCrashCapture(_ context.Context, appID, instanceID 
 	}
 	code := statusCode
 	return m.insertCrashCaptureLocked(app, ins, CrashTriggerHTTP5xx, &code, route, now), nil
+}
+
+func (m *MemStore) RequestSDKCrashCapture(_ context.Context, appID, instanceID, route, reason string, cooldown time.Duration, now time.Time) (CrashCapture, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureCrashLocked()
+	app, ok := m.apps[appID]
+	ins, insOK := m.instances[instanceID]
+	settings := m.crashSettings[appID]
+	if !ok || app.Status == AppDeleted || !insOK || ins.AppID != appID || ins.State != string(StateRunning) ||
+		IsFork(ins.Mode) || !settings.Enabled || m.crashCaptureBlockedLocked(appID, cooldown, now) {
+		return CrashCapture{}, ErrCrashCaptureRefused
+	}
+	c := m.insertCrashCaptureLocked(app, ins, CrashTriggerSDK, nil, route, now)
+	c.Reason = truncateUTF8(reason, CrashCaptureReasonMaxBytes)
+	m.crashCaptures[c.ID] = c
+	return c, nil
 }
 
 func (m *MemStore) RequestManualCrashCapture(_ context.Context, accountID, appID string, cooldown time.Duration, now time.Time) (CrashCapture, error) {

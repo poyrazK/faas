@@ -7,8 +7,10 @@ package state_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -286,6 +288,42 @@ func TestCrashCapture_EncryptKeepsPlaintextForAnActiveFork(t *testing.T) {
 			enc, err := f.store.MarkCrashCaptureEncrypted(ctx, ready.ID, []byte("sealed"), forkT0.Add(3*time.Second))
 			if err != nil || enc.PlaintextState != state.CrashPlaintextStaged {
 				t.Fatalf("encrypted under a fork = %+v, %v", enc, err)
+			}
+		})
+	}
+}
+
+// TestCrashCapture_SDKTrigger: an app's own request (through vmmd) follows
+// the 5xx rules — opt-in, a running non-fork instance, one in flight — and
+// keeps its reason and route within their byte limits.
+func TestCrashCapture_SDKTrigger(t *testing.T) {
+	for name, f := range appForkStores(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			ins := f.runningInstance(t, state.InstanceModeNormal)
+			if _, err := f.store.RequestSDKCrashCapture(ctx, f.appID, ins.ID, "/orders", "panic in checkout", crashCooldown, forkT0); !errors.Is(err, state.ErrCrashCaptureRefused) {
+				t.Fatalf("without opt-in err = %v, want refused", err)
+			}
+			if _, err := f.store.SetCrashSnapshotSettings(ctx, f.accountID, f.appID, true, forkT0); err != nil {
+				t.Fatal(err)
+			}
+			fork := f.runningInstance(t, state.InstanceModeFork)
+			if _, err := f.store.RequestSDKCrashCapture(ctx, f.appID, fork.ID, "", "x", crashCooldown, forkT0); !errors.Is(err, state.ErrCrashCaptureRefused) {
+				t.Fatalf("on a fork err = %v, want refused", err)
+			}
+			reason := strings.Repeat("é", 200) // 400 bytes
+			c, err := f.store.RequestSDKCrashCapture(ctx, f.appID, ins.ID, "/orders/"+strings.Repeat("ü", 300), reason, crashCooldown, forkT0)
+			if err != nil || c.Trigger != state.CrashTriggerSDK || c.InstanceID != ins.ID || c.StatusCode != nil {
+				t.Fatalf("sdk capture = %+v, %v", c, err)
+			}
+			if len(c.Reason) > state.CrashCaptureReasonMaxBytes || !utf8.ValidString(c.Reason) || !strings.HasPrefix(reason, c.Reason) {
+				t.Fatalf("reason = %d bytes, valid=%v", len(c.Reason), utf8.ValidString(c.Reason))
+			}
+			if len(c.Route) > 512 || !utf8.ValidString(c.Route) {
+				t.Fatalf("route = %d bytes, valid=%v", len(c.Route), utf8.ValidString(c.Route))
+			}
+			if _, err := f.store.RequestHTTPCrashCapture(ctx, f.appID, ins.ID, 500, "/", crashCooldown, forkT0.Add(time.Second)); !errors.Is(err, state.ErrCrashCaptureRefused) {
+				t.Fatalf("5xx while an sdk capture is in flight err = %v, want refused", err)
 			}
 		})
 	}
