@@ -1415,13 +1415,20 @@ Show one alert rule and its last delivery
 
 List a rule&#39;s webhook deliveries, newest first
 
-`gregale alerts deliveries --app <slug> [--limit <N>] [--include-test] <alert-id>`
+`gregale alerts deliveries [--app <slug>] [--interactive] [--limit <N>] [--include-test] [<alert-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (linked app or picker in interactive mode) |  |
+| `--interactive` | choose a rule and delivery options |  |
 | `--limit <N>` | max deliveries (1..100, default 20) |  |
 | `--include-test` | include test deliveries |  |
+
+Examples:
+
+```sh
+gregale alerts deliveries --app my-api --interactive
+```
 
 ### alerts update
 

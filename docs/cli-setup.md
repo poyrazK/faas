@@ -441,6 +441,29 @@ rules, other actions, or scripts, use the explicit preset flags with
 `--webhook-secret-stdin`. Guided setup requires terminal input and output.
 After creation, it prints a command to inspect the rule.
 
+## Inspect alert deliveries interactively
+
+Choose an alert rule without copying its ID:
+
+```sh
+gregale alerts deliveries --app my-api --interactive
+# Use the linked app, or pick an app when none is linked:
+gregale alerts deliveries --interactive
+```
+
+The flow shows the selected rule, asks whether to include test deliveries, and
+lets you choose how many recent deliveries to fetch (1–100, default 20).
+The table shows delivery status, attempts, HTTP response code, observed value,
+and errors. When test deliveries are included, a `TEST` column identifies them.
+This flow only reads delivery history; it does not send a webhook.
+
+A reusable command is printed with the selected rule ID and active profile.
+For scripts, use the explicit command with JSON output:
+
+```sh
+gregale alerts deliveries ALERT_ID --app my-api --limit 20 --json
+```
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
