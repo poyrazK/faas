@@ -17,7 +17,7 @@ import (
 var _ ProjectEnvironmentCloneCheckpointReleaseStore = (*PgStore)(nil)
 
 func cloneCheckpointReleaseFromSQL(row sqlc.ProjectEnvironmentCloneCheckpointRelease) (ProjectEnvironmentCloneCheckpointRelease, error) {
-	in := ProjectEnvironmentCloneCheckpointRelease{AdoptionSHA256: row.AdoptionSha256, State: row.State, RequestedAt: row.RequestedAt.Time, ObservationSHA256: row.ObservationSha256.String}
+	in := ProjectEnvironmentCloneCheckpointRelease{AdoptionSHA256: row.AdoptionSha256, State: row.State, RequestedAt: row.RequestedAt.Time.UTC(), ObservationSHA256: row.ObservationSha256.String}
 	if json.Unmarshal(row.Plan, &in.Plan) != nil || json.Unmarshal(row.Receipt, &in.Receipt) != nil {
 		return in, ErrConflict
 	}

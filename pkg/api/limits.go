@@ -8826,3 +8826,6 @@ const ObjectCheckpointVerificationBytesPerSideMax int64 = 5 << 40
 
 // Native retirement embeds the bounded original copy plan plus creation metadata.
 const ObjectCheckpointRetirementPlanMaxBytes = 17 << 20
+
+// Bounds for private source compensation plans and native observations.
+const CheckpointSourceCompensationMaxBytes = 16 << 20

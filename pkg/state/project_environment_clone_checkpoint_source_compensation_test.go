@@ -1,6 +1,9 @@
 package state
 
 import (
+	"encoding/json"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"strings"
 	"testing"
 	"time"
@@ -184,5 +187,41 @@ func TestCheckpointSourceCompensationRejectsMalformedOriginalPlan(t *testing.T) 
 				t.Fatal("accepted malformed plan")
 			}
 		})
+	}
+}
+
+func TestCheckpointSourceCompensationWithoutActiveReleaseSet(t *testing.T) {
+	in, o := sourceCompensationFixture(false, "")
+	in.Plan.Capture.SourceReleaseSetID = ""
+	in.Plan.Intent.SourceVersion = cloneCheckpointSHA(in.Plan.Capture)
+	o.PlanSHA256 = cloneCheckpointSHA(in.Plan)
+	o.CapturePlanSHA256 = cloneCheckpointSHA(in.Plan.Capture)
+	if err := validateCheckpointSourceCompensationObservation(in, o); err != nil {
+		t.Fatal("valid capture without an active release set", err)
+	}
+}
+
+func TestCheckpointSourceCompensationCanonicalReleaseJournalTime(t *testing.T) {
+	in, _ := sourceCompensationFixture(true, "requested")
+	plan, err := json.Marshal(in.Plan.Capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := json.Marshal(in.Plan.Receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := in.Plan.Release
+	row := sqlc.ProjectEnvironmentCloneCheckpointRelease{Plan: plan, Receipt: receipt, AdoptionSha256: original.AdoptionSHA256, State: original.State, RequestedAt: pgtype.Timestamptz{Time: original.RequestedAt.In(time.FixedZone("database driver", 3*60*60)), Valid: true}}
+	canonical, err := cloneCheckpointReleaseFromSQL(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical.RequestedAt.Location() != time.UTC || !canonical.RequestedAt.Equal(original.RequestedAt) {
+		t.Fatal("release journal changed its instant or retained a non-UTC location")
+	}
+	in.Plan.Release = &canonical
+	if err = validateCheckpointSourceCompensationPlan(in.Plan); err != nil {
+		t.Fatal("valid database release journal rejected", err)
 	}
 }

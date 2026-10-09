@@ -154,60 +154,71 @@ func authenticateUnusedCheckpointAdoptionTx(ctx context.Context, tx pgx.Tx, op P
 		if len(op.Resources) < 3 || op.Resources[len(op.Resources)-1].Kind != "data_checkpoint_adoption" {
 			return ErrConflict
 		}
-		row, err := sqlc.New().ReadProjectEnvironmentCloneConfigurationGuard(ctx, tx, sqlc.ReadProjectEnvironmentCloneConfigurationGuardParams{ProjectID: mustPgUUID(op.ProjectID), AccountID: mustPgUUID(op.AccountID)})
-		if err != nil {
-			if errors.Is(mapErr(err), ErrNotFound) {
+		compensation, compensationErr := readCheckpointSourceCompensationTx(ctx, tx, op)
+		if compensationErr == nil {
+			if compensation.Plan.Receipt == nil || compensation.Plan.Release != nil {
 				return ErrConflict
 			}
-			return mapErr(err)
-		}
-		fence, err := cloneConfigurationFenceFromSQL(op, row)
-		if err != nil {
-			return err
-		}
-		p := ProjectEnvironmentCloneCheckpointPlan{OperationID: op.ID, AccountID: op.AccountID, ProjectID: op.ProjectID, SourceEnvironment: op.SourceEnvironment, SourceRevisionHash: op.SourceRevisionHash, SourceReleaseSetID: op.SourceReleaseSetID, ConfigurationGeneration: fence.Generation, ConfigurationHeldAt: fence.HeldAt.UTC()}
-		databases := map[string]bool{}
-		for _, v := range views {
-			for _, db := range v.Postgres {
-				if databases[db.DatabaseID] {
-					continue
-				}
-				databases[db.DatabaseID] = true
-				hash, err := ProjectEnvironmentCloneDatabaseSourceHash(db)
-				if err != nil {
+			in = ProjectEnvironmentCloneCheckpointRelease{Plan: compensation.Plan.Capture, Receipt: *compensation.Plan.Receipt,
+				AdoptionSHA256: op.Resources[len(op.Resources)-1].SourceVersion, State: "planned"}
+		} else if !errors.Is(compensationErr, ErrNotFound) {
+			return compensationErr
+		} else {
+			row, err := sqlc.New().ReadProjectEnvironmentCloneConfigurationGuard(ctx, tx, sqlc.ReadProjectEnvironmentCloneConfigurationGuardParams{ProjectID: mustPgUUID(op.ProjectID), AccountID: mustPgUUID(op.AccountID)})
+			if err != nil {
+				if errors.Is(mapErr(err), ErrNotFound) {
 					return ErrConflict
 				}
-				p.Sources = append(p.Sources, ProjectEnvironmentCloneCheckpointSource{Kind: "managed_postgres", ID: db.DatabaseID, BackendID: db.BackendID, BackendFingerprint: db.BackendFingerprint, ProviderResourceID: db.ProviderResourceID, DataResourceID: db.DataResourceID, DefinitionSHA256: hash})
+				return mapErr(err)
 			}
-			for _, b := range v.Buckets {
-				p.Sources = append(p.Sources, ProjectEnvironmentCloneCheckpointSource{Kind: "object_storage", ID: b.ID, AppID: v.AppID, Scope: v.SourceScope, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, ProviderResourceID: b.PhysicalName, DefinitionSHA256: cloneCheckpointSHA(b)})
+			fence, err := cloneConfigurationFenceFromSQL(op, row)
+			if err != nil {
+				return err
 			}
-		}
-		sort.Slice(p.Sources, func(i, j int) bool { return p.Sources[i].Kind+p.Sources[i].ID < p.Sources[j].Kind+p.Sources[j].ID })
-		captured, err := time.Parse(time.RFC3339Nano, op.Resources[0].CapturePoint)
-		if err != nil {
-			return ErrConflict
-		}
-		r := ProjectEnvironmentCloneCheckpointReceipt{RequestID: op.ID, PlanSHA256: op.Resources[0].SourceVersion, CheckpointID: op.Resources[0].TargetID, CapturedAt: captured.UTC(), CompleteWriterCoverage: true}
-		for _, source := range p.Sources {
-			var identity string
-			switch source.Kind {
-			case "managed_postgres":
-				snapshot, err := readClonePostgresSnapshotTx(ctx, tx, op, source.ID)
-				if err != nil {
-					return ErrConflict
+			p := ProjectEnvironmentCloneCheckpointPlan{OperationID: op.ID, AccountID: op.AccountID, ProjectID: op.ProjectID, SourceEnvironment: op.SourceEnvironment, SourceRevisionHash: op.SourceRevisionHash, SourceReleaseSetID: op.SourceReleaseSetID, ConfigurationGeneration: fence.Generation, ConfigurationHeldAt: fence.HeldAt.UTC()}
+			databases := map[string]bool{}
+			for _, v := range views {
+				for _, db := range v.Postgres {
+					if databases[db.DatabaseID] {
+						continue
+					}
+					databases[db.DatabaseID] = true
+					hash, err := ProjectEnvironmentCloneDatabaseSourceHash(db)
+					if err != nil {
+						return ErrConflict
+					}
+					p.Sources = append(p.Sources, ProjectEnvironmentCloneCheckpointSource{Kind: "managed_postgres", ID: db.DatabaseID, BackendID: db.BackendID, BackendFingerprint: db.BackendFingerprint, ProviderResourceID: db.ProviderResourceID, DataResourceID: db.DataResourceID, DefinitionSHA256: hash})
 				}
-				identity = snapshot.ProviderSnapshotID
-			case "object_storage":
-				manifest, err := projectEnvironmentCloneObjectManifestDB(ctx, tx, op.AccountID, op.ProjectID, op.ID, source.ID)
-				if err != nil {
-					return ErrConflict
+				for _, b := range v.Buckets {
+					p.Sources = append(p.Sources, ProjectEnvironmentCloneCheckpointSource{Kind: "object_storage", ID: b.ID, AppID: v.AppID, Scope: v.SourceScope, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, ProviderResourceID: b.PhysicalName, DefinitionSHA256: cloneCheckpointSHA(b)})
 				}
-				identity = manifest.Hash
 			}
-			r.Sources = append(r.Sources, ProjectEnvironmentCloneCheckpointSourceReceipt{Kind: source.Kind, ID: source.ID, CaptureIdentity: identity})
+			sort.Slice(p.Sources, func(i, j int) bool { return p.Sources[i].Kind+p.Sources[i].ID < p.Sources[j].Kind+p.Sources[j].ID })
+			captured, err := time.Parse(time.RFC3339Nano, op.Resources[0].CapturePoint)
+			if err != nil {
+				return ErrConflict
+			}
+			r := ProjectEnvironmentCloneCheckpointReceipt{RequestID: op.ID, PlanSHA256: op.Resources[0].SourceVersion, CheckpointID: op.Resources[0].TargetID, CapturedAt: captured.UTC(), CompleteWriterCoverage: true}
+			for _, source := range p.Sources {
+				var identity string
+				switch source.Kind {
+				case "managed_postgres":
+					snapshot, err := readClonePostgresSnapshotTx(ctx, tx, op, source.ID)
+					if err != nil {
+						return ErrConflict
+					}
+					identity = snapshot.ProviderSnapshotID
+				case "object_storage":
+					manifest, err := projectEnvironmentCloneObjectManifestDB(ctx, tx, op.AccountID, op.ProjectID, op.ID, source.ID)
+					if err != nil {
+						return ErrConflict
+					}
+					identity = manifest.Hash
+				}
+				r.Sources = append(r.Sources, ProjectEnvironmentCloneCheckpointSourceReceipt{Kind: source.Kind, ID: source.ID, CaptureIdentity: identity})
+			}
+			in = ProjectEnvironmentCloneCheckpointRelease{Plan: p, Receipt: r, AdoptionSHA256: op.Resources[len(op.Resources)-1].SourceVersion, State: "planned"}
 		}
-		in = ProjectEnvironmentCloneCheckpointRelease{Plan: p, Receipt: r, AdoptionSHA256: op.Resources[len(op.Resources)-1].SourceVersion, State: "planned"}
 	} else if err != nil {
 		return err
 	}

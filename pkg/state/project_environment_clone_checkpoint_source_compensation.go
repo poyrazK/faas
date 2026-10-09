@@ -1,13 +1,14 @@
 package state
 
 import (
+	"context"
 	"reflect"
 	"time"
 )
 
 // Source compensation freezes the original capture and optional release,
-// including unknown outcomes. A future store must authenticate these against
-// frozen journals before reservation. This contract alone grants no native IO
+// including unknown outcomes. The store authenticates these against
+// frozen journals before reservation. Shape validation alone grants no native IO
 // or authority to open local configuration, database or object writer holds.
 type ProjectEnvironmentCloneCheckpointSourceCompensationPlan struct {
 	Capture ProjectEnvironmentCloneCheckpointPlan
@@ -20,6 +21,7 @@ type ProjectEnvironmentCloneCheckpointSourceCompensation struct {
 	Plan                     ProjectEnvironmentCloneCheckpointSourceCompensationPlan
 	State, ObservationSHA256 string
 	RequestedAt              time.Time
+	Observation              ProjectEnvironmentCloneCheckpointSourceCompensationObservation
 }
 
 // Absence of a native request is insufficient: even a planned request must be
@@ -50,7 +52,7 @@ func ProjectEnvironmentCloneCheckpointSourceCompensationPlanSHA256(p ProjectEnvi
 
 func validateCheckpointSourceCompensationPlan(p ProjectEnvironmentCloneCheckpointSourceCompensationPlan) error {
 	c, i := p.Capture, p.Intent
-	if c.OperationID == "" || c.AccountID == "" || c.ProjectID == "" || c.SourceEnvironment == "" || c.SourceReleaseSetID == "" || !validCloneObjectSHA256(c.SourceRevisionHash) || c.ConfigurationGeneration < 2 || !checkpointObjectRetirementTime(c.ConfigurationHeldAt) || c.ConfigurationHeldAt.After(time.Now()) || len(c.Sources) == 0 {
+	if c.OperationID == "" || c.AccountID == "" || c.ProjectID == "" || c.SourceEnvironment == "" || !validCloneObjectSHA256(c.SourceRevisionHash) || c.ConfigurationGeneration < 2 || !checkpointObjectRetirementTime(c.ConfigurationHeldAt) || c.ConfigurationHeldAt.After(time.Now()) || len(c.Sources) == 0 {
 		return ErrConflict
 	}
 	if i.Kind != "data_checkpoint" || i.Name != c.SourceEnvironment || i.SourceID != c.OperationID || i.SourceVersion != cloneCheckpointSHA(c) {
@@ -141,4 +143,14 @@ func validateCheckpointSourceCompensationObservation(in ProjectEnvironmentCloneC
 		return ErrConflict
 	}
 	return nil
+}
+
+// Reserve accepts original capture evidence, authenticated against its recorded
+// receipt hash. Recovery reads the saved plan; callers must not invent receipts
+// for captures with unknown outcomes or renew placement/retention.
+type ProjectEnvironmentCloneCheckpointSourceCompensationStore interface {
+	ReserveProjectEnvironmentCloneCheckpointSourceCompensation(context.Context, ProjectEnvironmentCloneLease, ProjectEnvironmentCloneCheckpointSourceCompensationPlan) (ProjectEnvironmentCloneCheckpointSourceCompensation, error)
+	ProjectEnvironmentCloneCheckpointSourceCompensationForLease(context.Context, ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneCheckpointSourceCompensation, error)
+	ClaimProjectEnvironmentCloneCheckpointSourceCompensation(context.Context, ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneCheckpointSourceCompensation, bool, error)
+	FinishProjectEnvironmentCloneCheckpointSourceCompensation(context.Context, ProjectEnvironmentCloneLease, ProjectEnvironmentCloneCheckpointSourceCompensationObservation) error
 }

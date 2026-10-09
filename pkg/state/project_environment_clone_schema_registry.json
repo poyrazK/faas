@@ -7938,5 +7938,18 @@
       "target_bucket_id"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_source_compensations",
+    "columns": [
+      "compensated_at",
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "state"
+    ],
+    "kind": "operational"
   }
 ]

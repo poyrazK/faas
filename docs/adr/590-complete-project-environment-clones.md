@@ -8917,3 +8917,50 @@ outcomes, and commit the receipt together with local configuration, PostgreSQL a
 object hold release under the current compensation worker fence. It must preserve
 original capture provenance for unfinished target cleanup after source reopening.
 No native adapter or public full-stage capture is enabled by this contract.
+
+### Private durable source compensation
+
+Source compensation now reserves, claims and finishes through an append-only
+SQLC journal. Initial reservation authenticates the supplied original capture
+plan against the operation's frozen binding catalogue and recorded intent hash.
+Any supplied capture receipt must match the original recorded receipt hash; an
+unknown capture cannot acquire a fabricated receipt. The optional release must
+match its original persisted journal exactly. Adopted datasets are authenticated
+against their original complete snapshot and manifest journals, including
+retired target placement metadata. Current source inventories never replace the
+original capture plan.
+
+A current compensation worker receives native dispatch authority only from the
+first committed planned-to-requested transition. Lost claim replies grant no
+permission to dispatch, and requested recovery observes independently without
+retrying native cleanup. The private coordinator checks admission around native
+IO and isolates the original plan from adapter mutation. A provider must
+permanently fence queued original capture and release requests before attesting
+that each exact source is unchanged, accessible and free of native holds owned
+by this operation. Restoration removes this operation's original closure only;
+it must preserve later owners' native holds. Completed observation reads the
+original immutable closure receipt rather than replacing it with current state.
+
+Finish validates the complete proof and atomically records it with release of
+owned configuration, PostgreSQL and object write holds under the current worker
+revision and lease. PostgreSQL maintenance and unsettled native object grant
+retirement still block local release. A failure at the final configuration write
+rolls back the receipt and every local hold change. Successful original release
+requires no further local hold writes. Completed replay checks the original
+receipt and operation-owned hold absence without touching another capture's
+holds or depending on current source configuration.
+
+The legacy independent abandonment methods reject common-capture operations;
+only the coordinated proof can reopen those holds. Original plans remain in the
+journal after source reopening, so unused fully adopted targets can still be
+cleaned when no original release journal exists. Journal payloads are bounded by
+`CheckpointSourceCompensationMaxBytes`; downgrade refuses all reserved,
+requested and completed authority or evidence.
+
+Tests cover original capture/release phases, unknown and lost acknowledgements,
+worker handoff, stale/cancelled workers, adapter mutation, incomplete proofs,
+legacy abandonment bypasses, atomic rollback, migration rollback and preservation
+of a later capture's configuration hold. This is a private coordinator seam;
+there is no built-in qualified R2/OVH adapter or public full-stage admission.
+Final whole-stage publication and remaining target compensation are separate
+work. Live provider qualification remains deferred.

@@ -49,7 +49,7 @@ UPDATE project_environment_clone_configuration_guards g
 SET state='open',operation_id=NULL,source_environment='',source_revision_hash='',held_at=NULL,generation=generation+1
 WHERE g.project_id=$1::uuid AND g.account_id=$2::uuid AND g.operation_id=$3::uuid
  AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$3::uuid
-  AND o.project_id=g.project_id AND o.account_id=g.account_id AND o.status='compensating'
+  AND o.project_id=g.project_id AND o.account_id=g.account_id AND o.status='compensating' AND coalesce(o.resources->0->>'kind','')<>'data_checkpoint'
   AND o.revision=$4::bigint AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp())
 `
 
@@ -1676,7 +1676,7 @@ const beginClonePostgresWriteFenceAbandonment = `-- name: BeginClonePostgresWrit
 UPDATE project_environment_clone_postgres_write_fences f SET state='abandoning',updated_at=clock_timestamp()
 WHERE f.operation_id=$1::uuid AND f.source_database_id=$2::uuid
  AND f.state IN ('held','abandoning') AND EXISTS (SELECT 1 FROM project_environment_clone_operations o
-  WHERE o.id=f.operation_id AND o.status='compensating' AND o.revision=$3::bigint
+  WHERE o.id=f.operation_id AND o.status='compensating' AND coalesce(o.resources->0->>'kind','')<>'data_checkpoint' AND o.revision=$3::bigint
    AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING f.operation_id, f.source_database_id, f.source_version, f.backend_id, f.backend_fingerprint, f.source_provider_resource_id, f.source_data_resource_id, f.state, f.remote_terminal_state, f.remote_released_at, f.released_at, f.created_at, f.updated_at
 `
 
@@ -2918,6 +2918,35 @@ func (q *Queries) ClaimCloneCheckpointRelease(ctx context.Context, db DBTX, arg 
 		&i.RequestedAt,
 		&i.ObservationSha256,
 		&i.ReleasedAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointSourceCompensation = `-- name: ClaimCloneCheckpointSourceCompensation :one
+UPDATE project_environment_clone_checkpoint_source_compensations c SET state='requested',requested_at=clock_timestamp()
+WHERE c.operation_id=$1::uuid AND c.state='planned'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=$2::bigint AND o.lease_token=$3::uuid
+ AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.plan, c.state, c.requested_at, c.observation, c.observation_sha256, c.compensated_at
+`
+
+type ClaimCloneCheckpointSourceCompensationParams struct {
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointSourceCompensation(ctx context.Context, db DBTX, arg ClaimCloneCheckpointSourceCompensationParams) (ProjectEnvironmentCloneCheckpointSourceCompensation, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointSourceCompensation, arg.OperationID, arg.ExpectedRevision, arg.WorkerToken)
+	var i ProjectEnvironmentCloneCheckpointSourceCompensation
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.CompensatedAt,
 	)
 	return i, err
 }
@@ -4966,6 +4995,19 @@ func (q *Queries) CloneCheckpointPostgresCredentialPublished(ctx context.Context
 	return column_1, err
 }
 
+const cloneCheckpointSourceCompensationHasHolds = `-- name: CloneCheckpointSourceCompensationHasHolds :one
+SELECT EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE clone_operation_id=$1)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_write_fences WHERE operation_id=$1 AND state<>'released')
+ OR EXISTS(SELECT 1 FROM project_environment_clone_configuration_guards WHERE operation_id=$1 AND state='held') AS held
+`
+
+func (q *Queries) CloneCheckpointSourceCompensationHasHolds(ctx context.Context, db DBTX, cloneOperationID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointSourceCompensationHasHolds, cloneOperationID)
+	var held pgtype.Bool
+	err := row.Scan(&held)
+	return held, err
+}
+
 const cloneObjectGrantRevocationDispatch = `-- name: CloneObjectGrantRevocationDispatch :one
 UPDATE project_environment_clone_object_grant_revocations
 SET state=CASE WHEN state='reserved' THEN 'dispatched' ELSE state END,
@@ -5205,7 +5247,7 @@ DELETE FROM object_bucket_write_fences f USING project_environment_clone_operati
 WHERE f.bucket_id=$1 AND f.clone_operation_id=op.id AND f.token=op.id
 AND f.backend_id=$2 AND f.backend_fingerprint=$3
 AND f.physical_name=$4
-AND op.id=$5 AND op.status='compensating'
+AND op.id=$5 AND op.status='compensating' AND coalesce(op.resources->0->>'kind','')<>'data_checkpoint'
 AND op.revision=$6 AND op.lease_token=$7::uuid
 AND op.lease_until > clock_timestamp()
 AND NOT EXISTS (SELECT 1 FROM project_environment_clone_object_grant_revocations r
@@ -5693,6 +5735,110 @@ func (q *Queries) CommitTenantAppScope(ctx context.Context, db DBTX, arg CommitT
 	var s_id string
 	err := row.Scan(&s_id)
 	return s_id, err
+}
+
+const compensateCloneCheckpointConfiguration = `-- name: CompensateCloneCheckpointConfiguration :execrows
+UPDATE project_environment_clone_configuration_guards g SET state='open',operation_id=NULL,source_environment='',source_revision_hash='',
+ held_at=NULL,generation=g.generation+1
+WHERE g.project_id=$1::uuid AND g.account_id=$2::uuid AND g.state='held'
+ AND g.operation_id=$3::uuid AND g.generation=$4::bigint AND g.held_at=$5::timestamptz
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_source_compensations c ON c.operation_id=o.id
+ WHERE o.id=g.operation_id AND o.status='compensating' AND c.state='compensated'
+ AND o.revision=$6::bigint AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp())
+ AND NOT EXISTS(SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id=g.operation_id)
+ AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=g.operation_id AND f.state<>'released')
+`
+
+type CompensateCloneCheckpointConfigurationParams struct {
+	ProjectID        pgtype.UUID
+	AccountID        pgtype.UUID
+	OperationID      pgtype.UUID
+	Generation       int64
+	HeldAt           pgtype.Timestamptz
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) CompensateCloneCheckpointConfiguration(ctx context.Context, db DBTX, arg CompensateCloneCheckpointConfigurationParams) (int64, error) {
+	result, err := db.Exec(ctx, compensateCloneCheckpointConfiguration,
+		arg.ProjectID,
+		arg.AccountID,
+		arg.OperationID,
+		arg.Generation,
+		arg.HeldAt,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const compensateCloneCheckpointObjectFence = `-- name: CompensateCloneCheckpointObjectFence :execrows
+DELETE FROM object_bucket_write_fences f USING project_environment_clone_operations o,project_environment_clone_checkpoint_source_compensations c
+WHERE f.clone_operation_id=o.id AND f.token=o.id AND c.operation_id=o.id AND c.state='compensated'
+ AND o.id=$1::uuid AND f.bucket_id=$2::uuid
+ AND o.status='compensating' AND o.revision=$3::bigint
+ AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()
+ AND NOT EXISTS(SELECT 1 FROM project_environment_clone_object_grant_revocations g
+ WHERE g.operation_id=o.id AND g.source_bucket_id=f.bucket_id AND g.request_started_at IS NOT NULL AND g.state<>'drained')
+`
+
+type CompensateCloneCheckpointObjectFenceParams struct {
+	OperationID      pgtype.UUID
+	BucketID         pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) CompensateCloneCheckpointObjectFence(ctx context.Context, db DBTX, arg CompensateCloneCheckpointObjectFenceParams) (int64, error) {
+	result, err := db.Exec(ctx, compensateCloneCheckpointObjectFence,
+		arg.OperationID,
+		arg.BucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const compensateCloneCheckpointPostgresFence = `-- name: CompensateCloneCheckpointPostgresFence :execrows
+UPDATE project_environment_clone_postgres_write_fences f SET state='released',
+ remote_terminal_state=$1::text,remote_released_at=$2::timestamptz,
+ released_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE f.operation_id=$3::uuid AND f.source_database_id=$4::uuid AND f.state='held'
+ AND $2::timestamptz<=clock_timestamp()
+ AND NOT EXISTS(SELECT 1 FROM managed_postgres_checkpoint_maintenance m WHERE m.source_database_id=f.source_database_id AND m.state<>'ready')
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_source_compensations c ON c.operation_id=o.id
+ WHERE o.id=f.operation_id AND o.status='compensating' AND c.state='compensated'
+ AND o.revision=$5::bigint AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp())
+`
+
+type CompensateCloneCheckpointPostgresFenceParams struct {
+	RemoteTerminalState string
+	RemoteReleasedAt    pgtype.Timestamptz
+	OperationID         pgtype.UUID
+	SourceDatabaseID    pgtype.UUID
+	ExpectedRevision    int64
+	WorkerToken         pgtype.UUID
+}
+
+func (q *Queries) CompensateCloneCheckpointPostgresFence(ctx context.Context, db DBTX, arg CompensateCloneCheckpointPostgresFenceParams) (int64, error) {
+	result, err := db.Exec(ctx, compensateCloneCheckpointPostgresFence,
+		arg.RemoteTerminalState,
+		arg.RemoteReleasedAt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const completeAutomaticRouteCheck = `-- name: CompleteAutomaticRouteCheck :execrows
@@ -13838,6 +13984,41 @@ func (q *Queries) FinishCloneCheckpointRelease(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const finishCloneCheckpointSourceCompensation = `-- name: FinishCloneCheckpointSourceCompensation :execrows
+UPDATE project_environment_clone_checkpoint_source_compensations c SET state='compensated',
+ observation=$1::jsonb,observation_sha256=$2::text,
+ compensated_at=$3::timestamptz
+WHERE c.operation_id=$4::uuid AND c.state='requested'
+ AND $3::timestamptz BETWEEN c.requested_at AND clock_timestamp()
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=$5::bigint AND o.lease_token=$6::uuid
+ AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointSourceCompensationParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	CompensatedAt     pgtype.Timestamptz
+	OperationID       pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointSourceCompensation(ctx context.Context, db DBTX, arg FinishCloneCheckpointSourceCompensationParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointSourceCompensation,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.CompensatedAt,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishClonePostgresWriteFenceAbandonment = `-- name: FinishClonePostgresWriteFenceAbandonment :one
 UPDATE project_environment_clone_postgres_write_fences f SET state='released',remote_terminal_state=$1::text,
  remote_released_at=$2::timestamptz,released_at=clock_timestamp(),updated_at=clock_timestamp()
@@ -13845,7 +14026,7 @@ WHERE f.operation_id=$3::uuid AND f.source_database_id=$4::uuid
  AND f.state='abandoning' AND $2::timestamptz<=clock_timestamp()
  AND NOT EXISTS (SELECT 1 FROM managed_postgres_checkpoint_maintenance m WHERE m.source_database_id=f.source_database_id AND m.state<>'ready')
  AND EXISTS (SELECT 1 FROM project_environment_clone_operations o
-  WHERE o.id=f.operation_id AND o.status='compensating' AND o.revision=$5::bigint
+  WHERE o.id=f.operation_id AND o.status='compensating' AND coalesce(o.resources->0->>'kind','')<>'data_checkpoint' AND o.revision=$5::bigint
    AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING f.operation_id, f.source_database_id, f.source_version, f.backend_id, f.backend_fingerprint, f.source_provider_resource_id, f.source_data_resource_id, f.state, f.remote_terminal_state, f.remote_released_at, f.released_at, f.created_at, f.updated_at
 `
 
@@ -17945,6 +18126,41 @@ func (q *Queries) InsertCloneCheckpointRelease(ctx context.Context, db DBTX, arg
 		&i.RequestedAt,
 		&i.ObservationSha256,
 		&i.ReleasedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointSourceCompensation = `-- name: InsertCloneCheckpointSourceCompensation :one
+INSERT INTO project_environment_clone_checkpoint_source_compensations(operation_id,plan)
+SELECT o.id,$1::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$2::uuid AND o.status='compensating'
+ AND o.revision=$3::bigint AND o.lease_token=$4::uuid
+ AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, state, requested_at, observation, observation_sha256, compensated_at
+`
+
+type InsertCloneCheckpointSourceCompensationParams struct {
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointSourceCompensation(ctx context.Context, db DBTX, arg InsertCloneCheckpointSourceCompensationParams) (ProjectEnvironmentCloneCheckpointSourceCompensation, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointSourceCompensation,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointSourceCompensation
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.CompensatedAt,
 	)
 	return i, err
 }
@@ -48250,6 +48466,26 @@ func (q *Queries) ReadCloneCheckpointRelease(ctx context.Context, db DBTX, opera
 		&i.RequestedAt,
 		&i.ObservationSha256,
 		&i.ReleasedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointSourceCompensation = `-- name: ReadCloneCheckpointSourceCompensation :one
+SELECT operation_id, plan, state, requested_at, observation, observation_sha256, compensated_at FROM project_environment_clone_checkpoint_source_compensations WHERE operation_id=$1 FOR UPDATE
+`
+
+// ADR-590: original source compensation is claimed once before native IO.
+func (q *Queries) ReadCloneCheckpointSourceCompensation(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointSourceCompensation, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointSourceCompensation, operationID)
+	var i ProjectEnvironmentCloneCheckpointSourceCompensation
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.CompensatedAt,
 	)
 	return i, err
 }
