@@ -3517,11 +3517,16 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// the deployment becomes routable. The gate is dark-launched by default;
 	// when enabled, a production breaking change is a normal deployment
 	// failure with a stable error code and an audit record.
-	if contractErr := h.checkAPIContract(ctx, dep); contractErr != nil {
+	contractCtx, contractErr := h.checkAPIContractContext(ctx, dep)
+	if contractErr != nil {
 		var gateErr *openapidiff.GateError
 		code := api.CodeCapacity
 		if errors.As(contractErr, &gateErr) {
-			code = api.CodeAPIContractBreakingChange
+			if len(gateErr.Diff.Breaks) > 0 {
+				code = api.CodeAPIContractBreakingChange
+			} else if len(gateErr.Diff.Unknowns) > 0 {
+				code = api.CodeAPIContractComparisonIncomplete
+			}
 		}
 		detail := contractErr.Error()
 		_, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail)
@@ -3536,6 +3541,8 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		return fmt.Errorf("imaged: api contract gate: %w", contractErr)
 	}
+
+	ctx = contractCtx
 
 	// Remember the current same-scope deployment. After the candidate passes
 	// smoke, MarkDeploymentLive atomically supersedes this row; only then may
@@ -3598,6 +3605,18 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		return nil
 	}
 	if promoteErr != nil {
+		var routeRemovalBlocker *state.RouteRemovalBlockedError
+		if errors.As(promoteErr, &routeRemovalBlocker) {
+			_, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeRouteRemovalRequired, routeRemovalBlocker.Error())
+			if markErr != nil {
+				return fmt.Errorf("imaged: record route removal blocker: %w", markErr)
+			}
+			if h.audit != nil {
+				h.audit.Emit(ctx, "deployment.route_removal_blocked", &app.AccountID, map[string]any{"app_id": app.ID, "deployment_id": dep.ID, "detail": routeRemovalBlocker.Reason})
+			}
+			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
+			return fmt.Errorf("imaged: route removal policy: %w", promoteErr)
+		}
 		var dependencyBlocker *state.DependencyGateError
 		if errors.As(promoteErr, &dependencyBlocker) {
 			// Refresh the durable blocker after a dependency changed during

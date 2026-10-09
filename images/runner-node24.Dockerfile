@@ -16,11 +16,17 @@ FROM node:24-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e385
 # The official image already reserves uid 1000 for `node`; reuse that
 # identity under the platform's canonical `app` name instead of attempting
 # a duplicate uid.
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive \
+COPY --chmod=0644 guest/profiling/node/package*.json /opt/gregale/profiling/
+RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt chmod 0755 /opt/gregale /opt/gregale/profiling && \
+    apt-get update && apt-get install -y --no-install-recommends python3 make g++ && \
+    cd /opt/gregale/profiling && NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev && \
+    apt-get purge -y --auto-remove python3 make g++ && rm -rf /root/.npm /var/lib/apt/lists/*
+RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt apt-get update && DEBIAN_FRONTEND=noninteractive \
     apt-get upgrade -y --no-install-recommends && \
     rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack && \
     rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack && \
     if id app >/dev/null 2>&1; then :; \
     elif id node >/dev/null 2>&1; then sed -i 's/^node:/app:/' /etc/passwd; \
     else useradd -u 1000 -m app; fi
+COPY --chmod=0644 guest/profiling/node.cjs /opt/gregale/profiling/node.cjs
 WORKDIR /app

@@ -325,6 +325,7 @@ func (m *MemStore) TenantSurfaceByHostname(_ context.Context, hostname string) (
 func (m *MemStore) CreateTenantHostnameIfUnderQuota(_ context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 
 	s, ok := m.tenantSurfaces[in.SurfaceID]
 	if !ok || s.Status == SurfaceStatusDeleted {
@@ -516,6 +517,7 @@ func (m *MemStore) ListPendingTenantHostnames(_ context.Context, olderThan time.
 func (m *MemStore) DeleteTenantHostname(_ context.Context, hostname string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if _, ok := m.tenantHostnames[hostname]; !ok {
 		return ErrNotFound
 	}

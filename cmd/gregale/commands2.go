@@ -1523,6 +1523,9 @@ func workerReplicasEqual(a, b *api.WorkerScaling) bool {
 
 func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest) bool {
 	manifest := current.Manifest
+	if desired.Profiling != nil && (manifest.Profiling == nil || *desired.Profiling != *manifest.Profiling) {
+		return true
+	}
 	if desired.ExecutionMode != nil && manifest.ExecutionMode != *desired.ExecutionMode {
 		return true
 	}
@@ -1567,7 +1570,7 @@ func applyManifestLifecycle(ctx context.Context, client manifestScalingClient, s
 	if err != nil {
 		return err
 	}
-	if !ok || m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil) {
+	if !ok || m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil && m.Profiling == nil) {
 		return nil
 	}
 	if err := m.Validate(); err != nil {
@@ -3929,6 +3932,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// waited deployments commit only once they reach live. --no-triggers
 	// opts out of the entire fan-out.
 	var stagedManifestTriggerTxn *manifestCronTransaction
+	profileTxn, err := stageManifestProfiling(ctx, client, slug, sourceDir)
+	if err != nil {
+		return printErr("Manifest profiling policy failed", err)
+	}
+	defer func() {
+		if err := profileTxn.rollback(ctx); err != nil {
+			PrintWarn(osStderr, "Manifest profiling rollback incomplete: %v", err)
+		}
+	}()
 	defer func() {
 		if stagedManifestTriggerTxn == nil || len(stagedManifestTriggerTxn.steps) == 0 {
 			return
@@ -3942,6 +3954,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}()
 	commitManifestTriggers := func() {
 		stagedManifestTriggerTxn.commit()
+		profileTxn.committed = true
 	}
 	applyManifestScaling := func() error {
 		if err := applyManifestLifecycle(ctx, client, slug, sourceDir); err != nil {
@@ -4561,11 +4574,12 @@ func cmdTrafficSet(args []string) int {
 // row after the atomic sibling rebalance; the transition fields let automation
 // distinguish a real promotion from an idempotent retry.
 type TrafficPromotionReceipt struct {
-	Deployment      api.DeploymentResponse  `json:"deployment"`
-	FromPercent     int                     `json:"from_percent"`
-	ToPercent       int                     `json:"to_percent"`
-	AlreadyPromoted bool                    `json:"already_promoted"`
-	BindingsCheck   *api.BindingCheckReport `json:"bindings_check,omitempty"`
+	Deployment       api.DeploymentResponse  `json:"deployment"`
+	FromPercent      int                     `json:"from_percent"`
+	ToPercent        int                     `json:"to_percent"`
+	AlreadyPromoted  bool                    `json:"already_promoted"`
+	BindingsCheck    *api.BindingCheckReport `json:"bindings_check,omitempty"`
+	RouteRemovalGate *routeRemovalGateReport `json:"route_removal_gate,omitempty"`
 }
 
 // cmdTrafficPromote is the intent-level counterpart to traffic set. It keeps
@@ -4581,6 +4595,11 @@ func cmdTrafficPromote(args []string) int {
 	maxAge := fs.Duration("max-verification-age", api.DefaultBindingVerificationAge, "maximum binding verification age (requires --require-bindings)")
 	allowUnsupported := fs.Bool("allow-unsupported", false, "waive unsupported queue/outbound probes (requires --require-bindings)")
 	requireAck := fs.Bool("require-application-ack", false, "require current PostgreSQL/object-storage application acknowledgements (requires --require-bindings)")
+	removalMode := fs.String("route-removal-mode", "", "opt-in CLI route-removal preflight: report or enforce; requires --app and --if-serving")
+	removalReadiness := fs.String("route-readiness", "", "migration readiness report for the serving deployment")
+	removalMapping := fs.String("route-mapping", "", "reviewed successor mapping JSON")
+	removalApproval := fs.String("route-owner-approval", "", "owner attestation for this exact change")
+	removalAge := fs.Duration("route-evidence-max-age", 72*time.Hour, "maximum route evidence age (at most 72h)")
 	slug, args := peelLeadingSlug(args)
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -4606,6 +4625,19 @@ func cmdTrafficPromote(args []string) int {
 	if ifServingSet && !validDeploymentRef(*ifServing) {
 		return printErr("Traffic promote failed", fmt.Errorf("--if-serving requires a deployment id or vN revision"))
 	}
+	var removalPolicySet bool
+	fs.Visit(func(f *flag.Flag) { removalPolicySet = removalPolicySet || strings.HasPrefix(f.Name, "route-") })
+	if removalPolicySet && (*removalMode != "report" && *removalMode != "enforce" || !validCLISlug(*app) || !ifServingSet || *removalAge <= 0 || *removalAge > 72*time.Hour) {
+		return printErr("Invalid removal gate options", errors.New("use --route-removal-mode report|enforce with --app, --if-serving and an evidence age of at most 72h"))
+	}
+	var removalEvidence routeRemovalGateEvidence
+	if removalPolicySet {
+		var err error
+		removalEvidence, err = readRouteRemovalGateEvidence(*removalReadiness, *removalMapping, *removalApproval)
+		if err != nil {
+			return printErr("Invalid removal evidence", err)
+		}
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -4616,6 +4648,7 @@ func cmdTrafficPromote(args []string) int {
 		return printErr("Traffic promote failed", err)
 	}
 	var servingID string
+	var servingDeployment api.DeploymentResponse
 	if ifServingSet {
 		resolved, resolveErr := resolveDeploymentArg(ctx, client, *app, *ifServing)
 		if resolveErr != nil {
@@ -4626,6 +4659,7 @@ func cmdTrafficPromote(args []string) int {
 			return printErr("Traffic promote failed", readErr)
 		}
 		servingID = serving.ID
+		servingDeployment = serving
 		if servingID == deploymentID {
 			return printErr("Traffic promote failed", fmt.Errorf("--if-serving must name a different deployment from --deployment"))
 		}
@@ -4637,14 +4671,45 @@ func cmdTrafficPromote(args []string) int {
 	if current.Status != statusLive {
 		return printErr("Traffic promote failed", fmt.Errorf("deployment %s is %s; only live deployments can be promoted", deploymentLabel(current), current.Status))
 	}
+	var removalGate *routeRemovalGateReport
+	if removalPolicySet {
+		if servingDeployment.ID != servingID || current.ID != deploymentID || servingDeployment.AppID == "" || current.AppID != servingDeployment.AppID || servingDeployment.Status != statusLive || servingDeployment.TrafficPercent != 100 {
+			return printErr("Route removal preflight failed", errors.New("baseline and candidate must belong to the same app; baseline must be live at 100% traffic"))
+		}
+		gateCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		base, baseContract := readRouteLifecycleInventory(gateCtx, client, *app, servingID, servingDeployment.AppID)
+		prop, propContract := readRouteLifecycleInventory(gateCtx, client, *app, deploymentID, current.AppID)
+		gate := buildRouteRemovalGate(*app, servingID, deploymentID, base.DocumentSHA256, prop.DocumentSHA256, *removalMode, baseContract, propContract, removalEvidence, *removalAge, time.Now().UTC())
+		if gate.Status == "passed" {
+			refreshRouteRemovalTraffic(gateCtx, client, &gate, *removalAge, time.Now().UTC())
+		}
+		removalGate = &gate
+		if *removalMode == "enforce" && gate.Status == "blocked" {
+			if jsonOutput {
+				if code := jsonOut(writeJSON(struct {
+					RouteRemovalGate *routeRemovalGateReport `json:"route_removal_gate"`
+				}{&gate})); code != 0 {
+					return code
+				}
+			} else {
+				renderRouteRemovalGate(osStdout, gate)
+			}
+			return 1
+		}
+		if !jsonOutput {
+			renderRouteRemovalGate(osStdout, gate)
+		}
+	}
 	if *requireBindings {
-		return promoteTrafficWithBindings(ctx, client, current, servingID, *maxAge, *allowUnsupported, *requireAck)
+		return promoteTrafficWithBindings(ctx, client, current, servingID, *maxAge, *allowUnsupported, *requireAck, removalGate)
 	}
 
 	receipt := TrafficPromotionReceipt{
-		Deployment:  current,
-		FromPercent: current.TrafficPercent,
-		ToPercent:   100,
+		Deployment:       current,
+		FromPercent:      current.TrafficPercent,
+		ToPercent:        100,
+		RouteRemovalGate: removalGate,
 	}
 	if current.TrafficPercent == 100 {
 		receipt.AlreadyPromoted = true

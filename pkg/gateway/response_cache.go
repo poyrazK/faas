@@ -156,14 +156,15 @@ func (k CacheKey) String() string {
 // ErrorUntil bound the independent stale-while-revalidate and stale-on-error
 // states; StaleUntil is their later retention boundary.
 type cacheEntry struct {
-	key             CacheKey
-	statusCode      int
-	header          map[string][]string
-	body            []byte
-	tags            []string
-	freshUntil      time.Time
-	revalidateUntil time.Time
-	errorUntil      time.Time
+	servedDeploymentID string // actual origin deployment; empty for legacy entries
+	key                CacheKey
+	statusCode         int
+	header             map[string][]string
+	body               []byte
+	tags               []string
+	freshUntil         time.Time
+	revalidateUntil    time.Time
+	errorUntil         time.Time
 	// staleUntil is the later of revalidateUntil and errorUntil. It is the
 	// retention/expiry boundary used by local eviction and shared-store TTLs.
 	staleUntil time.Time
@@ -347,6 +348,14 @@ func (c *ResponseCache) PutWithWindows(k CacheKey, statusCode int, header map[st
 
 // PutWithWindowsAndTags stores a response with its canonical purge tags.
 func (c *ResponseCache) PutWithWindowsAndTags(k CacheKey, statusCode int, header map[string][]string, body []byte, freshUntil, revalidateUntil, errorUntil time.Time, ruleAction *state.EdgeRuleCacheAction, tags []string) bool {
+	return c.PutWithDeployment(k, statusCode, header, body, freshUntil, revalidateUntil, errorUntil, ruleAction, tags, "")
+}
+
+// PutWithDeployment retains the final origin identity separately from the cache-key cohort.
+func (c *ResponseCache) PutWithDeployment(k CacheKey, statusCode int, header map[string][]string, body []byte, freshUntil, revalidateUntil, errorUntil time.Time, ruleAction *state.EdgeRuleCacheAction, tags []string, servedDeploymentID string) bool {
+	if k.DeploymentID != "" && servedDeploymentID != "" && k.DeploymentID != servedDeploymentID {
+		return false
+	}
 	if c == nil {
 		return false
 	}
@@ -372,16 +381,17 @@ func (c *ResponseCache) PutWithWindowsAndTags(k CacheKey, statusCode int, header
 		staleUntil = revalidateUntil
 	}
 	entry := &cacheEntry{
-		key:             k,
-		statusCode:      statusCode,
-		header:          copyHeader(header),
-		body:            append([]byte(nil), body...),
-		tags:            canonicalTags,
-		freshUntil:      freshUntil,
-		revalidateUntil: revalidateUntil,
-		errorUntil:      errorUntil,
-		staleUntil:      staleUntil,
-		ruleAction:      ruleAction,
+		servedDeploymentID: servedDeploymentID,
+		key:                k,
+		statusCode:         statusCode,
+		header:             copyHeader(header),
+		body:               append([]byte(nil), body...),
+		tags:               canonicalTags,
+		freshUntil:         freshUntil,
+		revalidateUntil:    revalidateUntil,
+		errorUntil:         errorUntil,
+		staleUntil:         staleUntil,
+		ruleAction:         ruleAction,
 	}
 	localStored := c.putLocal(entry)
 	sharedStored := false

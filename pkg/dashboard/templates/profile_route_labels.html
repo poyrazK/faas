@@ -1,0 +1,12 @@
+{{define "profile_route_label_coverage"}}
+<p>Reported labeled entries: {{with .LabeledRequests}}{{.}}{{else}}Unknown{{end}} / observed requests: {{with .ObservedRequests}}{{.}}{{else}}Unknown{{end}}. {{if .Available}}Labeling share: {{with .Percent}}{{printf "%.2f" .}}{{end}}%.{{else}}Share unavailable.{{end}}</p>
+<p class="muted">{{.Reason}} Counted captures: {{.CapturedProfiles}}; boundary captures excluded: {{.BoundaryProfiles}}.</p>
+{{end}}
+{{define "profile_route_label_comparison"}}
+<details><summary>{{if .Consistent}}Consistent observed labeling{{else}}Insufficient labeling evidence{{end}}</summary>
+{{with .Baseline}}<strong>Stable / baseline</strong>{{template "profile_route_label_coverage" .}}{{end}}
+{{with .Candidate}}<strong>Canary / candidate</strong>{{template "profile_route_label_coverage" .}}{{end}}
+<p>{{.Reason}} Minimum share: {{printf "%.0f" .MinimumPercent}}%; maximum allowed change is below {{printf "%.0f" .MaximumChangePercentagePoints}} percentage points.{{with .DeltaPercentagePoints}} Observed change: {{printf "%+.2f" .}} percentage points.{{end}}</p>
+<p>Application-reported counters do not prove complete instrumentation. Missing captures, request-entry versus telemetry timing and minute boundaries can affect the observed ratio.</p>
+</details>
+{{end}}

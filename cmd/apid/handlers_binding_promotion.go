@@ -213,6 +213,11 @@ func bindingPromotionDeadline(report api.BindingCheckReport, inventory api.AppBi
 }
 
 func (s *server) executeBindingPromotion(r *http.Request, acct state.Account, app state.App, deployment state.Deployment, req api.BindingPromotionRequest, age time.Duration) (state.BindingPromotionResult, api.BindingCheckReport, *api.Problem) {
+	contractCtx, contractProblem := s.contractTrafficContext(r.Context(), app, deployment)
+	if contractProblem != nil {
+		return state.BindingPromotionResult{}, api.BindingCheckReport{}, contractProblem
+	}
+	r = r.WithContext(contractCtx)
 	observation, problem := s.observeBindingPromotion(r, acct, app, deployment, req, age)
 	if problem != nil {
 		return state.BindingPromotionResult{}, observation.report, problem
@@ -241,6 +246,9 @@ func bindingPromotionProblem(code, title, detail string, report api.BindingCheck
 }
 
 func bindingPromotionWriteProblem(err error, report api.BindingCheckReport, expiration api.BindingCheckFinding) *api.Problem {
+	if p := routeRemovalBlockedProblem(err); p != nil {
+		return p
+	}
 	switch {
 	case errors.Is(err, state.ErrCheckedRollbackRequired):
 		return api.NewProblem(http.StatusConflict, "rollback_operation_required", "Checked rollback in progress", "Use the exact rollback operation status to inspect this traffic handoff.")

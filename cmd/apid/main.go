@@ -801,6 +801,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// surface can be dark-launched with the ginstal kill-switch
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
+		startProfileDeploymentChecks(ctx, srv, log)
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
 		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion
@@ -1431,6 +1432,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
+	if err := srv.configureProfiles(deps.getenv); err != nil {
+		return fmt.Errorf("apid profiling: %w", err)
+	}
 	if cfg.OutboundProbeGatewayURL != "" && !api.ValidOutboundProbeGateway(cfg.OutboundProbeGatewayURL) {
 		return fmt.Errorf("apid: outbound_probe_gateway_url must be an HTTPS origin")
 	}

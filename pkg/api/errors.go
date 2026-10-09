@@ -1580,6 +1580,9 @@ const (
 	// CodeAPIContractBreakingChange is stamped on deployments rejected by
 	// the production OpenAPI contract gate.
 	CodeAPIContractBreakingChange = "api_contract_breaking_change"
+	// CodeAPIContractComparisonIncomplete means a promotion was blocked
+	// because an unsupported response-schema change could not be classified.
+	CodeAPIContractComparisonIncomplete = "api_contract_comparison_incomplete"
 	// CodeOpenAPIPolicyConfirmationRequired means a policy apply request
 	// omitted the approval token returned by the preceding plan.
 	CodeOpenAPIPolicyConfirmationRequired = "openapi_policy_confirmation_required"
@@ -1868,6 +1871,10 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
+	case CodeProfileGateBlocked:
+		return http.StatusConflict
+	case CodeProfileInvestigationLimit:
+		return http.StatusTooManyRequests
 	case CodeAutomationInvalid:
 		return http.StatusUnprocessableEntity
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
@@ -1954,7 +1961,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
+	case CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange, CodeAPIContractComparisonIncomplete:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid, CodeSecurityPostureBlocked:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -3114,6 +3121,15 @@ func ErrAPIContractDiffDisabled() *Problem {
 func ErrAPIContractBreakingChange(detail string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractBreakingChange,
 		"API contract breaking change", detail).
+		WithDocs(docsBase + "/api-hosting/contract-diff")
+}
+
+// ErrAPIContractComparisonIncomplete is used when the compatibility gate
+// cannot classify a changed response schema with its currently supported
+// checks.
+func ErrAPIContractComparisonIncomplete(detail string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractComparisonIncomplete,
+		"API contract comparison incomplete", detail).
 		WithDocs(docsBase + "/api-hosting/contract-diff")
 }
 
@@ -6461,3 +6477,8 @@ func ErrUDPListenerLimit(limit, observed int) *Problem {
 		"UDP listener reservation limit reached", "Delete an existing UDP listener before reserving another public port. Disabled listeners still reserve their ports.").
 		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/containers#udp-listeners")
 }
+
+// CodeProfileInvestigationLimit is the per-app saved metadata quota.
+const CodeProfileInvestigationLimit = "profile_investigation_limit"
+
+const CodeProfileGateBlocked = "profile_gate_blocked"

@@ -299,6 +299,8 @@ var HostKeys = map[string]HostBlock{
 		},
 		ComputeNodeBlock: nil,
 	},
+	"profiled": {Daemon: "profiled", PrivateKeys: []string{}, ComputeNodeBlock: nil},
+
 	"realtimed": {
 		Daemon:           "realtimed",
 		PrivateKeys:      []string{"socket_path"},

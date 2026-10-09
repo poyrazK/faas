@@ -769,6 +769,18 @@ type AppRegistryCredential struct {
 	LastUsedAt        pgtype.Timestamptz
 }
 
+type AppRouteRemovalPolicy struct {
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	Mode                  string
+	Revision              int32
+	GraceSeconds          int64
+	MaxApprovalAgeSeconds int64
+	BaselineDeploymentID  pgtype.UUID
+	BaselineSince         pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
 type AppRuntimeConfigChange struct {
 	AppID     pgtype.UUID
 	ChangedAt pgtype.Timestamptz
@@ -5288,6 +5300,96 @@ type ProductionInvocationWork struct {
 	EnvironmentID            pgtype.UUID
 }
 
+type ProductionLifecycleReview struct {
+	ID           int64
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	ReviewedAt   pgtype.Timestamptz
+	Decision     []byte
+	Recovery     bool
+	Scope        pgtype.Text
+	Evidence     []byte
+}
+
+type ProfileCanaryCheck struct {
+	DeploymentID        pgtype.UUID
+	AppID               pgtype.UUID
+	AccountID           pgtype.UUID
+	CanaryStep          int32
+	CanaryStepStartedAt pgtype.Timestamptz
+	PolicyRevision      int64
+	Data                []byte
+	Status              string
+	Reason              string
+	Attempts            int32
+	NextAttemptAt       pgtype.Timestamptz
+	LeaseToken          pgtype.UUID
+	LeaseUntil          pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	CompletedAt         pgtype.Timestamptz
+}
+
+type ProfileDeploymentCheck struct {
+	DeploymentID    pgtype.UUID
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	PolicyRevision  int64
+	Data            []byte
+	Status          string
+	Reason          string
+	Attempts        int32
+	NextAttemptAt   pgtype.Timestamptz
+	LeaseToken      pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	InvestigationID pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+	CompletedAt     pgtype.Timestamptz
+}
+
+type ProfileDeploymentPolicy struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Revision  int64
+	Enabled   bool
+	Config    []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
+type ProfileInvestigation struct {
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	Revision      int64
+	Investigation []byte
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	Assessment    []byte
+}
+
+type ProfilePeriodicMonitor struct {
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	DeploymentID   pgtype.UUID
+	PolicyRevision int64
+	Route          string
+	Data           []byte
+	NextAttemptAt  pgtype.Timestamptz
+	Attempts       int32
+	LeaseToken     pgtype.UUID
+	LeaseUntil     pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type ProfileRouteAlertState struct {
+	ContextKey   string
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	DeploymentID pgtype.UUID
+	State        []byte
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type Project struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
@@ -6241,6 +6343,31 @@ type RequestTelemetry202612 struct {
 	FlagEvidence                []byte
 }
 
+type RequestTelemetryAppGap struct {
+	NodeName     string
+	AppID        pgtype.UUID
+	LastGapAt    pgtype.Timestamptz
+	PendingCount int32
+	DroppedTotal int64
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type RequestTelemetryCoverage struct {
+	NodeName                 string
+	BootID                   pgtype.UUID
+	Sequence                 int64
+	Enabled                  bool
+	SamplingBasisPoints      int32
+	DroppedTotal             int64
+	PendingCount             int32
+	SourceAt                 pgtype.Timestamptz
+	ReceivedAt               pgtype.Timestamptz
+	HealthySince             pgtype.Timestamptz
+	AppScoped                bool
+	UnattributedDroppedTotal int64
+	UnattributedPendingCount int32
+}
+
 type RequestTelemetryDefault struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID
@@ -6353,6 +6480,20 @@ type RouteHealthNotificationState struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+type RouteLifecycleApproval struct {
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	BaselineDeploymentID  pgtype.UUID
+	CandidateDeploymentID pgtype.UUID
+	Receipt               []byte
+	ApprovedAt            pgtype.Timestamptz
+	ValidUntil            pgtype.Timestamptz
+	InvalidatedAt         pgtype.Timestamptz
+	ConfigurationSnapshot []byte
+	SuccessorSnapshot     []byte
+}
+
 type RouteMonitor struct {
 	AppID                 pgtype.UUID
 	AccountID             pgtype.UUID
@@ -6389,6 +6530,33 @@ type RoutePolicyReceipt struct {
 	RequestSha256  string
 	Receipt        []byte
 	CreatedAt      pgtype.Timestamptz
+}
+
+type RouteRemovalApproval struct {
+	ID                    pgtype.UUID
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	PolicyRevision        int32
+	BaselineDeploymentID  pgtype.UUID
+	CandidateDeploymentID pgtype.UUID
+	BaselineSha256        []byte
+	CandidateSha256       []byte
+	MappingSha256         string
+	Mappings              []byte
+	ApprovedBy            string
+	ApprovedAt            pgtype.Timestamptz
+	ValidUntil            pgtype.Timestamptz
+	ObservationFrom       pgtype.Timestamptz
+	ObservationUntil      pgtype.Timestamptz
+	Receipt               []byte
+}
+
+type RouteRemovalPolicyHistory struct {
+	AppID     pgtype.UUID
+	Revision  int32
+	ChangedBy string
+	ChangedAt pgtype.Timestamptz
+	Policy    []byte
 }
 
 type RuntimeArtifactBinding struct {

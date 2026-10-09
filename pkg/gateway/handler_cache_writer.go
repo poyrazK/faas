@@ -57,6 +57,7 @@ import (
 // 413 — the cacheability predicate below would correctly skip
 // the Put.
 type cacheWriter struct {
+	servedDeploymentID string
 	http.ResponseWriter
 	inner *statusRecorder // the next-in-chain recorder (for header copy + status)
 	rule  *EdgeRuleCacheResolved
@@ -184,6 +185,9 @@ func (c *cacheWriter) WriteHeader(code int) {
 			continue
 		}
 		for _, v := range vs {
+			if isCachedRouteLifecycleHeader(k, v) {
+				continue
+			}
 			if strings.EqualFold(k, "Set-Cookie") {
 				if _, managed := c.managedPlatformCookies[v]; managed && !excludedManagedCookies[v] {
 					excludedManagedCookies[v] = true
@@ -321,7 +325,7 @@ func (c *cacheWriter) finishCacheCapture(cache *ResponseCache, key CacheKey, now
 	staleWhileRevalidate := time.Duration(c.rule.StaleWhileRevalidateSeconds) * time.Second
 	staleIfError := time.Duration(c.rule.StaleIfErrorSeconds) * time.Second
 	freshUntil := now.Add(maxAge)
-	return cache.PutWithWindowsAndTags(
+	return cache.PutWithDeployment(
 		key,
 		c.status,
 		c.header,
@@ -331,5 +335,6 @@ func (c *cacheWriter) finishCacheCapture(cache *ResponseCache, key CacheKey, now
 		freshUntil.Add(staleIfError),
 		c.ruleAction,
 		c.tags,
+		c.servedDeploymentID,
 	)
 }

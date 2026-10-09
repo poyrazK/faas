@@ -27,11 +27,13 @@ const SnapshotSchemaVersion = 1
 //   - All description whitespace is collapsed (the loader already
 //     trims it, but MarshalSnapshot re-runs the rule so a
 //     hand-constructed Spec also serializes deterministically).
+//   - Unsupported schema facet values are not stored. A SHA-256 digest of
+//     those facets is retained per schema so unsupported response-schema
+//     changes remain detectable without persisting examples or raw values.
 //
-// The canonical form is what feeds SHA-256. Two Specs that
-// [Compare] reports as zero breaks MUST produce identical
-// canonical JSON and identical SHA-256 — the hash is the
-// replay/drift anchor for the snapshot row.
+// The canonical form is what feeds SHA-256. Identical Specs produce
+// identical canonical JSON and SHA-256; the hash is the replay / drift
+// anchor for the snapshot row and also covers opaque-facet digests.
 func MarshalSnapshot(s *Spec) (json.RawMessage, string, error) {
 	if s == nil {
 		return nil, "", errors.New("openapidiff: MarshalSnapshot: nil spec")
@@ -213,6 +215,9 @@ func schemaToCanonical(s *Schema) map[string]any {
 	if s.Ref != "" {
 		out["ref"] = s.Ref
 	}
+	if s.UnsupportedFacetsSHA256 != "" {
+		out["unsupported_facets_sha256"] = s.UnsupportedFacetsSHA256
+	}
 	if s.Description != "" {
 		out["description"] = s.Description
 	}
@@ -354,6 +359,9 @@ func canonicalToSchema(in any) (*Schema, error) {
 	}
 	if v, ok := m["ref"].(string); ok {
 		sch.Ref = v
+	}
+	if v, ok := m["unsupported_facets_sha256"].(string); ok {
+		sch.UnsupportedFacetsSHA256 = v
 	}
 	if v, ok := m["description"].(string); ok {
 		sch.Description = v

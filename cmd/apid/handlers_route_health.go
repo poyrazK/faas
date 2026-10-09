@@ -75,6 +75,9 @@ func (s *server) getRouteHealthReport(w http.ResponseWriter, r *http.Request, ac
 		s.routeHealthError(w, err)
 		return
 	}
+	if candidate, err := s.store.DeploymentByID(r.Context(), id.String()); err == nil && candidate.AppID == app.ID {
+		report.ProfileSignal = s.profileCanarySignal(r.Context(), acct, app, candidate)
+	}
 	writeJSON(w, http.StatusOK, report)
 }
 func (s *server) routeHealthError(w http.ResponseWriter, err error) {

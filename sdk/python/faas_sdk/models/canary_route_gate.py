@@ -16,8 +16,9 @@ T = TypeVar("T", bound="CanaryRouteGate")
 
 @_attrs_define
 class CanaryRouteGate:
-    """Per-app canary advance gate. Absence is report mode with revision 0. Initial activation, stable rollbacks and aborts
-    are outside this gate.
+    """Per-app gate for canary route-requirements evidence and production lifecycle declarations. Absence is report mode
+    with revision 0. Lifecycle enforcement includes initial positive activation, promotions, traffic redistribution and
+    ordinary rollback. Dark staging, validated abort and automatic incident recovery remain available.
 
     """
 

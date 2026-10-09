@@ -88,9 +88,12 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":  true, // scoped HTML/CSRF adapter for the public issue action API
-	"POST /dashboard/apps/{slug}/issues/impact-alert-policy": true, // scoped HTML/CSRF adapter for issue impact alert policy updates
-	"POST /dashboard/apps/{slug}/issues/ownership-rules":     true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
+	"POST /dashboard/apps/{slug}/profiles/deployment-policy":         true, // session + CSRF adapter for automatic profiling policy
+	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check": true, // session + CSRF adapter for the profiling regression API
+	"POST /dashboard/apps/{slug}/profiles/investigations":            true, // session + CSRF adapter for the profiling investigation API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":          true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":         true, // scoped HTML/CSRF adapter for issue impact alert policy updates
+	"POST /dashboard/apps/{slug}/issues/ownership-rules":             true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
 
 	"GET /v1/dev/bridges/{id}/connect":           true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
 	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol
@@ -1087,6 +1090,18 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", alertsDeliveryFile),
 		filepath.Join(root, "pkg", "api", alertsPresetsFile),
 		filepath.Join(root, "pkg", "api", manifestFile),
+		filepath.Join(root, "pkg", "api", "profiles.go"), // ADR-819
+		filepath.Join(root, "pkg", "api", "profile_investigations.go"),
+		filepath.Join(root, "pkg", "api", "profile_regressions.go"),
+		filepath.Join(root, "pkg", "api", "profile_deployment_checks.go"),
+		filepath.Join(root, "pkg", "api", "profile_attribution.go"),
+		filepath.Join(root, "pkg", "api", "profile_canary_gate.go"),
+		filepath.Join(root, "pkg", "api", "profile_periodic_checks.go"),
+		filepath.Join(root, "pkg", "api", "profile_routes.go"),
+		filepath.Join(root, "pkg", "api", "profile_route_regressions.go"),
+		filepath.Join(root, "pkg", "api", "profile_route_labels.go"),
+		filepath.Join(root, "pkg", "api", "profile_request_mix.go"),
+		filepath.Join(root, "pkg", "api", "profile_alerts.go"),
 		filepath.Join(root, "pkg", "api", cliauthFile),
 		filepath.Join(root, "pkg", "api", mfaFile),
 		filepath.Join(root, "pkg", "api", sessionsFile),
@@ -1160,6 +1175,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),
 		filepath.Join(root, "pkg", "api", "route_gate.go"),
+		filepath.Join(root, "pkg", "api", "route_removal.go"),
+		filepath.Join(root, "pkg", "api", "route_lifecycle_approval.go"),
+		filepath.Join(root, "pkg", "api", "route_lifecycle_history.go"),
 		filepath.Join(root, "pkg", "api", "route_health.go"),
 		filepath.Join(root, "pkg", "api", "route_monitor.go"),
 		filepath.Join(root, "pkg", "api", "route_client_errors.go"),
