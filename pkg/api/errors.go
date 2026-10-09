@@ -763,6 +763,9 @@ const (
 	// instance that was served a developer live patch. The VM is destroyed
 	// instead, and the next wake restores the unpatched artifact.
 	CodeDevSourceDiverged = "dev_source_diverged"
+	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
+	// one developer environment.
+	CodeDevDebugSessionLimit = "dev_debug_session_limit"
 	// CodeDeploymentCancelLiveForbidden (ADR-124) is returned by
 	// POST /v1/apps/{slug}/deployments/{id}/cancel when the row
 	// is already in DeployLive. Cancel of a live row would
@@ -1887,7 +1890,7 @@ func StatusForCode(code string) int {
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
-		CodeAuthRateLimited:
+		CodeAuthRateLimited, CodeDevDebugSessionLimit:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge

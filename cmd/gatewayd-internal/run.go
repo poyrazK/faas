@@ -3364,7 +3364,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		)
 	}
 
-	apidHandler := newApidProxyWithGate(apidTarget, handler, logsHandler, writeGate, deps.appsDomain, log)
+	// ADR-741: the `gregale dev --debug` tunnel is compute-owned like the
+	// log stream. Its waker is the service proxy, wired below once built.
+	debugTunnel := newDevDebugTunnel(deps, log)
+	apidHandler := devDebugRoute(debugTunnel, newApidProxyWithGate(apidTarget, handler, logsHandler, writeGate, deps.appsDomain, log))
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
 	// to githubd's loopback listener (ADR-012, §11 single-public-
@@ -3711,7 +3714,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// signing key is available, so the default path is unchanged.
 			MintCallerAssertion: newServiceCallerMinter(ctx, pgStore, cfg.NodeName, log),
 		}
-		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
+		controlServices := gateway.NewServiceProxy(serviceProxyConfig)
+		controlMux.Handle("/v1/internal/services/", controlServices)
+		if debugTunnel != nil {
+			debugTunnel.setTargets(controlServices)
+		}
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
 			guestServiceCallerResolver = newServiceProxyCallerResolver(pgStore.ListAllInstances, cfg.NodeName)
 			serviceProxyConfig.ResolveCaller = guestServiceCallerResolver

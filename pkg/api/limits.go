@@ -817,6 +817,14 @@ const (
 	// using the normal developer build.
 	DevPatchMaxEntries       = 200
 	DevPatchMaxBytes   int64 = 8 << 20
+	// Remote debugger tunnels for `gregale dev --debug` (ADR-741): concurrent
+	// sessions per developer app, the quiet period after which a session is
+	// closed, the per-direction byte cap, and how long the tunnel waits for a
+	// parked developer app to wake.
+	DevDebugSessionsPerApp       = 4
+	DevDebugIdleTimeout          = 30 * time.Minute
+	DevDebugMaxBytes       int64 = 256 << 20
+	DevDebugWakeTimeout          = 60 * time.Second
 	// MaxDelayedTaskDelaySeconds bounds how far a one-shot invocation may be
 	// scheduled into the future. A one-year ceiling prevents effectively
 	// immortal pending rows while still covering annual workflows.
