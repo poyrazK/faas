@@ -3005,7 +3005,7 @@ var cliCommands = []cliCommand{
 		{Name: "add", Short: "Add a connection without changing the active profile", Positionals: []string{"<name>", "<api-url>"}},
 		{Name: "list", Short: "List connections and the active profile"},
 		{Name: "check", Short: "Verify the selected API connection and account identity", Examples: []string{"gregale profile check", "gregale --profile staging profile check --timeout 5s --json"}, Flags: []cliFlag{{Name: "timeout", Short: "maximum request duration (default 10s)", Value: "DURATION"}}},
-		{Name: "use", Short: "Select the default connection", Positionals: []string{"<name>"}},
+		{Name: "use", Short: "Select the default connection or choose and check one interactively", Positionals: []string{"[<name>]"}, Examples: []string{"gregale profile use staging", "gregale profile use --interactive"}, Flags: []cliFlag{{Name: "interactive", Short: "choose a saved connection, check its identity, and confirm switching", Bool: true}, {Name: "timeout", Short: "interactive connection check deadline (default 10s)", Value: "DURATION"}}},
 		{Name: "remove", Short: "Remove an inactive connection and its credentials", Positionals: []string{"<name>"}},
 	}},
 

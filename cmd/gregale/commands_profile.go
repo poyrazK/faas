@@ -109,6 +109,13 @@ func cmdProfile(args []string) int {
 	if err != nil {
 		return printErr("Could not read config", err)
 	}
+	if args[0] == "use" {
+		for _, arg := range args[1:] {
+			if arg == "--interactive" || strings.HasPrefix(arg, "--interactive=") {
+				return cmdProfileUseInteractive(args[1:], cfg)
+			}
+		}
+	}
 	switch args[0] {
 	case "check":
 		return cmdProfileCheck(args[1:])

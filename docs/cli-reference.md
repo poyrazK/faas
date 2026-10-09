@@ -7596,9 +7596,21 @@ gregale --profile staging profile check --timeout 5s --json
 
 ### profile use
 
-Select the default connection
+Select the default connection or choose and check one interactively
 
-`gregale profile use <name>`
+`gregale profile use [--interactive] [--timeout <DURATION>] [<name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--interactive` | choose a saved connection, check its identity, and confirm switching |  |
+| `--timeout <DURATION>` | interactive connection check deadline (default 10s) |  |
+
+Examples:
+
+```sh
+gregale profile use staging
+gregale profile use --interactive
+```
 
 ### profile remove
 
