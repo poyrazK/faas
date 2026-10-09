@@ -326,6 +326,13 @@ and refills does not stop and re-boot workers. When a pool does shrink,
 workers with in-flight push deliveries are kept and idle ones are stopped
 first. Pull-mode consumers are invisible to the platform, so they should stop
 taking new messages on the stop signal and finish within the grace period.
+
+A worker stays routable until its grace period ends, so a push delivery can
+still reach a worker that is being stopped. If the worker exits before
+answering, the delivery fails and is retried on another worker; that retry
+counts against the binding's attempt budget. Handle the stop signal by
+finishing in-flight messages, and keep `stop_grace_period_s` above your
+longest message.
 Lifecycle settings are applied idempotently after the app is created; plan and
 mode compatibility checks remain server-authoritative. Project deploys reject
 single-app lifecycle flags.

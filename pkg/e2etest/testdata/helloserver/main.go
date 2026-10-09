@@ -18,6 +18,7 @@
 //	-no-listen     never bind the port, so liveness sees conn_refused
 //	-no-healthz    omit /healthz so TCP readiness is the only boot contract
 //	-durable-counter serve the pure durable entity counter protocol
+//	-delay D       hold every / response for D (slow queue consumer fixture)
 package main
 
 import (
@@ -65,6 +66,7 @@ func main() {
 	probeContract := flag.Bool("probe-contract", false, "report this exec probe process to the local fixture server")
 	noHealthz := flag.Bool("no-healthz", false, "omit the /healthz endpoint")
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
+	delay := flag.Duration("delay", 0, "hold every / response for this long")
 	flag.Parse()
 	if *addr == "" {
 		port := os.Getenv("PORT")
@@ -159,6 +161,9 @@ func main() {
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		if *delay > 0 {
+			time.Sleep(*delay)
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write(body)
 	})
