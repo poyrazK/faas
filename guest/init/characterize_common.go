@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // containsNat reports whether the byte slice lists "nat" as a line.
@@ -89,6 +91,10 @@ func scanListeningFile(path string, owned map[uint64]struct{}) (int, string, boo
 			continue
 		}
 		if _, isOwned := owned[inode]; !isOwned {
+			continue
+		}
+		// ADR-741: the debugger listener is never the app's port.
+		if devDebugActive.Load() && int(port) == api.DevDebugNodePort {
 			continue
 		}
 		ip := hexIPToString(ipHex)

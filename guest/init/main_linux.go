@@ -505,7 +505,15 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = StampTraceparentEnv(env, GetResumeTraceparent())
 	// ADR-741: `gregale dev --debug` starts the Node inspector for the main
 	// workload only.
-	env = StampDevDebugEnv(env)
+	preload := ""
+	if devDebugEnvValue(env, api.DevDebugEnv) == api.DevDebugRuntimeNode {
+		if err := writeDevDebugPreload(devDebugPreloadPath); err != nil {
+			slog.Warn("dev debug preload unavailable; inspecting the first node process", "err", err)
+		} else {
+			preload = devDebugPreloadPath
+		}
+	}
+	env = StampDevDebugEnv(env, preload)
 	// exec.Command resolves a bare argv[0] immediately using guest-init's
 	// own PATH. Direct OCI images expect Docker semantics: resolution uses
 	// the image's PATH. Resolve against the mounted image after pivot_root,

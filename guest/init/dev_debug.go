@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 
@@ -14,12 +16,37 @@ import (
 // VM in the middle of a debugging session.
 var devDebugActive atomic.Bool
 
+// devDebugPreloadPath holds the inspector preload. /run/guest-init is inside
+// the pivoted root, so the workload can read it.
+const devDebugPreloadPath = "/run/guest-init/dev-debug.cjs"
+
+// devDebugPreload opens the inspector in the first Node process that is not a
+// package manager. `npm start` is itself a Node process: with --inspect in
+// NODE_OPTIONS npm took the port and the app's own inspector failed with
+// "address already in use", so the debugger attached to npm.
+const devDebugPreload = `'use strict';
+(function () {
+  const script = String(process.argv[1] || '');
+  if (/[\\/]node_modules[\\/](npm|yarn|pnpm|corepack)[\\/]/.test(script) ||
+      /[\\/](npm|npx|yarn|yarnpkg|pnpm|pnpx|corepack)(-cli)?(\.c?js)?$/.test(script) ||
+      /[\\/]yarn-[0-9][^\\/]*\.c?js$/.test(script)) {
+    return;
+  }
+  try {
+    require('inspector').open(` + api.DevDebugNodePortString + `, '0.0.0.0');
+  } catch (_) {
+    // A forked child of the app finds the port taken; the parent keeps it.
+  }
+})();
+`
+
 // StampDevDebugEnv enables the Node.js inspector for `gregale dev --debug`.
 // The CLI sets api.DevDebugEnv only on its developer environment. The
 // inspector listens on the guest interface so vmmd's ForwardTCPStream can
 // reach it; the port is never published at the edge. Any other runtime value
-// is ignored.
-func StampDevDebugEnv(env []string) []string {
+// is ignored. preload is the path of devDebugPreload; empty falls back to a
+// plain --inspect flag.
+func StampDevDebugEnv(env []string, preload string) []string {
 	if devDebugEnvValue(env, api.DevDebugEnv) != api.DevDebugRuntimeNode {
 		return env
 	}
@@ -28,8 +55,19 @@ func StampDevDebugEnv(env []string) []string {
 	if strings.Contains(options, "--inspect") {
 		return env
 	}
-	inspect := "--inspect=0.0.0.0:" + api.DevDebugNodePortString
-	return devDebugSetEnv(env, "NODE_OPTIONS", strings.TrimSpace(options+" "+inspect))
+	flag := "--inspect=0.0.0.0:" + api.DevDebugNodePortString
+	if preload != "" {
+		flag = "--require=" + preload
+	}
+	return devDebugSetEnv(env, "NODE_OPTIONS", strings.TrimSpace(options+" "+flag))
+}
+
+// writeDevDebugPreload writes devDebugPreload under dir and returns its path.
+func writeDevDebugPreload(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(devDebugPreload), 0o644)
 }
 
 func devDebugEnvValue(env []string, key string) string {
