@@ -188,7 +188,7 @@ jobs:
       - name: regression-pin checker tests
         run: make regression-pin-check-test
       - name: lint (golangci-lint v9)
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         env:
           # The loader compiles the full API/state test variants for type
           # information. Serialize those large exports and omit executable
