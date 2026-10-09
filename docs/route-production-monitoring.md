@@ -6,6 +6,10 @@ serving production deployment. Monitoring is advisory by default and independent
 of the canary guard and saved contract/policy checks; it can opt into an
 [automatic rollback](#automatic-rollback) for early error-budget incidents.
 
+To see every route's canary, production and contract coverage together, run
+[`gregale routes status`](route-status.md).
+
+
 Create a JSON file using exact gateway-normalized method/path labels:
 
 ```json

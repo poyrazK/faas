@@ -5785,6 +5785,24 @@ Analyze route changes, migrations, lifecycle and production policies
 
 `gregale routes [<subcommand>] [<slug>]`
 
+### routes status
+
+Show every route with its contract, traffic, canary health, production budget, rollback mode and gaps
+
+`gregale routes status [--deployment <ID>] [--since <DURATION>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | serving deployment UUID or vN (default: the app&#39;s serving deployment) |  |
+| `--since <DURATION>` | observed usage window (default 168h; also accepts 7d or RFC3339) |  |
+
+Examples:
+
+```sh
+gregale routes status my-api
+gregale routes status my-api --since 24h --json
+```
+
 ### routes requirements
 
 Save or read versioned route requirements for an app

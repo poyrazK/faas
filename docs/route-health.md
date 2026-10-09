@@ -7,6 +7,10 @@ saved route policy requirements and the Test CLI.
 For monitoring after promotion, use [production route budgets](route-production-monitoring.md).
 For customer-safe retirement reviews, see [route lifecycle review](route-lifecycle.md).
 
+To see every route's canary, production and contract coverage together, run
+[`gregale routes status`](route-status.md).
+
+
 Create a JSON selector file using exact **gateway-normalized telemetry paths**.
 Use the method/path labels in debugger analytics, rather than expanded request
 URLs or arbitrary OpenAPI parameter names. For example, the gateway normalizes

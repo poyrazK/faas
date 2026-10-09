@@ -2503,7 +2503,10 @@ var cliCommands = []cliCommand{
 	{
 		Name: "routes", DocSlug: "cli", Short: "Analyze route changes, migrations, lifecycle and production policies",
 		Positionals: []string{"[<slug>]"},
-		Subcommands: []cliSub{{Name: "requirements", Short: "Save or read versioned route requirements for an app", Subcommands: []cliSub{
+		Subcommands: []cliSub{{Name: "status", Positionals: []string{"<slug>"}, Short: "Show every route with its contract, traffic, canary health, production budget, rollback mode and gaps", Examples: []string{"gregale routes status my-api", "gregale routes status my-api --since 24h --json"}, Flags: []cliFlag{
+			{Name: "deployment", Value: "ID", Short: "serving deployment UUID or vN (default: the app's serving deployment)"},
+			{Name: "since", Value: "DURATION", Short: "observed usage window (default 168h; also accepts 7d or RFC3339)"},
+		}}, {Name: "requirements", Short: "Save or read versioned route requirements for an app", Subcommands: []cliSub{
 			{Name: "set", Positionals: []string{"<slug>"}, Short: "Save version 2 route intent after comparing the current revision", Examples: []string{"gregale routes requirements set my-api --requirements gregale-routes.yaml --expected-revision 0"}, Flags: []cliFlag{
 				{Name: "requirements", Short: "version 2 requirements YAML or JSON file", Value: "PATH", Req: true},
 				{Name: "expected-revision", Short: "current saved revision; use 0 for the first save", Value: "N", Req: true},
