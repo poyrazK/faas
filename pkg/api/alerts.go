@@ -103,6 +103,21 @@ func TruncateRunes(s string, maxRunes int) string {
 // Issue #1395 B3 adds three durable observability metrics backed by
 // app_errors, request_telemetry, and usage_daily.
 var AllowedAlertRuleMetrics = []string{
+	"event_execution_dead_letters",
+	"event_execution_dead_letter_rate_per_second",
+	"event_handler_failure_pct",
+	"event_completion_latency_p95_seconds",
+
+	"event_recovery_stalled_jobs",
+	"event_recovery_expiring_jobs",
+	"event_recovery_capacity_wait_jobs",
+	"event_pending_recipients",
+	"event_oldest_pending_seconds",
+	"event_retry_rate_per_second",
+	"event_terminal_failure_pct",
+	"event_routing_latency_p95_seconds",
+	"event_paused_seconds",
+	"event_drain_rate_per_second",
 	"error_rate_pct",
 	"latency_p50_ms",
 	"latency_p95_ms",
@@ -180,7 +195,7 @@ func AllowedAlertRuleAction(v string) bool {
 // Pre-auth target observations and signal health can be influenced by
 // external login traffic. Their alerts must never change a deployment.
 func AlertRuleActionAllowedForMetric(metric, action string) bool {
-	if metric == "pre_auth_target_threshold" || metric == "pre_auth_target_signal_gap_pct" ||
+	if IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || metric == "pre_auth_target_threshold" || metric == "pre_auth_target_signal_gap_pct" ||
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
 		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" {
 		return action == "" || action == "webhook"
@@ -192,6 +207,7 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 // AppID is the URL slug, not the body — same shape as the per-app
 // custom-domain and metric routes.
 type CreateAlertRuleRequest struct {
+	EventSubscriptionID             string  `json:"event_subscription_id,omitempty"`
 	PostDeployRollbackWindowSeconds *int    `json:"post_deploy_rollback_window_seconds,omitempty"`
 	Name                            string  `json:"name"`
 	Enabled                         *bool   `json:"enabled,omitempty"`
@@ -249,6 +265,7 @@ type RotateAlertRuleSecretRequest struct {
 // state.* typed values at the boundary (handles the import cycle
 // for us).
 type AlertRuleResponse struct {
+	EventSubscriptionID             string  `json:"event_subscription_id,omitempty"`
 	PostDeployRollbackWindowSeconds int     `json:"post_deploy_rollback_window_seconds,omitempty"`
 	ID                              string  `json:"id"`
 	AppID                           string  `json:"app_id"`
@@ -277,6 +294,7 @@ type AlertRuleResponse struct {
 // handler test can pin the mapping without dragging pkg/state into
 // pkg/api_test.
 type AlertRuleRow struct {
+	EventSubscriptionID             string
 	PostDeployRollbackWindowSeconds int
 	ID                              string
 	AppID                           string
@@ -308,6 +326,7 @@ type AlertRuleRow struct {
 // at the seam so neither side imports the other (precedent: PR #327).
 func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 	return AlertRuleResponse{
+		EventSubscriptionID:             r.EventSubscriptionID,
 		PostDeployRollbackWindowSeconds: r.PostDeployRollbackWindowSeconds,
 		ID:                              r.ID,
 		AppID:                           r.AppID,
@@ -399,4 +418,15 @@ func AllowedAlertRuleState(v string) bool { return containsString(AllowedAlertRu
 func TrimNonEmpty(s string) (string, bool) {
 	t := strings.TrimSpace(s)
 	return t, t != ""
+}
+
+func IsEventConsumerAlertMetric(metric string) bool {
+	if IsEventConsumerExecutionAlertMetric(metric) {
+		return true
+	}
+	switch metric {
+	case "event_pending_recipients", "event_oldest_pending_seconds", "event_retry_rate_per_second", "event_terminal_failure_pct", "event_routing_latency_p95_seconds", "event_paused_seconds", "event_drain_rate_per_second":
+		return true
+	}
+	return false
 }

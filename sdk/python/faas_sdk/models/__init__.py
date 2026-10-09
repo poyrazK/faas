@@ -410,6 +410,10 @@ from .build_response_status import BuildResponseStatus
 from .canary_advance_response import CanaryAdvanceResponse
 from .canary_preset_spec import CanaryPresetSpec
 from .canary_preset_spec_preset import CanaryPresetSpecPreset
+from .canary_profile_signal import CanaryProfileSignal
+from .canary_profile_signal_metric import CanaryProfileSignalMetric
+from .canary_profile_signal_mode import CanaryProfileSignalMode
+from .canary_profile_signal_status import CanaryProfileSignalStatus
 from .canary_route_gate import CanaryRouteGate
 from .canary_route_gate_mode import CanaryRouteGateMode
 from .cancel_deployment_request import CancelDeploymentRequest
@@ -428,6 +432,7 @@ from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
+from .check_profile_regression_request import CheckProfileRegressionRequest
 from .check_route_requirements_request import CheckRouteRequirementsRequest
 from .claim_api_consumer_usage_statement_request import ClaimAPIConsumerUsageStatementRequest
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
@@ -924,12 +929,22 @@ from .environment_workload_source_kind import EnvironmentWorkloadSourceKind
 from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_backlog_consumer import EventBacklogConsumer
+from .event_backlog_consumer_consumer_kind import EventBacklogConsumerConsumerKind
 from .event_backlog_recipient import EventBacklogRecipient
 from .event_backlog_recipient_capacity_scope import EventBacklogRecipientCapacityScope
+from .event_backlog_recipient_consumer_kind import EventBacklogRecipientConsumerKind
+from .event_backlog_recipient_origin import EventBacklogRecipientOrigin
 from .event_backlog_recipient_routing_mode import EventBacklogRecipientRoutingMode
 from .event_backlog_recipient_state import EventBacklogRecipientState
 from .event_backlog_recipient_waiting_reason import EventBacklogRecipientWaitingReason
 from .event_backlog_response import EventBacklogResponse
+from .event_circuit_breaker_policy import EventCircuitBreakerPolicy
+from .event_circuit_breaker_response import EventCircuitBreakerResponse
+from .event_circuit_breaker_response_state import EventCircuitBreakerResponseState
+from .event_consumer_execution_health import EventConsumerExecutionHealth
+from .event_consumer_execution_health_coverage import EventConsumerExecutionHealthCoverage
+from .event_consumer_health import EventConsumerHealth
+from .event_consumer_health_coverage import EventConsumerHealthCoverage
 from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
@@ -940,6 +955,8 @@ from .event_fanout_attempt_response import EventFanoutAttemptResponse
 from .event_fanout_attempt_response_action import EventFanoutAttemptResponseAction
 from .event_fanout_attempt_response_capacity_scope import EventFanoutAttemptResponseCapacityScope
 from .event_fanout_attempt_response_failure_code import EventFanoutAttemptResponseFailureCode
+from .event_fanout_attempt_response_filter_reason import EventFanoutAttemptResponseFilterReason
+from .event_fanout_attempt_response_retry_stop_reason import EventFanoutAttemptResponseRetryStopReason
 from .event_fanout_attempt_response_state import EventFanoutAttemptResponseState
 from .event_fanout_failure_response import EventFanoutFailureResponse
 from .event_fanout_failure_response_failure_code import EventFanoutFailureResponseFailureCode
@@ -948,6 +965,8 @@ from .event_fanout_history_summary_response import EventFanoutHistorySummaryResp
 from .event_fanout_history_summary_response_last_capacity_scope import (
     EventFanoutHistorySummaryResponseLastCapacityScope,
 )
+from .event_ordering_blocker import EventOrderingBlocker
+from .event_ordering_blocker_state import EventOrderingBlockerState
 from .event_preview_subscription import EventPreviewSubscription
 from .event_preview_subscription_filter import EventPreviewSubscriptionFilter
 from .event_receipt_attempt_history_response import EventReceiptAttemptHistoryResponse
@@ -969,11 +988,61 @@ from .event_receipt_response_routing_mode import EventReceiptResponseRoutingMode
 from .event_receipt_response_routing_summary import EventReceiptResponseRoutingSummary
 from .event_receipt_routing_response import EventReceiptRoutingResponse
 from .event_receipt_routing_response_capacity_scope import EventReceiptRoutingResponseCapacityScope
+from .event_receipt_routing_response_filter_reason import EventReceiptRoutingResponseFilterReason
+from .event_receipt_routing_response_retry_stop_reason import EventReceiptRoutingResponseRetryStopReason
 from .event_receipt_routing_response_state import EventReceiptRoutingResponseState
+from .event_recovery_capacity_wait import EventRecoveryCapacityWait
+from .event_recovery_capacity_wait_gate import EventRecoveryCapacityWaitGate
+from .event_recovery_capacity_wait_scope import EventRecoveryCapacityWaitScope
+from .event_recovery_control_request import EventRecoveryControlRequest
+from .event_recovery_execution import EventRecoveryExecution
+from .event_recovery_execution_source import EventRecoveryExecutionSource
+from .event_recovery_execution_state import EventRecoveryExecutionState
+from .event_recovery_execution_summary import EventRecoveryExecutionSummary
+from .event_recovery_finished_webhook_payload import EventRecoveryFinishedWebhookPayload
+from .event_recovery_finished_webhook_payload_mode import EventRecoveryFinishedWebhookPayloadMode
+from .event_recovery_finished_webhook_payload_outcome import EventRecoveryFinishedWebhookPayloadOutcome
+from .event_recovery_finished_webhook_payload_pending_count import EventRecoveryFinishedWebhookPayloadPendingCount
+from .event_recovery_finished_webhook_payload_state import EventRecoveryFinishedWebhookPayloadState
+from .event_recovery_health import EventRecoveryHealth
+from .event_recovery_history import EventRecoveryHistory
+from .event_recovery_history_entry import EventRecoveryHistoryEntry
+from .event_recovery_history_entry_action import EventRecoveryHistoryEntryAction
+from .event_recovery_history_entry_actor_kind import EventRecoveryHistoryEntryActorKind
+from .event_recovery_history_entry_previous_state import EventRecoveryHistoryEntryPreviousState
+from .event_recovery_history_entry_state import EventRecoveryHistoryEntryState
+from .event_recovery_item import EventRecoveryItem
+from .event_recovery_item_reason import EventRecoveryItemReason
+from .event_recovery_item_state import EventRecoveryItemState
+from .event_recovery_items import EventRecoveryItems
+from .event_recovery_job import EventRecoveryJob
+from .event_recovery_job_coverage import EventRecoveryJobCoverage
+from .event_recovery_job_health import EventRecoveryJobHealth
+from .event_recovery_job_health_mode import EventRecoveryJobHealthMode
+from .event_recovery_job_health_state import EventRecoveryJobHealthState
+from .event_recovery_job_health_status import EventRecoveryJobHealthStatus
+from .event_recovery_job_health_wait_reason import EventRecoveryJobHealthWaitReason
+from .event_recovery_job_state import EventRecoveryJobState
+from .event_recovery_jobs import EventRecoveryJobs
+from .event_recovery_preflight import EventRecoveryPreflight
+from .event_recovery_preflight_capacity_scopes import EventRecoveryPreflightCapacityScopes
+from .event_recovery_preflight_item import EventRecoveryPreflightItem
+from .event_recovery_preflight_item_capacity_scope import EventRecoveryPreflightItemCapacityScope
+from .event_recovery_preflight_item_reason import EventRecoveryPreflightItemReason
+from .event_recovery_preflight_item_status import EventRecoveryPreflightItemStatus
+from .event_recovery_preflight_reason_counts import EventRecoveryPreflightReasonCounts
+from .event_recovery_preflight_state import EventRecoveryPreflightState
+from .event_recovery_preview import EventRecoveryPreview
+from .event_recovery_preview_coverage import EventRecoveryPreviewCoverage
+from .event_recovery_rate_request import EventRecoveryRateRequest
+from .event_recovery_request import EventRecoveryRequest
+from .event_recovery_request_mode import EventRecoveryRequestMode
+from .event_recovery_request_outcome import EventRecoveryRequestOutcome
 from .event_replay_backfill_item_response import EventReplayBackfillItemResponse
 from .event_replay_backfill_item_response_state import EventReplayBackfillItemResponseState
 from .event_replay_backfill_items_response import EventReplayBackfillItemsResponse
 from .event_replay_backfill_job_response import EventReplayBackfillJobResponse
+from .event_replay_backfill_job_response_consumer_kind import EventReplayBackfillJobResponseConsumerKind
 from .event_replay_backfill_job_response_duplicate_policy import EventReplayBackfillJobResponseDuplicatePolicy
 from .event_replay_backfill_job_response_state import EventReplayBackfillJobResponseState
 from .event_replay_backfill_progress import EventReplayBackfillProgress
@@ -985,13 +1054,25 @@ from .event_replay_preview_match_original_recipient import EventReplayPreviewMat
 from .event_replay_preview_response import EventReplayPreviewResponse
 from .event_replay_preview_response_coverage import EventReplayPreviewResponseCoverage
 from .event_replay_preview_retention import EventReplayPreviewRetention
+from .event_routing_retry_policy import EventRoutingRetryPolicy
+from .event_routing_retry_policy_response import EventRoutingRetryPolicyResponse
 from .event_schema import EventSchema
+from .event_schema_rollout_consumer import EventSchemaRolloutConsumer
+from .event_schema_rollout_request import EventSchemaRolloutRequest
+from .event_schema_rollout_response import EventSchemaRolloutResponse
+from .event_schema_rollout_response_schema_origin import EventSchemaRolloutResponseSchemaOrigin
+from .event_schema_rollout_retained import EventSchemaRolloutRetained
+from .event_schema_rollout_validation import EventSchemaRolloutValidation
 from .event_storage_usage_response import EventStorageUsageResponse
 from .event_storage_usage_response_limits import EventStorageUsageResponseLimits
+from .event_subscription_delivery_control import EventSubscriptionDeliveryControl
 from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
 from .event_subscription_response_work_action import EventSubscriptionResponseWorkAction
+from .event_subscription_resume_request import EventSubscriptionResumeRequest
+from .event_subscription_schema_versions_request import EventSubscriptionSchemaVersionsRequest
+from .event_subscription_schema_versions_response import EventSubscriptionSchemaVersionsResponse
 from .exclusive_app_task_operation_request import ExclusiveAppTaskOperationRequest
 from .exclusive_job_operation_request import ExclusiveJobOperationRequest
 from .exclusive_operation_accepted import ExclusiveOperationAccepted
@@ -1146,7 +1227,12 @@ from .get_deployment_stages_response_200_history_item import GetDeploymentStages
 from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
 from .get_event_backlog_capacity_scope import GetEventBacklogCapacityScope
+from .get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
+from .get_event_backlog_origin import GetEventBacklogOrigin
 from .get_event_backlog_state import GetEventBacklogState
+from .get_event_backlog_waiting_reason import GetEventBacklogWaitingReason
+from .get_event_consumer_execution_health_window import GetEventConsumerExecutionHealthWindow
+from .get_event_consumer_health_window import GetEventConsumerHealthWindow
 from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
@@ -1315,6 +1401,8 @@ from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
 from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_event_deliveries_state import ListEventDeliveriesState
+from .list_event_recoveries_mode import ListEventRecoveriesMode
+from .list_event_recoveries_state import ListEventRecoveriesState
 from .list_event_replay_backfill_items_state import ListEventReplayBackfillItemsState
 from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
@@ -1334,6 +1422,9 @@ from .list_org_activity_response import ListOrgActivityResponse
 from .list_org_api_keys_response import ListOrgAPIKeysResponse
 from .list_platform_tenant_self_operations_state import ListPlatformTenantSelfOperationsState
 from .list_platform_tenant_self_workflow_runs_status import ListPlatformTenantSelfWorkflowRunsStatus
+from .list_profile_deployment_checks_response import ListProfileDeploymentChecksResponse
+from .list_profile_investigations_response import ListProfileInvestigationsResponse
+from .list_profile_periodic_monitors_response import ListProfilePeriodicMonitorsResponse
 from .list_project_environment_promotions_status import ListProjectEnvironmentPromotionsStatus
 from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
@@ -1736,6 +1827,7 @@ from .password_signup_request import PasswordSignupRequest
 from .patch_org_request import PatchOrgRequest
 from .patch_org_request_plan import PatchOrgRequestPlan
 from .payment_method_summary import PaymentMethodSummary
+from .periodic_profile_policy import PeriodicProfilePolicy
 from .plan_affected_app import PlanAffectedApp
 from .plan_affected_app_action import PlanAffectedAppAction
 from .plan_async_route import PlanAsyncRoute
@@ -1927,6 +2019,73 @@ from .private_network_peering_list_response import PrivateNetworkPeeringListResp
 from .private_network_peering_status import PrivateNetworkPeeringStatus
 from .private_network_status import PrivateNetworkStatus
 from .problem import Problem
+from .profile_attribution_comparison import ProfileAttributionComparison
+from .profile_attribution_quality import ProfileAttributionQuality
+from .profile_attribution_reason import ProfileAttributionReason
+from .profile_attribution_reason_reason import ProfileAttributionReasonReason
+from .profile_call_path import ProfileCallPath
+from .profile_call_path_frame import ProfileCallPathFrame
+from .profile_call_path_view import ProfileCallPathView
+from .profile_canary_gate_decision import ProfileCanaryGateDecision
+from .profile_canary_gate_decision_on_timeout import ProfileCanaryGateDecisionOnTimeout
+from .profile_canary_gate_decision_status import ProfileCanaryGateDecisionStatus
+from .profile_canary_gate_policy import ProfileCanaryGatePolicy
+from .profile_canary_gate_policy_on_timeout import ProfileCanaryGatePolicyOnTimeout
+from .profile_canary_gate_state import ProfileCanaryGateState
+from .profile_canary_gate_state_status import ProfileCanaryGateStateStatus
+from .profile_canary_history_page import ProfileCanaryHistoryPage
+from .profile_compare_request import ProfileCompareRequest
+from .profile_compare_response import ProfileCompareResponse
+from .profile_coverage import ProfileCoverage
+from .profile_deployment_check import ProfileDeploymentCheck
+from .profile_deployment_check_status import ProfileDeploymentCheckStatus
+from .profile_deployment_policy import ProfileDeploymentPolicy
+from .profile_deployment_policy_config import ProfileDeploymentPolicyConfig
+from .profile_function import ProfileFunction
+from .profile_function_delta import ProfileFunctionDelta
+from .profile_gate_override import ProfileGateOverride
+from .profile_gate_route_streak import ProfileGateRouteStreak
+from .profile_gate_route_streak_status import ProfileGateRouteStreakStatus
+from .profile_investigation import ProfileInvestigation
+from .profile_investigation_input import ProfileInvestigationInput
+from .profile_investigation_response import ProfileInvestigationResponse
+from .profile_investigation_window_status import ProfileInvestigationWindowStatus
+from .profile_investigation_window_status_status import ProfileInvestigationWindowStatusStatus
+from .profile_periodic_monitor import ProfilePeriodicMonitor
+from .profile_periodic_observation import ProfilePeriodicObservation
+from .profile_periodic_observation_status import ProfilePeriodicObservationStatus
+from .profile_periodic_observation_transition import ProfilePeriodicObservationTransition
+from .profile_query import ProfileQuery
+from .profile_regression_assessment import ProfileRegressionAssessment
+from .profile_regression_assessment_status import ProfileRegressionAssessmentStatus
+from .profile_regression_cpu_per_request_metric import ProfileRegressionCPUPerRequestMetric
+from .profile_regression_evidence import ProfileRegressionEvidence
+from .profile_regression_evidence_kind import ProfileRegressionEvidenceKind
+from .profile_regression_metric import ProfileRegressionMetric
+from .profile_regression_metric_cpu_per_request import ProfileRegressionMetricCpuPerRequest
+from .profile_regression_options import ProfileRegressionOptions
+from .profile_regression_options_metric import ProfileRegressionOptionsMetric
+from .profile_request_mix_group import ProfileRequestMixGroup
+from .profile_request_mix_snapshot import ProfileRequestMixSnapshot
+from .profile_request_mix_snapshot_status import ProfileRequestMixSnapshotStatus
+from .profile_request_mix_window import ProfileRequestMixWindow
+from .profile_response import ProfileResponse
+from .profile_route_adjustment import ProfileRouteAdjustment
+from .profile_route_alert_payload import ProfileRouteAlertPayload
+from .profile_route_alert_payload_source import ProfileRouteAlertPayloadSource
+from .profile_route_alert_payload_status import ProfileRouteAlertPayloadStatus
+from .profile_route_alert_payload_version import ProfileRouteAlertPayloadVersion
+from .profile_route_cpu import ProfileRouteCPU
+from .profile_route_label_comparison import ProfileRouteLabelComparison
+from .profile_route_label_coverage import ProfileRouteLabelCoverage
+from .profile_route_regression import ProfileRouteRegression
+from .profile_route_regression_status import ProfileRouteRegressionStatus
+from .profile_route_weight import ProfileRouteWeight
+from .profile_source import ProfileSource
+from .profile_source_location import ProfileSourceLocation
+from .profile_stack import ProfileStack
+from .profile_stack_delta import ProfileStackDelta
+from .profiling_config import ProfilingConfig
 from .programmatic_api_key import ProgrammaticAPIKey
 from .programmatic_auth_response import ProgrammaticAuthResponse
 from .programmatic_auth_response_plan import ProgrammaticAuthResponsePlan
@@ -2435,6 +2594,8 @@ from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
 from .save_automation_draft_request import SaveAutomationDraftRequest
+from .save_profile_deployment_policy_request import SaveProfileDeploymentPolicyRequest
+from .save_profile_investigation_request import SaveProfileInvestigationRequest
 from .save_route_requirements_request import SaveRouteRequirementsRequest
 from .saved_route_requirements import SavedRouteRequirements
 from .scaling_policy import ScalingPolicy
@@ -2784,6 +2945,12 @@ from .workflow_diagnostic_blocker_code import WorkflowDiagnosticBlockerCode
 from .workflow_diagnostic_step import WorkflowDiagnosticStep
 from .workflow_diagnostic_step_kind import WorkflowDiagnosticStepKind
 from .workflow_diagnostic_step_status import WorkflowDiagnosticStepStatus
+from .workflow_event_replay_backfill_request import WorkflowEventReplayBackfillRequest
+from .workflow_event_replay_preview_match import WorkflowEventReplayPreviewMatch
+from .workflow_event_replay_preview_match_original_recipient import WorkflowEventReplayPreviewMatchOriginalRecipient
+from .workflow_event_replay_preview_match_routing_state import WorkflowEventReplayPreviewMatchRoutingState
+from .workflow_event_replay_preview_response import WorkflowEventReplayPreviewResponse
+from .workflow_event_replay_preview_response_coverage import WorkflowEventReplayPreviewResponseCoverage
 from .workflow_finished_webhook_payload import WorkflowFinishedWebhookPayload
 from .workflow_finished_webhook_payload_status import WorkflowFinishedWebhookPayloadStatus
 from .workflow_for_each_action_spec import WorkflowForEachActionSpec
@@ -3261,6 +3428,10 @@ __all__ = (
     "CanaryAdvanceResponse",
     "CanaryPresetSpec",
     "CanaryPresetSpecPreset",
+    "CanaryProfileSignal",
+    "CanaryProfileSignalMetric",
+    "CanaryProfileSignalMode",
+    "CanaryProfileSignalStatus",
     "CanaryRouteGate",
     "CanaryRouteGateMode",
     "CancelDeploymentRequest",
@@ -3279,6 +3450,7 @@ __all__ = (
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
     "ChangePlanRequestPlan",
+    "CheckProfileRegressionRequest",
     "CheckRouteRequirementsRequest",
     "ClaimAPIConsumerUsageStatementRequest",
     "ClearObsoleteDeploymentsBody",
@@ -3759,12 +3931,22 @@ __all__ = (
     "EnvironmentWorkloadVariables",
     "ErrorNewWebhookPayload",
     "EventBacklogConsumer",
+    "EventBacklogConsumerConsumerKind",
     "EventBacklogRecipient",
     "EventBacklogRecipientCapacityScope",
+    "EventBacklogRecipientConsumerKind",
+    "EventBacklogRecipientOrigin",
     "EventBacklogRecipientRoutingMode",
     "EventBacklogRecipientState",
     "EventBacklogRecipientWaitingReason",
     "EventBacklogResponse",
+    "EventCircuitBreakerPolicy",
+    "EventCircuitBreakerResponse",
+    "EventCircuitBreakerResponseState",
+    "EventConsumerExecutionHealth",
+    "EventConsumerExecutionHealthCoverage",
+    "EventConsumerHealth",
+    "EventConsumerHealthCoverage",
     "EventDeliveryListResponse",
     "EventDeliveryResponse",
     "EventDeliveryResponseInvocationSource",
@@ -3775,12 +3957,16 @@ __all__ = (
     "EventFanoutAttemptResponseAction",
     "EventFanoutAttemptResponseCapacityScope",
     "EventFanoutAttemptResponseFailureCode",
+    "EventFanoutAttemptResponseFilterReason",
+    "EventFanoutAttemptResponseRetryStopReason",
     "EventFanoutAttemptResponseState",
     "EventFanoutFailureResponse",
     "EventFanoutFailureResponseFailureCode",
     "EventFanoutFailureResponseState",
     "EventFanoutHistorySummaryResponse",
     "EventFanoutHistorySummaryResponseLastCapacityScope",
+    "EventOrderingBlocker",
+    "EventOrderingBlockerState",
     "EventPreviewSubscription",
     "EventPreviewSubscriptionFilter",
     "EventReceiptAttemptHistoryResponse",
@@ -3802,11 +3988,61 @@ __all__ = (
     "EventReceiptResponseRoutingSummary",
     "EventReceiptRoutingResponse",
     "EventReceiptRoutingResponseCapacityScope",
+    "EventReceiptRoutingResponseFilterReason",
+    "EventReceiptRoutingResponseRetryStopReason",
     "EventReceiptRoutingResponseState",
+    "EventRecoveryCapacityWait",
+    "EventRecoveryCapacityWaitGate",
+    "EventRecoveryCapacityWaitScope",
+    "EventRecoveryControlRequest",
+    "EventRecoveryExecution",
+    "EventRecoveryExecutionSource",
+    "EventRecoveryExecutionState",
+    "EventRecoveryExecutionSummary",
+    "EventRecoveryFinishedWebhookPayload",
+    "EventRecoveryFinishedWebhookPayloadMode",
+    "EventRecoveryFinishedWebhookPayloadOutcome",
+    "EventRecoveryFinishedWebhookPayloadPendingCount",
+    "EventRecoveryFinishedWebhookPayloadState",
+    "EventRecoveryHealth",
+    "EventRecoveryHistory",
+    "EventRecoveryHistoryEntry",
+    "EventRecoveryHistoryEntryAction",
+    "EventRecoveryHistoryEntryActorKind",
+    "EventRecoveryHistoryEntryPreviousState",
+    "EventRecoveryHistoryEntryState",
+    "EventRecoveryItem",
+    "EventRecoveryItemReason",
+    "EventRecoveryItems",
+    "EventRecoveryItemState",
+    "EventRecoveryJob",
+    "EventRecoveryJobCoverage",
+    "EventRecoveryJobHealth",
+    "EventRecoveryJobHealthMode",
+    "EventRecoveryJobHealthState",
+    "EventRecoveryJobHealthStatus",
+    "EventRecoveryJobHealthWaitReason",
+    "EventRecoveryJobs",
+    "EventRecoveryJobState",
+    "EventRecoveryPreflight",
+    "EventRecoveryPreflightCapacityScopes",
+    "EventRecoveryPreflightItem",
+    "EventRecoveryPreflightItemCapacityScope",
+    "EventRecoveryPreflightItemReason",
+    "EventRecoveryPreflightItemStatus",
+    "EventRecoveryPreflightReasonCounts",
+    "EventRecoveryPreflightState",
+    "EventRecoveryPreview",
+    "EventRecoveryPreviewCoverage",
+    "EventRecoveryRateRequest",
+    "EventRecoveryRequest",
+    "EventRecoveryRequestMode",
+    "EventRecoveryRequestOutcome",
     "EventReplayBackfillItemResponse",
     "EventReplayBackfillItemResponseState",
     "EventReplayBackfillItemsResponse",
     "EventReplayBackfillJobResponse",
+    "EventReplayBackfillJobResponseConsumerKind",
     "EventReplayBackfillJobResponseDuplicatePolicy",
     "EventReplayBackfillJobResponseState",
     "EventReplayBackfillProgress",
@@ -3818,13 +4054,25 @@ __all__ = (
     "EventReplayPreviewResponse",
     "EventReplayPreviewResponseCoverage",
     "EventReplayPreviewRetention",
+    "EventRoutingRetryPolicy",
+    "EventRoutingRetryPolicyResponse",
     "EventSchema",
+    "EventSchemaRolloutConsumer",
+    "EventSchemaRolloutRequest",
+    "EventSchemaRolloutResponse",
+    "EventSchemaRolloutResponseSchemaOrigin",
+    "EventSchemaRolloutRetained",
+    "EventSchemaRolloutValidation",
     "EventStorageUsageResponse",
     "EventStorageUsageResponseLimits",
+    "EventSubscriptionDeliveryControl",
     "EventSubscriptionListResponse",
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
     "EventSubscriptionResponseWorkAction",
+    "EventSubscriptionResumeRequest",
+    "EventSubscriptionSchemaVersionsRequest",
+    "EventSubscriptionSchemaVersionsResponse",
     "ExclusiveAppTaskOperationRequest",
     "ExclusiveJobOperationRequest",
     "ExclusiveOperationAccepted",
@@ -3977,7 +4225,12 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItemName",
     "GetDeploymentStagesResponse200HistoryItemStatus",
     "GetEventBacklogCapacityScope",
+    "GetEventBacklogConsumerKind",
+    "GetEventBacklogOrigin",
     "GetEventBacklogState",
+    "GetEventBacklogWaitingReason",
+    "GetEventConsumerExecutionHealthWindow",
+    "GetEventConsumerHealthWindow",
     "GetExclusiveOperationTriggerBindingSource",
     "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
@@ -4146,6 +4399,8 @@ __all__ = (
     "ListDeployTokensResponse",
     "ListDevBridgesResponse",
     "ListEventDeliveriesState",
+    "ListEventRecoveriesMode",
+    "ListEventRecoveriesState",
     "ListEventReplayBackfillItemsState",
     "ListExecutionsStatus",
     "ListInstancesResponse",
@@ -4165,6 +4420,9 @@ __all__ = (
     "ListOrgAPIKeysResponse",
     "ListPlatformTenantSelfOperationsState",
     "ListPlatformTenantSelfWorkflowRunsStatus",
+    "ListProfileDeploymentChecksResponse",
+    "ListProfileInvestigationsResponse",
+    "ListProfilePeriodicMonitorsResponse",
     "ListProjectEnvironmentPromotionsStatus",
     "ListScheduleOccurrencesResponse",
     "ListSecretsForAccountResponse",
@@ -4563,6 +4821,7 @@ __all__ = (
     "PatchOrgRequest",
     "PatchOrgRequestPlan",
     "PaymentMethodSummary",
+    "PeriodicProfilePolicy",
     "PlanAffectedApp",
     "PlanAffectedAppAction",
     "PlanAsyncRoute",
@@ -4734,6 +4993,73 @@ __all__ = (
     "PrivateNetworkPeeringStatus",
     "PrivateNetworkStatus",
     "Problem",
+    "ProfileAttributionComparison",
+    "ProfileAttributionQuality",
+    "ProfileAttributionReason",
+    "ProfileAttributionReasonReason",
+    "ProfileCallPath",
+    "ProfileCallPathFrame",
+    "ProfileCallPathView",
+    "ProfileCanaryGateDecision",
+    "ProfileCanaryGateDecisionOnTimeout",
+    "ProfileCanaryGateDecisionStatus",
+    "ProfileCanaryGatePolicy",
+    "ProfileCanaryGatePolicyOnTimeout",
+    "ProfileCanaryGateState",
+    "ProfileCanaryGateStateStatus",
+    "ProfileCanaryHistoryPage",
+    "ProfileCompareRequest",
+    "ProfileCompareResponse",
+    "ProfileCoverage",
+    "ProfileDeploymentCheck",
+    "ProfileDeploymentCheckStatus",
+    "ProfileDeploymentPolicy",
+    "ProfileDeploymentPolicyConfig",
+    "ProfileFunction",
+    "ProfileFunctionDelta",
+    "ProfileGateOverride",
+    "ProfileGateRouteStreak",
+    "ProfileGateRouteStreakStatus",
+    "ProfileInvestigation",
+    "ProfileInvestigationInput",
+    "ProfileInvestigationResponse",
+    "ProfileInvestigationWindowStatus",
+    "ProfileInvestigationWindowStatusStatus",
+    "ProfilePeriodicMonitor",
+    "ProfilePeriodicObservation",
+    "ProfilePeriodicObservationStatus",
+    "ProfilePeriodicObservationTransition",
+    "ProfileQuery",
+    "ProfileRegressionAssessment",
+    "ProfileRegressionAssessmentStatus",
+    "ProfileRegressionCPUPerRequestMetric",
+    "ProfileRegressionEvidence",
+    "ProfileRegressionEvidenceKind",
+    "ProfileRegressionMetric",
+    "ProfileRegressionMetricCpuPerRequest",
+    "ProfileRegressionOptions",
+    "ProfileRegressionOptionsMetric",
+    "ProfileRequestMixGroup",
+    "ProfileRequestMixSnapshot",
+    "ProfileRequestMixSnapshotStatus",
+    "ProfileRequestMixWindow",
+    "ProfileResponse",
+    "ProfileRouteAdjustment",
+    "ProfileRouteAlertPayload",
+    "ProfileRouteAlertPayloadSource",
+    "ProfileRouteAlertPayloadStatus",
+    "ProfileRouteAlertPayloadVersion",
+    "ProfileRouteCPU",
+    "ProfileRouteLabelComparison",
+    "ProfileRouteLabelCoverage",
+    "ProfileRouteRegression",
+    "ProfileRouteRegressionStatus",
+    "ProfileRouteWeight",
+    "ProfileSource",
+    "ProfileSourceLocation",
+    "ProfileStack",
+    "ProfileStackDelta",
+    "ProfilingConfig",
     "ProgrammaticAPIKey",
     "ProgrammaticAuthResponse",
     "ProgrammaticAuthResponsePlan",
@@ -5217,6 +5543,8 @@ __all__ = (
     "RuntimeUpgradePreviewResponseDisposition",
     "SaveAutomationDraftRequest",
     "SavedRouteRequirements",
+    "SaveProfileDeploymentPolicyRequest",
+    "SaveProfileInvestigationRequest",
     "SaveRouteRequirementsRequest",
     "ScalingPolicy",
     "ScalingPolicyConcurrencyOverflow",
@@ -5543,6 +5871,12 @@ __all__ = (
     "WorkflowDiagnosticStep",
     "WorkflowDiagnosticStepKind",
     "WorkflowDiagnosticStepStatus",
+    "WorkflowEventReplayBackfillRequest",
+    "WorkflowEventReplayPreviewMatch",
+    "WorkflowEventReplayPreviewMatchOriginalRecipient",
+    "WorkflowEventReplayPreviewMatchRoutingState",
+    "WorkflowEventReplayPreviewResponse",
+    "WorkflowEventReplayPreviewResponseCoverage",
     "WorkflowFinishedWebhookPayload",
     "WorkflowFinishedWebhookPayloadStatus",
     "WorkflowForEachActionSpec",

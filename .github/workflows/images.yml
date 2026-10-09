@@ -159,14 +159,15 @@ jobs:
           # the binary even when guest/init itself is untouched. The native
           # builder acceptance fixture also needs a publisher run at its
           # source commit.
-          if grep -Eq '^(images/(builder-base\.Dockerfile|buildkit-frontend-startup\.patch|buildkit-session-health\.patch|builder-resolv\.conf|Dockerfile\.lock)$|guest/(init|executor)/|pkg/(api|executionprofiles|executionproto|reqbudget|sourcecontext|statefuldenylist)/|go\.(mod|sum)$|pkg/fcvm/builder_acceptance_metal_test\.go$|scripts/ci/(install-grype|update-grype-db|scan-oci-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+          if grep -Eq '^(images/(builder-base\.Dockerfile|buildkit-frontend-startup\.patch|buildkit-session-health\.patch|builder-resolv\.conf|Dockerfile\.lock)$|guest/(init|executor)/|pkg/(api|executionprofiles|executionproto|profileproto|reqbudget|sourcecontext|statefuldenylist)/|go\.(mod|sum)$|pkg/fcvm/builder_acceptance_metal_test\.go$|scripts/ci/(install-grype|update-grype-db|scan-oci-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
             builder=true
           fi
 
-          # Runtime bases contain only these Dockerfiles and the shared
-          # skeleton. Daemon code and guest runner shims ship in the signed
+          # Runtime bases contain these Dockerfiles, the shared skeleton,
+          # and profiling bootstraps. Daemon code and guest runner shims ship
+          # in the signed
           # release bundle and cannot change these image bytes.
-          if grep -Eq '^(images/(base-debian-parent|base-minimal|runner-node22|runner-node24|runner-python312|runner-python313|execution-python-data-v1|runner-go124|runner-go124-alpine)\.Dockerfile$|images/rootfs-skel/|images/install-execution-profile\.py$|images/install_execution_profile_test\.py$|pkg/executionprofiles/python-data-v1\.json$|images/Dockerfile\.lock$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+          if grep -Eq '^(images/(base-debian-parent|base-minimal|runner-node22|runner-node24|runner-python312|runner-python313|execution-python-data-v1|runner-go124|runner-go124-alpine)\.Dockerfile$|images/rootfs-skel/|guest/profiling/|images/install-execution-profile\.py$|images/install_execution_profile_test\.py$|pkg/executionprofiles/python-data-v1\.json$|images/Dockerfile\.lock$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
             bases=true
           fi
 

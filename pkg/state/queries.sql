@@ -1113,15 +1113,13 @@ from events where subject = $1 order by at desc limit $2;
 -- fan-out can enforce tenant isolation without joining apps.
 
 -- name: ListEventSubscriptionsForApp :many
-select id, account_id, app_id, source, type, filter, enabled,
-       created_at, updated_at
+select *
 from event_subscriptions
 where app_id = $1
 order by created_at asc, id asc;
 
 -- name: ListEnabledEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled,
-       s.created_at, s.updated_at
+select s.*
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1 and s.enabled and a.status <> 'deleted'
@@ -1131,8 +1129,7 @@ order by s.created_at asc, s.id asc;
 -- Candidate lookup for schedd fan-out. The final JSON filter matcher remains
 -- in pkg/events; these predicates only prune source/type patterns and page
 -- through the tenant's enabled subscriptions without an unbounded scan.
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled,
-       s.created_at, s.updated_at
+select s.*
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = sqlc.arg('account_id')::uuid
@@ -1173,7 +1170,7 @@ on conflict (app_id, source, type, filter) do update
 set enabled = true,
     updated_at = now()
 returning id, account_id, app_id, source, type, filter, enabled,
-          created_at, updated_at, (xmax = 0) as inserted;
+          created_at, updated_at, routing_retry_policy, schema_versions, (xmax = 0) as inserted;
 
 -- name: DeleteEventSubscription :exec
 delete from event_subscriptions
@@ -6211,7 +6208,7 @@ SELECT jsonb_build_object(
         FROM app_work_policies p WHERE p.app_id=a.id),'[]'::jsonb),
     'event_bindings',coalesce((SELECT jsonb_agg(jsonb_build_object(
         'subscription_id',b.subscription_id::text,'policy_name',b.policy_name,'key_selector',b.key_selector,
-        'fairness_selector',b.fairness_key_selector,'action',b.action) ORDER BY b.subscription_id)
+        'fairness_selector',b.fairness_key_selector,'action',b.action,'ordered',b.ordered) ORDER BY b.subscription_id)
         FROM event_subscription_work_bindings b WHERE b.app_id=a.id),'[]'::jsonb),
     'trigger_bindings',coalesce((SELECT jsonb_agg(jsonb_build_object(
         'trigger_id',b.trigger_id::text,'policy_name',b.policy_name,'key_selector',b.key_selector,
@@ -14729,10 +14726,10 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
  VALUES(sqlc.arg(deployment_id),sqlc.arg(fire_id)) ON CONFLICT(deployment_id) DO NOTHING;
 
 -- name: InsertCustomerAlertRule :one
-INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,
+INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
  action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
- sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.arg(action),sqlc.arg(webhook_url),
+ sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.arg(action),sqlc.arg(webhook_url),
  sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds))
 RETURNING *;
 
@@ -16306,3 +16303,33 @@ WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uui
       (r.revision,r.created_at,r.operation_id,r.id)>
       (sqlc.narg(after_revision)::bigint,sqlc.narg(after_published_at)::timestamptz,sqlc.narg(after_operation_id)::uuid,sqlc.narg(after_id)::uuid))
 ORDER BY r.revision,r.created_at,r.operation_id,r.id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ReadProfileAlertOwner :one
+SELECT slug FROM apps WHERE id=sqlc.arg(app_id)::text::uuid
+ AND account_id=sqlc.arg(account_id)::text::uuid AND status <> 'deleted';
+
+-- name: ReadProfileAlertState :one
+SELECT state FROM profile_route_alert_state WHERE context_key=sqlc.arg(context_key)::text
+ AND app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: WriteProfileAlertState :exec
+INSERT INTO profile_route_alert_state(context_key,app_id,account_id,deployment_id,state,updated_at)
+VALUES(sqlc.arg(context_key)::text,sqlc.arg(app_id)::text::uuid,sqlc.arg(account_id)::text::uuid,
+ sqlc.arg(deployment_id)::text::uuid,sqlc.arg(state)::jsonb,sqlc.arg(updated_at)::timestamptz)
+ON CONFLICT(context_key) DO UPDATE SET state=EXCLUDED.state,updated_at=EXCLUDED.updated_at;
+
+-- name: EnqueueProfileAlertNotification :exec
+WITH recipients AS (
+ SELECT array_agg(id ORDER BY id) AS ids FROM app_webhooks
+ WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND scope='app' AND enabled
+ AND (cardinality(event_filter)=0 OR sqlc.arg(event)::text=ANY(event_filter))
+)
+INSERT INTO app_webhook_event_outbox(account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+SELECT sqlc.arg(account_id)::text::uuid,sqlc.arg(app_id)::text::uuid,sqlc.arg(event)::text,
+ sqlc.arg(source_id)::text::uuid,sqlc.arg(payload)::jsonb,ids
+FROM recipients WHERE cardinality(ids)>0 ON CONFLICT(event,source_id) DO NOTHING;
+
+-- name: ReadProfileAlertDeploymentScope :one
+SELECT d.scope::text FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=sqlc.arg(deployment_id)::text::uuid AND a.id=sqlc.arg(app_id)::text::uuid
+ AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted';

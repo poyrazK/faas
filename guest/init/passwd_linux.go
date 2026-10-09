@@ -161,7 +161,7 @@ func searchPasswdTable(body []byte, name string) (int, bool) {
 		if off+recordHeader > len(body) {
 			return 0, false
 		}
-		nameLen := int(body[off+8])
+		nameLen := int(body[off+8]) // #nosec G602 -- the nine-byte record header is checked against len(body) immediately above.
 		end := off + recordHeader + nameLen
 		if end > len(body) {
 			return 0, false

@@ -93,33 +93,51 @@ type EventStorageUsageResponse struct {
 	Limits          EventStorageLimits `json:"limits"`
 }
 
+type EventOrderingBlocker struct {
+	EventSource    string     `json:"event_source"`
+	EventID        string     `json:"event_id"`
+	SubscriptionID string     `json:"subscription_id"`
+	AcceptedAt     time.Time  `json:"accepted_at"`
+	State          string     `json:"state"`
+	NextAttemptAt  *time.Time `json:"next_attempt_at,omitempty"`
+	AgeSeconds     float64    `json:"age_seconds"`
+	ReceiptURL     string     `json:"receipt_url"`
+}
+
 type EventBacklogRecipient struct {
-	EventSource       string     `json:"event_source"`
-	EventID           string     `json:"event_id"`
-	EventType         string     `json:"event_type"`
-	AcceptedAt        time.Time  `json:"accepted_at"`
-	AppID             string     `json:"app_id"`
-	AppSlug           string     `json:"app_slug"`
-	TargetAvailable   bool       `json:"target_available"`
-	SubscriptionID    string     `json:"subscription_id"`
-	RoutingMode       string     `json:"routing_mode"`
-	State             string     `json:"state"`
-	CapacityScope     string     `json:"capacity_scope,omitempty"`
-	Attempts          int        `json:"attempts"`
-	CapacityDeferrals int        `json:"capacity_deferrals"`
-	NextAttemptAt     *time.Time `json:"next_attempt_at,omitempty"`
-	LeaseUntil        *time.Time `json:"lease_until,omitempty"`
-	PendingAgeSeconds float64    `json:"pending_age_seconds"`
-	WaitingReason     string     `json:"waiting_reason"`
-	ReceiptURL        string     `json:"receipt_url"`
-	FanoutHistoryURL  string     `json:"fanout_history_url,omitempty"`
+	DeliveryControlReason string                `json:"-"`
+	OrderingBlocker       *EventOrderingBlocker `json:"ordering_blocker,omitempty"`
+	EventSource           string                `json:"event_source"`
+	EventID               string                `json:"event_id"`
+	EventType             string                `json:"event_type"`
+	AcceptedAt            time.Time             `json:"accepted_at"`
+	AppID                 string                `json:"app_id"`
+	AppSlug               string                `json:"app_slug"`
+	TargetAvailable       bool                  `json:"target_available"`
+	SubscriptionID        string                `json:"subscription_id"`
+	ConsumerKind          string                `json:"consumer_kind"`
+	Origin                string                `json:"origin"`
+	WorkflowName          string                `json:"workflow_name,omitempty"`
+	RoutingMode           string                `json:"routing_mode"`
+	State                 string                `json:"state"`
+	CapacityScope         string                `json:"capacity_scope,omitempty"`
+	Attempts              int                   `json:"attempts"`
+	CapacityDeferrals     int                   `json:"capacity_deferrals"`
+	NextAttemptAt         *time.Time            `json:"next_attempt_at,omitempty"`
+	LeaseUntil            *time.Time            `json:"lease_until,omitempty"`
+	PendingAgeSeconds     float64               `json:"pending_age_seconds"`
+	WaitingReason         string                `json:"waiting_reason"`
+	ReceiptURL            string                `json:"receipt_url"`
+	FanoutHistoryURL      string                `json:"fanout_history_url,omitempty"`
 }
 
 type EventBacklogConsumer struct {
+	OrderingWaitingRecipients int64     `json:"ordering_waiting_recipients"`
 	AppID                     string    `json:"app_id"`
 	AppSlug                   string    `json:"app_slug"`
 	TargetAvailable           bool      `json:"target_available"`
 	SubscriptionID            string    `json:"subscription_id"`
+	ConsumerKind              string    `json:"consumer_kind"`
 	WaitingRecipients         int64     `json:"waiting_recipients"`
 	PendingRecipients         int64     `json:"pending_recipients"`
 	ProcessingRecipients      int64     `json:"processing_recipients"`
@@ -205,6 +223,7 @@ func (r *PreviewEventRequest) UnmarshalJSON(data []byte) error {
 // EventPreviewSubscription describes an enabled subscription considered by a
 // read-only routing preview. Filter is the normalized manifest predicate.
 type EventPreviewSubscription struct {
+	SchemaVersions []string        `json:"schema_versions,omitempty"`
 	WorkflowName   string          `json:"workflow_name,omitempty"`
 	DeploymentID   string          `json:"deployment_id,omitempty"`
 	AppSlug        string          `json:"app_slug"`
@@ -219,16 +238,17 @@ type EventPreviewSubscription struct {
 // used by the asynchronous fanout worker. Subscription slices are bounded
 // samples; the counts cover every candidate.
 type PreviewEventResponse struct {
-	EventID             string                     `json:"event_id"`
-	Source              string                     `json:"source"`
-	Type                string                     `json:"type"`
-	CandidateCount      int                        `json:"candidate_count"`
-	MatchedCount        int                        `json:"matched_count"`
-	FilterMismatchCount int                        `json:"filter_mismatch_count"`
-	OtherMismatchCount  int                        `json:"other_mismatch_count"`
-	Matches             []EventPreviewSubscription `json:"matches"`
-	NonMatches          []EventPreviewSubscription `json:"non_matches"`
-	Truncated           bool                       `json:"truncated"`
+	SchemaVersionMismatchCount int                        `json:"schema_version_mismatch_count"`
+	EventID                    string                     `json:"event_id"`
+	Source                     string                     `json:"source"`
+	Type                       string                     `json:"type"`
+	CandidateCount             int                        `json:"candidate_count"`
+	MatchedCount               int                        `json:"matched_count"`
+	FilterMismatchCount        int                        `json:"filter_mismatch_count"`
+	OtherMismatchCount         int                        `json:"other_mismatch_count"`
+	Matches                    []EventPreviewSubscription `json:"matches"`
+	NonMatches                 []EventPreviewSubscription `json:"non_matches"`
+	Truncated                  bool                       `json:"truncated"`
 }
 
 // SendAppMessageRequest is the application-inbox contract. Gregale wraps the
@@ -291,18 +311,21 @@ type SendAppMessageResponse struct {
 // reconciled for an app. Filter is the normalized JSON object used by the
 // router when matching published events.
 type EventSubscriptionResponse struct {
-	ID              string          `json:"id"`
-	AppID           string          `json:"app_id"`
-	Source          string          `json:"source"`
-	Type            string          `json:"type"`
-	Filter          json.RawMessage `json:"filter"`
-	WorkPolicy      string          `json:"work_policy,omitempty"`
-	WorkKey         string          `json:"work_key,omitempty"`
-	WorkFairnessKey string          `json:"work_fairness_key,omitempty"`
-	WorkAction      string          `json:"work_action,omitempty"`
-	Enabled         bool            `json:"enabled"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	SchemaVersions     []string                 `json:"schema_versions,omitempty"`
+	RoutingRetryPolicy *EventRoutingRetryPolicy `json:"routing_retry_policy,omitempty"`
+	ID                 string                   `json:"id"`
+	AppID              string                   `json:"app_id"`
+	Source             string                   `json:"source"`
+	Type               string                   `json:"type"`
+	Filter             json.RawMessage          `json:"filter"`
+	WorkPolicy         string                   `json:"work_policy,omitempty"`
+	WorkKey            string                   `json:"work_key,omitempty"`
+	WorkFairnessKey    string                   `json:"work_fairness_key,omitempty"`
+	WorkAction         string                   `json:"work_action,omitempty"`
+	Ordered            bool                     `json:"ordered,omitempty"`
+	Enabled            bool                     `json:"enabled"`
+	CreatedAt          time.Time                `json:"created_at"`
+	UpdatedAt          time.Time                `json:"updated_at"`
 }
 
 // EventSubscriptionListResponse is the app-scoped, read-only subscription
@@ -349,6 +372,8 @@ type EventFanoutFailureResponse struct {
 // EventFanoutAttemptResponse is one immutable, bounded routing outcome or explicit
 // operator replay request for an event recipient.
 type EventFanoutAttemptResponse struct {
+	FilterReason      string    `json:"filter_reason,omitempty"`
+	RetryStopReason   string    `json:"retry_stop_reason,omitempty"`
 	CapacityScope     string    `json:"capacity_scope,omitempty"`
 	CapacityDeferrals int64     `json:"capacity_deferrals,omitempty"`
 	DetailsTruncated  bool      `json:"details_truncated,omitempty"`
@@ -405,6 +430,7 @@ type EventDeliveryListResponse struct {
 // ReplayEventFanoutFailureRequest identifies one failed recipient by the
 // published event's scoped identity and its acceptance-time subscription.
 type ReplayEventFanoutFailureRequest struct {
+	AllowExpired   bool   `json:"allow_expired,omitempty"`
 	EventID        string `json:"event_id"`
 	EventSource    string `json:"event_source"`
 	SubscriptionID string `json:"subscription_id"`
@@ -518,6 +544,7 @@ type CreateAppRequest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
 	StartupDeadlineS int                   `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int                   `json:"max_retries,omitempty"`
 	StopGracePeriodS int                   `json:"stop_grace_period_s,omitempty"`
@@ -854,6 +881,7 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
 	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int                  `json:"max_retries,omitempty"`
 	StopGracePeriodS *int                  `json:"stop_grace_period_s,omitempty"`
@@ -3352,16 +3380,20 @@ type UpdateDeploymentTrafficRequest struct {
 // caller only supplies the step it observed, so a stale or concurrent worker
 // cannot choose an arbitrary traffic value.
 type AdvanceCanaryRequest struct {
-	ExpectedStep int `json:"expected_step"`
+	// Reserved for the lease-bound internal worker; public requests reject true.
+	ProfileGateRollback bool                 `json:"profile_gate_rollback,omitempty"`
+	ProfileGateOverride *ProfileGateOverride `json:"profile_gate_override,omitempty"`
+	ExpectedStep        int                  `json:"expected_step"`
 }
 
 // CanaryAdvanceResponse carries the atomically advanced deployment and the
 // deployment_audit row id written in the same transaction.
 type CanaryAdvanceResponse struct {
-	Deployment  DeploymentResponse   `json:"deployment"`
-	AuditID     string               `json:"audit_id"`
-	RouteGate   *RouteGateDecision   `json:"route_gate,omitempty"`
-	RouteHealth *RouteHealthDecision `json:"route_health,omitempty"`
+	ProfileGate *ProfileCanaryGateDecision `json:"profile_gate,omitempty"`
+	Deployment  DeploymentResponse         `json:"deployment"`
+	AuditID     string                     `json:"audit_id"`
+	RouteGate   *RouteGateDecision         `json:"route_gate,omitempty"`
+	RouteHealth *RouteHealthDecision       `json:"route_health,omitempty"`
 }
 
 // CreateMirrorRuleRequest is the body for
@@ -11900,22 +11932,28 @@ type EventReceiptRecipientResponse struct {
 }
 
 type EventReceiptRoutingResponse struct {
-	GenerationCapacityDeferrals *int       `json:"generation_capacity_deferrals,omitempty"`
-	CapacityDeferrals           int        `json:"capacity_deferrals"`
-	CapacityScope               string     `json:"capacity_scope,omitempty"`
-	PendingAgeSeconds           *float64   `json:"pending_age_seconds,omitempty"`
-	State                       string     `json:"state"`
-	Attempts                    int        `json:"attempts"`
-	Generation                  *int64     `json:"generation,omitempty"`
-	GenerationAttempts          *int       `json:"generation_attempts,omitempty"`
-	NextAttemptAt               *time.Time `json:"next_attempt_at,omitempty"`
-	LeaseUntil                  *time.Time `json:"lease_until,omitempty"`
-	UpdatedAt                   *time.Time `json:"updated_at,omitempty"`
-	LastError                   string     `json:"last_error,omitempty"`
-	FailureCode                 string     `json:"failure_code,omitempty"`
-	Retryable                   bool       `json:"retryable"`
-	ReplayCount                 int64      `json:"replay_count"`
-	LastReplayedAt              *time.Time `json:"last_replayed_at,omitempty"`
+	DeliveryDeadlineAt          *time.Time               `json:"delivery_deadline_at,omitempty"`
+	DeliveryAgeOverride         bool                     `json:"delivery_age_override,omitempty"`
+	RoutingRetryPolicy          *EventRoutingRetryPolicy `json:"routing_retry_policy,omitempty"`
+	RetrySpentMS                int64                    `json:"retry_spent_ms,omitempty"`
+	FilterReason                string                   `json:"filter_reason,omitempty"`
+	RetryStopReason             string                   `json:"retry_stop_reason,omitempty"`
+	GenerationCapacityDeferrals *int                     `json:"generation_capacity_deferrals,omitempty"`
+	CapacityDeferrals           int                      `json:"capacity_deferrals"`
+	CapacityScope               string                   `json:"capacity_scope,omitempty"`
+	PendingAgeSeconds           *float64                 `json:"pending_age_seconds,omitempty"`
+	State                       string                   `json:"state"`
+	Attempts                    int                      `json:"attempts"`
+	Generation                  *int64                   `json:"generation,omitempty"`
+	GenerationAttempts          *int                     `json:"generation_attempts,omitempty"`
+	NextAttemptAt               *time.Time               `json:"next_attempt_at,omitempty"`
+	LeaseUntil                  *time.Time               `json:"lease_until,omitempty"`
+	UpdatedAt                   *time.Time               `json:"updated_at,omitempty"`
+	LastError                   string                   `json:"last_error,omitempty"`
+	FailureCode                 string                   `json:"failure_code,omitempty"`
+	Retryable                   bool                     `json:"retryable"`
+	ReplayCount                 int64                    `json:"replay_count"`
+	LastReplayedAt              *time.Time               `json:"last_replayed_at,omitempty"`
 }
 
 type EventReceiptExecutionResponse struct {

@@ -59,6 +59,16 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 731 | [Durable PostgreSQL lifecycle qualification](731-managed-postgres-durable-qualification.md) | accepted | Version-8 SQL restart, encrypted credential delivery, workload rotation and cleanup evidence |
 | 687 | [Object version listing and bound historical downloads](687-object-version-cli-and-bound-downloads.md) | accepted | Public immutable version identities, bounded listings and exact-version gateway read authority |
 | 688 | [Resumable CLI object uploads](688-resumable-cli-object-uploads.md) | accepted | Private fingerprint-bound multipart checkpoints and uncertain-completion recovery |
+| 792 | [Continuous CPU profiling across guest lifetimes](819-continuous-cpu-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 793 | [Route-associated CPU profiling](820-route-associated-cpu-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 794 | [Advisory route CPU regression checks](821-advisory-route-cpu-regression-checks.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 795 | [Route attribution quality reporting](822-route-attribution-quality.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 796 | [Per-route request labeling consistency](823-per-route-request-label-consistency.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 797 | [Native profiling restore qualification](824-native-profile-restore-qualification.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 798 | [Advisory route profiling notifications](825-advisory-profile-route-notifications.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 799 | [Periodic route profiling for running deployments](826-periodic-route-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 800 | [Route-specific profiling code evidence](827-route-specific-profile-code-evidence.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 801 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
@@ -666,3 +676,24 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-646: Unified backfill delivery inspection](646-unified-backfill-delivery-inspection.md)
 - [ADR-647: Independent event routing by default](647-independent-event-routing-default.md)
 - [ADR-648: Independent workflow event routing](648-independent-workflow-event-routing.md)
+- [ADR-792: Workflow and backfill event backlog discovery](792-event-backlog-workflow-backfill-discovery.md)
+- [ADR-793: Workflow event replay preview](793-workflow-event-replay-preview.md)
+- [ADR-794: Durable workflow event backfill](794-durable-workflow-event-backfill.md)
+- [ADR-795: Opt-in keyed event delivery ordering](795-keyed-event-delivery-ordering.md)
+- [ADR-796: Event ordering backlog diagnostics](796-event-ordering-backlog-diagnostics.md)
+- [ADR-797: Durable bulk event recovery](797-durable-bulk-event-recovery.md)
+- [ADR-798: Subscription pause and paced drain](798-subscription-pause-and-paced-drain.md)
+- [ADR-799: Consumer routing health and alerts](799-event-consumer-health-and-alerts.md)
+- [ADR-800: Consumer routing retry policies](800-consumer-routing-retry-policies.md)
+- [ADR-803: Application subscription schema version selection](803-event-subscription-schema-versions.md)
+- [ADR-804: Read-only event schema rollout preview](804-event-schema-rollout-preview.md)
+- [ADR-805: Consumer execution health and alerts](805-event-consumer-execution-health.md)
+- [ADR-806: Paced event execution recovery](806-paced-event-execution-recovery.md)
+- [ADR-807: Recovery execution outcomes](807-recovery-execution-outcomes.md)
+- [ADR-808: Recovery job controls](808-recovery-job-controls.md)
+- [ADR-809: Recovery job discovery](809-recovery-job-discovery.md)
+- [ADR-810: Recovery control audit history](810-recovery-control-audit-history.md)
+- [ADR-811: Recovery health and alerts](811-recovery-health-and-alerts.md)
+- [ADR-812: Durable recovery lifecycle notifications](812-recovery-lifecycle-notifications.md)
+- [ADR-813: Recovery capacity diagnostics](813-recovery-capacity-diagnostics.md)
+- [ADR-814: Read-only recovery preflight](814-recovery-preflight.md)

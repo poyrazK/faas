@@ -95,17 +95,17 @@ func (s *server) previewEvent(w http.ResponseWriter, r *http.Request, acct state
 			out.CandidateCount++
 			item := api.EventPreviewSubscription{
 				AppSlug:        appSlugs[canonicalEventPreviewUUID(row.AppID)],
-				SubscriptionID: row.ID,
-				Source:         row.Source,
-				Type:           row.Type,
-				Filter:         append(json.RawMessage(nil), row.Filter...),
+				SubscriptionID: row.ID, SchemaVersions: append([]string(nil), row.SchemaVersions...),
+				Source: row.Source,
+				Type:   row.Type,
+				Filter: append(json.RawMessage(nil), row.Filter...),
 			}
 			reason, matchErr := (events.Subscription{
 				ID:        row.ID,
 				AccountID: row.AccountID,
 				Source:    row.Source,
 				Type:      row.Type,
-				Filter:    row.Filter,
+				Filter:    row.Filter, SchemaVersions: row.SchemaVersions,
 			}).ExplainMatch(envelope)
 			if matchErr != nil {
 				out.OtherMismatchCount++
@@ -118,6 +118,9 @@ func (s *server) previewEvent(w http.ResponseWriter, r *http.Request, acct state
 			case events.MatchReasonWouldDeliver:
 				out.MatchedCount++
 				appendEventPreviewSample(&out.Matches, item, &out.Truncated)
+			case events.MatchReasonSchemaVersionMismatch:
+				out.SchemaVersionMismatchCount++
+				appendEventPreviewSample(&out.NonMatches, item, &out.Truncated)
 			case events.MatchReasonFilterMismatch:
 				out.FilterMismatchCount++
 				appendEventPreviewSample(&out.NonMatches, item, &out.Truncated)

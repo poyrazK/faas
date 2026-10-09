@@ -1,10 +1,5 @@
 # Gregale FaaS — build & ops entrypoints (spec §Commands).
-# Go >= 1.24. One binary per cmd/ dir.
-# (Bumped from 1.23: cmd/vmmd-stream-bridge uses the Go 1.24+
-# http.Protocols API for H2C — srv.Protocols.SetUnencryptedHTTP2(true).
-# go.mod pins 1.26.9; this comment is the floor for the toolchain
-# so a developer on 1.23.x sees a clean compile error rather than
-# a runtime panic.)
+# Go 1.26 with the patched 1.26.9 toolchain, pinned in go.mod and CI. One binary per cmd/ dir.
 
 GO      ?= go
 GOOS    ?= $(shell $(GO) env GOOS)
@@ -13,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -576,6 +571,12 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 
 .PHONY: native-m9-acceptance
 .PHONY: native-dev-bridge-acceptance
+.PHONY: native-profiling-acceptance
+native-profiling-acceptance: ## Qualify deployed CPU profiling, request counters and native restore with evidence
+	@result=0; bash scripts/ci/run-native-profiling-acceptance.sh || result=$$?; \
+	python3 scripts/ci/profile-verdict.py --evidence "$${GREGALE_PROFILE_EVIDENCE:-profile-native-evidence}" || result=1; \
+	exit $$result
+
 native-dev-bridge-acceptance: ## Verify Dev Bridge against designated native split-box fixtures and public TLS
 	@bash scripts/ci/run-native-dev-bridge-acceptance.sh
 
@@ -1040,8 +1041,8 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  trap 'rm -rf "$$tmp"' EXIT; \
 	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
-	  cp pkg/state/queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql pkg/state/deployment_dependency_queries.sql "$$tmp/pkg/state/"; \
-	  cp pkg/state/event_replay_preview_queries.sql pkg/state/event_replay_jobs_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql pkg/state/deployment_dependency_queries.sql pkg/state/profile_investigation_queries.sql pkg/state/profile_periodic_queries.sql pkg/state/profile_gate_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/event*_queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
 	  cp pkg/managedpostgres/copyinventory/queries.sql pkg/managedpostgres/copyinventory/schema.sql "$$tmp/pkg/managedpostgres/copyinventory/"; \
 	  cp pkg/managedpostgres/copyroles/queries.sql pkg/managedpostgres/copyroles/memberships.sql pkg/managedpostgres/copyroles/schema.sql "$$tmp/pkg/managedpostgres/copyroles/"; \

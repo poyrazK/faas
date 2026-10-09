@@ -352,8 +352,12 @@ var ErrRolloutStateInvalid = errors.New("state: rollout state does not permit re
 // The store applies all requested gates with the expected-step CAS, traffic
 // rebalance, rollout completion, and audit insert atomically.
 type CanaryAdvanceParams struct {
-	ExpectedStep   int
-	TrafficPercent int
+	ProfileGateOverride *api.ProfileGateOverride
+	ProfileGateDecision *api.ProfileCanaryGateDecision
+	// Only the worker may request a preplanned zero-traffic recovery.
+	ProfileGateRollback bool
+	ExpectedStep        int
+	TrafficPercent      int
 	// RequireSafeReleaseLease gates an automated worker advance on the
 	// durable meterd lease and rechecks it inside the transaction.
 	RequireSafeReleaseLease bool

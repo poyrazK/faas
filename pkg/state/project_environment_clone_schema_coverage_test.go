@@ -18,6 +18,12 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		"profile_deployment_policies":             CloneSchemaConfiguration,
+		"profile_investigations":                  CloneSchemaOperational,
+		"profile_deployment_checks":               CloneSchemaOperational,
+		"profile_route_alert_state":               CloneSchemaOperational,
+		"profile_canary_checks":                   CloneSchemaOperational,
+		"profile_periodic_monitors":               CloneSchemaOperational,
 		"app_binding_release_policies":            CloneSchemaConfiguration,
 		"app_binding_release_policy_history":      CloneSchemaConfiguration,
 		"alert_rollback_actions":                  CloneSchemaOperational,

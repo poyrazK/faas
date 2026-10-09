@@ -138,6 +138,9 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	eventCircuitBreakers        map[string]*eventCircuitRecord
+	eventSubscriptionControls   map[string]*memEventSubscriptionControl
+	eventRecoveryJobs           map[string]*memEventRecoveryJob
 	deploymentDependencyGates   map[string]DeploymentDependencyGate
 	invocationAttemptHistory    map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID     int64
@@ -503,17 +506,23 @@ type MemStore struct {
 	// insert in CreateEdgeRuleIfUnderQuota; no separate TOCTOU fence
 	// is needed. Soft-delete semantics (apps.status='deleted') are
 	// mirrored by the per-app lookup in the quota-check branch.
-	edgeRules                map[string]EdgeRule
-	routePolicyReceipts      map[string]routePolicyStoredReceipt
-	savedRouteRequirements   map[string]api.SavedRouteRequirements
-	automaticRouteChecks     map[string]memAutomaticRouteCheck
-	canaryRouteGates         map[string]api.CanaryRouteGate
-	routeMonitorConfigs      map[string]api.RouteMonitorConfig
-	routeMonitorNextCheck    map[string]time.Time
-	routeMonitorIncidents    map[string][]api.RouteMonitorIncident
-	routeHealthGates         map[string]api.RouteHealthGate
-	routeHealthHistory       map[string][]routeHealthStoredDecision
-	routeHealthNotifications map[string]routeHealthNotificationState
+	edgeRules                 map[string]EdgeRule
+	routePolicyReceipts       map[string]routePolicyStoredReceipt
+	savedRouteRequirements    map[string]api.SavedRouteRequirements
+	profileInvestigations     map[string]api.ProfileInvestigation
+	profileDeploymentPolicies map[string]api.ProfileDeploymentPolicy
+	profileDeploymentChecks   map[string]*memProfileDeploymentCheck
+	profileCanaryChecks       map[string]*memProfileCanaryCheck
+	automaticRouteChecks      map[string]memAutomaticRouteCheck
+	canaryRouteGates          map[string]api.CanaryRouteGate
+	routeMonitorConfigs       map[string]api.RouteMonitorConfig
+	routeMonitorNextCheck     map[string]time.Time
+	routeMonitorIncidents     map[string][]api.RouteMonitorIncident
+	routeHealthGates          map[string]api.RouteHealthGate
+	routeHealthHistory        map[string][]routeHealthStoredDecision
+	routeHealthNotifications  map[string]routeHealthNotificationState
+	profilePeriodicMonitors   map[string]*memPeriodicMonitor
+	profileAlertStates        map[string]profileAlertState
 	// edgeRuleGeneration mirrors edge_rule_generation_seq. Gaps are allowed;
 	// values never decrease during the MemStore lifetime.
 	edgeRuleGeneration int64
@@ -5006,13 +5015,22 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	if d.CanaryStep != params.ExpectedStep {
 		return Deployment{}, 0, ErrCanaryStepConflict
 	}
-	if params.RequireCanaryStageElapsed && (d.CanaryStepStartedAt == nil ||
+	if params.RequireCanaryStageElapsed && !params.ProfileGateRollback && (d.CanaryStepStartedAt == nil ||
 		time.Since(*d.CanaryStepStartedAt) < params.CanaryStageDuration) {
 		return Deployment{}, 0, ErrCanaryStageNotElapsed
 	}
 	depUUID, err := uuid.Parse(d.ID)
 	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: advance canary deployment id %q: %w", d.ID, err)
+	}
+	if params.ProfileGateDecision == nil {
+		params.ProfileGateDecision = &api.ProfileCanaryGateDecision{}
+	}
+	if err := authorizeProfileGate(m.profileGateDecisionLocked(d, time.Now().UTC()), &params); err != nil {
+		return Deployment{}, 0, err
+	}
+	if params.ProfileGateRollback {
+		return m.abortProfileGatedCanaryLocked(ctx, d, params)
 	}
 	if err := m.checkCanaryRouteGateLocked(d, params); err != nil {
 		return Deployment{}, 0, err
@@ -6356,6 +6374,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	delete(m.privateNetworkAttachments, id)
 	delete(m.savedRouteRequirements, id)
+	m.deleteProfileInvestigationsLocked(id)
 	delete(m.canaryRouteGates, id)
 	delete(m.routeMonitorConfigs, id)
 	delete(m.routeMonitorNextCheck, id)
@@ -7667,6 +7686,9 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		return *target, 0, ErrRolloutStateInvalid
 	}
 	if action != "abort" && target.CanaryTotalSteps > 0 {
+		if err := legacyProfileCanaryGate(m.profileDeploymentPolicies[appID], *target); err != nil {
+			return *target, 0, err
+		}
 		gate, err := m.canaryRouteGateLocked(m.apps[appID].AccountID, appID)
 		if err != nil {
 			return *target, 0, err
@@ -21538,6 +21560,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.apps, aid)
 			delete(m.appHealthHistory, aid)
 			delete(m.savedRouteRequirements, aid)
+			m.deleteProfileInvestigationsLocked(aid)
 			delete(m.canaryRouteGates, aid)
 			delete(m.routeMonitorConfigs, aid)
 			delete(m.routeMonitorNextCheck, aid)

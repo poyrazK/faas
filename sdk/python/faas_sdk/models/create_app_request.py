@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from ..models.after_restore_hook import AfterRestoreHook
     from ..models.before_checkpoint_hook import BeforeCheckpointHook
     from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
+    from ..models.profiling_config import ProfilingConfig
     from ..models.retry_policy_dto import RetryPolicyDTO
     from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_reliability_policies import ServiceReliabilityPolicies
@@ -62,6 +63,8 @@ class CreateAppRequest:
 
     slug: str
     """The tag- prefix is reserved for stable deployment-alias hostnames."""
+    profiling: ProfilingConfig | Unset = UNSET
+    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
     type_: CreateAppRequestType | Unset = UNSET
     visibility: CreateAppRequestVisibility | Unset = "public"
     """Ingress exposure for the new app. Choose internal to make it service-only; available on every plan."""
@@ -209,6 +212,10 @@ class CreateAppRequest:
 
     def to_dict(self) -> dict[str, Any]:
         slug = self.slug
+
+        profiling: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.profiling, Unset):
+            profiling = self.profiling.to_dict()
 
         type_: str | Unset = UNSET
         if not isinstance(self.type_, Unset):
@@ -378,6 +385,8 @@ class CreateAppRequest:
                 "slug": slug,
             }
         )
+        if profiling is not UNSET:
+            field_dict["profiling"] = profiling
         if type_ is not UNSET:
             field_dict["type"] = type_
         if visibility is not UNSET:
@@ -490,6 +499,7 @@ class CreateAppRequest:
         from ..models.after_restore_hook import AfterRestoreHook
         from ..models.before_checkpoint_hook import BeforeCheckpointHook
         from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
+        from ..models.profiling_config import ProfilingConfig
         from ..models.retry_policy_dto import RetryPolicyDTO
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
@@ -499,6 +509,13 @@ class CreateAppRequest:
 
         d = dict(src_dict)
         slug = d.pop("slug")
+
+        _profiling = d.pop("profiling", UNSET)
+        profiling: ProfilingConfig | Unset
+        if isinstance(_profiling, Unset):
+            profiling = UNSET
+        else:
+            profiling = ProfilingConfig.from_dict(_profiling)
 
         _type_ = d.pop("type", UNSET)
         type_: CreateAppRequestType | Unset
@@ -727,6 +744,7 @@ class CreateAppRequest:
 
         create_app_request = cls(
             slug=slug,
+            profiling=profiling,
             type_=type_,
             visibility=visibility,
             allowed_service_callers=allowed_service_callers,

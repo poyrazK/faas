@@ -235,6 +235,10 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			}
 			// ADR-127 dashboard debugger — regression feed, request
 			// telemetry table, and bounded span-evidence drill-down.
+			if pslug, ok := parseAppProfilesPath(slug); ok {
+				s.renderAppProfiles(w, r, log, acct, pslug)
+				return
+			}
 			if dslug, ok := parseAppDebugPath(slug); ok {
 				s.renderAppDebug(w, r, log, acct, dslug)
 				return
@@ -896,9 +900,10 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	operational := s.appOperationalSummary(ctx, acct, app)
 	appCosts := s.dashboardAppCosts(ctx, log, acct, app, costMonth, costMonthNotice)
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
-		Operational: &operational,
-		App:         appRow,
-		AppCosts:    appCosts,
+		ProfilingAvailable: s.profileBackend != nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled,
+		Operational:        &operational,
+		App:                appRow,
+		AppCosts:           appCosts,
 		RefreshQuery: dashboardAppDetailRefreshQuery(
 			costMonth.Format("2006-01"), analyticsGroupBy, analyticsRoute, analyticsMethod,
 		),
@@ -2924,6 +2929,33 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 				"deployment_id", dep.ID, "app_id", app.ID, "err", err)
 		}
 	}
+	data.ProfileCheck = s.profileDeploymentCheckBanner(r, acct, app, dep.ID)
+	data.CanaryProfileSignal = s.profileCanarySignal(ctx, acct, app, dep)
+	if data.CanaryProfileSignal != nil {
+		traffic := dashboard.BuildProfileTraffic(*data.CanaryProfileSignal)
+		data.CanaryProfileTraffic = &traffic
+	}
+	if dep.CanaryTotalSteps > 0 {
+		data.CanaryProfileHistoryEnabled = true
+		if store, ok := s.store.(state.ProfileCanaryCheckStore); ok {
+			page, err := store.ListProfileCanaryChecks(ctx, acct.ID, app.ID, dep.ID, api.ProfileCanaryHistoryPageSize, r.URL.Query().Get("canary_before"))
+			if err != nil {
+				data.CanaryProfileHistoryError = "Canary profile history could not be read."
+			} else {
+				for _, entry := range page.Entries {
+					s.enrichCanaryProfileSignal(ctx, app, &entry, &dep)
+					data.CanaryProfileHistory = append(data.CanaryProfileHistory, dashboard.ProfileCanaryHistoryEntry{CanaryProfileSignal: entry, Traffic: dashboard.BuildProfileTraffic(entry)})
+				}
+				if page.NextCursor != "" {
+					query := url.Values{"canary_before": {page.NextCursor}}
+					data.CanaryProfileHistoryMoreURL = "/dashboard/apps/" + url.PathEscape(app.Slug) + "/deployments/" + url.PathEscape(dep.ID) + "?" + query.Encode() + "#canary-profile-history"
+				}
+			}
+		} else {
+			data.CanaryProfileHistoryError = "Canary profile history is unavailable."
+		}
+	}
+
 	if dep.ScanStatus != "" {
 		payload := dashboardScanPayload(s.scanResponse(dep))
 		data.Scan = &payload

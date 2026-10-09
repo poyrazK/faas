@@ -119,9 +119,9 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    # Full cold-cache lint takes around forty minutes with bounded memory.
+    # Checkout/setup plus cold-cache analysis exhausted sixty minutes.
     # Leave time for analysis, cold builds and the remaining policy gates.
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
         with:
@@ -190,7 +190,9 @@ jobs:
       - name: lint (golangci-lint v8)
         uses: golangci/golangci-lint-action@v9
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          # Lint constructs its own SSA from source. Its export-data compile
+          # needs type checking, without costly inlining of the giant API package.
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1 -l"'
           # Bound analysis memory after repeated hosted-runner shutdowns.
           GOMEMLIMIT: 3GiB
           GOGC: 75
@@ -198,12 +200,12 @@ jobs:
         with:
           version: v2.14.0
           # The newer Go 1.26 analyzers report baseline findings throughout
-          # the existing tree. Keep all rules enabled, but gate only findings
+          # the existing tree. Retain the repository analyzer policies and gate findings
           # introduced since this event's base revision while the baseline is
           # addressed separately. The expanded repository needs up to fifty
           # minutes for cold-cache analysis under these memory bounds.
           args: >-
-            --timeout=50m
+            --timeout=60m
             --new-from-merge-base=${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
           # The action's own cache is keyed per 7-day interval and never re-saved
           # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
@@ -2302,8 +2304,26 @@ jobs:
         # here, matching the previous full suite; concurrent apply/replay
         # still run with the race detector in migration-checks above.
         run: |
+          set -euo pipefail
           MIGRATION_RUN=$(go run ./scripts/ci/e2eshard -package=./migrations -all-tests -shards=4 -shard=${{ matrix.shard }})
-          go test -count=1 -timeout=60m -run="$MIGRATION_RUN" ./migrations
+          migration_log="migration-results/shard-${{ matrix.shard }}.log"
+          if go test -count=1 -timeout=60m -run="$MIGRATION_RUN" ./migrations 2>&1 | tee "$migration_log"; then
+            exit 0
+          fi
+          python3 - "$migration_log" <<'PY'
+          import pathlib
+          import sys
+
+          lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines()
+          failures = [i for i, line in enumerate(lines) if line.startswith("--- FAIL:")]
+          if not failures:
+              failures = [max(0, len(lines) - 12)]
+          for index in failures:
+              message = "\n".join(lines[index:index + 12])
+              message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error::{message}")
+          PY
+          exit 1
       - name: save Go build + test cache
         # One writer per shared key; see unit-tests-state.
         if: always() && github.event_name == 'push' && matrix.shard == 1

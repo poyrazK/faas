@@ -7,6 +7,10 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.event_replay_backfill_job_response_consumer_kind import (
+    EventReplayBackfillJobResponseConsumerKind,
+    check_event_replay_backfill_job_response_consumer_kind,
+)
 from ..models.event_replay_backfill_job_response_duplicate_policy import (
     EventReplayBackfillJobResponseDuplicatePolicy,
     check_event_replay_backfill_job_response_duplicate_policy,
@@ -30,9 +34,7 @@ class EventReplayBackfillJobResponse:
 
     id: UUID
     app_slug: str
-    subscription_id: UUID
-    subscription_revision: str
-    """Fingerprint of the subscription declaration snapshotted when the job was created."""
+    consumer_kind: EventReplayBackfillJobResponseConsumerKind
     from_: datetime.datetime
     until: datetime.datetime
     cutoff_at: datetime.datetime
@@ -47,6 +49,14 @@ class EventReplayBackfillJobResponse:
     """Durable scan outcomes and current routing state for a backfill job."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    workflow_name: str | Unset = UNSET
+    """Workflow name for workflow jobs."""
+    workflow_revision: str | Unset = UNSET
+    """Fingerprint of the captured workflow recipient definition for workflow jobs."""
+    subscription_id: UUID | Unset = UNSET
+    """Ordinary subscription ID for application jobs."""
+    subscription_revision: str | Unset = UNSET
+    """Fingerprint of the subscription declaration snapshotted when an application job was created."""
     earliest_retained_at: datetime.datetime | Unset = UNSET
     """Account-wide earliest event surviving when the job was created; does not establish complete coverage."""
     completed_at: datetime.datetime | Unset = UNSET
@@ -56,9 +66,7 @@ class EventReplayBackfillJobResponse:
 
         app_slug = self.app_slug
 
-        subscription_id = str(self.subscription_id)
-
-        subscription_revision = self.subscription_revision
+        consumer_kind: str = self.consumer_kind
 
         from_ = self.from_.isoformat()
 
@@ -80,6 +88,16 @@ class EventReplayBackfillJobResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        workflow_name = self.workflow_name
+
+        workflow_revision = self.workflow_revision
+
+        subscription_id: str | Unset = UNSET
+        if not isinstance(self.subscription_id, Unset):
+            subscription_id = str(self.subscription_id)
+
+        subscription_revision = self.subscription_revision
+
         earliest_retained_at: str | Unset = UNSET
         if not isinstance(self.earliest_retained_at, Unset):
             earliest_retained_at = self.earliest_retained_at.isoformat()
@@ -94,8 +112,7 @@ class EventReplayBackfillJobResponse:
             {
                 "id": id,
                 "app_slug": app_slug,
-                "subscription_id": subscription_id,
-                "subscription_revision": subscription_revision,
+                "consumer_kind": consumer_kind,
                 "from": from_,
                 "until": until,
                 "cutoff_at": cutoff_at,
@@ -108,6 +125,14 @@ class EventReplayBackfillJobResponse:
                 "updated_at": updated_at,
             }
         )
+        if workflow_name is not UNSET:
+            field_dict["workflow_name"] = workflow_name
+        if workflow_revision is not UNSET:
+            field_dict["workflow_revision"] = workflow_revision
+        if subscription_id is not UNSET:
+            field_dict["subscription_id"] = subscription_id
+        if subscription_revision is not UNSET:
+            field_dict["subscription_revision"] = subscription_revision
         if earliest_retained_at is not UNSET:
             field_dict["earliest_retained_at"] = earliest_retained_at
         if completed_at is not UNSET:
@@ -124,9 +149,7 @@ class EventReplayBackfillJobResponse:
 
         app_slug = d.pop("app_slug")
 
-        subscription_id = UUID(d.pop("subscription_id"))
-
-        subscription_revision = d.pop("subscription_revision")
+        consumer_kind = check_event_replay_backfill_job_response_consumer_kind(d.pop("consumer_kind"))
 
         from_ = datetime.datetime.fromisoformat(d.pop("from"))
 
@@ -148,6 +171,19 @@ class EventReplayBackfillJobResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        workflow_name = d.pop("workflow_name", UNSET)
+
+        workflow_revision = d.pop("workflow_revision", UNSET)
+
+        _subscription_id = d.pop("subscription_id", UNSET)
+        subscription_id: UUID | Unset
+        if isinstance(_subscription_id, Unset):
+            subscription_id = UNSET
+        else:
+            subscription_id = UUID(_subscription_id)
+
+        subscription_revision = d.pop("subscription_revision", UNSET)
+
         _earliest_retained_at = d.pop("earliest_retained_at", UNSET)
         earliest_retained_at: datetime.datetime | Unset
         if isinstance(_earliest_retained_at, Unset):
@@ -165,8 +201,7 @@ class EventReplayBackfillJobResponse:
         event_replay_backfill_job_response = cls(
             id=id,
             app_slug=app_slug,
-            subscription_id=subscription_id,
-            subscription_revision=subscription_revision,
+            consumer_kind=consumer_kind,
             from_=from_,
             until=until,
             cutoff_at=cutoff_at,
@@ -177,6 +212,10 @@ class EventReplayBackfillJobResponse:
             progress=progress,
             created_at=created_at,
             updated_at=updated_at,
+            workflow_name=workflow_name,
+            workflow_revision=workflow_revision,
+            subscription_id=subscription_id,
+            subscription_revision=subscription_revision,
             earliest_retained_at=earliest_retained_at,
             completed_at=completed_at,
         )

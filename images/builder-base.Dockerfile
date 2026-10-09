@@ -62,11 +62,11 @@ ARG RUNC_SOURCE_SHA256=32286f18899a644ec7c1589688a9600ba54cc65264f23f1f5877ba214
 # so images/Dockerfile.lock has a literal "golang:1.26.9" alias to
 # match against. Bumping the Go version is a two-step: change this
 # line, run `make images-lock-update` to refresh the lock and digest.
-# BuildKit v0.32.x requires Go 1.26.3 or newer. 1.26.9 matches the
-# repository's toolchain directive and keeps guest-init, runc and the
-# BuildKit client off GO-2026-6617 and the earlier stdlib advisories.
-# The repo's `tool` directive also rejects older toolchains with
-# `unknown directive: tool` (verified during PR #940 review).
+# BuildKit v0.32.x requires Go 1.26.3 or newer. Use 1.26.9 so the
+# builder itself is not shipped with the Go standard-library advisories
+# fixed after 1.25.9; the repo's `tool` directive also rejects older
+# toolchains with `unknown directive: tool` (verified during PR #940
+# review).
 
 # ---- stage 1: build guest-init for the target arch -----------------------
 # Image registry digest pinned via images/Dockerfile.lock; make
@@ -109,9 +109,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       echo "${RUNC_SOURCE_SHA256}  /tmp/runc-source.tgz" | sha256sum -c - && \
       tar -xzf /tmp/runc-source.tgz --strip-components=1 -C /src/runc && \
       rm /tmp/runc-source.tgz && \
+      go mod edit -go=1.26.9 && \
       go mod edit -require=github.com/opencontainers/cgroups@v${RUNC_CGROUPS_VERSION} && \
       go mod edit -require=github.com/cilium/ebpf@v${RUNC_EBPF_VERSION} && \
-      go mod edit -require=golang.org/x/net@v0.57.0 && \
+      go mod edit -require=golang.org/x/net@v0.60.0 && \
       go mod download && \
       CGO_ENABLED=1 GOOS=linux GOARCH=${TARGETARCH} \
         go build -mod=mod -trimpath -buildmode=pie \
@@ -119,7 +120,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
           -ldflags "-linkmode external -extldflags -static-pie -X main.gitCommit=v${RUNC_VERSION}" \
           -o /out/runc . && \
       go version -m /out/runc | tee /tmp/runc-build-info && \
-      grep -q 'golang.org/x/net.*v0.57.0' /tmp/runc-build-info && \
+      grep -q 'golang.org/x/net.*v0.60.0' /tmp/runc-build-info && \
       ! grep -Eq 'v0.50.0|go1.25.12' /tmp/runc-build-info
 
 # BuildKit's server has a deliberately strict session liveness check. The
@@ -140,11 +141,9 @@ COPY images/buildkit-session-health.patch /tmp/buildkit-session-health.patch
 COPY images/buildkit-frontend-startup.patch /tmp/buildkit-frontend-startup.patch
 # BuildKit 0.32.2 still selects the vulnerable go-archive v0.2.0 and gRPC
 # v1.82.1. Keep the source release's vendored dependency graph for a fast,
-# reproducible build, but replace the source's vulnerable modules with fixed
-# releases, including the Go crypto fix, before compiling. x/net is already
-# fixed in this source release; pin it explicitly so a future source change
-# cannot lower the builder's dependency floor
-# unnoticed.
+# reproducible build, with fixed module floors. Regenerate the vendor tree
+# from the selected graph so x/net, crypto and their transitive source match
+# the module metadata before compiling.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git && \
       rm -rf /var/lib/apt/lists/* && \
       curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
@@ -155,24 +154,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       rm /tmp/buildkit-source.tgz && \
       git apply /tmp/buildkit-session-health.patch /tmp/buildkit-frontend-startup.patch && \
       go mod edit -require=github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} && \
-      go mod edit -require=golang.org/x/net@v0.57.0 && \
-      go mod edit -require=golang.org/x/crypto@v0.56.0 && \
+      go mod edit -require=golang.org/x/net@v0.60.0 && \
+      go mod edit -require=golang.org/x/crypto@v0.57.0 && \
       go mod edit -require=google.golang.org/grpc@v${BUILDKIT_GRPC_VERSION} && \
-      go mod download github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} google.golang.org/grpc@v${BUILDKIT_GRPC_VERSION} golang.org/x/crypto@v0.56.0 && \
-      archive_module="$(go env GOMODCACHE)/github.com/moby/go-archive@v${GO_ARCHIVE_VERSION}" && \
-      grpc_module="$(go env GOMODCACHE)/google.golang.org/grpc@v${BUILDKIT_GRPC_VERSION}" && \
-      crypto_module="$(go env GOMODCACHE)/golang.org/x/crypto@v0.56.0" && \
-      rm -rf vendor/github.com/moby/go-archive && \
-      rm -rf vendor/google.golang.org/grpc && \
-      rm -rf vendor/golang.org/x/crypto && \
-      cp -a "${archive_module}" vendor/github.com/moby/go-archive && \
-      cp -a "${grpc_module}" vendor/google.golang.org/grpc && \
-      cp -a "${crypto_module}" vendor/golang.org/x/crypto && \
-      sed -i \
-        -e "s#github.com/moby/go-archive v0.2.0#github.com/moby/go-archive v${GO_ARCHIVE_VERSION}#" \
-        -e "s#golang.org/x/crypto v0.54.0#golang.org/x/crypto v0.56.0#" \
-        -e "s#google.golang.org/grpc v1.82.1#google.golang.org/grpc v${BUILDKIT_GRPC_VERSION}#" \
-        vendor/modules.txt && \
+      go mod tidy && \
+      go mod vendor && \
       go test -mod=vendor ./frontend/gateway -run '^TestServeWaitsForColdFrontend$' -count=1 && \
       BUILDKIT_LDFLAGS="-X github.com/moby/buildkit/version.Version=v${BUILDKIT_VERSION} -X github.com/moby/buildkit/version.Revision=${BUILDKIT_REVISION} -X github.com/moby/buildkit/version.Package=github.com/moby/buildkit" && \
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
