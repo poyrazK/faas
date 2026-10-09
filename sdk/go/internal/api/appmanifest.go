@@ -88,6 +88,7 @@ type AppManifest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
 	// StartupDeadlineS is the time-to-ready bound. Zero uses the plan default.
 	StartupDeadlineS int `json:"startup_deadline_s,omitempty"`
 	// MaxRetries is the consecutive restart-attempt bound. Zero uses the plan

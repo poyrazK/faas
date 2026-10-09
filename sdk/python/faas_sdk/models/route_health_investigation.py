@@ -43,7 +43,8 @@ class RouteHealthInvestigation:
     """Exact configured route and signal, optionally scoped to a recorded customer identity."""
     report: RouteHealthReport
     """Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry
-    provenance."""
+    provenance. When the app's automatic profile policy is enabled, profile_signal adds an ephemeral report-only
+    comparison for an active canary; it never affects canary advancement or rollback and is not persisted."""
     finding: RouteHealthFinding
     """Combined verdict and both closed-window evidence records for one selected critical route."""
     status: RouteHealthInvestigationStatus

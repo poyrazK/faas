@@ -286,6 +286,9 @@ func boot() error {
 	if err != nil {
 		return err
 	}
+	if err := startProfileBridge(manifest.Profiling, slog.Default()); err != nil {
+		slog.Default().Warn("profile bridge unavailable", "err", err)
+	}
 	if manifest.AfterRestore != nil {
 		afterRestore.Store(&afterRestoreRuntime{hook: *manifest.AfterRestore, port: manifest.EffectivePort()})
 	}
@@ -479,6 +482,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
+	env = stampProfileEnv(env, m.Profiling)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = StampRestoreReseedEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)

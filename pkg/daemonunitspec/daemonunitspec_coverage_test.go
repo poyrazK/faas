@@ -436,7 +436,7 @@ func TestOptionalRegistry_ExplicitlyConfiguredDataPlanes(t *testing.T) {
 
 // --- Registry invariants --------------------------------------------
 
-func TestRegistry_OnlyOneBestEffort(t *testing.T) {
+func TestRegistry_OptionalDaemonsAreBestEffort(t *testing.T) {
 	// Pin the Critical-vs-best-effort split: only imaged is
 	// best-effort (the dep that pre-dates the ADR-110 builderd
 	// addition). Adding a second best-effort daemon must surface
@@ -447,8 +447,8 @@ func TestRegistry_OnlyOneBestEffort(t *testing.T) {
 			best = append(best, e.Name)
 		}
 	}
-	if len(best) != 1 || best[0] != "imaged" {
-		t.Errorf("best-effort daemons = %v, want [imaged]", best)
+	if len(best) != 2 || best[0] != "imaged" || best[1] != "profiled" {
+		t.Errorf("best-effort daemons = %v, want [imaged profiled]", best)
 	}
 }
 

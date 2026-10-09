@@ -16303,3 +16303,33 @@ WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uui
       (r.revision,r.created_at,r.operation_id,r.id)>
       (sqlc.narg(after_revision)::bigint,sqlc.narg(after_published_at)::timestamptz,sqlc.narg(after_operation_id)::uuid,sqlc.narg(after_id)::uuid))
 ORDER BY r.revision,r.created_at,r.operation_id,r.id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ReadProfileAlertOwner :one
+SELECT slug FROM apps WHERE id=sqlc.arg(app_id)::text::uuid
+ AND account_id=sqlc.arg(account_id)::text::uuid AND status <> 'deleted';
+
+-- name: ReadProfileAlertState :one
+SELECT state FROM profile_route_alert_state WHERE context_key=sqlc.arg(context_key)::text
+ AND app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: WriteProfileAlertState :exec
+INSERT INTO profile_route_alert_state(context_key,app_id,account_id,deployment_id,state,updated_at)
+VALUES(sqlc.arg(context_key)::text,sqlc.arg(app_id)::text::uuid,sqlc.arg(account_id)::text::uuid,
+ sqlc.arg(deployment_id)::text::uuid,sqlc.arg(state)::jsonb,sqlc.arg(updated_at)::timestamptz)
+ON CONFLICT(context_key) DO UPDATE SET state=EXCLUDED.state,updated_at=EXCLUDED.updated_at;
+
+-- name: EnqueueProfileAlertNotification :exec
+WITH recipients AS (
+ SELECT array_agg(id ORDER BY id) AS ids FROM app_webhooks
+ WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND scope='app' AND enabled
+ AND (cardinality(event_filter)=0 OR sqlc.arg(event)::text=ANY(event_filter))
+)
+INSERT INTO app_webhook_event_outbox(account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+SELECT sqlc.arg(account_id)::text::uuid,sqlc.arg(app_id)::text::uuid,sqlc.arg(event)::text,
+ sqlc.arg(source_id)::text::uuid,sqlc.arg(payload)::jsonb,ids
+FROM recipients WHERE cardinality(ids)>0 ON CONFLICT(event,source_id) DO NOTHING;
+
+-- name: ReadProfileAlertDeploymentScope :one
+SELECT d.scope::text FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=sqlc.arg(deployment_id)::text::uuid AND a.id=sqlc.arg(app_id)::text::uuid
+ AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted';

@@ -12619,7 +12619,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'app.health.changed'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -20465,6 +20465,139 @@ CREATE VIEW public.production_dead_letter_events AS
 
 
 --
+-- Name: profile_canary_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_canary_checks (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    canary_step integer NOT NULL,
+    canary_step_started_at timestamp with time zone NOT NULL,
+    policy_revision bigint NOT NULL,
+    data jsonb NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT profile_canary_checks_attempts_check CHECK (((attempts >= 0) AND (attempts <= 5))),
+    CONSTRAINT profile_canary_checks_canary_step_check CHECK ((canary_step >= 0)),
+    CONSTRAINT profile_canary_checks_check CHECK (((status = 'running'::text) = ((lease_token IS NOT NULL) AND (lease_until IS NOT NULL)))),
+    CONSTRAINT profile_canary_checks_check1 CHECK (((status = ANY (ARRAY['queued'::text, 'running'::text])) = ((completed_at IS NULL) AND (next_attempt_at IS NOT NULL)))),
+    CONSTRAINT profile_canary_checks_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 98304))),
+    CONSTRAINT profile_canary_checks_policy_revision_check CHECK (((policy_revision >= 1) AND (policy_revision <= '9007199254740991'::bigint))),
+    CONSTRAINT profile_canary_checks_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'regressed'::text, 'no_regression_detected'::text, 'inconclusive'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: profile_deployment_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_deployment_checks (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    policy_revision bigint NOT NULL,
+    data jsonb NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    investigation_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT profile_deployment_checks_attempts_check CHECK (((attempts >= 0) AND (attempts <= 5))),
+    CONSTRAINT profile_deployment_checks_check CHECK (((status = 'running'::text) = ((lease_token IS NOT NULL) AND (lease_until IS NOT NULL)))),
+    CONSTRAINT profile_deployment_checks_check1 CHECK (((status = ANY (ARRAY['queued'::text, 'running'::text])) = ((completed_at IS NULL) AND (next_attempt_at IS NOT NULL)))),
+    CONSTRAINT profile_deployment_checks_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 8192))),
+    CONSTRAINT profile_deployment_checks_policy_revision_check CHECK (((policy_revision >= 1) AND (policy_revision <= '9007199254740991'::bigint))),
+    CONSTRAINT profile_deployment_checks_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'regressed'::text, 'no_regression_detected'::text, 'inconclusive'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: profile_deployment_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_deployment_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    enabled boolean NOT NULL,
+    config jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT profile_deployment_policies_config_check CHECK (((jsonb_typeof(config) = 'object'::text) AND (octet_length((config)::text) <= 8192))),
+    CONSTRAINT profile_deployment_policies_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: profile_investigations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_investigations (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    investigation jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    assessment jsonb,
+    CONSTRAINT profile_investigations_assessment_check CHECK (((assessment IS NULL) OR ((jsonb_typeof(assessment) = 'object'::text) AND ((assessment ->> 'status'::text) IS NOT NULL) AND ((assessment ->> 'status'::text) = ANY (ARRAY['regressed'::text, 'no_regression_detected'::text, 'inconclusive'::text])) AND (octet_length((assessment)::text) <= 131072)))),
+    CONSTRAINT profile_investigations_investigation_check CHECK (((jsonb_typeof(investigation) = 'object'::text) AND (octet_length((investigation)::text) <= 131072))),
+    CONSTRAINT profile_investigations_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: profile_periodic_monitors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_periodic_monitors (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    policy_revision bigint NOT NULL,
+    route text NOT NULL,
+    data jsonb NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT profile_periodic_monitors_attempts_check CHECK (((attempts >= 0) AND (attempts <= 6))),
+    CONSTRAINT profile_periodic_monitors_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT profile_periodic_monitors_data_check CHECK (((jsonb_typeof(data) = 'object'::text) AND (octet_length((data)::text) <= 262144))),
+    CONSTRAINT profile_periodic_monitors_policy_revision_check CHECK (((policy_revision >= 1) AND (policy_revision <= '9007199254740991'::bigint))),
+    CONSTRAINT profile_periodic_monitors_route_check CHECK ((length(route) > 0))
+);
+
+
+--
+-- Name: profile_route_alert_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_route_alert_state (
+    context_key text NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    state jsonb NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT profile_route_alert_state_context_key_check CHECK ((length(context_key) = 64))
+);
+
+
+--
 -- Name: project_environment_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -28178,6 +28311,62 @@ ALTER TABLE ONLY public.private_networks
 
 
 --
+-- Name: profile_canary_checks profile_canary_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_canary_checks
+    ADD CONSTRAINT profile_canary_checks_pkey PRIMARY KEY (deployment_id, canary_step, canary_step_started_at, policy_revision);
+
+
+--
+-- Name: profile_deployment_checks profile_deployment_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_checks
+    ADD CONSTRAINT profile_deployment_checks_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: profile_deployment_policies profile_deployment_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_policies
+    ADD CONSTRAINT profile_deployment_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: profile_investigations profile_investigations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_investigations
+    ADD CONSTRAINT profile_investigations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: profile_periodic_monitors profile_periodic_monitors_deployment_id_policy_revision_rou_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_periodic_monitors
+    ADD CONSTRAINT profile_periodic_monitors_deployment_id_policy_revision_rou_key UNIQUE (deployment_id, policy_revision, route);
+
+
+--
+-- Name: profile_periodic_monitors profile_periodic_monitors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_periodic_monitors
+    ADD CONSTRAINT profile_periodic_monitors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: profile_route_alert_state profile_route_alert_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_route_alert_state
+    ADD CONSTRAINT profile_route_alert_state_pkey PRIMARY KEY (context_key);
+
+
+--
 -- Name: project_environment_approvals project_environment_approvals_approval_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31762,6 +31951,13 @@ CREATE INDEX deployments_pending_priority_idx ON public.deployments USING btree 
 
 
 --
+-- Name: deployments_profile_completed_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_profile_completed_idx ON public.deployments USING btree (app_id, scope, rollout_completed_at DESC, id DESC) WHERE ((status = ANY (ARRAY['live'::text, 'superseded'::text])) AND (rollout_state = 'complete'::text) AND (deleted_at IS NULL));
+
+
+--
 -- Name: deployments_rollback_on_5xx_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -34440,6 +34636,69 @@ CREATE INDEX private_network_peerings_account_idx ON public.private_network_peer
 --
 
 CREATE INDEX private_networks_account_idx ON public.private_networks USING btree (account_id, name, id);
+
+
+--
+-- Name: profile_canary_checks_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_canary_checks_due_idx ON public.profile_canary_checks USING btree (next_attempt_at, created_at, deployment_id) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: profile_canary_checks_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_canary_checks_retention_idx ON public.profile_canary_checks USING btree (completed_at, deployment_id) WHERE (completed_at IS NOT NULL);
+
+
+--
+-- Name: profile_deployment_checks_app_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_deployment_checks_app_created_idx ON public.profile_deployment_checks USING btree (app_id, created_at DESC, deployment_id);
+
+
+--
+-- Name: profile_deployment_checks_completed_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_deployment_checks_completed_idx ON public.profile_deployment_checks USING btree (completed_at, deployment_id) WHERE (completed_at IS NOT NULL);
+
+
+--
+-- Name: profile_deployment_checks_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_deployment_checks_due_idx ON public.profile_deployment_checks USING btree (next_attempt_at, deployment_id) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: profile_investigations_app_updated_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_investigations_app_updated_idx ON public.profile_investigations USING btree (app_id, updated_at DESC, id);
+
+
+--
+-- Name: profile_periodic_monitors_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_periodic_monitors_app_idx ON public.profile_periodic_monitors USING btree (app_id, updated_at DESC, id);
+
+
+--
+-- Name: profile_periodic_monitors_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_periodic_monitors_due_idx ON public.profile_periodic_monitors USING btree (next_attempt_at, id);
+
+
+--
+-- Name: profile_route_alert_state_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_route_alert_state_app_idx ON public.profile_route_alert_state USING btree (app_id);
 
 
 --
@@ -44346,6 +44605,142 @@ ALTER TABLE ONLY public.private_network_peerings
 
 ALTER TABLE ONLY public.private_networks
     ADD CONSTRAINT private_networks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_canary_checks profile_canary_checks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_canary_checks
+    ADD CONSTRAINT profile_canary_checks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_canary_checks profile_canary_checks_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_canary_checks
+    ADD CONSTRAINT profile_canary_checks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_canary_checks profile_canary_checks_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_canary_checks
+    ADD CONSTRAINT profile_canary_checks_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_deployment_checks profile_deployment_checks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_checks
+    ADD CONSTRAINT profile_deployment_checks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_deployment_checks profile_deployment_checks_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_checks
+    ADD CONSTRAINT profile_deployment_checks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_deployment_checks profile_deployment_checks_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_checks
+    ADD CONSTRAINT profile_deployment_checks_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_deployment_checks profile_deployment_checks_investigation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_checks
+    ADD CONSTRAINT profile_deployment_checks_investigation_id_fkey FOREIGN KEY (investigation_id) REFERENCES public.profile_investigations(id) ON DELETE SET NULL;
+
+
+--
+-- Name: profile_deployment_policies profile_deployment_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_policies
+    ADD CONSTRAINT profile_deployment_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_deployment_policies profile_deployment_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_deployment_policies
+    ADD CONSTRAINT profile_deployment_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_investigations profile_investigations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_investigations
+    ADD CONSTRAINT profile_investigations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_investigations profile_investigations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_investigations
+    ADD CONSTRAINT profile_investigations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_periodic_monitors profile_periodic_monitors_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_periodic_monitors
+    ADD CONSTRAINT profile_periodic_monitors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_periodic_monitors profile_periodic_monitors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_periodic_monitors
+    ADD CONSTRAINT profile_periodic_monitors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_periodic_monitors profile_periodic_monitors_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_periodic_monitors
+    ADD CONSTRAINT profile_periodic_monitors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_route_alert_state profile_route_alert_state_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_route_alert_state
+    ADD CONSTRAINT profile_route_alert_state_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_route_alert_state profile_route_alert_state_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_route_alert_state
+    ADD CONSTRAINT profile_route_alert_state_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_route_alert_state profile_route_alert_state_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_route_alert_state
+    ADD CONSTRAINT profile_route_alert_state_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

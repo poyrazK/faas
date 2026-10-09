@@ -81,6 +81,7 @@ func TestRestartOrder_MatchesExpected(t *testing.T) {
 		"githubd",           // After[apid] — Registry idx 7
 		"outboundd",         // After[apid] — shared third-party admission gateway
 		"imaged",            // After[vmmd] — Registry idx 9
+		"profiled",          // After[vmmd], diagnostics-only
 		"builderd",          // After[vmmd] — Registry idx 10, vmmd has popped
 	}
 	if len(got) != len(want) {

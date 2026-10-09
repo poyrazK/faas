@@ -1,4 +1,4 @@
-# ADR-818: GCS conditional PUT capabilities
+# ADR-829: GCS conditional PUT capabilities
 
 Date: 2026-10-08
 Status: Accepted

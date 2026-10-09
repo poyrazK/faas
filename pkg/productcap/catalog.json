@@ -57,6 +57,17 @@
       "acceptance_test": "pkg/oci/container_contract_test.go::TestContainerDeploymentContract"
     },
     {
+      "id": "continuous-profiling",
+      "name": "Continuous CPU profiling",
+      "category": "observability",
+      "description": "Attribute sampled application CPU time to functions and call paths, compare deployment capture windows, save investigations with authenticated sharing and expiry status, check saved comparisons for coverage-aware CPU regressions, and opt in to automatic checks after deployments with saved results.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/profiling",
+      "operator_flag": "FAAS_PROFILING_ENABLED",
+      "acceptance_test": "pkg/profiling/profile_test.go::TestCPUProfileDeploymentComparison"
+    },
+    {
       "id": "custom-domains",
       "name": "Custom domains",
       "category": "edge",

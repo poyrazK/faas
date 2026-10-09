@@ -5288,6 +5288,85 @@ type ProductionInvocationWork struct {
 	EnvironmentID            pgtype.UUID
 }
 
+type ProfileCanaryCheck struct {
+	DeploymentID        pgtype.UUID
+	AppID               pgtype.UUID
+	AccountID           pgtype.UUID
+	CanaryStep          int32
+	CanaryStepStartedAt pgtype.Timestamptz
+	PolicyRevision      int64
+	Data                []byte
+	Status              string
+	Reason              string
+	Attempts            int32
+	NextAttemptAt       pgtype.Timestamptz
+	LeaseToken          pgtype.UUID
+	LeaseUntil          pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	CompletedAt         pgtype.Timestamptz
+}
+
+type ProfileDeploymentCheck struct {
+	DeploymentID    pgtype.UUID
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	PolicyRevision  int64
+	Data            []byte
+	Status          string
+	Reason          string
+	Attempts        int32
+	NextAttemptAt   pgtype.Timestamptz
+	LeaseToken      pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	InvestigationID pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+	CompletedAt     pgtype.Timestamptz
+}
+
+type ProfileDeploymentPolicy struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Revision  int64
+	Enabled   bool
+	Config    []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
+type ProfileInvestigation struct {
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	Revision      int64
+	Investigation []byte
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	Assessment    []byte
+}
+
+type ProfilePeriodicMonitor struct {
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	DeploymentID   pgtype.UUID
+	PolicyRevision int64
+	Route          string
+	Data           []byte
+	NextAttemptAt  pgtype.Timestamptz
+	Attempts       int32
+	LeaseToken     pgtype.UUID
+	LeaseUntil     pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type ProfileRouteAlertState struct {
+	ContextKey   string
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	DeploymentID pgtype.UUID
+	State        []byte
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type Project struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
