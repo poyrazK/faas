@@ -121,9 +121,9 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    # Full cold-cache lint exceeded twenty minutes with bounded memory.
+    # Checkout/setup plus cold-cache Go 1.26 analysis exhausted sixty minutes.
     # Leave time for analysis, cold builds and the remaining policy gates.
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
         with:
@@ -197,10 +197,10 @@ jobs:
           GOMAXPROCS: 2
         with:
           version: v2.10.1
-          # The expanded repository exceeded the twenty-minute cold-cache
-          # deadline under these memory bounds. Retain every rule and give
-          # the complete analysis a bounded thirty-minute deadline.
-          args: --timeout=30m
+          # Go 1.26 analysis exceeded forty minutes under these memory bounds.
+          # Retain every rule and allow a bounded hour for cold-cache analysis,
+          # leaving the job budget for checkout, setup, and daemon builds.
+          args: --timeout=60m
           # The action's own cache is keyed per 7-day interval and never re-saved
           # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
           skip-cache: true
@@ -2290,8 +2290,26 @@ jobs:
         # here, matching the previous full suite; concurrent apply/replay
         # still run with the race detector in migration-checks above.
         run: |
+          set -euo pipefail
           MIGRATION_RUN=$(go run ./scripts/ci/e2eshard -package=./migrations -all-tests -shards=4 -shard=${{ matrix.shard }})
-          go test -count=1 -timeout=60m -run="$MIGRATION_RUN" ./migrations
+          migration_log="migration-results/shard-${{ matrix.shard }}.log"
+          if go test -count=1 -timeout=60m -run="$MIGRATION_RUN" ./migrations 2>&1 | tee "$migration_log"; then
+            exit 0
+          fi
+          python3 - "$migration_log" <<'PY'
+          import pathlib
+          import sys
+
+          lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines()
+          failures = [i for i, line in enumerate(lines) if line.startswith("--- FAIL:")]
+          if not failures:
+              failures = [max(0, len(lines) - 12)]
+          for index in failures:
+              message = "\n".join(lines[index:index + 12])
+              message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error::{message}")
+          PY
+          exit 1
       - name: save Go build + test cache
         # One writer per shared key; see unit-tests-state.
         if: always() && github.event_name == 'push' && matrix.shard == 1
