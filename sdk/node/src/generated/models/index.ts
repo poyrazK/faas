@@ -1334,6 +1334,7 @@ export type { RouteHealthInvestigationSide } from './RouteHealthInvestigationSid
 export type { RouteHealthInvestigationWindow } from './RouteHealthInvestigationWindow.js';
 export type { RouteHealthLatencyDiagnostics } from './RouteHealthLatencyDiagnostics.js';
 export type { RouteHealthLatencySample } from './RouteHealthLatencySample.js';
+export type { RouteHealthProbe } from './RouteHealthProbe.js';
 export type { RouteHealthReport } from './RouteHealthReport.js';
 export type { RouteHealthRoute } from './RouteHealthRoute.js';
 export type { RouteHealthStatusCounts } from './RouteHealthStatusCounts.js';

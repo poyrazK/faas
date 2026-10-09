@@ -2476,6 +2476,7 @@ from .route_health_investigation_window import RouteHealthInvestigationWindow
 from .route_health_latency_diagnostics import RouteHealthLatencyDiagnostics
 from .route_health_latency_diagnostics_coverage import RouteHealthLatencyDiagnosticsCoverage
 from .route_health_latency_sample import RouteHealthLatencySample
+from .route_health_probe import RouteHealthProbe
 from .route_health_report import RouteHealthReport
 from .route_health_report_client_error_status import RouteHealthReportClientErrorStatus
 from .route_health_report_coverage import RouteHealthReportCoverage
@@ -5457,6 +5458,7 @@ __all__ = (
     "RouteHealthLatencyDiagnostics",
     "RouteHealthLatencyDiagnosticsCoverage",
     "RouteHealthLatencySample",
+    "RouteHealthProbe",
     "RouteHealthReport",
     "RouteHealthReportClientErrorStatus",
     "RouteHealthReportCoverage",

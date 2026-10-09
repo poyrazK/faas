@@ -186,6 +186,32 @@ eight minutes of a stage. A regressed one-minute window is never pooled away.
 Customer cohorts, watched status codes and investigations keep one-minute
 windows; production monitoring pools the same way for its budgets.
 
+### Routes without organic traffic: synthetic probes
+
+A GET or HEAD selector can opt into synthetic probes for routes that get no
+traffic during a canary. Give a concrete path matching the selector:
+
+```json
+[
+  {"method": "GET", "path": "/reports/{id}", "probe": {"path": "/reports/7"}}
+]
+```
+
+While a canary is in flight and the route's organic evidence stays sparse,
+Gregale sends 10 bodyless requests per minute to the candidate and to the
+stable deployment. Probes keep your auth gates: a route that rejects anonymous
+requests with 401/403 stays unknown (`probe_unauthenticated`), so probe public
+or read-only routes. Probe requests never appear in request telemetry,
+analytics, customer reach or usage, but they wake the app like any request.
+At most 5 selectors can probe.
+
+When organic evidence (one-minute or pooled) is still sparse, the finding uses
+the probe results, reported as `evidence_window: synthetic` with
+`synthetic_windows`, under the same 5xx thresholds. Probes settle only the 5xx
+signal: a selected latency check still needs organic traffic, although a
+probe-detected regression is reported. Probes run only where the operator has
+enabled them.
+
 A window regresses when the candidate has at least two 5xx responses, a rate
 of at least 5%, at least three times stable's rate, and at least five percentage
 points above stable. Two regressing windows confirm a regressed route. Two

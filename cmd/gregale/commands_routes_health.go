@@ -207,14 +207,17 @@ func validateRouteHealthReport(r api.RouteHealthReport, deployment string) error
 		if !slices.Contains([]string{"healthy", "regressed", "unknown"}, f.Status) || len(f.Windows) != api.RouteHealthWindows {
 			return errors.New("invalid route verdict")
 		}
-		if len(f.PooledWindows) > 0 {
-			pooled, ok := routehealth.PooledWindows(r.ObservationAnchor, r.CheckedAt)
-			if !ok || len(f.PooledWindows) != len(pooled) {
-				return errors.New("invalid pooled observation windows")
+		for _, extra := range [][]api.RouteHealthWindowEvidence{f.PooledWindows, f.SyntheticWindows} {
+			if len(extra) == 0 {
+				continue
 			}
-			for i, w := range f.PooledWindows {
-				if !w.Start.Equal(pooled[i].Start) || !w.End.Equal(pooled[i].End) || w.Candidate.Requests < 0 || w.Stable.Requests < 0 {
-					return errors.New("invalid pooled observation window")
+			pooled, ok := routehealth.PooledWindows(r.ObservationAnchor, r.CheckedAt)
+			if !ok || len(extra) != len(pooled) {
+				return errors.New("invalid pooled or synthetic observation windows")
+			}
+			for i, w := range extra {
+				if !w.Start.Equal(pooled[i].Start) || !w.End.Equal(pooled[i].End) || w.Candidate.Requests < 0 || w.Stable.Requests < 0 || w.Candidate.Unauthenticated < 0 || w.Stable.Unauthenticated < 0 {
+					return errors.New("invalid pooled or synthetic observation window")
 				}
 			}
 		}
@@ -266,6 +269,12 @@ func renderRouteHealthReport(r api.RouteHealthReport, appSlug string) {
 	_, _ = fmt.Fprintf(osStdout, "Route health: %s (%s, revision %d)\nCandidate: %s (%s)\nStable: %s (%s)\nCoverage: observed telemetry only; full capture unknown\n", r.Status, r.Mode, r.Revision, r.DeploymentID, previewReportText(r.CandidateCommitSHA), r.StableDeploymentID, previewReportText(r.StableCommitSHA))
 	for _, f := range r.Routes {
 		_, _ = fmt.Fprintf(osStdout, "\n%s %s: %s\n", f.Method, previewReportText(f.Path), f.Status)
+		if f.EvidenceWindow == "synthetic" && len(f.SyntheticWindows) > 0 {
+			_, _ = fmt.Fprintf(osStdout, "  No organic traffic: 5xx verdict from synthetic probes over %s of this stage\n", f.SyntheticWindows[len(f.SyntheticWindows)-1].End.Sub(f.SyntheticWindows[0].Start))
+			for _, w := range f.SyntheticWindows {
+				_, _ = fmt.Fprintf(osStdout, "  probes %s–%s candidate %d/%d 5xx, stable %d/%d: %s (%s)\n", w.Start.Format("15:04:05Z"), w.End.Format("15:04:05Z"), w.Candidate.ServerErrors, w.Candidate.Requests, w.Stable.ServerErrors, w.Stable.Requests, w.Status, previewReportText(w.Reason))
+			}
+		}
 		if f.EvidenceWindow == "pooled" && len(f.PooledWindows) > 0 {
 			_, _ = fmt.Fprintf(osStdout, "  Low traffic: verdict pooled over %s of this stage in two halves\n", f.PooledWindows[len(f.PooledWindows)-1].End.Sub(f.PooledWindows[0].Start))
 			for _, w := range f.PooledWindows {
@@ -369,6 +378,7 @@ func validateRouteHealthVerdicts(r api.RouteHealthReport) error {
 	for _, f := range r.Routes {
 		claimed := f
 		claimed.PooledWindows = slices.Clone(f.PooledWindows)
+		claimed.SyntheticWindows = slices.Clone(f.SyntheticWindows)
 		claimedAnchor := r.ObservationAnchor
 		if claimedAnchor == nil && len(f.Windows) > 0 {
 			claimedAnchor = &f.Windows[0].Start

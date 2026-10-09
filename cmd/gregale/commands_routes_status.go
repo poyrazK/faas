@@ -214,8 +214,8 @@ func routeStatusCanary(c *routestatus.Canary) string {
 	if c.Status != "" {
 		out += " " + c.Status
 	}
-	if c.Evidence == "pooled" {
-		out += " (pooled)"
+	if c.Evidence != "" {
+		out += " (" + c.Evidence + ")"
 	}
 	return out
 }

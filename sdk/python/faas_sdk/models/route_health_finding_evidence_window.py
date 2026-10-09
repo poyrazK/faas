@@ -1,9 +1,10 @@
 from typing import Literal
 
-RouteHealthFindingEvidenceWindow = Literal["pooled"]
+RouteHealthFindingEvidenceWindow = Literal["pooled", "synthetic"]
 
 ROUTE_HEALTH_FINDING_EVIDENCE_WINDOW_VALUES: set[RouteHealthFindingEvidenceWindow] = {
     "pooled",
+    "synthetic",
 }
 
 
