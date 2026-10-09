@@ -1186,3 +1186,13 @@ Guarded worker draining and retirement use `POST /v1/apps/{slug}/park/conditiona
 which requires `expected_deployment_id`. Older control planes reject this route;
 the release client stops and never falls back to unconditional parking. Upgrade
 the control plane before retrying the pending release or retirement.
+
+`GET /v1/capabilities` advertises `conditional_parking` only when the serving
+control plane has an atomic parking backend. Missing or false support blocks
+Task releases and candidate quarantine/retirement before their Node gates start.
+The adapter repeats the check before deployment, promotion/draining, and
+quarantine checks. `gregale mcp doctor --hosting` includes a `conditional_parking`
+check; failed discovery is unknown readiness and missing support includes upgrade
+guidance. Upgrade all control-plane instances before retrying. Capability reports
+are preflight signals: mixed-version fleets still rely on the dedicated conditional
+parking endpoint and never fall back to ordinary parking.

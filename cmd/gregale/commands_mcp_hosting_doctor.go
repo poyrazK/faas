@@ -25,6 +25,12 @@ func printMCPHostingDoctor(status mcpTasksStatusResult, preflightPath string) in
 			report.OK = false
 		}
 	}
+	if len(status.ControlPlaneChecks) == 0 {
+		add("conditional_parking", "unknown", "Verify control-plane compatibility with gregale mcp doctor --hosting before release")
+	}
+	for _, check := range status.ControlPlaneChecks {
+		add(check.Name, check.Status, check.Detail)
+	}
 	if status.Configured {
 		add("scaling_policy", "passed", "Task scaling policy matches the deployment manifest")
 	} else {

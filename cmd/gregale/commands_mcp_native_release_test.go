@@ -114,6 +114,8 @@ func TestMCPNativeReleaseResumesPinnedDeploymentWithoutSubmitting(t *testing.T) 
 			submissions++
 		}
 		switch r.URL.Path {
+		case "/v1/capabilities":
+			json.NewEncoder(w).Encode(api.CapabilitiesResponse{ConditionalParking: true})
 		case "/v1/deployments/pinned":
 			json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "pinned", AppID: "app", Status: statusLive})
 		case "/v1/apps/worker":
@@ -202,6 +204,8 @@ func TestMCPNativeReleaseHealthAndDrainRecovery(t *testing.T) {
 					stable.TrafficPercent = 100
 				}
 				switch r.URL.Path {
+				case "/v1/capabilities":
+					json.NewEncoder(w).Encode(api.CapabilitiesResponse{ConditionalParking: true})
 				case "/v1/account":
 					json.NewEncoder(w).Encode(api.AccountResponse{Plan: "pro"})
 				case "/v1/apps/worker":
@@ -297,6 +301,8 @@ func TestMCPNativeSubmissionReconciliation(t *testing.T) {
 					t.Errorf("reconciliation wrote to API: %s", r.Method)
 				}
 				switch r.URL.Path {
+				case "/v1/capabilities":
+					json.NewEncoder(w).Encode(api.CapabilitiesResponse{ConditionalParking: true})
 				case "/v1/apps/" + app:
 					json.NewEncoder(w).Encode(api.AppResponse{ID: "owned", Slug: app})
 				case "/v1/apps/" + app + "/deployments":

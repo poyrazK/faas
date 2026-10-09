@@ -294,6 +294,9 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 	if s.Stage == "complete" {
 		return jsonOut(writeJSON(s))
 	}
+	if err := preflightMCPControlPlane(); err != nil {
+		return printErr("MCP control-plane compatibility", err)
+	}
 	if s.PendingSubmission != "" {
 		c, err := authedClient()
 		if err != nil {
@@ -690,6 +693,9 @@ func mcpNativeVerifyEndpoint(ctx context.Context, c *Client, p mcpNativeReleaseP
 }
 
 func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePlan, s *mcpNativeReleaseState, state string) error {
+	if err := requireMCPConditionalParking(ctx, c); err != nil {
+		return err
+	}
 	cfgWeb, err := mcphosting.Load(p.WebPath)
 	if err != nil {
 		return err
@@ -874,6 +880,9 @@ func checkMCPNativeWorkers(ctx context.Context, c *Client, p mcpNativeReleasePla
 }
 
 func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePlan, s *mcpNativeReleaseState, state string) error {
+	if err := requireMCPConditionalParking(ctx, c); err != nil {
+		return err
+	}
 	var input struct {
 		Replacements []string `json:"replacementWorkerIDs"`
 	}

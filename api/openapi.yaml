@@ -37409,6 +37409,10 @@ components:
       type: object
       required: [registry_version, plan, capabilities]
       properties:
+        conditional_parking:
+          type: boolean
+          default: false
+          description: The serving control plane and state backend support atomic deployment-guarded parking. Older servers omit this field, which means unsupported. This is a preflight signal, not a cluster-wide health guarantee; always use the conditional parking endpoint, including in mixed-version fleets.
         registry_version: { type: integer, minimum: 1, description: Version of the embedded product capability catalog. }
         plan: { type: string, enum: [free, hobby, pro, scale] }
         capabilities:

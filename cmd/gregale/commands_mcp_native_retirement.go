@@ -17,6 +17,9 @@ func checkMCPNativeRetirement(ctx context.Context, c *Client, p mcpNativeRelease
 	if s.Stage != "web_restored" && s.Stage != "quarantined" && s.Stage != "retirement_pending" && s.Stage != "worker_retired" {
 		return errors.New("restore web traffic before quarantining candidate workers")
 	}
+	if err := requireMCPConditionalParking(ctx, c); err != nil {
+		return err
+	}
 	current, err := mcpServingDeployment(ctx, c, p.WebApp, "")
 	if err != nil {
 		return err
@@ -103,6 +106,9 @@ func runMCPNativeRetirement(p mcpNativeReleasePlan, s mcpNativeReleaseState, sta
 	}
 	if s.PendingSubmission != "" || len(s.WorkerIDs) == 0 {
 		return printErr("MCP retirement", errors.New("candidate submission and worker IDs must be known"))
+	}
+	if err := preflightMCPControlPlane(); err != nil {
+		return printErr("MCP control-plane compatibility", err)
 	}
 	binary, err := os.Executable()
 	if err != nil {

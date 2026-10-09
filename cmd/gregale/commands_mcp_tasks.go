@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
 
 const (
@@ -180,6 +181,7 @@ type mcpTasksDiagnostic struct {
 }
 
 type mcpTasksStatusResult struct {
+	ControlPlaneChecks     []mcphosting.Check   `json:"-"`
 	WorkerHeartbeatsFresh  bool                 `json:"worker_heartbeats_fresh"`
 	ObserverHeartbeatFresh bool                 `json:"observer_heartbeat_fresh"`
 	Diagnostics            []mcpTasksDiagnostic `json:"diagnostics"`
@@ -275,6 +277,7 @@ func cmdMCPTasksReport(args []string, doctor bool) int {
 	}
 	result.diagnose()
 	if doctor {
+		result.ControlPlaneChecks = []mcphosting.Check{checkMCPConditionalParking(ctx, client)}
 		return printMCPHostingDoctor(result, *preflightPath)
 	}
 	if jsonOutput {

@@ -78,6 +78,8 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 			defer endpoint.Close()
 			control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
+				case "/v1/capabilities":
+					json.NewEncoder(w).Encode(api.CapabilitiesResponse{ConditionalParking: true})
 				case "/v1/apps/web/deployments":
 					json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{{ID: current, AppID: "web-id", Status: statusLive, TrafficPercent: 100}}})
 				case "/v1/apps/web":
@@ -232,6 +234,8 @@ func TestMCPNativeRecoveryInspectionDoesNotConfigureIngress(t *testing.T) {
 			return
 		}
 		switch r.URL.Path {
+		case "/v1/capabilities":
+			json.NewEncoder(w).Encode(api.CapabilitiesResponse{ConditionalParking: true})
 		case "/v1/apps/web/deployments":
 			json.NewEncoder(w).Encode(api.DeploymentListResponse{})
 		case "/v1/apps/observer":
