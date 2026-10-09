@@ -641,6 +641,26 @@ atomic server lock. Pausing prevents future dispatches without canceling running
 tasks. For images, commands, environment variables, schedules, or scripts,
 use `jobs update NAME` with explicit flags.
 
+## Create a batch Job interactively
+
+```sh
+gregale jobs add --interactive
+```
+
+Enter a Job name and container image. Keep the image entrypoint, or enter an
+executable and additional arguments individually (up to 64 command entries).
+Arguments are literal values, without shell splitting or comma parsing; the
+review shows the argument array. This flow accepts nonempty arguments.
+
+Keep server resource defaults, or choose RAM, timeout, parallelism, and retries.
+Review the settings and confirm before creating one batch Job. The server
+validates the image and account plan limits. Creation prepares the image without
+starting a run. The result shows effective resources, image preparation status,
+and a profile-aware inspection command. Once ready, use `jobs run --interactive`.
+
+For recurring schedules, environment variables, empty command arguments,
+custom policies, or scripts, use the explicit CLI or API as appropriate.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

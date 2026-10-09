@@ -175,6 +175,9 @@ func cmdJobsList(args []string) int {
 // defaults + clamps every numeric field; passing 0 lets the plan
 // default win.
 func cmdJobsAdd(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" {
+		return cmdJobsAddInteractive()
+	}
 	fs := newFlagSet("jobs-add", flag.ContinueOnError)
 	image := fs.String("image", "", "OCI image name[:tag | @digest] (required)")
 	command := fs.String("command", "", "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi)")

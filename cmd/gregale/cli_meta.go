@@ -1471,8 +1471,9 @@ var cliCommands = []cliCommand{
 				{Name: "offset", Short: "starting offset (>= 0)", Value: "N"},
 				{Name: "all", Short: "walk every page using --limit and --offset"},
 			}},
-			{Name: "add", Short: "Create a new job", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "image", Value: "REF", Short: "OCI image", Req: true},
+			{Name: "add", Short: "Create a new job", Positionals: []string{"[<name>]"}, Examples: []string{"gregale jobs add --interactive"}, Flags: []cliFlag{
+				{Name: "interactive", Bool: true, Short: "choose a name, image, command, and resources, then confirm creation"},
+				{Name: "image", Value: "REF", Short: "OCI image (required unless interactive)"},
 				{Name: "command", Value: "ARGV", Short: "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi)"},
 				{Name: "ram", Value: "MB", Short: "billable memory in MB (0 = plan default)"},
 				{Name: "timeout", Value: "SECONDS", Short: "per-task wall-clock deadline (0 = plan default)"},

@@ -3640,11 +3640,12 @@ List jobs in this account
 
 Create a new job
 
-`gregale jobs add --image <REF> [--command <ARGV>] [--ram <MB>] [--timeout <SECONDS>] [--parallelism <N>] [--retries <N>] [--schedule <EXPR>] [--timezone <TZ>] [--schedule-policy <JSON>] [--failure-rules <JSON>] <name>`
+`gregale jobs add [--interactive] [--image <REF>] [--command <ARGV>] [--ram <MB>] [--timeout <SECONDS>] [--parallelism <N>] [--retries <N>] [--schedule <EXPR>] [--timezone <TZ>] [--schedule-policy <JSON>] [--failure-rules <JSON>] [<name>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--image <REF>` | OCI image | required |
+| `--interactive` | choose a name, image, command, and resources, then confirm creation |  |
+| `--image <REF>` | OCI image (required unless interactive) |  |
 | `--command <ARGV>` | comma-separated entrypoint (e.g. /bin/sh,-c,echo hi) |  |
 | `--ram <MB>` | billable memory in MB (0 = plan default) |  |
 | `--timeout <SECONDS>` | per-task wall-clock deadline (0 = plan default) |  |
@@ -3654,6 +3655,12 @@ Create a new job
 | `--timezone <TZ>` | IANA timezone for the recurring schedule |  |
 | `--schedule-policy <JSON>` | versioned recurring schedule policy JSON |  |
 | `--failure-rules <JSON>` | versioned exit-code and outcome retry rules JSON |  |
+
+Examples:
+
+```sh
+gregale jobs add --interactive
+```
 
 ### jobs info
 
