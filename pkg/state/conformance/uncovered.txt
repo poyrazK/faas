@@ -266,6 +266,7 @@ LatestSupersededDeployment
 ListAPIConsumersForApp
 ListAPIKeys
 ListAccountCredits
+ListAccountTraceLogEvents
 ListActiveRegressionsByApp
 ListAlertDeliveriesForRule
 ListAlertPresets
@@ -375,6 +376,7 @@ ListOwnedCronsByNodeID
 ListPendingTenantHostnames
 ListProjectsForAccount
 ListRecentEventsForAccount
+ListRequestTelemetryByAccountTrace
 ListRequestTelemetryByApp
 ListRequestTelemetryByPlatformTenant
 ListRequestTelemetryDependencySpans

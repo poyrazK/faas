@@ -39,11 +39,16 @@ GLOBAL_INPUTS = {
 # plus the mega history suite.
 EXCLUDED_TEST_PREFIXES = ("cmd/e2e", "migrations")
 
+# Packages too slow under -race for one shard's budget. Instead of being
+# assigned whole, each one's tests are split by name across every shard
+# (scripts/ci/e2eshard, as the mega tier's state shards do). `split` lists
+# the ones a change selects.
+SPLIT_PACKAGES = ("pkg/state",)
+
 # Relative cost of a package's race test run, used only to balance shards.
 # Unlisted packages weigh 1. Measured from the mega tier's shard timings.
 WEIGHTS = {
     "cmd/apid": 40,
-    "pkg/state": 30,
     "cmd/gregale": 8,
     "pkg/e2etest": 6,
     "pkg/sched": 5,
@@ -106,6 +111,7 @@ def select(paths, pkgs):
 def shard(dirs, index, count):
     """Longest-processing-time assignment: deterministic and roughly balanced."""
     bins = [[0, []] for _ in range(count)]
+    dirs = [d for d in dirs if d not in SPLIT_PACKAGES]
     for d in sorted(dirs, key=lambda d: (-WEIGHTS.get(d, 1), d)):
         target = min(range(count), key=lambda b: (bins[b][0], b))
         bins[target][0] += WEIGHTS.get(d, 1)
@@ -115,7 +121,7 @@ def shard(dirs, index, count):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("kind", choices=["changed", "test", "summary"])
+    ap.add_argument("kind", choices=["changed", "test", "split", "summary"])
     ap.add_argument("--shard", type=int, default=1)
     ap.add_argument("--shards", type=int, default=1)
     args = ap.parse_args()
@@ -128,7 +134,12 @@ def main():
         print(f"changed packages ({len(changed)}): {' '.join(changed) or '<none>'}")
         print(f"test packages ({len(test)}): {' '.join(test) or '<none>'}")
         return
-    dirs = changed if args.kind == "changed" else shard(test, args.shard, args.shards)
+    if args.kind == "changed":
+        dirs = changed
+    elif args.kind == "split":
+        dirs = [d for d in test if d in SPLIT_PACKAGES]
+    else:
+        dirs = shard(test, args.shard, args.shards)
     print(" ".join("./" + d if d != "." else "." for d in dirs))
 
 
