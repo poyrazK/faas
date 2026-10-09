@@ -3676,17 +3676,18 @@ paths:
     get:
       tags: [events]
       operationId: getEventBacklog
-      summary: Discover waiting application event recipients and consumer counts.
+      summary: Discover waiting event consumers and recipient counts.
       description: |
         Requires apps:read or admin. Reads only the authenticated account's
-        captured application recipients in pending or processing routing state,
-        in both whole-event and independent-recipient routing modes. Includes
-        capacity waits before an invocation exists; excludes settled routing and
-        handler execution queues. Returns metadata and receipt/history links,
+        captured application and workflow recipients plus added backfill
+        recipients in pending or processing routing state, in both whole-event
+        and independent-recipient routing modes. Includes capacity waits before
+        an invocation exists; excludes settled routing and handler execution
+        queues. Returns consumer kind, origin, wait metadata and receipt/history links,
         never envelope data. Consumers count all matching recipients, independently
         of either bounded page. Age is measured from durable event acceptance.
         Recipient pages are oldest accepted first, then receipt and subscription
-        identity; consumer pages use app and subscription identity. Pass each
+        identity; consumer pages use app, subscription and consumer kind. Pass each
         continuation cursor with the same filters; page sizes may change. Cursors
         anchor window_at and its age cutoff, while membership and counts remain
         live on every request. Recovered rows disappear, including cursor rows.
@@ -3705,12 +3706,24 @@ paths:
           schema: { type: string, maxLength: 256 }
         - in: query
           name: subscription_id
-          description: Captured application recipient identifier.
+          description: Captured or backfilled recipient identifier.
           schema: { type: string, maxLength: 256 }
+        - in: query
+          name: consumer_kind
+          description: Restrict to application subscriptions or workflow starts.
+          schema: { type: string, enum: [application, workflow] }
+        - in: query
+          name: origin
+          description: Restrict to recipients captured at acceptance or added by historical backfill.
+          schema: { type: string, enum: [acceptance, backfill] }
         - in: query
           name: state
           description: Restrict current routing state.
           schema: { type: string, enum: [pending, processing] }
+        - in: query
+          name: waiting_reason
+          description: Restrict to the currently observed waiting reason before pagination and aggregation.
+          schema: { type: string, enum: [circuit_open, circuit_probe_wait, circuit_recovery_rate_limited, subscription_paused, subscription_rate_limited, ordering_blocked, capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, workflow_routing, ready] }
         - in: query
           name: capacity_scope
           description: Restrict currently pending waits by the last recorded capacity scope.
@@ -3884,6 +3897,42 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '500': { $ref: '#/components/responses/ServerError' }
+
+  /v1/event-schemas:preview-rollout:
+    post:
+      tags: [events]
+      operationId: previewEventSchemaRollout
+      summary: Preview schema version consumer coverage and payload validation.
+      description: 'Read-only. Requires apps:read or admin. Supply a proposed Draft 2020-12 schema, or omit schema to check a registered version. Reports enabled application consumers whose source/type patterns match; version acceptance does not evaluate content filters or guarantee delivery. Optional retained checks scan the newest 1000 account receipts within the acceptance-time range, validate at most 100 matching payloads and at most 4 MiB, and never certify schema compatibility or complete history. No schema is registered and no events or deliveries are created.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventSchemaRolloutRequest' }
+      responses:
+        '200':
+          description: Observed consumer coverage and bounded payload validation results.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSchemaRolloutResponse' }
+        '400':
+          description: Invalid schema, oversized request, or invalid sample or range.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Version is not registered and no proposed schema was supplied.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Bounded rollout observation timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/event-schemas:
     post:
@@ -25849,6 +25898,63 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/workflow-event-replay-preview:
+    get:
+      tags: [events]
+      operationId: previewWorkflowEventReplay
+      summary: Preview retained events for one captured workflow recipient.
+      description: |
+        Read-only, bounded inspection of retained envelopes and their immutable
+        workflow recipient snapshots. The preview evaluates the captured
+        workflow trigger filter, reports its routing checkpoint and durable
+        workflow admission receipt, and never creates a workflow run. It does
+        not inspect events where the workflow was not captured, current workflow
+        definitions, or current workflow quota/target eligibility. Potential
+        admissions are estimates for a future replay policy, not a guarantee.
+        Event payloads and captured definitions are never returned.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: workflow_name
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+          description: Workflow name in the immutable recipient snapshot.
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+          description: Inclusive platform acceptance-time lower bound, preceding the cutoff.
+        - name: until
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+          description: Exclusive acceptance-time upper bound; future values are capped at first-page observation.
+        - name: after
+          in: query
+          schema: { type: string, maxLength: 4096 }
+          description: Opaque next_after cursor bound to account, app, workflow name, range and fixed cutoff.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          description: Maximum retained envelopes examined per page, including events without this captured workflow.
+      responses:
+        '200':
+          description: Matching retained workflow-recipient metadata and page-local counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowEventReplayPreviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Retained-event read failed or exceeded the five-second deadline (workflow_event_replay_preview_read_timeout).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replays:
     post:
       tags: [events]
@@ -25906,6 +26012,1143 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503':
           description: Durable job creation timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/workflow-event-replays:
+    post:
+      tags: [events]
+      operationId: createWorkflowEventReplayBackfill
+      summary: Create a durable historical workflow-start backfill.
+      description: |
+        Creates a durable job for one currently eligible event-triggered workflow
+        in the app's preferred live default deployment. The selected workflow
+        definition and trigger are snapshotted at creation. The half-open range
+        uses platform acceptance time with a fixed exclusive cutoff and a
+        maximum 30-day range. Only retained events with a known immutable
+        recipient snapshot, a settled delivered receipt, and no captured
+        membership for this app workflow are considered. Legacy events with an
+        unknown snapshot, events that already captured this workflow, unsettled
+        receipts, filtered events, and any event with a durable workflow
+        admission receipt are skipped. A durable `(outbox_id, workflow
+        recipient_id)` receipt deduplicates run admission across backfill jobs,
+        including after the linked run is pruned. Admission uses the definition
+        pinned to the job and current account/app eligibility and run quotas.
+        Quota and temporary target failures can be retried with the standard
+        backfill retry operation. The scan handles at most 100 envelopes per
+        page; at most three jobs may run per account, with one active job per
+        workflow. Active jobs protect their range from normal settled-receipt
+        pruning. `enqueued` means a workflow run was admitted; run completion is
+        separate. Retained event history is not a complete archive.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkflowEventReplayBackfillRequest' }
+      responses:
+        '202':
+          description: Durable workflow replay job accepted.
+          headers:
+            Location:
+              schema: { type: string }
+              description: Relative link to this workflow job's status and outcomes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReplayBackfillJobResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Job target conflict, unsupported workflow, or workflow is not currently eligible (event_replay_backfill_conflict, event_replay_backfill_unsupported).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Workflow replay request exceeded its processing deadline.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-health:
+    get:
+      tags: [events]
+      operationId: getEventConsumerExecutionHealth
+      summary: Inspect consumer execution health over a retained history window.
+      description: Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Receipt and invocation retention bound coverage; history_complete is always false. Counts are not unique event totals. Completion latency starts at original event acceptance.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: inspect consumer execution health over a retained history window."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: inspect consumer execution health over a retained history window."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: window
+          description: "Retained observation window for this operation: inspect consumer execution health over a retained history window."
+          in: query
+          schema: { type: string, enum: [5m, 15m, 1h, 6h, 24h], default: 5m }
+      responses:
+        '200':
+          description: Retained execution states and windowed handler outcomes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventConsumerExecutionHealth' }
+        '400':
+          description: Invalid subscription identifier or observation window.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Subscription control request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/health:
+    get:
+      tags: [events]
+      operationId: getEventConsumerHealth
+      summary: Inspect consumer routing health over a retained history window.
+      description: Requires `apps:read` or `admin`. Current backlog is live. Rates and routing latency use bounded recorded outcomes; history_compacted marks incomplete windows. Routing success measures admission before invocation execution.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: inspect consumer routing health over a retained history window."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: inspect consumer routing health over a retained history window."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: window
+          description: "Retained observation window for this operation: inspect consumer routing health over a retained history window."
+          in: query
+          schema: { type: string, enum: [5m, 15m, 1h, 6h, 24h], default: 5m }
+      responses:
+        '200':
+          description: Consumer backlog and windowed recorded routing outcomes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventConsumerHealth' }
+        '400':
+          description: "Inspect consumer routing health over a retained history window: invalid subscription identifier or observation window."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Inspect consumer routing health over a retained history window: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker:
+    get:
+      tags: [events]
+      operationId: getEventCircuitBreaker
+      summary: Inspect consumer circuit breaker state.
+      description: Requires `apps:read` or `admin`. Runtime controls apply to retained pending routing for one application consumer. Manual pauses remain independent. Invocation execution failures do not count. PUT uses defaults for omitted fields and resets the observation window. Reset preserves policy and manual pause. Disable removes automatic gating. Status reports the last durable transition; cooldown progresses when work is available.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: inspect consumer circuit breaker state."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: inspect consumer circuit breaker state."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Durable breaker configuration and state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventCircuitBreakerResponse' }
+        '400':
+          description: Invalid subscription identifier or circuit breaker policy.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Inspect consumer circuit breaker state: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      tags: [events]
+      operationId: setEventCircuitBreaker
+      summary: Enable or replace a consumer circuit breaker policy.
+      description: Requires `deploy:write` or `admin`. Runtime controls apply to retained pending routing for one application consumer. Manual pauses remain independent. Invocation execution failures do not count. PUT uses defaults for omitted fields and resets the observation window. Reset preserves policy and manual pause. Disable removes automatic gating. Status reports the last durable transition; cooldown progresses when work is available.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: enable or replace a consumer circuit breaker policy."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: enable or replace a consumer circuit breaker policy."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventCircuitBreakerPolicy' }
+      responses:
+        '200':
+          description: "Enable or replace a consumer circuit breaker policy: durable breaker configuration and state."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventCircuitBreakerResponse' }
+        '400':
+          description: "Enable or replace a consumer circuit breaker policy: invalid subscription identifier or circuit breaker policy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Enable or replace a consumer circuit breaker policy: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [events]
+      operationId: disableEventCircuitBreaker
+      summary: Disable a consumer circuit breaker.
+      description: "Disable a consumer circuit breaker. Requires `deploy:write` or `admin`. Runtime controls apply to retained pending routing for one application consumer. Manual pauses remain independent. Invocation execution failures do not count. PUT uses defaults for omitted fields and resets the observation window. Reset preserves policy and manual pause. Disable removes automatic gating. Status reports the last durable transition; cooldown progresses when work is available."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: disable a consumer circuit breaker."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: disable a consumer circuit breaker."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: "Disable a consumer circuit breaker: durable breaker configuration and state."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventCircuitBreakerResponse' }
+        '400':
+          description: "Disable a consumer circuit breaker: invalid subscription identifier or circuit breaker policy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Disable a consumer circuit breaker: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker/reset:
+    post:
+      tags: [events]
+      operationId: resetEventCircuitBreaker
+      summary: Close an enabled circuit breaker and start a fresh observation window.
+      description: "Close an enabled circuit breaker and start a fresh observation window. Requires `deploy:write` or `admin`. Runtime controls apply to retained pending routing for one application consumer. Manual pauses remain independent. Invocation execution failures do not count. PUT uses defaults for omitted fields and resets the observation window. Reset preserves policy and manual pause. Disable removes automatic gating. Status reports the last durable transition; cooldown progresses when work is available."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: close an enabled circuit breaker and start a fresh observation window."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: close an enabled circuit breaker and start a fresh observation window."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: "Close an enabled circuit breaker and start a fresh observation window: durable breaker configuration and state."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventCircuitBreakerResponse' }
+        '400':
+          description: "Close an enabled circuit breaker and start a fresh observation window: invalid subscription identifier or circuit breaker policy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Close an enabled circuit breaker and start a fresh observation window: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions:
+    get:
+      tags: [events]
+      operationId: getEventSubscriptionSchemaVersions
+      summary: Inspect schema version selection for future events.
+      description: Requires `apps:read` or `admin`. Captured events retain their acceptance-time selection. An empty selection accepts all versions, including unversioned envelopes. Only current app subscriptions can be configured.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: inspect schema version selection for future events."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: inspect schema version selection for future events."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Selected schema versions; an empty array accepts all versions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionSchemaVersionsResponse' }
+        '400':
+          description: Invalid subscription identifier or schema version selection.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Inspect schema version selection for future events: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      tags: [events]
+      operationId: setEventSubscriptionSchemaVersions
+      summary: Replace schema version selection for future events.
+      description: Requires `deploy:write` or `admin`. Captured events retain their acceptance-time selection. An empty selection accepts all versions, including unversioned envelopes. Only current app subscriptions can be configured.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: replace schema version selection for future events."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: replace schema version selection for future events."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventSubscriptionSchemaVersionsRequest' }
+      responses:
+        '200':
+          description: "Replace schema version selection for future events: selected schema versions; an empty array accepts all versions."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionSchemaVersionsResponse' }
+        '400':
+          description: "Replace schema version selection for future events: invalid subscription identifier or schema version selection."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Replace schema version selection for future events: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [events]
+      operationId: resetEventSubscriptionSchemaVersions
+      summary: Accept all schema versions for future events.
+      description: "Accept all schema versions for future events. Requires `deploy:write` or `admin`. Captured events retain their acceptance-time selection. An empty selection accepts all versions, including unversioned envelopes. Only current app subscriptions can be configured."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: accept all schema versions for future events."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: accept all schema versions for future events."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: "Accept all schema versions for future events: selected schema versions; an empty array accepts all versions."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionSchemaVersionsResponse' }
+        '400':
+          description: "Accept all schema versions for future events: invalid subscription identifier or schema version selection."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Accept all schema versions for future events: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy:
+    get:
+      tags: [events]
+      operationId: getEventSubscriptionRetryPolicy
+      summary: Inspect routing retry policy for future events.
+      description: Requires `apps:read` or `admin`. Captured events retain their acceptance-time policy. Omitted policy uses legacy defaults. Only current app subscriptions can be configured.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: inspect routing retry policy for future events."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: inspect routing retry policy for future events."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Effective policy and whether explicitly configured.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRoutingRetryPolicyResponse' }
+        '400':
+          description: Invalid subscription identifier or retry policy.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Inspect routing retry policy for future events: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      tags: [events]
+      operationId: setEventSubscriptionRetryPolicy
+      summary: Replace routing retry policy for future events.
+      description: Requires `deploy:write` or `admin`. Captured events retain their acceptance-time policy. Omitted policy uses legacy defaults. Only current app subscriptions can be configured.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: replace routing retry policy for future events."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: replace routing retry policy for future events."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventRoutingRetryPolicy' }
+      responses:
+        '200':
+          description: "Replace routing retry policy for future events: effective policy and whether explicitly configured."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRoutingRetryPolicyResponse' }
+        '400':
+          description: "Replace routing retry policy for future events: invalid subscription identifier or retry policy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Replace routing retry policy for future events: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [events]
+      operationId: resetEventSubscriptionRetryPolicy
+      summary: Restore legacy routing retry defaults for future events.
+      description: "Restore legacy routing retry defaults for future events. Requires `deploy:write` or `admin`. Captured events retain their acceptance-time policy. Omitted policy uses legacy defaults. Only current app subscriptions can be configured."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: restore legacy routing retry defaults for future events."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: restore legacy routing retry defaults for future events."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: "Restore legacy routing retry defaults for future events: effective policy and whether explicitly configured."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRoutingRetryPolicyResponse' }
+        '400':
+          description: "Restore legacy routing retry defaults for future events: invalid subscription identifier or retry policy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Restore legacy routing retry defaults for future events: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control:
+    get:
+      tags: [events]
+      operationId: getEventSubscriptionDeliveryControl
+      summary: Inspect one consumer pause, pacing and backlog.
+      description: Requires `apps:read` or `admin`. Controls survive deployment and subscription removal. Already admitted invocations continue. Resume defaults to ten admissions per second and zero removes pacing.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: inspect one consumer pause, pacing and backlog."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: inspect one consumer pause, pacing and backlog."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current control configuration and waiting recipient counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionDeliveryControl' }
+        '400':
+          description: Invalid subscription identifier or drain rate.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Inspect one consumer pause, pacing and backlog: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pause:
+    post:
+      tags: [events]
+      operationId: pauseEventSubscription
+      summary: Pause new routing admissions for one event consumer.
+      description: Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already admitted invocations continue. Resume defaults to ten admissions per second and zero removes pacing.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: pause new routing admissions for one event consumer."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: pause new routing admissions for one event consumer."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: "Pause new routing admissions for one event consumer: current control configuration and waiting recipient counts."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionDeliveryControl' }
+        '400':
+          description: "Pause new routing admissions for one event consumer: invalid subscription identifier or drain rate."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Pause new routing admissions for one event consumer: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/resume:
+    post:
+      tags: [events]
+      operationId: resumeEventSubscription
+      summary: Resume one event consumer with controlled draining.
+      description: "Resume one event consumer with controlled draining. Requires `deploy:write` or `admin`. Controls survive deployment and subscription removal. Already admitted invocations continue. Resume defaults to ten admissions per second and zero removes pacing."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: resume one event consumer with controlled draining."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: resume one event consumer with controlled draining."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventSubscriptionResumeRequest' }
+      responses:
+        '200':
+          description: "Resume one event consumer with controlled draining: current control configuration and waiting recipient counts."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionDeliveryControl' }
+        '400':
+          description: "Resume one event consumer with controlled draining: invalid subscription identifier or drain rate."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Resume one event consumer with controlled draining: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-recoveries/health:
+    get:
+      tags: [events]
+      operationId: getEventRecoveryHealth
+      summary: Inspect active recovery progress and expiry risk.
+      description: Requires apps:read or admin and MFA. Current app-scoped observations of active jobs only. Stalled requires five minutes without admission progress and five minutes overdue for eligibility. Capacity/legacy claim retries and pacing defer eligibility. Paused jobs are reported separately and excluded from running-job alert counts. Expiry warnings cover pending items within one hour of expiry, including overdue expiry cleanup. No query parameters are accepted.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: inspect active recovery progress and expiry risk."
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Current active recovery health; terminal jobs are omitted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryHealth' }
+        '400':
+          description: Invalid query parameters.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Recovery health request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-recoveries/preview:
+    post:
+      tags: [events]
+      operationId: previewEventRecovery
+      summary: Preview failed application event recipients without requeueing.
+      description: Requires `apps:read` or `admin`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: preview failed application event recipients without requeueing."
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventRecoveryRequest' }
+      responses:
+        '200':
+          description: Recovery result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryPreview' }
+        '400':
+          description: Invalid request or selection larger than 10000 recipients.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Recovery request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-recoveries:
+    get:
+      tags: [events]
+      operationId: listEventRecoveries
+      summary: Discover retained recovery jobs for an owned application.
+      description: Requires apps:read or admin and MFA. Newest creation time and ID first. Lists admission metadata only; execution outcomes are available through recovery status. Pages reflect live state and retention, not a frozen snapshot. Reuse the same app and filters with next_cursor.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: discover retained recovery jobs for an owned application."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: state
+          in: query
+          description: Current admission state.
+          schema: { type: string, enum: [running, paused, completed, cancelled] }
+        - name: mode
+          in: query
+          description: Recovery mode; legacy omitted modes are routing.
+          schema: { type: string, enum: [routing, execution] }
+        - name: subscription_id
+          in: query
+          description: Matches the frozen selection filter or any captured item subscription.
+          schema: { type: string, maxLength: 256 }
+        - name: created_after
+          in: query
+          description: Exclusive creation lower bound.
+          schema: { type: string, format: date-time }
+        - name: created_before
+          in: query
+          description: Exclusive creation upper bound.
+          schema: { type: string, format: date-time }
+        - name: cursor
+          in: query
+          description: Opaque next_cursor from the previous page; bound to account, app, and filters.
+          schema: { type: string, maxLength: 4096 }
+        - name: limit
+          in: query
+          description: Maximum jobs per page.
+          schema: { type: integer, minimum: 1, maximum: 50, default: 50 }
+      responses:
+        '200':
+          description: Retained recovery job metadata; execution summaries are omitted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryJobs' }
+        '400':
+          description: Invalid filters or cursor.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Recovery listing timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      tags: [events]
+      operationId: createEventRecovery
+      summary: Create a durable recovery job for a frozen selection of routing failures.
+      description: Requires `deploy:write` or `admin`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: create a durable recovery job for a frozen selection of routing failures."
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventRecoveryRequest' }
+      responses:
+        '202':
+          description: "Create a durable recovery job for a frozen selection of routing failures: recovery result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryJob' }
+        '400':
+          description: "Create a durable recovery job for a frozen selection of routing failures: invalid request or selection larger than 10000 recipients."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Account already has three active recovery jobs.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Create a durable recovery job for a frozen selection of routing failures: recovery request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/event-recoveries/{jobID}:
+    get:
+      tags: [events]
+      operationId: getEventRecovery
+      summary: Read bulk recovery progress.
+      description: "Read bulk recovery progress. Requires `apps:read` or `admin`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          description: "Durable recovery job identifier for this operation: read bulk recovery progress."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: "Read bulk recovery progress: recovery result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryJob' }
+        '400':
+          description: "Read bulk recovery progress: invalid request or selection larger than 10000 recipients."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Read bulk recovery progress: recovery request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/event-recoveries/{jobID}/cancel:
+    post:
+      tags: [events]
+      operationId: cancelEventRecovery
+      summary: Cancel retries that have not yet been queued.
+      description: "Cancel retries that have not yet been queued. Requires `deploy:write` or `admin`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          description: "Durable recovery job identifier for this operation: cancel retries that have not yet been queued."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        description: Optional operator reason; an empty body preserves existing clients.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventRecoveryControlRequest' }
+      responses:
+        '200':
+          description: "Cancel retries that have not yet been queued: recovery result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryJob' }
+        '400':
+          description: "Cancel retries that have not yet been queued: invalid request or selection larger than 10000 recipients."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Cancel retries that have not yet been queued: recovery request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/event-recoveries/{jobID}/pause:
+    post:
+      tags: [events]
+      operationId: pauseEventRecovery
+      summary: Pause further recovery admissions.
+      description: Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are idempotent.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          description: "Durable recovery job identifier for this operation: pause further recovery admissions."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        description: "Request to pause further recovery admissions: optional operator reason; an empty body preserves existing clients."
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventRecoveryControlRequest' }
+      responses:
+        '200':
+          description: "Pause further recovery admissions: recovery result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryJob' }
+        '400':
+          description: "Pause further recovery admissions: invalid request or selection larger than 10000 recipients."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Recovery job is completed, cancelled, or expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Pause further recovery admissions: recovery request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/event-recoveries/{jobID}/resume:
+    post:
+      tags: [events]
+      operationId: resumeEventRecovery
+      summary: Resume the frozen recovery selection.
+      description: "Resume the frozen recovery selection. Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are idempotent."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          description: "Durable recovery job identifier for this operation: resume the frozen recovery selection."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        description: "Request to resume the frozen recovery selection: optional operator reason; an empty body preserves existing clients."
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventRecoveryControlRequest' }
+      responses:
+        '200':
+          description: "Resume the frozen recovery selection: recovery result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryJob' }
+        '400':
+          description: "Resume the frozen recovery selection: invalid request or selection larger than 10000 recipients."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: "Resume the frozen recovery selection: recovery job is completed, cancelled, or expired."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Resume the frozen recovery selection: recovery request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/event-recoveries/{jobID}/rate:
+    put:
+      tags: [events]
+      operationId: setEventRecoveryRate
+      summary: Change the current recovery admission rate.
+      description: "Change the current recovery admission rate. Requires `deploy:write` or `admin` and MFA. Controls preserve the frozen selection, spent window budget, existing waits, quota, and original expiry. Already queued deliveries continue. Completed, cancelled, or expired jobs return 409. Repeated desired-state controls on active jobs are idempotent."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          description: "Durable recovery job identifier for this operation: change the current recovery admission rate."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventRecoveryRateRequest' }
+      responses:
+        '200':
+          description: "Change the current recovery admission rate: recovery result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryJob' }
+        '400':
+          description: "Change the current recovery admission rate: invalid request or selection larger than 10000 recipients."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: "Change the current recovery admission rate: recovery job is completed, cancelled, or expired."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Change the current recovery admission rate: recovery request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/event-recoveries/{jobID}/preflight:
+    get:
+      tags: [events]
+      operationId: getEventRecoveryPreflight
+      summary: Assess a frozen recovery selection without admitting work.
+      description: Requires apps:read or admin and MFA. Read-only observations of all pending items, with up to 100 sample positions. Current per-item eligibility and capacity are not reservations. Conditions can change before admission. The optimistic rate-window estimate includes all pending admissions/skips and spent permits, assumes immediate resume, and excludes future contention, worker delays and handler execution. No query parameters are accepted.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          description: "Durable recovery job identifier for this operation: assess a frozen recovery selection without admitting work."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current eligibility observations and optimistic timing estimate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryPreflight' }
+        '400':
+          description: Invalid job ID or query parameters.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Recovery preflight timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/event-recoveries/{jobID}/history:
+    get:
+      tags: [events]
+      operationId: listEventRecoveryHistory
+      summary: Inspect retained recovery control audit history.
+      description: Requires apps:read or admin and MFA. Entries are ordered by ID ascending. Actor identity is server-resolved. Failed requests and no-op controls add no entry. Expiry discovered by controls commits a system entry even when the request returns 409. History is retained and deleted with its job. Existing jobs have no fabricated historical entries.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          description: "Durable recovery job identifier for this operation: inspect retained recovery control audit history."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: after
+          in: query
+          description: Exclusive last history entry ID; IDs need not be contiguous.
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: limit
+          description: "Maximum page size for this operation: inspect retained recovery control audit history."
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: Retained audit history page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryHistory' }
+        '400':
+          description: Invalid pagination.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Recovery history request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/event-recoveries/{jobID}/items:
+    get:
+      tags: [events]
+      operationId: listEventRecoveryItems
+      summary: Read a stable page of selected recipients and recovery outcomes.
+      description: "Read a stable page of selected recipients and recovery outcomes. Requires `apps:read` or `admin`."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          description: "Durable recovery job identifier for this operation: read a stable page of selected recipients and recovery outcomes."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: after
+          in: query
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+          description: Last item position returned on the preceding page of this job.
+        - name: limit
+          description: "Maximum page size for this operation: read a stable page of selected recipients and recovery outcomes."
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: "Read a stable page of selected recipients and recovery outcomes: recovery result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryItems' }
+        '400':
+          description: "Read a stable page of selected recipients and recovery outcomes: invalid request or selection larger than 10000 recipients."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Read a stable page of selected recipients and recovery outcomes: recovery request timed out."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -45012,6 +46255,7 @@ components:
       additionalProperties: false
       required: [app_slug, subscription_id, source, type, filter, reason]
       properties:
+        schema_versions: { type: array, maxItems: 16, uniqueItems: true, items: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' }, description: 'Exact case-sensitive schema versions. Empty or omitted accepts all versions; a nonempty selection excludes unversioned events. Selection is captured at publication or backfill creation.' }
         app_slug: { type: string }
         workflow_name: { type: string, description: Present for workflow recipients. }
         deployment_id: { type: string, format: uuid, description: Acceptance candidate deployment for workflow recipients. }
@@ -45032,6 +46276,7 @@ components:
       additionalProperties: false
       required: [event_id, source, type, candidate_count, matched_count, filter_mismatch_count, other_mismatch_count, matches, non_matches, truncated]
       properties:
+        schema_version_mismatch_count: { type: integer, minimum: 0, description: Candidates excluded by schema version selection. }
         event_id: { type: string }
         source: { type: string }
         type: { type: string }
@@ -45121,7 +46366,7 @@ components:
         receipt_url: { type: string, format: uri-reference, description: Tenant-authenticated relative URL for this event receipt. }
 
     EventBacklogResponse:
-      example: { observed_at: "2026-10-05T12:00:00Z", window_at: "2026-10-05T12:00:00Z", coverage: captured_application_recipients, recipients: [], consumers: [], unattributed_receipts: 0 }
+      example: { observed_at: "2026-10-05T12:00:00Z", window_at: "2026-10-05T12:00:00Z", coverage: captured_and_backfill_recipients, recipients: [], consumers: [], unattributed_receipts: 0 }
       type: object
       additionalProperties: false
       description: Live waiting recipients and exact matching counts, with an anchored acceptance window.
@@ -45129,7 +46374,7 @@ components:
       properties:
         observed_at: { type: string, format: date-time, description: Time of this live observation. }
         window_at: { type: string, format: date-time, description: First-page time anchoring acceptance and minimum-age cutoff across pages. }
-        coverage: { type: string, const: captured_application_recipients }
+        coverage: { type: string, const: captured_and_backfill_recipients }
         recipients:
           type: array
           maxItems: 200
@@ -45145,8 +46390,8 @@ components:
     EventBacklogRecipient:
       type: object
       additionalProperties: false
-      description: One captured application recipient awaiting routing, without envelope data.
-      required: [event_source, event_id, event_type, accepted_at, app_id, app_slug, target_available, subscription_id, routing_mode, state, attempts, capacity_deferrals, pending_age_seconds, waiting_reason, receipt_url]
+      description: One application or workflow event recipient awaiting routing, without envelope data.
+      required: [event_source, event_id, event_type, accepted_at, app_id, app_slug, target_available, subscription_id, consumer_kind, origin, routing_mode, state, attempts, capacity_deferrals, pending_age_seconds, waiting_reason, receipt_url]
       properties:
         event_source: { type: string }
         event_id: { type: string }
@@ -45156,6 +46401,9 @@ components:
         app_slug: { type: string, description: Empty when the captured app is no longer owned by this account. }
         target_available: { type: boolean }
         subscription_id: { type: string }
+        consumer_kind: { type: string, enum: [application, workflow] }
+        origin: { type: string, enum: [acceptance, backfill], description: Whether this recipient was captured at publication or added by historical backfill. }
+        workflow_name: { type: string, description: Captured workflow trigger name; present for workflow consumers. }
         routing_mode: { type: string, enum: [event, recipient] }
         state: { type: string, enum: [pending, processing] }
         capacity_scope: { type: string, enum: [consumer, app, account], description: Last recorded capacity scope for a currently pending recipient. }
@@ -45164,24 +46412,529 @@ components:
         next_attempt_at: { type: string, format: date-time }
         lease_until: { type: string, format: date-time, description: Recipient lease or shared whole-receipt lease. }
         pending_age_seconds: { type: number, format: double, minimum: 0, description: "Age from acceptance at observed_at, not time spent at the latest capacity scope." }
-        waiting_reason: { type: string, enum: [capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, ready], description: Recorded capacity takes precedence for pending recipients; receipt_processing refers only to a shared receipt lease. }
+        waiting_reason: { type: string, enum: [circuit_open, circuit_probe_wait, circuit_recovery_rate_limited, subscription_paused, subscription_rate_limited, ordering_blocked, capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, workflow_routing, ready], description: "Active routing and shared receipt leases take precedence; subscription controls precede ordering, recorded capacity and retry backoff." }
         receipt_url: { type: string, format: uri-reference }
-        fanout_history_url: { type: string, format: uri-reference, description: Present when the captured target still belongs to the account. History coverage is independently bounded. }
+        ordering_blocker: { $ref: '#/components/schemas/EventOrderingBlocker' }
+        fanout_history_url: { type: string, format: uri-reference, description: Present for application subscriptions whose captured target still belongs to the account. Workflow admission is visible through the receipt. History coverage is independently bounded. }
+
+    EventSubscriptionResumeRequest:
+      description: "Resume settings for a paused subscription, including the continuing routing admission rate."
+      type: object
+      additionalProperties: false
+      properties:
+        rate_per_second: { type: integer, minimum: 0, maximum: 100, default: 10, description: Maximum new routing admissions in a one-second window; zero removes pacing. This limit continues to apply to new publications after the backlog drains. }
+
+    EventConsumerExecutionHealth:
+      type: object
+      additionalProperties: false
+      description: 'Current retained execution states for admitted application event deliveries and retained handler replays. Attempts and successful completion latency use the requested window. Counts are bounded observations, include backfills, and are not unique event counts. Version filtering and routing failures are excluded. Historical coverage is always incomplete.'
+      required: [subscription_id, app_id, observed_at, window_start, coverage, history_complete, truncated, retained_roots, missing_roots, executions, queued, running, retrying, succeeded, failed, expired, dead_lettered, cancelled, superseded, unknown, successful_attempts, failed_attempts, unknown_attempts, window_completions, window_dead_letters, handler_failure_pct, dead_letter_rate_per_second, completion_latency_p95_seconds]
+      properties:
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        window_start: { type: string, format: date-time }
+        coverage: { type: string, enum: [bounded_retained_execution_roots] }
+        history_complete: { type: boolean, enum: [false], description: 'Receipt, invocation, and attempt retention make this an incomplete historical observation.' }
+        truncated: { type: boolean, description: 'More than 1000 retained delivery roots or 5000 linked invocations existed.' }
+        retained_roots: { type: integer, format: int64, minimum: 0 }
+        missing_roots: { type: integer, format: int64, minimum: 0 }
+        executions: { type: integer, format: int64, minimum: 0 }
+        queued: { type: integer, format: int64, minimum: 0 }
+        running: { type: integer, format: int64, minimum: 0 }
+        retrying: { type: integer, format: int64, minimum: 0 }
+        succeeded: { type: integer, format: int64, minimum: 0 }
+        failed: { type: integer, format: int64, minimum: 0 }
+        expired: { type: integer, format: int64, minimum: 0 }
+        dead_lettered: { type: integer, format: int64, minimum: 0 }
+        cancelled: { type: integer, format: int64, minimum: 0 }
+        superseded: { type: integer, format: int64, minimum: 0 }
+        unknown: { type: integer, format: int64, minimum: 0 }
+        successful_attempts: { type: integer, format: int64, minimum: 0 }
+        failed_attempts: { type: integer, format: int64, minimum: 0 }
+        unknown_attempts: { type: integer, format: int64, minimum: 0 }
+        window_completions: { type: integer, format: int64, minimum: 0 }
+        window_dead_letters: { type: integer, format: int64, minimum: 0 }
+        handler_failure_pct: { type: number, format: double, minimum: 0 }
+        dead_letter_rate_per_second: { type: number, format: double, minimum: 0 }
+        completion_latency_p95_seconds: { type: number, format: double, minimum: 0 }
+
+    EventConsumerHealth:
+      type: object
+      additionalProperties: false
+      description: Current subscription backlog and bounded recorded routing outcomes. History compaction can remove outcomes; rates then represent retained samples. Latency runs from event acceptance to successful routing admission.
+      required: [subscription_id, app_id, paused, rate_per_second, pending_recipients, processing_recipients, oldest_age_seconds, observed_at, window_start, coverage, paused_seconds, retry_scheduled, successful_routes, terminal_failures, retry_rate_per_second, terminal_failure_pct, routing_latency_p95_seconds, drain_rate_per_second, history_compacted]
+      properties:
+        expired_deliveries: { type: integer, format: int64, minimum: 0, description: Recorded delivery_expired outcomes in the observation window; included in terminal_failures. }
+        circuit_breaker: { $ref: '#/components/schemas/EventCircuitBreakerResponse' }
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        paused: { type: boolean }
+        rate_per_second: { type: integer, minimum: 0, maximum: 100 }
+        pending_recipients: { type: integer, format: int64, minimum: 0 }
+        processing_recipients: { type: integer, format: int64, minimum: 0 }
+        oldest_pending_at: { type: string, format: date-time }
+        oldest_age_seconds: { type: number, format: double, minimum: 0 }
+        updated_at: { type: string, format: date-time, description: Absent until an operator sets a control. }
+        observed_at: { type: string, format: date-time }
+        window_start: { type: string, format: date-time }
+        coverage: { type: string, enum: [bounded_recorded_outcomes] }
+        paused_seconds: { type: number, format: double, minimum: 0 }
+        retry_scheduled: { type: integer, format: int64, minimum: 0 }
+        successful_routes: { type: integer, format: int64, minimum: 0 }
+        terminal_failures: { type: integer, format: int64, minimum: 0 }
+        retry_rate_per_second: { type: number, format: double, minimum: 0 }
+        terminal_failure_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        routing_latency_p95_seconds: { type: number, format: double, minimum: 0 }
+        drain_rate_per_second: { type: number, format: double, minimum: 0 }
+        history_compacted: { type: boolean }
+
+    EventCircuitBreakerPolicy:
+      type: object
+      additionalProperties: false
+      description: Opt-in routing circuit breaker. Omitted properties use defaults. Failures and successful admissions form the sample; capacity waits and filtered events are excluded. Retained history must cover the observation window.
+      properties:
+        failure_threshold_pct: { type: number, format: double, exclusiveMinimum: 0, maximum: 100, default: 50 }
+        min_samples: { type: integer, format: int64, minimum: 1, maximum: 10000, default: 20 }
+        window_seconds: { type: integer, format: int64, minimum: 1, maximum: 3600, default: 300 }
+        cooldown_seconds: { type: integer, format: int64, minimum: 1, maximum: 3600, default: 60 }
+        probe_successes: { type: integer, minimum: 1, maximum: 20, default: 3 }
+        recovery_max_rate_per_second: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        recovery_seconds: { type: integer, format: int64, minimum: 1, maximum: 3600, default: 60 }
+
+    EventCircuitBreakerResponse:
+      description: "Captured circuit policy and current breaker state for one application event subscription."
+      type: object
+      additionalProperties: false
+      required: [subscription_id, enabled, state, probe_in_flight, successful_probes, recovery_rate_per_second, history_incomplete, manual_paused]
+      properties:
+        subscription_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        policy: { $ref: '#/components/schemas/EventCircuitBreakerPolicy' }
+        state: { type: string, enum: [disabled, closed, open, half_open, draining] }
+        reason: { type: string, description: Reason for the last durable transition. }
+        changed_at: { type: string, format: date-time }
+        cooldown_until: { type: string, format: date-time }
+        probe_in_flight: { type: boolean }
+        successful_probes: { type: integer, minimum: 0 }
+        recovery_rate_per_second: { type: integer, minimum: 0, maximum: 100 }
+        history_incomplete: { type: boolean, description: Compacted history prevents automatic threshold decisions or completion of recovery. }
+        manual_paused: { type: boolean }
+
+    EventRoutingRetryPolicy:
+      type: object
+      additionalProperties: false
+      description: Routing policy before invocation admission. Duration budgets include routing attempt time and scheduled retry delays. Admission waits add no budget cost. API replacement accepts explicit settings; manifests and CLI default configured policies to jitter enabled.
+      required: [max_attempts, initial_backoff_ms, max_backoff_ms]
+      properties:
+        max_delivery_age_ms: { type: integer, format: int64, minimum: 0, maximum: 2592000000, default: 0, description: 'Wall-clock age from platform acceptance before routing admission. Includes pauses, capacity, backoff, and circuit waits. Zero disables expiry. Rejected for strictly ordered subscriptions.' }
+        max_attempts: { type: integer, minimum: 1, maximum: 100, default: 12 }
+        max_retry_duration_ms: { type: integer, format: int64, minimum: 0, maximum: 604800000, default: 0, description: 'Zero disables the duration bound. Another retry is scheduled only when its entire delay fits within the remaining budget.' }
+        initial_backoff_ms: { type: integer, format: int64, minimum: 1, maximum: 3600000, default: 5000 }
+        max_backoff_ms: { type: integer, format: int64, minimum: 1, maximum: 3600000, default: 300000, description: Must be at least initial_backoff_ms. }
+        jitter: { type: boolean, default: false, description: Deterministic full jitter between one millisecond and the capped exponential delay. }
+
+    EventSubscriptionSchemaVersionsRequest:
+      description: "Replacement schema-version selection for future subscription publications and backfills."
+      type: object
+      additionalProperties: false
+      required: [schema_versions]
+      properties:
+        schema_versions: { type: array, maxItems: 16, uniqueItems: true, items: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' }, description: "Schema versions in the event subscription schema versions request: exact case-sensitive schema versions. Empty or omitted accepts all versions; a nonempty selection excludes unversioned events. Selection is captured at publication or backfill creation." }
+
+    EventSubscriptionSchemaVersionsResponse:
+      description: "Current exact schema-version selection associated with one subscription."
+      type: object
+      additionalProperties: false
+      required: [subscription_id, schema_versions]
+      properties:
+        subscription_id: { type: string, format: uuid }
+        schema_versions: { type: array, maxItems: 16, uniqueItems: true, items: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' }, description: "Schema versions in the event subscription schema versions response: exact case-sensitive schema versions. Empty or omitted accepts all versions; a nonempty selection excludes unversioned events. Selection is captured at publication or backfill creation." }
+
+    EventRoutingRetryPolicyResponse:
+      description: "Configured routing retry policy for an application event subscription, or its default policy."
+      type: object
+      additionalProperties: false
+      required: [subscription_id, configured, policy]
+      properties:
+        subscription_id: { type: string, format: uuid }
+        configured: { type: boolean }
+        policy: { $ref: '#/components/schemas/EventRoutingRetryPolicy' }
+
+    EventSubscriptionDeliveryControl:
+      type: object
+      additionalProperties: false
+      description: Live operator controls for a captured application subscription. Pending and processing counts include publication and historical backfill recipients retained in the backlog.
+      required: [subscription_id, app_id, paused, rate_per_second, pending_recipients, processing_recipients, oldest_age_seconds]
+      properties:
+        circuit_breaker: { $ref: '#/components/schemas/EventCircuitBreakerResponse' }
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        paused: { type: boolean }
+        rate_per_second: { type: integer, minimum: 0, maximum: 100 }
+        pending_recipients: { type: integer, format: int64, minimum: 0 }
+        processing_recipients: { type: integer, format: int64, minimum: 0 }
+        oldest_pending_at: { type: string, format: date-time }
+        oldest_age_seconds: { type: number, format: double, minimum: 0 }
+        updated_at: { type: string, format: date-time, description: "Updated at in the event subscription delivery control: absent until an operator sets a control." }
+
+    EventRecoveryRequest:
+      type: object
+      additionalProperties: false
+      description: Select routing failures (default) or the latest replayable retained execution per application event consumer. Execution mode includes publication and materialized backfill recipients, excludes workflows and object notifications, and requires retained admission and execution records. Creation freezes its own selection; preview is advisory.
+      properties:
+        reason:
+          type: string
+          maxLength: 512
+          description: Optional operator reason, limited to 512 UTF-8 bytes without control characters. Stored only in audit history; omitted from frozen selection. Preview does not record it.
+        mode: { type: string, enum: [routing, execution], default: routing }
+        outcome: { type: string, enum: [failed, dead_letter], description: Execution mode only; omitted selects both replayable outcomes. }
+        subscription_id: { type: string, maxLength: 256 }
+        event_source: { type: string, maxLength: 256 }
+        event_type: { type: string, maxLength: 256 }
+        failure_code: { type: string, maxLength: 256 }
+        min_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 31536000, default: 0, description: Minimum age of the recorded terminal failure. }
+        include_non_retryable: { type: boolean, default: false }
+        rate_per_second: { type: integer, minimum: 0, maximum: 100, default: 10, description: Maximum recipients processed per job in a one-second window; zero uses the default. Actual throughput depends on scheduler load. }
+
+    EventRecoveryExecution:
+      type: object
+      additionalProperties: false
+      description: Read-only observation of this job's admitted replay generation. Later replays are not attributed to this item. Missing history, untracked legacy items, or uncertain outcomes report unknown. Omitted for routing recovery and items not admitted.
+      required: [observed_at, state, source, attempts]
+      properties:
+        observed_at: { type: string, format: date-time }
+        state: { type: string, enum: [queued, running, retrying, succeeded, failed, dead_lettered, expired, cancelled, superseded, unknown] }
+        source: { type: string, enum: [invocation, attempt_history, unavailable] }
+        attempts: { type: integer, minimum: 0, description: Recorded dispatch attempt count for the tracked generation. }
+        completed_at: { type: string, format: date-time, description: Recorded terminal completion time when available. }
+
+    EventRecoveryExecutionSummary:
+      type: object
+      additionalProperties: false
+      description: Current observations of admitted execution-mode items, including legacy admissions as unknown. Counts sum to tracked_count and are separate from job admission state. Omitted for routing recovery. Retention can turn a previously known outcome into unknown.
+      required: [observed_at, tracked_count, queued, running, retrying, succeeded, failed, dead_lettered, expired, cancelled, superseded, unknown]
+      properties:
+        observed_at: { type: string, format: date-time }
+        tracked_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
+        queued: { type: integer, format: int64, minimum: 0 }
+        running: { type: integer, format: int64, minimum: 0 }
+        retrying: { type: integer, format: int64, minimum: 0 }
+        succeeded: { type: integer, format: int64, minimum: 0 }
+        failed: { type: integer, format: int64, minimum: 0 }
+        dead_lettered: { type: integer, format: int64, minimum: 0 }
+        expired: { type: integer, format: int64, minimum: 0 }
+        cancelled: { type: integer, format: int64, minimum: 0 }
+        superseded: { type: integer, format: int64, minimum: 0 }
+        unknown: { type: integer, format: int64, minimum: 0 }
+
+    EventRecoveryItem:
+      type: object
+      additionalProperties: false
+      description: Metadata-only selected recipient. In execution mode invocation_id identifies the selected failure. Queued means replay was admitted, not that the handler succeeded.
+      required: [position, event_source, event_id, event_type, subscription_id, failed_at, failure_code, retryable, state]
+      properties:
+        invocation_id: { type: string, format: uuid }
+        replay_invocation_id: { type: string, format: uuid, description: Exact replay admitted by this job; omitted for routing recovery and legacy items. }
+        replay_generation: { type: integer, format: int64, minimum: 0, description: Frozen admitted generation including zero for new replay children. }
+        execution: { $ref: '#/components/schemas/EventRecoveryExecution' }
+        position: { type: integer, format: int64, minimum: 1 }
+        event_source: { type: string }
+        event_id: { type: string }
+        event_type: { type: string }
+        subscription_id: { type: string }
+        failed_at: { type: string, format: date-time }
+        failure_code: { type: string }
+        retryable: { type: boolean }
+        state: { type: string, enum: [pending, queued, skipped, cancelled] }
+        reason: { type: string, enum: [changed, receipt_expired, target_unavailable, cancelled, expired] }
+
+    EventRecoveryPreview:
+      description: "Bounded selection preview for a proposed durable event recovery job."
+      type: object
+      additionalProperties: false
+      required: [observed_at, coverage, matched_count, exceeds_job_limit, sample]
+      properties:
+        observed_at: { type: string, format: date-time }
+        coverage: { type: string, enum: [captured_application_recipients, retained_application_executions] }
+        matched_count: { type: integer, format: int64, minimum: 0, maximum: 10001, description: Exact up to the job limit; a lower bound when exceeds_job_limit is true. }
+        exceeds_job_limit: { type: boolean }
+        sample:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventRecoveryItem' }
+
+    EventRecoveryRateRequest:
+      description: "Replacement admission rate and optional audit reason for an existing recovery job."
+      type: object
+      additionalProperties: false
+      required: [rate_per_second]
+      properties:
+        reason:
+          type: string
+          maxLength: 512
+          description: "Reason in the event recovery rate request: optional operator reason, limited to 512 UTF-8 bytes without control characters. Stored only in audit history; omitted from frozen selection. Preview does not record it."
+        rate_per_second: { type: integer, minimum: 1, maximum: 100, description: Maximum items per second. Does not reset spent permits or existing admission waits. }
+
+    EventRecoveryJob:
+      description: "Durable recovery job identity, frozen selection, pacing state and admission progress counters."
+      type: object
+      additionalProperties: false
+      required: [id, rate_per_second, app_id, coverage, selection, state, selected_count, pending_count, queued_count, skipped_count, cancelled_count, created_at, updated_at, expires_at]
+      properties:
+        rate_per_second: { type: integer, minimum: 1, maximum: 100, description: Current admission rate; selection.rate_per_second retains the original requested rate. }
+        paused_at: { type: string, format: date-time, description: Start time of the current pause; present only while paused. }
+        id: { type: string, format: uuid }
+        execution: { $ref: '#/components/schemas/EventRecoveryExecutionSummary' }
+        app_id: { type: string, format: uuid }
+        coverage: { type: string, enum: [captured_application_recipients, retained_application_executions] }
+        selection: { $ref: '#/components/schemas/EventRecoveryRequest' }
+        state: { type: string, enum: [running, paused, completed, cancelled] }
+        selected_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
+        pending_count: { type: integer, format: int64, minimum: 0 }
+        queued_count: { type: integer, format: int64, minimum: 0 }
+        skipped_count: { type: integer, format: int64, minimum: 0 }
+        cancelled_count: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+
+    EventRecoveryPreflightItem:
+      description: "Sampled pending recovery item eligibility and current wait or skip diagnostics."
+      type: object
+      additionalProperties: false
+      required: [position, status, reason]
+      properties:
+        position: { type: integer, format: int64, minimum: 1 }
+        status: { type: string, enum: [eligible, waiting, likely_skipped, unknown] }
+        reason: { type: string, enum: [eligible, capacity, legacy_claim, changed, expired, target_unavailable, receipt_expired, unknown] }
+        capacity_scope: { type: string, enum: [account, app, consumer] }
+    EventRecoveryPreflight:
+      description: "Read-only pending-item eligibility, current capacity and optimistic drain estimate for a recovery job."
+      type: object
+      additionalProperties: false
+      required: [job_id, observed_at, state, active, pending_count, eligible_count, waiting_count, likely_skipped_count, unknown_count, reason_counts, capacity_scopes, rate_per_second, remaining_lifetime_seconds, minimum_drain_seconds, earliest_drain_at, fits_before_expiry, assumes_immediate_resume, sample]
+      properties:
+        job_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        state: { type: string, enum: [running, paused, completed, cancelled] }
+        active: { type: boolean, description: Running or paused and not expired at the observation time. }
+        pending_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
+        eligible_count: { type: integer, format: int64, minimum: 0 }
+        waiting_count: { type: integer, format: int64, minimum: 0 }
+        likely_skipped_count: { type: integer, format: int64, minimum: 0 }
+        unknown_count: { type: integer, format: int64, minimum: 0 }
+        reason_counts:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
+        capacity_scopes:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
+        rate_per_second: { type: integer, minimum: 1, maximum: 100 }
+        remaining_lifetime_seconds: { type: number, minimum: 0 }
+        minimum_drain_seconds:
+          type: number
+          minimum: 0
+          description: Optimistic delay until the last pending item can spend an admission permit, respecting the current fixed-window budget and schedule. Does not include handler execution or future waits.
+        earliest_drain_at: { type: string, format: date-time }
+        fits_before_expiry:
+          type: boolean
+          description: Active job and optimistic earliest drain strictly precedes expiry; true is not a guarantee of completion.
+        assumes_immediate_resume: { type: boolean }
+        sample:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventRecoveryPreflightItem' }
+    EventRecoveryCapacityWait:
+      description: "Current capacity-wait episode with limiting scope and observation timestamps."
+      type: object
+      additionalProperties: false
+      required: [scope, gate, explanation, started_at, observed_at, age_seconds]
+      properties:
+        scope: { type: string, enum: [account, app, consumer, unknown] }
+        gate: { type: string, enum: [pending_delivery_limit, unknown] }
+        explanation: { type: string, description: Safe explanation of the observed admission gate; does not include payloads or resolved work keys. }
+        started_at: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        age_seconds: { type: number, minimum: 0 }
+    EventRecoveryJobHealth:
+      description: "Retained recovery job progress, expiry risk and capacity-wait observations."
+      type: object
+      additionalProperties: false
+      required: [job_id, mode, state, status, pending_count, rate_per_second, progress_age_seconds, progress_known, next_attempt_at, eligible_at, overdue_seconds, expires_at, expiring]
+      properties:
+        capacity_wait:
+          $ref: '#/components/schemas/EventRecoveryCapacityWait'
+          description: Latest tracked capacity episode. Omitted when no diagnostics have been observed. Preserved while paused; cleared on resume or item progress. Use eligible_at for the next eligible retry.
+        job_id: { type: string, format: uuid }
+        mode: { type: string, enum: [routing, execution] }
+        state: { type: string, enum: [running, paused] }
+        status: { type: string, enum: [running, paused, finishing, expired, stalled, capacity_wait, legacy_claim_wait, paced] }
+        pending_count: { type: integer, format: int64, minimum: 0 }
+        rate_per_second: { type: integer, minimum: 1, maximum: 100 }
+        last_progress_at:
+          type: string
+          format: date-time
+          description: Last committed item admission or skip; control changes and capacity deferrals do not advance this timestamp. Omitted when no tracked progress exists.
+        progress_age_seconds:
+          type: number
+          minimum: 0
+          description: Age of last tracked progress; falls back to job creation when progress_known is false. This fallback does not reconstruct historical progress.
+        progress_known: { type: boolean }
+        next_attempt_at: { type: string, format: date-time }
+        eligible_at:
+          type: string
+          format: date-time
+          description: Later of the scheduled attempt and the end of a spent rate window. Eligibility is ignored while paused.
+        overdue_seconds: { type: number, minimum: 0 }
+        expires_at: { type: string, format: date-time }
+        expiring:
+          type: boolean
+          description: Pending work exists and expiry is within one hour or already overdue. Paused jobs retain this signal separately.
+        wait_reason:
+          type: string
+          enum: [capacity, legacy_claim]
+          description: Most recently recorded admission wait; cleared on tracked progress.
+    EventRecoveryHealth:
+      description: "Bounded application recovery health summary and sampled actionable jobs."
+      type: object
+      additionalProperties: false
+      required: [capacity_wait_warning_seconds, capacity_waiting_jobs, prolonged_capacity_wait_jobs, app_id, observed_at, stall_grace_seconds, expiry_warning_seconds, running_jobs, paused_jobs, stalled_jobs, expiring_jobs, paused_expiring_jobs, jobs]
+      properties:
+        capacity_wait_warning_seconds: { type: integer, format: int64, minimum: 1 }
+        capacity_waiting_jobs: { type: integer, format: int64, minimum: 0, description: Running capacity-wait jobs observed within the five-minute freshness grace. }
+        prolonged_capacity_wait_jobs: { type: integer, format: int64, minimum: 0, description: Fresh running capacity episodes lasting at least fifteen minutes; excludes paused and expired jobs and scheduler stalls. }
+        app_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        stall_grace_seconds: { type: integer, format: int64, minimum: 1 }
+        expiry_warning_seconds: { type: integer, format: int64, minimum: 1 }
+        running_jobs: { type: integer, format: int64, minimum: 0 }
+        paused_jobs: { type: integer, format: int64, minimum: 0 }
+        stalled_jobs: { type: integer, format: int64, minimum: 0 }
+        expiring_jobs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Running jobs with pending work approaching expiry; excludes paused jobs.
+        paused_expiring_jobs: { type: integer, format: int64, minimum: 0 }
+        jobs:
+          type: array
+          maxItems: 3
+          items: { $ref: '#/components/schemas/EventRecoveryJobHealth' }
+    EventRecoveryFinishedWebhookPayload:
+      type: object
+      additionalProperties: false
+      description: Frozen terminal recovery admission metadata. Completed means recovery admission finished; admitted handler executions and routing retries can continue. Expired uses stored cancelled state with distinct expired outcome. JSON delivery nests this payload under payload.data; CloudEvents uses data. The event_id is stable across receivers and attempts, independently of each receiver delivery ID.
+      required: [event_id, job_id, app_id, mode, state, outcome, selected_count, pending_count, queued_count, skipped_count, cancelled_count, created_at, expires_at, completed_at]
+      properties:
+        event_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        mode: { type: string, enum: [routing, execution] }
+        state: { type: string, enum: [completed, cancelled] }
+        outcome: { type: string, enum: [completed, cancelled, expired] }
+        selected_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
+        pending_count: { type: integer, format: int64, enum: [0] }
+        queued_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
+        skipped_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
+        cancelled_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    EventRecoveryControlRequest:
+      description: "Optional audit reason attached to a recovery pause, resume or cancellation."
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 512
+          description: Optional operator reason, at most 512 UTF-8 bytes without control characters.
+    EventRecoveryHistoryEntry:
+      description: "Immutable recovery lifecycle or control action with actor identity and previous settings."
+      type: object
+      additionalProperties: false
+      required: [id, occurred_at, action, actor_kind, actor_id, previous_state, state, previous_rate, rate]
+      properties:
+        id: { type: integer, format: int64, minimum: 1 }
+        occurred_at: { type: string, format: date-time }
+        action: { type: string, enum: [created, paused, resumed, rate_changed, cancelled, expired] }
+        actor_kind: { type: string, enum: [account, api_key, internal, system] }
+        actor_id: { type: string, description: "Authenticated account or API key ID, or an internal/system identifier. No credential values." }
+        reason: { type: string, maxLength: 512 }
+        previous_state: { type: string, enum: ['', running, paused, completed, cancelled] }
+        state: { type: string, enum: [running, paused, completed, cancelled] }
+        previous_rate: { type: integer, minimum: 0, maximum: 100 }
+        rate: { type: integer, minimum: 1, maximum: 100 }
+    EventRecoveryHistory:
+      description: "Paginated chronological audit history for a retained recovery job."
+      type: object
+      additionalProperties: false
+      required: [job_id, entries]
+      properties:
+        job_id: { type: string, format: uuid }
+        entries:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventRecoveryHistoryEntry' }
+        next_after: { type: integer, format: int64, minimum: 1, description: Exclusive last ID for the next page; omitted on the final page. }
+    EventRecoveryJobs:
+      description: "Paginated retained recovery jobs with admission progress and account-bound discovery cursor."
+      type: object
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EventRecoveryJob' }
+        next_cursor:
+          type: string
+          description: Omitted on the final page. Preserve the same app and filters; page size may change.
+    EventRecoveryItems:
+      description: "Paginated frozen recovery items and their individual admission outcomes."
+      type: object
+      additionalProperties: false
+      required: [job_id, items]
+      properties:
+        job_id: { type: string, format: uuid }
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventRecoveryItem' }
+        next_after: { type: integer, format: int64, minimum: 1, description: Last item position for the next page; absent on the final page. }
+
+    EventOrderingBlocker:
+      type: object
+      additionalProperties: false
+      description: Earliest unresolved routing recipient in the captured ordered lane; excludes event data and resolved work keys.
+      required: [event_source, event_id, subscription_id, accepted_at, state, age_seconds, receipt_url]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        subscription_id: { type: string }
+        accepted_at: { type: string, format: date-time }
+        state: { type: string, enum: [pending, processing] }
+        next_attempt_at: { type: string, format: date-time }
+        age_seconds: { type: number, format: double, minimum: 0 }
+        receipt_url: { type: string, format: uri-reference }
 
     EventBacklogConsumer:
       type: object
       additionalProperties: false
-      description: Exact counts over all matching waiting recipients for one captured app/subscription, independent of recipient pagination.
-      required: [app_id, app_slug, target_available, subscription_id, waiting_recipients, pending_recipients, processing_recipients, capacity_waiting_recipients, oldest_accepted_at, oldest_age_seconds]
+      description: Exact counts over all matching waiting recipients for one app/subscription/consumer kind, independent of recipient pagination.
+      required: [app_id, app_slug, target_available, subscription_id, consumer_kind, waiting_recipients, pending_recipients, processing_recipients, capacity_waiting_recipients, ordering_waiting_recipients, oldest_accepted_at, oldest_age_seconds]
       properties:
         app_id: { type: string, format: uuid }
         app_slug: { type: string }
         target_available: { type: boolean }
         subscription_id: { type: string }
+        consumer_kind: { type: string, enum: [application, workflow] }
         waiting_recipients: { type: integer, format: int64, minimum: 0 }
         pending_recipients: { type: integer, format: int64, minimum: 0 }
         processing_recipients: { type: integer, format: int64, minimum: 0 }
         capacity_waiting_recipients: { type: integer, format: int64, minimum: 0 }
+        ordering_waiting_recipients: { type: integer, format: int64, minimum: 0 }
         oldest_accepted_at: { type: string, format: date-time }
         oldest_age_seconds: { type: number, format: double, minimum: 0 }
 
@@ -45225,6 +46978,93 @@ components:
         type: { type: string }
         version: { type: string }
         created: { type: boolean }
+
+    EventSchemaRolloutRequest:
+      description: "Candidate event schema and bounded retained-event sample settings for a read-only rollout preview."
+      type: object
+      additionalProperties: false
+      required: [source, type, version]
+      properties:
+        source: { type: string, minLength: 1, maxLength: 256, description: 'Concrete event source; wildcard patterns are not allowed.' }
+        type: { type: string, minLength: 1, maxLength: 256, description: 'Concrete event type; wildcard patterns are not allowed.' }
+        version: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' }
+        schema: { description: 'Proposed Draft 2020-12 JSON Schema, at most 64 KiB; external references are forbidden. Omit to use the registered version. It is never registered by this request.' }
+        samples:
+          type: array
+          maxItems: 20
+          description: 'Event data values to validate, at most 64 KiB each. No event envelopes are required.'
+          items: {}
+        from: { type: string, format: date-time, description: 'Optional inclusive platform acceptance time; requires until.' }
+        until: { type: string, format: date-time, description: 'Optional exclusive acceptance time; requires from. Cut off at observed_at when in the future.' }
+        retained_limit: { type: integer, minimum: 0, maximum: 100, default: 0, description: 'Requires a retained range when nonzero. Zero or omitted checks up to 100 matching payloads when a range is supplied.' }
+
+    EventSchemaRolloutConsumer:
+      description: "Application consumer selection and schema-version compatibility in a rollout preview."
+      type: object
+      additionalProperties: false
+      required: [subscription_id, app_id, source, type, schema_versions, accepts_version, content_filter_present]
+      properties:
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        source: { type: string, description: 'Subscription source pattern.' }
+        type: { type: string, description: 'Subscription type pattern.' }
+        schema_versions: { type: array, maxItems: 16, items: { type: string }, description: 'Empty accepts every version.' }
+        accepts_version: { type: boolean, description: 'Version selection only; no content filter evaluation or delivery guarantee.' }
+        content_filter_present: { type: boolean }
+
+    EventSchemaRolloutValidation:
+      description: "Candidate schema validation results for bounded retained event content."
+      type: object
+      additionalProperties: false
+      required: [valid]
+      properties:
+        sample_index: { type: integer, minimum: 0, maximum: 19, description: 'Zero-based index for caller-supplied samples.' }
+        event_id: { type: string, description: 'Identity for retained sample results.' }
+        accepted_at: { type: string, format: date-time }
+        valid: { type: boolean }
+        reason: { type: string, description: 'Bounded validation category or unreadable_envelope; no payload values are returned.' }
+        field: { type: string, maxLength: 256, description: 'First failing field path, bounded to 256 UTF-8 bytes.' }
+
+    EventSchemaRolloutRetained:
+      description: "Retained sample coverage and compatibility observations for the candidate event schema."
+      type: object
+      additionalProperties: false
+      required: [requested, scanned_count, examined_count, valid_count, invalid_count, unreadable_count, truncated, history_complete, results]
+      properties:
+        requested: { type: boolean }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        cutoff_at: { type: string, format: date-time }
+        scanned_count: { type: integer, minimum: 0, maximum: 1000, description: 'Account receipts scanned, including unrelated sources and types.' }
+        examined_count: { type: integer, minimum: 0, maximum: 100 }
+        valid_count: { type: integer, minimum: 0, maximum: 100 }
+        invalid_count: { type: integer, minimum: 0, maximum: 100 }
+        unreadable_count: { type: integer, minimum: 0, maximum: 100, description: 'Oversized, malformed, or invalid retained envelopes excluded from validation.' }
+        truncated: { type: boolean, description: 'Account scan, matching payload limit, or byte budget prevented checking all candidates.' }
+        history_complete: { type: boolean, enum: [false], description: 'Retention and bounded sampling never certify complete history.' }
+        results: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/EventSchemaRolloutValidation' } }
+
+    EventSchemaRolloutResponse:
+      description: "Read-only event schema rollout assessment combining validation, consumer selection and retained coverage."
+      type: object
+      additionalProperties: false
+      required: [source, type, version, schema_origin, schema_digest, observed_at, consumer_count, accepting_count, excluding_count, consumers_truncated, consumers, sample_valid_count, sample_invalid_count, samples, retained]
+      properties:
+        source: { type: string }
+        type: { type: string }
+        version: { type: string }
+        schema_origin: { type: string, enum: [proposed, registered] }
+        schema_digest: { type: string, pattern: '^[a-f0-9]{64}$', description: 'SHA-256 of the schema bytes checked.' }
+        observed_at: { type: string, format: date-time }
+        consumer_count: { type: integer, minimum: 0, maximum: 1000, description: 'Observed matching enabled application subscriptions; a lower bound when truncated.' }
+        accepting_count: { type: integer, minimum: 0, maximum: 1000 }
+        excluding_count: { type: integer, minimum: 0, maximum: 1000 }
+        consumers_truncated: { type: boolean }
+        consumers: { type: array, maxItems: 1000, items: { $ref: '#/components/schemas/EventSchemaRolloutConsumer' } }
+        sample_valid_count: { type: integer, minimum: 0, maximum: 20 }
+        sample_invalid_count: { type: integer, minimum: 0, maximum: 20 }
+        samples: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/EventSchemaRolloutValidation' } }
+        retained: { $ref: '#/components/schemas/EventSchemaRolloutRetained' }
 
     EventSchema:
       description: One registered account-scoped event schema version.
@@ -45277,8 +47117,10 @@ components:
     EventReplayPreviewMatch:
       type: object
       description: Matching retained-event metadata and original recipient membership.
-      required: [event_id, event_source, event_type, accepted_at, original_recipient, receipt_url]
+      required: [event_id, event_source, event_type, accepted_at, original_recipient, receipt_url, delivery_expired]
       properties:
+        delivery_expired: { type: boolean, description: 'Age limit of the current subscription is exceeded at observation time; historical backfill requires an explicit override to admit it.' }
+        delivery_deadline_at: { type: string, format: date-time }
         event_id: { type: string }
         event_source: { type: string }
         event_type: { type: string }
@@ -45311,6 +47153,8 @@ components:
       description: Read-only current-subscription preview of one bounded retained-event page.
       required: [app_slug, subscription, subscription_revision, from, until, cutoff_at, observed_at, coverage, retention, scanned_count, matched_count, filter_mismatch_count, pattern_mismatch_count, already_captured_count, matches]
       properties:
+        schema_version_mismatch_count: { type: integer, minimum: 0, description: "Schema version mismatch count in the event replay preview response: candidates excluded by schema version selection." }
+        expired_count: { type: integer, minimum: 0, maximum: 100, description: Matching retained events exceeding the current subscription age limit. }
         app_slug: { type: string }
         subscription: { $ref: '#/components/schemas/EventSubscriptionResponse' }
         subscription_revision: { type: string, description: Opaque fingerprint of the current subscription declaration. }
@@ -45331,14 +47175,76 @@ components:
           items: { $ref: '#/components/schemas/EventReplayPreviewMatch' }
         next_after: { type: string, description: Continue even if this page has no matches; absent when no more currently retained candidates follow. }
 
+    WorkflowEventReplayPreviewMatch:
+      type: object
+      description: A retained event whose captured workflow trigger matched, with routing and durable admission state.
+      required: [event_id, event_source, event_type, accepted_at, original_recipient, routing_state, filter_matched, admission_recorded, receipt_url]
+      properties:
+        event_id: { type: string }
+        event_source: { type: string }
+        event_type: { type: string }
+        schema_version: { type: string }
+        accepted_at: { type: string, format: date-time }
+        original_recipient:
+          type: string
+          enum: [captured]
+          description: The immutable event snapshot contains this workflow recipient.
+        routing_state:
+          type: string
+          enum: [pending, processing, filtered, enqueued, failed]
+          description: Latest retained routing checkpoint for this captured workflow recipient.
+        filter_matched: { type: boolean, enum: [true], description: The captured workflow trigger filter matches the retained envelope. }
+        admission_recorded:
+          type: boolean
+          description: A durable workflow admission receipt exists. This is the event/recipient deduplication key even if its run was later pruned.
+        workflow_run_id: { type: string, format: uuid, description: Run ID while the linked workflow run remains retained. }
+        workflow_run_status: { type: string, description: Current retained workflow run state when the run still exists. }
+        receipt_url: { type: string }
+    WorkflowEventReplayPreviewResponse:
+      type: object
+      description: Read-only, bounded preview of captured workflow event recipients; potential admissions do not guarantee future workflow admission.
+      required: [app_slug, workflow_name, from, until, cutoff_at, observed_at, coverage, retention, scanned_count, captured_count, matched_count, filter_mismatch_count, not_captured_count, unknown_recipient_count, already_admitted_count, potential_admission_count, matches]
+      properties:
+        app_slug: { type: string }
+        workflow_name: { type: string }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        cutoff_at: { type: string, format: date-time, description: Acceptance-time upper bound carried forward from the first page. }
+        observed_at: { type: string, format: date-time, description: Server timestamp when this workflow preview page was assembled. }
+        coverage: { type: string, enum: [retained_envelopes] }
+        retention: { $ref: '#/components/schemas/EventReplayPreviewRetention' }
+        scanned_count: { type: integer, minimum: 0, maximum: 100, description: Retained envelopes examined on this page. }
+        captured_count: { type: integer, minimum: 0, maximum: 100, description: Envelopes whose original snapshot contains the named app workflow. }
+        matched_count: { type: integer, minimum: 0, maximum: 100, description: Captured recipients whose immutable trigger filter matches the event. }
+        filter_mismatch_count: { type: integer, minimum: 0, maximum: 100 }
+        not_captured_count: { type: integer, minimum: 0, maximum: 100, description: Envelopes with a captured snapshot that excludes this workflow recipient. }
+        unknown_recipient_count: { type: integer, minimum: 0, maximum: 100, description: Legacy envelopes without an original recipient snapshot. }
+        already_admitted_count: { type: integer, minimum: 0, maximum: 100, description: Matching recipients with a durable admission receipt; these are deduplicated. }
+        potential_admission_count: { type: integer, minimum: 0, maximum: 100, description: Matching recipients without an admission receipt; not a guarantee of future quota or target eligibility. }
+        matches:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/WorkflowEventReplayPreviewMatch' }
+        next_after: { type: string, description: Continue even if this page has no matches; absent when no more currently retained envelopes follow. }
+
     EventReplayBackfillRequest:
       description: Acceptance-time range for a durable subscription event backfill.
       type: object
       additionalProperties: false
       required: [from, until]
       properties:
+        allow_expired: { type: boolean, default: false, description: 'Explicitly override delivery age for this replay generation or historical backfill job. Preserves deterministic invocation identity and manual controls.' }
         from: { type: string, format: date-time, description: Inclusive platform acceptance-time lower bound. }
         until: { type: string, format: date-time, description: Exclusive upper bound; future values are capped at creation time. The range may not exceed 30 days. }
+    WorkflowEventReplayBackfillRequest:
+      description: Current event-triggered workflow and acceptance-time range for a durable historical run-admission job.
+      type: object
+      additionalProperties: false
+      required: [workflow_name, from, until]
+      properties:
+        workflow_name: { type: string, minLength: 1, maxLength: 256, description: Workflow in the app's preferred live default deployment; its definition is pinned when the job is created. }
+        from: { type: string, format: date-time, description: Inclusive lower bound on platform event acceptance. }
+        until: { type: string, format: date-time, description: Exclusive acceptance upper bound; future values stop at job creation. At most 30 days are allowed. }
     EventReplayBackfillRetryRequest:
       description: Bound for the number of failed routing recipients requeued in this call.
       type: object
@@ -45365,6 +47271,8 @@ components:
         updated_at: { type: string, format: date-time }
         receipt_url: { type: string, format: uri-reference, description: Account-authenticated receipt inspection; omitted after the original receipt expires. }
         attempt_history_url: { type: string, format: uri-reference, description: Handler attempt history for this consumer; omitted when retained delivery provenance or current app ownership is unavailable. }
+        workflow_run_id: { type: string, format: uuid, description: Retained workflow run admitted for this item, when still present. }
+        workflow_run_status: { type: string, description: Current state of the retained workflow run, when still present. }
     EventReplayBackfillItemsResponse:
       description: Stable acceptance-ordered page of per-envelope outcomes for one backfill job.
       type: object
@@ -45399,12 +47307,15 @@ components:
       description: Progress and immutable selection details for one durable event backfill.
       type: object
       additionalProperties: false
-      required: [id, app_slug, subscription_id, subscription_revision, from, until, cutoff_at, history_complete, duplicate_policy, state, scan_complete, progress, created_at, updated_at]
+      required: [id, app_slug, consumer_kind, from, until, cutoff_at, history_complete, duplicate_policy, state, scan_complete, progress, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         app_slug: { type: string }
-        subscription_id: { type: string, format: uuid }
-        subscription_revision: { type: string, description: Fingerprint of the subscription declaration snapshotted when the job was created. }
+        consumer_kind: { type: string, enum: [application, workflow] }
+        workflow_name: { type: string, description: Workflow name for workflow jobs. }
+        workflow_revision: { type: string, description: Fingerprint of the captured workflow recipient definition for workflow jobs. }
+        subscription_id: { type: string, format: uuid, description: Ordinary subscription ID for application jobs. }
+        subscription_revision: { type: string, description: Fingerprint of the subscription declaration snapshotted when an application job was created. }
         from: { type: string, format: date-time }
         until: { type: string, format: date-time }
         cutoff_at: { type: string, format: date-time, description: Fixed exclusive acceptance cutoff. }
@@ -45433,6 +47344,8 @@ components:
       additionalProperties: false
       required: [id, app_id, source, type, filter, enabled, created_at, updated_at]
       properties:
+        schema_versions: { type: array, maxItems: 16, uniqueItems: true, items: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' }, description: "Schema versions in the event subscription response: exact case-sensitive schema versions. Empty or omitted accepts all versions; a nonempty selection excludes unversioned events. Selection is captured at publication or backfill creation." }
+        routing_retry_policy: { $ref: '#/components/schemas/EventRoutingRetryPolicy' }
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         source:
@@ -45449,6 +47362,7 @@ components:
         work_key: { type: string, description: "Dot selector into the CloudEvents envelope for the work key." }
         work_fairness_key: { type: string, description: "Optional dot selector for an application fairness group; defaults to work_key." }
         work_action: { type: string, enum: [invoke, cancel_pending], description: "Action taken on a matching event." }
+        ordered: { type: boolean, description: "Whether this subscription waits for earlier matching keyed deliveries before routing." }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -45514,6 +47428,8 @@ components:
       additionalProperties: false
       required: [subscription_id, action, state, attempt_number, retryable, occurred_at]
       properties:
+        filter_reason: { type: string, enum: [schema_version_mismatch], description: Why routing was filtered without consuming a routing attempt. }
+        retry_stop_reason: { type: string, enum: [non_retryable, max_attempts, max_duration, delivery_expired], description: Why automatic routing retries stopped; failure_code retains the underlying cause. }
         subscription_id: { type: string, format: uuid }
         action:
           type: string
@@ -45643,6 +47559,12 @@ components:
       additionalProperties: false
       required: [state, attempts, retryable, replay_count]
       properties:
+        delivery_deadline_at: { type: string, format: date-time, description: Captured wall-clock routing deadline. }
+        delivery_age_override: { type: boolean, description: Explicit operator override recorded for the current replay generation or backfill. }
+        routing_retry_policy: { $ref: '#/components/schemas/EventRoutingRetryPolicy' }
+        filter_reason: { type: string, enum: [schema_version_mismatch], description: "Filter reason in the event receipt routing response: why routing was filtered without consuming a routing attempt." }
+        retry_stop_reason: { type: string, enum: [non_retryable, max_attempts, max_duration, delivery_expired], description: "Retry stop reason in the event receipt routing response: why automatic routing retries stopped; failure_code retains the underlying cause." }
+        retry_spent_ms: { type: integer, format: int64, minimum: 0, description: Current replay generation duration budget spent on routing attempts and scheduled delays. }
         state: { type: string, enum: [pending, processing, filtered, enqueued, failed] }
         attempts: { type: integer, minimum: 0, description: "Lifetime routing attempts, including replay generations." }
         generation_capacity_deferrals: { type: integer, minimum: 0, description: Capacity waits in this independent routing generation; subtract from generation_attempts for failure-budget use. }
@@ -45778,6 +47700,7 @@ components:
       additionalProperties: false
       required: [event_id, event_source, subscription_id]
       properties:
+        allow_expired: { type: boolean, default: false, description: "Allow expired in the replay event fanout failure request: explicitly override delivery age for this replay generation or historical backfill job. Preserves deterministic invocation identity and manual controls." }
         event_id: { type: string }
         event_source: { type: string }
         subscription_id: { type: string, format: uuid }
@@ -50121,6 +52044,10 @@ components:
         - created_at
         - updated_at
       properties:
+        event_subscription_id:
+          type: string
+          format: uuid
+          description: 'Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to 24h are required.'
         post_deploy_rollback_window_seconds:
           type: integer
           minimum: 0
@@ -50156,6 +52083,20 @@ components:
             - slo_burn_rate
             - pre_auth_target_threshold
             - pre_auth_target_signal_gap_pct
+            - event_pending_recipients
+            - event_oldest_pending_seconds
+            - event_retry_rate_per_second
+            - event_terminal_failure_pct
+            - event_routing_latency_p95_seconds
+            - event_paused_seconds
+            - event_drain_rate_per_second
+            - event_execution_dead_letters
+            - event_execution_dead_letter_rate_per_second
+            - event_handler_failure_pct
+            - event_completion_latency_p95_seconds
+            - event_recovery_stalled_jobs
+            - event_recovery_expiring_jobs
+            - event_recovery_capacity_wait_jobs
             - workflow_failures
             - workflow_schedule_quota_skips
             - workflow_pending_age_seconds
@@ -50185,13 +52126,13 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll the rule''s app back to its last live deployment. demote = pin the current canary step (no traffic advance). promote = short-circuit the canary ladder to 100%. Pre-auth target and workflow metrics support webhook only.'
+          description: 'What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll the rule''s app back to its last live deployment. demote = pin the current canary step (no traffic advance). promote = short-circuit the canary ladder to 100%. Pre-auth target and event consumer and workflow metrics support webhook only.'
           default: webhook
           example: webhook
         state:
           type: string
           enum: [ok, firing, degraded, unknown]
-          description: "Evaluation state. degraded means the rule's own metric source is unavailable; unknown means the login-target signal has fewer than 20 selected failures on every observed route in this window."
+          description: "Evaluation state. degraded means the rule's own metric source is unavailable; unknown means insufficient samples, compacted event history, or a paused event consumer."
         last_fired_at: { type: string, format: date-time }
         last_evaluated_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
@@ -50202,6 +52143,10 @@ components:
       type: object
       required: [name, metric, comparison, threshold, window_spec, webhook_url, webhook_secret]
       properties:
+        event_subscription_id:
+          type: string
+          format: uuid
+          description: "Event subscription id in the create alert rule request: immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to 24h are required."
         post_deploy_rollback_window_seconds:
           type: integer
           minimum: 0
@@ -50211,7 +52156,7 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -50233,7 +52178,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'What to do when the rule fires. Omit to default to webhook. Pre-auth target and workflow metrics support webhook only.'
+          description: 'What to do when the rule fires. Omit to default to webhook. Pre-auth target and event consumer and workflow metrics support webhook only.'
           default: webhook
           example: webhook
 
@@ -50251,7 +52196,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -50264,7 +52209,7 @@ components:
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
-          description: 'Replace the action. Omit to leave the existing action in place. Pre-auth target and workflow metrics support webhook only.'
+          description: 'Replace the action. Omit to leave the existing action in place. Pre-auth target and event consumer and workflow metrics support webhook only.'
 
     RotateAlertRuleSecretResponse:
       description: 'rotate-secret response — returns the rotated_at timestamp + the masked constant.'
@@ -58623,7 +60568,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "routes.monitor.escalated"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -59112,7 +61057,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "routes.monitor.escalated"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -59194,7 +61139,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "routes.monitor.escalated"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

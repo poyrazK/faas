@@ -136,12 +136,15 @@ func refreshEventReplayCapacity(ctx context.Context, tx sqlc.DBTX, id string) er
 func eventCapacityProgress(previous PublishedEventRecipientProgress, attempts int, scope string) PublishedEventRecipientProgress {
 	now := time.Now().UTC()
 	next := now.Add(EventDeliveryCapacityRetryDelay)
-	return PublishedEventRecipientProgress{State: PublishedEventRecipientPending, Attempts: attempts,
-		CapacityDeferrals: previous.CapacityDeferrals + 1, CapacityScope: scope, NextAttemptAt: &next, UpdatedAt: now}
+	return PublishedEventRecipientProgress{DeliveryAgeOverride: previous.DeliveryAgeOverride, State: PublishedEventRecipientPending, Attempts: attempts,
+		RetrySpentMS: previous.RetrySpentMS, RetryGeneration: previous.RetryGeneration, CapacityDeferrals: previous.CapacityDeferrals + 1, CapacityScope: scope, NextAttemptAt: &next, UpdatedAt: now}
 }
 
 func preserveEventCapacityHistory(progress *PublishedEventRecipientProgress, previous PublishedEventRecipientProgress) {
+	progress.DeliveryAgeOverride = previous.DeliveryAgeOverride
 	progress.CapacityDeferrals = previous.CapacityDeferrals
+	progress.RetrySpentMS = previous.RetrySpentMS
+	progress.RetryGeneration = previous.RetryGeneration
 }
 
 func eventRoutingAccount(receipt *PublishedEventWork) string {

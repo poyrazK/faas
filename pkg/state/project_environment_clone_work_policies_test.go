@@ -18,7 +18,7 @@ func TestCloneWorkPolicyCaptureCoversEveryPolicyAndBindingField(t *testing.T) {
 		fields map[string]string
 	}{
 		{workpolicy.Policy{}, map[string]string{"Name": "Name", "MaxRunningPerKey": "MaxRunningPerKey", "MaxRunningPerFairnessKey": "MaxRunningPerFairnessKey", "PendingUpdates": "PendingUpdates", "Debounce": "DebounceMS", "ExpiresAfter": "ExpiresAfterMS"}},
-		{EventWorkBinding{}, map[string]string{"SubscriptionID": "SubscriptionID", "AppID": "catalogue_app_id", "PolicyName": "PolicyName", "KeySelector": "KeySelector", "FairnessSelector": "FairnessSelector", "Action": "Action"}},
+		{EventWorkBinding{}, map[string]string{"SubscriptionID": "SubscriptionID", "AppID": "catalogue_app_id", "PolicyName": "PolicyName", "KeySelector": "KeySelector", "FairnessSelector": "FairnessSelector", "Action": "Action", "Ordered": "Ordered"}},
 		{TriggerWorkBinding{}, map[string]string{"TriggerID": "TriggerID", "AppID": "catalogue_app_id", "PolicyName": "PolicyName", "KeySelector": "KeySelector", "FairnessSelector": "FairnessSelector"}},
 	} {
 		source := reflect.TypeOf(contract.source)

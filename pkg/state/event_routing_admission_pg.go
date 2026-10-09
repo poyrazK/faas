@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -162,16 +163,30 @@ func admitEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, clai
 		}
 	}
 	var created bool
+	controlReason := ""
+	var controlNext time.Time
 	if scope == "" {
+		controlReason, controlNext, err = eventSubscriptionGateTx(ctx, q, tx, p)
+		if err != nil {
+			return PublishedEventRoutingResult{}, err
+		}
+	}
+	if scope == "" && controlReason == "" {
 		created, err = performEventAdmissionTx(ctx, tx, receipt, p)
 	}
 	if err != nil {
 		return eventAdmissionResult(p, PublishedEventRecipientProgress{}, false, false), admissionError(EventFanoutFailureCodeInvocationEnqueueFailed, true, err)
 	}
 	progress := eventAdmissionProgress(p, attempts)
+	if progress.FilterReason == "schema_version_mismatch" {
+		progress = EventSchemaVersionFilteredProgress(previous, progress.Attempts, time.Now().UTC())
+	}
 	preserveEventCapacityHistory(&progress, previous)
 	if scope != "" {
 		progress = eventCapacityProgress(previous, attempts, scope)
+	}
+	if controlReason != "" {
+		progress = eventSubscriptionControlProgress(previous, attempts, controlReason, controlNext)
 	}
 	if created {
 		if err := q.EventDeliveryInsertSlot(ctx, tx, sqlc.EventDeliveryInsertSlotParams{InvocationID: mustPgUUID(p.invocation.ID),
@@ -230,6 +245,9 @@ func performEventAdmissionTx(ctx context.Context, tx pgx.Tx, receipt *PublishedE
 	if !p.matched || p.prior {
 		return false, nil
 	}
+	if !p.deliveryDeadline.IsZero() && !p.deliveryDeadline.After(time.Now().UTC()) {
+		return false, ErrEventDeliveryExpired
+	}
 	if p.cancel {
 		cancellation, err := cancelPendingKeyedInvocationsTx(ctx, tx, p.invocation.AppID, p.invocation.WorkPolicyName, p.invocation.WorkKeyDigest, p.invocation.ID)
 		if err == nil && cancellation.CreatedAt.Before(receipt.CreatedAt) {
@@ -256,7 +274,7 @@ func priorEventInvocationMatches(receipt *PublishedEventWork, p eventAdmissionPl
 func settleEventAdmissionTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, claim PublishedEventRoutingClaim, adopted bool, progress PublishedEventRecipientProgress) (bool, error) {
 	if adopted {
 		n, err := q.EventRecipientFinish(ctx, tx, sqlc.EventRecipientFinishParams{OutboxID: claim.OutboxID, SubscriptionID: claim.SubscriptionID,
-			ClaimToken: mustPgUUID(claim.ClaimToken), Generation: claim.Generation, State: progress.State, CapacityDeferred: progress.CapacityScope != "", AvailableAt: pgtypeFromTime(eventProgressNext(progress))})
+			ClaimToken: mustPgUUID(claim.ClaimToken), Generation: claim.Generation, State: progress.State, ControlDeferred: (progress.DeliveryControlReason != "" || progress.State == PublishedEventRecipientFiltered && progress.FilterReason == "schema_version_mismatch"), CapacityDeferred: progress.CapacityScope != "", AvailableAt: pgtypeFromTime(eventProgressNext(progress))})
 		if err != nil {
 			return false, err
 		}

@@ -12,58 +12,81 @@ import (
 )
 
 const eventBacklogConsumers = `-- name: EventBacklogConsumers :many
-SELECT b.app_id,b.subscription_id,coalesce(a.slug,'')::text AS app_slug,
+SELECT b.app_id,b.subscription_id,b.consumer_kind,coalesce(a.slug,'')::text AS app_slug,
        (a.id IS NOT NULL AND a.status<>'deleted')::boolean AS target_available,
        count(*)::bigint AS waiting_recipients,
        count(*) FILTER (WHERE b.routing_state='pending')::bigint AS pending_recipients,
        count(*) FILTER (WHERE b.routing_state='processing')::bigint AS processing_recipients,
        count(*) FILTER (WHERE b.capacity_scope<>'')::bigint AS capacity_waiting_recipients,
+       count(*) FILTER (WHERE observation.reason='ordering_blocked')::bigint AS ordering_waiting_recipients,
        min(b.accepted_at)::timestamptz AS oldest_accepted_at
-FROM event_routing_backlog b LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
-WHERE b.account_id=$1::uuid AND b.accepted_at<=$2::timestamptz
-  AND ($3::uuid IS NULL OR b.app_id=$3::uuid)
-  AND ($4::text='' OR b.subscription_id=$4::text)
-  AND ($5::text='' OR b.routing_state=$5::text)
-  AND ($6::text='' OR b.capacity_scope=$6::text)
-  AND ($7::uuid IS NULL OR (b.app_id,b.subscription_id)>($7::uuid,$8::text))
-GROUP BY b.app_id,b.subscription_id,a.id,a.slug,a.status
-ORDER BY b.app_id,b.subscription_id LIMIT $9::integer
+FROM event_routing_backlog b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+
+LEFT JOIN LATERAL (SELECT event_recipient_order_blocker(b.outbox_id,b.subscription_id,
+ (SELECT item FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) item WHERE item->>'id'=b.subscription_id LIMIT 1),b.routing_mode='recipient') AS blocker) ordering ON b.routing_state='pending'
+CROSS JOIN LATERAL (SELECT event_subscription_delivery_waiting_reason(b.account_id,b.app_id,b.subscription_id,$1::timestamptz) AS reason) control
+CROSS JOIN LATERAL (SELECT CASE WHEN b.routing_state='pending' AND NOT (b.routing_mode='event' AND coalesce(b.lease_until>$1::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason(b.routing_state,b.capacity_scope,b.routing_mode,b.lease_until,b.next_attempt_at,b.consumer_kind,ordering.blocker,$1::timestamptz) END AS reason) observation
+WHERE b.account_id=$2::uuid AND b.accepted_at<=$3::timestamptz
+  AND ($4::uuid IS NULL OR b.app_id=$4::uuid)
+  AND ($5::text='' OR b.subscription_id=$5::text)
+  AND ($6::text='' OR b.consumer_kind=$6::text)
+  AND ($7::text='' OR b.origin=$7::text)
+  AND ($8::text='' OR b.routing_state=$8::text)
+  AND ($9::text='' OR observation.reason=$9::text)
+  AND ($10::text='' OR b.capacity_scope=$10::text)
+  AND ($11::uuid IS NULL OR (b.app_id,b.subscription_id)>($11::uuid,$12::text)
+       OR ((b.app_id,b.subscription_id)=($11::uuid,$12::text)
+           AND $13::text<>'' AND b.consumer_kind>$13::text))
+GROUP BY b.app_id,b.subscription_id,b.consumer_kind,a.id,a.slug,a.status
+ORDER BY b.app_id,b.subscription_id,b.consumer_kind LIMIT $14::integer
 `
 
 type EventBacklogConsumersParams struct {
+	ObservedAt          pgtype.Timestamptz
 	AccountID           pgtype.UUID
 	Cutoff              pgtype.Timestamptz
 	AppID               pgtype.UUID
 	SubscriptionID      string
+	ConsumerKind        string
+	Origin              string
 	RoutingState        string
+	WaitingReason       string
 	CapacityScope       string
 	AfterAppID          pgtype.UUID
 	AfterSubscriptionID string
+	AfterConsumerKind   string
 	PageLimit           int32
 }
 
 type EventBacklogConsumersRow struct {
 	AppID                     pgtype.UUID
 	SubscriptionID            string
+	ConsumerKind              string
 	AppSlug                   string
 	TargetAvailable           bool
 	WaitingRecipients         int64
 	PendingRecipients         int64
 	ProcessingRecipients      int64
 	CapacityWaitingRecipients int64
+	OrderingWaitingRecipients int64
 	OldestAcceptedAt          pgtype.Timestamptz
 }
 
 func (q *Queries) EventBacklogConsumers(ctx context.Context, db DBTX, arg EventBacklogConsumersParams) ([]EventBacklogConsumersRow, error) {
 	rows, err := db.Query(ctx, eventBacklogConsumers,
+		arg.ObservedAt,
 		arg.AccountID,
 		arg.Cutoff,
 		arg.AppID,
 		arg.SubscriptionID,
+		arg.ConsumerKind,
+		arg.Origin,
 		arg.RoutingState,
+		arg.WaitingReason,
 		arg.CapacityScope,
 		arg.AfterAppID,
 		arg.AfterSubscriptionID,
+		arg.AfterConsumerKind,
 		arg.PageLimit,
 	)
 	if err != nil {
@@ -76,12 +99,14 @@ func (q *Queries) EventBacklogConsumers(ctx context.Context, db DBTX, arg EventB
 		if err := rows.Scan(
 			&i.AppID,
 			&i.SubscriptionID,
+			&i.ConsumerKind,
 			&i.AppSlug,
 			&i.TargetAvailable,
 			&i.WaitingRecipients,
 			&i.PendingRecipients,
 			&i.ProcessingRecipients,
 			&i.CapacityWaitingRecipients,
+			&i.OrderingWaitingRecipients,
 			&i.OldestAcceptedAt,
 		); err != nil {
 			return nil, err
@@ -95,26 +120,38 @@ func (q *Queries) EventBacklogConsumers(ctx context.Context, db DBTX, arg EventB
 }
 
 const eventBacklogRecipients = `-- name: EventBacklogRecipients :many
-SELECT b.outbox_id, b.subscription_id, b.account_id, b.app_id, b.accepted_at, b.routing_mode, b.routing_state, b.capacity_scope, b.attempts, b.capacity_deferrals, b.next_attempt_at, b.lease_until, o.source, o.event_id, o.event_type, coalesce(a.slug,'')::text AS app_slug,
-       (a.id IS NOT NULL AND a.status <> 'deleted')::boolean AS target_available
+SELECT b.outbox_id, b.subscription_id, b.account_id, b.app_id, b.accepted_at, b.routing_mode, b.routing_state, b.capacity_scope, b.attempts, b.capacity_deferrals, b.next_attempt_at, b.lease_until, b.consumer_kind, b.origin, b.workflow_name, o.source, o.event_id, o.event_type, coalesce(a.slug,'')::text AS app_slug,
+       (a.id IS NOT NULL AND a.status <> 'deleted')::boolean AS target_available, ordering.blocker AS ordering_blocker, control.reason::text AS delivery_control_reason
 FROM event_routing_backlog b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id
 LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
-WHERE b.account_id=$1::uuid AND b.accepted_at<=$2::timestamptz
-  AND ($3::uuid IS NULL OR b.app_id=$3::uuid)
-  AND ($4::text='' OR b.subscription_id=$4::text)
-  AND ($5::text='' OR b.routing_state=$5::text)
-  AND ($6::text='' OR b.capacity_scope=$6::text)
-  AND ($7::timestamptz IS NULL OR
-       (b.accepted_at,b.outbox_id,b.subscription_id)>($7::timestamptz,$8::bigint,$9::text))
-ORDER BY b.accepted_at,b.outbox_id,b.subscription_id LIMIT $10::integer
+
+LEFT JOIN LATERAL (SELECT event_recipient_order_blocker(b.outbox_id,b.subscription_id,
+ (SELECT item FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) item WHERE item->>'id'=b.subscription_id LIMIT 1),b.routing_mode='recipient') AS blocker) ordering ON b.routing_state='pending'
+CROSS JOIN LATERAL (SELECT event_subscription_delivery_waiting_reason(b.account_id,b.app_id,b.subscription_id,$1::timestamptz) AS reason) control
+CROSS JOIN LATERAL (SELECT CASE WHEN b.routing_state='pending' AND NOT (b.routing_mode='event' AND coalesce(b.lease_until>$1::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason(b.routing_state,b.capacity_scope,b.routing_mode,b.lease_until,b.next_attempt_at,b.consumer_kind,ordering.blocker,$1::timestamptz) END AS reason) observation
+WHERE b.account_id=$2::uuid AND b.accepted_at<=$3::timestamptz
+  AND ($4::uuid IS NULL OR b.app_id=$4::uuid)
+  AND ($5::text='' OR b.subscription_id=$5::text)
+  AND ($6::text='' OR b.consumer_kind=$6::text)
+  AND ($7::text='' OR b.origin=$7::text)
+  AND ($8::text='' OR b.routing_state=$8::text)
+  AND ($9::text='' OR observation.reason=$9::text)
+  AND ($10::text='' OR b.capacity_scope=$10::text)
+  AND ($11::timestamptz IS NULL OR
+       (b.accepted_at,b.outbox_id,b.subscription_id)>($11::timestamptz,$12::bigint,$13::text))
+ORDER BY b.accepted_at,b.outbox_id,b.subscription_id LIMIT $14::integer
 `
 
 type EventBacklogRecipientsParams struct {
+	ObservedAt          pgtype.Timestamptz
 	AccountID           pgtype.UUID
 	Cutoff              pgtype.Timestamptz
 	AppID               pgtype.UUID
 	SubscriptionID      string
+	ConsumerKind        string
+	Origin              string
 	RoutingState        string
+	WaitingReason       string
 	CapacityScope       string
 	AfterAcceptedAt     pgtype.Timestamptz
 	AfterOutboxID       int64
@@ -123,32 +160,41 @@ type EventBacklogRecipientsParams struct {
 }
 
 type EventBacklogRecipientsRow struct {
-	OutboxID          int64
-	SubscriptionID    string
-	AccountID         pgtype.UUID
-	AppID             pgtype.UUID
-	AcceptedAt        pgtype.Timestamptz
-	RoutingMode       string
-	RoutingState      string
-	CapacityScope     string
-	Attempts          int32
-	CapacityDeferrals int32
-	NextAttemptAt     pgtype.Timestamptz
-	LeaseUntil        pgtype.Timestamptz
-	Source            string
-	EventID           string
-	EventType         string
-	AppSlug           string
-	TargetAvailable   bool
+	OutboxID              int64
+	SubscriptionID        string
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	AcceptedAt            pgtype.Timestamptz
+	RoutingMode           string
+	RoutingState          string
+	CapacityScope         string
+	Attempts              int32
+	CapacityDeferrals     int32
+	NextAttemptAt         pgtype.Timestamptz
+	LeaseUntil            pgtype.Timestamptz
+	ConsumerKind          string
+	Origin                string
+	WorkflowName          string
+	Source                string
+	EventID               string
+	EventType             string
+	AppSlug               string
+	TargetAvailable       bool
+	OrderingBlocker       []byte
+	DeliveryControlReason string
 }
 
 func (q *Queries) EventBacklogRecipients(ctx context.Context, db DBTX, arg EventBacklogRecipientsParams) ([]EventBacklogRecipientsRow, error) {
 	rows, err := db.Query(ctx, eventBacklogRecipients,
+		arg.ObservedAt,
 		arg.AccountID,
 		arg.Cutoff,
 		arg.AppID,
 		arg.SubscriptionID,
+		arg.ConsumerKind,
+		arg.Origin,
 		arg.RoutingState,
+		arg.WaitingReason,
 		arg.CapacityScope,
 		arg.AfterAcceptedAt,
 		arg.AfterOutboxID,
@@ -175,11 +221,16 @@ func (q *Queries) EventBacklogRecipients(ctx context.Context, db DBTX, arg Event
 			&i.CapacityDeferrals,
 			&i.NextAttemptAt,
 			&i.LeaseUntil,
+			&i.ConsumerKind,
+			&i.Origin,
+			&i.WorkflowName,
 			&i.Source,
 			&i.EventID,
 			&i.EventType,
 			&i.AppSlug,
 			&i.TargetAvailable,
+			&i.OrderingBlocker,
+			&i.DeliveryControlReason,
 		); err != nil {
 			return nil, err
 		}
