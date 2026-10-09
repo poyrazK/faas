@@ -67,6 +67,7 @@ type Loop struct {
 	remoteDeleteBacklogCount     prometheus.Gauge
 	remoteDeleteBacklogOldestAge prometheus.Gauge
 	remoteDeleteFailures         prometheus.Counter
+	crashMetrics                 *crashCaptureMetrics
 
 	// Injected channels so tests never block on time.Sleep. Defaults are
 	// built in NewLoop and can be overridden by the With*Channel helpers.
@@ -144,6 +145,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 			loop.remoteDeleteBacklogOldestAge,
 			loop.remoteDeleteFailures,
 		)
+		loop.crashMetrics = newCrashCaptureMetrics(cfg.Handler.ops.Registry())
 	}
 	return loop
 }

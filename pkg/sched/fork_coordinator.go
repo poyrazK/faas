@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // ForkRuntime is the engine surface the fork coordinator drives (ADR-732).
@@ -23,6 +24,8 @@ type ForkCoordinatorConfig struct {
 	Lease         time.Duration
 	Poll          time.Duration
 	MaxConcurrent int
+	// Metrics is optional; nil records nothing.
+	Metrics *wire.CrashForkMetrics
 }
 
 const (
@@ -189,19 +192,32 @@ func (c *ForkCoordinator) claimQueued(ctx context.Context, now time.Time) {
 			return
 		}
 		c.hold(fork)
+		c.cfg.Metrics.ForkClaimed(forkSource(fork), now.Sub(fork.CreatedAt))
 		c.restore(ctx, fork)
 	}
 }
 
+// forkSource labels fork metrics by what the fork restores.
+func forkSource(fork state.AppFork) string {
+	if fork.CrashCaptureID != nil {
+		return "crash_capture"
+	}
+	return "deployment"
+}
+
 func (c *ForkCoordinator) restore(ctx context.Context, fork state.AppFork) {
+	started := c.now()
 	restored, err := c.runtime.RestoreFork(ctx, fork)
 	if err != nil {
 		code, message := ForkFailureCode(err)
+		c.cfg.Metrics.ForkRestoreFinished(forkSource(fork), code, c.now().Sub(started))
 		c.log.Warn("fork coordinator: restore failed", "fork", fork.ID, "code", code, "err", err)
 		c.finish(ctx, fork, state.AppForkFailed, code, message)
 		return
 	}
-	if _, err := c.store.MarkAppForkRunning(ctx, fork.ID, *fork.LeaseToken, restored.SnapshotID, restored.InstanceID, c.now().UTC()); err != nil {
+	if _, err := c.store.MarkAppForkRunning(ctx, fork.ID, *fork.LeaseToken, restored.SnapshotID, restored.InstanceID, c.now().UTC()); err == nil {
+		c.cfg.Metrics.ForkRestoreFinished(forkSource(fork), "running", c.now().Sub(started))
+	} else {
 		// The lease moved on (cancelled and swept, or taken over) while
 		// the VM booted. Nobody else knows this instance, so destroy it.
 		c.log.Warn("fork coordinator: mark running", "fork", fork.ID, "err", err)

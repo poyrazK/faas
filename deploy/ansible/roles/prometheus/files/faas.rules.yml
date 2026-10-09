@@ -4522,3 +4522,95 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUDPIngress.md"
           summary: "UDP peer resource limits are ending sessions"
           description: "UDP peer byte/message or transport resource limits are being reached repeatedly. Inspect client traffic and configured limits; this is distinct from an admission or forwarding failure."
+
+  # ADR-732/733: production forks and crash snapshots. Crash captures are
+  # copies of production memory: the DPA promises they are encrypted at
+  # rest within one imaged pass, so a missing key or a stuck backlog is
+  # a compliance problem, not only an availability one.
+  - name: faas_crash_snapshots
+    interval: 30s
+    rules:
+      - alert: FaasCrashCaptureEncryptionKeyMissing
+        expr: max(imaged_crash_capture_encryption_key_missing) == 1
+        for: 5m
+        labels:
+          severity: page
+          component: imaged
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "Crash captures are not being encrypted: imaged has no host age identity"
+          description: "imaged has crash captures waiting for encryption and no host age identity (FAAS_HOST_AGE_IDENTITY_PATH). Their plaintext stays on disk until the key is restored."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
+
+      - alert: FaasCrashCaptureUnencrypted
+        expr: max(imaged_crash_capture_unencrypted_oldest_age_seconds) > 120
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "A crash capture has been unencrypted for more than 2 minutes"
+          description: "ADR-733 encrypts a ready crash capture within one 5 s imaged pass. The oldest unencrypted capture is over 2 minutes old; check imaged_crash_capture_ops_total{op=\"encrypt\",result=\"error\"} and imaged logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
+
+      - alert: FaasCrashCaptureFileOpErrors
+        expr: sum by (op) (increase(imaged_crash_capture_ops_total{result="error"}[30m])) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "Crash capture {{ $labels.op }} is failing"
+          description: "imaged failed to {{ $labels.op }} crash capture files at least three times in 30m. A failing purge leaves plaintext on disk; a failing expire keeps captures past their retention."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
+
+      - alert: FaasCrashCaptureFailures
+        expr: |
+          (
+            sum by (trigger) (increase(schedd_crash_captures_total{result=~"capture_failed|capture_timeout"}[1h])) >= 3
+          )
+          and on (trigger)
+          (
+            sum by (trigger) (increase(schedd_crash_captures_total{result=~"capture_failed|capture_timeout"}[1h]))
+            /
+            clamp_min(sum by (trigger) (increase(schedd_crash_captures_total[1h])), 1)
+            > 0.5
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "Crash captures ({{ $labels.trigger }}) are failing"
+          description: "At least three crash captures failed or timed out in 1h, more than half of all attempts. A failed capture destroys the instance it paused; check schedd and vmmd logs for the snapshot error."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
+
+      - alert: FaasForkRestoreFailures
+        expr: |
+          (
+            sum by (source) (increase(schedd_fork_restores_total{result="restore_failed"}[1h])) >= 3
+          )
+          and on (source)
+          (
+            sum by (source) (increase(schedd_fork_restores_total{result="restore_failed"}[1h]))
+            /
+            clamp_min(sum by (source) (increase(schedd_fork_restores_total[1h])), 1)
+            > 0.5
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "Fork restores from {{ $labels.source }} are failing"
+          description: "At least three fork restores failed with restore_failed in 1h, more than half of all attempts. Customer-side refusals (no_capture, no_capacity, account_inactive, deployment_unavailable) are excluded."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"

@@ -2127,6 +2127,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}, log)
 		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
 	}
+	crashForkMetrics := wire.NewCrashForkMetrics(ops.Registry())
 	var forkCoordinator *sched.ForkCoordinator
 	if appForksEnabled(os.Getenv("FAAS_APP_FORKS")) {
 		// ADR-732: the lease owner scopes TTL teardown to this scheduler,
@@ -2135,7 +2136,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if owner == "" {
 			owner = "schedd"
 		}
-		forkCoordinator = sched.NewForkCoordinator(store, engine, sched.ForkCoordinatorConfig{Owner: owner}, log)
+		forkCoordinator = sched.NewForkCoordinator(store, engine, sched.ForkCoordinatorConfig{Owner: owner, Metrics: crashForkMetrics}, log)
 		log.Info("schedd: production forks enabled", "owner", owner)
 	}
 	loopErr := make(chan error, 1)
@@ -2203,7 +2204,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			runtime = sched.RefuseCrashCaptures(sched.ErrCrashStorageRemote)
 			log.Warn("schedd: crash snapshots refused on a remote storage backend", "backend", os.Getenv("FAAS_STORAGE_BACKEND"))
 		}
-		go sched.NewCrashCaptureCoordinator(store, runtime, 0, log).Run(ctx)
+		go sched.NewCrashCaptureCoordinator(store, runtime, 0, log).WithMetrics(crashForkMetrics).Run(ctx)
 		log.Info("schedd: crash snapshots enabled")
 	}
 

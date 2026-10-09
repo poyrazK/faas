@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -106,9 +108,13 @@ func (fx *crashCryptoFixture) read(t *testing.T, key string) ([]byte, bool) {
 func TestCrashCaptureEncryptPurgeStageAndExpire(t *testing.T) {
 	ctx := context.Background()
 	fx := newCrashCryptoFixture(t, true)
+	fx.loop.crashMetrics = newCrashCaptureMetrics(prometheus.NewRegistry())
 	keys := crashCaptureKeys(fx.capture)
 
 	c := fx.tend(t, time.Second)
+	if n := testutil.ToFloat64(fx.loop.crashMetrics.ops.WithLabelValues("encrypt", "ok")); n != 1 {
+		t.Fatalf("encrypt ok = %v, want 1", n)
+	}
 	if c.PlaintextState != state.CrashPlaintextAbsent || len(c.SealedKey) == 0 || c.EncryptedAt == nil {
 		t.Fatalf("after encrypt = %+v, want absent with a sealed key", c)
 	}
@@ -163,6 +169,14 @@ func TestCrashCaptureEncryptPurgeStageAndExpire(t *testing.T) {
 	if c = fx.tend(t, 2*time.Hour); c.Status != state.CrashCaptureExpired || c.SealedKey != nil {
 		t.Fatalf("after expiry = %+v", c)
 	}
+	for _, op := range []string{"purge", "stage", "expire"} {
+		if n := testutil.ToFloat64(fx.loop.crashMetrics.ops.WithLabelValues(op, "ok")); n < 1 {
+			t.Errorf("%s ok = %v, want at least 1", op, n)
+		}
+	}
+	if age := testutil.ToFloat64(fx.loop.crashMetrics.unencryptedOldest); age != 0 {
+		t.Errorf("unencrypted oldest age after encryption = %v, want 0", age)
+	}
 	for _, key := range keys {
 		for _, k := range []string{key, key + crashCaptureEncryptedSuffix} {
 			if _, ok := fx.read(t, k); ok {
@@ -174,8 +188,15 @@ func TestCrashCaptureEncryptPurgeStageAndExpire(t *testing.T) {
 
 func TestCrashCaptureWithoutKeyStaysPlaintext(t *testing.T) {
 	fx := newCrashCryptoFixture(t, false)
+	fx.loop.crashMetrics = newCrashCaptureMetrics(prometheus.NewRegistry())
 	if c := fx.tend(t, time.Second); c.PlaintextState != state.CrashPlaintextPresent || c.SealedKey != nil {
 		t.Fatalf("without a key = %+v, want present and unsealed", c)
+	}
+	if missing := testutil.ToFloat64(fx.loop.crashMetrics.keyMissing); missing != 1 {
+		t.Fatalf("key missing gauge = %v, want 1", missing)
+	}
+	if age := testutil.ToFloat64(fx.loop.crashMetrics.unencryptedOldest); age != 1 {
+		t.Fatalf("unencrypted oldest age = %v, want 1", age)
 	}
 	if mem, ok := fx.read(t, crashCaptureKeys(fx.capture)[0]); !ok || !bytes.Equal(mem, fx.mem) {
 		t.Fatal("plaintext was lost without a key to encrypt it")

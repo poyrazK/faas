@@ -84,19 +84,24 @@ func (l *Loop) tendCrashCaptures(ctx context.Context, now time.Time) {
 
 func (l *Loop) encryptCrashCaptures(ctx context.Context, be storage.StorageBackend, identities []*age.X25519Identity, now time.Time) {
 	due, err := l.store.CrashCapturesToEncrypt(ctx, now, crashCaptureCryptoBatch)
-	if err != nil || len(due) == 0 {
-		if err != nil {
-			l.log.Warn("imaged: crash capture encrypt list", "err", err)
-		}
+	if err != nil {
+		l.log.Warn("imaged: crash capture encrypt list", "err", err)
+		return
+	}
+	if len(due) == 0 {
+		l.crashMetrics.pending(now, time.Time{}, false)
 		return
 	}
 	recipient, err := secretbox.CurrentRecipient(identities)
+	// Listed oldest capture first.
+	l.crashMetrics.pending(now, *due[0].CapturedAt, err != nil)
 	if err != nil {
 		l.log.Error("imaged: crash captures stay unencrypted: no host age identity (FAAS_HOST_AGE_IDENTITY_PATH)", "pending", len(due))
 		return
 	}
 	for _, capture := range due {
 		sealed, err := encryptCrashCapture(ctx, be, recipient, capture)
+		l.crashMetrics.op("encrypt", err)
 		if err != nil {
 			l.log.Warn("imaged: crash capture encrypt", "capture", capture.ID, "err", err)
 			continue
@@ -133,7 +138,9 @@ func (l *Loop) purgeCrashPlaintext(ctx context.Context, be storage.StorageBacken
 }
 
 func (l *Loop) purgeCrashCapture(ctx context.Context, be storage.StorageBackend, capture state.CrashCapture) {
-	if err := deleteCrashCaptureKeys(ctx, be, crashCaptureKeys(capture)); err != nil {
+	err := deleteCrashCaptureKeys(ctx, be, crashCaptureKeys(capture))
+	l.crashMetrics.op("purge", err)
+	if err != nil {
 		l.log.Warn("imaged: crash capture purge", "capture", capture.ID, "err", err)
 		return
 	}
@@ -154,7 +161,9 @@ func (l *Loop) stageCrashCaptures(ctx context.Context, be storage.StorageBackend
 		if capture, err = l.store.BeginCrashCaptureStage(ctx, capture.ID, now); err != nil {
 			continue
 		}
-		if err := decryptCrashCapture(ctx, be, identities, capture); err != nil {
+		err := decryptCrashCapture(ctx, be, identities, capture)
+		l.crashMetrics.op("stage", err)
+		if err != nil {
 			// Left in staging: retried while a fork wants it, purged
 			// once none does.
 			l.log.Warn("imaged: crash capture stage", "capture", capture.ID, "err", err)

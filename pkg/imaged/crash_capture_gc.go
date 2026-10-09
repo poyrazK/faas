@@ -24,7 +24,9 @@ func (l *Loop) expireCrashCaptures(ctx context.Context, be crashCaptureDeleter, 
 		return
 	}
 	for _, capture := range due {
-		if err := deleteCrashCaptureFiles(ctx, be, capture); err != nil {
+		err := deleteCrashCaptureFiles(ctx, be, capture)
+		l.crashMetrics.op("expire", err)
+		if err != nil {
 			l.log.Warn("imaged: crash capture delete", "capture", capture.ID, "err", err)
 			continue
 		}
