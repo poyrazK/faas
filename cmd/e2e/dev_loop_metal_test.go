@@ -156,6 +156,12 @@ func TestDevLoopMetal(t *testing.T) {
 		t.Fatal(err)
 	}
 	slug := session.App.Slug
+	// The harness does not destroy VMs on teardown; park so leakcheck stays clean.
+	t.Cleanup(func() {
+		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
+			t.Errorf("cleanup park: status %d", status)
+		}
+	})
 	host := slug + ".apps.test.example"
 	// Pro apps default to public_auth_mode=bearer as well as require_authn;
 	// the probes below are anonymous, so open both gates.
@@ -273,21 +279,29 @@ func TestDevLoopMetal(t *testing.T) {
 		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
 			t.Fatalf("park: status %d", status)
 		}
+		// Park either reuses the deployment's clean init snapshot and only
+		// destroys the VM, or tries a capture that vmmd refuses with
+		// dev_source_diverged. Both must end the patched VM without a new
+		// snapshot of it.
 		deadline := time.Now().Add(60 * time.Second)
 		for {
-			var reason string
-			err := pool.QueryRow(ctx, `select data->>'reason' from events
-				where kind = 'wake.park_failed' and data->>'instance_id' = $1 order by at desc limit 1`, patchedInstance).Scan(&reason)
-			if err == nil {
-				if reason != api.CodeDevSourceDiverged {
-					t.Fatalf("park_failed reason = %q, want %s", reason, api.CodeDevSourceDiverged)
-				}
+			var running int
+			if err := pool.QueryRow(ctx, `select count(*) from instances where id = $1 and state = 'running'`, patchedInstance).Scan(&running); err != nil {
+				t.Fatalf("patched instance state: %v", err)
+			}
+			if running == 0 {
 				break
 			}
 			if time.Now().After(deadline) {
-				t.Fatalf("no park_failed event for the patched instance: %v", err)
+				t.Fatal("patched instance still running 60s after park")
 			}
 			time.Sleep(500 * time.Millisecond)
+		}
+		var reason string
+		err := pool.QueryRow(ctx, `select data->>'reason' from events
+			where kind = 'wake.park_failed' and data->>'instance_id' = $1 order by at desc limit 1`, patchedInstance).Scan(&reason)
+		if err == nil && reason != api.CodeDevSourceDiverged {
+			t.Fatalf("park_failed reason = %q, want %s", reason, api.CodeDevSourceDiverged)
 		}
 		var after int
 		if err := pool.QueryRow(ctx, `select count(*) from snapshots where deployment_id = $1`, first.ID).Scan(&after); err != nil {
