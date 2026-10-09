@@ -47,6 +47,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`chaos`](#chaos) | Inject bounded faults into isolated real-VM scenario tests |
 | [`preview`](#preview) | Manage preview environments for pull requests |
 | [`flags`](#flags) | Release application behavior to selected customers |
+| [`consumers`](#consumers) | Meter, price, and bill your API&#39;s consumers |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
@@ -5324,6 +5325,156 @@ Promote a targeting rule rollout
 | `--expected-version <number>` | current configuration version | required |
 
 
+## consumers
+
+Meter, price, and bill your API&#39;s consumers
+
+`gregale consumers [<subcommand>]`
+
+Examples:
+
+```sh
+gregale consumers create my-api --external-ref customer-42 --name "Customer 42"
+gregale consumers key-create my-api CONSUMER_ID --name production --scopes read,write
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 25
+gregale consumers statement-draft my-api CONSUMER_ID --month 2026-09
+gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id INV-1001
+```
+
+### consumers list
+
+List an app&#39;s API consumers
+
+`gregale consumers list <slug>`
+
+### consumers create
+
+Register an API consumer
+
+`gregale consumers create --external-ref <REF> --name <TEXT> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--external-ref <REF>` | stable consumer reference | required |
+| `--name <TEXT>` | consumer display name | required |
+
+### consumers info
+
+Show one API consumer
+
+`gregale consumers info <slug> <consumer-id>`
+
+### consumers revoke
+
+Revoke an API consumer and its keys
+
+`gregale consumers revoke <slug> <consumer-id>`
+
+### consumers keys
+
+List a consumer&#39;s API keys
+
+`gregale consumers keys <slug> <consumer-id>`
+
+### consumers key-create
+
+Issue a consumer API key (secret shown once)
+
+`gregale consumers key-create --name <TEXT> [--scopes <LIST>] [--expires <RFC3339>] <slug> <consumer-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <TEXT>` | key display name | required |
+| `--scopes <LIST>` | comma-separated scopes: read, write, admin (default write) |  |
+| `--expires <RFC3339>` | key expiry |  |
+
+### consumers key-revoke
+
+Revoke one consumer API key
+
+`gregale consumers key-revoke <slug> <consumer-id> <key-id>`
+
+### consumers usage
+
+Show a consumer&#39;s metered requests
+
+`gregale consumers usage [--since <RFC3339>] [--until <RFC3339>] <slug> <consumer-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <RFC3339>` | window start |  |
+| `--until <RFC3339>` | window end |  |
+
+### consumers quote
+
+Estimate a consumer&#39;s charges with current rate cards
+
+`gregale consumers quote [--since <RFC3339>] [--until <RFC3339>] <slug> <consumer-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <RFC3339>` | window start |  |
+| `--until <RFC3339>` | window end |  |
+
+### consumers rate-cards
+
+List an app&#39;s per-request price versions
+
+`gregale consumers rate-cards <slug>`
+
+### consumers rate-card-create
+
+Add an immutable per-request price version
+
+`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--effective-from <RFC3339>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--currency <CODE>` | ISO-4217 currency | required |
+| `--price-millicents <N>` | price per request; 100000 = 1.00 | required |
+| `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
+
+### consumers statements
+
+List a consumer&#39;s usage statements and revisions
+
+`gregale consumers statements <slug> <consumer-id>`
+
+### consumers statement-draft
+
+Snapshot a period, or draft an adjustment for late usage
+
+`gregale consumers statement-draft [--month <YYYY-MM>] [--period-start <RFC3339>] [--period-end <RFC3339>] <slug> <consumer-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--month <YYYY-MM>` | calendar month |  |
+| `--period-start <RFC3339>` | period start (UTC minute) |  |
+| `--period-end <RFC3339>` | exclusive period end (UTC minute) |  |
+
+### consumers statement-show
+
+Show one statement revision
+
+`gregale consumers statement-show <slug> <consumer-id> <statement-id>`
+
+### consumers statement-finalize
+
+Freeze a fully priced draft revision
+
+`gregale consumers statement-finalize <slug> <consumer-id> <statement-id>`
+
+### consumers statement-handoff
+
+Record your invoice reference for a finalized revision
+
+`gregale consumers statement-handoff --invoice-id <ID> <slug> <consumer-id> <statement-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--invoice-id <ID>` | your billing system&#39;s invoice reference | required |
+
+
 ## platform-tenants
 
 Manage one customer across app consumers and tenant hostnames
@@ -5477,6 +5628,89 @@ Restore linked credentials and hostnames
 | Flag | Meaning | |
 |---|---|---|
 | `--id <UUID>` | platform tenant UUID | required |
+
+### platform-tenants rate-cards
+
+List a customer&#39;s cross-app price versions
+
+`gregale platform-tenants rate-cards --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+
+### platform-tenants rate-card-create
+
+Add a customer-wide per-request price version
+
+`gregale platform-tenants rate-card-create --id <UUID> --currency <CODE> --price-millicents <N> [--effective-from <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+| `--currency <CODE>` | ISO-4217 currency | required |
+| `--price-millicents <N>` | price per request; 100000 = 1.00 | required |
+| `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
+
+### platform-tenants statements
+
+List a period&#39;s cross-app statement revisions
+
+`gregale platform-tenants statements --id <UUID> [--month <YYYY-MM>] [--period-start <RFC3339>] [--period-end <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+| `--month <YYYY-MM>` | calendar month |  |
+| `--period-start <RFC3339>` | period start (UTC minute) |  |
+| `--period-end <RFC3339>` | exclusive period end (UTC minute) |  |
+
+### platform-tenants statement-draft
+
+Snapshot a period, or draft an adjustment for late usage
+
+`gregale platform-tenants statement-draft --id <UUID> [--month <YYYY-MM>] [--period-start <RFC3339>] [--period-end <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+| `--month <YYYY-MM>` | calendar month |  |
+| `--period-start <RFC3339>` | period start (UTC minute) |  |
+| `--period-end <RFC3339>` | exclusive period end (UTC minute) |  |
+
+### platform-tenants statement-show
+
+Show one statement revision
+
+`gregale platform-tenants statement-show --id <UUID> --statement-id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+| `--statement-id <UUID>` | statement revision UUID | required |
+
+### platform-tenants statement-finalize
+
+Freeze a fully priced draft revision
+
+`gregale platform-tenants statement-finalize --id <UUID> --statement-id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+| `--statement-id <UUID>` | statement revision UUID | required |
+
+### platform-tenants statement-handoff
+
+Record your invoice reference for a finalized revision
+
+`gregale platform-tenants statement-handoff --id <UUID> --statement-id <UUID> --invoice-id <ID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+| `--statement-id <UUID>` | statement revision UUID | required |
+| `--invoice-id <ID>` | your billing system&#39;s invoice reference | required |
 
 
 ## edge-rules

@@ -130,7 +130,7 @@ func cliHelpGroup(command cliCommand) string {
 	switch command.Name {
 	case "account", "billing", "capabilities", "context", "dashboard", "doctor", "invitations", "invoices", "keys", "link", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "unlink", "upload-cache", "usage", "version", "completion", "man", "whoami":
 		return "Core"
-	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "mcp", "openapi", "preview", "projects", "registry", "rollback", "routes", "scan", "secrets", "start", "tenant-surfaces", "platform-tenants", "trusted-publishers":
+	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "mcp", "openapi", "preview", "projects", "registry", "rollback", "routes", "scan", "secrets", "start", "tenant-surfaces", "platform-tenants", "consumers", "trusted-publishers":
 		return "API"
 	case "add", "automations", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
@@ -453,6 +453,8 @@ var (
 	issueAppFlags = []cliFlag{{Name: "app", Short: "application slug", Value: "SLUG", Req: true}}
 	// platformTenantIDFlag is the --id flag platform-tenants verbs address a customer by.
 	platformTenantIDFlag = cliFlag{Name: "id", Short: "platform tenant UUID", Value: "UUID", Req: true}
+	// platformTenantStatementIDFlag addresses one cross-app statement revision.
+	platformTenantStatementIDFlag = cliFlag{Name: "statement-id", Short: "statement revision UUID", Value: "UUID", Req: true}
 )
 
 var templateNames13 = []string{
@@ -2226,6 +2228,59 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "consumers",
+		DocSlug: "consumers",
+		Short:   "Meter, price, and bill your API's consumers",
+		Examples: []string{
+			"gregale consumers create my-api --external-ref customer-42 --name \"Customer 42\"",
+			"gregale consumers key-create my-api CONSUMER_ID --name production --scopes read,write",
+			"gregale consumers rate-card-create my-api --currency EUR --price-millicents 25",
+			"gregale consumers statement-draft my-api CONSUMER_ID --month 2026-09",
+			"gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id INV-1001",
+		},
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List an app's API consumers", Positionals: []string{"<slug>"}},
+			{Name: "create", Short: "Register an API consumer", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "external-ref", Short: "stable consumer reference", Value: "REF", Req: true},
+				{Name: "name", Short: "consumer display name", Value: "TEXT", Req: true},
+			}},
+			{Name: "info", Short: "Show one API consumer", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "revoke", Short: "Revoke an API consumer and its keys", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "keys", Short: "List a consumer's API keys", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "key-create", Short: "Issue a consumer API key (secret shown once)", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
+				{Name: "name", Short: "key display name", Value: "TEXT", Req: true},
+				{Name: "scopes", Short: "comma-separated scopes: read, write, admin (default write)", Value: "LIST"},
+				{Name: "expires", Short: "key expiry", Value: "RFC3339"},
+			}},
+			{Name: "key-revoke", Short: "Revoke one consumer API key", Positionals: []string{"<slug>", "<consumer-id>", "<key-id>"}},
+			{Name: "usage", Short: "Show a consumer's metered requests", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
+				{Name: "since", Short: "window start", Value: "RFC3339"},
+				{Name: "until", Short: "window end", Value: "RFC3339"},
+			}},
+			{Name: "quote", Short: "Estimate a consumer's charges with current rate cards", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
+				{Name: "since", Short: "window start", Value: "RFC3339"},
+				{Name: "until", Short: "window end", Value: "RFC3339"},
+			}},
+			{Name: "rate-cards", Short: "List an app's per-request price versions", Positionals: []string{"<slug>"}},
+			{Name: "rate-card-create", Short: "Add an immutable per-request price version", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "currency", Short: "ISO-4217 currency", Value: "CODE", Req: true},
+				{Name: "price-millicents", Short: "price per request; 100000 = 1.00", Value: "N", Req: true},
+				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
+			}},
+			{Name: "statements", Short: "List a consumer's usage statements and revisions", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "statement-draft", Short: "Snapshot a period, or draft an adjustment for late usage", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
+				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
+				{Name: "period-start", Short: "period start (UTC minute)", Value: "RFC3339"},
+				{Name: "period-end", Short: "exclusive period end (UTC minute)", Value: "RFC3339"},
+			}},
+			{Name: "statement-show", Short: "Show one statement revision", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}},
+			{Name: "statement-finalize", Short: "Freeze a fully priced draft revision", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}},
+			{Name: "statement-handoff", Short: "Record your invoice reference for a finalized revision", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}, Flags: []cliFlag{
+				{Name: "invoice-id", Short: "your billing system's invoice reference", Value: "ID", Req: true},
+			}},
+		},
+	},
+	{
 		Name:    "platform-tenants",
 		DocSlug: "platform-tenants",
 		Short:   "Manage one customer across app consumers and tenant hostnames",
@@ -2281,6 +2336,31 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "suspend", Short: "Stop linked credentials and hostnames", Flags: []cliFlag{platformTenantIDFlag}},
 			{Name: "resume", Short: "Restore linked credentials and hostnames", Flags: []cliFlag{platformTenantIDFlag}},
+			{Name: "rate-cards", Short: "List a customer's cross-app price versions", Flags: []cliFlag{platformTenantIDFlag}},
+			{Name: "rate-card-create", Short: "Add a customer-wide per-request price version", Flags: []cliFlag{
+				platformTenantIDFlag,
+				{Name: "currency", Short: "ISO-4217 currency", Value: "CODE", Req: true},
+				{Name: "price-millicents", Short: "price per request; 100000 = 1.00", Value: "N", Req: true},
+				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
+			}},
+			{Name: "statements", Short: "List a period's cross-app statement revisions", Flags: []cliFlag{
+				platformTenantIDFlag,
+				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
+				{Name: "period-start", Short: "period start (UTC minute)", Value: "RFC3339"},
+				{Name: "period-end", Short: "exclusive period end (UTC minute)", Value: "RFC3339"},
+			}},
+			{Name: "statement-draft", Short: "Snapshot a period, or draft an adjustment for late usage", Flags: []cliFlag{
+				platformTenantIDFlag,
+				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
+				{Name: "period-start", Short: "period start (UTC minute)", Value: "RFC3339"},
+				{Name: "period-end", Short: "exclusive period end (UTC minute)", Value: "RFC3339"},
+			}},
+			{Name: "statement-show", Short: "Show one statement revision", Flags: []cliFlag{platformTenantIDFlag, platformTenantStatementIDFlag}},
+			{Name: "statement-finalize", Short: "Freeze a fully priced draft revision", Flags: []cliFlag{platformTenantIDFlag, platformTenantStatementIDFlag}},
+			{Name: "statement-handoff", Short: "Record your invoice reference for a finalized revision", Flags: []cliFlag{
+				platformTenantIDFlag, platformTenantStatementIDFlag,
+				{Name: "invoice-id", Short: "your billing system's invoice reference", Value: "ID", Req: true},
+			}},
 		},
 	},
 	{
