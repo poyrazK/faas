@@ -6207,7 +6207,7 @@ func TestParkAppRejectsChangedDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := e.do(t, "POST", "/v1/apps/guarded-worker/park", map[string]string{"expected_deployment_id": first.ID}, nil)
+	rec := e.do(t, "POST", "/v1/apps/guarded-worker/park/conditional", map[string]string{"expected_deployment_id": first.ID}, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("stale park: %d %s", rec.Code, rec.Body)
 	}
@@ -6215,8 +6215,46 @@ func TestParkAppRejectsChangedDeployment(t *testing.T) {
 	if app.Status != state.AppActive {
 		t.Fatalf("stale park changed status: %s", app.Status)
 	}
-	rec = e.do(t, "POST", "/v1/apps/guarded-worker/park", map[string]string{"expected_deployment_id": second.ID}, nil)
+	rec = e.do(t, "POST", "/v1/apps/guarded-worker/park/conditional", map[string]string{"expected_deployment_id": second.ID}, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("current park: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestParkAppConditionalRequiresGuard(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "guard-required")
+	for _, body := range []any{nil, map[string]any{}, map[string]any{"expected_deployment_id": nil}, map[string]any{"expected_deployment_id": ""}, map[string]any{"expected_deployment_id": "invalid"}, map[string]any{"expected_deployment_id": 1}, map[string]any{"unexpected": true}} {
+		rec := e.do(t, http.MethodPost, "/v1/apps/guard-required/park/conditional", body, nil)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body=%v status=%d response=%s", body, rec.Code, rec.Body)
+		}
+		app, err := e.store.AppByID(t.Context(), appID)
+		if err != nil || app.Status != state.AppActive {
+			t.Fatalf("invalid guard changed app: %+v %v", app, err)
+		}
+	}
+}
+
+func TestParkAppConditionalRejectsTrailingJSON(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "guard-trailing")
+	dep, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: appID, ImageDigest: "sha256:first", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"{}", "garbage"} {
+		body := fmt.Sprintf(`{"expected_deployment_id":%q}%s`, dep.ID, suffix)
+		req := httptest.NewRequest(http.MethodPost, "/v1/apps/guard-trailing/park/conditional", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+e.key)
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("suffix=%q status=%d response=%s", suffix, rec.Code, rec.Body)
+		}
+		app, err := e.store.AppByID(t.Context(), appID)
+		if err != nil || app.Status != state.AppActive {
+			t.Fatalf("trailing JSON changed app: %+v %v", app, err)
+		}
 	}
 }

@@ -1181,3 +1181,8 @@ and parking. Quarantine remains in place if a later check fails. All recovery
 and retirement stages block resuming the original rollout; use a new plan/journal
 for a subsequent release. Runtime database credentials supply the existing
 worker-table UPDATE privilege; observer credentials remain read-only.
+
+Guarded worker draining and retirement use `POST /v1/apps/{slug}/park/conditional`,
+which requires `expected_deployment_id`. Older control planes reject this route;
+the release client stops and never falls back to unconditional parking. Upgrade
+the control plane before retrying the pending release or retirement.

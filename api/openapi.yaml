@@ -13238,7 +13238,43 @@ paths:
                   format: uuid
                   description: Compare the latest app deployment atomically with parking. A changed or missing deployment returns 409 without parking; resend the same guard on drain retries.
       responses:
-        '422': { $ref: '#/components/responses/ValidationError' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '204': { description: Parked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/park/conditional:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: parkAppIfDeployment
+      summary: Park instances only if the latest deployment matches.
+      description: Unsupported control planes reject this route without parking. Clients must never fall back to unconditional parking.
+      parameters:
+        - name: fresh
+          in: query
+          description: For an isolated preview, invalidate its snapshots after all instances drain so the next request cold-boots from the artifact. Production apps reject this option.
+          schema: { type: boolean, default: false }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_deployment_id]
+              properties:
+                expected_deployment_id:
+                  type: string
+                  format: uuid
+                  description: Compare the latest app deployment atomically with parking. A changed or missing deployment returns 409 without parking; resend the same guard on drain retries.
+      responses:
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '204': { description: Parked. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }

@@ -118,7 +118,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 					json.NewEncoder(w).Encode(instances)
 				case "/v1/apps/candidate-worker/logs":
 					fmt.Fprint(w, "event: log\ndata: {\"instance\":\"candidate-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"claimFence\\\":true,\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\"}\"}\n\n")
-				case "/v1/apps/candidate-worker/park":
+				case "/v1/apps/candidate-worker/park/conditional":
 					var body map[string]string
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["expected_deployment_id"] != "worker-candidate" {
 						t.Errorf("missing deployment guard: %v %v", body, err)

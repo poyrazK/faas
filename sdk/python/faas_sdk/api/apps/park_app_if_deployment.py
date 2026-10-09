@@ -6,7 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.park_app_body import ParkAppBody
+from ...models.park_app_if_deployment_body import ParkAppIfDeploymentBody
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -14,7 +14,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     slug: str,
     *,
-    body: ParkAppBody | Unset = UNSET,
+    body: ParkAppIfDeploymentBody,
     fresh: bool | Unset = False,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -27,14 +27,13 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/apps/{slug}/park".format(
+        "url": "/v1/apps/{slug}/park/conditional".format(
             slug=quote(str(slug), safe=""),
         ),
         "params": params,
     }
 
-    if not isinstance(body, Unset):
-        _kwargs["json"] = body.to_dict()
+    _kwargs["json"] = body.to_dict()
 
     headers["Content-Type"] = "application/json"
 
@@ -101,15 +100,18 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ParkAppBody | Unset = UNSET,
+    body: ParkAppIfDeploymentBody,
     fresh: bool | Unset = False,
 ) -> Response[Any | Problem]:
-    """Manually park all running instances.
+    """Park instances only if the latest deployment matches.
+
+     Unsupported control planes reject this route without parking. Clients must never fall back to
+    unconditional parking.
 
     Args:
         slug (str):
         fresh (bool | Unset):  Default: False.
-        body (ParkAppBody | Unset):
+        body (ParkAppIfDeploymentBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -136,15 +138,18 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ParkAppBody | Unset = UNSET,
+    body: ParkAppIfDeploymentBody,
     fresh: bool | Unset = False,
 ) -> Any | Problem | None:
-    """Manually park all running instances.
+    """Park instances only if the latest deployment matches.
+
+     Unsupported control planes reject this route without parking. Clients must never fall back to
+    unconditional parking.
 
     Args:
         slug (str):
         fresh (bool | Unset):  Default: False.
-        body (ParkAppBody | Unset):
+        body (ParkAppIfDeploymentBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -166,15 +171,18 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ParkAppBody | Unset = UNSET,
+    body: ParkAppIfDeploymentBody,
     fresh: bool | Unset = False,
 ) -> Response[Any | Problem]:
-    """Manually park all running instances.
+    """Park instances only if the latest deployment matches.
+
+     Unsupported control planes reject this route without parking. Clients must never fall back to
+    unconditional parking.
 
     Args:
         slug (str):
         fresh (bool | Unset):  Default: False.
-        body (ParkAppBody | Unset):
+        body (ParkAppIfDeploymentBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -199,15 +207,18 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ParkAppBody | Unset = UNSET,
+    body: ParkAppIfDeploymentBody,
     fresh: bool | Unset = False,
 ) -> Any | Problem | None:
-    """Manually park all running instances.
+    """Park instances only if the latest deployment matches.
+
+     Unsupported control planes reject this route without parking. Clients must never fall back to
+    unconditional parking.
 
     Args:
         slug (str):
         fresh (bool | Unset):  Default: False.
-        body (ParkAppBody | Unset):
+        body (ParkAppIfDeploymentBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -2324,7 +2324,7 @@ func (c *Client) ParkIfDeployment(ctx context.Context, slug, deploymentID string
 	if deploymentID == "" {
 		return errors.New("expected deployment ID is required")
 	}
-	return c.park(ctx, slug, "/v1/apps/"+slug+"/park", map[string]string{"expected_deployment_id": deploymentID})
+	return c.park(ctx, slug, "/v1/apps/"+slug+"/park/conditional", map[string]string{"expected_deployment_id": deploymentID})
 }
 
 func (c *Client) park(ctx context.Context, slug, path string, body any) error {

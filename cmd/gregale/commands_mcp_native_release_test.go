@@ -241,7 +241,11 @@ func TestMCPNativeReleaseHealthAndDrainRecovery(t *testing.T) {
 					promotions++
 					promoted = true
 					json.NewEncoder(w).Encode(dep)
-				case "/v1/apps/previous/park":
+				case "/v1/apps/previous/park/conditional":
+					var body map[string]string
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["expected_deployment_id"] != "old" {
+						t.Errorf("missing previous deployment guard: %v %v", body, err)
+					}
 					parks++
 					w.WriteHeader(204)
 				default:
