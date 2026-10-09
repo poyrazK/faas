@@ -1811,7 +1811,7 @@ func cmdTail(args []string) int {
 
 	// Event frames carry app_id only. Resolve --app to its id so the filter
 	// matches, and keep an id→slug map so lines name the app.
-	filter := tailFilter{includeStateless: *includeStateless, slugs: map[string]string{}}
+	filter := tailFilter{includeStateless: *includeStateless, slugs: map[string]string{}, seen: &tailSeen{}}
 	if apps, listErr := client.ListApps(ctx); listErr == nil {
 		for _, a := range apps {
 			filter.slugs[a.ID] = a.Slug
@@ -1869,6 +1869,40 @@ type tailFilter struct {
 	appID            string
 	includeStateless bool
 	slugs            map[string]string
+	// seen dedups invocation_done frames. apid publishes each one twice
+	// (DB trigger + schedd drain) and consumers must dedup on
+	// (invocation_id, state); tail printed every completion twice
+	// (production hunt #8, H8-30). Nil disables dedup.
+	seen *tailSeen
+}
+
+// tailSeen remembers recently printed (invocation_id, state) keys, bounded so
+// a long tail session cannot grow without limit.
+type tailSeen struct {
+	keys  map[string]struct{}
+	order []string
+}
+
+const tailSeenMax = 4096
+
+// first reports whether key is new, and records it.
+func (s *tailSeen) first(key string) bool {
+	if s == nil {
+		return true
+	}
+	if s.keys == nil {
+		s.keys = make(map[string]struct{}, tailSeenMax)
+	}
+	if _, ok := s.keys[key]; ok {
+		return false
+	}
+	if len(s.order) == tailSeenMax {
+		delete(s.keys, s.order[0])
+		s.order = s.order[1:]
+	}
+	s.keys[key] = struct{}{}
+	s.order = append(s.order, key)
+	return true
 }
 
 func (f tailFilter) label(appID string) string {
@@ -1937,6 +1971,9 @@ func writeTailFrame(e api.Event, filter tailFilter) error {
 			return writeRawTailFrame(e)
 		}
 		if filter.appID != "" && p.AppID != filter.appID {
+			return nil
+		}
+		if !filter.seen.first(p.InvocationID + "\x00" + p.State) {
 			return nil
 		}
 		slug := p.AppSlug
