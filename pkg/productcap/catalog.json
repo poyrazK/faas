@@ -83,6 +83,17 @@
       "acceptance_test": "pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence"
     },
     {
+      "id": "datadog-integration",
+      "name": "Datadog integration",
+      "category": "observability",
+      "description": "Send an app's logs and deployment events to Datadog with one command, tagged with service, env, and version so they correlate with existing Datadog dashboards.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/742-datadog-integration",
+      "operator_flag": "FAAS_DATADOG_INTEGRATION_ENABLED",
+      "acceptance_test": "cmd/gregale/commands_add_datadog_test.go::TestCmdAddDatadog_ConfiguresDrainAndWebhook"
+    },
+    {
       "id": "declarative-response-caching",
       "name": "Declarative response caching",
       "category": "edge",
