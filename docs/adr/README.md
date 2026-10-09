@@ -723,3 +723,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-836: Release graph lifecycle successor bindings](836-release-graph-lifecycle-successors.md)
 
 - [ADR-837: Production lifecycle review history](837-production-lifecycle-review-history.md)
+
+- [ADR-519: application-reported workflow blocker ownership](519-workflow-blocker-ownership.md) — public responsibility, next-action guidance, and resolution attribution

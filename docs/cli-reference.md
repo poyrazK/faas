@@ -7036,7 +7036,7 @@ Summarize explicit business outcomes
 
 List workflows needing attention
 
-`gregale customer-operations attention [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
+`gregale customer-operations attention [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--priority <PRIORITY>] [--sort <ORDER>] [--owner <OWNER>] [--unassigned] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7049,8 +7049,12 @@ List workflows needing attention
 | `--target-operation <NAME>` | target Operation filter |  |
 | `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
 | `--required-outcome-code <CODE>` | required prerequisite outcome |  |
+| `--priority <PRIORITY>` | application-assigned blocker urgency | one of `low` · `normal` · `high` · `urgent` |
+| `--sort <ORDER>` | queue order; summaries retain group ordering | one of `updated_at` · `deadline` |
+| `--owner <OWNER>` | exact application-assigned blocker owner; excludes --unassigned |  |
+| `--unassigned` | only matching blockers without an owner; excludes --owner |  |
 | `--blocker-code <CODE>` | blocker code filter |  |
-| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` |
+| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` · `escalated` · `unacknowledged` · `follow_up_overdue` · `awaiting_verification` · `sla_breached` · `sla_at_risk` |
 | `--limit <N>` | page size, 1–100 |  |
 | `--cursor <CURSOR>` | continuation cursor |  |
 
@@ -7058,11 +7062,11 @@ List workflows needing attention
 
 Summarize workflows needing attention
 
-`gregale customer-operations attention-summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
+`gregale customer-operations attention-summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--priority <PRIORITY>] [--sort <ORDER>] [--owner <OWNER>] [--unassigned] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--group-by <DIMENSION>` | summary grouping | one of `workflow` · `blocker_code` · `target_operation` · `customer` · `dependency_status` · `required_outcome_code` |
+| `--group-by <DIMENSION>` | summary grouping | one of `owner` · `workflow` · `blocker_code` · `target_operation` · `customer` · `dependency_status` · `required_outcome_code` |
 | `--app <SLUG>` | owned app in account mode |  |
 | `--self` | authenticated customer queue |  |
 | `--app-id <UUID>` | required with --self |  |
@@ -7072,8 +7076,12 @@ Summarize workflows needing attention
 | `--target-operation <NAME>` | target Operation filter |  |
 | `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
 | `--required-outcome-code <CODE>` | required prerequisite outcome |  |
+| `--priority <PRIORITY>` | application-assigned blocker urgency | one of `low` · `normal` · `high` · `urgent` |
+| `--sort <ORDER>` | queue order; summaries retain group ordering | one of `updated_at` · `deadline` |
+| `--owner <OWNER>` | exact application-assigned blocker owner; excludes --unassigned |  |
+| `--unassigned` | only matching blockers without an owner; excludes --owner |  |
 | `--blocker-code <CODE>` | blocker code filter |  |
-| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` |
+| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` · `escalated` · `unacknowledged` · `follow_up_overdue` · `awaiting_verification` · `sla_breached` · `sla_at_risk` |
 | `--limit <N>` | page size, 1–100 |  |
 | `--cursor <CURSOR>` | continuation cursor |  |
 

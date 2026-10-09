@@ -1,12 +1,29 @@
 from typing import Literal
 
-ListPlatformTenantSelfWorkflowAttentionReason = Literal["blocked", "dependency", "overdue", "stale"]
-
-LIST_PLATFORM_TENANT_SELF_WORKFLOW_ATTENTION_REASON_VALUES: set[ListPlatformTenantSelfWorkflowAttentionReason] = {
+ListPlatformTenantSelfWorkflowAttentionReason = Literal[
+    "awaiting_verification",
     "blocked",
     "dependency",
+    "escalated",
+    "follow_up_overdue",
     "overdue",
+    "sla_at_risk",
+    "sla_breached",
     "stale",
+    "unacknowledged",
+]
+
+LIST_PLATFORM_TENANT_SELF_WORKFLOW_ATTENTION_REASON_VALUES: set[ListPlatformTenantSelfWorkflowAttentionReason] = {
+    "awaiting_verification",
+    "blocked",
+    "dependency",
+    "escalated",
+    "follow_up_overdue",
+    "overdue",
+    "sla_at_risk",
+    "sla_breached",
+    "stale",
+    "unacknowledged",
 }
 
 

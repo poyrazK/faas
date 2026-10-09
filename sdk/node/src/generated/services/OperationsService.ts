@@ -46,6 +46,8 @@ import type { OperationWorkflowAttentionSummary } from '../models/OperationWorkf
 import type { OperationWorkflowControlResponse } from '../models/OperationWorkflowControlResponse.js';
 import type { OperationWorkflowOutcomesResponse } from '../models/OperationWorkflowOutcomesResponse.js';
 import type { OperationWorkflowOutcomeSummary } from '../models/OperationWorkflowOutcomeSummary.js';
+import type { OperationWorkflowPerformanceInstancesResponse } from '../models/OperationWorkflowPerformanceInstancesResponse.js';
+import type { OperationWorkflowPerformanceSummary } from '../models/OperationWorkflowPerformanceSummary.js';
 import type { OperationWorkflowReadinessRequest } from '../models/OperationWorkflowReadinessRequest.js';
 import type { OperationWorkflowReadinessResponse } from '../models/OperationWorkflowReadinessResponse.js';
 import type { OperationWorkflowStateReport } from '../models/OperationWorkflowStateReport.js';
@@ -734,6 +736,308 @@ export class OperationsService {
     });
   }
   /**
+   * List ranked contributors to a workflow performance group.
+   * Requires account read scope and MFA. Optional tenant selection stays within account ownership. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts.
+   * @returns OperationWorkflowPerformanceInstancesResponse Ranked complete-history contributors and exact selected group distribution.
+   * @throws ApiError
+   */
+  public static listAccountWorkflowPerformanceInstances({
+    slug,
+    scope,
+    workflow,
+    cohort,
+    dimension,
+    tenantId,
+    contractVersion,
+    state,
+    operation,
+    code,
+    owner,
+    unassigned,
+    cohortToken,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Declared business workflow to investigate.
+     */
+    workflow: string,
+    /**
+     * Completed or ongoing cohort.
+     */
+    cohort: 'completed' | 'ongoing',
+    /**
+     * Overall measure or exact breakdown dimension.
+     */
+    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner',
+    /**
+     * Optional account-owned customer selector on an operator milestone timeline.
+     */
+    tenantId?: string,
+    /**
+     * Required for state and blocker dimensions.
+     */
+    contractVersion?: number,
+    /**
+     * Exact contributing state. Required for the state dimension.
+     */
+    state?: string,
+    /**
+     * Exact blocker target Operation. Required for the blocker dimension.
+     */
+    operation?: string,
+    /**
+     * Exact blocker code. Required for the blocker dimension.
+     */
+    code?: string,
+    /**
+     * Exact public owner. Mutually exclusive with unassigned.
+     */
+    owner?: string,
+    /**
+     * Select the empty owner group. Mutually exclusive with owner.
+     */
+    unassigned?: boolean,
+    /**
+     * Opaque selector-bound cohort token from the summary or a previous contributor response.
+     */
+    cohortToken?: string,
+  }): CancelablePromise<OperationWorkflowPerformanceInstancesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-performance/instances',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'workflow': workflow,
+        'tenant_id': tenantId,
+        'cohort': cohort,
+        'dimension': dimension,
+        'contract_version': contractVersion,
+        'state': state,
+        'operation': operation,
+        'code': code,
+        'owner': owner,
+        'unassigned': unassigned,
+        'cohort_token': cohortToken,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The retained cohort changed. Refresh the summary and use its new cohort_token.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List ranked contributors to a workflow performance group.
+   * Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts.
+   * @returns OperationWorkflowPerformanceInstancesResponse Ranked complete-history contributors and exact selected group distribution.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowPerformanceInstances({
+    appId,
+    scope,
+    workflow,
+    cohort,
+    dimension,
+    contractVersion,
+    state,
+    operation,
+    code,
+    owner,
+    unassigned,
+    cohortToken,
+  }: {
+    /**
+     * App selected within the authenticated customer's milestone feed.
+     */
+    appId: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Declared business workflow to investigate.
+     */
+    workflow: string,
+    /**
+     * Completed or ongoing cohort.
+     */
+    cohort: 'completed' | 'ongoing',
+    /**
+     * Overall measure or exact breakdown dimension.
+     */
+    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner',
+    /**
+     * Required for state and blocker dimensions.
+     */
+    contractVersion?: number,
+    /**
+     * Exact contributing state. Required for the state dimension.
+     */
+    state?: string,
+    /**
+     * Exact blocker target Operation. Required for the blocker dimension.
+     */
+    operation?: string,
+    /**
+     * Exact blocker code. Required for the blocker dimension.
+     */
+    code?: string,
+    /**
+     * Exact public owner. Mutually exclusive with unassigned.
+     */
+    owner?: string,
+    /**
+     * Select the empty owner group. Mutually exclusive with owner.
+     */
+    unassigned?: boolean,
+    /**
+     * Opaque selector-bound cohort token from the summary or a previous contributor response.
+     */
+    cohortToken?: string,
+  }): CancelablePromise<OperationWorkflowPerformanceInstancesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-performance/instances',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'workflow': workflow,
+        'cohort': cohort,
+        'dimension': dimension,
+        'contract_version': contractVersion,
+        'state': state,
+        'operation': operation,
+        'code': code,
+        'owner': owner,
+        'unassigned': unassigned,
+        'cohort_token': cohortToken,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The retained cohort changed. Refresh the summary and use its new cohort_token.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Summarize business workflow performance across retained instances.
+   * Requires account read scope and MFA. Optional customer selection stays within account ownership. Explicit app/environment/workflow selection is required. The latest 100 completed and 100 ongoing retained instances form separate cohorts. Matching counts include all retained instances. Incomplete histories are excluded from durations and nearest-rank p50/p95 percentiles with explicit coverage reasons. Each instance contributes one accumulated duration per reported group. At most 1024 reports per instance and 32 output groups per dimension; group truncation does not change cohort totals. Ongoing durations run through evaluation time. No cursor or time-window filter is supported. Retention and newly published reports can change results.
+   * @returns OperationWorkflowPerformanceSummary Separate completed and ongoing cohorts with coverage and ranked durations.
+   * @throws ApiError
+   */
+  public static summarizeAccountWorkflowPerformance({
+    slug,
+    scope,
+    workflow,
+    tenantId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Declared workflow name to compare across instances.
+     */
+    workflow: string,
+    /**
+     * Optional account-owned customer selector on an operator milestone timeline.
+     */
+    tenantId?: string,
+  }): CancelablePromise<OperationWorkflowPerformanceSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-performance/summary',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'workflow': workflow,
+        'tenant_id': tenantId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Summarize business workflow performance across retained instances.
+   * Customer identity comes from credentials and tenant overrides are rejected. Requires platform_tenant:operations:read. Explicit app/environment/workflow selection is required. The latest 100 completed and 100 ongoing retained instances form separate cohorts. Matching counts include all retained instances. Incomplete histories are excluded from durations and nearest-rank p50/p95 percentiles with explicit coverage reasons. Each instance contributes one accumulated duration per reported group. At most 1024 reports per instance and 32 output groups per dimension; group truncation does not change cohort totals. Ongoing durations run through evaluation time. No cursor or time-window filter is supported. Retention and newly published reports can change results.
+   * @returns OperationWorkflowPerformanceSummary Separate completed and ongoing cohorts with coverage and ranked durations.
+   * @throws ApiError
+   */
+  public static summarizePlatformTenantSelfWorkflowPerformance({
+    appId,
+    scope,
+    workflow,
+  }: {
+    /**
+     * App selected within the authenticated customer's milestone feed.
+     */
+    appId: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Declared workflow name to compare across instances.
+     */
+    workflow: string,
+  }): CancelablePromise<OperationWorkflowPerformanceSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-performance/summary',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'workflow': workflow,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Summarize completed workflows with explicit business outcomes.
    * Account outcome summary — Requires account read scope and MFA. Optional tenant selection remains within account ownership. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
    * @returns OperationWorkflowOutcomeSummary All matching workflow count and a bounded group page ordered by value ascending.
@@ -1064,6 +1368,10 @@ export class OperationsService {
     targetOperation,
     dependencyStatus,
     requiredOutcomeCode,
+    priority,
+    sort = 'updated_at',
+    owner,
+    unassigned,
     blockerCode,
     reason,
     tenantId,
@@ -1095,13 +1403,29 @@ export class OperationsService {
      */
     requiredOutcomeCode?: string,
     /**
+     * Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal.
+     */
+    priority?: 'low' | 'normal' | 'high' | 'urgent',
+    /**
+     * Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order.
+     */
+    sort?: 'updated_at' | 'deadline',
+    /**
+     * Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker.
+     */
+    owner?: string,
+    /**
+     * Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false.
+     */
+    unassigned?: boolean,
+    /**
      * For the account attention queue, restrict attention to this application-reported blocker code.
      */
     blockerCode?: string,
     /**
      * For the account attention queue, select the attention reason to include in the queue.
      */
-    reason?: 'blocked' | 'stale' | 'overdue' | 'dependency',
+    reason?: 'blocked' | 'stale' | 'overdue' | 'dependency' | 'escalated' | 'unacknowledged' | 'follow_up_overdue' | 'awaiting_verification' | 'sla_breached' | 'sla_at_risk',
     /**
      * Optional account-owned customer selector on an operator milestone timeline.
      */
@@ -1127,6 +1451,10 @@ export class OperationsService {
         'target_operation': targetOperation,
         'dependency_status': dependencyStatus,
         'required_outcome_code': requiredOutcomeCode,
+        'priority': priority,
+        'sort': sort,
+        'owner': owner,
+        'unassigned': unassigned,
         'blocker_code': blockerCode,
         'reason': reason,
         'tenant_id': tenantId,
@@ -1159,6 +1487,10 @@ export class OperationsService {
     targetOperation,
     dependencyStatus,
     requiredOutcomeCode,
+    priority,
+    sort = 'updated_at',
+    owner,
+    unassigned,
     blockerCode,
     reason,
     tenantId,
@@ -1176,7 +1508,7 @@ export class OperationsService {
     /**
      * For the account attention summary, dimension used to aggregate matching workflow instances.
      */
-    groupBy?: 'workflow' | 'blocker_code' | 'target_operation' | 'customer' | 'dependency_status' | 'required_outcome_code',
+    groupBy?: 'owner' | 'workflow' | 'blocker_code' | 'target_operation' | 'customer' | 'dependency_status' | 'required_outcome_code',
     /**
      * For the account attention summary, restrict results to this declared workflow name.
      */
@@ -1194,13 +1526,29 @@ export class OperationsService {
      */
     requiredOutcomeCode?: string,
     /**
+     * Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal.
+     */
+    priority?: 'low' | 'normal' | 'high' | 'urgent',
+    /**
+     * Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order.
+     */
+    sort?: 'updated_at' | 'deadline',
+    /**
+     * Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker.
+     */
+    owner?: string,
+    /**
+     * Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false.
+     */
+    unassigned?: boolean,
+    /**
      * For the account attention summary, restrict attention to this application-reported blocker code.
      */
     blockerCode?: string,
     /**
      * For the account attention summary, select the attention reason to include in the queue.
      */
-    reason?: 'blocked' | 'stale' | 'overdue' | 'dependency',
+    reason?: 'blocked' | 'stale' | 'overdue' | 'dependency' | 'escalated' | 'unacknowledged' | 'follow_up_overdue' | 'awaiting_verification' | 'sla_breached' | 'sla_at_risk',
     /**
      * Optional account-owned customer selector on an operator milestone timeline.
      */
@@ -1227,6 +1575,10 @@ export class OperationsService {
         'target_operation': targetOperation,
         'dependency_status': dependencyStatus,
         'required_outcome_code': requiredOutcomeCode,
+        'priority': priority,
+        'sort': sort,
+        'owner': owner,
+        'unassigned': unassigned,
         'blocker_code': blockerCode,
         'reason': reason,
         'tenant_id': tenantId,
@@ -1258,6 +1610,10 @@ export class OperationsService {
     targetOperation,
     dependencyStatus,
     requiredOutcomeCode,
+    priority,
+    sort = 'updated_at',
+    owner,
+    unassigned,
     blockerCode,
     reason,
     limit = 20,
@@ -1288,13 +1644,29 @@ export class OperationsService {
      */
     requiredOutcomeCode?: string,
     /**
+     * Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal.
+     */
+    priority?: 'low' | 'normal' | 'high' | 'urgent',
+    /**
+     * Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order.
+     */
+    sort?: 'updated_at' | 'deadline',
+    /**
+     * Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker.
+     */
+    owner?: string,
+    /**
+     * Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false.
+     */
+    unassigned?: boolean,
+    /**
      * For the customer attention queue, restrict attention to this application-reported blocker code.
      */
     blockerCode?: string,
     /**
      * For the customer attention queue, select the attention reason to include in the queue.
      */
-    reason?: 'blocked' | 'stale' | 'overdue' | 'dependency',
+    reason?: 'blocked' | 'stale' | 'overdue' | 'dependency' | 'escalated' | 'unacknowledged' | 'follow_up_overdue' | 'awaiting_verification' | 'sla_breached' | 'sla_at_risk',
     /**
      * Maximum retained public facts in a milestone page.
      */
@@ -1314,6 +1686,10 @@ export class OperationsService {
         'target_operation': targetOperation,
         'dependency_status': dependencyStatus,
         'required_outcome_code': requiredOutcomeCode,
+        'priority': priority,
+        'sort': sort,
+        'owner': owner,
+        'unassigned': unassigned,
         'blocker_code': blockerCode,
         'reason': reason,
         'limit': limit,
@@ -1345,6 +1721,10 @@ export class OperationsService {
     targetOperation,
     dependencyStatus,
     requiredOutcomeCode,
+    priority,
+    sort = 'updated_at',
+    owner,
+    unassigned,
     blockerCode,
     reason,
     limit = 20,
@@ -1361,7 +1741,7 @@ export class OperationsService {
     /**
      * For the customer attention summary, dimension used to aggregate matching workflow instances.
      */
-    groupBy?: 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code',
+    groupBy?: 'owner' | 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code',
     /**
      * For the customer attention summary, restrict results to this declared workflow name.
      */
@@ -1379,13 +1759,29 @@ export class OperationsService {
      */
     requiredOutcomeCode?: string,
     /**
+     * Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal.
+     */
+    priority?: 'low' | 'normal' | 'high' | 'urgent',
+    /**
+     * Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order.
+     */
+    sort?: 'updated_at' | 'deadline',
+    /**
+     * Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker.
+     */
+    owner?: string,
+    /**
+     * Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false.
+     */
+    unassigned?: boolean,
+    /**
      * For the customer attention summary, restrict attention to this application-reported blocker code.
      */
     blockerCode?: string,
     /**
      * For the customer attention summary, select the attention reason to include in the queue.
      */
-    reason?: 'blocked' | 'stale' | 'overdue' | 'dependency',
+    reason?: 'blocked' | 'stale' | 'overdue' | 'dependency' | 'escalated' | 'unacknowledged' | 'follow_up_overdue' | 'awaiting_verification' | 'sla_breached' | 'sla_at_risk',
     /**
      * Maximum retained public facts in a milestone page.
      */
@@ -1406,6 +1802,10 @@ export class OperationsService {
         'target_operation': targetOperation,
         'dependency_status': dependencyStatus,
         'required_outcome_code': requiredOutcomeCode,
+        'priority': priority,
+        'sort': sort,
+        'owner': owner,
+        'unassigned': unassigned,
         'blocker_code': blockerCode,
         'reason': reason,
         'limit': limit,

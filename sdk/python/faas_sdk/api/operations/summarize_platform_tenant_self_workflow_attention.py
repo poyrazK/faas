@@ -14,8 +14,14 @@ from ...models.summarize_platform_tenant_self_workflow_attention_dependency_stat
 from ...models.summarize_platform_tenant_self_workflow_attention_group_by import (
     SummarizePlatformTenantSelfWorkflowAttentionGroupBy,
 )
+from ...models.summarize_platform_tenant_self_workflow_attention_priority import (
+    SummarizePlatformTenantSelfWorkflowAttentionPriority,
+)
 from ...models.summarize_platform_tenant_self_workflow_attention_reason import (
     SummarizePlatformTenantSelfWorkflowAttentionReason,
+)
+from ...models.summarize_platform_tenant_self_workflow_attention_sort import (
+    SummarizePlatformTenantSelfWorkflowAttentionSort,
 )
 from ...types import UNSET, Response, Unset
 
@@ -29,6 +35,10 @@ def _get_kwargs(
     target_operation: str | Unset = UNSET,
     dependency_status: SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
+    priority: SummarizePlatformTenantSelfWorkflowAttentionPriority | Unset = UNSET,
+    sort: SummarizePlatformTenantSelfWorkflowAttentionSort | Unset = "updated_at",
+    owner: str | Unset = UNSET,
+    unassigned: bool | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
     reason: SummarizePlatformTenantSelfWorkflowAttentionReason | Unset = UNSET,
     limit: int | Unset = 20,
@@ -59,6 +69,22 @@ def _get_kwargs(
     params["dependency_status"] = json_dependency_status
 
     params["required_outcome_code"] = required_outcome_code
+
+    json_priority: str | Unset = UNSET
+    if not isinstance(priority, Unset):
+        json_priority = priority
+
+    params["priority"] = json_priority
+
+    json_sort: str | Unset = UNSET
+    if not isinstance(sort, Unset):
+        json_sort = sort
+
+    params["sort"] = json_sort
+
+    params["owner"] = owner
+
+    params["unassigned"] = unassigned
 
     params["blocker_code"] = blocker_code
 
@@ -143,6 +169,10 @@ def sync_detailed(
     target_operation: str | Unset = UNSET,
     dependency_status: SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
+    priority: SummarizePlatformTenantSelfWorkflowAttentionPriority | Unset = UNSET,
+    sort: SummarizePlatformTenantSelfWorkflowAttentionSort | Unset = "updated_at",
+    owner: str | Unset = UNSET,
+    unassigned: bool | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
     reason: SummarizePlatformTenantSelfWorkflowAttentionReason | Unset = UNSET,
     limit: int | Unset = 20,
@@ -169,6 +199,10 @@ def sync_detailed(
         target_operation (str | Unset):
         dependency_status (SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset):
         required_outcome_code (str | Unset):
+        priority (SummarizePlatformTenantSelfWorkflowAttentionPriority | Unset):
+        sort (SummarizePlatformTenantSelfWorkflowAttentionSort | Unset):  Default: 'updated_at'.
+        owner (str | Unset):
+        unassigned (bool | Unset):
         blocker_code (str | Unset):
         reason (SummarizePlatformTenantSelfWorkflowAttentionReason | Unset):
         limit (int | Unset):  Default: 20.
@@ -190,6 +224,10 @@ def sync_detailed(
         target_operation=target_operation,
         dependency_status=dependency_status,
         required_outcome_code=required_outcome_code,
+        priority=priority,
+        sort=sort,
+        owner=owner,
+        unassigned=unassigned,
         blocker_code=blocker_code,
         reason=reason,
         limit=limit,
@@ -213,6 +251,10 @@ def sync(
     target_operation: str | Unset = UNSET,
     dependency_status: SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
+    priority: SummarizePlatformTenantSelfWorkflowAttentionPriority | Unset = UNSET,
+    sort: SummarizePlatformTenantSelfWorkflowAttentionSort | Unset = "updated_at",
+    owner: str | Unset = UNSET,
+    unassigned: bool | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
     reason: SummarizePlatformTenantSelfWorkflowAttentionReason | Unset = UNSET,
     limit: int | Unset = 20,
@@ -239,6 +281,10 @@ def sync(
         target_operation (str | Unset):
         dependency_status (SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset):
         required_outcome_code (str | Unset):
+        priority (SummarizePlatformTenantSelfWorkflowAttentionPriority | Unset):
+        sort (SummarizePlatformTenantSelfWorkflowAttentionSort | Unset):  Default: 'updated_at'.
+        owner (str | Unset):
+        unassigned (bool | Unset):
         blocker_code (str | Unset):
         reason (SummarizePlatformTenantSelfWorkflowAttentionReason | Unset):
         limit (int | Unset):  Default: 20.
@@ -261,6 +307,10 @@ def sync(
         target_operation=target_operation,
         dependency_status=dependency_status,
         required_outcome_code=required_outcome_code,
+        priority=priority,
+        sort=sort,
+        owner=owner,
+        unassigned=unassigned,
         blocker_code=blocker_code,
         reason=reason,
         limit=limit,
@@ -278,6 +328,10 @@ async def asyncio_detailed(
     target_operation: str | Unset = UNSET,
     dependency_status: SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
+    priority: SummarizePlatformTenantSelfWorkflowAttentionPriority | Unset = UNSET,
+    sort: SummarizePlatformTenantSelfWorkflowAttentionSort | Unset = "updated_at",
+    owner: str | Unset = UNSET,
+    unassigned: bool | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
     reason: SummarizePlatformTenantSelfWorkflowAttentionReason | Unset = UNSET,
     limit: int | Unset = 20,
@@ -304,6 +358,10 @@ async def asyncio_detailed(
         target_operation (str | Unset):
         dependency_status (SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset):
         required_outcome_code (str | Unset):
+        priority (SummarizePlatformTenantSelfWorkflowAttentionPriority | Unset):
+        sort (SummarizePlatformTenantSelfWorkflowAttentionSort | Unset):  Default: 'updated_at'.
+        owner (str | Unset):
+        unassigned (bool | Unset):
         blocker_code (str | Unset):
         reason (SummarizePlatformTenantSelfWorkflowAttentionReason | Unset):
         limit (int | Unset):  Default: 20.
@@ -325,6 +383,10 @@ async def asyncio_detailed(
         target_operation=target_operation,
         dependency_status=dependency_status,
         required_outcome_code=required_outcome_code,
+        priority=priority,
+        sort=sort,
+        owner=owner,
+        unassigned=unassigned,
         blocker_code=blocker_code,
         reason=reason,
         limit=limit,
@@ -346,6 +408,10 @@ async def asyncio(
     target_operation: str | Unset = UNSET,
     dependency_status: SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset = UNSET,
     required_outcome_code: str | Unset = UNSET,
+    priority: SummarizePlatformTenantSelfWorkflowAttentionPriority | Unset = UNSET,
+    sort: SummarizePlatformTenantSelfWorkflowAttentionSort | Unset = "updated_at",
+    owner: str | Unset = UNSET,
+    unassigned: bool | Unset = UNSET,
     blocker_code: str | Unset = UNSET,
     reason: SummarizePlatformTenantSelfWorkflowAttentionReason | Unset = UNSET,
     limit: int | Unset = 20,
@@ -372,6 +438,10 @@ async def asyncio(
         target_operation (str | Unset):
         dependency_status (SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus | Unset):
         required_outcome_code (str | Unset):
+        priority (SummarizePlatformTenantSelfWorkflowAttentionPriority | Unset):
+        sort (SummarizePlatformTenantSelfWorkflowAttentionSort | Unset):  Default: 'updated_at'.
+        owner (str | Unset):
+        unassigned (bool | Unset):
         blocker_code (str | Unset):
         reason (SummarizePlatformTenantSelfWorkflowAttentionReason | Unset):
         limit (int | Unset):  Default: 20.
@@ -395,6 +465,10 @@ async def asyncio(
             target_operation=target_operation,
             dependency_status=dependency_status,
             required_outcome_code=required_outcome_code,
+            priority=priority,
+            sort=sort,
+            owner=owner,
+            unassigned=unassigned,
             blocker_code=blocker_code,
             reason=reason,
             limit=limit,

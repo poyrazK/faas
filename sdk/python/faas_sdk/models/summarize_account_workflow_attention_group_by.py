@@ -1,13 +1,14 @@
 from typing import Literal
 
 SummarizeAccountWorkflowAttentionGroupBy = Literal[
-    "blocker_code", "customer", "dependency_status", "required_outcome_code", "target_operation", "workflow"
+    "blocker_code", "customer", "dependency_status", "owner", "required_outcome_code", "target_operation", "workflow"
 ]
 
 SUMMARIZE_ACCOUNT_WORKFLOW_ATTENTION_GROUP_BY_VALUES: set[SummarizeAccountWorkflowAttentionGroupBy] = {
     "blocker_code",
     "customer",
     "dependency_status",
+    "owner",
     "required_outcome_code",
     "target_operation",
     "workflow",
