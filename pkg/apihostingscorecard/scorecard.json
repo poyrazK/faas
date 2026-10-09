@@ -16,6 +16,19 @@
       ]
     },
     {
+      "id": "api-monetization-accuracy",
+      "name": "Consumer billing accuracy",
+      "category": "reliability",
+      "description": "Consumer usage is priced per minute with the effective rate card, late usage only adds adjustment revisions, and billed usage is checkable against request telemetry before invoicing.",
+      "capabilities": ["api-monetization"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/apid/handlers_consumer_usage_statements_test.go::TestAPIConsumerUsageStatementSnapshotAndFinalize"},
+        {"kind": "test", "locator": "cmd/apid/handlers_consumer_completeness_test.go::TestAPIConsumerUsageCompletenessEndpoint"},
+        {"kind": "test", "locator": "pkg/billing/api_consumer_completeness_test.go::TestCheckAPIConsumerUsageCompleteness"}
+      ]
+    },
+    {
       "id": "application-messaging-reliability",
       "name": "Application inbox and outbox reliability",
       "category": "reliability",

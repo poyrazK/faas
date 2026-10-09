@@ -5533,7 +5533,7 @@ Move a consumer onto a plan from a minute
 
 | Flag | Meaning | |
 |---|---|---|
-| `--plan <NAME>` | plan name, or &#34;default&#34; for the app default plan | required |
+| `--plan <NAME>` | plan name; use default for the app default plan | required |
 | `--effective-from <RFC3339>` | UTC minute the plan takes effect (default next minute) |  |
 
 ### consumers plan-history

@@ -2304,7 +2304,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-units-per-month", Short: "weighted units per consumer per UTC month; 0 is unlimited", Value: "N"},
 			}},
 			{Name: "set-plan", Short: "Move a consumer onto a plan from a minute", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
-				{Name: "plan", Short: "plan name, or \"default\" for the app default plan", Value: "NAME", Req: true},
+				{Name: "plan", Short: "plan name; use default for the app default plan", Value: "NAME", Req: true},
 				{Name: "effective-from", Short: "UTC minute the plan takes effect (default next minute)", Value: "RFC3339"},
 			}},
 			{Name: "plan-history", Short: "List a consumer's plan assignments", Positionals: []string{"<slug>", "<consumer-id>"}},
