@@ -452,3 +452,47 @@ These flags work with local directories, archives, resumable uploads,
 steady-state readiness and liveness remain separate API settings.
 They require a single-app deployment and cannot be combined with project
 selection, preview (`--plan`, `--diff`, `--dry-run`), `--github`, or `--create-only`.
+
+## Recover an interrupted deployment
+
+Submission failures now include recovery details: the stage (`upload`,
+`submission`, or `deployment`), app, any confirmed deployment ID, an inspection
+command, and the logical idempotency key when that transport uses one.
+In JSON mode, these appear in the stderr Problem object's `recovery` field.
+
+If no deployment ID was confirmed, inspect the app's history before retrying:
+
+```bash
+gregale deployments --app my-api
+```
+
+A submission error does not prove the server rejected the request. Retry the
+original command with the printed `retry_flag`, keeping the source, deploy
+options, account, API endpoint, and selected profile unchanged. The flag uses
+the same logical key that the original request used; the CLI scopes wire keys
+per operation. Replay protection is limited by the server's retention window.
+Use a new logical key for an intentional new deployment. Upload-stage failures
+can recover saved resumable state when it is available; commit-stage failures
+retain their recovery state so the next invocation can discover an accepted
+deployment. A developer source-sync failure does not advertise a retry key
+because that transport does not use this deploy key.
+
+When a deployment ID is known, inspect or resume that deployment instead of
+submitting another one:
+
+```bash
+gregale deployment get DEPLOYMENT_ID
+gregale deployment wait DEPLOYMENT_ID --timeout 1200
+gregale deployment wait DEPLOYMENT_ID --rollout --timeout 1200
+```
+
+Generated recovery commands preserve the selected named connection through
+`gregale --profile NAME`. Keep any API and credential environment overrides the
+same as the original operation.
+
+For JSON deploy waits, the stdout receipt includes `wait_stage` (`deployment`
+or `rollout`) and `recovery` when waiting stops. A deadline sets `timed_out`
+and retains exit `3`; cancellation sets `interrupted` and exits `130`.
+The stderr Problem contains matching inspection and resume guidance. A terminal
+failed deployment or aborted rollout exits `1` and identifies its stage in the
+receipt. Stopping a local wait leaves server processing running.

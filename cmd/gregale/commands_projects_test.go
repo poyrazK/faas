@@ -129,7 +129,7 @@ func TestProjectsEnvironmentCreateSendsCloneSource(t *testing.T) {
 
 func TestProjectsEnvironmentHistoryUsesFilters(t *testing.T) {
 	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"items":[{"promotion_id":"prom-1","project_slug":"shop","from_environment":"staging","to_environment":"production","status":"succeeded","created_at":"2026-09-17T00:00:00Z","updated_at":"2026-09-17T00:00:00Z"}],"next_before":"cursor"}`, http.StatusOK)
+	f := authedFakeAPI(t, `{"items":[{"promotion_id":"prom-1","project_slug":"shop","from_environment":"staging","to_environment":"production","status":"succeeded","created_at":"2026-09-17T00:00:00Z","updated_at":"2026-09-17T00:00:00Z"}],"next_before":"next-cursor"}`, http.StatusOK)
 	if code := cmdProjectsEnvironmentHistory([]string{"shop", "production", "--from", "staging", "--status", "succeeded", "--limit", "10", "--before", "cursor"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}

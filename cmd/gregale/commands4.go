@@ -90,11 +90,16 @@ func cmdAccountExport(args []string) int {
 func cmdAccountDelete(args []string) int {
 	fs := newFlagSet("account delete", flag.ContinueOnError)
 	quiet := fs.Bool("q", false, "suppress confirmation prompt")
+	fs.BoolVar(quiet, "quiet", false, "confirm deletion without prompting")
+	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
+	}
+	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+		return code
 	}
 	client, err := authedClient()
 	if err != nil {

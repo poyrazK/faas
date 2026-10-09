@@ -6,7 +6,10 @@ import type { AppBindingInventory } from '../models/AppBindingInventory.js';
 import type { AppErrorRequestsResponse } from '../models/AppErrorRequestsResponse.js';
 import type { AppErrorSampleResponse } from '../models/AppErrorSampleResponse.js';
 import type { AppErrorsSummaryResponse } from '../models/AppErrorsSummaryResponse.js';
+import type { AppHealthHistoryPage } from '../models/AppHealthHistoryPage.js';
+import type { AppHealthResponse } from '../models/AppHealthResponse.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
+import type { AppOperationalSummary } from '../models/AppOperationalSummary.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { AppRestartResponse } from '../models/AppRestartResponse.js';
 import type { AppRoutesResponse } from '../models/AppRoutesResponse.js';
@@ -58,6 +61,7 @@ import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsR
 import type { PreviewRouteMonitorRequest } from '../models/PreviewRouteMonitorRequest.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
+import type { Problem } from '../models/Problem.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
@@ -1177,6 +1181,90 @@ export class AppsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Explain observed app serving health.
+   * Read-only assessment of default-scope HTTP serving deployments,
+   * replica readiness, node evidence and the last 5 minutes of request
+   * telemetry scoped to current traffic-bearing default releases. It never wakes
+   * or probes a workload. Structural evidence is available on every plan;
+   * request telemetry follows the existing Hobby+ metrics entitlement.
+   * Missing, failed, stale or truncated evidence cannot confirm health.
+   * A failed latest release does not erase older serving evidence.
+   * Scale-to-zero idle is expected when no warm replicas are required.
+   * Worker and job execution health is not assessed.
+   * Requires apps:read or admin scope. No MFA required.
+   *
+   * @returns AppHealthResponse Evidence assessment, including unknown checks.
+   * @throws ApiError
+   */
+  public static getAppHealth({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppHealthResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/health',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `Authentication required.`,
+        403: `Read scope required.`,
+        404: `App not found for this account.`,
+        429: `Rate limit exceeded.`,
+      },
+    });
+  }
+  /**
+   * Read recorded app health changes.
+   * Requires apps:read or admin; no MFA required. Background collection
+   * records default HTTP serving assessments independently of dashboard
+   * reads, without waking or probing workloads. Baseline, meaningful
+   * changes and expired-evidence gaps are newest first. Times describe
+   * observations or evidence expiry, not exact incident start/end times.
+   * Retains up to 100 entries within 4 MiB and 30 days per app; each entry
+   * is bounded to 64 KiB. Missing, foreign, aged or pruned cursors return
+   * 404. Latest retains its original time; collector_fresh is false when
+   * unavailable or expired. Reads never create or refresh stored evidence.
+   *
+   * @returns AppHealthHistoryPage Recorded observations and collection freshness; Cache-Control no-store.
+   * @returns Problem Invalid page parameters, access denial, missing cursor, or unavailable storage.
+   * @throws ApiError
+   */
+  public static listAppHealthHistory({
+    slug,
+    limit = 20,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Maximum number of retained observations to return.
+     */
+    limit?: number,
+    /**
+     * ID of the last retained entry from the preceding page.
+     */
+    before?: string,
+  }): CancelablePromise<AppHealthHistoryPage | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/health/history',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
       },
     });
   }
@@ -3370,6 +3458,38 @@ export class AppsService {
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read current production monitoring and recovery progress.
+   * Requires app read access and completed MFA. Joins current default-scope production route evidence, metadata for the saved open incident, pending checked rollbacks across app scopes, and pending or failed restart handoffs. Reads do not wake workloads, change traffic, or declare incident recovery. Component availability and bounded-list truncation are explicit. Deployment smoke verification remains a separate launch-time result. Customer identities, request evidence, free-form rollback reasons and internal restart errors are omitted. No query parameters are accepted.
+   * @returns AppOperationalSummary Independently observed operational facts; unavailable components remain explicit.
+   * @throws ApiError
+   */
+  public static getAppOperationalSummary({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppOperationalSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/operational-summary',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
       },
     });

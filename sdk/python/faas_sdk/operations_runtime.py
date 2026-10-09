@@ -156,8 +156,12 @@ class GregaleOperations:
         """Publish an already committed fact using its saved ID and occurrence time."""
         return OperationMilestone.from_dict(await self._report_json("milestones", report.to_dict()))
 
-    async def validate_milestones(self, batch: OperationMilestoneValidationRequest) -> OperationMilestoneValidationResponse:
-        return OperationMilestoneValidationResponse.from_dict(await self._report_json("milestones/validate", batch.to_dict()))
+    async def validate_milestones(
+        self, batch: OperationMilestoneValidationRequest
+    ) -> OperationMilestoneValidationResponse:
+        return OperationMilestoneValidationResponse.from_dict(
+            await self._report_json("milestones/validate", batch.to_dict())
+        )
 
     async def workflow_state(self, report: OperationWorkflowStateReport) -> OperationWorkflowStateReportResponse:
         """Publish a workflow state report that is already committed by the application."""
