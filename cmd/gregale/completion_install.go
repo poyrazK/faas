@@ -265,8 +265,8 @@ func writeCompletionInstallFile(path string, body []byte, mode os.FileMode) erro
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
-	defer file.Close()
+	defer func() { _ = os.Remove(file.Name()) }()
+	defer func() { _ = file.Close() }()
 	if err := file.Chmod(mode); err != nil {
 		return err
 	}

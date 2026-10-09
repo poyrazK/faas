@@ -117,6 +117,6 @@ func cmdIssuesReopenInteractive(args []string) int {
 		command = append(command, "--profile", quoteLogCommandArg(profile))
 	}
 	command = append(command, "issues", "get", quoteLogCommandArg(current.ID), "--app", quoteLogCommandArg(slug))
-	fmt.Fprintln(osStdout, "Inspection command (POSIX shells):\n"+strings.Join(command, " "))
+	_, _ = fmt.Fprintln(osStdout, "Inspection command (POSIX shells):\n"+strings.Join(command, " "))
 	return 0
 }

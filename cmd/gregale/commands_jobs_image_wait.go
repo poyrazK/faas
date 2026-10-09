@@ -83,7 +83,7 @@ func followJobImage(ctx context.Context, client *api.Client, pin api.JobResponse
 	previous := ""
 	for {
 		if last.ID != pin.ID || last.Name != pin.Name || last.AccountID != pin.AccountID || last.ImageRef != pin.ImageRef {
-			return last, 1, errors.New("Job identity or selected image changed; inspect the Job and start a new wait")
+			return last, 1, errors.New("job identity or selected image changed; inspect the Job and start a new wait")
 		}
 		if pin.ImageResolvedDigest != "" && last.ImageResolvedDigest != pin.ImageResolvedDigest {
 			return last, 1, errors.New("resolved image digest changed")

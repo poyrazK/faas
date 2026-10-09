@@ -90,15 +90,17 @@ func cmdJobsNext(args []string) int {
 			return 0
 		}
 		table := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(table, "JOB\tSTATE\tKIND\tNEXT EXPRESSION TIME\tTIMEZONE\tIMAGE")
+		_, _ = fmt.Fprintln(table, "JOB\tSTATE\tKIND\tNEXT EXPRESSION TIME\tTIMEZONE\tIMAGE")
 		for _, item := range items {
 			next := "-"
 			if item.NextExpressionAt != nil {
 				next = item.NextExpressionAt.Format(time.RFC3339)
 			}
-			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(item.Name), oneLine(item.State), oneLine(item.Kind), next, oneLine(item.Timezone), oneLine(item.ImageStatus))
+			_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(item.Name), oneLine(item.State), oneLine(item.Kind), next, oneLine(item.Timezone), oneLine(item.ImageStatus))
 		}
-		table.Flush()
+		if err := table.Flush(); err != nil {
+			return printErr("Could not write upcoming Jobs", err)
+		}
 		for _, item := range items {
 			if item.Error != "" {
 				PrintProgress(osStdout, "%s: %s", item.Name, item.Error)

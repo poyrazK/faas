@@ -83,7 +83,7 @@ func collectJobRegistry(ctx context.Context, input *os.File, client *api.Client)
 	if err != nil {
 		return fail(err)
 	}
-	defer term.Restore(int(input.Fd()), state)
+	defer func() { _ = term.Restore(int(input.Fd()), state) }()
 	stream := secretTerminalIO{input: input, output: osStderr}
 	terminal := &secretEntryTerminal{Terminal: term.NewTerminal(stream, ""), input: stream, maxBytes: api.MaxRegistryPasswordBytes}
 	offset := 0
@@ -98,9 +98,9 @@ func collectJobRegistry(ctx context.Context, input *os.File, client *api.Client)
 			if !jobSlugPattern.MatchString(item.Name) || !jobRunIDPattern.MatchString(item.ID) {
 				return fail(errors.New("invalid Job identity"))
 			}
-			fmt.Fprintf(terminal, "%d. %s\n", i+1, oneLine(item.Name))
+			_, _ = fmt.Fprintf(terminal, "%d. %s\n", i+1, oneLine(item.Name))
 		}
-		fmt.Fprintln(terminal, "Choose a number; n shows more; q cancels.")
+		_, _ = fmt.Fprintln(terminal, "Choose a number; n shows more; q cancels.")
 		value, err := secretTerminalRead(ctx, terminal, "Job", false)
 		if err != nil {
 			return fail(err)
@@ -114,7 +114,7 @@ func collectJobRegistry(ctx context.Context, input *os.File, client *api.Client)
 		}
 		choice, err := strconv.Atoi(value)
 		if err != nil || choice < 1 || choice > len(page.Jobs) {
-			fmt.Fprintln(terminal, "Choose a listed Job.")
+			_, _ = fmt.Fprintln(terminal, "Choose a listed Job.")
 			continue
 		}
 		job = page.Jobs[choice-1]
@@ -133,7 +133,7 @@ func collectJobRegistry(ctx context.Context, input *os.File, client *api.Client)
 		if err == nil {
 			break
 		}
-		fmt.Fprintln(terminal, "Enter a valid lowercase registry host[:port].")
+		_, _ = fmt.Fprintln(terminal, "Enter a valid lowercase registry host[:port].")
 	}
 	user := ""
 	for {
@@ -144,7 +144,7 @@ func collectJobRegistry(ctx context.Context, input *os.File, client *api.Client)
 		if user != "" && len(user) <= api.MaxRegistryUsernameLen && strings.IndexFunc(user, unicode.IsControl) < 0 {
 			break
 		}
-		fmt.Fprintln(terminal, "Enter a nonempty username within the supported limit.")
+		_, _ = fmt.Fprintln(terminal, "Enter a nonempty username within the supported limit.")
 	}
 	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	credentials, err := client.ListJobRegistryCredentials(readCtx, job.Name)
@@ -166,9 +166,9 @@ func collectJobRegistry(ctx context.Context, input *os.File, client *api.Client)
 	if password == "" || strings.IndexFunc(password, unicode.IsControl) >= 0 {
 		return fail(errors.New("enter a nonempty password/token without control characters"))
 	}
-	fmt.Fprintf(terminal, "Review: %s credential for Job %s; registry=%s; username=%s; token=hidden\n", action, job.Name, registry, user)
+	_, _ = fmt.Fprintf(terminal, "Review: %s credential for Job %s; registry=%s; username=%s; token=hidden\n", action, job.Name, registry, user)
 	if snapshot != nil {
-		fmt.Fprintf(terminal, "Existing username: %s\n", oneLine(snapshot.Username))
+		_, _ = fmt.Fprintf(terminal, "Existing username: %s\n", oneLine(snapshot.Username))
 	}
 	answer, err := secretTerminalRead(ctx, terminal, "Save credential? (y/N)", false)
 	if err != nil {

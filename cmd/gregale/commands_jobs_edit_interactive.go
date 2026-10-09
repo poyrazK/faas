@@ -89,12 +89,13 @@ func cmdJobsUpdateInteractive() int {
 		return startInputExit(err)
 	}
 	schedule, timezone := job.Schedule, job.Timezone
-	if scheduleChoice == 1 {
+	switch scheduleChoice {
+	case 1:
 		schedule, timezone, err = promptJobSchedule(ctx, prompt, job.Schedule, job.Timezone)
 		if err != nil {
 			return startInputExit(err)
 		}
-	} else if scheduleChoice == 2 {
+	case 2:
 		schedule = ""
 	}
 	req := api.UpdateJobRequest{}

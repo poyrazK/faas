@@ -115,7 +115,7 @@ func cmdCronsUpdateInteractive(slug string) int {
 		}
 		_, _ = fmt.Fprintln(prompt.writer, "Use UTC or an explicit IANA timezone such as Europe/Istanbul.")
 	}
-	expression := original.Schedule
+	var expression string
 	for {
 		expression, err = prompt.text(ctx, "Schedule (minute hour day-of-month month day-of-week)", original.Schedule)
 		if err != nil {

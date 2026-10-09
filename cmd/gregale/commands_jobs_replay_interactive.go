@@ -46,7 +46,7 @@ func cmdJobsReplayFailedInteractive() int {
 			return currentJob, run, nil, err
 		}
 		if currentJob.ID != job.ID || currentJob.Name != job.Name || currentJob.AccountID != job.AccountID || run.ID != source.ID || run.JobID != job.ID || run.AccountID != job.AccountID {
-			return currentJob, run, nil, errors.New("Job or source run identity changed")
+			return currentJob, run, nil, errors.New("job or source run identity changed")
 		}
 		if run.AggregateStatus != "failed" && run.AggregateStatus != "cancelled" && run.AggregateStatus != "dead_letter" && run.AggregateStatus != "succeeded" {
 			return currentJob, run, nil, errors.New("source run must be terminal")

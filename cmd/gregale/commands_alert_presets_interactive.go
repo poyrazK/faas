@@ -117,7 +117,7 @@ func collectAlertPreset(ctx context.Context, input *os.File, slug string, preset
 	if err != nil {
 		return preset, req, false, err
 	}
-	defer term.Restore(int(input.Fd()), state)
+	defer func() { _ = term.Restore(int(input.Fd()), state) }()
 	stream := secretTerminalIO{input: input, output: osStderr}
 	terminal := &secretEntryTerminal{Terminal: term.NewTerminal(stream, ""), input: stream, maxBytes: api.AlertRuleWebhookSecretMaxBytes}
 	_, _ = fmt.Fprintln(terminal, "Choose an alert preset (number; q cancels). Ctrl-C or Ctrl-D cancels before saving.")

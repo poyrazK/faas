@@ -117,7 +117,7 @@ func loadLogViews() (logViewsFile, error) {
 	if err != nil {
 		return views, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
 		return views, err
@@ -167,8 +167,8 @@ func writeLogViews(views logViewsFile) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
-	defer file.Close()
+	defer func() { _ = os.Remove(file.Name()) }()
+	defer func() { _ = file.Close() }()
 	if _, err := file.Write(append(body, '\n')); err != nil {
 		return err
 	}

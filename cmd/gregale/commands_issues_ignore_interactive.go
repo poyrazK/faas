@@ -74,7 +74,7 @@ func cmdIssuesIgnoreInteractive(args []string) int {
 			if err == nil && duration >= time.Second && duration <= api.IssueMaxTokenLifetime {
 				break
 			}
-			fmt.Fprintln(osStderr, "Enter a duration from 1 second to 2160 hours.")
+			_, _ = fmt.Fprintln(osStderr, "Enter a duration from 1 second to 2160 hours.")
 		}
 	}
 	read := func() (api.Issue, error) {
@@ -128,6 +128,6 @@ func cmdIssuesIgnoreInteractive(args []string) int {
 		command = append(command, "--profile", quoteLogCommandArg(profile))
 	}
 	command = append(command, "issues", "get", quoteLogCommandArg(current.ID), "--app", quoteLogCommandArg(slug))
-	fmt.Fprintln(osStdout, "Inspection command (POSIX shells):\n"+strings.Join(command, " "))
+	_, _ = fmt.Fprintln(osStdout, "Inspection command (POSIX shells):\n"+strings.Join(command, " "))
 	return 0
 }

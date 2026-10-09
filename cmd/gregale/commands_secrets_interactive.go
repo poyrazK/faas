@@ -54,7 +54,7 @@ type secretEntryTerminal struct {
 // be silently truncated. Only names and non-secret prompts use ReadLine.
 func (t *secretEntryTerminal) ReadPassword(label string) (string, error) {
 	_, _ = fmt.Fprint(t.Terminal, label)
-	defer fmt.Fprintln(t.Terminal)
+	defer func() { _, _ = fmt.Fprintln(t.Terminal) }()
 	value := make([]byte, 0, min(t.maxBytes, 4096))
 	overLimit := false
 	for {
@@ -179,7 +179,7 @@ func collectInteractiveSecrets(ctx context.Context, input *os.File, app, scope, 
 	if err != nil {
 		return nil, "", "", false, err
 	}
-	defer term.Restore(int(input.Fd()), state)
+	defer func() { _ = term.Restore(int(input.Fd()), state) }()
 	stream := secretTerminalIO{input: input, output: osStderr}
 	terminal := &secretEntryTerminal{Terminal: term.NewTerminal(stream, ""), input: stream, maxBytes: limits.SecretValueMaxBytes}
 	_, _ = fmt.Fprintln(terminal, "Values are hidden. Ctrl-C or Ctrl-D cancels before saving. Enter an empty name when finished.")

@@ -55,10 +55,9 @@ func cmdIssuesResolveInteractive(args []string) int {
 		return 0
 	}
 	var choice int
-	seen := map[string]bool{}
 	var releases []api.DeploymentResponse
 	releaseCursors := map[int]string{0: ""}
-	seen = map[string]bool{}
+	seen := map[string]bool{}
 	choice, err = chooseJobLogPage(ctx, prompt, "Choose the release that fixed this issue.", func(ctx context.Context, offset int) ([]string, int, error) {
 		page, err := client.ListAppDeployments(ctx, slug, releaseCursors[offset], 20)
 		releases = page.Items

@@ -72,7 +72,7 @@ func cmdAlertUpdateInteractive(slug string) int {
 		return printErr("Invalid selected rule", errors.New("the rule does not match the selected app and ID"))
 	}
 	PrintProgress(osStdout, "App: %s; rule: %s (%s)\nMetric: %s %s %s; action=%s", slug, oneLine(rule.Name), rule.ID, oneLine(rule.Metric), oneLine(rule.Comparison), formatThreshold(rule.Threshold), oneLine(rule.Action))
-	threshold := rule.Threshold
+	var threshold float64
 	for {
 		value, inputErr := prompt.text(ctx, "Threshold", strconv.FormatFloat(rule.Threshold, 'g', -1, 64))
 		if inputErr != nil {
@@ -84,7 +84,7 @@ func cmdAlertUpdateInteractive(slug string) int {
 		}
 		_, _ = fmt.Fprintln(osStderr, "Enter a finite number.")
 	}
-	window := rule.WindowSpec
+	var window string
 	for {
 		window, err = prompt.text(ctx, "Window (5m, 15m, 1h, 6h, 24h, 7d, 15d)", rule.WindowSpec)
 		if err != nil {

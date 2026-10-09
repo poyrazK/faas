@@ -177,7 +177,7 @@ func cmdJobsList(args []string) int {
 // defaults + clamps every numeric field; passing 0 lets the plan
 // default win.
 func cmdJobsAdd(args []string) int {
-	if len(args) == 1 && args[0] == "--interactive" {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsAddInteractive()
 	}
 	fs := newFlagSet("jobs-add", flag.ContinueOnError)
@@ -290,7 +290,7 @@ func cmdJobsInfo(args []string) int {
 // `--pause` / `--resume` pair is mutually exclusive and maps to
 // status='paused' / status='active'.
 func cmdJobsUpdate(args []string) int {
-	if len(args) == 1 && args[0] == "--interactive" {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsUpdateInteractive()
 	}
 	fs := newFlagSet("jobs-update", flag.ContinueOnError)
@@ -434,7 +434,7 @@ func cmdJobsUpdate(args []string) int {
 // enforces the soft-delete guard via the soft_delete_job_if_no_live
 // _instances stored function (migrations/00576).
 func cmdJobsRm(args []string) int {
-	if len(args) == 1 && args[0] == "--interactive" {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsRmInteractive()
 	}
 	if len(args) != 1 {
@@ -463,7 +463,7 @@ func cmdJobsRm(args []string) int {
 // the plan cap before the store call. Plan caps: Hobby=100,
 // Pro=1000, Scale=5000.
 func cmdJobsRun(args []string) int {
-	if len(args) == 1 && args[0] == "--interactive" {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsRunInteractive()
 	}
 	fs := newFlagSet("jobs-run", flag.ContinueOnError)
@@ -618,7 +618,7 @@ func cmdJobsRuns(args []string) int {
 }
 
 func cmdJobsOccurrences(args []string) int {
-	if len(args) == 1 && args[0] == "--interactive" {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsOccurrencesInteractive()
 	}
 	fs := newFlagSet("jobs-occurrences", flag.ContinueOnError)
@@ -675,7 +675,7 @@ func cmdJobsOccurrences(args []string) int {
 // tasks: the server SIGTERMs via vmmd; the guest's job supervisor
 // handles the 30s grace window before SIGKILL.
 func cmdJobsCancel(args []string) int {
-	if len(args) == 1 && args[0] == "--interactive" {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsCancelInteractive()
 	}
 	if len(args) != 2 {
@@ -705,7 +705,7 @@ func cmdJobsCancel(args []string) int {
 // Returns a page of tasks 0..N-1 (zero-based). LeaseToken is OMITTED
 // from the wire (internal dispatch primitive).
 func cmdJobsTasks(args []string) int {
-	if len(args) == 1 && args[0] == "--interactive" {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsTasksInteractive()
 	}
 	if len(args) != 2 {
@@ -734,7 +734,7 @@ func cmdJobsTasks(args []string) int {
 // cmdJobsAttempts returns retained terminal outcomes, including earlier
 // attempts whose task projection was subsequently retried.
 func cmdJobsAttempts(args []string) int {
-	if len(args) == 1 && args[0] == "--interactive" {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsAttemptsInteractive()
 	}
 	if len(args) != 3 || !jobRunIDPattern.MatchString(args[1]) {
@@ -771,7 +771,7 @@ func cmdJobsAttempts(args []string) int {
 
 // cmdJobsReplayFailed creates a linked run containing unsuccessful inputs.
 func cmdJobsReplayFailed(args []string) int {
-	if len(args) == 1 && args[0] == "--interactive" {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsReplayFailedInteractive()
 	}
 	if len(args) != 2 || !jobRunIDPattern.MatchString(args[1]) {
@@ -796,7 +796,7 @@ func cmdJobsReplayFailed(args []string) int {
 // cmdJobsArtifactURL verifies a managed result and returns its short-lived
 // signed GET URL together with the expected size and SHA-256.
 func cmdJobsArtifactURL(args []string) int {
-	if len(args) == 1 && args[0] == "--interactive" {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsArtifactURLInteractive()
 	}
 	if len(args) != 4 || !jobRunIDPattern.MatchString(args[1]) || args[3] == "" {
@@ -829,7 +829,7 @@ func cmdJobsArtifactURL(args []string) int {
 // The server enforces the task state and retry budget; this command only
 // validates the stable positional shape before making the request.
 func cmdJobsRetry(args []string) int {
-	if len(args) == 1 && args[0] == "--interactive" {
+	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsRetryInteractive()
 	}
 	if len(args) != 3 {

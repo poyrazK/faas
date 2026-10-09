@@ -593,7 +593,7 @@ func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []
 	// scopes posture — pkg/api/limits.go::SecretCountMax doc). Pass
 	// scope="" to ListSecretsWithScope for the cross-scope total.
 	if !jsonOutput {
-		printSecretsQuotaStamp(client, app, scope)
+		printSecretsQuotaStamp(ctx, client, app, scope)
 	}
 	if restart {
 		out, err := client.RestartAppFresh(ctx, app)
@@ -693,15 +693,15 @@ func reorderSecretsSetArgs(args []string) ([]string, error) {
 // (handlers_secrets.go::listSecrets calls CountAppSecrets across
 // every scope). Using `len(list.Secrets)` would under-report for
 // any customer with non-default-scope rows.
-func printSecretsQuotaStamp(client *api.Client, app, scope string) {
+func printSecretsQuotaStamp(ctx context.Context, client *api.Client, app, scope string) {
 	_ = scope // accepted for symmetry with secretsSet; the stamp itself
 	// always reads the cross-scope total.
-	list, err := client.ListSecretsWithScope(context.Background(), app, "")
+	list, err := client.ListSecretsWithScope(ctx, app, "")
 	if err != nil {
 		return
 	}
 	used := list.Count
-	if acct, err := client.Whoami(context.Background()); err == nil {
+	if acct, err := client.Whoami(ctx); err == nil {
 		if l, ok := api.LimitsFor(api.Plan(acct.Plan)); ok && l.SecretCountMax > 0 {
 			_, _ = fmt.Fprintf(osStdout, "%s: %d/%d secrets\n", app, used, l.SecretCountMax)
 			return

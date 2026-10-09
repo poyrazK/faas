@@ -157,7 +157,8 @@ func logsPromptFilter(ctx context.Context, prompt *startPrompt, label string, ro
 
 func quoteLogCommandArg(value string) string {
 	if value != "" && strings.IndexFunc(value, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_/.:", r))
+		safe := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_/.:", r)
+		return !safe
 	}) < 0 {
 		return value
 	}
