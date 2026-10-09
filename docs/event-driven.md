@@ -2971,3 +2971,27 @@ After a lost response or retryable server error, preserve the application, key a
 Deduplication lasts while the receipt remains retained. Settled receipts become eligible for pruning after 30 days; unsettled work and retention holds can extend that period. Repeated publication does not refresh retention. After actual pruning, the same key can create a new acceptance and fanout. Renaming the producer app preserves identity, while deleting and recreating an app creates a new UUID namespace. Legacy account/source/id publication of the derived identity addresses the same event; the namespace is not an isolation boundary between authorized producers in the same account.
 
 The CLI always prints JSON. Go exposes `PublishAppEvent`; Node and Python expose the generated `publishAppEvent` / `publish_app_event` methods. No new storage migration is needed. See [ADR-847](adr/847-application-scoped-producer-key-publication.md).
+
+### Reconcile an application producer key without republishing
+
+```sh
+gregale events publish-app-status my-app --key order-123-created --json
+# Continue the bounded consumer evidence page:
+gregale events publish-app-status my-app --key order-123-created --after CURSOR --limit 100 --json
+```
+
+`GET /v1/apps/{slug}/events/publish-status?key=KEY` derives the same identity as app-key publishing and only reads retained receipts. It requires apps:read/admin, MFA and existing app ownership and rate limits. The exact original key is required; repeated, empty, unknown or malformed query parameters are rejected. No publish, claim, replay or retention refresh occurs.
+
+The response includes `app_id`, `source`, `event_id`, `observed_at`, `status` and `receipt_url`. Retained observations also include the original acceptance `receipt` and the existing rich receipt `evidence`, with routing summaries and independently tracked consumer execution/workflow outcomes. It does not compare a proposed payload with stored content.
+
+| Status | Meaning |
+| --- | --- |
+| `processing` | Acceptance is retained and routing is still active. |
+| `accepted` | Acceptance is retained and routing has settled, including possible routing failures or filtered consumers. |
+| `unavailable` | No retained receipt is visible; never accepted, concurrent acceptance and pruning cannot be distinguished. |
+
+Neither processing nor accepted proves successful handler execution. Inspect each consumer's evidence; missing execution evidence remains unknown. Legacy unknown membership remains `snapshot_captured=false`. Unavailable must not automatically trigger a replacement publish, because publication after pruning can create another fanout.
+
+Recipient pages default to 100 rows and allow up to 200. Follow `evidence.next_after` using `after`. Global routing summaries cover retained consumers beyond the returned page; execution rows cover only that page. Pages are live snapshots and cursors bind the original acceptance identity. If pruning/republication makes a cursor stale, restart observation without inferring continuity of the prior acceptance. Each request has a five-second deadline and no-store response.
+
+The CLI always prints JSON and exits 2 for unavailable, 0 for retained acceptance, and nonzero for read/validation errors. Exit 0 is not a delivery-success assertion. Go uses `GetAppEventPublishStatus`, Node `getAppEventPublishStatus`, and Python `get_app_event_publish_status`. The standalone Go SDK preserves recipient rows as `json.RawMessage`; the root Go SDK and generated SDKs use existing typed receipt models. See [ADR-848](adr/848-application-producer-key-publication-status.md).

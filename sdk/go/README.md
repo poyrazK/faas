@@ -404,3 +404,13 @@ receipt, err := client.PublishAppEvent(ctx, "my-app", faas.AppPublishEventReques
 ```
 
 The result includes `Duplicate` and the original durable `Receipt`. Preserve app/key/content on retry. Configure subscriptions against the returned `app.<UUID>` source. Deduplication lasts while the receipt is retained; consumer side effects still need deduplication.
+
+Read-only producer-key reconciliation:
+
+```go
+status, err := client.GetAppEventPublishStatus(ctx, "my-app", faas.AppEventPublishStatusQuery{
+    Key: "order-123-created",
+})
+```
+
+`processing` and `accepted` prove retained acceptance, while accepted only means routing settled, not successful handler execution. `unavailable` cannot establish nonpublication and must not automatically trigger another publish. Follow `status.Evidence.NextAfter` using `After` (default 100, maximum 200 recipients). The standalone SDK exposes typed receipt metadata and lossless `json.RawMessage` recipient rows; the root Go SDK uses the existing full receipt DTOs.

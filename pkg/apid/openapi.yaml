@@ -3437,6 +3437,60 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/events/publish-status:
+    get:
+      tags: [events]
+      operationId: getAppEventPublishStatus
+      summary: Reconcile an app producer key without publishing another event.
+      description: |
+        Requires an owned app, apps:read/admin scopes, MFA and existing rate limits.
+        Derives exactly the same source and event ID as app key publication.
+        Read-only five-second receipt snapshot; no append, claim, replay or retention refresh.
+        Returns processing while retained routing is unsettled, accepted after routing
+        settles, or unavailable when no retained receipt is visible. Both processing
+        and accepted prove durable acceptance. Accepted does not prove delivery or
+        handler success; consult independent recipient execution and workflow evidence.
+        Unavailable cannot distinguish never accepted, concurrent acceptance not yet
+        visible, or pruning. It must not automatically trigger a replacement publish.
+        Evidence includes full routing summaries and a bounded recipient page.
+        Follow evidence.next_after using after; pages are live snapshots and cursors
+        bind account, source, event ID and acceptance identity. Stale cursors fail 400.
+        Raw producer keys and event payloads are not returned. App renames preserve
+        identity; replacement apps have a different UUID namespace. Matching legacy
+        account/source/ID publication addresses the same identity.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Owned application whose producer-key namespace is inspected.
+          schema: { type: string }
+        - name: key
+          in: query
+          required: true
+          description: Exact original printable ASCII producer key, without spaces.
+          schema: { type: string, minLength: 1, maxLength: 256, pattern: '^[!-~]+$' }
+        - name: after
+          in: query
+          description: Bound receipt recipient continuation cursor from evidence.next_after.
+          schema: { type: string, minLength: 1, maxLength: 8192 }
+        - name: limit
+          in: query
+          description: Number of consumer evidence rows in this page.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        '200':
+          description: Retained acceptance evidence or explicitly unavailable observation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppEventPublishStatusResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
   /v1/apps/{slug}/events:publish:
     post:
       tags: [events]
@@ -47296,6 +47350,28 @@ components:
           maxItems: 100
           items: { $ref: '#/components/schemas/EventPreviewSubscription' }
         truncated: { type: boolean, description: True when either sample omits additional candidates. }
+
+    AppEventPublishStatusResponse:
+      type: object
+      additionalProperties: false
+      description: Read-only producer-key reconciliation with retained consumer evidence.
+      required: [app_id, source, event_id, observed_at, status, receipt_url]
+      properties:
+        app_id: { type: string, format: uuid }
+        source: { type: string }
+        event_id: { type: string }
+        observed_at: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [processing, accepted, unavailable]
+          description: Routing progress of retained acceptance; never a consumer success claim.
+        reason:
+          type: string
+          enum: [not_retained_or_not_observed]
+          description: Missing receipt observation cannot establish nonexecution.
+        receipt_url: { type: string, format: uri-reference }
+        receipt: { $ref: '#/components/schemas/PublishEventResponse' }
+        evidence: { $ref: '#/components/schemas/EventReceiptResponse' }
 
     AppPublishEventRequest:
       type: object

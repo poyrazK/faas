@@ -751,6 +751,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding": "DeleteWorkflowCallbackWebhookBinding",
 	"POST /v1/workflows/runs/{id}/events":                                    "SendWorkflowEvent",
 	"POST /v1/workflows/runs/{id}/cancel":                                    "CancelWorkflowRun",
+	"GET /v1/apps/{slug}/events/publish-status":                              "GetAppEventPublishStatus",
 	"POST /v1/apps/{slug}/events:publish":                                    "PublishAppEvent",
 	"POST /v1/events:publish-batch":                                          "PublishEventBatch",
 	"POST /v1/events:publish":                                                "PublishEvent",

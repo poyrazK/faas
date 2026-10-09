@@ -38,14 +38,11 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
-	appID, err := uuid.Parse(app.ID)
+	appID, source, id, err := appProducerEventIdentity(app.ID, req.Key)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("application identity"))
 		return
 	}
-	source := "app." + appID.String()
-	digest := sha256.Sum256([]byte(req.Key))
-	id := "key." + hex.EncodeToString(digest[:])
 	envelope, err := normalizePublishRequest(api.PublishEventRequest{ID: id, Source: source, Type: req.Type, Time: req.Time, Data: req.Data, SchemaVersion: req.SchemaVersion}, acct.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
@@ -92,5 +89,17 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 	}
 	receipt := api.PublishEventResponse{ID: id, AccountID: acct.ID, AcceptedAt: accepted.AcceptedAt, ReceiptURL: eventReceiptURL(source, id)}
 	w.Header().Set("Location", receipt.ReceiptURL)
-	writeJSON(w, http.StatusAccepted, api.AppPublishEventResponse{AppID: appID.String(), Source: source, Duplicate: accepted.Duplicate, Receipt: receipt})
+	writeJSON(w, http.StatusAccepted, api.AppPublishEventResponse{AppID: appID, Source: source, Duplicate: accepted.Duplicate, Receipt: receipt})
+}
+
+func appProducerEventIdentity(app, key string) (string, string, string, error) {
+	id, err := uuid.Parse(app)
+	if err != nil || id == uuid.Nil {
+		return "", "", "", api.ErrValidation("invalid application identity")
+	}
+	if err := api.ValidateAppEventProducerKey(key); err != nil {
+		return "", "", "", err
+	}
+	digest := sha256.Sum256([]byte(key))
+	return id.String(), "app." + id.String(), "key." + hex.EncodeToString(digest[:]), nil
 }

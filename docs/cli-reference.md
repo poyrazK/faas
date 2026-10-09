@@ -1695,6 +1695,24 @@ Inspect receipt expiry, backfill holds and account storage
 | `--window <DURATION>` | expiry lookahead (1s..720h; default 24h) |  |
 | `--limit <N>` | maximum sampled receipts (1..100) |  |
 
+### events publish-app-status
+
+Reconcile retained publication and consumer evidence without submitting an event
+
+`gregale events publish-app-status [--key <KEY>] [--after <CURSOR>] [--limit <N>] <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--key <KEY>` | Original exact application producer key |  |
+| `--after <CURSOR>` | Continue the recipient evidence page |  |
+| `--limit <N>` | Recipients per page (1..200; default 100) |  |
+
+Examples:
+
+```sh
+gregale events publish-app-status my-app --key order-123-created --json
+```
+
 ### events publish-app
 
 Publish an event using a durable application-scoped producer key

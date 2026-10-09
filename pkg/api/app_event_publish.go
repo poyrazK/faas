@@ -18,14 +18,21 @@ type AppPublishEventRequest struct {
 	SchemaVersion string          `json:"schemaversion,omitempty"`
 }
 
-func (r AppPublishEventRequest) Validate() error {
-	if len(r.Key) == 0 || len(r.Key) > AppEventPublishKeyMaxBytes {
+func ValidateAppEventProducerKey(key string) error {
+	if len(key) == 0 || len(key) > AppEventPublishKeyMaxBytes {
 		return fmt.Errorf("key must contain 1..%d printable ASCII bytes without spaces", AppEventPublishKeyMaxBytes)
 	}
-	for _, b := range []byte(r.Key) {
+	for _, b := range []byte(key) {
 		if b < 0x21 || b > 0x7e {
 			return fmt.Errorf("key must contain printable ASCII without spaces")
 		}
+	}
+	return nil
+}
+
+func (r AppPublishEventRequest) Validate() error {
+	if err := ValidateAppEventProducerKey(r.Key); err != nil {
+		return err
 	}
 	if len(r.Data) == 0 || !json.Valid(r.Data) {
 		return fmt.Errorf("data must be a JSON value")

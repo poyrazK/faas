@@ -9461,3 +9461,9 @@ const (
 	AppEventPublishKeyMaxBytes        = 256
 	AppEventPublishBodyMaxBytes int64 = 1 << 20
 )
+
+// App producer-key status uses existing receipt pagination and cursor format.
+const (
+	AppEventPublishStatusRecipientsDefault = 100
+	AppEventPublishStatusCursorMaxBytes    = 8192
+)

@@ -263,3 +263,10 @@ const (
 
 // AppEventPublishKeyMaxBytes mirrors pkg/api/limits.go for the standalone SDK.
 const AppEventPublishKeyMaxBytes = 256
+
+// Producer-key status pagination mirrors the public receipt API.
+const (
+	AppEventPublishStatusRecipientsDefault = 100
+	AppEventPublishStatusCursorMaxBytes    = 8192
+	AppEventPublishStatusRecipientsMax     = 200
+)

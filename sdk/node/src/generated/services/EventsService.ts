@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppEventPublishStatusResponse } from '../models/AppEventPublishStatusResponse.js';
 import type { AppPublishEventRequest } from '../models/AppPublishEventRequest.js';
 import type { AppPublishEventResponse } from '../models/AppPublishEventResponse.js';
 import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
@@ -100,6 +101,75 @@ export class EventsService {
         \`profile_investigation_limit\`.
         `,
         500: `The router could not read the current subscription set.`,
+      },
+    });
+  }
+  /**
+   * Reconcile an app producer key without publishing another event.
+   * Requires an owned app, apps:read/admin scopes, MFA and existing rate limits.
+   * Derives exactly the same source and event ID as app key publication.
+   * Read-only five-second receipt snapshot; no append, claim, replay or retention refresh.
+   * Returns processing while retained routing is unsettled, accepted after routing
+   * settles, or unavailable when no retained receipt is visible. Both processing
+   * and accepted prove durable acceptance. Accepted does not prove delivery or
+   * handler success; consult independent recipient execution and workflow evidence.
+   * Unavailable cannot distinguish never accepted, concurrent acceptance not yet
+   * visible, or pruning. It must not automatically trigger a replacement publish.
+   * Evidence includes full routing summaries and a bounded recipient page.
+   * Follow evidence.next_after using after; pages are live snapshots and cursors
+   * bind account, source, event ID and acceptance identity. Stale cursors fail 400.
+   * Raw producer keys and event payloads are not returned. App renames preserve
+   * identity; replacement apps have a different UUID namespace. Matching legacy
+   * account/source/ID publication addresses the same identity.
+   *
+   * @returns AppEventPublishStatusResponse Retained acceptance evidence or explicitly unavailable observation.
+   * @throws ApiError
+   */
+  public static getAppEventPublishStatus({
+    slug,
+    key,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * Owned application whose producer-key namespace is inspected.
+     */
+    slug: string,
+    /**
+     * Exact original printable ASCII producer key, without spaces.
+     */
+    key: string,
+    /**
+     * Bound receipt recipient continuation cursor from evidence.next_after.
+     */
+    after?: string,
+    /**
+     * Number of consumer evidence rows in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<AppEventPublishStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/events/publish-status',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'key': key,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        500: `code: capacity — server-side error; retry with backoff.`,
       },
     });
   }

@@ -455,3 +455,5 @@ status selection. Each page is a fresh read-only snapshot. Returned detail and
 retry-preview paths use existing recovery inspection endpoints.
 
 Application-scoped producer keys: use `faas_sdk.api.events.publish_app_event` with `AppPublishEventRequest(key="order-123-created", type_="order.created", data={"order_id": "123"})`. Preserve app/key/content after uncertain responses. The result includes `duplicate`, generated `app.<UUID>` source and the durable original receipt. Deduplication lasts while the receipt is retained; consumers still deduplicate side effects.
+
+Read-only producer-key reconciliation: `faas_sdk.api.events.get_app_event_publish_status` accepts the app slug and original exact key. The response contains the retained receipt and paginated consumer evidence. `accepted` means routing settled, not consumer success; `processing` is still durably accepted. `unavailable` remains uncertain and must not automatically trigger publication. Follow `evidence.next_after` using `after`, with up to 200 recipients per page (default 100).
