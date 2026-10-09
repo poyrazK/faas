@@ -235,6 +235,16 @@ appeared on `GET /v1/apps/{slug}/debug/requests/{id}/evidence`. This covers
 guest-init env stamping, the bridge across snapshot restore, vsock 1041, the
 vmmd broker, apid ingest and the flush into `spans_summary`. During the init
 cold boot, before the instance is serving, the broker refuses exports
-(`identity`); that is by design. Still pending: the same check on a dedicated
-native host, the Node/Python runner-image preloads inside a VM (validated
-outside a VM only), and the split-box mTLS path on a two-node layout.
+(`identity`); that is by design.
+
+`TestGuestTracingNodePreloadMetal` (2026-10-10, same host) passed: a plain
+`node:22-alpine` app with no tracing code, carrying the pinned
+`/opt/gregale/tracing` bundle, was preloaded by guest-init's `NODE_OPTIONS`,
+and its HTTP client span reached the evidence classified as
+`app_dependency`/`http` after a snapshot-restore wake. Both scenarios left no
+VM resources behind. The Node bundle adds about 111 MB (uncompressed) to the
+shared read-only runner base; per-app layers are unaffected.
+
+Still pending: the same checks on a dedicated native host, the Python
+preload inside a VM (validated outside a VM only), and the split-box mTLS
+path on a two-node layout.
