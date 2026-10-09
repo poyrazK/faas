@@ -413,16 +413,18 @@ jobs:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
       # -race on every tested package: races are the failures hardest to
-      # trace back later. Memory bounds match the mega pg shard 1, whose cold
-      # cmd/apid race build otherwise shuts the hosted runner down. Changed
-      # packages plus the §6.2 invariant tests (tests/property) when anything
-      # in their import tree changed.
+      # trace back later. Changed packages plus the §6.2 invariant tests
+      # (tests/property) when anything in their import tree changed.
+      #
+      # Two phases. The race build of cmd/apid can exhaust hosted-runner
+      # memory, so test binaries are compiled first under the mega pg shard 1
+      # bounds (GOMEMLIMIT/GOGC/GOMAXPROCS). Those bounds must not reach the
+      # tests themselves: inherited by the test binaries, GOGC=10 on two cores
+      # pushed a third of pkg/state past the shard's 15-minute timeout. The
+      # run phase reuses the compiled binaries from the build cache.
       - name: race tests (changed packages and invariants)
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
-          GOMEMLIMIT: 2GiB
-          GOGC: 10
-          GOMAXPROCS: 2
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
@@ -432,11 +434,15 @@ jobs:
             echo "no affected Go packages assigned to shard $SHARD"
             exit 0
           fi
+          echo "::group::compile test binaries (bounded memory)"
+          # shellcheck disable=SC2086 # space-separated package lists
+          GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS $SPLIT
+          echo "::endgroup::"
           pids=()
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            go test -race -count=1 -p 4 -timeout=12m $PKGS &
+            go test -race -count=1 -p 4 -timeout=16m $PKGS &
             pids+=("$!")
           fi
           # Packages too slow for one shard run a third of their tests here,
@@ -445,7 +451,7 @@ jobs:
             run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
             echo "testing: $pkg (test shard $SHARD/3)"
             # Large PostgreSQL partitions use the mega tier's process
-            # budget; package tests above keep their 12-minute deadline.
+            # budget; standard package tests use main's 16-minute deadline.
             go test -race -count=1 -timeout=20m -run "$run" "$pkg" &
             pids+=("$!")
           done

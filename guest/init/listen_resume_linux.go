@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/guestmemproto"
 	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"golang.org/x/sys/unix"
 )
@@ -261,6 +262,10 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		handleAppCPULimitConn(f, log, hdr[4:], firstCPULimitHandler(onCPULimit))
 		return
 	}
+	if msgType == guestmemproto.MessageType {
+		handleMemoryStatsConn(f, log, hdr[4:])
+		return
+	}
 	if msgType != VsockResumeMsgType {
 		log.Warn("vsock unknown msg type", "type", msgType)
 		resumeDiag(fmt.Sprintf("resume: unknown message type=%d", msgType))
@@ -394,6 +399,45 @@ func handleBeforeCheckpointConn(f *os.File, log *slog.Logger, lengthHeader []byt
 		return
 	}
 	_, _ = f.Write([]byte{VsockResumeAckOK})
+}
+
+// handleMemoryStatsConn answers vmmd's pre-capture memory question with a
+// /proc/meminfo summary. It is diagnostic only: vmmd captures regardless.
+func handleMemoryStatsConn(f *os.File, log *slog.Logger, lengthHeader []byte) {
+	if binary.BigEndian.Uint32(lengthHeader) != 0 {
+		_, _ = f.Write([]byte{VsockResumeAckBodyLength})
+		return
+	}
+	reply, err := memoryStatsReply("/proc/meminfo")
+	if err != nil {
+		log.Warn("memory stats", "err", err)
+		_, _ = f.Write([]byte{VsockResumeAckJSON})
+		return
+	}
+	_, _ = f.Write(reply)
+}
+
+// memoryStatsReply frames the reply as an OK byte, a 4-byte big-endian length
+// and the guestmemproto.Stats JSON.
+func memoryStatsReply(path string) ([]byte, error) {
+	// nolint:forbidigo // fixed procfs path inside the guest.
+	in, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = in.Close() }()
+	stats, err := guestmemproto.Parse(in)
+	if err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(stats)
+	if err != nil {
+		return nil, err
+	}
+	reply := make([]byte, 5, 5+len(body))
+	reply[0] = VsockResumeAckOK
+	binary.BigEndian.PutUint32(reply[1:5], uint32(len(body)))
+	return append(reply, body...), nil
 }
 
 func firstCPULimitHandler(handlers []func(int) error) func(int) error {
