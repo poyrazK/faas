@@ -157,9 +157,12 @@ func TestDevLoopMetal(t *testing.T) {
 	}
 	slug := session.App.Slug
 	host := slug + ".apps.test.example"
+	// Pro apps default to public_auth_mode=bearer as well as require_authn;
+	// the probes below are anonymous, so open both gates.
 	falsy := false
-	if _, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{RequireAuthn: &falsy}); status != http.StatusOK {
-		t.Fatalf("disable require_authn: status %d", status)
+	if _, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{RequireAuthn: &falsy,
+		PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}); status != http.StatusOK {
+		t.Fatalf("open app auth: status %d", status)
 	}
 	// ADR-741: `gregale dev --debug` sets this as a sealed secret; the harness
 	// has no secret sealing key, so set the same variable as plain app env.
@@ -198,20 +201,22 @@ func TestDevLoopMetal(t *testing.T) {
 			t.Fatalf("debug tunnel dial: %v", err)
 		}
 		defer func() { _ = socket.Close() }()
-		if err := socket.WriteMessage(websocket.BinaryMessage, []byte("GET /json/version HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")); err != nil {
+		// /json/list names the inspected script: the app's index.js, not the
+		// npm process that launched it.
+		if err := socket.WriteMessage(websocket.BinaryMessage, []byte("GET /json/list HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")); err != nil {
 			t.Fatal(err)
 		}
 		_ = socket.SetReadDeadline(time.Now().Add(30 * time.Second))
 		var reply bytes.Buffer
-		for !strings.Contains(reply.String(), "Protocol-Version") {
+		for !strings.Contains(reply.String(), "webSocketDebuggerUrl") || !strings.HasSuffix(strings.TrimSpace(reply.String()), "]") {
 			_, chunk, err := socket.ReadMessage()
 			if err != nil {
 				t.Fatalf("inspector reply %q: %v", reply.String(), err)
 			}
 			reply.Write(chunk)
 		}
-		if !strings.Contains(reply.String(), "node.js") && !strings.Contains(reply.String(), "Node.js") {
-			t.Fatalf("inspector reply = %q, want the Node.js version document", reply.String())
+		if !strings.Contains(reply.String(), "index.js") || strings.Contains(reply.String(), "npm-cli") {
+			t.Fatalf("inspector targets = %q, want the app's index.js", reply.String())
 		}
 	})
 
