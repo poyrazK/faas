@@ -61,6 +61,8 @@ type cliCommand struct {
 	// Examples are runnable command lines shown by local help, man pages,
 	// and the generated Markdown reference for common customer tasks.
 	Examples []string
+	// SearchTerms describe customer tasks using vocabulary beyond command names.
+	SearchTerms []string
 	// Subcommands enumerates the verb set the dispatcher recognises.
 	// Empty for commands with no verb set (e.g. `whoami`, `version`).
 	Subcommands []cliSub
@@ -172,8 +174,9 @@ func (c cliCommand) completionSubcommandWord() int {
 
 // cliSub is one verb under a cliCommand (e.g. alerts.list, alerts.add).
 type cliSub struct {
-	Name  string
-	Short string
+	Name        string
+	Short       string
+	SearchTerms []string
 	// Aliases are accepted spellings for this subcommand. They are used
 	// when expanding manifest completion paths.
 	Aliases []string
@@ -491,7 +494,8 @@ var cliCommands = []cliCommand{
 	mcpCLICommand(),
 	{
 		Name: "start", DocSlug: "deploy", Short: "Get your first app live with a few guided prompts",
-		Examples: []string{"gregale start"},
+		SearchTerms: []string{"first deployment getting started launch application"},
+		Examples:    []string{"gregale start"},
 	},
 	{
 		Name:    "account",
@@ -1051,7 +1055,7 @@ var cliCommands = []cliCommand{
 		SubcommandsAfterPositionals: true,
 		Subcommands: []cliSub{
 			{Name: subHealth, Short: "Explain default-scope serving health and missing evidence"},
-			{Name: "scale", Short: "Preview, save, apply or update app resource and runtime settings", Examples: []string{
+			{Name: "scale", Short: "Preview, save, apply or update app resource and runtime settings", SearchTerms: []string{"reduce costs memory resources capacity"}, Examples: []string{
 				"gregale app my-api scale --plan --ram 512 --out scale-change.json",
 				"gregale app my-api scale --apply scale-change.json --confirm",
 			}, Flags: append([]cliFlag{
@@ -1060,12 +1064,12 @@ var cliCommands = []cliCommand{
 				{Name: "apply", Short: "apply a saved scale plan JSON file", Value: "PATH"},
 				{Name: "confirm", Short: "confirm applying the saved plan (requires --apply)"},
 			}, appScaleCLIFlags()...)},
-			{Name: "costs", Short: "Show this app's attributed usage costs and source coverage", Flags: []cliFlag{
+			{Name: "costs", Short: "Show this app's attributed usage costs and source coverage", SearchTerms: []string{"reduce costs spending bill usage"}, Flags: []cliFlag{
 				{Name: "month", Short: "UTC usage month (defaults to current)", Value: "YYYY-MM"},
 				{Name: "json", Short: "Print the machine-readable app cost report"},
 			}, Examples: []string{"gregale app my-api costs", "gregale app my-api costs --month 2026-10 --json"}},
 			{Name: "rename", Short: "Rename an app"},
-			{Name: "restart", Short: "Request a snapshot restart, or track a fresh runtime-configuration restart", Flags: []cliFlag{
+			{Name: "restart", Short: "Request a snapshot restart, or track a fresh runtime-configuration restart", SearchTerms: []string{"restart after changing secrets apply updated configuration"}, Examples: []string{"gregale app my-api restart --fresh --wait"}, Flags: []cliFlag{
 				{Name: "fresh", Short: "cold-boot replacements with current runtime configuration"},
 				{Name: "wait", Short: "wait for processing; requires --fresh"},
 				{Name: "timeout", Short: "client deadline (default 10m)", Value: "DURATION"},
@@ -3578,7 +3582,7 @@ var cliCommands = []cliCommand{
 					{Name: "override", Positionals: []string{"<project>", "<environment>"}, Short: "Permit an expiring edit to an owned field", Flags: []cliFlag{{Name: "resource", Value: "RESOURCE", Short: "Logical resource"}, {Name: "path", Value: "PATH", Short: "Owned field path"}, {Name: "reason", Value: "REASON", Short: "Reason for the temporary edit"}, {Name: "expires", Value: "RFC3339", Short: "Expiry within twenty-four hours"}}},
 					{Name: "remove-override", Positionals: []string{"<project>", "<environment>"}, Short: "Revoke a field override", Flags: []cliFlag{{Name: "resource", Value: "RESOURCE", Short: "Logical resource"}, {Name: "path", Value: "PATH", Short: "Owned field path"}}},
 				}},
-				{Name: "diff", Short: "Compare environments"},
+				{Name: "diff", Short: "Compare environments", SearchTerms: []string{"compare environments staging production configuration differences"}, Positionals: []string{"<project-slug>"}, Flags: []cliFlag{{Name: "from", Short: "source environment", Value: "ENV", Req: true}, {Name: "to", Short: "target environment", Value: "ENV", Req: true}}, Examples: []string{"gregale projects environments diff my-project --from staging --to production"}},
 				{Name: "preview", Aliases: []string{"promotion-preview"}, Short: "Plan a promotion", Flags: []cliFlag{
 					{Name: "from", Short: "source environment", Value: "ENV", Req: true},
 					{Name: "to", Short: "target environment", Value: "ENV", Req: true},

@@ -83,6 +83,11 @@ func TestJSONOutputHonored(t *testing.T) {
 // example, cmdRegistryList → cmdRegistry, cmdAlertAdd → cmdAlerts.
 // Top-level handlers and their leaves share the same canonical name.
 func topLevelDispatcher(leaf string) string {
+	// Help is dispatched directly by run and intentionally has no manifest
+	// entry. Its search leaf now emits JSON and must participate in this gate.
+	if strings.EqualFold(leaf, "cmdHelp") || strings.EqualFold(leaf, "cmdHelpSearch") {
+		return "cmdHelp"
+	}
 	if leaf == "cmdWaitAlertRollback" {
 		return "cmdAlerts"
 	}
@@ -294,7 +299,7 @@ func markJSONCommandVector(tested map[string]bool, args []ast.Expr) {
 		if value == "--json" || value == "-j" || value == "--json=true" {
 			continue
 		}
-		if _, known := lookupCliCommand(value); known {
+		if _, known := lookupCliCommand(value); known || value == "help" {
 			tested[topLevelDispatcher("cmd"+value)] = true
 		}
 		return
@@ -302,6 +307,11 @@ func markJSONCommandVector(tested map[string]bool, args []ast.Expr) {
 }
 
 func TestJSONAuditDispatcherMapping(t *testing.T) {
+	for _, handler := range []string{"cmdHelp", "cmdHelpSearch", "cmdhelp"} {
+		if got := topLevelDispatcher(handler); got != "cmdHelp" {
+			t.Errorf("%s maps to %s, want cmdHelp", handler, got)
+		}
+	}
 	for _, command := range cliCommands {
 		want := "cmd"
 		for _, part := range strings.Split(command.Name, "-") {
@@ -324,13 +334,14 @@ func TestHumanBefore(t *testing.T) { cmdBindings(nil) }
 func TestArbitraryName(t *testing.T) { jsonOutput = true; cmdApps(nil) }
 func TestHumanAfter(t *testing.T) { cmdBindings(nil) }
 func TestRunJSON(t *testing.T) { _ = "bindings"; for _, args := range [][]string{{"alerts", "--json"}} { run(args) } }
+func TestRunHelpJSON(t *testing.T) { run([]string{"help", "--search", "costs", "--json"}) }
 func helper() { jsonOutput = true; cmdBindings(nil) }
 `, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tested := jsonTestedFile(file)
-	if !tested["cmdApps"] || !tested["cmdAlerts"] || tested["cmdBindings"] || len(tested) != 2 {
+	if !tested["cmdApps"] || !tested["cmdAlerts"] || !tested["cmdHelp"] || tested["cmdBindings"] || len(tested) != 3 {
 		t.Fatalf("JSON-tested command families = %v", tested)
 	}
 }

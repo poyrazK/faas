@@ -44,6 +44,7 @@ func topLevelUsage(showAdvanced bool) string {
 		b.WriteString("  gregale start\n  gregale deploy --plan\n  gregale deploy --path ./api\n")
 		b.WriteString("\nRun 'gregale help --all' for every command, or 'gregale help deploy' for a topic.\n")
 	}
+	b.WriteString("Search by task: gregale help --search \"reduce costs\"\n")
 	b.WriteString("\nRun 'gregale <command> --help' for command details.\n\n")
 	b.WriteString("Global flags:\n")
 	b.WriteString("  --json                 Machine-readable output where supported. Slices emit\n")
@@ -148,6 +149,10 @@ func run(args []string) (status int) {
 				return 0
 			}
 		}
+	}
+	// Task discovery is local even when the selected connection is unavailable.
+	if args[0] == "help" && hasHelpSearchFlag(args[1:]) {
+		return cmdHelpSearch(args[1:])
 	}
 	if err := validateSelectedProfile(); err != nil {
 		return printErr("Invalid connection profile", err)

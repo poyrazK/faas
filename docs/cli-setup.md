@@ -5,6 +5,25 @@ binary itself. No checked-in copies in `contrib/completion/`; the
 binary is the source of truth. This doc covers the install path for
 each shell, plus the man-page install for offline / CI use.
 
+## Find a command by task
+
+Search local command descriptions, examples, flags, and task keywords when you
+know what you want to do but do not know the command name:
+
+```sh
+gregale help --search "restart after changing secrets"
+gregale help --search "compare environments"
+gregale help --search "reduce costs"
+gregale help --search "costs" --json
+```
+
+Search runs offline without login and shows up to eight ranked results with
+usage, available examples, and documentation links. Quote multi-word queries.
+Use `--all` with `--search` to include operator and compatibility commands.
+No matches is a successful search with an empty `results` array in JSON output;
+invalid or empty queries exit with code 1. Search displays commands and does
+not execute them.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

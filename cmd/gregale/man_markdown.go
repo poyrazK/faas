@@ -24,6 +24,8 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Generated from the CLI's command manifest by `gregale man --markdown`. Do not edit by hand.")
 	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Find commands by task with `gregale help --search \"reduce costs\"`. Search is local and needs no login. Add `--all` to include advanced commands or `--json` for structured results. See [CLI setup](cli-setup.md#find-a-command-by-task).")
+	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "| Command | What it does |")

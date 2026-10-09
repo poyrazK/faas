@@ -2,6 +2,8 @@
 
 Generated from the CLI's command manifest by `gregale man --markdown`. Do not edit by hand.
 
+Find commands by task with `gregale help --search "reduce costs"`. Search is local and needs no login. Add `--all` to include advanced commands or `--json` for structured results. See [CLI setup](cli-setup.md#find-a-command-by-task).
+
 Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
 
 | Command | What it does |
@@ -2480,6 +2482,12 @@ Request a snapshot restart, or track a fresh runtime-configuration restart
 | `--timeout <DURATION>` | client deadline (default 10m) |  |
 | `--poll-interval <DURATION>` | status polling interval (default 2s) |  |
 | `--json` | print the accepted ID or last observed restart receipt |  |
+
+Examples:
+
+```sh
+gregale app my-api restart --fresh --wait
+```
 
 #### app restart status
 
@@ -8865,7 +8873,18 @@ Revoke a field override
 
 Compare environments
 
-`gregale projects environments diff`
+`gregale projects environments diff --from <ENV> --to <ENV> <project-slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <ENV>` | source environment | required |
+| `--to <ENV>` | target environment | required |
+
+Examples:
+
+```sh
+gregale projects environments diff my-project --from staging --to production
+```
 
 #### projects environments preview
 
