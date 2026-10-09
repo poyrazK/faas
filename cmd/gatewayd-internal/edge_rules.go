@@ -27,6 +27,7 @@ import (
 	"net"
 	"net/http"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -273,6 +274,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	cache, cacheErrs := compileCacheRules(storeRules)
 	respond, respondErrs := compileRespondRules(storeRules)
 	asyncRules, asyncErrs := compileAsyncRules(storeRules)
+	waf, wafErrs := compileWAFRules(storeRules)
 	retry, retryErrs := compileRetryRules(storeRules)
 	circuitBreaker, circuitBreakerErrs := compileCircuitBreakerRules(storeRules)
 	entry := &gateway.HostEntry{
@@ -292,6 +294,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		Cache:          cache,
 		Respond:        respond,
 		Async:          asyncRules,
+		WAF:            waf,
 		Retry:          retry,
 		CircuitBreaker: circuitBreaker,
 	}
@@ -312,6 +315,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	parseErrs = append(parseErrs, circuitBreakerErrs...)
 	parseErrs = append(parseErrs, respondErrs...)
 	parseErrs = append(parseErrs, asyncErrs...)
+	parseErrs = append(parseErrs, wafErrs...)
 	if len(parseErrs) > 0 {
 		entry.PathGlobErrs = parseErrs
 	}
@@ -367,6 +371,9 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		}
 		for range asyncErrs {
 			g.metrics.ObserveEdgeRuleCompileError("async")
+		}
+		for range wafErrs {
+			g.metrics.ObserveEdgeRuleCompileError("waf")
 		}
 	}
 	g.cache.PutIfGeneration(host, entry, generation)
@@ -849,6 +856,27 @@ func (g *gatewaydEdgeRules) MatchAsync(ctx context.Context, host, requestPath, m
 		rules = entry.Async
 	}
 	return gateway.PickFirstAsyncMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleAsyncResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+}
+
+// MatchWAF returns the highest-priority kind=waf rule matching the public
+// request (ADR-831 step 1), sharing the per-host cache with every kind.
+func (g *gatewaydEdgeRules) MatchWAF(ctx context.Context, host, requestPath, method string) *gateway.EdgeRuleWAFResolved {
+	if g == nil || g.cache == nil {
+		return nil
+	}
+	rules, hit := g.cache.GetWAF(host)
+	if !hit {
+		entry, err := g.loadHost(ctx, host)
+		if err != nil {
+			if g.log != nil {
+				g.log.Warn("edge rule loader failed; treating waf rule as miss", "host", host, "err", err)
+			}
+			return nil
+		}
+		g.warnPathGlobErrs(host, entry.PathGlobErrs)
+		rules = entry.WAF
+	}
+	return gateway.PickFirstWAFMatch(gateway.OwnedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleWAFResolved) string { return r.AccountID }), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 }
 
 // Reset drops every cached entry. Called by the pg_notify loop in
@@ -1635,6 +1663,47 @@ func compileAsyncRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleAsyncReso
 			Priority:         rule.Priority, PathGlob: rule.MatchPath,
 			Methods:      buildMethodsMap(rule.MatchMethods),
 			MatchHeaders: buildMatchHeadersMap(rule.MatchHeaders),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	return out, parseErrs
+}
+
+// compileWAFRules compiles kind=waf rows (ADR-831 step 1). A row whose action
+// is missing or fails the apid bounds (a direct-database write) is dropped
+// rather than inspected with values apid would have rejected.
+func compileWAFRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleWAFResolved, []gateway.PathGlobError) {
+	if len(storeRules) == 0 {
+		return nil, nil
+	}
+	var out []gateway.EdgeRuleWAFResolved
+	var parseErrs []gateway.PathGlobError
+	for i := range storeRules {
+		rule := &storeRules[i]
+		if !rule.Enabled || rule.Kind != state.EdgeRuleKindWAF || rule.Action.WAF == nil {
+			continue
+		}
+		action := api.EdgeRuleWAFAction{
+			Mode:             rule.Action.WAF.Mode,
+			ParanoiaLevel:    rule.Action.WAF.ParanoiaLevel,
+			AnomalyThreshold: rule.Action.WAF.AnomalyThreshold,
+			ExcludeRuleIDs:   slices.Clone(rule.Action.WAF.ExcludeRuleIDs),
+		}
+		if action.Validate() != nil {
+			continue
+		}
+		if errs := validatePathGlob(rule.ID, rule.MatchPath); errs != nil {
+			parseErrs = append(parseErrs, errs...)
+			continue
+		}
+		out = append(out, gateway.EdgeRuleWAFResolved{
+			ID: rule.ID, AccountID: rule.AccountID, AppID: rule.AppID,
+			Priority: rule.Priority, PathGlob: rule.MatchPath,
+			Methods:          buildMethodsMap(rule.MatchMethods),
+			MatchHeaders:     buildMatchHeadersMap(rule.MatchHeaders),
+			ParanoiaLevel:    action.ParanoiaLevel,
+			AnomalyThreshold: action.AnomalyThreshold,
+			ExcludeRuleIDs:   action.ExcludeRuleIDs,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

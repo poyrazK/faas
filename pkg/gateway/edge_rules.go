@@ -520,6 +520,7 @@ type HostEntry struct {
 	Retry          []EdgeRuleRetryResolved
 	CircuitBreaker []EdgeRuleCircuitBreakerResolved
 	Async          []EdgeRuleAsyncResolved
+	WAF            []EdgeRuleWAFResolved
 	PathGlobErrs   []PathGlobError
 }
 
@@ -558,6 +559,7 @@ func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
 	out.Retry = slices.Clone(entry.Retry)
 	out.CircuitBreaker = slices.Clone(entry.CircuitBreaker)
 	out.Async = slices.Clone(entry.Async)
+	out.WAF = slices.Clone(entry.WAF)
 	for i := range out.Respond {
 		out.Respond[i].Body = slices.Clone(entry.Respond[i].Body)
 	}
@@ -907,6 +909,18 @@ func (c *EdgeRuleCache) GetAsync(host string) ([]EdgeRuleAsyncResolved, bool) {
 		return nil, true
 	}
 	return slices.Clone(entry.Async), true
+}
+
+// GetWAF returns a defensive copy of the compiled kind=waf rules.
+func (c *EdgeRuleCache) GetWAF(host string) ([]EdgeRuleWAFResolved, bool) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return nil, false
+	}
+	if entry.WAF == nil {
+		return nil, true
+	}
+	return slices.Clone(entry.WAF), true
 }
 
 // getEntry promotes the entry on hit and returns it. Internal —

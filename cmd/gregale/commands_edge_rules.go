@@ -42,7 +42,7 @@ import (
 var edgeRuleKindVocab = []string{
 	"route", "rewrite", "redirect", "headers", "cors", "jwt", "ip",
 	"validate", "limit", "geo", "maintenance", "throttle", "budget",
-	"cache", "respond", "retry", "circuit_breaker",
+	"cache", "respond", "retry", "circuit_breaker", "waf",
 	"async",
 }
 
@@ -109,7 +109,7 @@ func cmdEdgeRules(args []string) int {
 func cmdEdgeRulesList(args []string) int {
 	fs := newFlagSet("edge-rules list", flag.ContinueOnError)
 	slug := fs.String("app", "", "filter to a single app slug")
-	kind := fs.String("kind", "", "filter to a single kind (route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async)")
+	kind := fs.String("kind", "", "filter to a single kind (route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async|waf)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -183,7 +183,7 @@ func warnTemplatedEdgeRulePaths(w io.Writer, items []api.EdgeRuleResponse) {
 func cmdEdgeRulesCreate(args []string) int {
 	fs := newFlagSet("edge-rules create", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
-	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async (required)")
+	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async|waf (required)")
 	matchHost := fs.String("match-host", "", "host to match (required)")
 	matchPath := fs.String("match-path", "/", "path to match")
 	var matchMethods multiFlag
@@ -322,6 +322,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	circuitWindowSeconds := fs.Int("circuit-window-seconds", 0, "kind=circuit_breaker: rolling failure window in seconds (default 10; max 300)")
 	circuitOpenSeconds := fs.Int("circuit-open-seconds", 0, "kind=circuit_breaker: first open interval before a half-open probe (default 5; max 3600)")
 	circuitMaxOpenSeconds := fs.Int("circuit-max-open-seconds", 0, "kind=circuit_breaker: ceiling the backoff grows toward (default 60; must be >= open-seconds)")
+	wafFlags := addEdgeRuleWAFFlags(fs)
 
 	// maintenance (ADR-091 D20 / issue #881). Per-route 503 with a
 	// Retry-After. Both fields are optional — a bare maintenance rule
@@ -444,6 +445,9 @@ func cmdEdgeRulesCreate(args []string) int {
 		CircuitWindowSeconds:              *circuitWindowSeconds,
 		CircuitOpenSeconds:                *circuitOpenSeconds,
 		CircuitMaxOpenSeconds:             *circuitMaxOpenSeconds,
+		WAFParanoiaLevel:                  *wafFlags.paranoiaLevel,
+		WAFAnomalyThreshold:               *wafFlags.anomalyThreshold,
+		WAFExcludeRules:                   *wafFlags.excludeRules,
 		MaintenanceRetryAfter:             *maintenanceRetryAfter,
 		MaintenanceMessage:                *maintenanceMessage,
 		RespondStatus:                     *respondStatus,
@@ -655,6 +659,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	circuitWindowSeconds := fs.Int("circuit-window-seconds", 0, "kind=circuit_breaker: rolling failure window in seconds (default 10; max 300)")
 	circuitOpenSeconds := fs.Int("circuit-open-seconds", 0, "kind=circuit_breaker: first open interval before a half-open probe (default 5; max 3600)")
 	circuitMaxOpenSeconds := fs.Int("circuit-max-open-seconds", 0, "kind=circuit_breaker: ceiling the backoff grows toward (default 60; must be >= open-seconds)")
+	wafFlags := addEdgeRuleWAFFlags(fs)
 
 	maintenanceRetryAfter := fs.Int("maintenance-retry-after-seconds", 0, "kind=maintenance: new Retry-After hint in seconds (>=0; max 86400)")
 	maintenanceMessage := fs.String("maintenance-message", "", "kind=maintenance: new operator message (<=512 bytes)")
@@ -818,6 +823,9 @@ func cmdEdgeRulesUpdate(args []string) int {
 			CircuitWindowSeconds:              *circuitWindowSeconds,
 			CircuitOpenSeconds:                *circuitOpenSeconds,
 			CircuitMaxOpenSeconds:             *circuitMaxOpenSeconds,
+			WAFParanoiaLevel:                  *wafFlags.paranoiaLevel,
+			WAFAnomalyThreshold:               *wafFlags.anomalyThreshold,
+			WAFExcludeRules:                   *wafFlags.excludeRules,
 			MaintenanceRetryAfter:             *maintenanceRetryAfter,
 			MaintenanceMessage:                *maintenanceMessage,
 			RespondStatus:                     *respondStatus,
@@ -911,6 +919,11 @@ type edgeRuleActionInputs struct {
 	AsyncRetryPolicy               api.RetryPolicyDTO
 	AsyncRetryPolicySet            bool
 	AsyncMaxAgeSeconds             int
+	// waf (ADR-831 step 1). All optional; WAFExcludeRules is the raw
+	// comma-separated flag value, parsed by buildEdgeRuleWAFAction.
+	WAFParanoiaLevel    int
+	WAFAnomalyThreshold int
+	WAFExcludeRules     string
 	// rewrite
 	RewriteFrom, RewriteTo string
 	// redirect
@@ -1326,6 +1339,8 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			return nil, errToError(err)
 		}
 		return marshalAction(a)
+	case "waf":
+		return buildEdgeRuleWAFAction(in)
 	case "validate":
 		a := api.EdgeRuleValidateAction{
 			Schema:                in.ValidateSchema,
@@ -1619,6 +1634,7 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"on-success-webhook", "on-failure-webhook",
 		"async-max-attempts", "async-retry-base-seconds", "async-retry-max-seconds",
 		"async-retry-jitter-seconds", "async-max-age-seconds",
+		"waf-paranoia-level", "waf-anomaly-threshold", "waf-exclude-rules",
 		"rewrite-from", "rewrite-to",
 		"redirect-status", "redirect-to", "redirect-header",
 		"headers-request-add", "headers-request-set", "headers-request-remove",

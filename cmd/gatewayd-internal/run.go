@@ -64,6 +64,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/edgewaf"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -2765,6 +2766,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.pgStore != nil {
 		handler.WithAsyncRouteEnqueuer(&asyncRouteEnqueuer{store: deps.pgStore})
 	}
+	// ADR-831 step 1 — observe-only kind=waf. The rule set compiles lazily
+	// on the first sample, so a node with no WAF rules pays nothing.
+	wafInspector := edgewaf.New(deps.metrics, log)
+	go wafInspector.Run(ctx)
+	handler.WithWAFInspector(wafInspector)
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
 	// (applyEdgeRuleJWT short-circuits, matching pre-PR-5 + dev

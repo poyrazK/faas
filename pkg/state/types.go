@@ -7414,6 +7414,12 @@ const (
 	// existing invocation drain later delivers the original method, path, JSON
 	// body, and safe headers to the app.
 	EdgeRuleKindAsync EdgeRuleKind = "async"
+	// EdgeRuleKindWAF inspects matched requests with the OWASP Core Rule
+	// Set (ADR-831 step 1). Observe-only: inspection runs off the request
+	// path and reports detections without blocking. Quota via
+	// Limits.EdgeRulesWAFPerApp (Free 0 / Hobby 0 / Pro 5 / Scale 20). See
+	// migrations/20261009172820417_edge_rules_kind_waf.sql.
+	EdgeRuleKindWAF EdgeRuleKind = "waf"
 )
 
 // IsValid reports whether k is a closed-set kind. New kinds land via
@@ -7426,7 +7432,8 @@ func (k EdgeRuleKind) IsValid() bool {
 		EdgeRuleKindIP, EdgeRuleKindValidate, EdgeRuleKindLimit,
 		EdgeRuleKindMaintenance, EdgeRuleKindThrottle, EdgeRuleKindGeo,
 		EdgeRuleKindBudget, EdgeRuleKindCache, EdgeRuleKindRespond,
-		EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker, EdgeRuleKindAsync:
+		EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker, EdgeRuleKindAsync,
+		EdgeRuleKindWAF:
 		return true
 	}
 	return false
@@ -7868,6 +7875,17 @@ type EdgeRuleAction struct {
 	CircuitBreaker *EdgeRuleCircuitBreakerAction `json:"circuit_breaker,omitempty"`
 	// Async marks a matching request for durable deferred execution.
 	Async *EdgeRuleAsyncAction `json:"async,omitempty"`
+	// WAF carries the kind=waf scoring knobs (ADR-831 step 1).
+	WAF *EdgeRuleWAFAction `json:"waf,omitempty"`
+}
+
+// EdgeRuleWAFAction is the stored kind=waf payload (ADR-831 step 1). Values
+// are the effective ones written by api.EdgeRuleWAFAction.Validate.
+type EdgeRuleWAFAction struct {
+	Mode             string `json:"mode,omitempty"`
+	ParanoiaLevel    int    `json:"paranoia_level,omitempty"`
+	AnomalyThreshold int    `json:"anomaly_threshold,omitempty"`
+	ExcludeRuleIDs   []int  `json:"exclude_rule_ids,omitempty"`
 }
 
 // EdgeRuleRetryAction is the kind=retry payload (ADR-201 §1).

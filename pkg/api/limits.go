@@ -1789,6 +1789,17 @@ type Limits struct {
 	// thresholds, which is a knob that can also be set badly.
 	EdgeRulesCircuitBreakerPerApp int
 
+	// EdgeRulesWAFPerApp caps how many kind='waf' rules one app may
+	// hold (ADR-831 step 1). Per-plan: Free 0, Hobby 0, Pro 5,
+	// Scale 20. Zero means the kind is unavailable on the plan.
+	//
+	// The gate is a CPU decision: CRS inspection costs roughly 3 µs of
+	// gateway CPU per inspected body byte. Inspection runs off the
+	// request path in a node-wide worker pool (EdgeWAFWorkers) with a
+	// per-app sampling bucket, so the per-app rule count is not the
+	// CPU bound; it caps path-scoped tuning (exclusions, thresholds).
+	EdgeRulesWAFPerApp int
+
 	// EgressCircuitBreakersPerApp caps how many declared upstreams one
 	// app may opt into egress breaking for (ADR-201 §3). Per-plan:
 	// Free 0, Hobby 3, Pro 10, Scale 50 — deliberately mirroring
@@ -2777,6 +2788,8 @@ var planLimits = map[Plan]Limits{
 		EdgeRulesRetryPerApp:          0,
 		EdgeRulesCircuitBreakerPerApp: 0,
 		EgressCircuitBreakersPerApp:   0,
+		// ADR-831 step 1: WAF inspection spends shared gateway CPU.
+		EdgeRulesWAFPerApp: 0,
 		// CORS presets (issue #975 item #4 / Mega-Foundation #979-b,
 		// slot 00294). Free=0 mirrors the tenant_surfaces / alert_rules
 		// posture: the abstraction is the upsell, the abuse-floor tier
@@ -3192,6 +3205,8 @@ var planLimits = map[Plan]Limits{
 		EdgeRulesRetryPerApp:          3,
 		EdgeRulesCircuitBreakerPerApp: 3,
 		EgressCircuitBreakersPerApp:   3,
+		// ADR-831 step 1: WAF inspection is Pro and above.
+		EdgeRulesWAFPerApp: 0,
 		// CORS presets (issue #975 #4 / Mega-Foundation #979-b, slot
 		// 00294). Hobby is the entry paid tier — 10 presets per
 		// account, 5 per app. MaxOrigins 25 covers the typical
@@ -3592,6 +3607,8 @@ var planLimits = map[Plan]Limits{
 		EdgeRulesRetryPerApp:          10,
 		EdgeRulesCircuitBreakerPerApp: 10,
 		EgressCircuitBreakersPerApp:   10,
+		// ADR-831 step 1: WAF inspection is Pro and above.
+		EdgeRulesWAFPerApp: 5,
 		// CORS presets (issue #975 #4 / Mega-Foundation #979-b, slot
 		// 00294). Pro is the typical SaaS tier — 50 presets per
 		// account, 15 per app, 100 origins per preset.
@@ -3978,6 +3995,8 @@ var planLimits = map[Plan]Limits{
 		EdgeRulesRetryPerApp:          25,
 		EdgeRulesCircuitBreakerPerApp: 25,
 		EgressCircuitBreakersPerApp:   50,
+		// ADR-831 step 1: WAF inspection is Pro and above.
+		EdgeRulesWAFPerApp: 20,
 		// CORS presets (issue #975 #4 / Mega-Foundation #979-b, slot
 		// 00294). Scale is the large-fleet tier — 250 presets per
 		// account, 50 per app, 500 origins per preset. Numbers
@@ -4685,6 +4704,38 @@ const (
 	// rule age before the serving plan applies its lower deadline cap.
 	// The Scale plan currently owns the largest invocation deadline.
 	MaxAsyncRouteAgeSeconds = 86400
+
+	// --- ADR-831 step 1: kind=waf observe-only inspection ---------------
+
+	// EdgeWAFInspectBodyBytes is how much of a request body the WAF
+	// sees. The gateway records this prefix while the proxy streams the
+	// body upstream, so inspection never delays forwarding. CRS costs
+	// about 3 µs of CPU per body byte, so 8 KiB bounds one inspection
+	// near 30 ms of worker CPU.
+	EdgeWAFInspectBodyBytes = 8 * 1024
+	// EdgeWAFWorkers is the node-wide number of inspection goroutines,
+	// which is the WAF's hard CPU ceiling on a gateway node.
+	EdgeWAFWorkers = 2
+	// EdgeWAFQueueDepth bounds samples waiting for a worker. A full
+	// queue drops the sample and counts it; it never blocks a request.
+	EdgeWAFQueueDepth = 256
+	// EdgeWAFInspectionsPerAppPerSecond and EdgeWAFInspectionsPerAppBurst
+	// bound one app's share of the worker pool. Requests above the rate
+	// are not inspected (outcome "sampled_out").
+	EdgeWAFInspectionsPerAppPerSecond = 20
+	EdgeWAFInspectionsPerAppBurst     = 40
+	// EdgeWAFDefaultParanoiaLevel and MaxEdgeWAFParanoiaLevel bound the
+	// OWASP CRS paranoia level a rule may select.
+	EdgeWAFDefaultParanoiaLevel = 1
+	MaxEdgeWAFParanoiaLevel     = 2
+	// EdgeWAFDefaultAnomalyThreshold is the CRS inbound anomaly score at
+	// which a request counts as a detection (CRS default 5: one critical
+	// match). MaxEdgeWAFAnomalyThreshold bounds customer tuning.
+	EdgeWAFDefaultAnomalyThreshold = 5
+	MaxEdgeWAFAnomalyThreshold     = 100
+	// MaxEdgeWAFExcludedRules bounds the CRS rule IDs one rule may
+	// exclude from scoring.
+	MaxEdgeWAFExcludedRules = 50
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 

@@ -1,0 +1,52 @@
+package main
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+// edgeRuleWAFFlags are the kind=waf flags shared by `edge-rules create` and
+// `edge-rules update` (ADR-831 step 1, observe-only).
+type edgeRuleWAFFlags struct {
+	paranoiaLevel    *int
+	anomalyThreshold *int
+	excludeRules     *string
+}
+
+func addEdgeRuleWAFFlags(fs *flag.FlagSet) edgeRuleWAFFlags {
+	return edgeRuleWAFFlags{
+		paranoiaLevel: fs.Int("waf-paranoia-level", 0,
+			fmt.Sprintf("kind=waf: OWASP CRS paranoia level 1..%d (default %d)", api.MaxEdgeWAFParanoiaLevel, api.EdgeWAFDefaultParanoiaLevel)),
+		anomalyThreshold: fs.Int("waf-anomaly-threshold", 0,
+			fmt.Sprintf("kind=waf: anomaly score that counts as a detection, 1..%d (default %d)", api.MaxEdgeWAFAnomalyThreshold, api.EdgeWAFDefaultAnomalyThreshold)),
+		excludeRules: fs.String("waf-exclude-rules", "",
+			"kind=waf: comma-separated CRS rule IDs to leave out of scoring, e.g. 942100,920350"),
+	}
+}
+
+func buildEdgeRuleWAFAction(in edgeRuleActionInputs) (json.RawMessage, error) {
+	a := api.EdgeRuleWAFAction{
+		ParanoiaLevel:    in.WAFParanoiaLevel,
+		AnomalyThreshold: in.WAFAnomalyThreshold,
+	}
+	for _, field := range strings.Split(in.WAFExcludeRules, ",") {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		id, err := strconv.Atoi(field)
+		if err != nil {
+			return nil, fmt.Errorf("--waf-exclude-rules: %q is not a rule ID", field)
+		}
+		a.ExcludeRuleIDs = append(a.ExcludeRuleIDs, id)
+	}
+	if err := a.Validate(); err != nil {
+		return nil, errToError(err)
+	}
+	return marshalAction(a)
+}

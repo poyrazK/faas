@@ -1248,7 +1248,10 @@ type Handler struct {
 	// asyncRoutes persists requests matched by kind=async. Nil is a fail-closed
 	// runtime wiring error only when such a rule actually matches.
 	asyncRoutes AsyncRouteEnqueuer
-	operations  OperationRouteEnqueuer
+	// wafInspector evaluates kind=waf samples off the request path
+	// (ADR-831 step 1). Nil disables WAF inspection.
+	wafInspector WAFInspector
+	operations   OperationRouteEnqueuer
 	// geoReader is the country lookup used by applyEdgeRuleGeo and
 	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
 	// at boot, but a matched policy that needs geography fails closed.
@@ -6003,6 +6006,15 @@ haveApp:
 		h.metrics.ObserveEdgeRejection(app.ID, "throttle", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
+	}
+
+	// ADR-831 step 1 / kind=waf, observe-only. Placed after the cheap
+	// rejections (limit, body cap, throttle) so rejected traffic is never
+	// inspected, and before validate so a schema 422 is still sampled.
+	// It records the body prefix as later stages read it and submits the
+	// sample when ServeHTTP returns; the request is never delayed.
+	if submitWAF := h.beginEdgeRuleWAF(r, app); submitWAF != nil {
+		defer submitWAF()
 	}
 
 	// PR-B / kind=validate body gate. Runs AFTER rewrite /

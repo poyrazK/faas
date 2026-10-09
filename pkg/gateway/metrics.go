@@ -226,6 +226,9 @@ type Metrics struct {
 	rateLimited           *prometheus.CounterVec
 	preAuthRateLimited    *prometheus.CounterVec
 	edgeRejections        *prometheus.CounterVec
+	wafInspections        *prometheus.CounterVec
+	wafDetections         *prometheus.CounterVec
+	wafInspectionSeconds  prometheus.Histogram
 	preAuthPolicyShadow   *prometheus.CounterVec
 	// rateLimitDegraded counts every central-counter error that caused a
 	// process-local fallback. The closed scope label keeps cardinality fixed;
@@ -1307,6 +1310,19 @@ func NewMetrics() *Metrics {
 			Name: "gateway_edge_rejections_total",
 			Help: "Requests answered by an edge gate before wake, by app, gate kind (jwt|ip_allowlist|internal_only|ip|geo|limit|body_limit|throttle) and status (401|403|413|429|503|other). Pre-auth and kind=validate decisions have their own per-app counters.",
 		}, []string{"app", "kind", "status"}),
+		wafInspections: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_waf_inspections_total",
+			Help: "kind=waf requests by app and outcome (clean|detected|sampled_out|dropped|error). Observe-only (ADR-831 step 1): no outcome blocks a request.",
+		}, []string{"app", "outcome"}),
+		wafDetections: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_waf_detections_total",
+			Help: "kind=waf detections by app and OWASP CRS attack category (sqli|xss|rce|lfi|rfi|ssrf|ssti|php|java|generic|protocol|multipart|scanner|session_fixation|other). One detection may count several categories.",
+		}, []string{"app", "category"}),
+		wafInspectionSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "gateway_waf_inspection_seconds",
+			Help:    "Worker CPU-bound time to evaluate one kind=waf sample, off the request path.",
+			Buckets: []float64{0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25},
+		}),
 		preAuthPolicyShadow: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_pre_auth_policy_shadow_total",
 			Help: "Observe-mode would-block decisions, final response classes, and optional target-failure signals by app and configured policy. Policy labels are bounded by one app policy plus 16 route, 16 failure, and 16 target policies; no source IP, path, or target is a label.",
@@ -1710,7 +1726,7 @@ func NewMetrics() *Metrics {
 	// closed set guarantees the §12 dashboard panel "edge rule
 	// match rate" surfaces every (kind, outcome) tuple from
 	// first scrape.
-	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "ip", "validate", "limit", "maintenance", "geo", "throttle", "async", "ingress_ip"} {
+	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "ip", "validate", "limit", "maintenance", "geo", "throttle", "async", "waf", "ingress_ip"} {
 		for _, outcome := range []string{"match", "miss", "blocked", "failed"} {
 			m.edgeRuleMatch.WithLabelValues(kind, outcome)
 		}
@@ -1916,6 +1932,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
+	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafInspectionSeconds)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
@@ -2479,6 +2496,26 @@ func (m *Metrics) ObserveEdgeRejection(appID, kind string, status int) {
 		label = strconv.Itoa(status)
 	}
 	m.edgeRejections.WithLabelValues(appID, kind, label).Inc()
+}
+
+// ObserveWAFInspection counts one kind=waf outcome for an app. seconds is the
+// evaluation time and is recorded only for evaluated samples (seconds > 0).
+func (m *Metrics) ObserveWAFInspection(appID, outcome string, seconds float64) {
+	if m == nil || m.wafInspections == nil {
+		return
+	}
+	m.wafInspections.WithLabelValues(appID, outcome).Inc()
+	if seconds > 0 {
+		m.wafInspectionSeconds.Observe(seconds)
+	}
+}
+
+// ObserveWAFDetection counts one CRS attack category seen in a detection.
+func (m *Metrics) ObserveWAFDetection(appID, category string) {
+	if m == nil || m.wafDetections == nil {
+		return
+	}
+	m.wafDetections.WithLabelValues(appID, category).Inc()
 }
 
 func (m *Metrics) ObservePreAuthRateLimit(appID, outcome string) {
