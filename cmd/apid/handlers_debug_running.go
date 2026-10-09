@@ -19,6 +19,9 @@ const (
 	debugRunningLimitMax         = 100
 	debugRunningAttributionCap   = 200
 	debugRunningAttributionSlack = 2 * time.Minute
+	// debugRunningResidencyScanLimit bounds the live-instance read used to
+	// decide whether the newest observation still describes current residency.
+	debugRunningResidencyScanLimit = 64
 )
 
 // debugRunningEvent mirrors the scheduler's durable event shape. Keeping the
@@ -111,7 +114,7 @@ func (s *server) readDebugRunning(ctx context.Context, app state.App, windowStar
 	if err != nil {
 		return api.DebugRunningResponse{}, err
 	}
-	active, err := s.currentDebugRunningInstances(ctx, app.ID)
+	active, residentSince, err := s.currentDebugRunningInstances(ctx, app.ID)
 	if err != nil {
 		return api.DebugRunningResponse{}, err
 	}
@@ -157,7 +160,7 @@ func (s *server) readDebugRunning(ctx context.Context, app state.App, windowStar
 	}
 	var current []api.DebugRunningCause
 	var currentObservedAt string
-	if active && len(history) > 0 {
+	if active && len(history) > 0 && !debugRunningObservationPredates(history[0].ObservedAt, residentSince) {
 		config.ConfiguredMinInstances = history[0].ConfiguredMinInstances
 		config.EffectiveMinInstances = history[0].EffectiveMinInstances
 		config.PrewarmMinInstances = history[0].PrewarmMinInstances
@@ -186,25 +189,64 @@ func (s *server) readDebugRunning(ctx context.Context, app state.App, windowStar
 // at least one resident instance still exists. PgStore and MemStore expose a
 // bounded query for this purpose; the fallback keeps focused test doubles
 // compatible with the broader Store interface.
-func (s *server) currentDebugRunningInstances(ctx context.Context, appID string) (bool, error) {
+//
+// residentSince is the earliest point from which some live instance has been
+// continuously resident: per instance, the later of row creation and its last
+// park (a wake reuses the parked row, so started_at alone is stale). An
+// observation older than residentSince was made before every live instance's
+// current residency began and cannot explain it. It is zero when the bound is
+// unknown (the bounded read was truncated), which keeps the observation.
+func (s *server) currentDebugRunningInstances(ctx context.Context, appID string) (bool, time.Time, error) {
 	var (
 		instances []state.Instance
 		err       error
+		truncated bool
 	)
 	if lister, ok := s.store.(activeInstancesLister); ok {
-		instances, err = lister.ListActiveInstancesForApp(ctx, appID, 1)
+		instances, err = lister.ListActiveInstancesForApp(ctx, appID, debugRunningResidencyScanLimit)
+		truncated = len(instances) == debugRunningResidencyScanLimit
 	} else {
 		instances, err = s.store.ListInstancesForApp(ctx, appID)
 	}
 	if err != nil {
-		return false, err
+		return false, time.Time{}, err
 	}
+	active := false
+	var residentSince time.Time
 	for _, instance := range instances {
-		if state.IsLive(instance.State) {
-			return true, nil
+		if !state.IsLive(instance.State) {
+			continue
+		}
+		active = true
+		since := instance.StartedAt
+		if instance.ParkedAt.After(since) {
+			since = instance.ParkedAt
+		}
+		if since.IsZero() {
+			truncated = true
+		}
+		if residentSince.IsZero() || since.Before(residentSince) {
+			residentSince = since
 		}
 	}
-	return false, nil
+	if truncated {
+		residentSince = time.Time{}
+	}
+	return active, residentSince, nil
+}
+
+// debugRunningObservationPredates reports whether a scheduler observation was
+// recorded before residentSince. Unparseable timestamps and an unknown bound
+// keep the observation eligible rather than hiding a valid explanation.
+func debugRunningObservationPredates(observedAt string, residentSince time.Time) bool {
+	if residentSince.IsZero() {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339Nano, observedAt)
+	if err != nil {
+		return false
+	}
+	return at.Before(residentSince)
 }
 
 // enrichRunningRequestAttribution adds request/route evidence to request

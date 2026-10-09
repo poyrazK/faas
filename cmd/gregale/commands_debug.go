@@ -20,8 +20,8 @@
 //	gregale debug running <slug> [--since <dur>] [--limit <n>]
 //	gregale debug bundle <slug> <request-id-or-row-id> [--since <dur>] [--source <id> --mirror <id>] [--output PATH]
 //	gregale debug regressions watch <slug> [--since <dur>] [--interval D] [--once]
-//	gregale debug regressions <slug> [--since <dur>]
-//	gregale debug regressions --all [--since <dur>]
+//	gregale debug regressions [list] <slug> [--since <dur>]
+//	gregale debug regressions [list] --all [--since <dur>]
 //	gregale debug regressions <acknowledge|dismiss|resolve|reopen> <slug> --deployment-id UUID --route P [--dismissed-until RFC3339]
 //	gregale debug regressions rollback <slug> [--to <deployment_id>] --yes
 //	gregale debug compare <slug> --source <id> --mirror <id> [--route <pattern>] [--since <dur>] [--until <timestamp>]
@@ -37,9 +37,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -54,6 +56,14 @@ import (
 const debugCmdUsage = "usage: gregale debug <requests|coverage|dependencies|running|regressions|compare|bundle> ..."
 
 const debugRequestsCmdUsage = "usage: gregale debug requests <list|export|watch|get|show|evidence|explain|trace|inspect|replay> ..."
+
+const debugRegressionsUsage = "usage: gregale debug regressions [list] [--all] [--since D] [<slug>]"
+
+// isDebugNotFound reports whether err is the API's 404 problem.
+func isDebugNotFound(err error) bool {
+	var apiErr *api.APIError
+	return errors.As(err, &apiErr) && apiErr.Problem.Status == http.StatusNotFound
+}
 
 // debugCmdDocsTopic is the docs topic slug for the debug
 // namespace. Resolves to cli_meta.go's "debug" cliCommand entry;
@@ -615,8 +625,14 @@ func cmdDebugRegressions(args []string) int {
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
+	// "list" is an explicit verb only where it cannot be the slug: before
+	// another slug or with --all. A lone "list" stays a valid app slug (issue
+	// #2764), and a not-found answer for it points at the real syntax below.
+	if len(positional) > 0 && positional[0] == "list" && (*all || len(positional) == 2) {
+		positional = positional[1:]
+	}
 	if (*all && len(positional) != 0) || (!*all && len(positional) != 1) {
-		PrintUsage(os.Stderr, "usage: gregale debug regressions [--all] [--since D] [<slug>]", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugRegressionsUsage, debugCmdDocsTopic)
 		return 1
 	}
 	client, err := authedClient()
@@ -629,6 +645,9 @@ func cmdDebugRegressions(args []string) int {
 	slug := positional[0]
 	resp, err := client.ListAppDebugRegressions(context.Background(), slug, *since)
 	if err != nil {
+		if slug == "list" && isDebugNotFound(err) && !jsonOutput {
+			_, _ = fmt.Fprintf(osStderr, "No app named %q. To list regressions, name the app or use --all:\n  %s\n", slug, debugRegressionsUsage)
+		}
 		return printErr("Could not list regressions", err)
 	}
 	if jsonOutput {

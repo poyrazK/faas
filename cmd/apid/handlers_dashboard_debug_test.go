@@ -117,10 +117,12 @@ func TestDashboardHandler_DebugRunningPanelProjectsObservation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	if _, err := store.CreateInstance(t.Context(), app.ID, "", string(state.StateRunning), 128, "node-1", "wake-debug"); err != nil {
+	instance, err := store.CreateInstance(t.Context(), app.ID, "", string(state.StateRunning), 128, "node-1", "wake-debug")
+	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 	at := time.Now().UTC().Add(-time.Minute)
+	store.BackdateForTest(instance.ID, at.Add(-time.Minute))
 	payload, err := json.Marshal(debugRunningEvent{
 		SchemaVersion:          1,
 		AppID:                  app.ID,

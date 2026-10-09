@@ -23,10 +23,12 @@ func TestDebugRunning_ReturnsCurrentAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	if _, err := e.store.CreateInstance(t.Context(), app.ID, "", string(state.StateRunning), 128, "node-1", "wake-debug"); err != nil {
+	instance, err := e.store.CreateInstance(t.Context(), app.ID, "", string(state.StateRunning), 128, "node-1", "wake-debug")
+	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 	now := time.Now().UTC()
+	e.store.BackdateForTest(instance.ID, now.Add(-10*time.Minute))
 	appendRunningEvent(t, e, app.ID, now.Add(-2*time.Minute), api.DebugRunningReasonRequestActivity)
 	appendRunningEvent(t, e, app.ID, now.Add(-time.Minute), api.DebugRunningReasonOpenConnection)
 
@@ -101,6 +103,79 @@ func TestDebugRunning_ClearsCurrentAfterTerminalInstance(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDebugRunning_ClearsCurrentAfterRewake pins issue #2686's re-wake case:
+// a wake reuses the parked instance row, so an observation recorded before the
+// park must not be reported as current until the scheduler observes the new
+// residency.
+func TestDebugRunning_ClearsCurrentAfterRewake(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app, err := e.store.CreateApp(t.Context(), state.App{
+		AccountID: e.acct.ID,
+		Slug:      "running-debug-rewake",
+		Status:    state.AppActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	instance, err := e.store.CreateInstance(t.Context(), app.ID, "", string(state.StateRunning), 128, "node-1", "wake-debug")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	now := time.Now().UTC()
+	e.store.BackdateForTest(instance.ID, now.Add(-10*time.Minute))
+	e.store.SetParkedAtForTest(instance.ID, now.Add(-30*time.Second))
+	appendRunningEvent(t, e, app.ID, now.Add(-time.Minute), api.DebugRunningReasonRequestActivity)
+
+	got := getDebugRunning(t, e, "running-debug-rewake")
+	if len(got.History) != 1 {
+		t.Fatalf("history = %+v, want retained pre-park explanation", got.History)
+	}
+	if len(got.Current) != 0 || got.CurrentObservedAt != "" {
+		t.Fatalf("current = %+v observed_at=%q, want empty before the post-wake observation", got.Current, got.CurrentObservedAt)
+	}
+
+	appendRunningEvent(t, e, app.ID, now.Add(-10*time.Second), api.DebugRunningReasonStartupGrace)
+	got = getDebugRunning(t, e, "running-debug-rewake")
+	if len(got.Current) != 1 || got.Current[0].Code != api.DebugRunningReasonStartupGrace {
+		t.Fatalf("current = %+v, want post-wake startup-grace observation", got.Current)
+	}
+}
+
+func TestDebugRunningObservationPredates(t *testing.T) {
+	since := time.Date(2026, 9, 16, 1, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name       string
+		observedAt string
+		since      time.Time
+		want       bool
+	}{
+		{name: "before residency", observedAt: since.Add(-time.Second).Format(time.RFC3339Nano), since: since, want: true},
+		{name: "at residency start", observedAt: since.Format(time.RFC3339Nano), since: since},
+		{name: "after residency start", observedAt: since.Add(time.Second).Format(time.RFC3339Nano), since: since},
+		{name: "unknown bound", observedAt: since.Add(-time.Hour).Format(time.RFC3339Nano)},
+		{name: "unparseable timestamp", observedAt: "not-a-time", since: since},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := debugRunningObservationPredates(tc.observedAt, tc.since); got != tc.want {
+				t.Fatalf("debugRunningObservationPredates(%q, %s) = %t, want %t", tc.observedAt, tc.since, got, tc.want)
+			}
+		})
+	}
+}
+
+func getDebugRunning(t *testing.T, e testEnv, slug string) api.DebugRunningResponse {
+	t.Helper()
+	rec := e.do(t, http.MethodGet, "/v1/apps/"+slug+"/debug/running?since=3h", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var got api.DebugRunningResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return got
 }
 
 func TestDebugRunning_SkipsMalformedEventsAndEnforcesLimit(t *testing.T) {
