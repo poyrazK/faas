@@ -522,9 +522,9 @@ jobs:
             "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
           echo "${COSIGN_SHA256}  $RUNNER_TEMP/release-tools/cosign" | sha256sum -c -
           chmod 0755 "$RUNNER_TEMP/release-tools/cosign"
-          # Syft is released as a pinned binary because v1.49.0 requires
-          # Go >= 1.26.3 while the repository's Go toolchain remains pinned
-          # to the 1.25 line for the application and CI vulnerability gate.
+          # Syft is released as a pinned binary (v1.49.0 requires
+          # Go >= 1.26.3) so the release tool chain stays independent of
+          # the repository's Go toolchain pin.
           curl -fsSL -o "$RUNNER_TEMP/release-tools/syft.tar.gz" \
             "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
           echo "${SYFT_SHA256}  $RUNNER_TEMP/release-tools/syft.tar.gz" | sha256sum -c -
