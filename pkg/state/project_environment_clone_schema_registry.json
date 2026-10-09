@@ -517,6 +517,35 @@
     "kind": "operational"
   },
   {
+    "table": "app_health_collection_state",
+    "columns": [
+      "account_id",
+      "app_id",
+      "assessment",
+      "assessment_key",
+      "checked_at",
+      "lease_started_at",
+      "lease_token",
+      "lease_until",
+      "next_check_at",
+      "notification_state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_health_history",
+    "columns": [
+      "account_id",
+      "app_id",
+      "encoded_bytes",
+      "entry",
+      "id",
+      "kind",
+      "observed_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_issue_impact_alert_policies",
     "columns": [
       "app_id",
@@ -1235,6 +1264,7 @@
       "plan",
       "railpack_version",
       "runner_digest",
+      "runtime_base_ref",
       "sbom_storage_key",
       "source_sha256",
       "source_url",
@@ -2134,6 +2164,65 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_runtime_upgrade_acceptances",
+    "columns": [
+      "configuration_fingerprint",
+      "deployment_id",
+      "instance_id",
+      "node_id",
+      "profile",
+      "qualification_report_sha256",
+      "ready_at",
+      "rootfs_key",
+      "secret_fingerprint",
+      "started_at",
+      "target_release_id",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_runtime_upgrade_baselines",
+    "columns": [
+      "captured_at",
+      "configuration_fingerprint",
+      "deployment_id",
+      "input_fingerprint",
+      "input_secret_fingerprint",
+      "secret_fingerprint",
+      "serving_deployment_id",
+      "serving_rootfs_key",
+      "serving_runtime_release_id",
+      "target_release_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_runtime_upgrade_cutovers",
+    "columns": [
+      "cutover_at",
+      "deployment_id",
+      "qualification_report_sha256",
+      "serving_deployment_id",
+      "target_release_id",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_runtime_upgrade_targets",
+    "columns": [
+      "deployment_id",
+      "handler",
+      "kind",
+      "release_id",
+      "source_bytes",
+      "source_root",
+      "source_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_scope_exclusions",
     "columns": [
       "account_id",
@@ -2246,6 +2335,7 @@
       "rootfs_bytes",
       "rootfs_key",
       "rootfs_path",
+      "runtime_upgrade_routing_token",
       "scan_result",
       "scan_status",
       "scanned_at",
@@ -7053,6 +7143,15 @@
     "kind": "operational"
   },
   {
+    "table": "runtime_artifact_bindings",
+    "columns": [
+      "account_id",
+      "release_id",
+      "rootfs_key"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "runtime_config_entries",
     "columns": [
       "actor_id",
@@ -7141,6 +7240,42 @@
     "kind": "operational"
   },
   {
+    "table": "runtime_release_qualifications",
+    "columns": [
+      "architecture",
+      "completed_at",
+      "firecracker_sha256",
+      "host_id",
+      "kernel_boot_id",
+      "kernel_sha256",
+      "leakcheck_sha256",
+      "profile",
+      "recorded_at",
+      "release_id",
+      "report_sha256",
+      "revocation_sha256",
+      "revoked_at",
+      "source_commit",
+      "started_at",
+      "test_metal_sha256"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_releases",
+    "columns": [
+      "architecture",
+      "base_sha256",
+      "created_at",
+      "guest_init_sha256",
+      "id",
+      "layout_version",
+      "runtime",
+      "source_ref"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "runtime_snapshots",
     "columns": [
       "architecture",
@@ -7166,6 +7301,250 @@
       "vm_state_bytes"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_external_fence_authorities",
+    "columns": [
+      "created_at",
+      "id",
+      "public_key",
+      "revoked_at"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_external_fence_intents",
+    "columns": [
+      "authority_id",
+      "boot_id",
+      "challenge",
+      "created_at",
+      "gateway_revision",
+      "id",
+      "machine_id",
+      "public_revision",
+      "resource_id",
+      "scope_sha256",
+      "withdrawal_id"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_external_fence_receipts",
+    "columns": [
+      "enforced_at",
+      "envelope",
+      "envelope_sha256",
+      "intent_id",
+      "issued_at",
+      "observed_at",
+      "receipt_id",
+      "withdrawal_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_gateway_drains",
+    "columns": [
+      "active_forwards",
+      "activity_version",
+      "app_id",
+      "cutover_at",
+      "deployment_id",
+      "expires_at",
+      "fence_id",
+      "gateway_roster_revision",
+      "gateway_session_id",
+      "observed_at",
+      "operation_id",
+      "routing_revision",
+      "serving_deployment_id",
+      "slot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_gateway_heartbeats",
+    "columns": [
+      "expires_at",
+      "gateway_session_id",
+      "roster_revision",
+      "seen_at",
+      "slot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_gateway_receipts",
+    "columns": [
+      "app_id",
+      "cutover_at",
+      "deployment_id",
+      "gateway_session_id",
+      "installed_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_gateway_roster_head",
+    "columns": [
+      "revision",
+      "singleton"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_gateway_rosters",
+    "columns": [
+      "created_at",
+      "gateway_sessions",
+      "revision",
+      "slot_ids"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_native_public_startups",
+    "columns": [
+      "boot_id",
+      "config_sha256",
+      "envelope",
+      "envelope_sha256",
+      "gateway_revision",
+      "machine_id",
+      "net_namespace",
+      "observed_at",
+      "pid",
+      "pid_namespace",
+      "public_revision",
+      "public_session_id",
+      "recorded_at",
+      "review",
+      "review_sha256",
+      "slot_id",
+      "start_ticks"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_operations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "blocker",
+      "created_at",
+      "deadline_at",
+      "deployment_id",
+      "finished_at",
+      "id",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "phase",
+      "qualification_report_sha256",
+      "serving_deployment_id",
+      "source_path",
+      "source_sha256",
+      "target_release_id",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_activity",
+    "columns": [
+      "activity_version",
+      "config_sha256",
+      "coverage_known",
+      "current_forwards",
+      "expires_at",
+      "guard_enabled",
+      "observed_at",
+      "pending_forwards",
+      "previous_forwards",
+      "public_roster_revision",
+      "public_session_id",
+      "slot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_guards",
+    "columns": [
+      "config_sha256",
+      "expires_at",
+      "guard_enabled",
+      "observed_at",
+      "public_roster_revision",
+      "public_session_id",
+      "slot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_roster_head",
+    "columns": [
+      "revision",
+      "singleton"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_rosters",
+    "columns": [
+      "config_sha256s",
+      "created_at",
+      "gateway_roster_revision",
+      "public_sessions",
+      "revision",
+      "slot_ids",
+      "topology_sha256"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_withdrawal_receipts",
+    "columns": [
+      "active_forwards",
+      "activity_version",
+      "admission_closed",
+      "coverage_known",
+      "fence_id",
+      "observed_at",
+      "withdrawal_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_withdrawals",
+    "columns": [
+      "config_sha256",
+      "created_at",
+      "id",
+      "public_session_id",
+      "roster_revision",
+      "slot_id"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_verifications",
+    "columns": [
+      "created_at",
+      "cutover_at",
+      "deadline_at",
+      "finished_at",
+      "gateway_roster_revision",
+      "gateway_sessions",
+      "last_observation",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "operation_id",
+      "phase",
+      "reason"
+    ],
+    "kind": "operational"
   },
   {
     "table": "safe_release_worker_lease",

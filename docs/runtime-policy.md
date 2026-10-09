@@ -76,3 +76,9 @@ The contract still does **not** attest every host-level firewall rule or
 guest-process configuration. Changes to environment, entrypoint, or memory
 topology may require a fresh instance; those remain distinct from the hot
 policy components listed here.
+
+## Immutable runtime base identity
+
+[Runtime identity and upgrade previews](runtime-releases.md) describe the managed
+function release bindings and read-only planning foundation. Older artifacts
+without bindings retain their legacy base selection and report unknown provenance.

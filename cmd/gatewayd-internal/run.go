@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"log/slog"
 	"net"
@@ -66,10 +67,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/gateway/activity"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
+	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
+	"github.com/onebox-faas/faas/pkg/gatewayconfirmation"
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logarchive"
@@ -954,10 +958,12 @@ func isHandlerErrorResult(body []byte) bool {
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
-	listen       func(network, addr string) (net.Listener, error)
-	listenPacket func(network, addr string) (net.PacketConn, error)
-	newSrv       func(addr string, handler http.Handler) *http.Server
-	backend      gateway.Backend
+	// Private identity is built only with the process-wide drain tracker.
+	runtimeIngressIdentity http.Handler
+	listen                 func(network, addr string) (net.Listener, error)
+	listenPacket           func(network, addr string) (net.PacketConn, error)
+	newSrv                 func(addr string, handler http.Handler) *http.Server
+	backend                gateway.Backend
 	// drain (issue #587 / PR-A) is the per-request WaitGroup-backed
 	// drain tracker the graceful-shutdown path waits on. ONE
 	// tracker per daemon, shared by Handler + InternalReverseProxy +
@@ -1436,6 +1442,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer func() { _ = responseCache.Close() }()
 	deps.responseCache = responseCache
+	runtimeGatewaySession, runtimeGatewaySlot := "", ""
+	var runtimeActivity *activity.Tracker
+	runtimeDrainEnabled, err := privateRuntimeDrainEnabled(osGetenv)
+	if err != nil {
+		return err
+	}
+	if osGetenv("FAAS_RUNTIME_UPGRADE_ROUTING_CONFIRMATION") == "1" {
+		runtimeGatewaySession = uuid.NewString()
+		runtimeGatewaySlot = strings.TrimSpace(osGetenv("FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID"))
+		if err := gatewayconfirmation.ValidateIdentity(runtimeGatewaySlot, runtimeGatewaySession); err != nil {
+			return fmt.Errorf("private runtime gateway slot configuration: %w", err)
+		}
+		runtimeActivity, err = activity.New(runtimeGatewaySession)
+		if runtimeDrainEnabled {
+			runtimeActivity, err = activity.NewWithFences(runtimeGatewaySession)
+		}
+		if err != nil {
+			return fmt.Errorf("private runtime gateway activity configuration: %w", err)
+		}
+		log.Info("gatewayd: private runtime routing confirmation enabled", "gateway_session_id", runtimeGatewaySession, "gateway_slot_id", runtimeGatewaySlot)
+	}
+	deps.runtimeIngressIdentity, err = privateRuntimeIngressIdentity(osGetenv, runtimeGatewaySlot, runtimeGatewaySession)
+	if err != nil {
+		return err
+	}
 	backend := gateway.NewPGBackend(router, sched, log).
 		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
 			releaseID, deploymentID, err := pgStore.ResolveProjectRelease(ctx, appID, scope, requestedID)
@@ -1599,7 +1630,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// picker's weight table. The adapter translates
 		// state.Deployment to gateway.DeploymentWeightsRow
 		// (the gateway package does not import pkg/state).
-		WithStore(weightsStoreAdapter{store: pgStore}).
+		WithStore(weightsStoreAdapter{store: pgStore, sessionID: runtimeGatewaySession, slotID: runtimeGatewaySlot, drainTracker: runtimeActivity, drainEnabled: runtimeDrainEnabled}).
 		// Issue #72 / ADR-125: mirror dispatch and debugger replay
 		// consume the same enabled-rule cache. The adapter keeps the
 		// gateway package independent of pkg/state while allowing replay
@@ -1651,6 +1682,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go watchInvalidations(ctx, pool, backend, log, invalidationsReady, osGetenv("FAAS_NODE_NAME"))
 	deps.invalidationsReady = invalidationsReady
 
+	if runtimeGatewaySession != "" {
+		var repairStore gatewayconfirmation.Store = pgStore
+		if runtimeDrainEnabled {
+			repairStore = gatewayconfirmation.DrainRepair{Store: pgStore, Tracker: runtimeActivity}
+		}
+		go gatewayconfirmation.Run(ctx, repairStore, backend, log)
+		go gatewayconfirmation.RunHeartbeat(ctx, pgStore, runtimeGatewaySlot, runtimeGatewaySession, log)
+	}
 	deps.backend = backend
 	// Flush per-instance last_request_at to schedd so its idle reaper sees
 	// gateway traffic (spec §4.1, ADR-018) — without this a busy app parks once
@@ -2032,7 +2071,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(gatewayOps, pool)
 	eventsPlatform := events.NewPlatform("gatewayd", pgStore, log, gatewayOps, nil)
-	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics).WithEvents(eventsPlatform)
+	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics).
+		WithEvents(eventsPlatform).WithActivityTracker(runtimeActivity)
 	// Synthetic invocations share the same per-node HTTP→vmmd bridge as
 	// public requests. This assignment happens after nodeCache creation so
 	// the cache has its production mTLS/overlay wiring before schedd can
@@ -3759,6 +3799,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		mux.Handle("/v1/internal/realtime/", realtimeControlProxy)
 		publicListenerHandler = mux
 	}
+	if deps.runtimeIngressIdentity != nil {
+		publicListenerHandler = ingress.Wrap(publicListenerHandler, deps.runtimeIngressIdentity)
+		if deps.synth != nil {
+			deps.synth.SetHandler(publicListenerHandler)
+		}
+	}
 	// addSrv is the closure for the public :8080 + control listeners
 	// below; declared above so the unified-mux block above can run
 	// before the public-listener gate without depending on it.
@@ -4253,7 +4299,11 @@ func installComputeMetricsRoute(mux *http.ServeMux, boxRole role.Role, control h
 // pkg/state import already exists. It translates state.Deployment to
 // gateway.DeploymentWeightsRow (only fields the picker reads).
 type weightsStoreAdapter struct {
-	store liveDeploymentStore
+	store        liveDeploymentStore
+	sessionID    string
+	slotID       string
+	drainTracker *activity.Tracker
+	drainEnabled bool
 }
 
 func (a weightsStoreAdapter) LiveDeployments(ctx context.Context, appID string) ([]gateway.DeploymentWeightsRow, error) {
@@ -4269,6 +4319,18 @@ func (a weightsStoreAdapter) LiveDeployments(ctx context.Context, appID string) 
 		})
 	}
 	return out, nil
+}
+
+// DeploymentWeightsInstalled is called only after the picker swaps weights.
+func (a weightsStoreAdapter) DeploymentWeightsInstalled(ctx context.Context, appID string, rows []gateway.DeploymentWeightsRow) error {
+	if a.sessionID == "" {
+		return nil
+	}
+	store, ok := a.store.(state.RuntimeUpgradeGatewayStore)
+	if !ok {
+		return state.ErrInvalidArgument
+	}
+	return gatewayconfirmation.RecordInstalled(ctx, store, a.sessionID, appID, rows)
 }
 
 // mirrorRulesStoreAdapter adapts the state-layer mirror rule projection to

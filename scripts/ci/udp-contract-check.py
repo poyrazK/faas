@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Portable UDP contracts; skipped or missing cases cannot count as passes."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -25,16 +26,17 @@ FILES = {
 }
 
 
-def required_tests():
+def required_tests(packages=None):
     expected = set()
     module = re.search(r"^module (\S+)", (ROOT / "go.mod").read_text(), re.M).group(1)
-    for package, patterns in FILES.items():
+    selected = FILES if packages is None else {package: FILES[package] for package in packages}
+    for package, patterns in selected.items():
         files = []
         for pattern in ([patterns] if isinstance(patterns, str) else patterns):
-            selected = sorted((ROOT / package).glob(pattern))
-            if not selected:
+            matched_files = sorted((ROOT / package).glob(pattern))
+            if not matched_files:
                 raise SystemExit(f"udp-contract-check: missing test sources: {package}/{pattern}")
-            files.extend(selected)
+            files.extend(matched_files)
         for source in files:
             names = re.findall(r"^func\s+(Test\w+)\s*\(\s*(?:\w+\s+)?\*testing\.T\s*,?\s*\)", source.read_text(), re.M)
             if not names:
@@ -44,11 +46,21 @@ def required_tests():
 
 
 def main():
-    expected = required_tests()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--packages",
+        nargs="+",
+        choices=tuple(FILES),
+        help="run required contracts only for these Go packages",
+    )
+    args = parser.parse_args()
+    packages = args.packages
+    selected = FILES if packages is None else {package: FILES[package] for package in packages}
+    expected = required_tests(packages)
     regex = "^(" + "|".join(sorted({name for _, name in expected})) + ")$"
     command = [os.environ.get("GO", "go"), "test", "-race", "-json", "-p", "1",
                "-count=1", "-timeout=3m", "-run", regex]
-    command.extend("./" + package for package in FILES)
+    command.extend("./" + package for package in selected)
     passed = set()
     rejected = False
     with subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE,

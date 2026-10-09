@@ -1,6 +1,39 @@
 package builderd
 
-import "github.com/onebox-faas/faas/pkg/imaged"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"runtime"
+
+	"github.com/onebox-faas/faas/pkg/imaged"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+// An explicit update target wins over daemon defaults. Errors are never
+// interpreted as an unpinned build, including failures reading the pin.
+func resolveDeploymentRuntimeBaseRef(ctx context.Context, store any, app state.App, dep state.Deployment, fw Framework, envLookup func(string) string) (string, error) {
+	if err := state.CheckDeploymentRuntimeUpgradeBaseline(ctx, store, dep.ID); err != nil {
+		return "", err
+	}
+	if targets, ok := store.(state.RuntimeUpgradeTargetStore); ok {
+		target, err := targets.DeploymentRuntimeUpgradeTarget(ctx, dep.ID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return "", fmt.Errorf("read runtime update target: %w", err)
+		}
+		if err == nil {
+			if target.Validate() != nil || app.ID != dep.AppID || app.Type != state.AppTypeFunction ||
+				app.Runtime != target.Runtime || target.Architecture != runtime.GOARCH || fw == FrameworkDocker || dep.SourceSHA256 == "" {
+				return "", fmt.Errorf("%w: incompatible runtime update build target", state.ErrConflict)
+			}
+			if err := state.RequireRuntimeReleaseQualification(ctx, store, target); err != nil {
+				return "", err
+			}
+			return target.SourceRef, nil
+		}
+	}
+	return resolveBuildRuntimeBaseRef(app.Runtime, fw, envLookup)
+}
 
 // resolveBuildRuntimeBaseRef chooses the same base reference imaged uses for
 // deployment-layer materialisation. The app runtime is authoritative,
