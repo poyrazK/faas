@@ -288,7 +288,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 	groups := make([]api.RequestAnalyticsGroup, 0, len(groupRows))
 	routes := make([]api.RequestAnalyticsRoute, 0, len(groupRows))
 	groupsTruncated := false
-	var otherRouteRequests int64
+	var otherRouteRequests, otherRouteTimeMS int64
 	for _, row := range groupRows {
 		value := requestAnalyticsDimensionString(row.Dimension)
 		method := requestAnalyticsDimensionString(row.Method)
@@ -314,7 +314,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		if group.Value == "__other__" {
 			groupsTruncated = true
 			if groupBy == "route" {
-				otherRouteRequests = group.Requests
+				otherRouteRequests, otherRouteTimeMS = group.Requests, row.RequestTimeMs
 			}
 			continue
 		}
@@ -336,6 +336,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 				GuestCPUAvgMS:       group.GuestCPUAvgMS,
 				GuestCPUP95MS:       group.GuestCPUP95MS,
 				GuestPeakRSSMaxMB:   group.GuestPeakRSSMaxMB,
+				RequestTimeMS:       row.RequestTimeMs,
 			})
 		}
 	}
@@ -372,7 +373,8 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 	if groupBy == "route" {
 		// Usage and request analytics use the exact same bounded window. The
 		// app's raw RAM-hours are valued at Gregale's current compute overage
-		// rate, then distributed across the observed route request counts. This
+		// rate, then distributed across routes by observed request time
+		// (ADR-743), or request count when no timing exists. This
 		// intentionally excludes the account's shared included allowance and
 		// any egress charge: it is a cost allocation estimate, not invoice math.
 		usage, _, err := meter.BuildAppWindowSummary(ctx, s.store, acct.ID, app.ID, window.From, window.Until)
@@ -380,7 +382,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 			return api.RequestAnalyticsResponse{}, err
 		}
 		estimatedMillicents := api.OverageMillicentsForBillableMBSeconds(usage.MBSeconds)
-		requestCount, allocatedMillicents, otherRouteMillicents := allocateRequestAnalyticsRouteCost(routes, otherRouteRequests, estimatedMillicents)
+		requestCount, allocatedMillicents, otherRouteMillicents, allocationMethod := allocateRequestAnalyticsRouteCostByTime(routes, otherRouteRequests, otherRouteTimeMS, estimatedMillicents)
 		otherRouteRequestSharePct := 0.0
 		if requestCount > 0 {
 			otherRouteRequestSharePct = float64(otherRouteRequests) * 100 / float64(requestCount)
@@ -394,7 +396,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 			OtherRouteRequestSharePct: otherRouteRequestSharePct,
 			RateMillicentsPerGBHour:   api.OverageMillicentsPerGBHour,
 			Currency:                  "EUR",
-			AllocationMethod:          "request_share",
+			AllocationMethod:          allocationMethod,
 			Basis:                     "raw_ram_hours_at_current_overage_rate_before_allowance",
 			RequestCount:              requestCount,
 		}

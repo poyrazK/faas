@@ -57584,8 +57584,10 @@ components:
           items: { $ref: '#/components/schemas/RequestAnalyticsRouteDeploymentObservation' }
         other_deployment_requests: { type: integer, format: int64, minimum: 0, description: "Route requests from deployments outside the top-five list." }
         other_deployment_estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "This route's estimated compute value allocated to deployments outside the top-five list by request share." }
-        estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "Estimated raw RAM-hour value allocated to this route by observed request share; excludes account-level included allowance and egress." }
+        estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "Estimated raw RAM-hour value allocated to this route by its share of observed request time (ADR-743), or by request share when no timing exists; excludes account-level included allowance and egress." }
         request_share_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        request_time_ms: { type: integer, format: int64, minimum: 0, description: "Total gateway-observed request time for this route in the window, in milliseconds." }
+        request_time_share_pct: { type: number, format: double, minimum: 0, maximum: 100, description: "This route's share of all observed app request time in the window." }
 
     RequestAnalyticsRouteDeploymentObservation:
       type: object
@@ -57661,7 +57663,7 @@ components:
         other_route_request_share_pct: { type: number, format: double, minimum: 0, maximum: 100 }
         rate_millicents_per_gb_hour: { type: integer, format: int64, minimum: 0 }
         currency: { type: string, enum: [EUR] }
-        allocation_method: { type: string, enum: [request_share] }
+        allocation_method: { type: string, enum: [request_time_share, request_share], description: "request_time_share (ADR-743) splits by observed request time; request_share is the fallback when the window has no timing." }
         basis: { type: string, enum: [raw_ram_hours_at_current_overage_rate_before_allowance] }
         request_count: { type: integer, format: int64, minimum: 0 }
 

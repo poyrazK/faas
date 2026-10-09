@@ -1,9 +1,10 @@
 from typing import Literal
 
-RequestAnalyticsComputeCostAllocationMethod = Literal["request_share"]
+RequestAnalyticsComputeCostAllocationMethod = Literal["request_share", "request_time_share"]
 
 REQUEST_ANALYTICS_COMPUTE_COST_ALLOCATION_METHOD_VALUES: set[RequestAnalyticsComputeCostAllocationMethod] = {
     "request_share",
+    "request_time_share",
 }
 
 

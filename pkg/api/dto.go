@@ -10875,10 +10875,15 @@ type RequestAnalyticsRoute struct {
 	OtherDeploymentRequests                       int64 `json:"other_deployment_requests,omitempty"`
 	OtherDeploymentEstimatedComputeCostMillicents int64 `json:"other_deployment_estimated_compute_cost_millicents,omitempty"`
 	// EstimatedComputeCostMillicents allocates this app's estimated raw
-	// RAM-hour value to the route by its share of observed requests. It is
+	// RAM-hour value to the route by its share of observed request time
+	// (ADR-743), falling back to request share when no timing exists. It is
 	// an estimate at the current compute overage rate, not an invoice line.
 	EstimatedComputeCostMillicents int64   `json:"estimated_compute_cost_millicents,omitempty"`
 	RequestSharePct                float64 `json:"request_share_pct,omitempty"`
+	// RequestTimeMS is the route's total gateway-observed request time in the
+	// window; RequestTimeSharePct is its share of the app's total.
+	RequestTimeMS       int64   `json:"request_time_ms,omitempty"`
+	RequestTimeSharePct float64 `json:"request_time_share_pct,omitempty"`
 }
 
 // RequestAnalyticsRouteDeploymentObservation is one route's request-share
