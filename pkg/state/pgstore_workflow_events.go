@@ -112,7 +112,7 @@ func admitEventWorkflowTx(ctx context.Context, queries *sqlc.Queries, tx pgx.Tx,
 		return "", false, ErrWorkflowRunQuotaExceeded
 	}
 	if err := queries.InsertEventWorkflowRun(ctx, tx, sqlc.InsertEventWorkflowRunParams{
-		ID: mustPgUUID(run.ID), AppID: mustPgUUID(run.AppID), WorkflowName: run.WorkflowName,
+		DeploymentID: mustPgUUID(run.DeploymentID), ID: mustPgUUID(run.ID), AppID: mustPgUUID(run.AppID), WorkflowName: run.WorkflowName,
 		PlatformTenantID: run.PlatformTenantID, Input: run.Input, DefinitionSnapshot: run.DefinitionSnapshot,
 	}); err != nil {
 		return "", false, err

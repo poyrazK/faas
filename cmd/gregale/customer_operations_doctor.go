@@ -91,6 +91,9 @@ func runCustomerOperationDoctor(ctx context.Context, client customerOperationDoc
 			if check.Name != "" {
 				name += "/" + check.Name
 			}
+			if check.ExecutionKind != "" {
+				name += " [" + check.ExecutionKind + "]"
+			}
 			_, err = fmt.Fprintf(out, "%s\t%s\t%s\t%s\n  %s\n", check.Impact, check.Status, name, check.Code, check.Message)
 			if err == nil && check.Remediation != "" {
 				_, err = fmt.Fprintf(out, "  %s\n", check.Remediation)
@@ -126,6 +129,12 @@ func validateCustomerOperationDoctor(r api.OperationDoctorResponse, c customerOp
 			return fmt.Errorf("duplicate Operations diagnostic check")
 		}
 		seen[key] = true
+		if check.ExecutionKind != "" && !slices.Contains([]string{"http", "workflow", "job"}, check.ExecutionKind) {
+			return fmt.Errorf("invalid Operations execution type observation")
+		}
+		if check.Check == "execution_preview" && (!validCustomerOperationUUID(check.DefinitionID) || check.Name == "" || check.Impact != "submission" || !slices.Contains([]string{"observed", "blocked"}, check.Status) || (check.Status == "observed" && check.ExecutionKind == "")) {
+			return fmt.Errorf("invalid Operations execution preview observation")
+		}
 		if check.Check == "definition_contract" || check.Check == "definitions" {
 			definitionObserved = true
 		}

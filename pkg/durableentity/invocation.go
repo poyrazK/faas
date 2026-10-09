@@ -27,13 +27,15 @@ type HandlerRequest struct {
 // The handler must finish inside the configured lease. A crash is recovered
 // by takeover after expiry. Leases fence commits, not external side effects.
 func (m *Manager) Invoke(ctx context.Context, id ID, owner string, request Request, handler func(context.Context, View) (Transition, error)) (Result, error) {
-	if IsAlarmRequestID(request.ID) {
+	if IsAlarmRequestID(request.ID) || handler == nil {
 		return Result{}, ErrInvalid
 	}
-	return m.invoke(ctx, id, owner, request, handler)
+	return m.invoke(ctx, id, owner, request, func(ctx context.Context, _ Claim, view View) (Transition, error) {
+		return handler(ctx, view)
+	})
 }
 
-func (m *Manager) invoke(ctx context.Context, id ID, owner string, request Request, handler func(context.Context, View) (Transition, error)) (Result, error) {
+func (m *Manager) invoke(ctx context.Context, id ID, owner string, request Request, handler func(context.Context, Claim, View) (Transition, error)) (Result, error) {
 	if !id.valid() || !validIdentity(owner) || !validIdentity(request.ID) || !json.Valid(request.Payload) || handler == nil {
 		return Result{}, ErrInvalid
 	}
@@ -46,7 +48,9 @@ func (m *Manager) invoke(ctx context.Context, id ID, owner string, request Reque
 	if err != nil {
 		return Result{}, err
 	}
-	result, err := m.Execute(ctx, claim, request, handler)
+	result, err := m.Execute(ctx, claim, request, func(ctx context.Context, view View) (Transition, error) {
+		return handler(ctx, claim, view)
+	})
 	// Cleanup cannot undo an acknowledged commit. Failure only delays the next
 	// process until expiry. Use a bounded context even if the caller went away.
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.DurableEntityReleaseTimeout)

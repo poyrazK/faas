@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
@@ -39,8 +41,8 @@ func (s *server) getAppOpenAPIContractDiff(w http.ResponseWriter, r *http.Reques
 	}
 	resp := api.OpenAPIContractDiffResponse{
 		AppID: app.ID, Scope: scope, Source: check.ProposedSource, ProposedSHA256: check.Diff.ProposedSHA256,
-		Blocking: len(check.Diff.Breaks) > 0,
-		Breaks:   contractBreaks(check.Diff), Additions: contractAdditions(check.Diff),
+		Blocking: check.Diff.Blocking(),
+		Breaks:   contractBreaks(check.Diff), Unknowns: contractUnknowns(check.Diff), Additions: contractAdditions(check.Diff),
 	}
 	if check.HasBaseline {
 		resp.BaselineDeploymentID = check.Baseline.DeploymentID
@@ -52,6 +54,25 @@ func (s *server) getAppOpenAPIContractDiff(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func contractUnknowns(diff openapidiff.SnapshotDiff) []api.OpenAPIContractUnknown {
+	out := make([]api.OpenAPIContractUnknown, 0, len(diff.Unknowns))
+	for _, unknown := range diff.Unknowns {
+		out = append(out, api.OpenAPIContractUnknown{
+			Path: unknown.Path, Method: unknown.Method, Status: unknown.Status,
+			PathInSchema: unknown.PathInSchema, Code: string(unknown.Code),
+		})
+	}
+	return out
+}
+
+func contractGateProblem(diff openapidiff.SnapshotDiff) *api.Problem {
+	detail := (&openapidiff.GateError{Diff: diff}).Error()
+	if len(diff.Breaks) == 0 && len(diff.Unknowns) > 0 {
+		return api.ErrAPIContractComparisonIncomplete(detail)
+	}
+	return api.ErrAPIContractBreakingChange(detail)
 }
 
 func contractBreaks(diff openapidiff.SnapshotDiff) []api.OpenAPIContractBreak {
@@ -74,4 +95,28 @@ func contractAdditions(diff openapidiff.SnapshotDiff) []api.OpenAPIContractAddit
 		})
 	}
 	return out
+}
+
+func (s *server) contractTrafficContext(ctx context.Context, app state.App, d state.Deployment) (context.Context, *api.Problem) {
+	if !api.ApiContractDiffEnabled() || !strings.EqualFold(strings.TrimSpace(d.Scope), "prod") {
+		return ctx, nil
+	}
+	check, err := openapidiff.CheckLiveContract(ctx, s.store, app.ID, d.ID, "prod", true)
+	if errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
+		return ctx, nil
+	}
+	if err != nil {
+		return ctx, api.ErrCapacity("could not evaluate serving API contract")
+	}
+	check, fence, err := openapidiff.ApplyRemovalException(ctx, s.store, check, false)
+	if err != nil {
+		return ctx, api.ErrCapacity("could not evaluate route removal approval")
+	}
+	if check.Diff.Blocking() {
+		return ctx, contractGateProblem(check.Diff)
+	}
+	if fence != nil {
+		ctx = state.WithRouteRemovalFence(ctx, *fence)
+	}
+	return ctx, nil
 }

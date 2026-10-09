@@ -49,8 +49,13 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
+	pinnedBase, err := e.artifactBaseKey(ctx, app, primeLayer)
+	if err != nil {
+		result.RejectionReason = "prime_runtime_release_unavailable"
+		return result, err
+	}
 	spec := AppSpec{
-		BaseKey: baseKey(app.Runtime), LayerKey: primeLayer,
+		BaseKey: pinnedBase, LayerKey: primeLayer,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
@@ -98,6 +103,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		HealthcheckGRPCService:   healthcheckGRPCService,
 		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
 		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
+		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label

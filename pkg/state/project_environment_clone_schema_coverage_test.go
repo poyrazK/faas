@@ -1,5 +1,9 @@
 // adr: 590
 // adr: 623 — pending resize intents belong only to their original database.
+// adr: 738
+// adr: 694
+// adr: 695
+// adr: 708
 package state
 
 import (
@@ -14,6 +18,12 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		"profile_deployment_policies":             CloneSchemaConfiguration,
+		"profile_investigations":                  CloneSchemaOperational,
+		"profile_deployment_checks":               CloneSchemaOperational,
+		"profile_route_alert_state":               CloneSchemaOperational,
+		"profile_canary_checks":                   CloneSchemaOperational,
+		"profile_periodic_monitors":               CloneSchemaOperational,
 		"app_binding_release_policies":            CloneSchemaConfiguration,
 		"app_binding_release_policy_history":      CloneSchemaConfiguration,
 		"alert_rollback_actions":                  CloneSchemaOperational,
@@ -78,11 +88,15 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"app_service_address_cursors":               CloneSchemaOperational,
 		"workflow_automation_definitions":           CloneSchemaConfiguration,
 		"workflow_automation_revisions":             CloneSchemaConfiguration,
+		"workflow_code_pins":                        CloneSchemaOperational,
+		"workflow_dispatch_cursors":                 CloneSchemaOperational,
+		"workflow_event_code_refs":                  CloneSchemaOperational,
 		"workflow_event_receipts":                   CloneSchemaOperational,
 		"workflow_operation_effects":                CloneSchemaOperational,
 		"workflow_run_resumes":                      CloneSchemaOperational,
 		"platform_tenant_workflow_schedule_cursors": CloneSchemaOperational,
 		"workflow_schedule_cursors":                 CloneSchemaOperational,
+		"workflow_schedule_occurrences":             CloneSchemaOperational,
 		"workflow_webhook_bindings":                 CloneSchemaConfiguration,
 		"workflow_webhook_receipts":                 CloneSchemaOperational,
 		"customer_operation_definitions":            CloneSchemaConfiguration,
@@ -92,10 +106,12 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"customer_operation_delivery_retries":       CloneSchemaOperational,
 		"customer_operation_executions":             CloneSchemaOperational,
 		"customer_operation_idempotency":            CloneSchemaOperational,
+		"customer_operation_job_executions":         CloneSchemaOperational,
 		"customer_operation_recoveries":             CloneSchemaOperational,
 		"customer_operation_result_blobs":           CloneSchemaOperational,
 		"customer_operation_reports":                CloneSchemaOperational,
 		"customer_operation_stream_leases":          CloneSchemaOperational,
+		"customer_operation_workflow_executions":    CloneSchemaOperational,
 		"customer_operation_workflow_guest_claims":  CloneSchemaOperational,
 		"customer_operation_workflow_state_reports": CloneSchemaOperational,
 		"customer_operation_workflow_states":        CloneSchemaOperational,
@@ -106,10 +122,28 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"runtime_config_entries":            CloneSchemaConfiguration,
 		"managed_realtime_channel_messages": CloneSchemaData, "managed_realtime_channel_heads": CloneSchemaData,
 		"instances": CloneSchemaOperational, "invocations": CloneSchemaOperational, "app_tasks": CloneSchemaOperational,
-		"invocation_environment_queue_admissions": CloneSchemaOperational,
-		"invocation_environment_queue_receipts":   CloneSchemaOperational,
-		"deployment_runtime_environment_owners":   CloneSchemaOperational,
-		"invocation_work_environment_domains":     CloneSchemaOperational, "invocation_work_environment_admissions": CloneSchemaOperational,
+		"invocation_environment_queue_admissions":    CloneSchemaOperational,
+		"invocation_environment_queue_receipts":      CloneSchemaOperational,
+		"deployment_runtime_environment_owners":      CloneSchemaOperational,
+		"app_health_collection_state":                CloneSchemaOperational,
+		"app_health_history":                         CloneSchemaOperational,
+		"runtime_releases":                           CloneSchemaPlatform,
+		"runtime_release_qualifications":             CloneSchemaPlatform,
+		"runtime_artifact_bindings":                  CloneSchemaOperational,
+		"deployment_runtime_upgrade_targets":         CloneSchemaOperational,
+		"deployment_runtime_upgrade_baselines":       CloneSchemaOperational,
+		"deployment_runtime_upgrade_acceptances":     CloneSchemaOperational,
+		"deployment_runtime_upgrade_cutovers":        CloneSchemaOperational,
+		"runtime_upgrade_operations":                 CloneSchemaOperational,
+		"runtime_upgrade_verifications":              CloneSchemaOperational,
+		"runtime_upgrade_gateway_rosters":            CloneSchemaPlatform,
+		"runtime_upgrade_gateway_roster_head":        CloneSchemaPlatform,
+		"runtime_upgrade_gateway_heartbeats":         CloneSchemaOperational,
+		"runtime_upgrade_external_fence_authorities": CloneSchemaPlatform,
+		"runtime_upgrade_external_fence_intents":     CloneSchemaPlatform,
+		"runtime_upgrade_external_fence_receipts":    CloneSchemaOperational,
+		"runtime_upgrade_native_public_startups":     CloneSchemaOperational,
+		"invocation_work_environment_domains":        CloneSchemaOperational, "invocation_work_environment_admissions": CloneSchemaOperational,
 		"project_environment_queue_runtime_sets": CloneSchemaOperational, "project_environment_queue_consumers": CloneSchemaOperational,
 		"feature_flag_versions":           CloneSchemaConfiguration,
 		"exclusive_work_policies":         CloneSchemaConfiguration,

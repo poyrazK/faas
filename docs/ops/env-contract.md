@@ -351,11 +351,17 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PRIVATE_NETWORK_TRANSPORT_ENABLED` | vmmd | `default` |  |  | `` | opt-in node-to-node VXLAN over the operator-managed encrypted overlay; disabled until every regional peer is configured |
 | `FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE` | vmmd | `default` |  |  | `` | optional underlay interface for Gregale private-network VXLAN; falls back to FAAS_OVERLAY_INTERFACE |
 | `FAAS_PRIVATE_NETWORK_TRANSPORT_PEERS` | vmmd | `default` |  |  | `` | comma-separated IPv4 overlay addresses for the other compute nodes in this region |
+| `FAAS_PROFILED_ROLE` | profiled, shared | `dropin` |  |  | `` |  |
+| `FAAS_PROFILE_SOCKET` | vmmd, profiled | `unit` |  |  | `` |  |
+| `FAAS_PROFILING_ENABLED` | apid, vmmd, profiled, guest, shared | `default` |  | 0 | `` | operator-only CPU profiling; opt in through /etc/faas/profiling.env (ADR-819) |
+| `FAAS_PROFILING_ENDPOINT` | guest, shared | `guest` |  |  | `` | loopback bridge stamped by guest-init for SDKs |
 | `FAAS_PROMETHEUS_URL` | apid, meterd | `default` |  |  | `` |  |
 | `FAAS_PUBLIC_CONTROL_ADDR` | gatewayd-public, shared | `unit` |  |  | `` |  |
 | `FAAS_PUBLIC_IFACE` | vmmd, shared | `dropin` |  |  | `` | vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible; "shared" covers pkg/e2etest forwarding the host's NIC to a harness-booted vmmd (the row is not Required, so this adds no boot-time enforcement) |
 | `FAAS_PUBLIC_LISTEN_ADDR` | gatewayd-public | `unit` |  |  | `` | matches faas-gatewayd-public.socket ListenStream; explicit loopback satisfies ADR-126's multi-host check |
 | `FAAS_PUBLIC_STATUS_LAUNCH_AT` | apid | `dropin` |  |  | `` | public-beta launch boundary rendered by the control-plane deployment |
+| `FAAS_PYROSCOPE_TOKEN` | apid, profiled | `default` |  |  | `` | operator backend credential; never sent into guests |
+| `FAAS_PYROSCOPE_URL` | apid, profiled | `default` |  |  | `` | private tenant-enabled backend configured in /etc/faas/profiling.env |
 | `FAAS_QUOTA_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_OUTBOX` | realtimed | `default` |  |  | `` |  |
@@ -397,6 +403,17 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_RETENTION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RUNTIME_KIND` | guest | `guest` |  |  | `` |  |
+| `FAAS_RUNTIME_UPGRADE_DRAIN_CONFIRMATION` | gatewayd-internal | `default` |  |  | `` | default-off private forwarding drain receipt; requires reviewed runtime routing confirmation (ADR-697) |
+| `FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID` | gatewayd-internal | `default` |  |  | `` | reviewed private gateway slot identity; required only when runtime routing confirmation is enabled (ADR-695) |
+| `FAAS_RUNTIME_UPGRADE_INGRESS_CONFIRMATION` | gatewayd-internal, gatewayd-public | `default` |  |  | `` | default-off private ingress identity proof; requires reviewed routing and drain confirmations (ADR-698) |
+| `FAAS_RUNTIME_UPGRADE_INGRESS_TOKEN` | gatewayd-internal, gatewayd-public | `default` |  |  | `` | private ingress secret; leave unset until the reviewed gateway deployment enables ingress confirmation (ADR-698) |
+| `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY` | gatewayd-public | `default` |  |  | `` | default-off public ingress activity proof; requires reviewed public edge confirmation (ADR-700) |
+| `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_CONFIRMATION` | gatewayd-public | `default` |  |  | `` | default-off public edge confirmation; requires the installed connection guard and reviewed slot identity (ADR-699) |
+| `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_IDENTITY` | gatewayd-public | `default` |  |  | `` | default-off selected public edge identity endpoint; keep disabled until public edge withdrawal and activity are qualified (ADR-702) |
+| `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_NATIVE_IDENTITY` | gatewayd-public | `default` |  |  | `` | default-off boot-bound native public identity endpoint; requires all reviewed public edge controls (ADR-710) |
+| `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_SLOT_ID` | gatewayd-public | `default` |  |  | `` | reviewed public gateway slot identity; required only when public edge confirmation is enabled (ADR-699) |
+| `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_WITHDRAWAL` | gatewayd-public | `default` |  |  | `` | default-off public edge withdrawal barrier; requires reviewed confirmation and activity controls (ADR-701) |
+| `FAAS_RUNTIME_UPGRADE_ROUTING_CONFIRMATION` | gatewayd-internal | `default` |  |  | `` | default-off private runtime routing receipt; enable only with a reviewed gateway slot identity (ADR-695) |
 | `FAAS_S3_GATEWAY_CONTROL_ADDR` | s3-gatewayd | `unit` |  | 127.0.0.1:9096 | `` |  |
 | `FAAS_S3_GATEWAY_LISTEN_ADDR` | s3-gatewayd | `unit` |  | 127.0.0.1:8084 | `` |  |
 | `FAAS_S3_GATEWAY_ROLE` | s3-gatewayd | `dropin` |  | single-box | `` | production control-plane service must set control-plane explicitly |
@@ -529,6 +546,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_WORKFLOWS_ENABLED` | apid, schedd | `unit` |  |  | `` | public-beta apid and schedd units both enable durable workflow run creation and dispatch |
 | `FAAS_WORKFLOW_OUTBOUND_ENABLED` | outboundd, schedd | `default` |  |  | `` | ADR-489 exact opt-in for managed workflow outbound execution; off unless set to 1 on schedd and outboundd (outboundd also accepts workflow_outbound_enabled in TOML) |
 | `FAAS_WORKLOAD_` | guest | `guest` |  |  | `` | guest-init injects per-task loopback endpoint metadata for the main workload and declared sidecars |
+| `FAAS_WORKLOAD_IDENTITY_ENDPOINT` | shared | `guest` |  |  | `` | guest-init stamps the platform-owned loopback workload identity token endpoint into each workload environment |
 | `FAAS_WORKLOAD_IDENTITY_ISSUER` | vmmd | `default` |  |  | `` | optional vmmd workload-identity issuer override; config TOML is the primary deployment setting |
 | `FAAS_WORKLOAD_IDENTITY_KEY_ID` | vmmd | `default` |  |  | `` | optional vmmd workload-identity key ID override; config TOML is the primary deployment setting |
 | `FAAS_WORKLOAD_IDENTITY_KEY_PATH` | vmmd | `default` |  |  | `` | optional vmmd workload-identity signing-key path override; an empty path leaves issuance disabled |

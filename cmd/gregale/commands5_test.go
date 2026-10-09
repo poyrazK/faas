@@ -899,7 +899,7 @@ func TestCmdAppScale_RequiresLogin(t *testing.T) {
 
 // TestCmdAppScale_Min1_EchoesResidentCost (issue #65 D3) pins the
 // always-resident GB-h/mo echo after `gregale app <slug> scale --min 1`
-// on a Pro plan. Cost = (512+8) × 1 × 30 / 1024 ≈ 15.2 GB-h/mo.
+// on a Pro plan. Cost = (512+8) × 1 × 720 / 1024 ≈ 365.6 GB-h/mo.
 func TestCmdAppScale_Min1_EchoesResidentCost(t *testing.T) {
 	sink := &multiSink{
 		onAccount: func(string) (int, any) {
@@ -924,7 +924,7 @@ func TestCmdAppScale_Min1_EchoesResidentCost(t *testing.T) {
 	for _, want := range []string{
 		"✓ Updated",
 		"1 instance of 512 MB kept warm",
-		"~15.2 GB-h/mo",
+		"~365.6 GB-h/mo",
 		"1000 millicent/GB-h overage",
 	} {
 		if !strings.Contains(out, want) {
@@ -1482,8 +1482,8 @@ func TestCmdAppRename_ConflictRendersProblem(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	stderr, restore := captureStderr(t)
 	defer restore()
-	if code := cmdAppRename("hello", "taken"); code != 1 {
-		t.Errorf("cmdAppRename conflict = %d, want 1", code)
+	if code := cmdAppRename("hello", "taken"); code != 5 {
+		t.Errorf("cmdAppRename conflict = %d, want 5", code)
 	}
 	if !strings.Contains(stderr.String(), "Slug already in use") {
 		t.Errorf("conflict detail should surface on stderr: %q", stderr.String())
@@ -2108,6 +2108,9 @@ func TestTemplates_NodeRuntimeFloor(t *testing.T) {
 			want := ">=22"
 			if name == "function-node24" {
 				want = ">=24"
+			} else if templates.CategoryFor(name) == "operations" {
+				// Match the installed SDK's Web Crypto/runtime compatibility floor.
+				want = ">=22.10.0"
 			}
 			if pkg.Engines.Node != want {
 				t.Fatalf("engines.node = %q, want %q", pkg.Engines.Node, want)

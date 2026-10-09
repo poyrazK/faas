@@ -76,6 +76,7 @@ func guestReceivesFaasHeader(ctx context.Context, name string) bool {
 		strings.EqualFold(name, api.InvocationIDHeader) ||
 		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsWorkflowStepHeader(name))) ||
 		api.IsGuestIdentityHeader(name) ||
+		api.IsOutboundWebhookHeader(name) ||
 		strings.EqualFold(name, wire.ClientIPHeader)
 }
 
@@ -459,6 +460,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// review F3 fix.)
 	bodyErrCh := make(chan error, 1)
 	go func() {
+		defer close(bodyErrCh)
 		cr, stopReader := newCtxReader(ctx, r.Body)
 		defer stopReader()
 		buf := make([]byte, 8*1024)
@@ -487,6 +489,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 		}
 	}()
+
+	// ADR-696: join the body pump even if the response writer or receiver
+	// panics. Explicit error reads below preserve outcome classification;
+	// closing the channel also lets this defer wait after those reads.
+	defer finishForwardRequestBody(cancel, bodyErrCh)
 
 	// Receiver loop: read frames and pipe into w. The first
 	// frame is ForwardHTTPResponseInit (status + headers);
@@ -846,6 +853,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// receiver loop is race-free without a mutex.
 	upgradeReader := make(chan io.ReadCloser, 1)
 	bodyErrCh := rawRequestBodyLoop(ctx, r.Body, stream, upgradeReader, touch, cancel, metrics, plan)
+	defer finishForwardRequestBody(cancel, bodyErrCh)
 	var rawOutput io.Writer = w
 	upgraded := false
 
@@ -1059,6 +1067,14 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// could inspect bodyErrCh's final value to distinguish
 	// client-initiated FIN from server-initiated close; for
 	// PR-B the customer-side churn signal is sufficient.
+}
+
+// finishForwardRequestBody joins the request pump on every exit, including
+// panic, before the forwarding factory releases its activity slot (ADR-696).
+func finishForwardRequestBody(cancel context.CancelFunc, result <-chan error) {
+	cancel()
+	for range result {
+	}
 }
 
 // rawRequestHead reconstructs the inbound HTTP/1 request head for the raw

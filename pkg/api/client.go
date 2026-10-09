@@ -229,7 +229,13 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 }
 
 func (c *Client) doWithHeaders(ctx context.Context, method, path string, body, out any, headers http.Header) error {
-	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, method, path, body, out, "", headers)
+	cli := c.http
+	if strings.HasPrefix(path, "/v1/runtime/job-operations/") || headers.Get(OperationJobCapabilityHeader) != "" {
+		clone := *cli
+		clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		cli = &clone
+	}
+	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, cli, method, path, body, out, "", headers)
 }
 
 // doWithIdempotencyKey is the same request path as do, with an optional
@@ -2742,8 +2748,24 @@ func (c *Client) SubmitExclusiveJobOperation(ctx context.Context, name string, r
 // Server clamps limit to [1,200] and surfaces a 400 Problem on
 // garbage input. For a wider, cross-source view use ListInvocations.
 func (c *Client) ListJobRuns(ctx context.Context, name string) (ListJobRunsResponse, error) {
+	return c.ListJobRunsPage(ctx, name, 0, 0)
+}
+
+// ListJobRunsPage requests one offset page; zero limit uses the server default.
+func (c *Client) ListJobRunsPage(ctx context.Context, name string, limit, offset int) (ListJobRunsResponse, error) {
 	var out ListJobRunsResponse
-	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs", nil, &out)
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs"
+	if len(q) != 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // ListJobScheduleOccurrences returns the durable decision history for each
@@ -6406,7 +6428,45 @@ func (c *Client) ClearObsoleteDeployments(ctx context.Context, appSlug string, o
 // on errors.Is(err, api.ErrNotFound).
 func (c *Client) GetAppsDeploymentOpenAPIDoc(ctx context.Context, slug, deployment string) (OpenAPIDocResponse, error) {
 	var out OpenAPIDocResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/"+deployment+"/openapi", nil, &out)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/apps/"+url.PathEscape(slug)+"/deployments/"+url.PathEscape(deployment)+"/openapi", nil)
+	if err != nil {
+		return out, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	var raw json.RawMessage
+	err = c.doReqWithSuccess(c.http, req, &raw, func(resp *http.Response) bool {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return false
+		}
+		out.DeploymentID = resp.Header.Get("X-OpenAPI-Doc-Deployment-ID")
+		out.AppID = resp.Header.Get("X-OpenAPI-Doc-App-ID")
+		out.Source = resp.Header.Get("X-OpenAPI-Doc-Source")
+		out.DocSHA256 = resp.Header.Get("X-OpenAPI-Doc-SHA256")
+		out.CapturedAt = resp.Header.Get("X-OpenAPI-Doc-Captured-At")
+		out.UpdatedAt = resp.Header.Get("X-OpenAPI-Doc-Updated-At")
+		out.ByteSize, _ = strconv.Atoi(resp.Header.Get("X-OpenAPI-Doc-Byte-Size"))
+		out.Truncated = resp.Header.Get("X-OpenAPI-Doc-Truncated") == "1"
+		return true
+	})
+	if err != nil {
+		return out, err
+	}
+	var document map[string]any
+	if err = json.Unmarshal(raw, &document); err != nil {
+		return out, err
+	}
+	if _, rawDocument := document["openapi"]; rawDocument {
+		// GET serves the captured OpenAPI body unchanged. Identity and digest
+		// come from server metadata, never inferred from requested selectors.
+		out.Doc = document
+		return out, nil
+	}
+	// Accept the historical wrapped response used by alternate API versions.
+	// Callers still reject an incomplete identity or capture source.
+	err = json.Unmarshal(raw, &out)
+	return out, err
 }
 
 // GetAppsDeploymentRoutePolicySnapshot returns the gateway edge-rule policy
@@ -7346,5 +7406,25 @@ func (c *Client) GetEventReceiptAttempts(ctx context.Context, source, id, subscr
 func (c *Client) GetEventStorageUsage(ctx context.Context) (EventStorageUsageResponse, error) {
 	var out EventStorageUsageResponse
 	err := c.do(ctx, http.MethodGet, "/v1/events/storage", nil, &out)
+	return out, err
+}
+
+// GetAppHealth reads the default-scope HTTP health evidence without waking the app.
+func (c *Client) GetAppHealth(ctx context.Context, slug string) (AppHealthResponse, error) {
+	var out AppHealthResponse
+	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/health", nil, &out)
+	return out, err
+}
+
+func (c *Client) ListAppHealthHistory(ctx context.Context, slug string, limit int, before string) (AppHealthHistoryPage, error) {
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	if before != "" {
+		query.Set("before", before)
+	}
+	var out AppHealthHistoryPage
+	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/health/history?"+query.Encode(), nil, &out)
 	return out, err
 }

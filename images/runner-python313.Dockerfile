@@ -17,7 +17,7 @@
 # the box — per-app cost is just the customer's site-packages + handler.
 FROM cgr.dev/chainguard/wolfi-base:latest@sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042
 # Issue #197 B3.6 (extension): mutable tag pinned via images/Dockerfile.lock.
-RUN apk add --no-cache bash ca-certificates python-3.13 && \
+RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt apk add --no-cache bash ca-certificates python-3.13 && \
     mkdir -p /usr/local/bin && \
     ln -sf /usr/bin/python3.13 /usr/local/bin/python3 && \
     ln -sf /usr/bin/python3.13 /usr/local/bin/python
@@ -27,5 +27,12 @@ RUN apk add --no-cache bash ca-certificates python-3.13 && \
 COPY images/rootfs-skel/ /
 # Wolfi's mode-000 placeholder has no login use inside the microVM and blocks
 # unprivileged ext4 assembly from copying the complete runtime tree.
-RUN rm -f /etc/shadow
+RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt rm -f /etc/shadow
+COPY --chmod=0644 guest/profiling/python/requirements.txt /opt/gregale/profiling/requirements.txt
+RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt chmod 0755 /opt/gregale /opt/gregale/profiling && \
+    apk add --no-cache --virtual .profiling-build py3.13-pip && \
+    PIP_CERT=/etc/ssl/certs/ca-certificates.crt python3 -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
+      --target /opt/gregale/profiling/python -r /opt/gregale/profiling/requirements.txt && \
+    apk del .profiling-build
+COPY --chmod=0644 guest/profiling/python/sitecustomize.py /opt/gregale/profiling/python/sitecustomize.py
 WORKDIR /app

@@ -17,8 +17,8 @@ Neither is a generally available production feature.
 
 Use an existing **dedicated private test bucket** with reliable conditional writes
 and strong read-after-write consistency. Provider compatibility alone does not
-qualify a provider. Give the harness private GET/PUT permission, plus LIST for
-alarm qualification and LIST/DELETE for cleanup, and keep all
+qualify a provider. Give the harness private GET/PUT permission, plus LIST/DELETE for
+alarm qualification and cleanup, and keep all
 customer writes and bucket lifecycle deletion away from the entity prefix.
 
 Configure `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and, when needed,
@@ -70,7 +70,7 @@ Configure a GCS backend using the fields shown in
 backend, and set `FAAS_DURABLE_ENTITY_BUCKET` to an existing, dedicated private
 platform test bucket. The same app allowlist and invocation/alarm/maintenance
 opt-ins apply. Grant the platform identity object read/create/replace access;
-alarm discovery needs LIST, and cleanup needs LIST/DELETE. Keep customer access,
+alarm discovery and cleanup need LIST/DELETE. Keep customer access,
 automatic lifecycle deletion and public caching away from this bucket.
 
 The trusted operator command also supports GCS. Configure Application Default
@@ -202,8 +202,8 @@ branches and the legacy archive. It retains new-generation uploads, manifests,
 unknown paths and probes. A delayed orphan upload can be removed on a later
 sweep. A reader racing reclamation can receive a retryable conflict.
 
-Manifest writes upgrade to schema 3; older binaries fail closed. Stop old entity
-callers/alarm workers when upgrading. Downgrading after upgrade needs an explicit
+Manifest writes upgrade to schema 5; older binaries fail closed. Stop old entity
+callers/alarm/maintenance workers when upgrading. Downgrading needs an explicit
 storage migration. Keep bucket lifecycle deletion disabled. Versioned buckets may
 retain historical versions/delete markers; this command deletes current keys and
 does not reclaim those physical versions or backups.
@@ -289,9 +289,24 @@ With a cap they return 503 `durable_entity_inventory_pending` for new work until
 the logical proof completes; reads and original receipt replays remain available.
 The separately enabled maintenance worker alternates cleanup and inventory pages
 and gives legacy accounting priority. For manual migration rerun `-inventory`.
-Stop all old entity callers, alarm and maintenance workers before this schema-3
-upgrade; binaries supporting only manifest schemas 1/2 reject the new manifests.
+Stop all old entity callers, alarm and maintenance workers before this schema-5
+upgrade; binaries supporting only manifest schemas 1/2/3/4 reject new manifests.
 A downgrade requires storage migration. Guest protocol version 1 is unchanged.
+
+## Internal outgoing-intent contract
+
+The private Go state engine can append `Transition.Outbox` webhook intents and
+restore them using `Manager.PendingOutbox` for one exact entity scope. Messages
+commit with state/receipts, retain stable IDs across replay/restart, and survive
+ordinary transitions and cleanup. Pending bytes count in snapshot/storage caps.
+Limits are 16 messages per transition, 128 pending, 64 KiB per payload and
+256 KiB of encoded pending messages; the 1 MiB snapshot ceiling also applies.
+Queue/cap rejection publishes neither new state nor outgoing messages.
+
+This is an engine contract, with no delivery worker, acknowledgement/removal or
+customer messaging API. Guest protocol v1 rejects an `outbox` field; handlers
+remain pure. Registered-webhook admission and deduplicated relay acceptance
+must precede guest enablement. See [ADR-903](../../docs/adr/903-object-storage-entity-outbox-contract.md).
 
 ## Deploy the counter invocation preview
 
@@ -380,15 +395,23 @@ With the invocation preview configured, enable:
 export FAAS_DURABLE_ENTITY_ALARMS_ENABLED=1
 ```
 
-The private platform credentials also need bucket listing permission. Startup
-checks delimiter listing of the entity prefix. Apid scans eight entity directories
-per page and dispatches due alarms through the existing scheduler/guest invocation
-path. Each entity read has a two-second budget, each page a twenty-second budget,
-and each delivery the usual twenty-five-second ceiling. One alarm runs at a time
-per apid process, with five seconds between completed pages. A restart reconstructs
-due work from the bucket; no SQL alarm table or permanent entity VM is required.
-Snapshots do not enlarge listing pages, but every entity must be inspected, so
-this scan has no production deadline latency guarantee.
+The private platform credentials also need delimiter/flat LIST and DELETE for
+index hints. Startup checks listing and deletes only a unique platform probe.
+Apid reads up to eight time-ordered index entries per page, and independently
+reconciles eight entity directories to recover alarms saved before the upgrade
+or whose index publication failed. Each read has a two-second budget, each scan
+a twenty-second budget, and each delivery the usual twenty-five-second ceiling.
+One alarm runs at a time per apid process, with five seconds between sweeps.
+Cursors are disposable and restart independently after listing errors.
+
+Index entries under `gregale/durable-entities/v1/alarm-index/` contain private
+entity identity, state version, scheduled time and retry reservation number.
+They are advisory: the committed snapshot and fenced manifest remain authority.
+A missing/failed hint cannot undo a committed transition; reconciliation repairs
+it. Due stale hints are deleted after revalidation. Future entries stop an index
+pass without reading their entity state; superseded future hints remain until
+their indexed due time. Listing must be lexically ordered (native S3/GCS support
+this); discovery still has no production ordering or deadline latency guarantee.
 
 For the counter, send a payload such as
 `{"delta":1,"alarm_at":"2026-10-08T12:00:00Z"}` with a new request ID. Choose an
@@ -405,14 +428,38 @@ observed version and deadline under ownership. Cancelled/replaced observations
 do not reach the guest, and a preserved deadline is rediscovered in newer state.
 Handlers return state/result and either clear or rearm `alarm_at`; returning the
 same overdue deadline rearms it and can cause another delivery. Failed handlers
-leave the alarm due. Attempts can repeat, while only a successful fenced
+keep the original business deadline and retry metadata. Only a successful fenced
 publication commits the state, receipt and next deadline together.
 
 Suspended/deleted accounts, disabled/deleted apps, suspended customers and
 deleted/recreated environments cannot start new alarm work. Existing alarms stay
 in the bucket while held. Alarm receipts use the same immutable receipt index.
-Retry/dead-letter policy, a due-time index, plan quotas and provider-backed
-operational qualification are still required for production availability.
+Before guest execution, a manifest CAS reserves an attempt and its next retry
+time. Backoff is 30 seconds, one minute, two minutes, four minutes, then capped
+at five minutes. Five reservations exhaust that state version's alarm. A crash
+or lost reservation acknowledgement consumes an attempt if publication succeeded;
+busy ownership, stale observations and rejected reservation CAS do not. Admission
+holds before reservation consume no attempts. Successful receipt replay is checked
+before retry gates, including after a lost final commit acknowledgement.
+
+Exhaustion leaves state and the alarm deadline intact and stops automatic retries.
+The last reserved attempt may still be running when inspection reports exhaustion.
+Inspect one exact private entity scope with the trusted operator harness:
+
+```bash
+go run ./examples/durable-entities -alarm-status \
+  -account ACCOUNT_ID -app APP_ID -environment-id ENVIRONMENT_UUID \
+  -tenant-id CUSTOMER_UUID -namespace counters -entity customer:456
+```
+
+Omit `-tenant-id` only for an entity without customer scope. Output contains the
+alarm identity, reservation count, next retry time and `exhausted`, never business
+state or provider errors. Inspection does not acquire entity ownership. A deliberate
+ordinary transition can clear the alarm or rearm it in a new state version, resetting
+the budget. There is no automatic dead-letter replay or public inspection endpoint.
+Advisory hint bytes are outside the per-entity committed-state cap; the existing
+storage-operation and upload-volume metrics include them. Plan quotas, billing,
+index compaction and provider/native qualification remain production work.
 
 ## Qualify a live provider
 

@@ -1,6 +1,6 @@
 // ADR-713: result-only receipts for customer Operation HTTP executions.
 import { createHash } from 'node:crypto';
-import { OPERATION_REQUEST_BYTES, OPERATION_IDENTITY_BYTES, OPERATION_RESPONSE_BYTES } from './operation-contract.js';
+import { OPERATION_REQUEST_BYTES, OPERATION_IDENTITY_BYTES, OPERATION_RESPONSE_BYTES, OPERATION_WORKFLOW_STATE_BATCH_BYTES } from './operation-contract.js';
 import { operationHeaders, operationExecutionContext, type OperationRequestHeaders } from './operation-execution-context.js';
 import { operationReceiptTransaction, type OperationPool, type OperationTransactionResult } from './operation-receipt.js';
 
@@ -80,7 +80,7 @@ export async function withCustomerOperationTransaction(
   pool: OperationPool, input: CustomerOperationTransactionRequest,
   handler: (transaction: CustomerOperationTransaction) => Promise<unknown>,
   validateMilestones?: (reports: OperationMilestoneReport[]) => Promise<unknown>,
-  validateWorkflowStates?: (reports: OperationWorkflowStateReport[]) => Promise<unknown>,
+  validateWorkflowStates?: (reports: OperationWorkflowStateReport[], milestones: OperationMilestoneReport[]) => Promise<unknown>,
 ): Promise<OperationTransactionResult> {
   const request = normalize(input);
   const digest = Buffer.from(customerOperationRequestDigest(request));
@@ -89,9 +89,26 @@ export async function withCustomerOperationTransaction(
     const workflowStates: OperationWorkflowStateReport[] = [];
     if (request.milestonesSupported) await tx.query("SELECT 1 FROM public.gregale_customer_operation_milestones LIMIT 0");
     let open = true;
+    let pendingGuards = 0;
+    let guardFailed = false;
+    let guardError: unknown;
     let result: unknown;
-    try { result = await handler(milestoneTransaction(tx, request, reports, workflowStates, () => open)); }
+    const transaction = milestoneTransaction(tx, request, reports, workflowStates, () => open, error => { guardFailed = true; guardError = error; });
+    const guard = transaction.guardedWorkflowTransition;
+    transaction.guardedWorkflowTransition = async (...args) => {
+      pendingGuards++;
+      try { return await guard(...args); }
+      finally { pendingGuards--; }
+    };
+    const reconcile=transaction.reconcileWorkflowState;
+    transaction.reconcileWorkflowState=async (...args)=>{
+      pendingGuards++;
+      try {return await reconcile(...args);} finally {pendingGuards--;}
+    };
+    try { result = await handler(transaction); }
     finally { open = false; }
+    if (pendingGuards) throw new TypeError("Readiness guards must be awaited before the callback returns");
+    if (guardFailed) throw guardError;
     const body = JSON.stringify(result, (_key, value: unknown) => {
       if (value === undefined || typeof value === 'function' || typeof value === 'symbol' || typeof value === 'bigint'
           || (typeof value === 'number' && !Number.isFinite(value))) throw new TypeError('customer Operation result must contain JSON values');
@@ -105,8 +122,9 @@ export async function withCustomerOperationTransaction(
     }
     if (workflowStates.length > 0) {
       if (!validateWorkflowStates) throw new TypeError('Workflow state validation is required before commit');
-      const saved = await saveCustomerWorkflowStates(tx, request, workflowStates);
-      await validateWorkflowStates(saved);
+      const saved = await saveCustomerWorkflowStates(tx, request, workflowStates, reports);
+      if (Buffer.byteLength(JSON.stringify({workflow_states: saved, milestones: reports})) > OPERATION_WORKFLOW_STATE_BATCH_BYTES) throw new TypeError('Workflow state validation batch exceeds its byte limit');
+      await validateWorkflowStates(saved, reports);
     }
     return body;
   }, body => validate(body, request.resultMaxBytes));

@@ -1588,7 +1588,7 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
-	if err := be.Delete(ctx, sched.JobLayerKey(jobID)); err != nil && !storage.IsNotFound(err) {
+	if err := h.deleteUnretainedJobArtifact(ctx, be, sched.JobLayerKey(jobID)); err != nil && !storage.IsNotFound(err) {
 		return err
 	}
 	if lister, ok := be.(storage.LocalArtifactLister); ok {
@@ -1600,7 +1600,7 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 			if foundJobID, valid := jobArtifactJobID(key); !valid || foundJobID != jobID {
 				continue
 			}
-			if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+			if err := h.deleteUnretainedJobArtifact(ctx, be, key); err != nil && !storage.IsNotFound(err) {
 				return err
 			}
 		}
@@ -1631,7 +1631,7 @@ func (h *Handler) cleanupSupersededJobArtifacts(ctx context.Context, jobID, keep
 		if !valid || foundJobID != jobID || key == keepKey {
 			continue
 		}
-		if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+		if err := h.deleteUnretainedJobArtifact(ctx, be, key); err != nil && !storage.IsNotFound(err) {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("delete %s: %w", key, err))
 		}
 	}
@@ -1679,7 +1679,7 @@ func (h *Handler) ReconcileDeletedJobArtifacts(ctx context.Context) error {
 			reconcileErrs = append(reconcileErrs, fmt.Errorf("job %s lookup: %w", jobID, err))
 			continue
 		}
-		if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+		if err := h.deleteUnretainedJobArtifact(ctx, be, key); err != nil && !storage.IsNotFound(err) {
 			reconcileErrs = append(reconcileErrs, fmt.Errorf("job %s artifact delete: %w", jobID, err))
 		}
 	}
@@ -1901,7 +1901,7 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 	}
 	// Runtime bases are staged on demand so a fresh bare-metal node can
 	// become ready without building every supported runtime at startup.
-	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
+	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
 
@@ -2278,6 +2278,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if dep.Handler != "" {
 		manifest.Entrypoint = []string{dep.Handler}
 	}
+	manifest = imageEntrypointForCmdOverride(manifest, imageCfg, dep)
 	// PR-B (issue #460 / ADR-053): layer the deployment's six persisted
 	// override columns onto the OCI-derived manifest before validation. The
 	// helper is a pure function; an error here means a jsonb column failed
@@ -2939,12 +2940,29 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		SBOMRun:        h.syftRun,
 		SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
 	}
+	var pinnedRelease *state.RuntimeRelease
 	if h.runtimeBaseStagingEnabled {
+		release, pinErr := h.prepareFunctionRuntimeRelease(ctx, app, dep, runtime, appsKey)
+		if pinErr != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, pinErr, "pin function runtime")
+			return fmt.Errorf("imaged: pin function runtime: %w", pinErr)
+		}
+		pinnedRelease = release
+		if release != nil {
+			if err := h.replicateRuntimeRelease(ctx, *release); err != nil {
+				_ = h.markDeployFailed(ctx, dep.ID, err, "replicate function runtime")
+				return err
+			}
+		}
 		// Production source builds consume builderd's dependency-complete
 		// OCI export. Re-applying dep.SourcePath here would silently throw
 		// away Railpack's installed dependencies and, for Go, leave the
 		// runner looking for /app/handler while Railpack emits /app/server.
-		layers, sourcePath, cleanup, artifactErr := h.functionBuildArtifact(ctx, runtime, dep.RootfsPath)
+		recordedRef := ""
+		if pinnedRelease != nil {
+			recordedRef = pinnedRelease.SourceRef
+		}
+		layers, sourcePath, cleanup, artifactErr := h.functionBuildArtifactForRef(ctx, runtime, dep.RootfsPath, recordedRef)
 		if artifactErr != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, artifactErr, "select function build artifact")
 			return fmt.Errorf("imaged: select function build artifact: %w", artifactErr)
@@ -2955,6 +2973,13 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	} else {
 		// Keep the hermetic legacy/test seam. Production handlers always
 		// enable runtime-base staging and therefore take the artifact path.
+		target, err := h.explicitRuntimeUpgradeTarget(ctx, app, dep, runtime)
+		if err != nil {
+			return err
+		}
+		if target != nil {
+			return errors.New("runtime update requires immutable base staging")
+		}
 		buildInput.Layers = builtLayers
 		buildInput.TarballPath = dep.SourcePath
 	}
@@ -2976,6 +3001,12 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 		return fmt.Errorf("imaged: stamp rootfs: %w", err)
+	}
+	if pinnedRelease != nil {
+		if err := h.store.(state.RuntimeReleaseStore).BindDeploymentRuntimeRelease(ctx, dep.ID, appsKey, pinnedRelease.ID); err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "bind function runtime")
+			return fmt.Errorf("imaged: bind function runtime: %w", err)
+		}
 	}
 	if err := h.replicateLayer(ctx, appsKey); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "replicate app layer")
@@ -3487,11 +3518,16 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// the deployment becomes routable. The gate is dark-launched by default;
 	// when enabled, a production breaking change is a normal deployment
 	// failure with a stable error code and an audit record.
-	if contractErr := h.checkAPIContract(ctx, dep); contractErr != nil {
+	contractCtx, contractErr := h.checkAPIContractContext(ctx, dep)
+	if contractErr != nil {
 		var gateErr *openapidiff.GateError
 		code := api.CodeCapacity
 		if errors.As(contractErr, &gateErr) {
-			code = api.CodeAPIContractBreakingChange
+			if len(gateErr.Diff.Breaks) > 0 {
+				code = api.CodeAPIContractBreakingChange
+			} else if len(gateErr.Diff.Unknowns) > 0 {
+				code = api.CodeAPIContractComparisonIncomplete
+			}
 		}
 		detail := contractErr.Error()
 		_, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail)
@@ -3506,6 +3542,8 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		return fmt.Errorf("imaged: api contract gate: %w", contractErr)
 	}
+
+	ctx = contractCtx
 
 	// Remember the current same-scope deployment. After the candidate passes
 	// smoke, MarkDeploymentLive atomically supersedes this row; only then may
@@ -3568,6 +3606,18 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		return nil
 	}
 	if promoteErr != nil {
+		var routeRemovalBlocker *state.RouteRemovalBlockedError
+		if errors.As(promoteErr, &routeRemovalBlocker) {
+			_, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeRouteRemovalRequired, routeRemovalBlocker.Error())
+			if markErr != nil {
+				return fmt.Errorf("imaged: record route removal blocker: %w", markErr)
+			}
+			if h.audit != nil {
+				h.audit.Emit(ctx, "deployment.route_removal_blocked", &app.AccountID, map[string]any{"app_id": app.ID, "deployment_id": dep.ID, "detail": routeRemovalBlocker.Reason})
+			}
+			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
+			return fmt.Errorf("imaged: route removal policy: %w", promoteErr)
+		}
 		var dependencyBlocker *state.DependencyGateError
 		if errors.As(promoteErr, &dependencyBlocker) {
 			// Refresh the durable blocker after a dependency changed during
@@ -3862,7 +3912,7 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 	default:
 		return fmt.Errorf("imaged: snapshot_boot: unknown deployment kind %q", dep.Kind)
 	}
-	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
+	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
 	if err := h.transitionWithStage(ctx, dep.ID, state.StageImageBuild, state.StageSecurityScan, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
@@ -4910,4 +4960,22 @@ func (h *Handler) buildFullRootfsLayer(
 		"plan", string(acct.Plan),
 	)
 	return nil
+}
+
+func (h *Handler) deleteUnretainedJobArtifact(ctx context.Context, be storage.StorageBackend, key string) error {
+	pins, ok := h.store.(state.OperationJobImageRetentionStore)
+	if !ok {
+		if _, native := h.store.(state.JobOperationStore); native {
+			return fmt.Errorf("job operation image retention unavailable")
+		}
+		return be.Delete(ctx, key)
+	}
+	retained, err := pins.OperationJobImageRetained(ctx, key)
+	if err != nil {
+		return err
+	}
+	if retained {
+		return nil
+	}
+	return be.Delete(ctx, key)
 }

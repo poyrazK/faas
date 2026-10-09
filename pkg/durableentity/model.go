@@ -116,13 +116,16 @@ type Request struct {
 	Payload json.RawMessage
 }
 
-// Transition replaces business state and alarm state together. Nil AlarmAt
-// clears an alarm. Callbacks must be pure: no external side effects. A callback
-// can run even when publication ultimately conflicts or fails.
+// Transition replaces business state and alarm state and appends outgoing intents
+// atomically. Nil AlarmAt clears an alarm. Callbacks must be pure: a callback can
+// run even when publication ultimately conflicts or fails.
 type Transition struct {
 	Data    json.RawMessage `json:"data"`
 	Result  json.RawMessage `json:"result"`
 	AlarmAt *time.Time      `json:"alarm_at,omitempty"`
+	// Outbox is internal engine authority only. Guest protocol v1 rejects it
+	// until a qualified delivery worker and destination admission are available.
+	Outbox []OutboxIntent `json:"-"`
 }
 
 type Result struct {
@@ -146,6 +149,7 @@ type snapshot struct {
 	Receipts       map[string]receipt `json:"receipts,omitempty"` // Schema 1 only.
 	ReceiptRoot    *journalRef        `json:"receipt_root,omitempty"`
 	LegacyReceipts *objectRef         `json:"legacy_receipts,omitempty"`
+	Outbox         []OutboxMessage    `json:"outbox,omitempty"` // Schema 3 only.
 }
 
 type objectRef struct {
@@ -160,17 +164,18 @@ type journalRef struct {
 }
 
 type manifest struct {
-	Schema            int           `json:"schema"`
-	ID                ID            `json:"entity"`
-	OwnerID           string        `json:"owner_id"`
-	Token             string        `json:"claim_token"`
-	Epoch             uint64        `json:"epoch"`
-	Revision          string        `json:"revision"`
-	ExpiresAt         time.Time     `json:"expires_at"`
-	SnapshotKey       string        `json:"snapshot_key"`
-	SnapshotHash      string        `json:"snapshot_hash"`
-	Version           uint64        `json:"state_version"`
-	Generation        uint64        `json:"storage_generation,omitempty"`
-	StorageLimitBytes int64         `json:"storage_limit_bytes,omitempty"`
-	StorageUsage      *StorageUsage `json:"storage_usage,omitempty"`
+	Schema            int            `json:"schema"`
+	ID                ID             `json:"entity"`
+	OwnerID           string         `json:"owner_id"`
+	Token             string         `json:"claim_token"`
+	Epoch             uint64         `json:"epoch"`
+	Revision          string         `json:"revision"`
+	ExpiresAt         time.Time      `json:"expires_at"`
+	SnapshotKey       string         `json:"snapshot_key"`
+	SnapshotHash      string         `json:"snapshot_hash"`
+	Version           uint64         `json:"state_version"`
+	Generation        uint64         `json:"storage_generation,omitempty"`
+	StorageLimitBytes int64          `json:"storage_limit_bytes,omitempty"`
+	StorageUsage      *StorageUsage  `json:"storage_usage,omitempty"`
+	AlarmDelivery     *alarmDelivery `json:"alarm_delivery,omitempty"`
 }

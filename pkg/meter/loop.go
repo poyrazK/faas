@@ -669,7 +669,7 @@ func (l *Loop) emitFloorApplied(ctx context.Context, rows []RolledRow) {
 	}
 	floorApps := map[string]bool{}
 	for _, r := range rows {
-		if r.SyntheticFloor {
+		if r.SyntheticFloor && !r.CatchUp {
 			floorApps[r.AppID] = true
 		}
 	}
@@ -743,6 +743,11 @@ func (l *Loop) emitMeteredMB(ctx context.Context, rows []RolledRow) {
 		// refactor that pulls the filter out of the sampler
 		// can't accidentally emit a mirror row here.
 		if state.IsMeteredSkippableMode(r.Mode) {
+			continue
+		}
+		// A caught-up row (H5-55) may repeat a row an earlier, failed
+		// tick already wrote and counted.
+		if r.CatchUp {
 			continue
 		}
 		mode := r.Mode

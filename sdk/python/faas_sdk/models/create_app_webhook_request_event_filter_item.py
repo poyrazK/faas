@@ -1,12 +1,16 @@
 from typing import Literal
 
 CreateAppWebhookRequestEventFilterItem = Literal[
+    "app.health.changed",
     "app.parked",
     "app.woken",
     "debug.regression.detected",
     "debug.regression.resolved",
     "deployment.failed",
     "deployment.live",
+    "event_recovery.cancelled",
+    "event_recovery.completed",
+    "event_recovery.expired",
     "issue.assigned",
     "issue.created",
     "issue.ignored",
@@ -17,6 +21,8 @@ CreateAppWebhookRequestEventFilterItem = Literal[
     "job.finished",
     "operation.effect",
     "operation.finished",
+    "profile.route_recovered",
+    "profile.route_regressed",
     "rollout.aborted",
     "rollout.completed",
     "routes.health.aborted",
@@ -33,12 +39,16 @@ CreateAppWebhookRequestEventFilterItem = Literal[
 ]
 
 CREATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[CreateAppWebhookRequestEventFilterItem] = {
+    "app.health.changed",
     "app.parked",
     "app.woken",
     "debug.regression.detected",
     "debug.regression.resolved",
     "deployment.failed",
     "deployment.live",
+    "event_recovery.cancelled",
+    "event_recovery.completed",
+    "event_recovery.expired",
     "issue.assigned",
     "issue.created",
     "issue.ignored",
@@ -49,6 +59,8 @@ CREATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[CreateAppWebhookRequest
     "job.finished",
     "operation.effect",
     "operation.finished",
+    "profile.route_recovered",
+    "profile.route_regressed",
     "rollout.aborted",
     "rollout.completed",
     "routes.health.aborted",

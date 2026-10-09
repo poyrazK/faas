@@ -637,3 +637,36 @@ func TestPGBackend_PromotionDoesNotCountSupersededWarmTarget(t *testing.T) {
 		t.Fatalf("post-promotion pick = %+v, want cold dep-new", pick)
 	}
 }
+
+// countingWeightsStore counts LiveDeployments reads per app.
+type countingWeightsStore struct {
+	fakeWeightsStore
+	reads map[string]int
+}
+
+func (c *countingWeightsStore) LiveDeployments(ctx context.Context, appID string) ([]gateway.DeploymentWeightsRow, error) {
+	c.reads[appID]++
+	return c.fakeWeightsStore.LiveDeployments(ctx, appID)
+}
+
+// production-us hunt #7 (H5-63): a kind=route target is resolved by slug,
+// so Lookup never hydrated its production weights and the picker found no
+// target for any routed request. PrepareRouteTarget hydrates them once.
+func TestPGBackend_PrepareRouteTargetHydratesWeightsOnce(t *testing.T) {
+	store := &countingWeightsStore{
+		fakeWeightsStore: fakeWeightsStore{rows: map[string][]gateway.DeploymentWeightsRow{
+			"app-target": {{ID: "dep-1", TrafficPercent: 100}},
+		}},
+		reads: map[string]int{},
+	}
+	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, gateway.NewFakeScheduler("node-A"), nil).WithStore(store)
+	target := gateway.App{ID: "app-target", AccountID: "acct-1", Slug: "target"}
+	for range 3 {
+		if !b.PrepareRouteTarget(context.Background(), target) {
+			t.Fatal("PrepareRouteTarget = false, want hydrated")
+		}
+	}
+	if got := store.reads["app-target"]; got != 1 {
+		t.Fatalf("weights read %d times, want once", got)
+	}
+}

@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.workflow_schedule_response_catch_up import (
+    WorkflowScheduleResponseCatchUp,
+    check_workflow_schedule_response_catch_up,
+)
 from ..models.workflow_schedule_response_last_status import (
     WorkflowScheduleResponseLastStatus,
     check_workflow_schedule_response_last_status,
@@ -31,6 +35,10 @@ class WorkflowScheduleResponse:
     timezone: str
     overlap: WorkflowScheduleResponseOverlap
     enabled: bool
+    catch_up: WorkflowScheduleResponseCatchUp | Unset = UNSET
+    """Effective missed-fire policy; defaults to skip."""
+    catch_up_window: str | Unset = UNSET
+    """Effective recovery duration"""
     next_fire_at: datetime.datetime | Unset = UNSET
     last_evaluated_at: datetime.datetime | Unset = UNSET
     last_scheduled_for: datetime.datetime | Unset = UNSET
@@ -50,6 +58,12 @@ class WorkflowScheduleResponse:
         overlap: str = self.overlap
 
         enabled = self.enabled
+
+        catch_up: str | Unset = UNSET
+        if not isinstance(self.catch_up, Unset):
+            catch_up = self.catch_up
+
+        catch_up_window = self.catch_up_window
 
         next_fire_at: str | Unset = UNSET
         if not isinstance(self.next_fire_at, Unset):
@@ -83,6 +97,10 @@ class WorkflowScheduleResponse:
                 "enabled": enabled,
             }
         )
+        if catch_up is not UNSET:
+            field_dict["catch_up"] = catch_up
+        if catch_up_window is not UNSET:
+            field_dict["catch_up_window"] = catch_up_window
         if next_fire_at is not UNSET:
             field_dict["next_fire_at"] = next_fire_at
         if last_evaluated_at is not UNSET:
@@ -110,6 +128,15 @@ class WorkflowScheduleResponse:
         overlap = check_workflow_schedule_response_overlap(d.pop("overlap"))
 
         enabled = d.pop("enabled")
+
+        _catch_up = d.pop("catch_up", UNSET)
+        catch_up: WorkflowScheduleResponseCatchUp | Unset
+        if isinstance(_catch_up, Unset):
+            catch_up = UNSET
+        else:
+            catch_up = check_workflow_schedule_response_catch_up(_catch_up)
+
+        catch_up_window = d.pop("catch_up_window", UNSET)
 
         _next_fire_at = d.pop("next_fire_at", UNSET)
         next_fire_at: datetime.datetime | Unset
@@ -153,6 +180,8 @@ class WorkflowScheduleResponse:
             timezone=timezone,
             overlap=overlap,
             enabled=enabled,
+            catch_up=catch_up,
+            catch_up_window=catch_up_window,
             next_fire_at=next_fire_at,
             last_evaluated_at=last_evaluated_at,
             last_scheduled_for=last_scheduled_for,

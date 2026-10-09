@@ -72,7 +72,7 @@ func UnitApid() daemonunit.Unit {
 		CapabilityBoundingSet: []string{},
 		AmbientCapabilities:   []string{""},
 
-		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/otel.env",
+		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/profiling.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_BILLING_MODE", Value: "live"},
 			{Key: "FAAS_SESSION_KEY", Value: "%d/faas_session_key"},

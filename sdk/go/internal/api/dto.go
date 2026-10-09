@@ -101,6 +101,7 @@ type CreateAppRequest struct {
 	RestartPolicy          string                `json:"restart_policy,omitempty"`
 	AfterRestore           *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint       *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling              *ProfilingConfig      `json:"profiling,omitempty"`
 	StartupDeadlineS       int                   `json:"startup_deadline_s,omitempty"`
 	MaxRetries             int                   `json:"max_retries,omitempty"`
 	RetryPolicy            *RetryPolicyDTO       `json:"retry_policy,omitempty"`
@@ -142,6 +143,7 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
 	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int                  `json:"max_retries,omitempty"`
 	RetryPolicy      *RetryPolicyDTO       `json:"retry_policy,omitempty"`
@@ -2296,7 +2298,7 @@ type TriggerMetricsResponse struct {
 // --- Jobs (issue #1184 Workstream A) ----------------------------------------
 // Mirrors the canonical Job DTOs in pkg/api/dto.go. Field tags + ordering
 // + omitempty are part of the wire contract — the spec_compliance_test
-// gate (TestSpecCompliance in cmd/apid) pins the OpenAPI schema's
+// gate (TestSpecCompliance in scripts/ci/speccompliance) pins the OpenAPI schema's
 // `required` arrays, so any drift between this file and pkg/api/dto.go
 // breaks the gatewayd-public edge case.
 

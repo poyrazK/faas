@@ -16,7 +16,7 @@ func (s *server) runDurableEntityAlarms(ctx context.Context) {
 	if s.durableEntities == nil || !s.durableEntityAlarmsEnabled {
 		return
 	}
-	cursor := ""
+	cursor := alarmSweepCursor{}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -26,9 +26,8 @@ func (s *server) runDurableEntityAlarms(ctx context.Context) {
 		case <-timer.C:
 		}
 		next, err := s.sweepDurableEntityAlarms(ctx, cursor)
-		if err == nil {
-			cursor = next
-		} else if ctx.Err() == nil {
+		cursor = next
+		if err != nil && ctx.Err() == nil {
 			// Provider errors can contain credentials or customer state.
 			s.log.Warn("durable entity alarm discovery failed")
 		}
@@ -36,30 +35,40 @@ func (s *server) runDurableEntityAlarms(ctx context.Context) {
 	}
 }
 
-func (s *server) sweepDurableEntityAlarms(ctx context.Context, cursor string) (string, error) {
+type alarmSweepCursor struct{ index, entities string }
+
+func scanDurableEntityAlarmPage(ctx context.Context, cursor string, scan func(context.Context, string) (durableentity.AlarmPage, error)) (durableentity.AlarmPage, error) {
 	scanCtx, cancel := context.WithTimeout(ctx, api.DurableEntityAlarmScanTimeout)
-	page, err := s.durableEntities.ScanDueAlarms(scanCtx, cursor)
-	cancel()
-	if err != nil {
-		return cursor, err
-	}
+	defer cancel()
+	return scan(scanCtx, cursor)
+}
+
+func (s *server) sweepDurableEntityAlarms(ctx context.Context, cursor alarmSweepCursor) (alarmSweepCursor, error) {
+	indexed, indexErr := scanDurableEntityAlarmPage(ctx, cursor.index, s.durableEntities.ScanIndexedDueAlarms)
+	reconciled, reconcileErr := scanDurableEntityAlarmPage(ctx, cursor.entities, s.durableEntities.ScanDueAlarms)
+	// A failed/expired native cursor restarts only its own disposable scan. The
+	// other scan can keep delivering while the provider repairs its listing.
+	next := alarmSweepCursor{index: indexed.NextCursor, entities: reconciled.NextCursor}
+	page := durableentity.AlarmPage{Failed: indexed.Failed + reconciled.Failed, Alarms: append(indexed.Alarms, reconciled.Alarms...)}
 	if page.Failed > 0 {
 		s.log.Warn("durable entity alarm state unavailable", "entities", page.Failed)
 	}
+	seen := map[durableentity.ID]uint64{}
 	for _, alarm := range page.Alarms {
 		if ctx.Err() != nil {
-			return cursor, ctx.Err()
+			return next, ctx.Err()
 		}
-		if !s.durableEntityApps[alarm.Entity.AppID] {
+		if seen[alarm.Entity] == alarm.Version || !s.durableEntityApps[alarm.Entity.AppID] {
 			continue
 		}
+		seen[alarm.Entity] = alarm.Version
 		if err := s.deliverDurableEntityAlarm(ctx, alarm); err != nil && ctx.Err() == nil {
-			if !errors.Is(err, durableentity.ErrAlarmObsolete) && !errors.Is(err, durableentity.ErrBusy) && !errors.Is(err, durableentity.ErrConflict) {
+			if !errors.Is(err, durableentity.ErrAlarmObsolete) && !errors.Is(err, durableentity.ErrAlarmBackoff) && !errors.Is(err, durableentity.ErrAlarmExhausted) && !errors.Is(err, durableentity.ErrBusy) && !errors.Is(err, durableentity.ErrConflict) {
 				s.log.Warn("durable entity alarm delivery deferred")
 			}
 		}
 	}
-	return page.NextCursor, nil
+	return next, errors.Join(indexErr, reconcileErr)
 }
 
 func (s *server) deliverDurableEntityAlarm(ctx context.Context, alarm durableentity.Alarm) (err error) {

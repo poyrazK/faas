@@ -2,6 +2,7 @@ name: Customer platform starter
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "cmd/gregale/templates/**"
       - "cmd/apid/**"
@@ -20,11 +21,21 @@ on:
       - "Makefile"
   workflow_dispatch:
 
+# Only the newest push to a pull request is interesting; without a group every
+# superseded push kept its runners until completion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
+env:
+  GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+
 jobs:
   acceptance:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Cold builds of the complete API/state test sources reached the old
     # fifteen-minute deadline. Keep acceptance bounded without dropping tests.
@@ -51,9 +62,25 @@ jobs:
       CUSTOMER_DATABASE_URL: postgres://customer_app:customer_test@127.0.0.1:5432/customer_platform?sslmode=disable
     steps:
       - uses: actions/checkout@v7
+      # Restore-only: read main's non-race `checks` Go cache instead of letting
+      # setup-go save a ~0.8 GB entry per pull-request ref, which evicted main's
+      # CI cache families from the 10 GB repository budget.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + module cache from main
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-checks-${{ runner.os }}-
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false  # restored from main above
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -80,6 +107,7 @@ jobs:
 
   mcp-task-postgres:
     name: MCP durable Tasks PostgreSQL integration
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:

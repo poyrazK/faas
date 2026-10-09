@@ -352,8 +352,12 @@ var ErrRolloutStateInvalid = errors.New("state: rollout state does not permit re
 // The store applies all requested gates with the expected-step CAS, traffic
 // rebalance, rollout completion, and audit insert atomically.
 type CanaryAdvanceParams struct {
-	ExpectedStep   int
-	TrafficPercent int
+	ProfileGateOverride *api.ProfileGateOverride
+	ProfileGateDecision *api.ProfileCanaryGateDecision
+	// Only the worker may request a preplanned zero-traffic recovery.
+	ProfileGateRollback bool
+	ExpectedStep        int
+	TrafficPercent      int
 	// RequireSafeReleaseLease gates an automated worker advance on the
 	// durable meterd lease and rechecks it inside the transaction.
 	RequireSafeReleaseLease bool
@@ -6469,6 +6473,11 @@ type Store interface {
 	// app_id and bounded received_at predicates keep both lookup forms
 	// tenant-scoped and within the caller's plan retention window.
 	GetRequestTelemetryByAppAndIdentifier(ctx context.Context, arg sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error)
+
+	// ListRequestTelemetryByAccountTrace backs GET /v1/account/traces/{id}:
+	// the newest retained row per app for one trace id, in one indexed read
+	// instead of one lookup per app.
+	ListRequestTelemetryByAccountTrace(ctx context.Context, arg sqlc.ListRequestTelemetryByAccountTraceParams) ([]sqlc.ListRequestTelemetryByAccountTraceRow, error)
 
 	// RequestTelemetryByDeployment backs the per-deployment
 	// drilldown and the regression detector (PR-B cron). Uses

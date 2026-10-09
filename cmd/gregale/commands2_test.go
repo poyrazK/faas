@@ -1995,6 +1995,14 @@ func TestCmdAppsRm_TypedConfirmation_Mismatch(t *testing.T) {
 		method string
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			if strings.HasSuffix(r.URL.Path, "/deployments") {
+				_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{}})
+			} else {
+				_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "myapp"})
+			}
+			return
+		}
 		mu.Lock()
 		method = r.Method
 		mu.Unlock()
@@ -2007,8 +2015,8 @@ func TestCmdAppsRm_TypedConfirmation_Mismatch(t *testing.T) {
 
 	pipeStdin(t, "wrong\n")
 
-	if code := cmdAppsRm([]string{"myapp"}); code != 1 {
-		t.Errorf("cmdAppsRm (typed-wrong) = %d, want 1", code)
+	if code := cmdAppsRm([]string{"myapp"}); code != 130 {
+		t.Errorf("cmdAppsRm (typed-wrong) = %d, want 130", code)
 	}
 	mu.Lock()
 	defer mu.Unlock()

@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
+	"github.com/onebox-faas/faas/pkg/guestmemproto"
 	"github.com/onebox-faas/faas/pkg/jailsetup"
 	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -367,7 +369,7 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 		}
 		line := append([]byte(nil), w.pending[:newline+1]...)
 		w.pending = w.pending[newline+1:]
-		if firecrackerControlLine(line) {
+		if firecrackerControlLine(line) || guestInitStageLine(line) {
 			continue
 		}
 		if _, err := w.ring.Write("stdout", line); err != nil {
@@ -375,6 +377,14 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 		}
 	}
 	return len(p), nil
+}
+
+// guestInitStageLine matches guest-init's internal boot-progress markers
+// ("guest-init: stage pivot"). They are kept in the unfiltered console file for
+// operators; customers saw them at the top of every job task log (hunt #8).
+// guest-init's app restart and crash lines stay customer-visible.
+func guestInitStageLine(line []byte) bool {
+	return bytes.HasPrefix(bytes.TrimSpace(line), []byte("guest-init: stage "))
 }
 
 // stripFirecrackerTimestamp drops the wall-clock token Firecracker's logger
@@ -425,6 +435,7 @@ func firecrackerControlLine(line []byte) bool {
 	}
 	for _, marker := range []string{
 		"running firecracker",
+		"successfully started microvm",
 		"firecracker exiting",
 		"host cpu vendor",
 		"snapshot cpu vendor",
@@ -2309,26 +2320,26 @@ const resumeHookMsgResume uint32 = 1
 const resumeHookAckAfterRestore byte = 13
 
 // resumeHookAckUserspaceReseed: a registered Node or Python process did not
-// confirm its userspace RNG reseed (ADR-680). Keep in sync with
+// confirm its userspace RNG reseed (ADR-687). Keep in sync with
 // guest/init/listen_resume_linux.go.
 const resumeHookAckUserspaceReseed byte = 15
 
 // resumeCapUserspaceReseed is the capability bit a guest-init running the
-// ADR-680 userspace reseed barrier sends right after its OK ack.
+// ADR-687 userspace reseed barrier sends right after its OK ack.
 const (
 	resumeCapUserspaceReseed = byte(0x01)
 	resumeCapabilityWait     = 100 * time.Millisecond
 )
 
 // ErrGuestLacksRestoreReseed means the restored guest-init did not advertise
-// the userspace reseed barrier (ADR-680): it predates the barrier, or its
+// the userspace reseed barrier (ADR-687): it predates the barrier, or its
 // barrier never started. Its Node and Python processes may replay the
 // snapshot's random state, so the restore is refused. The manager cold-boots
 // and schedd marks the snapshot stale, so the next park captures a snapshot
 // from the current guest-init. It deliberately does not wrap io.EOF: an old
 // guest closes right after its ack, and a transport retry would resend the
 // resume request.
-var ErrGuestLacksRestoreReseed = errors.New("vmm: restored guest-init lacks the userspace RNG reseed barrier (ADR-680)")
+var ErrGuestLacksRestoreReseed = errors.New("vmm: restored guest-init lacks the userspace RNG reseed barrier (ADR-687)")
 
 func readResumeCapabilities(conn net.Conn) error {
 	_ = conn.SetReadDeadline(time.Now().Add(resumeCapabilityWait))
@@ -2389,15 +2400,16 @@ const resumeHookMaxBodyBytes = 8 * 1024
 func readConnectAck(conn net.Conn) (string, error) {
 	const max = 64
 	buf := make([]byte, 0, max)
-	one := make([]byte, 1)
+	one := [1]byte{}
 	for len(buf) < max {
-		if _, err := conn.Read(one); err != nil {
+		if _, err := conn.Read(one[:]); err != nil {
 			return "", fmt.Errorf("read CONNECT reply: %w", err)
 		}
-		if one[0] == '\n' || one[0] == '\r' {
+		value := one[0]
+		if value == '\n' || value == '\r' {
 			break
 		}
-		buf = append(buf, one[0])
+		buf = append(buf, value)
 	}
 	if len(buf) == 0 {
 		return "", fmt.Errorf("empty CONNECT reply")
@@ -2562,18 +2574,19 @@ func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTime
 	sent := time.Now()
 
 	// Step 4: read the 1-byte ack from the guest.
-	ack := make([]byte, 1)
-	if _, err := io.ReadFull(conn, ack); err != nil {
+	ack := [1]byte{}
+	if _, err := io.ReadFull(conn, ack[:]); err != nil {
 		return fmt.Errorf("vmm: read resume ack: %w", err)
 	}
-	if ack[0] != 0 {
-		if ack[0] == resumeHookAckAfterRestore {
-			return fmt.Errorf("vmm: %w (ack=%d)", ErrAfterRestoreHook, ack[0])
+	ackValue := ack[0]
+	if ackValue != 0 {
+		if ackValue == resumeHookAckAfterRestore {
+			return fmt.Errorf("vmm: %w (ack=%d)", ErrAfterRestoreHook, ackValue)
 		}
-		if ack[0] == resumeHookAckUserspaceReseed {
-			return fmt.Errorf("vmm: resume hook failed: a Node or Python process did not confirm its userspace RNG reseed (ack=%d)", ack[0])
+		if ackValue == resumeHookAckUserspaceReseed {
+			return fmt.Errorf("vmm: resume hook failed: a Node or Python process did not confirm its userspace RNG reseed (ack=%d)", ackValue)
 		}
-		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ack[0])
+		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ackValue)
 	}
 	if err := readResumeCapabilities(conn); err != nil {
 		return err
@@ -2626,13 +2639,70 @@ func (v *JailerVMM) TriggerBeforeCheckpoint(ctx context.Context, l Lease) error 
 	if _, err := io.ReadFull(conn, result[:]); err != nil {
 		return fmt.Errorf("vmm: before_checkpoint ACK: %w", err)
 	}
-	if result[0] == beforeCheckpointHookAckFailed {
+	resultValue := result[0]
+	if resultValue == beforeCheckpointHookAckFailed {
 		return fmt.Errorf("vmm: %w", ErrBeforeCheckpointFailed)
 	}
-	if result[0] != 0 {
-		return fmt.Errorf("vmm: before_checkpoint rejected (ack=%d)", result[0])
+	if resultValue != 0 {
+		return fmt.Errorf("vmm: before_checkpoint rejected (ack=%d)", resultValue)
 	}
 	return nil
+}
+
+// guestMemoryStats asks guest-init for its /proc/meminfo summary just before
+// a capture, so the capture log can say what the snapshot's non-zero content
+// is made of. It is diagnostic: callers log the error and capture anyway, and
+// a guest that predates guestmemproto answers with a single non-zero byte.
+func (v *JailerVMM) guestMemoryStats(ctx context.Context, l Lease) (guestmemproto.Stats, error) {
+	var stats guestmemproto.Stats
+	if v == nil || v.chrootBase == "" || l.Instance == "" {
+		return stats, fmt.Errorf("vmm: memory stats: invalid VMM or instance")
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(callCtx, "unix", v.vsockUDSSock(l.Instance))
+	if err != nil {
+		return stats, fmt.Errorf("vmm: memory stats dial: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	stop := context.AfterFunc(callCtx, func() { _ = conn.Close() })
+	defer stop()
+	if deadline, ok := callCtx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	if _, err := fmt.Fprintf(conn, "CONNECT %d\n", resumeHookGuestPort); err != nil {
+		return stats, fmt.Errorf("vmm: memory stats CONNECT: %w", err)
+	}
+	if ack, err := readConnectAck(conn); err != nil || ack != "OK" {
+		return stats, fmt.Errorf("vmm: memory stats CONNECT reply %q: %w", ack, err)
+	}
+	var msg [8]byte
+	binary.BigEndian.PutUint32(msg[:4], guestmemproto.MessageType)
+	if _, err := conn.Write(msg[:]); err != nil {
+		return stats, fmt.Errorf("vmm: memory stats send: %w", err)
+	}
+	var hdr [5]byte
+	if _, err := io.ReadFull(conn, hdr[:1]); err != nil {
+		return stats, fmt.Errorf("vmm: memory stats ack: %w", err)
+	}
+	if hdr[0] != 0 {
+		return stats, fmt.Errorf("vmm: memory stats unsupported by guest (ack=%d)", hdr[0])
+	}
+	if _, err := io.ReadFull(conn, hdr[1:]); err != nil {
+		return stats, fmt.Errorf("vmm: memory stats length: %w", err)
+	}
+	n := binary.BigEndian.Uint32(hdr[1:])
+	if n == 0 || n > guestmemproto.MaxBodyBytes {
+		return stats, fmt.Errorf("vmm: memory stats body length %d out of range", n)
+	}
+	body := make([]byte, n)
+	if _, err := io.ReadFull(conn, body); err != nil {
+		return stats, fmt.Errorf("vmm: memory stats body: %w", err)
+	}
+	if err := json.Unmarshal(body, &stats); err != nil {
+		return stats, fmt.Errorf("vmm: memory stats decode: %w", err)
+	}
+	return stats, nil
 }
 
 // TriggerExtensionHook delivers one bounded lifecycle notification to the
@@ -2930,6 +3000,8 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			return SnapshotInfo{}, err
 		}
 	}
+	// Read after the app's before_checkpoint hook, which may free memory.
+	guestMem, guestMemErr := v.guestMemoryStats(ctx, l)
 	root := v.chrootRoot(l.Instance)
 	if err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Paused"}); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("vmm: pause: %w", err)
@@ -3013,6 +3085,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	var memTmpPath string
 	var memPublishedPath string
 	var memBytes int64
+	memContent := int64(-1)
 	var err error
 	memPublishedLocally := false
 	// In OCI mode, never rename into a cache path returned by LocalPath:
@@ -3029,7 +3102,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 					return SnapshotInfo{}, fmt.Errorf("vmm: prepare local snapshot path: %w", prepErr)
 				}
 				var moveErr error
-				memBytes, moveErr = publishLocalSnapshotMemory(filepath.Join(root, memName), localPath, syncLocalSnapshotMemory)
+				memBytes, memContent, moveErr = publishLocalSnapshotMemory(ctx, filepath.Join(root, memName), localPath, syncLocalSnapshotMemory)
 				if moveErr != nil {
 					return SnapshotInfo{}, fmt.Errorf("vmm: publish local snapshot mem: %w", moveErr)
 				}
@@ -3048,7 +3121,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		_ = memTmp.Close()
 		defer func() { _ = os.Remove(memTmpPath) }()
 
-		memBytes, err = moveOut(filepath.Join(root, memName), memTmpPath)
+		memBytes, memContent, err = moveOutSparse(ctx, filepath.Join(root, memName), memTmpPath)
 		if err != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: export mem: %w", err)
 		}
@@ -3137,6 +3210,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	if driveKey != "" {
 		storedBytes += snapshotDriveStoredBytes(driveWritten, v.publishedLocalPath(driveKey, frozenDrivePath), driveBytes)
 	}
+	logSnapshotMemory(l.Instance, memBytes, memContent, storedBytes, guestMem, guestMemErr)
 
 	// SnapshotKeepAlive purposely does NOT Kill the VM — the
 	// warm-tier capture keeps the VM paused until the engine's
@@ -5777,6 +5851,16 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 	// so the wake.readiness_200 emit can carry the elapsed_ms
 	// field. Keep it local: one JailerVMM serves many concurrent instances.
 	readinessStartedAt := time.Now()
+	// A guest that stops during startup (crash-looped workload, guest-init
+	// exit) can never become ready: stop probing at once and report what the
+	// workload printed instead of waiting out the whole startup deadline.
+	ctx, stopGuestWatch := v.cancelOnGuestStop(ctx, l.Instance)
+	defer stopGuestWatch()
+	defer func() {
+		if err != nil && errors.Is(context.Cause(ctx), errGuestStopped) && !v.guestStopRequested(l.Instance) {
+			err = v.guestStoppedDuringStartup(l)
+		}
+	}()
 
 	if healthcheckGRPC {
 		conn, connErr := grpc.NewClient("passthrough:///"+addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -5984,6 +6068,9 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 			receiptReceived = true
 			if receipt.err != nil {
 				if requiresCharacterization {
+					if v.guestExitedWithin(l.Instance, guestExitReportGrace) {
+						return v.guestStoppedDuringStartup(l)
+					}
 					return fmt.Errorf("execution mode %q requires a valid characterization report: %w", executionMode, receipt.err)
 				}
 				continue
@@ -5994,6 +6081,9 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-characterizationDeadline:
+			if v.guestExitedWithin(l.Instance, 0) {
+				return v.guestStoppedDuringStartup(l)
+			}
 			return fmt.Errorf("execution mode %q did not produce a valid characterization report before the startup deadline", executionMode)
 		}
 	}
@@ -6048,6 +6138,124 @@ func characterizationReadinessMismatch(report api.CharacterizationReport, execut
 		}
 	}
 	return nil
+}
+
+// errGuestStopped is the readiness context's cancel cause when the
+// Firecracker process of the instance exits before the guest became ready.
+var errGuestStopped = errors.New("guest stopped during startup")
+
+// cancelOnGuestStop derives a context that is cancelled with errGuestStopped
+// when the instance's Firecracker process exits. production-us hunt #8: a
+// public nginx image crash-looped and guest-init exited (kernel panic) 1.5 s
+// after boot, yet readiness probed the dead guest for its full 2-minute
+// deadline and then reported "app_not_listening" with no app output.
+func (v *JailerVMM) cancelOnGuestStop(ctx context.Context, instance string) (context.Context, func()) {
+	v.mu.Lock()
+	rec := v.recs[instance]
+	v.mu.Unlock()
+	if rec == nil || rec.done == nil {
+		return ctx, func() {}
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	stop := make(chan struct{})
+	go func() {
+		select {
+		case <-rec.done:
+			cancel(errGuestStopped)
+		case <-stop:
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() {
+		close(stop)
+		cancel(nil)
+	}
+}
+
+// guestExitReportGrace bounds how long a failed characterization receipt
+// waits for the Firecracker exit that usually follows a guest-init exit
+// (kernel panic, then VMM stop, ~1 s later).
+const guestExitReportGrace = 2 * time.Second
+
+// guestExitedWithin reports whether the instance's Firecracker process exited
+// on its own, waiting at most grace. production-us hunt #8: a worker whose
+// command crash-looped surfaced only "requires a valid characterization
+// report: context deadline exceeded" because the receipt failed first; the
+// workload's own error was in the console tail (H8-20).
+func (v *JailerVMM) guestExitedWithin(instance string, grace time.Duration) bool {
+	v.mu.Lock()
+	rec := v.recs[instance]
+	v.mu.Unlock()
+	if rec == nil || rec.done == nil {
+		return false
+	}
+	if grace <= 0 {
+		select {
+		case <-rec.done:
+			return !v.guestStopRequested(instance)
+		default:
+			return false
+		}
+	}
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-rec.done:
+		return !v.guestStopRequested(instance)
+	case <-timer.C:
+		return false
+	}
+}
+
+// guestStopRequested reports whether vmmd itself stopped the instance (an
+// explicit destroy owns that exit and its error).
+func (v *JailerVMM) guestStopRequested(instance string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	rec := v.recs[instance]
+	return rec != nil && rec.stopping
+}
+
+// guestStoppedDuringStartup reports a guest that stopped before readiness,
+// with the workload's own last output lines, in the same form as a
+// characterization report of a workload that exited during startup.
+func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
+	var lines []string
+	if ring := v.LogRing(l.Instance); ring != nil {
+		for _, line := range ring.Snapshot(0) {
+			lines = append(lines, line.Line)
+		}
+	}
+	if tail := workloadOutputTail(lines, 20); tail != "" {
+		return fmt.Errorf("workload stopped during startup (guest %s exited before becoming ready): %s", l.Instance, tail)
+	}
+	return fmt.Errorf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance)
+}
+
+// kernelLogLine matches guest kernel messages ("[    1.445781] ...") that the
+// serial console interleaves with workload output.
+var kernelLogLine = regexp.MustCompile(`^\[\s*\d+\.\d+\]`)
+
+// workloadOutputTail keeps the last max non-empty lines that are not guest
+// kernel messages (a guest-init exit ends in a kernel panic trace that would
+// otherwise push the workload's own error out of the tail).
+func workloadOutputTail(lines []string, max int) string {
+	kept := make([]string, 0, max)
+	for i := len(lines) - 1; i >= 0 && len(kept) < max; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || kernelLogLine.MatchString(line) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	for i, j := 0, len(kept)-1; i < j; i, j = i+1, j-1 {
+		kept[i], kept[j] = kept[j], kept[i]
+	}
+	tail := []rune(strings.Join(kept, "\n"))
+	if len(tail) > 4096 {
+		tail = tail[len(tail)-4096:]
+	}
+	return string(tail)
 }
 
 // notReadyProblem shapes the deadline-expired error from the TCP

@@ -13,6 +13,10 @@ export type DeploymentAliasResponse = {
    */
   revision: number;
   /**
+   * Lifecycle status of the target deployment. An alias whose deployment is not live (superseded by a rollback or redeploy, or failed) no longer serves traffic and answers 409.
+   */
+  deployment_status?: string;
+  /**
    * Stable one-label hostname for this alias. It is keyed by an immutable app identifier and remains stable if the app slug is renamed.
    */
   host?: string;

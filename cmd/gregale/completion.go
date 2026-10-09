@@ -27,6 +27,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -56,6 +58,8 @@ func cmdCompletion(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "profile-names":
+		return cmdCompletionProfileNames()
 	case "bash":
 		return cmdCompletionBash()
 	case "zsh":
@@ -107,12 +111,30 @@ func cmdCompletionCacheList(kind string) int {
 // TAB time. This avoids embedding the UserConfigDir computation
 // in four different shell dialects.
 func cachePathForScripts() string {
-	return api.NewClient(apiBase(), loadToken()).CompletionCache().Path()
+	return NewClient(apiBase(), loadToken()).CompletionCache().Path()
 }
 
 // clearCompletionCaches drops cached suggestions when local credentials are
 // saved or removed. Cache cleanup is best-effort, like cache refresh itself.
 func clearCompletionCaches() {
+	if currentProfile() != "default" && os.Getenv("FAAS_COMPLETION_CACHE_PATH") == "" {
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			return
+		}
+		entries, err := os.ReadDir(filepath.Join(dir, "gregale", "profiles", currentProfile()))
+		if err != nil {
+			return
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasPrefix(entry.Name(), "completion-cache") {
+				if err := os.Remove(filepath.Join(dir, "gregale", "profiles", currentProfile(), entry.Name())); err != nil {
+					PrintWarn(osStderr, "Could not clear the local completion cache: %v", err)
+				}
+			}
+		}
+		return
+	}
 	if err := api.NewCompletionCache().ClearAll(); err != nil {
 		PrintWarn(os.Stderr, "Could not clear the local completion cache: %v", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,13 +31,20 @@ type WorkflowStepExecutor interface {
 type WorkflowStepIdentity struct {
 	RunID            string
 	PlatformTenantID string
+	DeploymentID     string
 }
 
 // WorkflowIdentityExecutor carries the durable run identity through the
-// scheduler-to-gateway envelope. Legacy executors remain usable for unscoped
-// runs; tenant-bound runs fail closed if the executor cannot carry identity.
+// scheduler-to-gateway envelope. Legacy executors remain usable for unpinned, unscoped
+// runs; pinned and tenant-bound runs require durable identity transport.
 type WorkflowIdentityExecutor interface {
 	ExecuteWorkflowStep(ctx context.Context, appID string, identity WorkflowStepIdentity, path, method string, headers map[string]string, body []byte, timeout time.Duration, managedOperationID string, generation int64) (int, []byte, error)
+}
+
+// WorkflowRetryAfterExecutor preserves downstream throttling deadlines while
+// carrying the same trusted identity and operation context as normal dispatch.
+type WorkflowRetryAfterExecutor interface {
+	ExecuteWorkflowStepWithRetryAfter(context.Context, string, WorkflowStepIdentity, string, string, map[string]string, []byte, time.Duration, string, int64) (int, []byte, time.Time, error)
 }
 
 // WorkflowManagedOperationExecutor is implemented by the authenticated
@@ -118,9 +126,82 @@ func workflowHTTPStatus(statusCode int, callErr error) *int {
 	return &statusCode
 }
 
+func (o *WorkflowOrchestrator) executeWorkflowHandlerWithRetryAfter(ctx context.Context, run *state.WorkflowRun, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, time.Time, error) {
+	if executor, ok := o.executor.(WorkflowRetryAfterExecutor); ok {
+		return executor.ExecuteWorkflowStepWithRetryAfter(ctx, run.AppID, WorkflowStepIdentity{RunID: run.ID, PlatformTenantID: run.PlatformTenantID, DeploymentID: run.DeploymentID}, path, method, headers, body, timeout, operationID, generation)
+	}
+	status, body, err := o.executeWorkflowHandler(ctx, run, path, method, headers, body, timeout, operationID, generation)
+	return status, body, time.Time{}, err
+}
+
 func (o *WorkflowOrchestrator) executeWorkflowHandler(ctx context.Context, run *state.WorkflowRun, path, method string, headers map[string]string, body []byte, timeout time.Duration, managedOperationID string, generation int64) (int, []byte, error) {
+	if adapter, ok := o.store.(state.WorkflowOperationStore); ok {
+		op, linked, err := adapter.OperationForWorkflowRun(ctx, run.ID)
+		if err != nil {
+			return 0, nil, err
+		}
+		if linked {
+			if op.Generation != run.ResumeCount+1 || op.CancellationRequested || op.State != api.OperationRunning {
+				return 0, nil, state.ErrOperationStaleAttempt
+			}
+			if op.ReleaseID != "" {
+				headers[api.ReleaseHeader] = op.ReleaseID
+			} else {
+				headers[api.RevisionHeader] = op.DeploymentID
+			}
+			attempt, err := strconv.Atoi(headers["X-Faas-Workflow-Attempt"])
+			if err != nil {
+				return 0, nil, err
+			}
+
+			proofStore, ok := o.store.(state.WorkflowOutboundStore)
+			if !ok {
+				return 0, nil, errors.New("workflow operation proof unavailable")
+			}
+			proof, err := proofStore.GetWorkflowOutboundAttempt(ctx, run.ID, headers["X-Faas-Workflow-Step"], attempt)
+			if err != nil {
+				return 0, nil, err
+			}
+			deadlineStore, ok := o.store.(state.WorkflowOperationDeadlineStore)
+			if !ok {
+				return 0, nil, errors.New("workflow operation deadline unavailable")
+			}
+			deadline, err := deadlineStore.WorkflowOperationAttemptDeadline(ctx, run.ID, headers["X-Faas-Workflow-Step"], attempt)
+			if err != nil {
+				return 0, nil, err
+			}
+			timeout = min(timeout, time.Until(deadline))
+			if timeout <= 0 {
+				return 0, nil, state.ErrOperationStaleAttempt
+			}
+			var stopDeadline context.CancelFunc
+			ctx, stopDeadline = context.WithDeadline(ctx, deadline)
+			defer stopDeadline()
+			headers[api.OperationIDHeader] = op.ID
+			headers[api.OperationExecutionKindHeader] = "workflow"
+			headers[api.OperationWorkflowRunHeader] = run.ID
+			headers[api.OperationWorkflowStepHeader] = headers["X-Faas-Workflow-Step"]
+			headers[api.OperationGenerationHeader] = strconv.Itoa(op.Generation)
+			headers[api.OperationAttemptHeader] = strconv.Itoa(attempt)
+			headers[api.OperationWorkflowCapabilityHeader] = proof.Token
+			var release func()
+			ctx, release = o.workflowItemContext(ctx, run.ID, headers["X-Faas-Workflow-Step"], attempt)
+			defer release()
+		}
+	}
+	status, result, err := o.dispatchWorkflowHandler(ctx, run, path, method, headers, body, timeout, managedOperationID, generation)
+	if ctx.Err() != nil {
+		return 0, nil, ctx.Err()
+	}
+	return status, result, err
+}
+
+func (o *WorkflowOrchestrator) dispatchWorkflowHandler(ctx context.Context, run *state.WorkflowRun, path, method string, headers map[string]string, body []byte, timeout time.Duration, managedOperationID string, generation int64) (int, []byte, error) {
 	if executor, ok := o.executor.(WorkflowIdentityExecutor); ok {
-		return executor.ExecuteWorkflowStep(ctx, run.AppID, WorkflowStepIdentity{RunID: run.ID, PlatformTenantID: run.PlatformTenantID}, path, method, headers, body, timeout, managedOperationID, generation)
+		return executor.ExecuteWorkflowStep(ctx, run.AppID, WorkflowStepIdentity{RunID: run.ID, PlatformTenantID: run.PlatformTenantID, DeploymentID: run.DeploymentID}, path, method, headers, body, timeout, managedOperationID, generation)
+	}
+	if run.DeploymentID != "" {
+		return 0, nil, errors.New("workflow executor cannot carry pinned run identity")
 	}
 	if run.PlatformTenantID != "" {
 		return 0, nil, errors.New("workflow executor cannot carry platform tenant identity")
@@ -357,8 +438,28 @@ func workflowFailureContextForHandler(handlerName string, specs []api.WorkflowSt
 
 // DispatchTick runs one iteration of claiming pending runs and advancing active ones.
 func (o *WorkflowOrchestrator) DispatchTick(ctx context.Context) error {
+	_, err := o.dispatchOne(ctx)
+	return err
+}
+
+// DispatchBatch drains a bounded number of runs on an already reserved pool
+// slot. No run is claimed ahead of available execution capacity.
+func (o *WorkflowOrchestrator) DispatchBatch(ctx context.Context) error {
+	for range api.WorkflowDispatchBatchPerSlot {
+		claimed, err := o.dispatchOne(ctx)
+		if err != nil || !claimed {
+			return err
+		}
+	}
+	return nil
+}
+
+func (o *WorkflowOrchestrator) dispatchOne(ctx context.Context) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if o.store == nil {
-		return nil
+		return false, nil
 	}
 
 	// Claim one newly queued run or one parked wait whose deadline is due.
@@ -367,26 +468,26 @@ func (o *WorkflowOrchestrator) DispatchTick(ctx context.Context) error {
 		if o.log != nil {
 			o.log.Warn("workflow orchestrator: claim pending failed", "err", err)
 		}
-		return err
+		return false, err
 	}
 
 	if claimed != nil {
 		ctx = state.WithWorkflowRunGeneration(ctx, claimed.ID, claimed.ResumeCount)
 		if err := o.initAndAdvanceRun(ctx, claimed); err != nil {
 			if errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) || errors.Is(err, state.ErrWorkflowGuardNotReady) {
-				return nil
+				return true, nil
 			}
 			if o.log != nil {
 				o.log.Warn("workflow orchestrator: init and advance run failed", "run_id", claimed.ID, "err", err)
 			}
 			if recoverErr := o.store.RecoverWorkflowRun(ctx, claimed.ID); recoverErr != nil {
-				return errors.Join(err, recoverErr)
+				return true, errors.Join(err, recoverErr)
 			}
-			return err
+			return true, err
 		}
 	}
 
-	return nil
+	return claimed != nil, nil
 }
 
 // initAndAdvanceRun parses the definition snapshot, seeds step records, and advances.
@@ -1017,7 +1118,7 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 
 	timeout := spec.Timeout
 	if timeout <= 0 {
-		timeout = 30 * time.Second
+		timeout = api.WorkflowStepDefaultTimeout
 	}
 	if leaseStore, ok := o.store.(state.WorkflowRunLeaseStore); ok {
 		if err := leaseStore.ExtendWorkflowRunLease(ctx, run.ID, timeout); err != nil {
@@ -1050,7 +1151,7 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 			if managedOperationID != "" {
 				generation = int64(step.Attempt + 1)
 			}
-			statusCode, body, err = o.executeWorkflowHandler(execCtx, run, workflowStepPath(spec), method, headers, inputBytes, timeout, managedOperationID, generation)
+			statusCode, body, outboundRetryAt, err = o.executeWorkflowHandlerWithRetryAfter(execCtx, run, workflowStepPath(spec), method, headers, inputBytes, timeout, managedOperationID, generation)
 		}
 	}
 	auditOutput := string(body)

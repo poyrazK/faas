@@ -17,16 +17,18 @@ import (
 // bytes, and successfully write the reserved platform copy before attachment.
 // Store methods recheck the claim and staging receipt atomically.
 type OperationArtifactStore interface {
+	ReuseOperationArtifact(context.Context, string, OperationExecutionAuthority, api.OperationArtifactRequest) (api.OperationArtifactUploadResponse, error)
 	AttachVerifiedOperationArtifact(context.Context, string, OperationExecutionAuthority, api.OperationArtifactRequest, string) (Operation, error)
 }
 
 func operationArtifact(op *Operation, inv Invocation, req api.OperationArtifactRequest, now time.Time) (api.OperationEvent, error) {
-	if err := operations.ValidateArtifact(req, op.PlanLimits); err != nil {
-		return api.OperationEvent{}, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	if err := validateHTTPArtifactDeclaration(*op, inv, req); err != nil {
+		return api.OperationEvent{}, err
 	}
-	app, _, _, _ := operations.ParseArtifactURI(req.URI)
-	if app != op.AppID {
-		return api.OperationEvent{}, ErrNotFound
+	// A committed replay is handled before this mutation. Cancellation fences
+	// every new attachment, including an upload already copying private bytes.
+	if op.CancellationRequested {
+		return api.OperationEvent{}, ErrConflict
 	}
 	if len(op.Artifacts) >= op.PlanLimits.ArtifactsPerOperation {
 		return api.OperationEvent{}, NewOperationLimitError("artifacts_per_operation", int64(op.PlanLimits.ArtifactsPerOperation), int64(len(op.Artifacts))+1)
@@ -38,6 +40,9 @@ func operationArtifact(op *Operation, inv Invocation, req api.OperationArtifactR
 	for _, artifact := range op.Artifacts {
 		if artifact.Name == req.Name {
 			return api.OperationEvent{}, ErrConflict
+		}
+		if artifact.SizeBytes > op.PlanLimits.ArtifactTotalMaxBytes-total {
+			return api.OperationEvent{}, NewOperationLimitError("artifact_total_bytes", op.PlanLimits.ArtifactTotalMaxBytes, op.PlanLimits.ArtifactTotalMaxBytes+1)
 		}
 		total += artifact.SizeBytes
 	}
@@ -112,14 +117,9 @@ func (s *PgStore) AttachVerifiedOperationArtifact(ctx context.Context, id string
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	execution, _ := operationUUID(authority.InvocationID)
-	claim, err := q.LockCustomerOperationClaim(ctx, tx, execution)
+	inv, err := operationLockedInvocation(ctx, tx, authority.InvocationID)
 	if err != nil {
 		return Operation{}, mapErr(err)
-	}
-	inv := Invocation{ID: claim.ID, AppID: claim.AppID, AccountID: claim.AccountID, PlatformTenantID: claim.PlatformTenantID, InstanceID: claim.InstanceID, State: InvocationState(claim.State), Attempts: int(claim.Attempts)}
-	if claim.LeaseExpiresAt.Valid {
-		expiry := claim.LeaseExpiresAt.Time
-		inv.LeaseExpiresAt = &expiry
 	}
 	op, _, _, exists, err := operationForInvocationTx(ctx, tx, inv.ID)
 	if err != nil {
@@ -153,6 +153,11 @@ func (s *PgStore) AttachVerifiedOperationArtifact(ctx context.Context, id string
 		return Operation{}, mapErr(err)
 	}
 	blob := operationPGBlob(row)
+	// Lock waits count against the execution lease and staging lifetime.
+	now = time.Now().UTC()
+	if err := ValidateOperationExecutionAuthority(op, inv, authority, now); err != nil {
+		return Operation{}, err
+	}
 	if err := validateOperationResultBlob(blob, op, inv, req, now); err != nil {
 		return Operation{}, err
 	}
@@ -181,6 +186,16 @@ func (s *PgStore) AttachVerifiedOperationArtifact(ctx context.Context, id string
 }
 
 func refreshOperationArtifactExpiry(op *Operation) {
+	for key, receipt := range op.JobArtifactReceipts {
+		expiry := op.ExpiresAt
+		receipt.Artifact.ExpiresAt = &expiry
+		op.JobArtifactReceipts[key] = receipt
+	}
+	for key, receipt := range op.WorkflowArtifactReceipts {
+		expiry := op.ExpiresAt
+		receipt.Artifact.ExpiresAt = &expiry
+		op.WorkflowArtifactReceipts[key] = receipt
+	}
 	for i := range op.Artifacts {
 		expiry := op.ExpiresAt
 		op.Artifacts[i].ExpiresAt = &expiry

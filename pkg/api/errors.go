@@ -1580,6 +1580,9 @@ const (
 	// CodeAPIContractBreakingChange is stamped on deployments rejected by
 	// the production OpenAPI contract gate.
 	CodeAPIContractBreakingChange = "api_contract_breaking_change"
+	// CodeAPIContractComparisonIncomplete means a promotion was blocked
+	// because an unsupported response-schema change could not be classified.
+	CodeAPIContractComparisonIncomplete = "api_contract_comparison_incomplete"
 	// CodeOpenAPIPolicyConfirmationRequired means a policy apply request
 	// omitted the approval token returned by the preceding plan.
 	CodeOpenAPIPolicyConfirmationRequired = "openapi_policy_confirmation_required"
@@ -1868,6 +1871,10 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
+	case CodeProfileGateBlocked:
+		return http.StatusConflict
+	case CodeProfileInvestigationLimit:
+		return http.StatusTooManyRequests
 	case CodeAutomationInvalid:
 		return http.StatusUnprocessableEntity
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
@@ -1954,7 +1961,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
+	case CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange, CodeAPIContractComparisonIncomplete:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid, CodeSecurityPostureBlocked:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -3079,12 +3086,12 @@ func ErrDomainCertNotIssued(domain, reason string) *Problem {
 // FAAS_DOMAIN_DOCTOR_ENABLED is unset. The route stays
 // registered (per the pre-#911 pattern in api/flags.go) so
 // the CLI gets a deterministic error code rather than a
-// generic 404. The detail line is the operator-facing
-// "set FAAS_DOMAIN_DOCTOR_ENABLED=1" hint.
+// generic 404. The detail stays customer-facing; operators key on
+// the stable code, not on FAAS_DOMAIN_DOCTOR_ENABLED in the text.
 func ErrDoctorDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeDoctorDisabled,
 		"Domain doctor is dark-launched",
-		"the FAAS_DOMAIN_DOCTOR_ENABLED flag is not set on this cluster; ask the operator to enable it or use `gregale domains verify` for a one-shot check").
+		"the domain doctor is not available on this Gregale installation right now; use `gregale domains verify` for a one-shot check or contact support").
 		WithDocs(docsBase + "/domains/doctor")
 }
 
@@ -3105,7 +3112,7 @@ func ErrDoctorUnavailable(domain, reason string) *Problem {
 func ErrAPIContractDiffDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeAPIContractDiffDisabled,
 		"API contract diff is disabled",
-		"the FAAS_API_CONTRACT_DIFF_ENABLED flag is not enabled on this cluster; ask the operator to enable it").
+		"API contract diff is not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/api-hosting/contract-diff")
 }
 
@@ -3114,6 +3121,15 @@ func ErrAPIContractDiffDisabled() *Problem {
 func ErrAPIContractBreakingChange(detail string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractBreakingChange,
 		"API contract breaking change", detail).
+		WithDocs(docsBase + "/api-hosting/contract-diff")
+}
+
+// ErrAPIContractComparisonIncomplete is used when the compatibility gate
+// cannot classify a changed response schema with its currently supported
+// checks.
+func ErrAPIContractComparisonIncomplete(detail string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractComparisonIncomplete,
+		"API contract comparison incomplete", detail).
 		WithDocs(docsBase + "/api-hosting/contract-diff")
 }
 
@@ -4353,7 +4369,7 @@ func ErrTenantSurfacesNotAllowed(p Plan) *Problem {
 func ErrTenantSurfacesNotEnabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeTenantSurfacesNotEnabled,
 		"Tenant surfaces are not enabled",
-		"the FAAS_TENANT_SURFACES_ENABLED flag is not enabled on this cluster; ask the cluster operator to enable the tenant-surface API").
+		"tenant surfaces are not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/plans#tenant-surfaces")
 }
 
@@ -4366,7 +4382,7 @@ func ErrTenantSurfacesNotEnabled() *Problem {
 func ErrStaticEgressIPNotEnabled() *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodeStaticEgressIPNotEnabled,
 		"Static egress IP feature is not enabled on this cluster",
-		"the FAAS_STATIC_EGRESS_IP_ENABLED env var is not set; ask the cluster operator to enable the static egress IP surface.").
+		"static egress IPs are not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/static-egress-ip")
 }
 
@@ -4375,7 +4391,7 @@ func ErrStaticEgressIPNotEnabled() *Problem {
 func ErrPrivateNetworkNotEnabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodePrivateNetworkNotEnabled,
 		"Private network attachments are not enabled on this cluster",
-		"the FAAS_PRIVATE_NETWORK_ENABLED env var is not enabled; ask the cluster operator to enable the private-network attachment surface.").
+		"private network attachments are not available on this Gregale installation right now; contact support for availability").
 		WithDocs(docsBase + "/networking")
 }
 
@@ -6461,3 +6477,8 @@ func ErrUDPListenerLimit(limit, observed int) *Problem {
 		"UDP listener reservation limit reached", "Delete an existing UDP listener before reserving another public port. Disabled listeners still reserve their ports.").
 		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/containers#udp-listeners")
 }
+
+// CodeProfileInvestigationLimit is the per-app saved metadata quota.
+const CodeProfileInvestigationLimit = "profile_investigation_limit"
+
+const CodeProfileGateBlocked = "profile_gate_blocked"

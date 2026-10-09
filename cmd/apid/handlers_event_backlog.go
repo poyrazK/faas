@@ -69,7 +69,8 @@ func (s *server) getEventBacklog(w http.ResponseWriter, r *http.Request, acct st
 }
 
 func parseEventBacklog(values url.Values) (state.EventBacklogQuery, *api.Problem) {
-	q := state.EventBacklogQuery{Filters: api.EventBacklogFilters{App: strings.TrimSpace(values.Get("app")), SubscriptionID: strings.TrimSpace(values.Get("subscription_id")), State: values.Get("state"), CapacityScope: values.Get("capacity_scope")}}
+	q := state.EventBacklogQuery{Filters: api.EventBacklogFilters{App: strings.TrimSpace(values.Get("app")), SubscriptionID: strings.TrimSpace(values.Get("subscription_id")),
+		WaitingReason: values.Get("waiting_reason"), ConsumerKind: values.Get("consumer_kind"), Origin: values.Get("origin"), State: values.Get("state"), CapacityScope: values.Get("capacity_scope")}}
 	if raw := values.Get("min_age_seconds"); raw != "" {
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
@@ -107,7 +108,8 @@ func decodeEventBacklogCursor(raw, kind, accountID string, q state.EventBacklogQ
 		if c.Recipient.OutboxID <= 0 || c.Recipient.SubscriptionID == "" || c.Recipient.AcceptedAt.IsZero() || c.Recipient.AcceptedAt.After(c.WindowAt.Add(-time.Duration(q.Filters.MinAgeSeconds)*time.Second)) {
 			return c, invalid
 		}
-	} else if _, err = uuid.Parse(c.Consumer.AppID); err != nil || c.Consumer.SubscriptionID == "" {
+	} else if _, err = uuid.Parse(c.Consumer.AppID); err != nil || c.Consumer.SubscriptionID == "" ||
+		c.Consumer.ConsumerKind != "" && c.Consumer.ConsumerKind != "application" && c.Consumer.ConsumerKind != "workflow" {
 		return c, invalid
 	}
 	return c, nil
@@ -154,7 +156,12 @@ func eventBacklogResponse(result state.EventBacklog, q state.EventBacklogQuery, 
 	for _, entry := range result.Recipients {
 		r := entry.EventBacklogRecipient
 		r.ReceiptURL = eventReceiptURL(r.EventSource, r.EventID)
-		if r.AppSlug != "" {
+		if r.OrderingBlocker != nil {
+			blocker := *r.OrderingBlocker
+			blocker.ReceiptURL = eventReceiptURL(blocker.EventSource, blocker.EventID)
+			r.OrderingBlocker = &blocker
+		}
+		if r.AppSlug != "" && r.ConsumerKind != "workflow" {
 			query := url.Values{"event_source": {r.EventSource}, "event_id": {r.EventID}, "subscription_id": {r.SubscriptionID}}
 			r.FanoutHistoryURL = "/v1/apps/" + url.PathEscape(r.AppSlug) + "/event-deliveries/attempts?" + query.Encode()
 		}

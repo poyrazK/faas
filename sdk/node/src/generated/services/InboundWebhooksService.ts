@@ -38,7 +38,8 @@ export class InboundWebhooksService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -81,7 +82,8 @@ export class InboundWebhooksService {
         409: `code: inbound_webhook_invalid for malformed endpoint configuration/body or a missing Stripe event id; code: inbound_webhook_bad_signature when Stripe-Signature does not verify.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -120,7 +122,8 @@ export class InboundWebhooksService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -160,7 +163,8 @@ export class InboundWebhooksService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -200,7 +204,8 @@ export class InboundWebhooksService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -262,7 +267,8 @@ export class InboundWebhooksService {
         413: `Request body exceeds 64 KiB.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -302,7 +308,8 @@ export class InboundWebhooksService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -352,7 +359,8 @@ export class InboundWebhooksService {
         409: `Binding revision conflict (webhook_automation_conflict).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
@@ -398,7 +406,8 @@ export class InboundWebhooksService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable

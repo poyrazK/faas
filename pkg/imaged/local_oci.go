@@ -14,6 +14,7 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
@@ -130,6 +131,10 @@ func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(
 // executable selected by its image config; this makes both Go runtimes
 // independent of the builder VM's base chain.
 func (h *Handler) functionBuildArtifact(ctx context.Context, runtime, archivePath string) ([]io.Reader, string, func(), error) {
+	return h.functionBuildArtifactForRef(ctx, runtime, archivePath, "")
+}
+
+func (h *Handler) functionBuildArtifactForRef(ctx context.Context, runtime, archivePath, recordedRef string) ([]io.Reader, string, func(), error) {
 	config, layers, cleanup, err := loadLocalOCIArchive(archivePath)
 	if err != nil {
 		return nil, "", func() {}, fmt.Errorf("load built OCI image: %w", err)
@@ -161,7 +166,10 @@ func (h *Handler) functionBuildArtifact(ctx context.Context, runtime, archivePat
 		cleanup()
 		return nil, "", func() {}, errors.New("builder OCI function artifact requires a manifest-capable runtime base puller")
 	}
-	baseRef := h.deployBaseRefOverride
+	baseRef := recordedRef
+	if baseRef == "" {
+		baseRef = h.deployBaseRefOverride
+	}
 	if baseRef == "" {
 		baseRef, err = resolveDeployBaseRef(runtime, os.Getenv)
 		if err != nil {
@@ -574,5 +582,24 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return err
 	}
 	h.log.Info("imaged: build local OCI app layer", "app", app.Slug, "bytes", result.ContentBytes)
+	// production-us hunt #8: only registry-image deploys built companion
+	// layers (buildImageLayer). A source deploy with companions built its
+	// app layer here and then failed at snapshot prime with "sidecar
+	// \"heartbeat\" has no built layer". Build them here too, with the same
+	// fail-on-secret posture as the image path.
+	scFindings, err := h.buildSidecarLayers(ctx, app, dep, acct)
+	if err != nil {
+		return err
+	}
+	if len(scFindings) > 0 {
+		upsertDeploymentSecretFindings(ctx, h.store, dep.ID,
+			scFindings, layerSecretScanStatusCompleteWithRedactions,
+			dep.ImageDigest, time.Now().UTC(), h.log)
+		if markErr := h.markDeployFailed(ctx, dep.ID, errImageSecretDetected, "companion image secret detected"); markErr != nil {
+			h.log.Warn("imaged: mark deploy failed on companion layer secret",
+				"deployment", dep.ID, "app", app.Slug, "err", markErr)
+		}
+		return errImageSecretDetected
+	}
 	return nil
 }

@@ -118,6 +118,7 @@ func TestStatusForCode_KnownCodes(t *testing.T) {
 		"egress_ports_too_many":               http.StatusBadRequest,
 		"invalid_egress_port":                 http.StatusBadRequest,
 		"account_abuse_hold":                  http.StatusForbidden,
+		CodeAPIContractComparisonIncomplete:   http.StatusUnprocessableEntity,
 		CodeWorkflowTenantIdentityUnavailable: http.StatusConflict,
 	}
 	for code, want := range cases {

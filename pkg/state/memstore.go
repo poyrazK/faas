@@ -138,6 +138,18 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	productionLifecycleHistory      []api.RouteLifecycleHistoryEntry
+	nextProductionLifecycleReviewID int64
+	productionLifecycleDecisions    map[string]api.RouteGateDecision
+	lifecycleApprovalConfigurations map[string]string
+	lifecycleApprovalSuccessors     map[string]string
+	lifecycleRecovery               bool
+	routeLifecycleApprovals         map[string]api.RouteLifecycleApproval
+	routeRemovalPolicies            map[string]api.RouteRemovalPolicy
+
+	eventCircuitBreakers        map[string]*eventCircuitRecord
+	eventSubscriptionControls   map[string]*memEventSubscriptionControl
+	eventRecoveryJobs           map[string]*memEventRecoveryJob
 	deploymentDependencyGates   map[string]DeploymentDependencyGate
 	invocationAttemptHistory    map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID     int64
@@ -149,6 +161,7 @@ type MemStore struct {
 	bindingReleasePolicyHistory []api.BindingReleasePolicy
 	operationData               *operationMemory
 	operationCodePins           map[string]time.Time
+	workflowCodePins            map[string]time.Time
 	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
 	environmentExternalOwners   map[string]environmentExternalFieldOwner
 	environmentGitOps           map[string]*environmentGitOpsMemory
@@ -401,18 +414,19 @@ type MemStore struct {
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
-	workflowResumes          map[string][]WorkflowResume
-	workflowRuns             map[string]WorkflowRun
-	workflowRunCreateKeys    map[workflowRunCreateKey]workflowRunCreateKeyEntry
-	workflowSchedules        map[string]WorkflowScheduleCursor
-	workflowTenantSchedules  map[string]WorkflowScheduleCursor
-	automationVersion        int64
-	automations              map[string]Automation
-	automationRevisions      map[string][]AutomationRevision
-	workflowSteps            map[string]map[string]WorkflowStep // run_id → step_name → step
-	workflowStepAttempts     map[workflowStepAttemptKey]WorkflowStepAttempt
-	workflowOperationEffects map[workflowStepAttemptKey][]workflowOperationStoredEffect
-	workflowEvents           map[string][]WorkflowEvent // run_id → []WorkflowEvent
+	workflowResumes             map[string][]WorkflowResume
+	workflowRuns                map[string]WorkflowRun
+	workflowRunCreateKeys       map[workflowRunCreateKey]workflowRunCreateKeyEntry
+	workflowSchedules           map[string]WorkflowScheduleCursor
+	workflowTenantSchedules     map[string]WorkflowScheduleCursor
+	workflowScheduleOccurrences map[string]WorkflowScheduleOccurrence
+	automationVersion           int64
+	automations                 map[string]Automation
+	automationRevisions         map[string][]AutomationRevision
+	workflowSteps               map[string]map[string]WorkflowStep // run_id → step_name → step
+	workflowStepAttempts        map[workflowStepAttemptKey]WorkflowStepAttempt
+	workflowOperationEffects    map[workflowStepAttemptKey][]workflowOperationStoredEffect
+	workflowEvents              map[string][]WorkflowEvent // run_id → []WorkflowEvent
 	// fireNowRequests mirrors cron_fire_now_requests (migrations/00193)
 	// for in-process handler tests. Keyed by request id (UUID);
 	// status transitions follow the production 5-state CHECK (pending
@@ -501,17 +515,23 @@ type MemStore struct {
 	// insert in CreateEdgeRuleIfUnderQuota; no separate TOCTOU fence
 	// is needed. Soft-delete semantics (apps.status='deleted') are
 	// mirrored by the per-app lookup in the quota-check branch.
-	edgeRules                map[string]EdgeRule
-	routePolicyReceipts      map[string]routePolicyStoredReceipt
-	savedRouteRequirements   map[string]api.SavedRouteRequirements
-	automaticRouteChecks     map[string]memAutomaticRouteCheck
-	canaryRouteGates         map[string]api.CanaryRouteGate
-	routeMonitorConfigs      map[string]api.RouteMonitorConfig
-	routeMonitorNextCheck    map[string]time.Time
-	routeMonitorIncidents    map[string][]api.RouteMonitorIncident
-	routeHealthGates         map[string]api.RouteHealthGate
-	routeHealthHistory       map[string][]routeHealthStoredDecision
-	routeHealthNotifications map[string]routeHealthNotificationState
+	edgeRules                 map[string]EdgeRule
+	routePolicyReceipts       map[string]routePolicyStoredReceipt
+	savedRouteRequirements    map[string]api.SavedRouteRequirements
+	profileInvestigations     map[string]api.ProfileInvestigation
+	profileDeploymentPolicies map[string]api.ProfileDeploymentPolicy
+	profileDeploymentChecks   map[string]*memProfileDeploymentCheck
+	profileCanaryChecks       map[string]*memProfileCanaryCheck
+	automaticRouteChecks      map[string]memAutomaticRouteCheck
+	canaryRouteGates          map[string]api.CanaryRouteGate
+	routeMonitorConfigs       map[string]api.RouteMonitorConfig
+	routeMonitorNextCheck     map[string]time.Time
+	routeMonitorIncidents     map[string][]api.RouteMonitorIncident
+	routeHealthGates          map[string]api.RouteHealthGate
+	routeHealthHistory        map[string][]routeHealthStoredDecision
+	routeHealthNotifications  map[string]routeHealthNotificationState
+	profilePeriodicMonitors   map[string]*memPeriodicMonitor
+	profileAlertStates        map[string]profileAlertState
 	// edgeRuleGeneration mirrors edge_rule_generation_seq. Gaps are allowed;
 	// values never decrease during the MemStore lifetime.
 	edgeRuleGeneration int64
@@ -719,6 +739,7 @@ type MemStore struct {
 	eventFanoutAttemptNextID    int64
 	eventSchemas                map[string]EventSchema
 	workflowRunLeases           map[string]time.Time
+	workflowDispatchCursors     map[workflowDispatchScope]time.Time
 	eventWorkflowReceipts       map[string]string
 	// auditOutbox mirrors audit_event_outbox. It is separate from the
 	// events slice because delivery claims need leases and retry state,
@@ -977,6 +998,20 @@ type MemStore struct {
 	// 2026-08-01, putting the row's Minute before the current
 	// monthStart and silently filtering it out). Protected by m.mu.
 	clock func() time.Time
+	// Runtime and health projections introduced by this feature stack.
+	runtimeUpgradeGatewayReceipts   map[string]runtimeUpgradeGatewayReceipt
+	runtimeUpgradeVerifications     map[string]RuntimeUpgradeVerificationJournal
+	runtimeUpgradeGatewayRoster     RuntimeUpgradeGatewayRoster
+	runtimeUpgradeGatewayHeartbeats map[string]runtimeUpgradeGatewayHeartbeat
+	runtimeReleases                 map[string]RuntimeRelease
+	runtimeReleaseQualifications    map[string]RuntimeReleaseQualification
+	runtimeArtifactBindings         map[string]string
+	runtimeUpgradeTargets           map[string]runtimeUpgradeTarget
+	runtimeUpgradeBaselines         map[string]RuntimeUpgradeBaseline
+	runtimeUpgradeAcceptances       map[string]RuntimeUpgradeAcceptance
+	runtimeUpgradeCutovers          map[string]RuntimeUpgradeCutover
+	runtimeUpgradeOperations        map[string]RuntimeUpgradeOperation
+	appHealthHistory                map[string]appHealthRecord
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -4262,6 +4297,7 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	rollback := func(err error) ([]App, error) {
 		for _, id := range insertedIDs {
 			delete(m.apps, id)
+			delete(m.appHealthHistory, id)
 		}
 		return nil, err
 	}
@@ -4963,6 +4999,7 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if params.RequireSafeReleaseLease {
 		if m.safeReleaseWorkerLeaseUntil.IsZero() {
 			return Deployment{}, 0, fmt.Errorf("%w: %w", ErrSafeReleaseLeaseUnavailable, ErrSafeReleaseLeaseMissing)
@@ -4975,6 +5012,9 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	if !ok {
 		return Deployment{}, 0, ErrNotFound
 	}
+	if err := m.checkRuntimeUpgradeRecoveryLocked(d.AppID); err != nil {
+		return Deployment{}, 0, err
+	}
 	before := d
 	rolloutState := NormalizeRolloutState(d.RolloutState)
 	if d.Status != DeployLive || (rolloutState != "pending" && rolloutState != "rolling_out") ||
@@ -4985,13 +5025,22 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	if d.CanaryStep != params.ExpectedStep {
 		return Deployment{}, 0, ErrCanaryStepConflict
 	}
-	if params.RequireCanaryStageElapsed && (d.CanaryStepStartedAt == nil ||
+	if params.RequireCanaryStageElapsed && !params.ProfileGateRollback && (d.CanaryStepStartedAt == nil ||
 		time.Since(*d.CanaryStepStartedAt) < params.CanaryStageDuration) {
 		return Deployment{}, 0, ErrCanaryStageNotElapsed
 	}
 	depUUID, err := uuid.Parse(d.ID)
 	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: advance canary deployment id %q: %w", d.ID, err)
+	}
+	if params.ProfileGateDecision == nil {
+		params.ProfileGateDecision = &api.ProfileCanaryGateDecision{}
+	}
+	if err := authorizeProfileGate(m.profileGateDecisionLocked(d, time.Now().UTC()), &params); err != nil {
+		return Deployment{}, 0, err
+	}
+	if params.ProfileGateRollback {
+		return m.abortProfileGatedCanaryLocked(ctx, d, params)
 	}
 	if err := m.checkCanaryRouteGateLocked(d, params); err != nil {
 		return Deployment{}, 0, err
@@ -5116,6 +5165,7 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 
 	d, ok := m.deployments[id]
 	if !ok {
@@ -5152,6 +5202,11 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		}
 	}
 
+	// Plan every weight before mutating any row, including upgrade fences.
+	d.TrafficPercent = newPercent
+	if err := m.checkRuntimeUpgradeTrafficLocked(d); err != nil {
+		return Deployment{}, err
+	}
 	appID := d.AppID
 
 	// Collect siblings (id-ordered for stable tie-break).
@@ -5187,23 +5242,25 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		return Deployment{}, err
 	}
 	d.TrafficPercent = newPercent
-	m.putDeploymentLocked(id, d)
-	for i, s := range siblings {
-		other := m.deployments[s.ID]
+	sum := newPercent
+	for i, sibling := range siblings {
+		other := m.deployments[sibling.ID]
 		other.TrafficPercent = newWeights[i]
-		m.putDeploymentLocked(s.ID, other)
-	}
-
-	// Σ invariant (defensive tripwire).
-	var sum int
-	for _, row := range m.deployments {
-		if row.AppID == appID && row.Status == DeployLive {
-			sum += row.TrafficPercent
+		if err := m.checkRuntimeUpgradeTrafficLocked(other); err != nil {
+			return Deployment{}, err
 		}
+		sum += other.TrafficPercent
 	}
 	if sum != 100 {
 		return Deployment{}, ErrTrafficPercentSumInvalid
 	}
+	m.putDeploymentLocked(id, d)
+	for i, sibling := range siblings {
+		other := m.deployments[sibling.ID]
+		other.TrafficPercent = newWeights[i]
+		m.putDeploymentLocked(sibling.ID, other)
+	}
+
 	return d, nil
 }
 
@@ -5959,6 +6016,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
@@ -6318,6 +6376,9 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	if err := m.prepareOperationJobOwnerPurgeLocked("", id); err != nil {
+		return err
+	}
 	m.forgetOwnedOperationsLocked("", id)
 	delete(m.appDeletionClaims, id)
 	m.deleteAppWorkOwnershipLocked(id)
@@ -6328,6 +6389,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	delete(m.privateNetworkAttachments, id)
 	delete(m.savedRouteRequirements, id)
+	m.deleteProfileInvestigationsLocked(id)
 	delete(m.canaryRouteGates, id)
 	delete(m.routeMonitorConfigs, id)
 	delete(m.routeMonitorNextCheck, id)
@@ -6395,6 +6457,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.deployments, key)
 			delete(m.deploymentRuntimeEnvironmentOwners, key)
 			delete(m.operationCodePins, key)
+			delete(m.workflowCodePins, key)
 		}
 	}
 	for key, layer := range m.deploymentSidecarLayers {
@@ -6479,7 +6542,9 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	delete(m.serviceRecovery, id)
 	m.deleteEnvironmentSecretRefsLocked(id, "")
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
+	m.deleteWorkflowDispatchCursorsLocked(id)
 	delete(m.apps, id)
+	delete(m.appHealthHistory, id)
 	return nil
 }
 
@@ -7584,10 +7649,14 @@ func (m *MemStore) RecoverRolloutForDeployment(ctx context.Context, appID, deplo
 func (m *MemStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	return m.recoverRolloutLocked(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
 }
 
 func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, auditOverride *DeploymentAudit) (Deployment, int64, error) {
+	previousRecovery := m.lifecycleRecovery
+	m.lifecycleRecovery = action == "abort"
+	defer func() { m.lifecycleRecovery = previousRecovery }()
 	// Validate action at the store boundary so a direct store
 	// caller (CLI test path) gets the same 422 shape as the
 	// handler. The handler also validates via
@@ -7603,6 +7672,9 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 	// have rewritten, and the divergence goes unnoticed until production.
 	reason = normalizeRolloutReason(reason)
 
+	if err := m.checkRuntimeUpgradeRecoveryLocked(appID); err != nil {
+		return Deployment{}, 0, err
+	}
 	// Find the active deployment for this app: rollout_state ∈
 	// ('pending','rolling_out') and status='live'. There can be
 	// at most one active rollout per app at a time (canary
@@ -7633,6 +7705,9 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		return *target, 0, ErrRolloutStateInvalid
 	}
 	if action != "abort" && target.CanaryTotalSteps > 0 {
+		if err := legacyProfileCanaryGate(m.profileDeploymentPolicies[appID], *target); err != nil {
+			return *target, 0, err
+		}
 		gate, err := m.canaryRouteGateLocked(m.apps[appID].AccountID, appID)
 		if err != nil {
 			return *target, 0, err
@@ -7772,6 +7847,13 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		}
 		sort.SliceStable(siblings, func(a, b int) bool { return siblings[a].ID < siblings[b].ID })
 		newWeights := RedistributeTraffic(toHelperSiblings(siblings), 100-stepPct)
+		proposed := map[string]int{target.ID: stepPct}
+		for i, sibling := range siblings {
+			proposed[sibling.ID] = newWeights[i]
+		}
+		if err := m.checkRouteRemovalTrafficLocked(proposed); err != nil {
+			return Deployment{}, 0, err
+		}
 		for i, s := range siblings {
 			other := m.deployments[s.ID]
 			other.TrafficPercent = newWeights[i]
@@ -7802,6 +7884,9 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		return *target, auditID, nil
 
 	case "promote":
+		if err := m.checkRouteRemovalTrafficLocked(map[string]int{target.ID: 100}); err != nil {
+			return Deployment{}, 0, err
+		}
 		if target.CanaryTotalSteps <= 0 || target.CanaryStep >= target.CanaryTotalSteps {
 			return *target, 0, ErrRolloutStateInvalid
 		}
@@ -7879,6 +7964,13 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		}
 		sort.SliceStable(siblings, func(a, b int) bool { return siblings[a].ID < siblings[b].ID })
 		newWeights := RedistributeTraffic(toHelperSiblings(siblings), 100)
+		proposed := map[string]int{}
+		for i, sibling := range siblings {
+			proposed[sibling.ID] = newWeights[i]
+		}
+		if err := m.checkRouteRemovalTrafficLocked(proposed); err != nil {
+			return Deployment{}, 0, err
+		}
 		for i, sibling := range siblings {
 			other := m.deployments[sibling.ID]
 			other.TrafficPercent = newWeights[i]
@@ -8044,7 +8136,7 @@ func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID string) (
 	var latest Deployment
 	found := false
 	for _, d := range m.deployments {
-		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID)))
+		rollbackEligible := !abortedCanaryCandidate(d) && (d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID))))
 		if d.AppID == appID && rollbackEligible && (!found || m.rollbackMoreRecentLocked(d, latest)) {
 			latest, found = d, true
 		}
@@ -8346,6 +8438,9 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	}
 	proposal := d
 	proposal.Status = status
+	if err := m.checkRuntimeUpgradeTrafficLocked(proposal); err != nil {
+		return err
+	}
 	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
 		return err
 	}
@@ -8418,7 +8513,7 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 	var fallbackID string
 	var fallback Deployment
 	for id, candidate := range m.deployments {
-		if id == d.ID || candidate.AppID != d.AppID || candidate.Status != DeployLive {
+		if id == d.ID || candidate.AppID != d.AppID || candidate.Status != DeployLive || !m.runtimeUpgradeTrafficAllowedLocked(candidate) {
 			continue
 		}
 		if fallbackID == "" || candidate.TrafficPercent > fallback.TrafficPercent ||
@@ -8483,9 +8578,14 @@ func (m *MemStore) MarkDeploymentLiveIfLatest(ctx context.Context, id string) er
 func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLatest bool) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if !m.runtimeUpgradeTrafficAllowedLocked(d) &&
+		(d.TrafficPercent > 0 || !d.TrafficPercentExplicit || d.CanaryTotalSteps > 0 || IsServiceRollout(d)) {
+		return ErrConflict
 	}
 	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
 		return err
@@ -8611,11 +8711,17 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		for i, sibling := range siblings {
 			other := m.deployments[sibling.ID]
 			other.TrafficPercent = newWeights[i]
+			if err := m.checkRuntimeUpgradeTrafficLocked(other); err != nil {
+				return err
+			}
 			updatedSiblings[sibling.ID] = other
 		}
 		proposed := map[string]int{id: d.TrafficPercent}
 		for siblingID, other := range updatedSiblings {
 			proposed[siblingID] = other.TrafficPercent
+		}
+		if err := m.checkProductionLifecycleLocked(proposed); err != nil {
+			return err
 		}
 		if err := m.checkBindingReleaseTrafficLocked(ctx, proposed); err != nil {
 			return err
@@ -8633,7 +8739,13 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		m.putDeploymentLocked(id, d)
 		return nil
 	}
+	if err := m.checkProductionLifecycleLocked(map[string]int{id: 100}); err != nil {
+		return err
+	}
 	if d.CanaryTotalSteps <= 0 {
+		if err := m.checkRouteRemovalTrafficLocked(map[string]int{id: 100}); err != nil {
+			return err
+		}
 		// Commit the stable cutover as one mutex-protected mutation. The old
 		// live row remains visible throughout the replacement build and is
 		// retired only when the replacement is ready to serve.
@@ -8727,6 +8839,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	for i, sibling := range siblings {
 		other := m.deployments[sibling.ID]
 		other.TrafficPercent = newWeights[i]
+		if err := m.checkRuntimeUpgradeTrafficLocked(other); err != nil {
+			return err
+		}
 		updatedSiblings[sibling.ID] = other
 	}
 	proposed := map[string]int{id: d.TrafficPercent}
@@ -9186,6 +9301,16 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	// builds a fresh struct and never copies Revision, so this is always
 	// a fresh assignment; mirrors the subselect in PgStore's retry INSERT.
 	newDep.Revision = m.nextDeploymentRevisionLocked(newDep.AppID)
+	if pin, ok := m.runtimeUpgradeTargets[failedID]; ok {
+		if !pin.matches(newDep) {
+			return Deployment{}, ErrConflict
+		}
+		m.runtimeUpgradeTargets[newDep.ID] = pin
+	}
+	if baseline, ok := m.runtimeUpgradeBaselines[failedID]; ok {
+		baseline.DeploymentID = newDep.ID
+		m.runtimeUpgradeBaselines[newDep.ID] = baseline
+	}
 	if gate, exists := m.deploymentDependencyGates[failedID]; exists {
 		m.deploymentDependencyGates[newDep.ID] = cloneDeploymentDependencyGate(gate)
 	}
@@ -9278,6 +9403,10 @@ func (m *MemStore) MarkAutoRollback(_ context.Context, deploymentID, reason stri
 func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDeploymentID string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
+	previousRecovery := m.lifecycleRecovery
+	m.lifecycleRecovery = true
+	defer func() { m.lifecycleRecovery = previousRecovery }()
 	cur, ok := m.deployments[currentDeploymentID]
 	if !ok || cur.AppID != appID || cur.Status != DeployLive {
 		return "", ErrNotFound
@@ -9289,8 +9418,8 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		if id == currentDeploymentID {
 			continue
 		}
-		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID)))
-		if d.EnvironmentWorkloadHeld() || d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || !rollbackEligible {
+		rollbackEligible := !abortedCanaryCandidate(d) && (d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID))))
+		if !m.runtimeUpgradeTrafficAllowedLocked(d) || d.EnvironmentWorkloadHeld() || d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || !rollbackEligible {
 			continue
 		}
 		if targetID == "" || m.rollbackMoreRecentLocked(d, latest) {
@@ -9308,6 +9437,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	if err := m.rejectUncheckedBindingReleaseLocked(cur.AppID, cur.Scope); err != nil {
 		return "", err
 	}
+	if err := m.checkRouteRemovalTrafficLocked(map[string]int{targetID: 100}); err != nil {
+		return "", err
+	}
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(m.deployments[targetID])); err != nil {
 		return "", err
 	}
@@ -9318,7 +9450,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		}
 		before := d
 		d.Status = DeploySuperseded
-		if m.operationRetainsDeploymentLocked(id) {
+		if m.durableWorkRetainsDeploymentLocked(id) {
 			d.Status = DeployLive
 		}
 		d.TrafficPercent = 0
@@ -9435,6 +9567,9 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, 
 	d.RootfsPath = path
 	d.RootfsKey = key
 	d.RootfsBytes = bytes
+	if err := m.checkRuntimeUpgradeTrafficLocked(d); err != nil {
+		return err
+	}
 	m.putDeploymentLocked(id, d)
 	return nil
 }
@@ -9996,6 +10131,9 @@ func (m *MemStore) UpsertDeploymentOpenAPIDoc(_ context.Context, deploymentID, a
 		row.UpdatedAt = now
 	}
 	previous, existed := m.openAPIDocs[deploymentID]
+	if existed {
+		m.invalidateLifecycleApprovalsLocked(deploymentID, now.UTC())
+	}
 	m.openAPIDocs[deploymentID] = row
 	// Content/truncation changes supersede an old lease; source-only retries do not.
 	if !existed || string(previous.DocSHA256) != string(row.DocSHA256) || previous.Truncated != row.Truncated {
@@ -10015,6 +10153,7 @@ func (m *MemStore) DeleteDeploymentOpenAPIDoc(_ context.Context, deploymentID, a
 	if !ok || row.AccountID != accountID {
 		return ErrNotFound
 	}
+	m.invalidateLifecycleApprovalsLocked(deploymentID, time.Now().UTC())
 	delete(m.openAPIDocs, deploymentID)
 	m.enqueueAutomaticRouteCheckLocked(row.AppID, deploymentID, true)
 	return nil
@@ -10495,6 +10634,11 @@ func (m *MemStore) createBuildWithID(id, deploymentID string, kind DeploymentKin
 	defer m.mu.Unlock()
 	if _, ok := m.deployments[deploymentID]; !ok {
 		return Build{}, 0, fmt.Errorf("state: build for unknown deployment %q", deploymentID)
+	}
+	for _, op := range m.runtimeUpgradeOperations {
+		if op.DeploymentID == deploymentID && op.Phase != RuntimeUpgradePrepared && op.Phase != RuntimeUpgradeWaiting {
+			return Build{}, 0, ErrConflict
+		}
 	}
 	dep := m.deployments[deploymentID]
 	if dep.Status != DeployPending && dep.Status != DeployBuilding {
@@ -11200,6 +11344,7 @@ func (m *MemStore) RequeueBuildIfClaim(_ context.Context, claim Build) error {
 func (m *MemStore) CreateCustomDomain(_ context.Context, domain, appID, token string) (CustomDomain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	now := time.Now()
 	if current, dup := m.domains[domain]; dup {
 		if current.Verified() || current.VerificationExpiresAt.IsZero() || current.VerificationExpiresAt.After(now) {
@@ -11321,6 +11466,7 @@ func (m *MemStore) ListDomainsForAccount(_ context.Context, accountID string) ([
 func (m *MemStore) MarkDomainVerified(_ context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	d, ok := m.domains[domain]
 	if !ok {
 		return ErrNotFound
@@ -11335,6 +11481,7 @@ func (m *MemStore) MarkDomainVerified(_ context.Context, domain string) error {
 func (m *MemStore) MarkDomainVerifiedIfChallenge(_ context.Context, domain, token string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	d, ok := m.domains[domain]
 	if !ok {
 		return false, nil
@@ -11376,6 +11523,7 @@ func (m *MemStore) UpdateCustomDomainCertStatus(_ context.Context, domain string
 func (m *MemStore) DeleteCustomDomain(_ context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	return m.deleteCustomDomainLocked(domain)
 }
 
@@ -11386,6 +11534,7 @@ func (m *MemStore) DeleteCustomDomainWithActivity(_ context.Context, domain stri
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if err := m.deleteCustomDomainLocked(domain); err != nil {
 		return 0, err
 	}
@@ -21228,6 +21377,9 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	if err := m.prepareOperationJobOwnerPurgeLocked(id, ""); err != nil {
+		return err
+	}
 	m.forgetOwnedOperationsLocked(id, "")
 	for bucketID, b := range m.objectBuckets {
 		if b.AccountID == id {
@@ -21450,6 +21602,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.deployments, did)
 			delete(m.deploymentRuntimeEnvironmentOwners, did)
 			delete(m.operationCodePins, did)
+			delete(m.workflowCodePins, did)
 		}
 	}
 	for i := len(m.snapshots) - 1; i >= 0; i-- {
@@ -21468,8 +21621,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.serviceRecovery, aid)
 			m.deleteEnvironmentSecretRefsLocked(aid, "")
 			m.deleteEnvironmentWorkloadIntentsLocked(aid, "")
+			m.deleteWorkflowDispatchCursorsLocked(aid)
 			delete(m.apps, aid)
+			delete(m.appHealthHistory, aid)
 			delete(m.savedRouteRequirements, aid)
+			m.deleteProfileInvestigationsLocked(aid)
 			delete(m.canaryRouteGates, aid)
 			delete(m.routeMonitorConfigs, aid)
 			delete(m.routeMonitorNextCheck, aid)
@@ -22148,6 +22304,7 @@ func (m *MemStore) manifestEdgeRuleKeyExistsLocked(appID, manifestKey, excludeID
 func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if m.manifestEdgeRuleKeyExistsLocked(in.AppID, in.ManifestKey, "") {
 		return EdgeRule{}, ErrConflict
 	}
@@ -22192,6 +22349,7 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if m.manifestEdgeRuleKeyExistsLocked(in.AppID, in.ManifestKey, "") {
 		return EdgeRule{}, ErrConflict
 	}
@@ -22827,6 +22985,7 @@ func (m *MemStore) ListCertExpiryStateForWalker(_ context.Context, staleCutoff t
 func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRuleParams) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	r, ok := m.edgeRules[id]
 	if !ok {
 		return EdgeRule{}, ErrNotFound
@@ -22878,6 +23037,7 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 func (m *MemStore) DeleteEdgeRule(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	rule, ok := m.edgeRules[id]
 	if !ok {
 		return ErrNotFound

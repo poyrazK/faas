@@ -12,11 +12,12 @@ import (
 )
 
 func cmdEventsBackfill(args []string) int {
-	flags, positional := splitArgsForFlags(args, "yes")
+	flags, positional := splitArgsForFlags(args, "yes", "allow-expired")
 	fs := newFlagSet("events backfill", flag.ContinueOnError)
 	subscription := fs.String("subscription-id", "", "target ordinary application subscription UUID")
 	from := fs.String("from", "", "inclusive acceptance timestamp (RFC3339)")
 	until := fs.String("until", "", "exclusive acceptance timestamp (RFC3339)")
+	allowExpired := fs.Bool("allow-expired", false, "explicitly bypass delivery age for this historical backfill")
 	yes := fs.Bool("yes", false, "confirm that matching historical events may invoke this consumer")
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -24,7 +25,7 @@ func cmdEventsBackfill(args []string) int {
 	start, startErr := time.Parse(time.RFC3339Nano, *from)
 	end, endErr := time.Parse(time.RFC3339Nano, *until)
 	subID, subErr := uuid.Parse(*subscription)
-	req := api.EventReplayBackfillRequest{From: start, Until: end}
+	req := api.EventReplayBackfillRequest{AllowExpired: *allowExpired, From: start, Until: end}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || !*yes || startErr != nil || endErr != nil || subErr != nil || req.Validate() != nil {
 		PrintUsage(os.Stderr, "usage: gregale events backfill <app> --subscription-id UUID --from RFC3339 --until RFC3339 --yes", "events")
 		return 1
@@ -116,6 +117,13 @@ func cmdEventsBackfillItems(args []string) int {
 			}
 		}
 		_, _ = fmt.Fprintln(osStdout)
+		if item.WorkflowRunID != "" {
+			_, _ = fmt.Fprintf(osStdout, "  Workflow run: %s", item.WorkflowRunID)
+			if item.WorkflowRunStatus != "" {
+				_, _ = fmt.Fprintf(osStdout, " (%s)", oneLine(item.WorkflowRunStatus))
+			}
+			_, _ = fmt.Fprintln(osStdout)
+		}
 		if item.ReceiptURL != "" {
 			_, _ = fmt.Fprintf(osStdout, "  Delivery inspection: %s\n", oneLine(item.ReceiptURL))
 		}
@@ -166,7 +174,14 @@ func cmdEventsBackfillRetry(args []string) int {
 }
 
 func writeEventBackfillJob(job api.EventReplayBackfillJobResponse) {
-	_, _ = fmt.Fprintf(osStdout, "Backfill %s for %s / %s: %s\n", job.ID, oneLine(job.AppSlug), job.SubscriptionID, job.State)
+	target := job.SubscriptionID
+	if job.ConsumerKind == "workflow" {
+		target = "workflow/" + job.WorkflowName
+	}
+	_, _ = fmt.Fprintf(osStdout, "Backfill %s for %s / %s: %s\n", job.ID, oneLine(job.AppSlug), oneLine(target), job.State)
+	if job.WorkflowRevision != "" {
+		_, _ = fmt.Fprintf(osStdout, "Captured workflow revision: %s\n", job.WorkflowRevision)
+	}
 	_, _ = fmt.Fprintf(osStdout, "Acceptance window: [%s, %s) | cutoff: %s | scan complete: %t\n", job.From.Format(time.RFC3339Nano), job.Until.Format(time.RFC3339Nano), job.CutoffAt.Format(time.RFC3339Nano), job.ScanComplete)
 	_, _ = fmt.Fprintf(osStdout, "Scanned %d | matched %d | filtered %d | pending %d | processing %d | enqueued %d | failed %d\n", job.Progress.Scanned, job.Progress.Matched, job.Progress.Filtered, job.Progress.Pending, job.Progress.Processing, job.Progress.Enqueued, job.Progress.Failed)
 	_, _ = fmt.Fprintf(osStdout, "Retryable failed: %d\n", job.Progress.RetryableFailed)

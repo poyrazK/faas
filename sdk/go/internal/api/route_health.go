@@ -66,6 +66,39 @@ type RouteHealthFinding struct {
 	Windows       []RouteHealthWindowEvidence `json:"windows"`
 }
 
+type CanaryProfileSignal struct {
+	Gate                *ProfileCanaryGateState       `json:"gate,omitempty"`
+	Attribution         *ProfileAttributionComparison `json:"attribution,omitempty"`
+	RouteChecks         []ProfileRouteRegression      `json:"route_checks,omitempty"`
+	RequestMix          *ProfileRequestMixSnapshot    `json:"request_mix,omitempty"`
+	Mode                string                        `json:"mode"`
+	Status              string                        `json:"status"`
+	Reason              string                        `json:"reason"`
+	CanaryStep          int                           `json:"canary_step"`
+	CanaryStepStartedAt time.Time                     `json:"canary_step_started_at"`
+	CreatedAt           time.Time                     `json:"created_at"`
+	CheckedAt           *time.Time                    `json:"checked_at,omitempty"`
+	Attempts            int                           `json:"attempts"`
+	NextAttemptAt       *time.Time                    `json:"next_attempt_at,omitempty"`
+	CompletedAt         *time.Time                    `json:"completed_at,omitempty"`
+	PolicyRevision      int64                         `json:"policy_revision"`
+	Metric              string                        `json:"metric"`
+	WindowSeconds       int                           `json:"window_seconds"`
+	Options             ProfileRegressionOptions      `json:"options"`
+	Baseline            *ProfileQuery                 `json:"baseline,omitempty"`
+	Candidate           *ProfileQuery                 `json:"candidate,omitempty"`
+	BaselineRequests    *int64                        `json:"baseline_requests,omitempty"`
+	CandidateRequests   *int64                        `json:"candidate_requests,omitempty"`
+	BaselineCoverage    *ProfileCoverage              `json:"baseline_coverage,omitempty"`
+	CandidateCoverage   *ProfileCoverage              `json:"candidate_coverage,omitempty"`
+	BaselineSource      *ProfileSource                `json:"baseline_source,omitempty"`
+	CandidateSource     *ProfileSource                `json:"candidate_source,omitempty"`
+	ComparisonURL       string                        `json:"comparison_url,omitempty"`
+	Total               *ProfileRegressionMetric      `json:"total,omitempty"`
+	Evidence            []ProfileRegressionEvidence   `json:"evidence"`
+	UncomparableEntries int                           `json:"uncomparable_entries"`
+}
+
 // Coverage refers to stored observations: full capture cannot be established.
 type RouteHealthReport struct {
 	ClientErrorStatus string `json:"client_error_status,omitempty"`
@@ -89,6 +122,7 @@ type RouteHealthReport struct {
 	MinimumRequests        int64                      `json:"minimum_requests"`
 	MinimumLatencyRequests int64                      `json:"minimum_latency_requests,omitempty"`
 	Routes                 []RouteHealthFinding       `json:"routes"`
+	ProfileSignal          *CanaryProfileSignal       `json:"profile_signal,omitempty"`
 }
 
 // RouteHealthDecision is metadata-only for advancement responses and audits.
