@@ -86,4 +86,5 @@ func applyPooledEvidence(f *api.RouteHealthFinding, anchor *time.Time, unavailab
 func SummarizeFindingWithPooled(f *api.RouteHealthFinding, anchor *time.Time) {
 	SummarizeFinding(f)
 	applyPooledEvidence(f, anchor, "")
+	applySyntheticEvidence(f, anchor, "")
 }
