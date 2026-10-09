@@ -17,7 +17,7 @@ import (
 
 func cmdDataAPI(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api <create|types|refresh>", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api <create|types|diff|refresh|sync>", "data-api")
 		return 1
 	}
 	switch args[0] {
@@ -25,32 +25,74 @@ func cmdDataAPI(args []string) int {
 		return cmdDataAPICreate(args[1:])
 	case "types":
 		return cmdDataAPITypes(args[1:])
+	case "diff":
+		return cmdDataAPIDiff(args[1:])
 	case "refresh":
 		return cmdDataAPIRefresh(args[1:])
+	case "sync":
+		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, types or refresh"))
+		return printErr("Unknown Data API command", fmt.Errorf("use create, types, diff, refresh or sync"))
 	}
 }
 
 // A snapshot restart would preserve PostgREST's stale schema cache. Use the
 // existing fresh-restart lifecycle to rebuild it on every active instance.
 func cmdDataAPIRefresh(args []string) int {
-	if len(args) != 1 || !api.ValidAppSlug(args[0]) {
-		PrintUsage(os.Stderr, "usage: gregale data-api refresh NAME", "data-api")
+	fs := newFlagSet("data-api refresh", flag.ContinueOnError)
+	wait := fs.Bool("wait", false, "wait for fresh-restart completion and Data API readiness")
+	timeout := fs.Duration("timeout", 5*time.Minute, "deadline for the complete refresh wait (maximum 1h)")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
+	}
+	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *timeout <= 0 || *timeout > time.Hour {
+		PrintUsage(os.Stderr, "usage: gregale data-api refresh NAME [--wait [--timeout DURATION]]", "data-api")
+		return 1
+	}
+	var explicitTimeout bool
+	fs.Visit(func(f *flag.Flag) { explicitTimeout = explicitTimeout || f.Name == "timeout" })
+	if explicitTimeout && !*wait {
+		return printErr("Invalid flags", errors.New("--timeout requires --wait"))
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	result, err := client.RestartAppFresh(context.Background(), args[0])
+	ctx := context.Background()
+	if *wait {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+		defer cancel()
+	}
+	var healthURL string
+	if *wait {
+		app, getErr := client.GetApp(ctx, fs.Arg(0))
+		if getErr != nil {
+			return printErr("Could not inspect Data API app", getErr)
+		}
+		healthURL, err = dataAPIReadinessURL(app)
+		if err != nil {
+			return printErr("Could not check Data API readiness", err)
+		}
+	}
+	result, err := client.RestartAppFresh(ctx, fs.Arg(0))
 	if err != nil {
 		return printErr("Could not refresh Data API schema", err)
+	}
+	if *wait {
+		if err = waitDataAPIRefresh(ctx, client, fs.Arg(0), result.WakeID, healthURL, time.Second); err != nil {
+			return printErr("Could not verify Data API schema refresh", dataAPIRefreshDiagnostic(err))
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(dataAPIRefreshReceipt{AppRestartResponse: result, Status: "completed", Ready: true}))
+		}
+		PrintOK(osStdout, "Schema refresh completed for %s (wake_id=%s); Data API is ready", fs.Arg(0), result.WakeID)
+		return 0
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
 	}
-	PrintOK(osStdout, "Schema refresh requested for %s; verify /healthz before using the new contract", args[0])
+	PrintOK(osStdout, "Schema refresh requested for %s; verify /healthz before using the new contract", fs.Arg(0))
 	return 0
 }
 
@@ -92,7 +134,8 @@ func cmdDataAPICreate(args []string) int {
 	if *resume {
 		app, err = client.GetApp(ctx, fs.Arg(0))
 	} else {
-		app, err = client.CreateApp(ctx, api.CreateAppRequest{Slug: fs.Arg(0), Type: "app"})
+		requireAuthn := false
+		app, err = client.CreateApp(ctx, api.CreateAppRequest{Slug: fs.Arg(0), Type: "app", RequireAuthn: &requireAuthn})
 	}
 	if err != nil {
 		return printErr("Could not create Data API app", err)
@@ -122,7 +165,11 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 	}
 	// PostgreSQL's extra egress port remains subject to the normal plan gate.
 	ports := []int{5432}
-	if _, err = client.UpdateApp(ctx, app.Slug, api.UpdateAppRequest{EgressPorts: &ports}); err != nil {
+	// Application JWTs are verified by the Data API runtime. Paid-plan edge
+	// defaults require an owner API key, which would reject those JWTs first.
+	requireAuthn := false
+	publicAuth := openPublicAuthAfterTokenRemoval(app)
+	if _, err = client.UpdateApp(ctx, app.Slug, api.UpdateAppRequest{EgressPorts: &ports, RequireAuthn: &requireAuthn, PublicAuth: publicAuth, SetPublicAuth: publicAuth != nil}); err != nil {
 		return err
 	}
 	for _, key := range []string{"DATA_API_SCHEMAS", "DATA_API_ISSUER", "DATA_API_JWKS_URL", "DATA_API_AUDIENCE", "DATA_API_ALLOWED_ORIGINS"} {
@@ -149,6 +196,7 @@ func cmdDataAPITypes(args []string) int {
 	fs := newFlagSet("data-api types", flag.ContinueOnError)
 	output := fs.String("output", "", "write generated types atomically to a file")
 	check := fs.Bool("check", false, "fail if --output differs from the database contract")
+	snapshot := fs.Bool("snapshot", false, "export a JSON contract baseline for data-api diff")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum task wait")
 	// This command never downloads credentials or introspects customer SQL
 	// from apid. A bounded manual task runs inside the selected app revision.
@@ -156,7 +204,7 @@ func cmdDataAPITypes(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || (*check && *output == "") || *timeout <= 0 || *timeout > time.Hour {
-		PrintUsage(os.Stderr, "usage: gregale data-api types NAME [--output FILE] [--check] [--timeout DURATION]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api types NAME [--output FILE] [--check] [--snapshot] [--timeout DURATION]", "data-api")
 		return 1
 	}
 	client, err := authedClient()
@@ -165,16 +213,30 @@ func cmdDataAPITypes(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	task, err := client.CreateAppTask(ctx, fs.Arg(0), api.CreateAppTaskRequest{Command: []string{"node", "/app/types.mjs"}, TimeoutSeconds: 60, MaxOutputBytes: api.AppTaskDefaultMaxOutputBytes})
-	if err != nil {
-		return printErr("Could not start schema generation", err)
+	var task api.AppTaskResponse
+	if *snapshot {
+		task, err = generateDataAPIContract(ctx, client, fs.Arg(0))
+	} else {
+		task, err = generateDataAPITypes(ctx, client, fs.Arg(0))
 	}
-	task, err = waitDataAPITypeTask(ctx, client, fs.Arg(0), task)
 	if err != nil {
 		return printErr("Schema generation failed", err)
 	}
 	if err = writeDataAPITypes(*output, *check, task.StdoutTail); err != nil {
 		return printErr("Could not export schema types", err)
+	}
+	if *snapshot {
+		if *output == "" {
+			_, err = fmt.Fprint(osStdout, task.StdoutTail)
+			if err != nil {
+				return printErr("Could not write snapshot", err)
+			}
+		} else if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{"task_id": task.ID, "deployment_id": task.DeploymentID, "output": *output}))
+		} else {
+			PrintOK(osStdout, "Database snapshot written: %s", *output)
+		}
+		return 0
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"task_id": task.ID, "deployment_id": task.DeploymentID, "fingerprint": dataAPIFingerprint.FindStringSubmatch(task.StdoutTail)[1], "output": *output, "types": task.StdoutTail}))
@@ -190,6 +252,14 @@ func cmdDataAPITypes(args []string) int {
 	return 0
 }
 
+func generateDataAPITypes(ctx context.Context, client *api.Client, slug string) (api.AppTaskResponse, error) {
+	task, err := client.CreateAppTask(ctx, slug, api.CreateAppTaskRequest{Command: []string{"node", "/app/types.mjs"}, TimeoutSeconds: 60, MaxOutputBytes: api.AppTaskDefaultMaxOutputBytes})
+	if err != nil {
+		return task, fmt.Errorf("start schema generation: %w", err)
+	}
+	return waitDataAPITypeTask(ctx, client, slug, task)
+}
+
 // --check is a boolean; the positional normalizer for PostgreSQL flags would
 // otherwise treat an app following it as the flag's value.
 func normalizeDataAPITypeArgs(args []string) []string {
@@ -200,6 +270,10 @@ func normalizeDataAPITypeArgs(args []string) []string {
 }
 
 func waitDataAPITypeTask(ctx context.Context, client *api.Client, slug string, task api.AppTaskResponse) (api.AppTaskResponse, error) {
+	return waitDataAPIContractTask(ctx, client, slug, task, false)
+}
+
+func waitDataAPIContractTask(ctx context.Context, client *api.Client, slug string, task api.AppTaskResponse, snapshot bool) (api.AppTaskResponse, error) {
 	for !task.Status.Terminal() {
 		timer := time.NewTimer(time.Second)
 		select {
@@ -217,6 +291,13 @@ func waitDataAPITypeTask(ctx context.Context, client *api.Client, slug string, t
 	if task.Status != api.AppTaskStatusSucceeded {
 		return task, fmt.Errorf("task %s ended with status %s", task.ID, task.Status)
 	}
+	if snapshot {
+		if task.OutputTruncated {
+			return task, errors.New("schema snapshot was truncated")
+		}
+		_, err := parseDataAPIContract([]byte(task.StdoutTail))
+		return task, err
+	}
 	if task.OutputTruncated || len(task.StdoutTail) > api.AppTaskDefaultMaxOutputBytes || !strings.HasPrefix(task.StdoutTail, "// Generated by gregale data-api types. Do not edit.\n") || !dataAPIFingerprint.MatchString(task.StdoutTail) {
 		return task, errors.New("schema generation returned incomplete or invalid output")
 	}
@@ -233,7 +314,7 @@ func writeDataAPITypes(output string, check bool, content string) error {
 			return err
 		}
 		if string(current) != content {
-			return errors.New("database types are stale; regenerate with gregale data-api types")
+			return errors.New("database contract is stale; regenerate with gregale data-api types")
 		}
 		return nil
 	}

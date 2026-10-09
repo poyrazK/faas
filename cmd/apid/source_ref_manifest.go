@@ -304,7 +304,7 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	if m == nil {
 		return staged, nil
 	}
-	if len(sourceOperationSpecs(m)) > 0 && !s.operationDefinitionAdmission(acct.ID, app.ID, deploymentScope) {
+	if !s.operationDefinitionsAdmission(acct.ID, app.ID, deploymentScope, sourceOperationSpecs(m)) {
 		return staged, api.ErrCapacity("new operation admission is disabled for this preview cohort")
 	}
 	resolved, problem := s.resolveManifestPostgresBindings(ctx, acct, m, []string{app.Slug}, deploymentScope)

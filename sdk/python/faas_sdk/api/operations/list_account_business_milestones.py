@@ -139,8 +139,9 @@ def sync_detailed(
 
      Requires account read scope and MFA. Explicit app/environment/reference selectors and optional
     customer selection remain within account ownership. Paired workflow and workflow-instance selectors
-    narrow the feed to one run. Facts are ordered by first platform publication time, not inferred
-    business causality.
+    narrow the feed to one run and include a grouped workflow_instance view with ordered declared steps,
+    latest matching facts, current state, and independently paginated transition history. Facts are
+    ordered by first platform publication time, not inferred business causality.
 
     Args:
         slug (str):
@@ -203,8 +204,9 @@ def sync(
 
      Requires account read scope and MFA. Explicit app/environment/reference selectors and optional
     customer selection remain within account ownership. Paired workflow and workflow-instance selectors
-    narrow the feed to one run. Facts are ordered by first platform publication time, not inferred
-    business causality.
+    narrow the feed to one run and include a grouped workflow_instance view with ordered declared steps,
+    latest matching facts, current state, and independently paginated transition history. Facts are
+    ordered by first platform publication time, not inferred business causality.
 
     Args:
         slug (str):
@@ -262,8 +264,9 @@ async def asyncio_detailed(
 
      Requires account read scope and MFA. Explicit app/environment/reference selectors and optional
     customer selection remain within account ownership. Paired workflow and workflow-instance selectors
-    narrow the feed to one run. Facts are ordered by first platform publication time, not inferred
-    business causality.
+    narrow the feed to one run and include a grouped workflow_instance view with ordered declared steps,
+    latest matching facts, current state, and independently paginated transition history. Facts are
+    ordered by first platform publication time, not inferred business causality.
 
     Args:
         slug (str):
@@ -324,8 +327,9 @@ async def asyncio(
 
      Requires account read scope and MFA. Explicit app/environment/reference selectors and optional
     customer selection remain within account ownership. Paired workflow and workflow-instance selectors
-    narrow the feed to one run. Facts are ordered by first platform publication time, not inferred
-    business causality.
+    narrow the feed to one run and include a grouped workflow_instance view with ordered declared steps,
+    latest matching facts, current state, and independently paginated transition history. Facts are
+    ordered by first platform publication time, not inferred business causality.
 
     Args:
         slug (str):

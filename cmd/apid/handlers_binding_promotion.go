@@ -227,6 +227,7 @@ func (s *server) executeBindingPromotion(r *http.Request, acct state.Account, ap
 	if req.ExpectedServingDeploymentID != nil {
 		expected = *req.ExpectedServingDeploymentID
 	}
+	//nolint:contextcheck // contractTrafficContext preserves r.Context(), optionally adding a route-removal fence; GuardPromotion forwards that context to the callback.
 	err := s.managedPostgresBindings.GuardPromotion(r.Context(), acct.ID, app.ID, observation.domain, observation.store.BindingPromotionBackend(), func(ctx context.Context) error {
 		var err error
 		result, err = observation.store.PromoteDeploymentWithBindings(ctx, deployment.ID, observation.fence, expected)

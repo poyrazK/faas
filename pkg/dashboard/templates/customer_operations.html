@@ -39,6 +39,7 @@
   </header>
   <main>
     <p><a href="/dashboard/apps/{{.Data.AppSlug}}">{{.Data.AppSlug}}</a> / <a href="{{.Data.ListURL}}">Customer operations</a></p>
+    <p><a href="{{.Data.ListURL}}/attention?scope={{.Data.Scope}}">Workflow attention queue →</a> · <a href="{{.Data.ListURL}}/outcomes?scope={{.Data.Scope}}">Business outcomes →</a></p>
     {{if .Data.Detail}}
     {{with .Data.Detail}}
     <h1>{{.Name}}</h1>
@@ -157,13 +158,55 @@
       {{range .Data.Workflows}}
       <h3>{{.Title}} <code>{{.Name}}</code>{{if .InstanceID}} · run <code>{{.InstanceID}}</code>{{end}}</h3>
       {{if .State}}<p>Current state: <strong><code>{{.State}}</code></strong> <span class="badge {{if .Terminal}}good{{else}}neutral{{end}}">{{if .Terminal}}Terminal{{else}}Active{{end}}</span>{{if .Stale}} <span class="badge bad">Stale</span> · threshold {{.StateStaleAfter}}{{end}} · app timestamp <time>{{.StateOccurredAt}}</time> · received <time>{{.StateUpdatedAt}}</time> · revision {{.StateRevision}}</p>{{end}}
+      {{if .OutcomeCode}}<p><strong>Business outcome: <code>{{.OutcomeCode}}</code></strong> · {{.OutcomeDescription}}</p>{{end}}
+      {{if .DeadlineAt}}<p>Business deadline: <time>{{.DeadlineAt}}</time>{{if .Overdue}} · <span class="badge bad">Overdue</span> · {{.OverdueSeconds}} seconds{{else}}{{if .Terminal}} · completed workflow{{end}}{{end}}.</p>{{end}}
       {{if .Selected}}<p>Showing state history for this run.</p>{{else}}<p><a href="{{.HistoryURL}}">View state history for this run →</a></p>{{end}}
+      {{if .Readiness}}<h4>Transition readiness</h4>
+      <p class="muted">Requirements are checked against retained reports. Planned milestones are empty in this overview; the application checks its business row and authorization before committing a transition.</p>
+      {{range .ReadinessItems}}<p><strong>Operation <code>{{.Transition.Operation}}</code>: <code>{{.Transition.From}}</code> → <code>{{.Transition.To}}</code></strong> · {{if .Ready}}declared requirements met{{else}}requirements unmet{{end}}.</p>
+      {{if .ReasonLabels}}<ul>{{range .ReasonLabels}}<li>{{.}}</li>{{end}}</ul>{{end}}
+      {{if .MissingMilestones}}<p>Commit these milestones with the transition: {{range .MissingMilestones}}<code>{{.}}</code> {{end}}</p>{{end}}
+      {{if .Transition.RequiredDependencyWorkflows}}<p>Transition prerequisite workflows: {{range .Transition.RequiredDependencyWorkflows}}<code>{{.}}</code> {{else}}none{{end}}</p>{{end}}
+      {{if .MissingDependencyWorkflows}}<p>Missing prerequisite links: {{range .MissingDependencyWorkflows}}<code>{{.}}</code> {{end}}</p>{{end}}
+      {{if .UnmetEffects}}<ul>{{range .UnmetEffects}}<li>Effect <code>{{.Requirement.Code}}</code> version <code>{{.Requirement.Version}}</code> requires confirmed milestone <code>{{.Requirement.Milestone}}</code>: <code>{{.Reason}}</code>.</li>{{end}}</ul>{{end}}
+      {{if .UnmetInvariants}}<ul>{{range .UnmetInvariants}}<li>Invariant <code>{{.Requirement.Code}}</code> version <code>{{.Requirement.Version}}</code> requires milestone <code>{{.Requirement.Milestone}}</code>: <code>{{.Reason}}</code>.</li>{{end}}</ul>{{end}}
+      {{if .MissingPolicies}}<ul>{{range .MissingPolicies}}<li>Milestone <code>{{.Milestone}}</code> requires rule <code>{{.RuleID}}</code> version <code>{{.RuleVersion}}</code> with decision <code>{{.Code}}</code>.</li>{{end}}</ul>{{end}}
+      {{if .InvariantBlockers}}<p>{{len .InvariantBlockers}} application invariant checks block this action; details follow.</p>{{end}}
+      {{if .Blockers}}<ul>{{range .Blockers}}<li><code>{{.Code}}</code>: {{.Description}}</li>{{end}}</ul>{{end}}
+      {{if .UnmetDependencies}}<p>{{len .UnmetDependencies}} unmet prerequisites; inspect the linked workflows below.</p>{{end}}
+      {{if .Advisories}}<p class="muted">{{range .Advisories}}{{if eq . "state_stale"}}The reported state is stale. {{else if eq . "deadline_overdue"}}The business deadline has passed. {{end}}{{end}}</p>{{end}}
+      {{else}}<p>No transitions from the current reported state are available.</p>{{end}}
+      {{if .Readiness.HasMore}}<p class="muted">Showing the first 100 of {{.Readiness.TransitionCount}} declared transitions. Check a specific proposed edge through the readiness API.</p>{{end}}{{end}}
+      {{if .DependencyTrace}}<h4>Dependency trace</h4>
+      <p>{{.DependencyTrace.VisitedWorkflowCount}} workflow references inspected · {{.DependencyTrace.ExaminedDependencyCount}} dependency edges examined.</p>
+      {{if .DependencyFindings}}<ol>{{range .DependencyFindings}}<li>
+        <p>{{range $index, $step := .Steps}}{{if $index}} → {{end}}<a href="{{$step.URL}}"><code>{{$step.SubjectType}}:{{$step.SubjectID}} · {{$step.Workflow}} / {{$step.InstanceID}}</code></a>{{if $step.RequiredOutcomeCode}} (requires <code>{{$step.RequiredOutcomeCode}}</code>){{end}}{{end}}</p>
+        <p><strong>{{.Title}}</strong> · {{.Explanation}}</p>
+        {{with .State}}<p>Reported state <code>{{.State}}</code> · revision {{.Revision}}{{if .OutcomeCode}} · outcome <code>{{.OutcomeCode}}</code>{{end}}{{if .DeadlineAt}} · due <time>{{.DeadlineAt}}</time>{{end}}</p>{{if .Blockers}}<ul>{{range .Blockers}}<li><code>{{.Operation}}</code> · <code>{{.Code}}</code>: {{.Description}}</li>{{end}}</ul>{{end}}{{end}}
+      </li>{{end}}</ol>{{else}}<p>No unmet prerequisite findings in the inspected reports.</p>{{end}}
+      {{if .DependencyTrace.Truncated}}<p class="muted">Trace incomplete. Limits reached: {{range .DependencyTrace.LimitsReached}}<code>{{.}}</code> {{end}}. Follow the workflow links to inspect further.</p>{{end}}{{end}}
+      {{if .DependencyImpact}}<h4>Dependent workflows</h4>
+      <p>{{.DependencyImpact.WorkflowCount}} retained workflows depend on this run · {{.DependencyImpact.ImpactedWorkflowCount}} active workflows have an unmet prerequisite.</p>
+      {{if .DependentWorkflows}}<ul>{{range .DependentWorkflows}}<li><a href="{{.URL}}"><code>{{.Subject.Type}}:{{.Subject.ID}} · {{.State.Workflow}} / {{.State.InstanceID}}</code></a> · reported state <code>{{.State.State}}</code>{{if .State.Terminal}} · terminal{{end}} · prerequisite {{.DependencyStatus}}{{if .RequiredOutcomeCode}} · requires outcome <code>{{.RequiredOutcomeCode}}</code>{{end}}{{if .NeedsAttention}} · <strong>affected</strong>{{end}}</li>{{end}}</ul>{{end}}
+      {{if .DependencyImpact.HasMore}}<p class="muted">Showing the first 100 dependents, with affected workflows first. Counts include all retained matches.</p>{{end}}{{end}}
+      {{if .RelatedWorkflows}}<h4>Workflow dependencies</h4><ul>{{range .RelatedWorkflows}}<li><a href="{{.URL}}"><code>{{.Dependency.SubjectType}}:{{.Dependency.SubjectID}} · {{.Dependency.Workflow}} / {{.Dependency.InstanceID}}</code></a> · {{.Status}}{{if .Dependency.RequiredOutcomeCode}} · requires outcome <code>{{.Dependency.RequiredOutcomeCode}}</code>{{end}}{{if .State}} · reported state <code>{{.State.State}}</code>{{if .State.OutcomeCode}} · outcome <code>{{.State.OutcomeCode}}</code>{{end}}{{else}} · no retained state{{end}}</li>{{end}}</ul>{{end}}
+      {{with .Decision}}<p><strong>Workflow decision:</strong> {{.Explanation}}</p>
+      {{if .Blockers}}<h4>Application blockers</h4><ul>{{range .Blockers}}<li><code>{{.Operation}}</code> · <code>{{.Code}}</code>: {{.Description}}</li>{{end}}</ul>{{end}}
+      {{if .NextActions}}<ul>{{range .NextActions}}<li>Operation <code>{{.Operation}}</code>: <code>{{.From}}</code> → <code>{{.To}}</code>{{if .RequiredMilestones}} · commit milestones {{range .RequiredMilestones}}<code>{{.}}</code> {{end}}with this transition{{end}}</li>{{end}}</ul><p class="muted">The application checks authorization and its current business row before acting.</p>{{end}}{{end}}
       {{if .StateHistory}}<h4>State changes</h4><ol>{{range .StateHistory}}<li>
-        {{if .FromState}}<code>{{.FromState}}</code> → <strong><code>{{.State}}</code></strong>{{else}}Reported state: <strong><code>{{.State}}</code></strong>{{end}} · revision {{.Revision}} · occurred <time>{{.OccurredAt}}</time> · published <time>{{.PublishedAt}}</time>
+        {{if .DependenciesOnly}}Updated workflow dependencies for <code>{{.State}}</code> · {{len .DependsOn}} links{{else if .OutcomeOnly}}Reported business outcome <code>{{.OutcomeCode}}</code> for <code>{{.State}}</code>: {{.OutcomeDescription}}{{else if .DeadlineOnly}}Updated business deadline for <code>{{.State}}</code> · {{if .DeadlineAt}}due <time>{{.DeadlineAt}}</time>{{else}}deadline cleared{{end}}{{else if .BlockersOnly}}Updated application blockers for <code>{{.State}}</code>{{else if .FromState}}<code>{{.FromState}}</code> → <strong><code>{{.State}}</code></strong>{{else}}Reported state: <strong><code>{{.State}}</code></strong>{{end}} · revision {{.Revision}} · occurred <time>{{.OccurredAt}}</time> · published <time>{{.PublishedAt}}</time>
+        {{if .OutcomeCode}}{{if not .OutcomeOnly}}<p>Outcome snapshot: <code>{{.OutcomeCode}}</code> · {{.OutcomeDescription}}</p>{{end}}{{end}}
+        {{if .DeadlineAt}}{{if not .DeadlineOnly}}<p>Business deadline: <time>{{.DeadlineAt}}</time>.</p>{{end}}{{end}}
         <p><a href="{{.OperationURL}}">Operation <code>{{.OperationID}}</code></a> · report <code>{{.ID}}</code></p>
+        {{if .BlockerResolutions}}<h5>Reported blocker resolutions</h5><ul>{{range .BlockerResolutions}}<li><code>{{.Operation}}</code> · <code>{{.Code}}</code>: {{.Description}}<br>Source revision {{.BlockerRevision}} · report <code>{{.BlockerReportID}}</code> · <a href="/dashboard/apps/{{$.Data.AppSlug}}/customer-operations/{{.BlockerOperationID}}">source Operation</a></li>{{end}}</ul>{{end}}
       </li>{{end}}</ol>{{else if .Selected}}<p class="muted">No retained state changes for this workflow run.</p>{{end}}
       {{if .Steps}}<ol>{{range .Steps}}<li><strong>{{.Label}}</strong> · occurred <time>{{.OccurredAt}}</time> · published <time>{{.PublishedAt}}</time>
         <p><a href="{{.OperationURL}}">Operation <code>{{.OperationID}}</code></a> · milestone <code>{{.MilestoneID}}</code></p>
+        {{if .Reconciliation}}<p><strong>Reconciliation: <code>{{.Reconciliation.Status}}</code></strong></p><p>Application state <code>{{.Reconciliation.AuthoritativeState}}</code> at business revision <code>{{.Reconciliation.SourceRevision}}</code>; retained state {{if .Reconciliation.ObservedState}}<code>{{.Reconciliation.ObservedState}}</code> at report revision {{.Reconciliation.ObservedReportRevision}}{{else}}unavailable{{end}}. Expected report revision {{.Reconciliation.ExpectedReportRevision}}. Application contract version {{.Reconciliation.ContractVersion}}; observed contract version {{.Reconciliation.ObservedContractVersion}}.</p><p class="muted">This is the discrepancy observed at reconciliation time; the current state is shown above.</p>{{end}}
+        {{if .Compensation}}<p><strong>Compensation <code>{{.Compensation.Code}}</code>: <code>{{.Compensation.Status}}</code></strong> · version <code>{{.Compensation.Version}}</code></p><p>{{.Compensation.Description}}</p><p>Source effect milestone <code>{{.Compensation.SourceEffect.MilestoneID}}</code> in <a href="{{.SourceEffectURL}}">Operation <code>{{.Compensation.SourceEffect.OperationID}}</code></a>.</p>{{if .Compensation.Reference}}<p>Compensation reference <code>{{.Compensation.Reference}}</code></p>{{end}}{{end}}
+        {{if .Effect}}<p><strong>Effect <code>{{.Effect.Code}}</code>: <code>{{.Effect.Status}}</code></strong> · version <code>{{.Effect.Version}}</code></p><p>{{.Effect.Description}}</p>{{if .Effect.Reference}}<p>Reference <code>{{.Effect.Reference}}</code></p>{{end}}{{if .Effect.AmountMinor}}<p>Amount: {{.Effect.AmountMinor}} minor units {{.Effect.Currency}}</p>{{end}}{{end}}
+        {{if .Invariant}}<p><strong>Invariant <code>{{.Invariant.Code}}</code>: <code>{{.Invariant.Status}}</code></strong> · version <code>{{.Invariant.Version}}</code></p><p>{{.Invariant.Description}}</p><p>Affected Operations: {{range .Invariant.Operations}}<code>{{.}}</code> {{end}}.</p>{{end}}
+        {{if .Decision}}<p><strong>Decision: {{.Decision.Code}}</strong> · rule <code>{{.Decision.RuleID}}</code> version <code>{{.Decision.RuleVersion}}</code></p><p>{{.Decision.Description}}</p>{{end}}
         <pre><code>{{.Payload}}</code></pre>
       </li>{{end}}</ol>{{else}}<p class="muted">No retained milestone facts for this workflow run.</p>{{end}}
       {{end}}
@@ -177,6 +220,11 @@
       {{if .Data.MilestonesError}}<p role="alert">{{.Data.MilestonesError}}</p>{{else}}
       <ol>{{range .Data.Milestones}}{{if not .WorkflowMapped}}<li><strong>{{.Name}}</strong> · occurred <time>{{.OccurredAt}}</time> · published <time>{{.CreatedAt}}</time>
         <p><a href="{{.OperationURL}}">Operation <code>{{.OperationID}}</code></a> · milestone <code>{{.ID}}</code></p>
+        {{if .Reconciliation}}<p><strong>Reconciliation: <code>{{.Reconciliation.Status}}</code></strong></p><p>Application state <code>{{.Reconciliation.AuthoritativeState}}</code> at business revision <code>{{.Reconciliation.SourceRevision}}</code>; retained state {{if .Reconciliation.ObservedState}}<code>{{.Reconciliation.ObservedState}}</code> at report revision {{.Reconciliation.ObservedReportRevision}}{{else}}unavailable{{end}}. Expected report revision {{.Reconciliation.ExpectedReportRevision}}. Application contract version {{.Reconciliation.ContractVersion}}; observed contract version {{.Reconciliation.ObservedContractVersion}}.</p><p class="muted">This is the discrepancy observed at reconciliation time; the current state is shown above.</p>{{end}}
+        {{if .Compensation}}<p><strong>Compensation <code>{{.Compensation.Code}}</code>: <code>{{.Compensation.Status}}</code></strong> · version <code>{{.Compensation.Version}}</code></p><p>{{.Compensation.Description}}</p><p>Source effect milestone <code>{{.Compensation.SourceEffect.MilestoneID}}</code> in <a href="{{.SourceEffectURL}}">Operation <code>{{.Compensation.SourceEffect.OperationID}}</code></a>.</p>{{if .Compensation.Reference}}<p>Compensation reference <code>{{.Compensation.Reference}}</code></p>{{end}}{{end}}
+        {{if .Effect}}<p><strong>Effect <code>{{.Effect.Code}}</code>: <code>{{.Effect.Status}}</code></strong> · version <code>{{.Effect.Version}}</code></p><p>{{.Effect.Description}}</p>{{if .Effect.Reference}}<p>Reference <code>{{.Effect.Reference}}</code></p>{{end}}{{if .Effect.AmountMinor}}<p>Amount: {{.Effect.AmountMinor}} minor units {{.Effect.Currency}}</p>{{end}}{{end}}
+        {{if .Invariant}}<p><strong>Invariant <code>{{.Invariant.Code}}</code>: <code>{{.Invariant.Status}}</code></strong> · version <code>{{.Invariant.Version}}</code></p><p>{{.Invariant.Description}}</p><p>Affected Operations: {{range .Invariant.Operations}}<code>{{.}}</code> {{end}}.</p>{{end}}
+        {{if .Decision}}<p><strong>Decision: {{.Decision.Code}}</strong> · rule <code>{{.Decision.RuleID}}</code> version <code>{{.Decision.RuleVersion}}</code></p><p>{{.Decision.Description}}</p>{{end}}
         <pre><code>{{.Payload}}</code></pre>
       </li>{{end}}{{else}}<li>{{if $.Data.Workflows}}All reported facts are shown in observed workflows above.{{else}}No retained milestones for this selection.{{end}}</li>{{end}}</ol>
       {{if .Data.NextMilestonesURL}}<p><a href="{{.Data.NextMilestonesURL}}">Older milestones →</a></p>{{end}}

@@ -103,6 +103,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		HealthcheckGRPCService:   healthcheckGRPCService,
 		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
 		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
+		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label

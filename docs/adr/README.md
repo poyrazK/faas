@@ -71,6 +71,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 801 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
+| 903 | [Object-storage entity outbox commit contract](903-object-storage-entity-outbox-contract.md) | internal engine; delivery pending | Atomically rooted outgoing intents with bounded restore, receipt replay and storage accounting |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
 | 634 | [Asynchronous request-ID journal](634-async-request-id-journal.md) | proposed | The exact request-ID index is queued and written by bounded workers; a failed or dropped write never fails the request |
 | 635 | [Authenticated tenant workflow continuations](635-tenant-workflow-continuations.md) | accepted | Tenant-authenticated event and callback continuation routes with atomic live-link checks |
@@ -650,8 +651,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 ## Customer operation decisions
 
 - [ADR-521: customer operations above execution ledgers](521-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery
+- [ADR-517: version customer workflow contracts and require transition evidence](517-versioned-customer-workflow-contracts.md) — pin workflow meaning and verify required milestones across app commit and platform publication
+- [ADR-518: business workflow observations and transactional evidence](518-business-workflow-observations-and-evidence.md) — scoped workflow assessments, typed business evidence, reconciliation, and compensation observations
 
 - [ADR-571: S3 write proof custody and owned cleanup](571-s3-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
+- [ADR-658: Private result files for workflow Operations](658-workflow-operation-artifacts.md)
 
 ## Events and delivery
 

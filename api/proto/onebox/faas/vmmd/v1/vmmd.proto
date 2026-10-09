@@ -692,6 +692,11 @@ message AppSpec {
   // forbidden ports again before rendering the per-instance egress_ports
   // set. Empty = base ports only.
   repeated uint32 egress_ports = 29;
+  // liveness_probe_json is the deployment's validated primary-app
+  // liveness_probe override (ADR-078), carried like readiness_probe_json.
+  // Empty keeps the plan defaults. production-us hunt #8: without this field
+  // apid stored the override and every VM still ran the plan defaults.
+  string liveness_probe_json = 31;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's

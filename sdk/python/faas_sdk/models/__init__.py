@@ -435,6 +435,8 @@ from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
+from .check_account_workflow_readiness_body import CheckAccountWorkflowReadinessBody
+from .check_platform_tenant_self_workflow_readiness_body import CheckPlatformTenantSelfWorkflowReadinessBody
 from .check_profile_regression_request import CheckProfileRegressionRequest
 from .check_route_requirements_request import CheckRouteRequirementsRequest
 from .claim_api_consumer_usage_statement_request import ClaimAPIConsumerUsageStatementRequest
@@ -1245,6 +1247,9 @@ from .get_route_health_investigation_method import GetRouteHealthInvestigationMe
 from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
 from .get_route_health_investigation_status_code import GetRouteHealthInvestigationStatusCode
 from .get_route_health_report_customer_group_by import GetRouteHealthReportCustomerGroupBy
+from .get_workflow_operation_execution_control_x_gregale_operation_execution_kind import (
+    GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind,
+)
 from .git_hub_activity_retry_response import GitHubActivityRetryResponse
 from .git_hub_check_activity import GitHubCheckActivity
 from .git_hub_check_activity_status import GitHubCheckActivityStatus
@@ -1391,6 +1396,8 @@ from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .link_platform_tenant_consumer_request import LinkPlatformTenantConsumerRequest
 from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceRequest
 from .list_account_operations_state import ListAccountOperationsState
+from .list_account_workflow_attention_dependency_status import ListAccountWorkflowAttentionDependencyStatus
+from .list_account_workflow_attention_reason import ListAccountWorkflowAttentionReason
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
@@ -1424,6 +1431,10 @@ from .list_org_activity_actor_type import ListOrgActivityActorType
 from .list_org_activity_response import ListOrgActivityResponse
 from .list_org_api_keys_response import ListOrgAPIKeysResponse
 from .list_platform_tenant_self_operations_state import ListPlatformTenantSelfOperationsState
+from .list_platform_tenant_self_workflow_attention_dependency_status import (
+    ListPlatformTenantSelfWorkflowAttentionDependencyStatus,
+)
+from .list_platform_tenant_self_workflow_attention_reason import ListPlatformTenantSelfWorkflowAttentionReason
 from .list_platform_tenant_self_workflow_runs_status import ListPlatformTenantSelfWorkflowRunsStatus
 from .list_profile_deployment_checks_response import ListProfileDeploymentChecksResponse
 from .list_profile_investigations_response import ListProfileInvestigationsResponse
@@ -1701,6 +1712,24 @@ from .open_api_contract_diff_response_source import OpenAPIContractDiffResponseS
 from .open_api_contract_unknown import OpenAPIContractUnknown
 from .operation_accepted_response import OperationAcceptedResponse
 from .operation_artifact_request import OperationArtifactRequest
+from .operation_artifact_upload_request import OperationArtifactUploadRequest
+from .operation_artifact_upload_response import OperationArtifactUploadResponse
+from .operation_business_compensation import OperationBusinessCompensation
+from .operation_business_compensation_payload import OperationBusinessCompensationPayload
+from .operation_business_compensation_payload_kind import OperationBusinessCompensationPayloadKind
+from .operation_business_compensation_status import OperationBusinessCompensationStatus
+from .operation_business_decision import OperationBusinessDecision
+from .operation_business_decision_payload import OperationBusinessDecisionPayload
+from .operation_business_decision_payload_kind import OperationBusinessDecisionPayloadKind
+from .operation_business_effect import OperationBusinessEffect
+from .operation_business_effect_payload import OperationBusinessEffectPayload
+from .operation_business_effect_payload_kind import OperationBusinessEffectPayloadKind
+from .operation_business_effect_reference import OperationBusinessEffectReference
+from .operation_business_effect_status import OperationBusinessEffectStatus
+from .operation_business_invariant import OperationBusinessInvariant
+from .operation_business_invariant_payload import OperationBusinessInvariantPayload
+from .operation_business_invariant_payload_kind import OperationBusinessInvariantPayloadKind
+from .operation_business_invariant_status import OperationBusinessInvariantStatus
 from .operation_cancellation_request import OperationCancellationRequest
 from .operation_definition_response import OperationDefinitionResponse
 from .operation_definition_spec import OperationDefinitionSpec
@@ -1709,11 +1738,13 @@ from .operation_definition_spec_method import OperationDefinitionSpecMethod
 from .operation_definition_spec_milestones import OperationDefinitionSpecMilestones
 from .operation_definition_spec_owner import OperationDefinitionSpecOwner
 from .operation_definition_spec_recovery import OperationDefinitionSpecRecovery
+from .operation_definition_spec_transaction_receipt import OperationDefinitionSpecTransactionReceipt
 from .operation_definition_summary import OperationDefinitionSummary
 from .operation_definition_summary_http_transaction_version import OperationDefinitionSummaryHttpTransactionVersion
 from .operation_definition_summary_method import OperationDefinitionSummaryMethod
 from .operation_definition_summary_owner import OperationDefinitionSummaryOwner
 from .operation_definition_summary_recovery import OperationDefinitionSummaryRecovery
+from .operation_definition_summary_transaction_receipt import OperationDefinitionSummaryTransactionReceipt
 from .operation_definitions_response import OperationDefinitionsResponse
 from .operation_delivery_attempt import OperationDeliveryAttempt
 from .operation_delivery_attempt_outcome import OperationDeliveryAttemptOutcome
@@ -1728,6 +1759,7 @@ from .operation_delivery_retry_response_state import OperationDeliveryRetryRespo
 from .operation_delivery_summary import OperationDeliverySummary
 from .operation_delivery_summary_state import OperationDeliverySummaryState
 from .operation_doctor_check import OperationDoctorCheck
+from .operation_doctor_check_execution_kind import OperationDoctorCheckExecutionKind
 from .operation_doctor_check_impact import OperationDoctorCheckImpact
 from .operation_doctor_check_status import OperationDoctorCheckStatus
 from .operation_doctor_response import OperationDoctorResponse
@@ -1741,7 +1773,11 @@ from .operation_event import OperationEvent
 from .operation_event_type import OperationEventType
 from .operation_events_response import OperationEventsResponse
 from .operation_execution import OperationExecution
+from .operation_execution_control_response import OperationExecutionControlResponse
 from .operation_executions_response import OperationExecutionsResponse
+from .operation_job_artifact_response import OperationJobArtifactResponse
+from .operation_job_control_response import OperationJobControlResponse
+from .operation_job_report_request import OperationJobReportRequest
 from .operation_list_response import OperationListResponse
 from .operation_milestone import OperationMilestone
 from .operation_milestone_request import OperationMilestoneRequest
@@ -1749,8 +1785,21 @@ from .operation_milestone_validation_request import OperationMilestoneValidation
 from .operation_milestone_validation_response import OperationMilestoneValidationResponse
 from .operation_milestones_response import OperationMilestonesResponse
 from .operation_progress import OperationProgress
+from .operation_recovery_artifact import OperationRecoveryArtifact
+from .operation_recovery_artifact_state import OperationRecoveryArtifactState
+from .operation_recovery_decision import OperationRecoveryDecision
+from .operation_recovery_decision_resolution import OperationRecoveryDecisionResolution
+from .operation_recovery_decision_state import OperationRecoveryDecisionState
+from .operation_recovery_inspection import OperationRecoveryInspection
+from .operation_recovery_inspection_execution_kind import OperationRecoveryInspectionExecutionKind
+from .operation_recovery_inspection_state import OperationRecoveryInspectionState
+from .operation_recovery_preview import OperationRecoveryPreview
+from .operation_recovery_preview_request import OperationRecoveryPreviewRequest
+from .operation_recovery_preview_request_resolution import OperationRecoveryPreviewRequestResolution
+from .operation_recovery_preview_resolution import OperationRecoveryPreviewResolution
 from .operation_recovery_request import OperationRecoveryRequest
 from .operation_recovery_request_resolution import OperationRecoveryRequestResolution
+from .operation_recovery_step import OperationRecoveryStep
 from .operation_report_request import OperationReportRequest
 from .operation_response import OperationResponse
 from .operation_response_state import OperationResponseState
@@ -1758,18 +1807,84 @@ from .operation_result_artifact import OperationResultArtifact
 from .operation_start_request import OperationStartRequest
 from .operation_subject import OperationSubject
 from .operation_subject_spec import OperationSubjectSpec
+from .operation_submission_lookup_request import OperationSubmissionLookupRequest
+from .operation_submission_lookup_response import OperationSubmissionLookupResponse
+from .operation_submission_lookup_response_state import OperationSubmissionLookupResponseState
+from .operation_submission_scope import OperationSubmissionScope
 from .operation_summary import OperationSummary
 from .operation_summary_state import OperationSummaryState
 from .operation_tenant_identity import OperationTenantIdentity
+from .operation_workflow_action_preview_request import OperationWorkflowActionPreviewRequest
+from .operation_workflow_action_preview_response import OperationWorkflowActionPreviewResponse
+from .operation_workflow_action_preview_response_reason import OperationWorkflowActionPreviewResponseReason
+from .operation_workflow_artifact_response import OperationWorkflowArtifactResponse
+from .operation_workflow_attention_entry import OperationWorkflowAttentionEntry
+from .operation_workflow_attention_entry_reasons_item import OperationWorkflowAttentionEntryReasonsItem
+from .operation_workflow_attention_group import OperationWorkflowAttentionGroup
+from .operation_workflow_attention_response import OperationWorkflowAttentionResponse
+from .operation_workflow_attention_stats import OperationWorkflowAttentionStats
+from .operation_workflow_attention_summary import OperationWorkflowAttentionSummary
+from .operation_workflow_attention_summary_group_by import OperationWorkflowAttentionSummaryGroupBy
+from .operation_workflow_blocker import OperationWorkflowBlocker
+from .operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
+from .operation_workflow_control_response import OperationWorkflowControlResponse
+from .operation_workflow_decision import OperationWorkflowDecision
+from .operation_workflow_decision_reason import OperationWorkflowDecisionReason
+from .operation_workflow_dependency import OperationWorkflowDependency
+from .operation_workflow_dependency_finding import OperationWorkflowDependencyFinding
+from .operation_workflow_dependency_finding_kind import OperationWorkflowDependencyFindingKind
+from .operation_workflow_dependency_finding_limit import OperationWorkflowDependencyFindingLimit
+from .operation_workflow_dependency_impact import OperationWorkflowDependencyImpact
+from .operation_workflow_dependency_trace import OperationWorkflowDependencyTrace
+from .operation_workflow_dependency_trace_dependency_limit import OperationWorkflowDependencyTraceDependencyLimit
+from .operation_workflow_dependency_trace_depth_limit import OperationWorkflowDependencyTraceDepthLimit
+from .operation_workflow_dependency_trace_finding_limit import OperationWorkflowDependencyTraceFindingLimit
+from .operation_workflow_dependency_trace_limits_reached_item import OperationWorkflowDependencyTraceLimitsReachedItem
+from .operation_workflow_dependency_trace_workflow_limit import OperationWorkflowDependencyTraceWorkflowLimit
+from .operation_workflow_dependent_instance import OperationWorkflowDependentInstance
+from .operation_workflow_dependent_instance_dependency_status import OperationWorkflowDependentInstanceDependencyStatus
+from .operation_workflow_effect_requirement import OperationWorkflowEffectRequirement
+from .operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+from .operation_workflow_instance_milestone_ref import OperationWorkflowInstanceMilestoneRef
+from .operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
+from .operation_workflow_instance_step import OperationWorkflowInstanceStep
+from .operation_workflow_instance_transition import OperationWorkflowInstanceTransition
+from .operation_workflow_invariant_requirement import OperationWorkflowInvariantRequirement
+from .operation_workflow_outcome_entry import OperationWorkflowOutcomeEntry
+from .operation_workflow_outcome_group import OperationWorkflowOutcomeGroup
+from .operation_workflow_outcome_summary import OperationWorkflowOutcomeSummary
+from .operation_workflow_outcome_summary_group_by import OperationWorkflowOutcomeSummaryGroupBy
+from .operation_workflow_outcomes_response import OperationWorkflowOutcomesResponse
+from .operation_workflow_planned_decision import OperationWorkflowPlannedDecision
+from .operation_workflow_planned_effect import OperationWorkflowPlannedEffect
+from .operation_workflow_planned_invariant import OperationWorkflowPlannedInvariant
+from .operation_workflow_policy_requirement import OperationWorkflowPolicyRequirement
+from .operation_workflow_readiness_overview import OperationWorkflowReadinessOverview
+from .operation_workflow_readiness_request import OperationWorkflowReadinessRequest
+from .operation_workflow_readiness_response import OperationWorkflowReadinessResponse
+from .operation_workflow_reconciliation import OperationWorkflowReconciliation
+from .operation_workflow_reconciliation_payload import OperationWorkflowReconciliationPayload
+from .operation_workflow_reconciliation_payload_kind import OperationWorkflowReconciliationPayloadKind
+from .operation_workflow_reconciliation_status import OperationWorkflowReconciliationStatus
+from .operation_workflow_related_instance import OperationWorkflowRelatedInstance
+from .operation_workflow_related_instance_status import OperationWorkflowRelatedInstanceStatus
 from .operation_workflow_state import OperationWorkflowState
 from .operation_workflow_state_history_entry import OperationWorkflowStateHistoryEntry
 from .operation_workflow_state_report import OperationWorkflowStateReport
+from .operation_workflow_state_report_deadline_at_type_1 import OperationWorkflowStateReportDeadlineAtType1
 from .operation_workflow_state_report_response import OperationWorkflowStateReportResponse
 from .operation_workflow_state_validation_request import OperationWorkflowStateValidationRequest
 from .operation_workflow_state_validation_response import OperationWorkflowStateValidationResponse
 from .operation_workflow_step import OperationWorkflowStep
 from .operation_workflow_step_state_stale_after_seconds import OperationWorkflowStepStateStaleAfterSeconds
 from .operation_workflow_transition import OperationWorkflowTransition
+from .operation_workflow_transition_readiness import OperationWorkflowTransitionReadiness
+from .operation_workflow_transition_readiness_advisories_item import OperationWorkflowTransitionReadinessAdvisoriesItem
+from .operation_workflow_transition_readiness_reasons_item import OperationWorkflowTransitionReadinessReasonsItem
+from .operation_workflow_unmet_effect import OperationWorkflowUnmetEffect
+from .operation_workflow_unmet_effect_reason import OperationWorkflowUnmetEffectReason
+from .operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
+from .operation_workflow_unmet_invariant_reason import OperationWorkflowUnmetInvariantReason
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -1987,6 +2102,10 @@ from .preflight_report import PreflightReport
 from .preflight_source import PreflightSource
 from .preflight_verdict import PreflightVerdict
 from .prepare_managed_postgres_cutover_request import PrepareManagedPostgresCutoverRequest
+from .prepare_workflow_operation_artifact_x_gregale_operation_execution_kind import (
+    PrepareWorkflowOperationArtifactXGregaleOperationExecutionKind,
+)
+from .preview_account_workflow_actions_body import PreviewAccountWorkflowActionsBody
 from .preview_artifact_response import PreviewArtifactResponse
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
 from .preview_environment_git_revision_request import PreviewEnvironmentGitRevisionRequest
@@ -1998,6 +2117,7 @@ from .preview_event_request import PreviewEventRequest
 from .preview_event_request_data_content_type import PreviewEventRequestDataContentType
 from .preview_event_request_datacontenttype import PreviewEventRequestDatacontenttype
 from .preview_event_response import PreviewEventResponse
+from .preview_platform_tenant_self_workflow_actions_body import PreviewPlatformTenantSelfWorkflowActionsBody
 from .preview_production_changes_response import PreviewProductionChangesResponse
 from .preview_production_changes_response_configuration_changed_groups_item import (
     PreviewProductionChangesResponseConfigurationChangedGroupsItem,
@@ -2364,6 +2484,12 @@ from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
 from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
 from .retry_policy_dto import RetryPolicyDTO
+from .reuse_workflow_operation_artifact_x_gregale_operation_execution_kind import (
+    ReuseWorkflowOperationArtifactXGregaleOperationExecutionKind,
+)
+from .reuse_workflow_operation_upload_x_gregale_operation_execution_kind import (
+    ReuseWorkflowOperationUploadXGregaleOperationExecutionKind,
+)
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
@@ -2766,6 +2892,20 @@ from .stream_app_logs_archive import StreamAppLogsArchive
 from .stream_app_logs_follow import StreamAppLogsFollow
 from .stream_app_logs_level import StreamAppLogsLevel
 from .stream_deployment_logs_follow import StreamDeploymentLogsFollow
+from .summarize_account_workflow_attention_dependency_status import SummarizeAccountWorkflowAttentionDependencyStatus
+from .summarize_account_workflow_attention_group_by import SummarizeAccountWorkflowAttentionGroupBy
+from .summarize_account_workflow_attention_reason import SummarizeAccountWorkflowAttentionReason
+from .summarize_account_workflow_outcomes_group_by import SummarizeAccountWorkflowOutcomesGroupBy
+from .summarize_platform_tenant_self_workflow_attention_dependency_status import (
+    SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus,
+)
+from .summarize_platform_tenant_self_workflow_attention_group_by import (
+    SummarizePlatformTenantSelfWorkflowAttentionGroupBy,
+)
+from .summarize_platform_tenant_self_workflow_attention_reason import SummarizePlatformTenantSelfWorkflowAttentionReason
+from .summarize_platform_tenant_self_workflow_outcomes_group_by import (
+    SummarizePlatformTenantSelfWorkflowOutcomesGroupBy,
+)
 from .sweep_stuck_builds_response import SweepStuckBuildsResponse
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
@@ -2924,6 +3064,9 @@ from .upload_session_response import UploadSessionResponse
 from .upload_session_response_status import UploadSessionResponseStatus
 from .upload_start_request import UploadStartRequest
 from .upload_start_response import UploadStartResponse
+from .upload_workflow_operation_artifact_x_gregale_operation_execution_kind import (
+    UploadWorkflowOperationArtifactXGregaleOperationExecutionKind,
+)
 from .upsert_dev_session_request import UpsertDevSessionRequest
 from .upsert_dev_session_request_runtime import UpsertDevSessionRequestRuntime
 from .upsert_dev_session_request_type import UpsertDevSessionRequestType
@@ -3479,6 +3622,8 @@ __all__ = (
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
     "ChangePlanRequestPlan",
+    "CheckAccountWorkflowReadinessBody",
+    "CheckPlatformTenantSelfWorkflowReadinessBody",
     "CheckProfileRegressionRequest",
     "CheckRouteRequirementsRequest",
     "ClaimAPIConsumerUsageStatementRequest",
@@ -4269,6 +4414,7 @@ __all__ = (
     "GetRouteHealthInvestigationSignal",
     "GetRouteHealthInvestigationStatusCode",
     "GetRouteHealthReportCustomerGroupBy",
+    "GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind",
     "GitHubActivityRetryResponse",
     "GitHubCheckActivity",
     "GitHubCheckActivityStatus",
@@ -4415,6 +4561,8 @@ __all__ = (
     "LinkPlatformTenantConsumerRequest",
     "LinkPlatformTenantSurfaceRequest",
     "ListAccountOperationsState",
+    "ListAccountWorkflowAttentionDependencyStatus",
+    "ListAccountWorkflowAttentionReason",
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
@@ -4448,6 +4596,8 @@ __all__ = (
     "ListOrgActivityResponse",
     "ListOrgAPIKeysResponse",
     "ListPlatformTenantSelfOperationsState",
+    "ListPlatformTenantSelfWorkflowAttentionDependencyStatus",
+    "ListPlatformTenantSelfWorkflowAttentionReason",
     "ListPlatformTenantSelfWorkflowRunsStatus",
     "ListProfileDeploymentChecksResponse",
     "ListProfileInvestigationsResponse",
@@ -4721,6 +4871,24 @@ __all__ = (
     "OpenAPIContractUnknown",
     "OperationAcceptedResponse",
     "OperationArtifactRequest",
+    "OperationArtifactUploadRequest",
+    "OperationArtifactUploadResponse",
+    "OperationBusinessCompensation",
+    "OperationBusinessCompensationPayload",
+    "OperationBusinessCompensationPayloadKind",
+    "OperationBusinessCompensationStatus",
+    "OperationBusinessDecision",
+    "OperationBusinessDecisionPayload",
+    "OperationBusinessDecisionPayloadKind",
+    "OperationBusinessEffect",
+    "OperationBusinessEffectPayload",
+    "OperationBusinessEffectPayloadKind",
+    "OperationBusinessEffectReference",
+    "OperationBusinessEffectStatus",
+    "OperationBusinessInvariant",
+    "OperationBusinessInvariantPayload",
+    "OperationBusinessInvariantPayloadKind",
+    "OperationBusinessInvariantStatus",
     "OperationCancellationRequest",
     "OperationDefinitionResponse",
     "OperationDefinitionSpec",
@@ -4729,12 +4897,14 @@ __all__ = (
     "OperationDefinitionSpecMilestones",
     "OperationDefinitionSpecOwner",
     "OperationDefinitionSpecRecovery",
+    "OperationDefinitionSpecTransactionReceipt",
     "OperationDefinitionsResponse",
     "OperationDefinitionSummary",
     "OperationDefinitionSummaryHttpTransactionVersion",
     "OperationDefinitionSummaryMethod",
     "OperationDefinitionSummaryOwner",
     "OperationDefinitionSummaryRecovery",
+    "OperationDefinitionSummaryTransactionReceipt",
     "OperationDeliveryAttempt",
     "OperationDeliveryAttemptOutcome",
     "OperationDeliveryAttemptsResponse",
@@ -4748,6 +4918,7 @@ __all__ = (
     "OperationDeliverySummary",
     "OperationDeliverySummaryState",
     "OperationDoctorCheck",
+    "OperationDoctorCheckExecutionKind",
     "OperationDoctorCheckImpact",
     "OperationDoctorCheckStatus",
     "OperationDoctorResponse",
@@ -4761,7 +4932,11 @@ __all__ = (
     "OperationEventsResponse",
     "OperationEventType",
     "OperationExecution",
+    "OperationExecutionControlResponse",
     "OperationExecutionsResponse",
+    "OperationJobArtifactResponse",
+    "OperationJobControlResponse",
+    "OperationJobReportRequest",
     "OperationListResponse",
     "OperationMilestone",
     "OperationMilestoneRequest",
@@ -4769,8 +4944,21 @@ __all__ = (
     "OperationMilestoneValidationRequest",
     "OperationMilestoneValidationResponse",
     "OperationProgress",
+    "OperationRecoveryArtifact",
+    "OperationRecoveryArtifactState",
+    "OperationRecoveryDecision",
+    "OperationRecoveryDecisionResolution",
+    "OperationRecoveryDecisionState",
+    "OperationRecoveryInspection",
+    "OperationRecoveryInspectionExecutionKind",
+    "OperationRecoveryInspectionState",
+    "OperationRecoveryPreview",
+    "OperationRecoveryPreviewRequest",
+    "OperationRecoveryPreviewRequestResolution",
+    "OperationRecoveryPreviewResolution",
     "OperationRecoveryRequest",
     "OperationRecoveryRequestResolution",
+    "OperationRecoveryStep",
     "OperationReportRequest",
     "OperationResponse",
     "OperationResponseState",
@@ -4778,18 +4966,84 @@ __all__ = (
     "OperationStartRequest",
     "OperationSubject",
     "OperationSubjectSpec",
+    "OperationSubmissionLookupRequest",
+    "OperationSubmissionLookupResponse",
+    "OperationSubmissionLookupResponseState",
+    "OperationSubmissionScope",
     "OperationSummary",
     "OperationSummaryState",
     "OperationTenantIdentity",
+    "OperationWorkflowActionPreviewRequest",
+    "OperationWorkflowActionPreviewResponse",
+    "OperationWorkflowActionPreviewResponseReason",
+    "OperationWorkflowArtifactResponse",
+    "OperationWorkflowAttentionEntry",
+    "OperationWorkflowAttentionEntryReasonsItem",
+    "OperationWorkflowAttentionGroup",
+    "OperationWorkflowAttentionResponse",
+    "OperationWorkflowAttentionStats",
+    "OperationWorkflowAttentionSummary",
+    "OperationWorkflowAttentionSummaryGroupBy",
+    "OperationWorkflowBlocker",
+    "OperationWorkflowBlockerResolution",
+    "OperationWorkflowControlResponse",
+    "OperationWorkflowDecision",
+    "OperationWorkflowDecisionReason",
+    "OperationWorkflowDependency",
+    "OperationWorkflowDependencyFinding",
+    "OperationWorkflowDependencyFindingKind",
+    "OperationWorkflowDependencyFindingLimit",
+    "OperationWorkflowDependencyImpact",
+    "OperationWorkflowDependencyTrace",
+    "OperationWorkflowDependencyTraceDependencyLimit",
+    "OperationWorkflowDependencyTraceDepthLimit",
+    "OperationWorkflowDependencyTraceFindingLimit",
+    "OperationWorkflowDependencyTraceLimitsReachedItem",
+    "OperationWorkflowDependencyTraceWorkflowLimit",
+    "OperationWorkflowDependentInstance",
+    "OperationWorkflowDependentInstanceDependencyStatus",
+    "OperationWorkflowEffectRequirement",
+    "OperationWorkflowEvidenceMilestone",
+    "OperationWorkflowInstanceMilestoneRef",
+    "OperationWorkflowInstanceSnapshot",
+    "OperationWorkflowInstanceStep",
+    "OperationWorkflowInstanceTransition",
+    "OperationWorkflowInvariantRequirement",
+    "OperationWorkflowOutcomeEntry",
+    "OperationWorkflowOutcomeGroup",
+    "OperationWorkflowOutcomesResponse",
+    "OperationWorkflowOutcomeSummary",
+    "OperationWorkflowOutcomeSummaryGroupBy",
+    "OperationWorkflowPlannedDecision",
+    "OperationWorkflowPlannedEffect",
+    "OperationWorkflowPlannedInvariant",
+    "OperationWorkflowPolicyRequirement",
+    "OperationWorkflowReadinessOverview",
+    "OperationWorkflowReadinessRequest",
+    "OperationWorkflowReadinessResponse",
+    "OperationWorkflowReconciliation",
+    "OperationWorkflowReconciliationPayload",
+    "OperationWorkflowReconciliationPayloadKind",
+    "OperationWorkflowReconciliationStatus",
+    "OperationWorkflowRelatedInstance",
+    "OperationWorkflowRelatedInstanceStatus",
     "OperationWorkflowState",
     "OperationWorkflowStateHistoryEntry",
     "OperationWorkflowStateReport",
+    "OperationWorkflowStateReportDeadlineAtType1",
     "OperationWorkflowStateReportResponse",
     "OperationWorkflowStateValidationRequest",
     "OperationWorkflowStateValidationResponse",
     "OperationWorkflowStep",
     "OperationWorkflowStepStateStaleAfterSeconds",
     "OperationWorkflowTransition",
+    "OperationWorkflowTransitionReadiness",
+    "OperationWorkflowTransitionReadinessAdvisoriesItem",
+    "OperationWorkflowTransitionReadinessReasonsItem",
+    "OperationWorkflowUnmetEffect",
+    "OperationWorkflowUnmetEffectReason",
+    "OperationWorkflowUnmetInvariant",
+    "OperationWorkflowUnmetInvariantReason",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",
@@ -4989,6 +5243,8 @@ __all__ = (
     "PreflightSource",
     "PreflightVerdict",
     "PrepareManagedPostgresCutoverRequest",
+    "PrepareWorkflowOperationArtifactXGregaleOperationExecutionKind",
+    "PreviewAccountWorkflowActionsBody",
     "PreviewArtifactResponse",
     "PreviewCreatedWebhookPayload",
     "PreviewEnvironmentGitRevisionRequest",
@@ -5000,6 +5256,7 @@ __all__ = (
     "PreviewEventRequestDatacontenttype",
     "PreviewEventRequestDataContentType",
     "PreviewEventResponse",
+    "PreviewPlatformTenantSelfWorkflowActionsBody",
     "PreviewProductionChangesResponse",
     "PreviewProductionChangesResponseConfigurationChangedGroupsItem",
     "PreviewResourceLinksResponse",
@@ -5340,6 +5597,8 @@ __all__ = (
     "RetryGithubCheckUpdateConfirm",
     "RetryGithubWebhookDeliveryConfirm",
     "RetryPolicyDTO",
+    "ReuseWorkflowOperationArtifactXGregaleOperationExecutionKind",
+    "ReuseWorkflowOperationUploadXGregaleOperationExecutionKind",
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
     "RollbackFeatureFlagsRequest",
@@ -5734,6 +5993,14 @@ __all__ = (
     "StreamAppLogsFollow",
     "StreamAppLogsLevel",
     "StreamDeploymentLogsFollow",
+    "SummarizeAccountWorkflowAttentionDependencyStatus",
+    "SummarizeAccountWorkflowAttentionGroupBy",
+    "SummarizeAccountWorkflowAttentionReason",
+    "SummarizeAccountWorkflowOutcomesGroupBy",
+    "SummarizePlatformTenantSelfWorkflowAttentionDependencyStatus",
+    "SummarizePlatformTenantSelfWorkflowAttentionGroupBy",
+    "SummarizePlatformTenantSelfWorkflowAttentionReason",
+    "SummarizePlatformTenantSelfWorkflowOutcomesGroupBy",
     "SweepStuckBuildsResponse",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
@@ -5880,6 +6147,7 @@ __all__ = (
     "UploadSessionResponseStatus",
     "UploadStartRequest",
     "UploadStartResponse",
+    "UploadWorkflowOperationArtifactXGregaleOperationExecutionKind",
     "UpsertDevSessionRequest",
     "UpsertDevSessionRequestRuntime",
     "UpsertDevSessionRequestType",

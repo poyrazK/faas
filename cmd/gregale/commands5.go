@@ -1694,7 +1694,7 @@ func splitArgsForFlags(args []string, boolFlags ...string) (flags, pos []string)
 	pos = make([]string, 0, len(args))
 	i := 0
 	for i < len(args) {
-		a := args[i]
+		a := args[i] //nolint:gosec // G602: i starts at zero and the loop condition bounds it by len(args).
 		if a == "--" {
 			i++
 			for i < len(args) {
@@ -1811,7 +1811,7 @@ func cmdTail(args []string) int {
 
 	// Event frames carry app_id only. Resolve --app to its id so the filter
 	// matches, and keep an id→slug map so lines name the app.
-	filter := tailFilter{includeStateless: *includeStateless, slugs: map[string]string{}}
+	filter := tailFilter{includeStateless: *includeStateless, slugs: map[string]string{}, seen: &tailSeen{}}
 	if apps, listErr := client.ListApps(ctx); listErr == nil {
 		for _, a := range apps {
 			filter.slugs[a.ID] = a.Slug
@@ -1869,6 +1869,40 @@ type tailFilter struct {
 	appID            string
 	includeStateless bool
 	slugs            map[string]string
+	// seen dedups invocation_done frames. apid publishes each one twice
+	// (DB trigger + schedd drain) and consumers must dedup on
+	// (invocation_id, state); tail printed every completion twice
+	// (production hunt #8, H8-30). Nil disables dedup.
+	seen *tailSeen
+}
+
+// tailSeen remembers recently printed (invocation_id, state) keys, bounded so
+// a long tail session cannot grow without limit.
+type tailSeen struct {
+	keys  map[string]struct{}
+	order []string
+}
+
+const tailSeenMax = 4096
+
+// first reports whether key is new, and records it.
+func (s *tailSeen) first(key string) bool {
+	if s == nil {
+		return true
+	}
+	if s.keys == nil {
+		s.keys = make(map[string]struct{}, tailSeenMax)
+	}
+	if _, ok := s.keys[key]; ok {
+		return false
+	}
+	if len(s.order) == tailSeenMax {
+		delete(s.keys, s.order[0])
+		s.order = s.order[1:]
+	}
+	s.keys[key] = struct{}{}
+	s.order = append(s.order, key)
+	return true
 }
 
 func (f tailFilter) label(appID string) string {
@@ -1898,25 +1932,40 @@ func tailStreamOnce(ctx context.Context, client *Client, filter tailFilter) (att
 	dec := api.NewDecoder(body)
 	dec.SetCloseFn(body.Close)
 	defer func() { _ = dec.Close() }()
+	return true, consumeTailStream(ctx, dec, filter)
+}
+
+// consumeTailStream prints frames from one decoded stream. It returns an exit
+// code, or -1 to reconnect.
+func consumeTailStream(ctx context.Context, dec *api.Decoder, filter tailFilter) int {
 	for {
 		select {
 		case <-ctx.Done():
-			return true, 130
+			return 130
 		case e, ok := <-dec.Events():
 			if !ok {
-				return true, -1
+				return -1
 			}
 			if writeErr := writeTailFrame(e, filter); writeErr != nil {
-				return true, printErr("Could not write event", writeErr)
+				return printErr("Could not write event", writeErr)
 			}
 		case err := <-dec.Errors():
 			if err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
 				PrintWarn(os.Stderr, "stream closed: %v", err)
 			}
 			if ctx.Err() != nil {
-				return true, 130
+				return 130
 			}
-			return true, -1
+			// The decoder buffers frames before it publishes the terminal
+			// error, and select picks a ready case at random, so the last
+			// frames of a stream that ends right after them were dropped.
+			// The decoder closes Events right after Errors.
+			for e := range dec.Events() {
+				if writeErr := writeTailFrame(e, filter); writeErr != nil {
+					return printErr("Could not write event", writeErr)
+				}
+			}
+			return -1
 		}
 	}
 }
@@ -1937,6 +1986,9 @@ func writeTailFrame(e api.Event, filter tailFilter) error {
 			return writeRawTailFrame(e)
 		}
 		if filter.appID != "" && p.AppID != filter.appID {
+			return nil
+		}
+		if !filter.seen.first(p.InvocationID + "\x00" + p.State) {
 			return nil
 		}
 		slug := p.AppSlug

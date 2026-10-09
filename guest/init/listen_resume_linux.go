@@ -55,11 +55,11 @@ const (
 	VsockResumeAckAfterRestore     = 13
 	VsockResumeAckBeforeCheckpoint = 14
 	// VsockResumeAckUserspaceReseed: a registered Node or Python process did
-	// not confirm its userspace RNG reseed (ADR-680). vmmd cold-boots instead
+	// not confirm its userspace RNG reseed (ADR-687). vmmd cold-boots instead
 	// of serving a process that may replay the snapshot's random values.
 	VsockResumeAckUserspaceReseed = 15
 	// VsockResumeCapUserspaceReseed follows an OK ack when the reseed
-	// barrier ran (ADR-680). vmmd refuses a restore without it, which is how
+	// barrier ran (ADR-687). vmmd refuses a restore without it, which is how
 	// snapshots taken by an older guest-init retire themselves. Hosts that
 	// read one byte ignore it.
 	VsockResumeCapUserspaceReseed = 0x01
@@ -339,7 +339,7 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	// goroutine — the resume hook doesn't return a value, and the
 	// runner env can't be threaded back through the supervisor
 	// without a refactor that breaks the test fixture.
-	// ADR-680: the kernel is reseeded; now every registered workload process
+	// ADR-687: the kernel is reseeded; now every registered workload process
 	// must reseed its userspace generators before the instance can serve.
 	if err := reseedRestoredWorkloads(); err != nil {
 		log.Error("vsock resume: userspace reseed failed", "err", err)

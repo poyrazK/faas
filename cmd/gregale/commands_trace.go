@@ -294,8 +294,8 @@ func renderTraceResult(traceID string, result api.AccountTraceLookupResponse) in
 			_, _ = fmt.Fprintln(osStdout, "MATCHES")
 			for _, match := range result.Matches {
 				request := match.Request
-				_, _ = fmt.Fprintf(osStdout, "  %s · %s %s · HTTP %d · %d ms · telemetry row %s\n",
-					match.App, request.Method, request.Route, request.Status, request.LatencyMS, request.ID)
+				_, _ = fmt.Fprintf(osStdout, "  %s · %s · HTTP %d · %d ms · telemetry row %s\n",
+					match.App, requestLine(request.Method, request.Route), request.Status, request.LatencyMS, request.ID)
 			}
 		}
 		if len(result.Invocations) > 0 {
@@ -441,7 +441,7 @@ func renderTraceWaterfall(w io.Writer, result api.AccountTraceLookupResponse) {
 		entries = append(entries, traceWaterfallEntry{
 			start: start,
 			end:   end,
-			label: fmt.Sprintf("%s · HTTP %s %s · status=%d", event.App, event.Method, event.Route, event.Status),
+			label: fmt.Sprintf("%s · HTTP %s · status=%d", event.App, requestLine(event.Method, event.Route), event.Status),
 		})
 	}
 	if len(entries) == 0 {

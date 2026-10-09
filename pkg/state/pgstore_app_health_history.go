@@ -47,6 +47,9 @@ func (s *PgStore) FinishAppHealth(ctx context.Context, claim AppHealthClaim, a a
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	if err := q.LockAppHealthAccount(ctx, tx, claim.AccountID); err != nil {
+		return fmt.Errorf("lock app health account: %w", err)
+	}
 	row, err := q.LockAppHealthCollection(ctx, tx, sqlc.LockAppHealthCollectionParams{AppID: claim.AppID, AccountID: claim.AccountID, Token: claim.Token, StartedAt: NewPgtypeTime(claim.StartedAt), CheckedNow: NewPgtypeTime(now)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict

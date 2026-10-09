@@ -132,8 +132,10 @@ def sync_detailed(
 
      Requires platform_tenant:operations:read. Identity comes only from credentials. The app,
     environment, and paired public reference select related retained work. Paired workflow and workflow-
-    instance selectors narrow the feed to one run. Opaque pagination binds all selectors; other
-    customers with the same entity ID remain isolated.
+    instance selectors narrow the feed to one run and include a grouped workflow_instance view with
+    ordered declared steps, latest matching facts, current state, and independently paginated transition
+    history. Opaque pagination binds all selectors; other customers with the same entity ID remain
+    isolated.
 
     Args:
         app_id (UUID):
@@ -193,8 +195,10 @@ def sync(
 
      Requires platform_tenant:operations:read. Identity comes only from credentials. The app,
     environment, and paired public reference select related retained work. Paired workflow and workflow-
-    instance selectors narrow the feed to one run. Opaque pagination binds all selectors; other
-    customers with the same entity ID remain isolated.
+    instance selectors narrow the feed to one run and include a grouped workflow_instance view with
+    ordered declared steps, latest matching facts, current state, and independently paginated transition
+    history. Opaque pagination binds all selectors; other customers with the same entity ID remain
+    isolated.
 
     Args:
         app_id (UUID):
@@ -249,8 +253,10 @@ async def asyncio_detailed(
 
      Requires platform_tenant:operations:read. Identity comes only from credentials. The app,
     environment, and paired public reference select related retained work. Paired workflow and workflow-
-    instance selectors narrow the feed to one run. Opaque pagination binds all selectors; other
-    customers with the same entity ID remain isolated.
+    instance selectors narrow the feed to one run and include a grouped workflow_instance view with
+    ordered declared steps, latest matching facts, current state, and independently paginated transition
+    history. Opaque pagination binds all selectors; other customers with the same entity ID remain
+    isolated.
 
     Args:
         app_id (UUID):
@@ -308,8 +314,10 @@ async def asyncio(
 
      Requires platform_tenant:operations:read. Identity comes only from credentials. The app,
     environment, and paired public reference select related retained work. Paired workflow and workflow-
-    instance selectors narrow the feed to one run. Opaque pagination binds all selectors; other
-    customers with the same entity ID remain isolated.
+    instance selectors narrow the feed to one run and include a grouped workflow_instance view with
+    ordered declared steps, latest matching facts, current state, and independently paginated transition
+    history. Opaque pagination binds all selectors; other customers with the same entity ID remain
+    isolated.
 
     Args:
         app_id (UUID):

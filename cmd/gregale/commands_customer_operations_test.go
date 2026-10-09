@@ -232,7 +232,7 @@ func TestCustomerOperationCLIRejectsUnfencedOrAmbiguousCommands(t *testing.T) {
 		}
 	}
 	command, ok := lookupCliCommand("customer-operations")
-	if !ok || len(command.Subcommands) != 15 {
+	if !ok || len(command.Subcommands) != 22 {
 		t.Fatal("command help/completion manifest missing")
 	}
 	if _, ok := lookupCliCommand("operations"); !ok {

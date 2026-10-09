@@ -113,6 +113,35 @@ managed_operation_tests="$(native_e2e_lane_tests managed-operation-only "${repo_
   '^(TestManagedOperationWorkflowMetal)$' ]] ||
   fail "managed-operation-only does not build an anchored test filter"
 native_e2e_is_lane managed-operation-only || fail "managed-operation-only is not recognised as a lane"
+# Customer Job Operations derive all scenarios, including future additions.
+customer_job_tests="$(native_e2e_lane_tests customer-job-operations-only "${repo_root}")"
+for required in TestCustomerJobOperationResultMetal TestCustomerJobOperationRestartMetal \
+  TestCustomerJobOperationRecoveryMetal TestCustomerJobOperationCancellationMetal TestCustomerJobOperationDirectUploadMetal; do
+  printf '%s\n' "${customer_job_tests}" | grep -qx "${required}" || fail "customer Job lane lost ${required}"
+done
+native_e2e_is_lane customer-job-operations-only || fail "customer Job selector is not a lane"
+rx="$(native_e2e_lane_regex customer-job-operations-only "${repo_root}")"
+[[ "${rx}" == ^\(*\)\$ ]] || fail "customer Job regex is not anchored"
+customer_job_probe="${probe}/customer-job"
+mkdir -p "${customer_job_probe}/cmd/e2e"
+cp "${repo_root}/cmd/e2e/customer_job_operations_metal_test.go" "${customer_job_probe}/cmd/e2e/"
+printf '\nfunc TestCustomerJobAddedProbe(t *testing.T) {}\n' >> "${customer_job_probe}/cmd/e2e/customer_job_operations_metal_test.go"
+native_e2e_lane_tests customer-job-operations-only "${customer_job_probe}" | grep -qx TestCustomerJobAddedProbe || fail "new customer Job scenario was omitted"
+
+customer_workflow_tests="$(native_e2e_lane_tests customer-workflow-operations-only "${repo_root}")"
+for required in TestCustomerWorkflowOperationResultMetal TestCustomerWorkflowOperationRecoveryMetal \
+  TestCustomerWorkflowOperationCancellationMetal TestCustomerWorkflowOperationDeadlineMetal TestCustomerWorkflowOperationOwnerRevocationMetal; do
+  printf '%s\n' "${customer_workflow_tests}" | grep -qx "${required}" || fail "customer Workflow lane lost ${required}"
+done
+native_e2e_is_lane customer-workflow-operations-only || fail "customer Workflow selector is not a lane"
+rx="$(native_e2e_lane_regex customer-workflow-operations-only "${repo_root}")"
+[[ "${rx}" == ^\(*\)\$ ]] || fail "customer Workflow regex is not anchored"
+customer_workflow_probe="${probe}/customer-workflow"
+mkdir -p "${customer_workflow_probe}/cmd/e2e"
+cp "${repo_root}/cmd/e2e/customer_workflow_operations_metal_test.go" "${customer_workflow_probe}/cmd/e2e/"
+printf '\nfunc TestCustomerWorkflowAddedProbe(t *testing.T) {}\n' >> "${customer_workflow_probe}/cmd/e2e/customer_workflow_operations_metal_test.go"
+native_e2e_lane_tests customer-workflow-operations-only "${customer_workflow_probe}" | grep -qx TestCustomerWorkflowAddedProbe || fail "new customer Workflow scenario was omitted"
+
 # The assert must actually bite: a bogus name fails it.
 ( NATIVE_E2E_SMOKE_TESTS+=(TestDoesNotExistAnywhere); native_e2e_assert_lanes "${repo_root}" ) 2>/dev/null &&
   fail "native_e2e_assert_lanes accepted a lane naming a nonexistent test"
