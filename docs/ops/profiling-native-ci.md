@@ -19,7 +19,7 @@ Use a dedicated x86 Linux KVM acceptance stack and a self-hosted runner with lab
 - Secret `GREGALE_NATIVE_PROFILE_TOKEN`: an independent random fixture-only secret
   of at least 32 characters. The provisioner seals it into the disposable app.
 
-The host requires Go 1.25.13, Python 3, `timeout`, `flock`, `git`, `/dev/kvm`, and
+The host requires Go 1.26.9, Python 3, `timeout`, `flock`, `git`, `/dev/kvm`, and
 write access to `/var/lock/faas-builder-acceptance.lock`. Install
 `/etc/faas/profiling-acceptance-host` to designate this stack for the drill. Native
 builder/e2e operations share the same host lock; the live platform remains running

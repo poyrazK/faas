@@ -4,7 +4,7 @@
 # type-mismatch flags, etc.).
 #
 # Schema v2 — required by golangci-lint >= v2.0. Action v8 pins v2.4.0
-# which is built with Go 1.25 and supports our go.mod's 'go 1.25.0'
+# source-built with the project compiler so it supports go.mod's Go version
 # directive (v1.x was built with Go 1.23 and rejected the bump — see
 # golangci/golangci-lint#5873).
 version: "2"

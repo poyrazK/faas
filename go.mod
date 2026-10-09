@@ -1,9 +1,9 @@
 module github.com/onebox-faas/faas
 
-go 1.25.13
+go 1.26.9
 
-// Pinned to match the version CI runs (.github/workflows/ci.yml:
-// golangci-lint-action@v9 with version: v2.4.0). Update both together.
+// Pinned to match the source-built tool CI runs (.github/workflows/ci.yml).
+// Build it with the project compiler; update the tool version and CI together.
 // `go tool golangci-lint run ./...` in the Makefile picks this up
 // automatically; no separate install required.
 tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint
@@ -26,6 +26,7 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/google/pprof v0.0.0-20250607225305-033d6d78b36a
 	github.com/google/uuid v1.6.0
+	github.com/googleapis/gax-go/v2 v2.23.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgerrcode v0.0.0-20250907135507-afb5586c32a6
 	github.com/jackc/pgx/v5 v5.11.0
@@ -55,13 +56,13 @@ require (
 	go.opentelemetry.io/otel/trace v1.46.0
 	go.opentelemetry.io/proto/otlp v1.11.0
 	go.uber.org/zap v1.28.0
-	golang.org/x/crypto v0.55.0
-	golang.org/x/net v0.58.0
+	golang.org/x/crypto v0.57.0
+	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sync v0.22.0
-	golang.org/x/sys v0.47.0
-	golang.org/x/term v0.45.0
-	golang.org/x/text v0.41.0
+	golang.org/x/sync v0.23.0
+	golang.org/x/sys v0.48.0
+	golang.org/x/term v0.46.0
+	golang.org/x/text v0.42.0
 	google.golang.org/api v0.287.1
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260831171406-18b4a7587f8a
 	google.golang.org/grpc v1.83.2
@@ -85,7 +86,6 @@ require (
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.17 // indirect
-	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
@@ -356,7 +356,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20250620022241-b7579e27df2b // indirect
-	golang.org/x/mod v0.40.0
+	golang.org/x/mod v0.41.0
 	golang.org/x/tools v0.49.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect

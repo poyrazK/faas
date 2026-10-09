@@ -94,7 +94,7 @@ Format for future ADRs: `ADR-NNN · title · status · decision · consequences`
 
 | ADR | Decision | Why | Rejected alternatives |
 |---|---|---|---|
-| 001 | Control plane in **Go**, monorepo, static binaries | firecracker-go-sdk is first-party and actively maintained (Go 1.25.13 toolchain); single-binary deploys; agents generate/test Go well | Rust (slower iteration, no first-party SDK), Node/Python (RAM cost on a budgeted box) |
+| 001 | Control plane in **Go**, monorepo, static binaries | firecracker-go-sdk is first-party and actively maintained (Go 1.26.9 toolchain); single-binary deploys; agents generate/test Go well | Rust (slower iteration, no first-party SDK), Node/Python (RAM cost on a budgeted box) |
 | 002 | **Builds on the control-plane nodes** (option B), governed | Founder decision; €0 extra; reuse existing capacity | Off-host builder VM (revisit at Gate B if build queue p95 > 60 s) |
 | 003 | **Builds run inside ephemeral builder microVMs**, not host containers | Untrusted `npm install` gets the same VM-grade isolation as untrusted runtime code; RAM cap is the VM boundary (exact, unbreachable); reuses vmmd primitives; kills rootless-runc attack surface on the host | Rootless BuildKit directly on host (weaker isolation, cgroup escapes are kernel bugs away), host docker (unacceptable) |
 | 004 | Zero-config engine: **Railpack** (BuildKit-based, Go); **Dockerfile** escape hatch; **pre-built OCI** accepted | Railpack is Nixpacks' successor (Nixpacks in maintenance mode), produces far smaller images — directly protects the 130 MB fleet snapshot target | Nixpacks (larger images), CNB Buildpacks (multi-GB builder images don't fit our RAM/disk budget) |
@@ -1918,7 +1918,7 @@ The per-VM request-concurrency bound (`concurrency_per_vm`, issue #559) is indep
 
 ## 14. Delivery plan (for agents; sequential, each gate = passing acceptance tests)
 
-Conventions for all milestones: Go 1.25.13 (the version pinned by `go.mod`);
+Conventions for all milestones: Go 1.26.9 (the version pinned by `go.mod`);
 integration tests that need KVM are tagged `//go:build metal` and run on the
 dedicated native x86_64 Linux acceptance host via `make test-metal`; unit tests
 must pass with `make test` on any machine.

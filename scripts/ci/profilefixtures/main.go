@@ -79,7 +79,7 @@ func archive(root, path, mode string) (resultErr error) {
 		_, err := tw.Write(body)
 		return err
 	}
-	dockerfile := fmt.Sprintf(`FROM golang:1.25.13-bookworm AS build
+	dockerfile := fmt.Sprintf(`FROM golang:1.26.9-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

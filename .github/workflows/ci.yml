@@ -45,13 +45,9 @@ permissions:
   security-events: write
 
 env:
-  # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
-  # and the go.mod `go 1.25.13` directive resolve to the same Go runtime.
-  # go1.25.12 carries 7 stdlib vulnerabilities (GO-2026-5026/5972/6088/
-  # 6089/6090/6091/6218) fixed in go1.25.13 — the supply-chain gate fails
-  # closed when the runner resolves "1.25" to a vulnerable patch. Bump
-  # in lock-step with the go.mod `go` directive.
-  GO_VERSION: "1.25.13"
+  # Match go.mod and the image compiler pins. Go 1.26.9 fixes the
+  # standard-library advisories reported by the release security gate.
+  GO_VERSION: "1.26.9"
   # vacuum is the OpenAPI ruleset linter used by `make spec-check`.
   # Both the version and the SHA-256 pin are mirrored from the upstream
   # checksum file at https://github.com/daveshanley/vacuum/releases — never
@@ -67,8 +63,7 @@ env:
   # has a `make sqlc` guard for local devs; CI uses the binary download
   # because the `go install` path cross-compiles sqlc (with its cgo
   # pganalyze/pg_query_go tree) from source on every cold runner (~30 s)
-  # and v1.31.1's go.mod requires Go >= 1.26, which the ubuntu-latest
-  # runner (Go 1.25.13) cannot satisfy under GOTOOLCHAIN=local.
+  # and avoid the heavy cgo installation on a cold runner.
   # Same supply-chain pin pattern as vacuum above and every binary in the
   # EX44 ansible roles.
   SQLC_VERSION: "1.31.1"
@@ -191,23 +186,15 @@ jobs:
         run: make regression-pin-check
       - name: regression-pin checker tests
         run: make regression-pin-check-test
-      - name: lint (golangci-lint v8)
-        uses: golangci/golangci-lint-action@v9
+      - name: lint (golangci-lint v2.4.0)
+        # Build the pinned tool with the project's compiler. The upstream
+        # v2.4.0 binary embeds Go 1.25 and cannot target a Go 1.26 module.
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
-          # Bound analysis memory after repeated hosted-runner shutdowns.
           GOMEMLIMIT: 3GiB
           GOGC: 75
           GOMAXPROCS: 2
-        with:
-          version: v2.4.0
-          # The expanded repository exceeded the twenty-minute cold-cache
-          # deadline under these memory bounds. Retain every rule and give
-          # the complete analysis a bounded thirty-minute deadline.
-          args: --timeout=30m
-          # The action's own cache is keyed per 7-day interval and never re-saved
-          # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
-          skip-cache: true
+        run: go tool golangci-lint run --timeout=30m
 
       # Re-runs the same checks golangci-lint covers as a fallback, in case
       # the lint step is skipped (e.g. workflow_dispatch with no Go file
