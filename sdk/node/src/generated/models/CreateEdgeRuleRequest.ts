@@ -45,20 +45,20 @@ export type CreateEdgeRuleRequest = {
    */
   action: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction);
   /**
-   * Operator-facing rule name.
+   * Optional operator-facing name for the new rule.
    */
   name?: string;
   /**
-   * Operator-facing description.
+   * Optional operator-facing notes for the new rule.
    */
   description?: string;
   /**
-   * When the gateway stops applying the rule.
+   * Optional time after which the gateway stops applying the new rule.
    */
   expires_at?: string;
   match?: EdgeRuleMatchExpr;
   /**
-   * enforce (default) or log; a log-mode rule is matched and counted but never acts.
+   * Start the rule enforced (default) or in log mode, where it is only matched and counted.
    */
   mode?: 'enforce' | 'log';
 };

@@ -17,6 +17,8 @@ T = TypeVar("T", bound="CreateEdgeRuleListRequest")
 
 @_attrs_define
 class CreateEdgeRuleListRequest:
+    """Create an edge-rule list (ADR-907)."""
+
     name: str
     kind: CreateEdgeRuleListRequestKind
     """ip (addresses and CIDRs, for client_ip), country (ISO 3166-1 alpha-2), host (exact hosts and *.suffix

@@ -142,10 +142,11 @@ func cmdEdgeRuleListsCreate(args []string) int {
 		return 1
 	}
 	const usage = "<name> --kind ip|country|host|string|asn [--item V]... [--items-file path|-] [--description D]"
-	name, ok := edgeRuleListNameArg(fs, "create", usage)
-	if !ok {
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists create "+usage, "edge-rule-lists")
 		return 1
 	}
+	name := fs.Arg(0)
 	if *kind == "" {
 		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists create "+usage, "edge-rule-lists")
 		return 1
@@ -179,10 +180,11 @@ func cmdEdgeRuleListsUpdate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	name, ok := edgeRuleListNameArg(fs, "update", "<name> [--add V]... [--remove V]... [--replace-file path|-] [--description D]")
-	if !ok {
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists update <name> [--add V]... [--remove V]... [--replace-file path|-] [--description D]", "edge-rule-lists")
 		return 1
 	}
+	name := fs.Arg(0)
 	req := api.UpdateEdgeRuleListRequest{Add: []string(add), Remove: []string(remove)}
 	if flagWasSet(fs, "description") {
 		req.Description = description
@@ -210,10 +212,11 @@ func cmdEdgeRuleListsRm(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	name, ok := edgeRuleListNameArg(fs, "rm", "<name>")
-	if !ok {
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists rm <name>", "edge-rule-lists")
 		return 1
 	}
+	name := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

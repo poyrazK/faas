@@ -25656,6 +25656,7 @@ paths:
       - name: name
         in: path
         required: true
+        description: Edge-rule list name, unique within the account.
         schema: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{0,63}$' }
     get:
       tags: [edge_rules]
@@ -25668,11 +25669,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/EdgeRuleListResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '404':
-          description: 'code: edge_rule_list_not_found'
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/EdgeRuleListNotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     patch:
       tags: [edge_rules]
@@ -25701,24 +25698,16 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
-        '404':
-          description: 'code: edge_rule_list_not_found'
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/EdgeRuleListNotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     delete:
       tags: [edge_rules]
       operationId: deleteEdgeRuleList
       summary: Delete an unreferenced edge-rule list.
       responses:
-        '204': { description: Deleted. }
+        '204': { description: The list was deleted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '404':
-          description: 'code: edge_rule_list_not_found'
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/EdgeRuleListNotFound' }
         '409':
           description: 'code: edge_rule_list_in_use (rules still reference the list)'
           content:
@@ -25737,9 +25726,7 @@ paths:
         '200':
           description: Edge rules for this app, ordered by priority ASC.
           headers:
-            ETag:
-              description: The app's current edge-rule set version, for If-Match on later mutations.
-              schema: { type: string }
+            ETag: { $ref: '#/components/headers/EdgeRuleSetETag' }
           content:
             application/json:
               schema:
@@ -25753,11 +25740,7 @@ paths:
       operationId: createEdgeRule
       summary: Create an edge rule on an app.
       parameters:
-        - name: If-Match
-          in: header
-          required: false
-          description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
-          schema: { type: string }
+        - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
       description: |
         Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
         validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
@@ -25795,11 +25778,7 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/EdgeRuleConflict' }
-        '412':
-          description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Problem' }
+        '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -25824,11 +25803,7 @@ paths:
       operationId: updateEdgeRule
       summary: Partial-update an edge rule.
       parameters:
-        - name: If-Match
-          in: header
-          required: false
-          description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
-          schema: { type: string }
+        - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
       description: |
         Every field is optional. `kind` is NOT patchable — rotating
         kind mid-life would break the action union. To change kind,
@@ -25848,11 +25823,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '412':
-          description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Problem' }
+        '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     delete:
@@ -25860,21 +25831,13 @@ paths:
       operationId: deleteEdgeRule
       summary: Delete an edge rule.
       parameters:
-        - name: If-Match
-          in: header
-          required: false
-          description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
-          schema: { type: string }
+        - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
       responses:
         '204':
           description: The cors preset was deleted. Referencing edge_rules.cors_preset_id was atomically cleared via ON DELETE SET NULL; the gateway compile path fails closed until the customer wires a new preset or inlines fallback values.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '412':
-          description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Problem' }
+        '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/edge-rules/versions:
@@ -25892,9 +25855,7 @@ paths:
         '200':
           description: Versions, newest first.
           headers:
-            ETag:
-              description: The app's current edge-rule set version, for If-Match on later mutations.
-              schema: { type: string }
+            ETag: { $ref: '#/components/headers/EdgeRuleSetETag' }
           content:
             application/json:
               schema:
@@ -25910,6 +25871,7 @@ paths:
       - name: version
         in: path
         required: true
+        description: Rule-set version number, from the versions listing.
         schema: { type: integer, minimum: 1 }
     get:
       tags: [edge_rules]
@@ -25944,10 +25906,12 @@ paths:
         - name: rule
           in: query
           required: false
+          description: Only events for this edge rule id.
           schema: { type: string, format: uuid }
         - name: outcome
           in: query
           required: false
+          description: Only matched (enforced) or logged (log-mode) events.
           schema: { type: string, enum: [matched, logged] }
         - name: since
           in: query
@@ -25957,6 +25921,7 @@ paths:
         - name: limit
           in: query
           required: false
+          description: Events per page.
           schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
         - name: cursor
           in: query
@@ -25990,6 +25955,7 @@ paths:
         - name: window
           in: query
           required: false
+          description: How far back to total hit counts.
           schema: { type: string, enum: ['1h', '24h', '7d'], default: '24h' }
       responses:
         '200':
@@ -26016,11 +25982,7 @@ paths:
         exceeds the current plan's edge-rule quotas or references a deleted
         CORS preset.
       parameters:
-        - name: If-Match
-          in: header
-          required: false
-          description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
-          schema: { type: string }
+        - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
       requestBody:
         required: true
         content:
@@ -26030,9 +25992,7 @@ paths:
         '200':
           description: The rules now in force.
           headers:
-            ETag:
-              description: The app's current edge-rule set version, for If-Match on later mutations.
-              schema: { type: string }
+            ETag: { $ref: '#/components/headers/EdgeRuleSetETag' }
           content:
             application/json:
               schema:
@@ -26046,11 +26006,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Problem' }
-        '412':
-          description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Problem' }
+        '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/throttle-suggestions:
@@ -36705,6 +36661,9 @@ components:
       description: Browser dashboard session cookie. The browser sends this HttpOnly cookie automatically.
 
   headers:
+    EdgeRuleSetETag:
+      description: The app's current edge-rule set version, for If-Match on later mutations (ADR-905).
+      schema: { type: string }
     WWWAuthenticate:
       description: |
         RFC 6750 Bearer challenge emitted when a protected API resource
@@ -36758,6 +36717,12 @@ components:
     ManagedRealtimePrincipalQueryBounded: {"name": "principal", "description": "Verified push principal ID", "in": "query", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 256}}
     ManagedRealtimeProviderPath: {"name": "provider", "description": "Push provider name", "in": "path", "required": true, "schema": {"type": "string", "enum": ["fcm", "apns", "webpush"]}}
     ManagedRealtimeDevicePath: {"name": "device", "description": "Registered device ID", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 128}}
+    EdgeRuleSetIfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
+      schema: { type: string }
     OperationArtifact:
       name: artifact
       in: path
@@ -60500,11 +60465,11 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
-        name: { type: string, maxLength: 100, description: Operator-facing rule name. }
-        description: { type: string, maxLength: 1000, description: Operator-facing description. }
-        expires_at: { type: string, format: date-time, description: When the gateway stops applying the rule. }
+        name: { type: string, maxLength: 100, description: Optional operator-facing name for the new rule. }
+        description: { type: string, maxLength: 1000, description: Optional operator-facing notes for the new rule. }
+        expires_at: { type: string, format: date-time, description: Optional time after which the gateway stops applying the new rule. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
-        mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
+        mode: { type: string, enum: [enforce, log], description: 'Start the rule enforced (default) or in log mode, where it is only matched and counted.' }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -60548,13 +60513,13 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
-        name: { type: string, maxLength: 100, description: Operator-facing rule name. }
-        description: { type: string, maxLength: 1000, description: Operator-facing description. }
-        expires_at: { type: string, format: date-time, description: When the gateway stops applying the rule. }
+        name: { type: string, maxLength: 100, description: Replacement rule name. }
+        description: { type: string, maxLength: 1000, description: Replacement rule notes. }
+        expires_at: { type: string, format: date-time, description: New expiry; the gateway stops applying the rule after it. }
         clear_expires_at: { type: boolean, description: Remove the expiry so the rule applies indefinitely. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         clear_match: { type: boolean, description: Remove the match condition. }
-        mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
+        mode: { type: string, enum: [enforce, log], description: 'Switch the rule to enforce, or to log so it is matched and counted but never acts.' }
 
     EdgeRuleMatchExpr:
       description: |
@@ -60609,6 +60574,7 @@ components:
         updated_at: { type: string, format: date-time }
 
     ListEdgeRuleListsResponse:
+      description: The account's edge-rule lists, without items (ADR-907).
       type: object
       required: [lists]
       properties:
@@ -60617,6 +60583,7 @@ components:
           items: { $ref: '#/components/schemas/EdgeRuleListResponse' }
 
     CreateEdgeRuleListRequest:
+      description: Create an edge-rule list (ADR-907).
       type: object
       required: [name, kind]
       properties:
@@ -60631,6 +60598,7 @@ components:
           items: { type: string, maxLength: 256 }
 
     UpdateEdgeRuleListRequest:
+      description: 'Edit an edge-rule list: replace items, or add and remove some (ADR-907).'
       type: object
       properties:
         description: { type: string, maxLength: 500 }
@@ -60657,6 +60625,7 @@ components:
         next_cursor: { type: string }
 
     EdgeRuleEventResponse:
+      description: One sampled request an edge rule matched (ADR-908).
       type: object
       required: [id, rule_id, outcome, occurred_at]
       properties:
@@ -60670,7 +60639,7 @@ components:
         method: { type: string }
         host: { type: string }
         path: { type: string, description: Request path without the query string. }
-        client_ip: { type: string, description: Trusted client IP, when known. }
+        client_ip: { type: string, description: 'Trusted client IP, when known.' }
         country: { type: string }
         user_agent: { type: string }
 
@@ -60686,6 +60655,7 @@ components:
           items: { $ref: '#/components/schemas/EdgeRuleHitStatsResponse' }
 
     EdgeRuleHitStatsResponse:
+      description: One rule's match counts over the window (ADR-904).
       type: object
       required: [rule_id, matched, logged]
       properties:
@@ -60709,6 +60679,7 @@ components:
           items: { $ref: '#/components/schemas/EdgeRuleResponse' }
 
     RollbackEdgeRulesRequest:
+      description: Restore an app's edge rules to a recorded rule-set version (ADR-905).
       type: object
       required: [version]
       properties:
@@ -71684,6 +71655,16 @@ components:
         maximum_change_percentage_points: { type: number, format: double, exclusiveMinimum: 0, maximum: 100, default: 20 }
 
   responses:
+    EdgeRulesVersionMismatch:
+      description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    EdgeRuleListNotFound:
+      description: 'code: edge_rule_list_not_found'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     OperationConflict:
       description: A pinned contract, idempotency payload or execution generation conflicts with the retained state.
       content:

@@ -115,7 +115,8 @@ def sync_detailed(
     Args:
         slug (str):
         if_match (str | Unset):
-        body (RollbackEdgeRulesRequest):
+        body (RollbackEdgeRulesRequest): Restore an app's edge rules to a recorded rule-set
+            version (ADR-905).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -156,7 +157,8 @@ def sync(
     Args:
         slug (str):
         if_match (str | Unset):
-        body (RollbackEdgeRulesRequest):
+        body (RollbackEdgeRulesRequest): Restore an app's edge rules to a recorded rule-set
+            version (ADR-905).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -192,7 +194,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         if_match (str | Unset):
-        body (RollbackEdgeRulesRequest):
+        body (RollbackEdgeRulesRequest): Restore an app's edge rules to a recorded rule-set
+            version (ADR-905).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -231,7 +234,8 @@ async def asyncio(
     Args:
         slug (str):
         if_match (str | Unset):
-        body (RollbackEdgeRulesRequest):
+        body (RollbackEdgeRulesRequest): Restore an app's edge rules to a recorded rule-set
+            version (ADR-905).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

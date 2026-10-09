@@ -11,6 +11,8 @@ T = TypeVar("T", bound="RollbackEdgeRulesRequest")
 
 @_attrs_define
 class RollbackEdgeRulesRequest:
+    """Restore an app's edge rules to a recorded rule-set version (ADR-905)."""
+
     version: int
     """The version to restore."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Create an edge-rule list (ADR-907).
+ */
 export type CreateEdgeRuleListRequest = {
   name: string;
   /**

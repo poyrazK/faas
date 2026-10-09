@@ -469,6 +469,7 @@ export type { EdgeRuleResponse } from './EdgeRuleResponse.js';
 export type { EdgeRuleRetryAction } from './EdgeRuleRetryAction.js';
 export type { EdgeRuleRewriteAction } from './EdgeRuleRewriteAction.js';
 export type { EdgeRuleRouteAction } from './EdgeRuleRouteAction.js';
+export type { EdgeRuleSetIfMatch } from './EdgeRuleSetIfMatch.js';
 export type { EdgeRuleSetVersionResponse } from './EdgeRuleSetVersionResponse.js';
 export type { EdgeRuleStatsResponse } from './EdgeRuleStatsResponse.js';
 export type { EdgeRuleSuggestion } from './EdgeRuleSuggestion.js';

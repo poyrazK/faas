@@ -476,6 +476,7 @@ export type { EdgeRuleResponse } from './models/EdgeRuleResponse.js';
 export type { EdgeRuleRetryAction } from './models/EdgeRuleRetryAction.js';
 export type { EdgeRuleRewriteAction } from './models/EdgeRuleRewriteAction.js';
 export type { EdgeRuleRouteAction } from './models/EdgeRuleRouteAction.js';
+export type { EdgeRuleSetIfMatch } from './models/EdgeRuleSetIfMatch.js';
 export type { EdgeRuleSetVersionResponse } from './models/EdgeRuleSetVersionResponse.js';
 export type { EdgeRuleStatsResponse } from './models/EdgeRuleStatsResponse.js';
 export type { EdgeRuleSuggestion } from './models/EdgeRuleSuggestion.js';

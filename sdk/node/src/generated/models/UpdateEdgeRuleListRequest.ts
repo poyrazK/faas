@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Edit an edge-rule list: replace items, or add and remove some (ADR-907).
+ */
 export type UpdateEdgeRuleListRequest = {
   description?: string;
   /**

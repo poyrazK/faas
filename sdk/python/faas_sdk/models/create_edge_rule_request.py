@@ -78,11 +78,11 @@ class CreateEdgeRuleRequest:
     Omitted == 'block' (the SQL-side default).
     """
     name: str | Unset = UNSET
-    """Operator-facing rule name."""
+    """Optional operator-facing name for the new rule."""
     description: str | Unset = UNSET
-    """Operator-facing description."""
+    """Optional operator-facing notes for the new rule."""
     expires_at: datetime.datetime | Unset = UNSET
-    """When the gateway stops applying the rule."""
+    """Optional time after which the gateway stops applying the new rule."""
     match: EdgeRuleMatchExpr | Unset = UNSET
     """ADR-906 match condition, ANDed with the rule's fixed selectors. A node
     is exactly one of all, any, not, or a field/op leaf. Fields: method,
@@ -95,7 +95,7 @@ class CreateEdgeRuleRequest:
     bytes. An untrusted client IP, or its unknown country or ASN, is absent.
     """
     mode: CreateEdgeRuleRequestMode | Unset = UNSET
-    """enforce (default) or log; a log-mode rule is matched and counted but never acts."""
+    """Start the rule enforced (default) or in log mode, where it is only matched and counted."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -184,7 +185,11 @@ func (s *server) rollbackEdgeRules(w http.ResponseWriter, r *http.Request, acct 
 		s.writeEdgeRuleRestoreError(w, err)
 		return
 	}
-	s.log.Info("edge rules rolled back", "app", app.ID, "account", acct.ID, "version", req.Version, "rules", len(restored.Rules))
+	s.log.Info("edge rules rolled back",
+		"app", logsanitize.Field(app.ID),
+		"account", logsanitize.Field(acct.ID),
+		"version", logsanitize.Field(strconv.Itoa(req.Version)),
+		"rules", len(restored.Rules))
 	s.audit.Emit(r.Context(), "edge_rule.rolled_back", &acct.ID, map[string]any{
 		auditKeyAppID: app.ID,
 		"version":     req.Version,

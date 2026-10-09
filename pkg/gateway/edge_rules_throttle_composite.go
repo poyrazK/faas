@@ -4,6 +4,7 @@ package gateway
 // request fields, e.g. client IP and path.
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -16,6 +17,10 @@ import (
 // combinations are hashed so attacker-chosen header values cannot grow the
 // limiter's keys.
 const throttleCompositeMaxKeyBytes = 128
+
+// throttleCompositeKeyHMACKey keys the long-identity digest (ADR-909).
+// Changing it re-buckets every hashed composite identity once.
+const throttleCompositeKeyHMACKey = "gregale/edge-rule-throttle-composite/v1"
 
 // resolveCompositeThrottleKey joins the rule's key fields into one identity.
 // A field that is unavailable (untrusted client IP, no GeoIP) fails the
@@ -59,6 +64,12 @@ func compositeThrottleKey(parts []string) string {
 	if len(key) <= throttleCompositeMaxKeyBytes {
 		return key
 	}
-	sum := sha256.Sum256([]byte(key))
-	return "h:" + hex.EncodeToString(sum[:16])
+	// HMAC with a fixed, versioned key rather than bare SHA-256: the digest
+	// only bounds the bucket key's length and must be identical on every
+	// gateway (central mode shards on it), so the key cannot be per-process;
+	// keying it keeps raw identities (which may include credentials-adjacent
+	// headers) from being recoverable by hashing guesses.
+	mac := hmac.New(sha256.New, []byte(throttleCompositeKeyHMACKey))
+	_, _ = mac.Write([]byte(key))
+	return "h:" + hex.EncodeToString(mac.Sum(nil)[:16])
 }

@@ -209,6 +209,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/edge-rules":                     true, // HTML form, edge-rule create (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/trace":               true, // HTML form, read-only edge-rule request trace
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/toggle":         true, // HTML form, edge-rule enabled toggle (issue #1397 G4)
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/mode":           true, // HTML form, edge-rule enforce/log switch (ADR-904)
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":         true, // HTML form, edge-rule delete (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/security-headers":    true, // HTML form, security-headers preset (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay": true, // HTML form, queue DLQ replay (issue #1397 G7)
@@ -323,6 +324,8 @@ func init() {
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
 	"EventRetentionQuery": true, // client-only retention query options; route parameters are the wire contract
+	// ADR-908: client-only filter/paging options; the wire parameters are declared on the route.
+	"EdgeRuleEventsQuery": true,
 	// Workflow list options encode URL query parameters, not JSON request bodies.
 	"OperationWorkflowAttentionOptions":        true,
 	"OperationWorkflowAttentionSummaryOptions": true,
@@ -567,6 +570,7 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	"EdgeRuleMatchExpr":      true, // ADR-906 condition type lives in pkg/api/edge_rule_match.go with its compiler
 	"DevBridgeScope":         true, // wire types live in pkg/devbridge; digests never cross the wire
 	"DevBridgeSession":       true,
 	"DevBridgeActivity":      true, // ADR-379 wire observer types live in pkg/devbridge

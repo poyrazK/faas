@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * One rule's match counts over the window (ADR-904).
+ */
 export type EdgeRuleHitStatsResponse = {
   rule_id: string;
   /**

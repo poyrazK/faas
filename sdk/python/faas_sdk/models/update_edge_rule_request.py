@@ -77,11 +77,11 @@ class UpdateEdgeRuleRequest:
     ) = UNSET
     """Replaces the jsonb column whole."""
     name: str | Unset = UNSET
-    """Operator-facing rule name."""
+    """Replacement rule name."""
     description: str | Unset = UNSET
-    """Operator-facing description."""
+    """Replacement rule notes."""
     expires_at: datetime.datetime | Unset = UNSET
-    """When the gateway stops applying the rule."""
+    """New expiry; the gateway stops applying the rule after it."""
     clear_expires_at: bool | Unset = UNSET
     """Remove the expiry so the rule applies indefinitely."""
     match: EdgeRuleMatchExpr | Unset = UNSET
@@ -98,7 +98,7 @@ class UpdateEdgeRuleRequest:
     clear_match: bool | Unset = UNSET
     """Remove the match condition."""
     mode: UpdateEdgeRuleRequestMode | Unset = UNSET
-    """enforce (default) or log; a log-mode rule is matched and counted but never acts."""
+    """Switch the rule to enforce, or to log so it is matched and counted but never acts."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

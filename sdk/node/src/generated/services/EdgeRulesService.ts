@@ -141,6 +141,9 @@ export class EdgeRulesService {
   public static getEdgeRuleList({
     name,
   }: {
+    /**
+     * Edge-rule list name, unique within the account.
+     */
     name: string,
   }): CancelablePromise<EdgeRuleListResponse> {
     return __request(OpenAPI, {
@@ -174,6 +177,9 @@ export class EdgeRulesService {
     name,
     requestBody,
   }: {
+    /**
+     * Edge-rule list name, unique within the account.
+     */
     name: string,
     requestBody: UpdateEdgeRuleListRequest,
   }): CancelablePromise<EdgeRuleListResponse> {
@@ -206,6 +212,9 @@ export class EdgeRulesService {
   public static deleteEdgeRuleList({
     name,
   }: {
+    /**
+     * Edge-rule list name, unique within the account.
+     */
     name: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
@@ -477,6 +486,9 @@ export class EdgeRulesService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Rule-set version number, from the versions listing.
+     */
     version: number,
   }): CancelablePromise<EdgeRuleSetVersionResponse> {
     return __request(OpenAPI, {
@@ -522,12 +534,21 @@ export class EdgeRulesService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Only events for this edge rule id.
+     */
     rule?: string,
+    /**
+     * Only matched (enforced) or logged (log-mode) events.
+     */
     outcome?: 'matched' | 'logged',
     /**
      * Duration such as 1h, 24h or 7d.
      */
     since?: string,
+    /**
+     * Events per page.
+     */
     limit?: number,
     /**
      * next_cursor from the previous page.
@@ -577,6 +598,9 @@ export class EdgeRulesService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * How far back to total hit counts.
+     */
     window?: '1h' | '24h' | '7d',
   }): CancelablePromise<EdgeRuleStatsResponse> {
     return __request(OpenAPI, {

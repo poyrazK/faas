@@ -18,6 +18,8 @@ T = TypeVar("T", bound="EdgeRuleEventResponse")
 
 @_attrs_define
 class EdgeRuleEventResponse:
+    """One sampled request an edge rule matched (ADR-908)."""
+
     id: str
     rule_id: str
     outcome: EdgeRuleEventResponseOutcome
@@ -31,7 +33,7 @@ class EdgeRuleEventResponse:
     path: str | Unset = UNSET
     """Request path without the query string."""
     client_ip: str | Unset = UNSET
-    """Trusted client IP"""
+    """Trusted client IP, when known."""
     country: str | Unset = UNSET
     user_agent: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

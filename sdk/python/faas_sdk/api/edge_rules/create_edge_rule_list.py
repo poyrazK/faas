@@ -92,7 +92,7 @@ def sync_detailed(
     per list are plan limits.
 
     Args:
-        body (CreateEdgeRuleListRequest):
+        body (CreateEdgeRuleListRequest): Create an edge-rule list (ADR-907).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,7 +125,7 @@ def sync(
     per list are plan limits.
 
     Args:
-        body (CreateEdgeRuleListRequest):
+        body (CreateEdgeRuleListRequest): Create an edge-rule list (ADR-907).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -153,7 +153,7 @@ async def asyncio_detailed(
     per list are plan limits.
 
     Args:
-        body (CreateEdgeRuleListRequest):
+        body (CreateEdgeRuleListRequest): Create an edge-rule list (ADR-907).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,7 +184,7 @@ async def asyncio(
     per list are plan limits.
 
     Args:
-        body (CreateEdgeRuleListRequest):
+        body (CreateEdgeRuleListRequest): Create an edge-rule list (ADR-907).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

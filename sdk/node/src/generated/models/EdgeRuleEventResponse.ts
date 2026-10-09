@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * One sampled request an edge rule matched (ADR-908).
+ */
 export type EdgeRuleEventResponse = {
   id: string;
   rule_id: string;
@@ -20,7 +23,7 @@ export type EdgeRuleEventResponse = {
    */
   path?: string;
   /**
-   * Trusted client IP
+   * Trusted client IP, when known.
    */
   client_ip?: string;
   country?: string;

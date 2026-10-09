@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
 // edgeRuleLoadRetryBackoff spaces database retries for a host whose last
@@ -101,7 +102,7 @@ func (g *gatewaydEdgeRules) lastKnownHost(host string, loadErr error) (*gateway.
 		return nil, loadErr
 	}
 	if g.log != nil && !errors.Is(loadErr, errEdgeRuleLoadBackoff) {
-		g.log.Warn("edge rule load failed; serving last known rules", "host", host, "err", loadErr)
+		g.log.Warn("edge rule load failed; serving last known rules", "host", logsanitize.Field(host), "err", loadErr)
 	}
 	return entry, nil
 }

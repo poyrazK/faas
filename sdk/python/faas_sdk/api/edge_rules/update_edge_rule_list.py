@@ -99,7 +99,8 @@ def sync_detailed(
 
     Args:
         name (str):
-        body (UpdateEdgeRuleListRequest):
+        body (UpdateEdgeRuleListRequest): Edit an edge-rule list: replace items, or add and remove
+            some (ADR-907).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -136,7 +137,8 @@ def sync(
 
     Args:
         name (str):
-        body (UpdateEdgeRuleListRequest):
+        body (UpdateEdgeRuleListRequest): Edit an edge-rule list: replace items, or add and remove
+            some (ADR-907).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -168,7 +170,8 @@ async def asyncio_detailed(
 
     Args:
         name (str):
-        body (UpdateEdgeRuleListRequest):
+        body (UpdateEdgeRuleListRequest): Edit an edge-rule list: replace items, or add and remove
+            some (ADR-907).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -203,7 +206,8 @@ async def asyncio(
 
     Args:
         name (str):
-        body (UpdateEdgeRuleListRequest):
+        body (UpdateEdgeRuleListRequest): Edit an edge-rule list: replace items, or add and remove
+            some (ADR-907).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

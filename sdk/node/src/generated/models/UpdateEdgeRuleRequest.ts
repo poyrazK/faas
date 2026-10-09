@@ -44,15 +44,15 @@ export type UpdateEdgeRuleRequest = {
    */
   action?: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction);
   /**
-   * Operator-facing rule name.
+   * Replacement rule name.
    */
   name?: string;
   /**
-   * Operator-facing description.
+   * Replacement rule notes.
    */
   description?: string;
   /**
-   * When the gateway stops applying the rule.
+   * New expiry; the gateway stops applying the rule after it.
    */
   expires_at?: string;
   /**
@@ -65,7 +65,7 @@ export type UpdateEdgeRuleRequest = {
    */
   clear_match?: boolean;
   /**
-   * enforce (default) or log; a log-mode rule is matched and counted but never acts.
+   * Switch the rule to enforce, or to log so it is matched and counted but never acts.
    */
   mode?: 'enforce' | 'log';
 };
