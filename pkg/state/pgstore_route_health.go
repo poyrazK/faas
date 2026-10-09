@@ -52,7 +52,9 @@ func (s *PgStore) SetRouteHealthGate(ctx context.Context, accountID, appID strin
 	if req.Mode == "enforce" && (!snapshot.Account.Plan.TrafficSplitAllowed() || !snapshot.Account.Plan.DebugTelemetryEnabled()) {
 		return g, ErrRouteHealthPlan
 	}
-	if g.Mode == req.Mode && g.OnRegression == req.OnRegression && routehealth.RoutesEqual(g.Routes, req.Routes) {
+	// The first explicit save records intent even when it matches the default,
+	// so an empty selector list opts out of default seeding (ADR-844).
+	if g.Revision > 0 && g.Mode == req.Mode && g.OnRegression == req.OnRegression && routehealth.RoutesEqual(g.Routes, req.Routes) {
 		return g, tx.Commit(ctx)
 	}
 	if g.Revision >= api.RouteRequirementsMaxRevision {
