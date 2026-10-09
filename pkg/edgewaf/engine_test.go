@@ -143,3 +143,20 @@ func TestRuleIDLabelIsBounded(t *testing.T) {
 	}
 	t.Logf("CRS detection rules: %d", len(ids))
 }
+
+// TestEvaluateTruncatedJSONBody covers bodies longer than the inspection cap:
+// the WAF sees a prefix that is no longer valid JSON, and an attack inside
+// that prefix must still be scored.
+func TestEvaluateTruncatedJSONBody(t *testing.T) {
+	waf, _ := sharedInspector(t).engine(1)
+	attack := `{"q":"1' OR 1=1--","pad":"` + strings.Repeat("a", 20*1024) + `"}`
+	s := sample(http.MethodPost, "/api/search", nil, attack[:api.EdgeWAFDefaultInspectBodyBytes])
+	s.BodyTruncated = true
+	res, err := evaluate(waf, s)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if !res.Detected {
+		t.Errorf("attack in the inspected prefix of a truncated JSON body was not detected: score=%d rules=%v", res.Score, res.RuleIDs)
+	}
+}

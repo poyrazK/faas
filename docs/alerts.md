@@ -66,6 +66,9 @@ is being rejected or would be:
 - `edge_waf_detections` (Pro and above) fires when `kind=waf` edge rules detect
   more than 25 likely attacks in 15 minutes. The WAF observes only, so these
   requests were not blocked and are not counted by `edge_rejection_pressure`.
+  Counts are a sample: each app's inspections are rate-limited and requests
+  with bodies are expensive to inspect, so under load only part of the
+  matched traffic is inspected (the summary's `not_inspected` count).
   `gregale edge-rules summary` lists detections by attack category and the
   CRS rule IDs that scored most; add a rule ID to the rule's
   `exclude_rule_ids` when it fires on legitimate traffic.

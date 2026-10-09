@@ -149,12 +149,10 @@ differs from the proposal:
   in-path evaluation that `block` and `warn` will need; that needs its own
   amendment and measurement on the reference node.
 - **Body cap: default 8 KiB, maximum 64 KiB** (`inspect_body_bytes`), not a
-  64 KiB default. Profiling on a development machine put CRS at about 3 µs of
-  CPU per body byte, so 64 KiB is roughly 200 ms per inspection, enough for a
-  few apps to saturate the workers. Each sample is charged against its app's
-  inspection budget at one token plus one per 8 KiB of body, so a larger cap
-  buys fewer inspections, not more CPU. Both numbers must be re-measured on
-  the reference node before leaving preview.
+  64 KiB default, because body inspection dominates the cost (measured in
+  amendment 2; an earlier estimate of ~3 µs per byte was wrong by 10-30x).
+  Each sample is charged against its app's inspection budget at one token
+  plus one per 8 KiB of body. Amendment 2 shows this undercharges bodies.
 - **Signals.** `gateway_waf_inspections_total{app,outcome}`,
   `gateway_waf_detections_total{app,category}` and
   `gateway_waf_rule_matches_total{app,rule_id}`. `rule_id` is limited to CRS
@@ -169,3 +167,50 @@ differs from the proposal:
   counts them without changes.
 - **Plan gating (still to decide):** built as Pro 5 rules per app, Scale 20,
   Free and Hobby 0, in `pkg/api/limits.go`.
+
+## Amendment 2: measured inspection cost (2026-10-10)
+
+Measured with `pkg/edgewaf` benchmarks (`BenchmarkEvaluate`,
+`BenchmarkEvaluateBodyShape`, `TestInspectorLoad`) on
+`gregale-internal-test-1`: one Intel Xeon 2.8 GHz vCPU per worker, CRS
+v4.25 through Coraza, Go 1.26.9. That node is shared and not the reference
+node; user CPU was 96% of wall time, and repeat runs varied by up to 1.6x.
+
+| Request | PL1 | PL2 |
+|---|---|---|
+| headers only, no body | 2.1 ms | 4.0 ms |
+| 1 KiB JSON body | 29 ms | 54 ms |
+| 8 KiB body, one long string or text/plain | 52-58 ms | — |
+| 8 KiB JSON, ~100 objects × 5 fields | 140-230 ms | 440-460 ms |
+| 32-64 KiB JSON | ~0.57-0.59 s | 0.66-1.05 s |
+
+Cost stops growing above ~32 KiB of many-field JSON, consistent with
+Coraza's argument limit. Go's `regexp` engine is most of the CPU profile.
+
+Pool behaviour with the shipped settings (2 workers, 20 inspections per
+second per app, burst 40, queue 256), 20 apps each sending 50 matched
+requests per second for 15 s:
+
+- headers only: 452 inspections/s, 54.8% sampled out by the per-app
+  budget, 0.03% dropped. The budget, not CPU, is the limit.
+- 8 KiB JSON bodies: 16 inspections/s for the whole node (1.8% of matched
+  requests), 75.5% sampled out, 22.2% dropped on a full queue.
+
+Consequences:
+
+1. **The in-path latency gate cannot be met as built.** A headers-only
+   inspection at PL1 already takes ~2.1 ms of CPU against the ADR's
+   p95 ≤ 2 ms budget, before any body. `warn` and `block` need a cheaper
+   engine configuration (fewer rules, a faster regex backend, or
+   headers/URI-only blocking) and a new measurement before they are offered.
+2. **Observe mode on bodies is sampling, not coverage.** At 8 KiB a node
+   inspects on the order of 10-20 body-carrying requests per second in
+   total, so detection counts are a sample. The summary and docs already
+   report `not_inspected`; the docs must say plainly that it is a sample.
+3. **Budget pricing undercharges bodies.** An 8 KiB body costs 25-100x a
+   headers-only inspection but is charged 2 tokens. The per-app budget
+   should be priced in worker time (for example, admit on available budget
+   and charge measured CPU milliseconds afterwards), so one app sending
+   large bodies cannot take the whole pool.
+
+These are open decisions for the product owner before step 1 leaves preview.

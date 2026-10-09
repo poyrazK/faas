@@ -4710,11 +4710,11 @@ const (
 	// EdgeWAFDefaultInspectBodyBytes is how much of a request body the
 	// WAF sees when a rule does not set inspect_body_bytes. The gateway
 	// records this prefix while the proxy streams the body upstream, so
-	// inspection never delays forwarding. CRS costs about 3 µs of CPU per
-	// body byte, so 8 KiB bounds one inspection near 30 ms of worker CPU.
-	// ADR-831 proposed a 64 KiB default; that is the ceiling instead,
-	// because at ~200 ms per inspection it would let a few apps saturate
-	// the node's workers.
+	// inspection never delays forwarding. Measured on one 2.8 GHz Xeon
+	// core at PL1 (ADR-831 amendment 2): about 2 ms with no body, 50-60 ms
+	// for 8 KiB of text, 140-230 ms for 8 KiB of many-field JSON, and
+	// ~0.6 s at 64 KiB. ADR-831 proposed a 64 KiB default; that is the
+	// ceiling instead.
 	EdgeWAFDefaultInspectBodyBytes = 8 * 1024
 	// MaxEdgeWAFInspectBodyBytes bounds a rule's inspect_body_bytes.
 	MaxEdgeWAFInspectBodyBytes = 64 * 1024
