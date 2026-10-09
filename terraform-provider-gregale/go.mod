@@ -2,6 +2,8 @@ module github.com/poyrazK/faas/terraform-provider-gregale
 
 go 1.26.0
 
+toolchain go1.26.9
+
 require (
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
 	github.com/hashicorp/terraform-plugin-go v0.31.0

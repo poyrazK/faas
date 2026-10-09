@@ -144,7 +144,7 @@ func cmdProfile(args []string) int {
 		if args[0] == "add" {
 			want = 3
 		}
-		if len(args) != want {
+		if len(args) < 2 || len(args) != want {
 			return printErr("Invalid profile usage", errors.New("use: profile add <name> <api-url>, profile use <name>, or profile remove <name>"))
 		}
 		name := args[1] // #nosec G602 -- len(args) must equal want, which is 2 or 3.
@@ -155,6 +155,9 @@ func cmdProfile(args []string) int {
 		exists = exists || name == "default"
 		switch args[0] {
 		case "add":
+			if len(args) != 3 {
+				return printErr("Invalid profile usage", errors.New("use: profile add <name> <api-url>"))
+			}
 			if exists {
 				return printErr("Profile already exists", errors.New(name))
 			}

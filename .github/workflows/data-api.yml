@@ -14,6 +14,11 @@ on:
       - "sdk/data/**"
       - "tests/data-api/**"
       - "scripts/test-data-api.sh"
+      - "scripts/*data-api*bundle*"
+      - "scripts/test-data-api-packaging.sh"
+      - "scripts/archive-cli-binary.sh"
+      - "scripts/ci/run-data-api-staging-canary.sh"
+      - ".github/workflows/data-api-staging.yml"
       - ".github/workflows/data-api.yml"
   workflow_dispatch:
 # Only the newest push to a pull request is interesting; without a group every
@@ -24,7 +29,34 @@ concurrency:
 
 permissions:
   contents: read
+env:
+  GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+
 jobs:
+  packaging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOGC: 30
+      GOMEMLIMIT: 2GiB
+      GOMAXPROCS: 2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Verify reproducible artifacts and clean starter installation
+        run: bash scripts/test-data-api-packaging.sh --out-dir "$RUNNER_TEMP/data-api-bundle"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gregale-data-api-${{ github.sha }}
+          path: ${{ runner.temp }}/data-api-bundle/
+          if-no-files-found: error
   acceptance:
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
@@ -47,6 +79,7 @@ jobs:
       DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
       DATA_API_TEST_DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
       DATA_API_POSTGREST_BIN: /tmp/gregale-postgrest
+      DATA_API_BROWSER_REQUIRED: "1"
     steps:
       - uses: actions/checkout@v7
       # Restore-only: read main's non-race `checks` Go cache instead of letting
@@ -78,6 +111,8 @@ jobs:
           trap 'docker rm "$container_id"' EXIT
           docker cp "$container_id:/bin/postgrest" "$DATA_API_POSTGREST_BIN"
           chmod +x "$DATA_API_POSTGREST_BIN"
+      - name: Locate Chromium for real browser acceptance
+        run: echo "DATA_API_CHROMIUM_BIN=$(command -v google-chrome)" >> "$GITHUB_ENV"
       - name: Verify generated API, JWT RLS and client contract
         run: make data-api-acceptance
       - name: Enable TLS for durable SQL credential acceptance

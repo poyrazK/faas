@@ -4525,7 +4525,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
 | `--handler <HANDLER>` | function handler |  |
@@ -6626,7 +6626,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -8298,19 +8298,66 @@ Deploy a managed PostgREST Data API
 
 Generate types in an owner-authenticated app task
 
-`gregale data-api types [--output <FILE>] [--check] [--timeout <DURATION>] <name>`
+`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--output <FILE>` | generated TypeScript output |  |
+| `--output <FILE>` | generated TypeScript or snapshot output |  |
 | `--check` | fail if the output file is stale |  |
+| `--snapshot` | export a JSON baseline for data-api diff |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
+
+### data-api diff
+
+Compare the current schema with a saved JSON baseline
+
+`gregale data-api diff --baseline <FILE> [--check] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--baseline <FILE>` | JSON snapshot exported with types --snapshot | required |
+| `--check` | fail on breaking contract changes |  |
+| `--timeout <DURATION>` | task wait deadline (default 2m) |  |
+
+Examples:
+
+```sh
+gregale data-api diff notes-data --baseline schema.json --check
+```
 
 ### data-api refresh
 
 Request a fresh restart to reload the database schema
 
-`gregale data-api refresh <name>`
+`gregale data-api refresh [--wait] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for fresh-restart completion and Data API readiness |  |
+| `--timeout <DURATION>` | complete wait deadline (default 5m, maximum 1h; requires --wait) |  |
+
+Examples:
+
+```sh
+gregale data-api refresh notes-data --wait --timeout 5m
+```
+
+### data-api sync
+
+Run migrations, refresh the API, export types and check the client
+
+`gregale data-api sync --config <FILE> [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--config <FILE>` | JSON workflow with output, migrate and check argument arrays | required |
+| `--timeout <DURATION>` | entire workflow deadline (default 20m, maximum 1h) |  |
+
+Examples:
+
+```sh
+gregale data-api sync notes-data --config data-api.json
+```
 
 
 ## ps

@@ -20,7 +20,7 @@ client.from('notes').insert({subject:'alice',body:'hello',state:'invalid'})
 client.from('notes').insert({id:42,subject:'alice',body:'hello'})
 // @ts-expect-error Relations outside the exported schema do not exist.
 client.from('private_notes')
-// @ts-expect-error RPC is excluded from the V1 Data API contract.
+// @ts-expect-error Unapproved RPC functions are absent from the generated contract.
 client.rpc('echo', {value:'hello'})
 const result = await client.from('notes').select('id,body,state').single()
 if (result.data) {
@@ -31,3 +31,33 @@ if (result.data) {
   const wrong: number = result.data.body
   void [id,body,state,wrong]
 }
+const joined = await client.from('notes').select('id,comments(id,body)').single()
+if (joined.data) {
+  const replies: { id: number; body: string }[] = joined.data.comments
+  // @ts-expect-error reverse one-to-many relationships return arrays
+  const reply: { body: string } = joined.data.comments
+  // @ts-expect-error nested projections cannot invent unselected fields
+  const parentID = joined.data.comments[0].note_id
+  void [replies, reply, parentID]
+}
+const parent = await client.from('comments').select('id,notes(id,body)').single()
+if (parent.data) {
+  const note: { id: number; body: string } = parent.data.notes
+  // @ts-expect-error many-to-one relationships return an object, not an array
+  const array: { id: number; body: string }[] = parent.data.notes
+  void [note, array]
+}
+
+createDataClient<Database>({ url: 'https://data.example', accessToken: 'jwt', onResponse: info => {
+  const id: string | null = info.requestId
+  const status: number = info.status
+  const duration: number = info.durationMs
+  // @ts-expect-error Response diagnostics are immutable.
+  info.status = 0
+  // @ts-expect-error Tokens and application metadata are not diagnostics.
+  info.accessToken
+  // @ts-expect-error Raw responses and bodies are not exposed.
+  info.body
+  void [id, status, duration]
+} })
+createDataClient<Database>({ url: 'https://data.example', accessToken: 'jwt', onResponse: async () => {} })
