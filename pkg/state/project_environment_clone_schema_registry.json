@@ -5958,6 +5958,103 @@
     "kind": "configuration"
   },
   {
+    "table": "profile_canary_checks",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "canary_step",
+      "canary_step_started_at",
+      "completed_at",
+      "created_at",
+      "data",
+      "deployment_id",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "policy_revision",
+      "reason",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_deployment_checks",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "completed_at",
+      "created_at",
+      "data",
+      "deployment_id",
+      "investigation_id",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "policy_revision",
+      "reason",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_deployment_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "config",
+      "enabled",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "profile_investigations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "assessment",
+      "created_at",
+      "id",
+      "investigation",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_periodic_monitors",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "data",
+      "deployment_id",
+      "id",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "policy_revision",
+      "route",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_route_alert_state",
+    "columns": [
+      "account_id",
+      "app_id",
+      "context_key",
+      "deployment_id",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_approvals",
     "columns": [
       "account_id",
