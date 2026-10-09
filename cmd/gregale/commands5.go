@@ -1932,25 +1932,40 @@ func tailStreamOnce(ctx context.Context, client *Client, filter tailFilter) (att
 	dec := api.NewDecoder(body)
 	dec.SetCloseFn(body.Close)
 	defer func() { _ = dec.Close() }()
+	return true, consumeTailStream(ctx, dec, filter)
+}
+
+// consumeTailStream prints frames from one decoded stream. It returns an exit
+// code, or -1 to reconnect.
+func consumeTailStream(ctx context.Context, dec *api.Decoder, filter tailFilter) int {
 	for {
 		select {
 		case <-ctx.Done():
-			return true, 130
+			return 130
 		case e, ok := <-dec.Events():
 			if !ok {
-				return true, -1
+				return -1
 			}
 			if writeErr := writeTailFrame(e, filter); writeErr != nil {
-				return true, printErr("Could not write event", writeErr)
+				return printErr("Could not write event", writeErr)
 			}
 		case err := <-dec.Errors():
 			if err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
 				PrintWarn(os.Stderr, "stream closed: %v", err)
 			}
 			if ctx.Err() != nil {
-				return true, 130
+				return 130
 			}
-			return true, -1
+			// The decoder buffers frames before it publishes the terminal
+			// error, and select picks a ready case at random, so the last
+			// frames of a stream that ends right after them were dropped.
+			// The decoder closes Events right after Errors.
+			for e := range dec.Events() {
+				if writeErr := writeTailFrame(e, filter); writeErr != nil {
+					return printErr("Could not write event", writeErr)
+				}
+			}
+			return -1
 		}
 	}
 }
