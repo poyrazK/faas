@@ -651,8 +651,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 ## Customer operation decisions
 
 - [ADR-521: customer operations above execution ledgers](521-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery
-- [ADR-900: version customer workflow contracts and require transition evidence](900-versioned-customer-workflow-contracts.md) — pin workflow meaning and verify required milestones across app commit and platform publication
-- [ADR-901: business workflow observations and transactional evidence](901-business-workflow-observations-and-evidence.md) — scoped workflow assessments, typed business evidence, reconciliation, and compensation observations
+- [ADR-517: version customer workflow contracts and require transition evidence](517-versioned-customer-workflow-contracts.md) — pin workflow meaning and verify required milestones across app commit and platform publication
+- [ADR-518: business workflow observations and transactional evidence](518-business-workflow-observations-and-evidence.md) — scoped workflow assessments, typed business evidence, reconciliation, and compensation observations
 
 - [ADR-571: S3 write proof custody and owned cleanup](571-s3-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
 - [ADR-658: Private result files for workflow Operations](658-workflow-operation-artifacts.md)

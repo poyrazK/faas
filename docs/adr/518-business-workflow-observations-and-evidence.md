@@ -1,4 +1,4 @@
-# ADR-901: Business workflow observations and transactional evidence
+# ADR-518: Business workflow observations and transactional evidence
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted for the customer Operations HTTP implementation.
 
 ## Context
 
-Versioned workflow contracts (ADR-900) establish transition continuity and
+Versioned workflow contracts (ADR-517) establish transition continuity and
 milestone evidence. Applications also need to explain business decisions,
 blocked actions, dependencies, confirmed effects, and recovery without moving
 their business rules or external side effects into the platform.
