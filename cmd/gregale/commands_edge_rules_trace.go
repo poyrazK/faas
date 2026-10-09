@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ func cmdEdgeRulesTrace(args []string) int {
 	method := fs.String("method", http.MethodGet, "request method (default GET)")
 	clientIP := fs.String("client-ip", "", "simulated client IP for kind=ip rules")
 	country := fs.String("country", "", "simulated ISO 3166-1 alpha-2 country for kind=geo rules")
+	asnFlag := fs.String("asn", "", "simulated client autonomous system for asn conditions, e.g. AS13335")
 	bodyFile := fs.String("body-file", "", fmt.Sprintf("read request body from file (max %d bytes; contents are not output)", edgeruletrace.MaxTraceBodyBytes))
 	var headerArgs multiFlag
 	fs.Var(&headerArgs, "header", "simulated request header (Name:Value; repeat; values compare exactly)")
@@ -72,7 +74,7 @@ func cmdEdgeRulesTrace(args []string) int {
 		}
 	} else {
 		if *slug == "" || *rawURL == "" {
-			PrintUsage(os.Stderr, "usage: gregale edge-rules trace (--config <file|-> | --app <slug> --url <http(s)://host/path> [--project <slug> --environment <slug>] [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--body-file <path|->]) [--proposal <file|->] [--add-rule JSON|@file]... [--remove-rule ID]...", "edge-rules")
+			PrintUsage(os.Stderr, "usage: gregale edge-rules trace (--config <file|-> | --app <slug> --url <http(s)://host/path> [--project <slug> --environment <slug>] [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--asn AS] [--body-file <path|->]) [--proposal <file|->] [--add-rule JSON|@file]... [--remove-rule ID]...", "edge-rules")
 			return 1
 		}
 		u, parseErr := url.Parse(*rawURL)
@@ -95,8 +97,16 @@ func cmdEdgeRulesTrace(args []string) int {
 				return printErr("Invalid --body-file", err)
 			}
 		}
+		var asn uint32
+		if *asnFlag != "" {
+			n, perr := strconv.ParseUint(strings.TrimPrefix(strings.TrimPrefix(*asnFlag, "AS"), "as"), 10, 32)
+			if perr != nil || n == 0 {
+				return printErr("Invalid --asn", fmt.Errorf("%q is not an ASN (use 13335 or AS13335)", *asnFlag))
+			}
+			asn = uint32(n)
+		}
 		input, err = edgeruletrace.NormalizeInput(edgeruletrace.Input{
-			Project: *project, Environment: *environment,
+			Project: *project, Environment: *environment, ASN: asn,
 			App: *slug, Host: u.Hostname(), Path: requestPath, Method: *method,
 			ClientIP: *clientIP, Country: *country, Headers: requestHeaders,
 			Body: requestBody, BodyProvided: bodyProvided,

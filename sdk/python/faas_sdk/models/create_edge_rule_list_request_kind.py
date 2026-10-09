@@ -1,8 +1,9 @@
 from typing import Literal
 
-CreateEdgeRuleListRequestKind = Literal["country", "host", "ip", "string"]
+CreateEdgeRuleListRequestKind = Literal["asn", "country", "host", "ip", "string"]
 
 CREATE_EDGE_RULE_LIST_REQUEST_KIND_VALUES: set[CreateEdgeRuleListRequestKind] = {
+    "asn",
     "country",
     "host",
     "ip",

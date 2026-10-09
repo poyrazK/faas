@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -48,6 +49,8 @@ type EdgeRuleMatchInput struct {
 	Query    url.Values
 	ClientIP net.IP
 	Country  string
+	// ASN is the client IP's autonomous system (ADR-910); 0 is absent.
+	ASN uint32
 }
 
 type matchFieldKind int
@@ -61,6 +64,7 @@ const (
 	fieldHeader
 	fieldCookie
 	fieldQuery
+	fieldASN
 )
 
 // EdgeRuleMatchProgram is a validated, compiled condition. It is immutable
@@ -253,6 +257,23 @@ func (c *matchCompiler) leaf(e EdgeRuleMatchExpr, at string) (matchNode, error) 
 	default:
 		return matchNode{}, fmt.Errorf("%s: unknown op %q", at, e.Op)
 	}
+	if kind == fieldASN {
+		switch e.Op {
+		case "exists", "missing":
+		case "eq", "ne", "in", "not_in":
+			canonical := make([]string, len(values))
+			for i, v := range values {
+				asn, err := canonicalASN(v)
+				if err != nil {
+					return matchNode{}, fmt.Errorf("%s: %w", at, err)
+				}
+				canonical[i] = asn
+			}
+			values = canonical
+		default:
+			return matchNode{}, fmt.Errorf("%s: asn supports eq, ne, in, not_in, exists, missing, in_list", at)
+		}
+	}
 	if kind == fieldClientIP {
 		switch e.Op {
 		case "cidr", "exists", "missing":
@@ -320,6 +341,8 @@ func parseMatchField(field string) (matchFieldKind, string, error) {
 		return fieldClientIP, "", nil
 	case "country":
 		return fieldCountry, "", nil
+	case "asn":
+		return fieldASN, "", nil
 	}
 	prefix, name, ok := strings.Cut(field, ":")
 	if ok && name != "" && len(name) <= edgeRuleMatchMaxSelectorLen {
@@ -332,7 +355,7 @@ func parseMatchField(field string) (matchFieldKind, string, error) {
 			return fieldQuery, name, nil
 		}
 	}
-	return 0, "", fmt.Errorf("unknown field %q (method, path, host, client_ip, country, header:<name>, cookie:<name>, query:<name>)", field)
+	return 0, "", fmt.Errorf("unknown field %q (method, path, host, client_ip, country, asn, header:<name>, cookie:<name>, query:<name>)", field)
 }
 
 // Matches evaluates the condition. A nil program always matches.
@@ -444,6 +467,11 @@ func (n *matchNode) fieldValues(in EdgeRuleMatchInput) ([]string, bool) {
 		return []string{in.Host}, in.Host != ""
 	case fieldCountry:
 		return []string{in.Country}, in.Country != ""
+	case fieldASN:
+		if in.ASN == 0 {
+			return nil, false
+		}
+		return []string{strconv.FormatUint(uint64(in.ASN), 10)}, true
 	case fieldClientIP:
 		if in.ClientIP == nil {
 			return nil, false

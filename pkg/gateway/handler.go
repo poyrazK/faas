@@ -1264,6 +1264,8 @@ type Handler struct {
 	// A matched policy fails closed when the reader is unavailable;
 	// the daemon itself can still boot without a DB-IP file.
 	geoReader CountryReader
+	// asnReader resolves the asn match field (ADR-910); nil = absent.
+	asnReader ASNReader
 	// edgeRuleHits counts per-rule matches (ADR-904); nil disables counting.
 	edgeRuleHits EdgeRuleHitRecorder
 	// resolveTargetApp is the closure the matcher uses to
@@ -5767,7 +5769,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ADR-906: the snapshot rule conditions read. The client IP is only the
 	// single trusted forwarded hop; country is looked up lazily.
 	trustedIP, _ := clientIPFromTrustedXFF(r)
-	requestCtx = WithEdgeRuleMatchContext(requestCtx, NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits))
+	matchCtx := NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits)
+	matchCtx.SetASNLookup(h.edgeRuleASNLookup())
+	requestCtx = WithEdgeRuleMatchContext(requestCtx, matchCtx)
 	// ADR-909: response-counted throttles charge once the status is known.
 	requestCtx, statusHooks := withResponseStatusHooks(requestCtx)
 	r = r.WithContext(requestCtx)

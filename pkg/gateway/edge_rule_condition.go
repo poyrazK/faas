@@ -90,6 +90,11 @@ type EdgeRuleMatchContext struct {
 	lookup      func(net.IP) string
 	country     string
 
+	// ADR-910: autonomous system, resolved at most once on demand.
+	asnOnce   sync.Once
+	asnLookup func(net.IP) uint32
+	asn       uint32
+
 	// ADR-904: hit recording, deduplicated per request (a kind can be looked
 	// up more than once while serving one request).
 	hits     EdgeRuleHitRecorder
@@ -174,6 +179,22 @@ func ObserveEdgeRuleMatch[T any](ctx context.Context, enforced, logged *T) *T {
 	return enforced
 }
 
+// SetASNLookup installs the ASN resolver for the trusted client IP
+// (ADR-910). Call before the context is attached to a request; nil leaves
+// the asn field absent.
+func (m *EdgeRuleMatchContext) SetASNLookup(lookup func(net.IP) uint32) {
+	m.asnLookup = lookup
+}
+
+func (m *EdgeRuleMatchContext) resolvedASN() uint32 {
+	m.asnOnce.Do(func() {
+		if m.asnLookup != nil && m.ClientIP != nil {
+			m.asn = m.asnLookup(m.ClientIP)
+		}
+	})
+	return m.asn
+}
+
 func (m *EdgeRuleMatchContext) resolvedCountry() string {
 	m.countryOnce.Do(func() {
 		if m.lookup != nil && m.ClientIP != nil {
@@ -195,6 +216,33 @@ func (h *Handler) edgeRuleCountryLookup() func(net.IP) string {
 			return ""
 		}
 		return country
+	}
+}
+
+// ASNReader resolves an IP's autonomous system (ADR-910). pkg/geoip.Reader
+// opened on the DB-IP ASN database implements it.
+type ASNReader interface {
+	LookupASN(ip net.IP) (asn uint32, org string, ok bool, err error)
+}
+
+// WithASNReader arms the asn match field. nil leaves it absent.
+func (h *Handler) WithASNReader(r ASNReader) *Handler {
+	h.asnReader = r
+	return h
+}
+
+// edgeRuleASNLookup adapts the ASN reader for conditions; a lookup error
+// or missing record leaves the field absent.
+func (h *Handler) edgeRuleASNLookup() func(net.IP) uint32 {
+	if h.asnReader == nil {
+		return nil
+	}
+	return func(ip net.IP) uint32 {
+		asn, _, ok, err := h.asnReader.LookupASN(ip)
+		if err != nil || !ok {
+			return 0
+		}
+		return asn
 	}
 }
 
@@ -270,6 +318,7 @@ func edgeRuleMatchInputFor(ctx context.Context, requestPath, method string) api.
 	if m := edgeRuleMatchContextFrom(ctx); m != nil {
 		input.Host, input.Headers, input.Query, input.ClientIP = m.Host, m.Headers, m.Query, m.ClientIP
 		input.Country = m.resolvedCountry()
+		input.ASN = m.resolvedASN()
 	}
 	return input
 }

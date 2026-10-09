@@ -20,7 +20,8 @@ class CreateEdgeRuleListRequest:
     name: str
     kind: CreateEdgeRuleListRequestKind
     """ip (addresses and CIDRs, for client_ip), country (ISO 3166-1 alpha-2), host (exact hosts and *.suffix
-    patterns), string (exact values, for path, header, cookie and query fields)."""
+    patterns), string (exact values, for path, header, cookie and query fields), asn (autonomous system numbers such
+    as 13335 or AS13335, for asn)."""
     description: str | Unset = UNSET
     items: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

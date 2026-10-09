@@ -172,6 +172,11 @@ var geoipDBPath = envOrGateway("FAAS_GEOIP_DB_PATH", "/var/lib/faas/geoip/dbip-c
 // where the daemon is the canonical source of the DB.
 var geoipAutoRefresh = envOrGateway("FAAS_GEOIP_AUTO_REFRESH", "0")
 
+// geoipASNDBPath is the DB-IP ASN Lite .mmdb file behind the asn match
+// field (ADR-910). A missing file leaves the field absent: conditions on
+// asn then never match, the same posture as an unknown country.
+var geoipASNDBPath = envOrGateway("FAAS_GEOIP_ASN_DB_PATH", "/var/lib/faas/geoip/dbip-asn-lite.mmdb")
+
 // controlAddr is the private control-plane listener — never reachable from
 // the internet; bound to the loopback interface by default so an
 // operator-prometheus scrape is the only thing that can reach it.
@@ -1172,6 +1177,9 @@ type runDeps struct {
 	// not auto-downloaded). Production wires a Watcher with a
 	// 168h (weekly) cadence if FAAS_GEOIP_AUTO_REFRESH=1.
 	geoWatcher *geoip.Watcher
+	// asnReader / asnWatcher back the asn match field (ADR-910).
+	asnReader  *geoip.Reader
+	asnWatcher *geoip.Watcher
 	// publicAuthCache (issue #477 / ADR-079) is the unsealed
 	// basic-auth credential cache shared between the Handler
 	// (enforcePublicAuthBasic reads through it) and the
@@ -2256,6 +2264,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 		}
 	}
+	openASNReader(ctx, &deps, log)
 	// Issue #561 / ADR-091 PR 5 — build the per-URL JWKS cache
 	// + JWT verifier that applyEdgeRuleJWT consults. Lazy
 	// registration on first match; the cache uses an HTTP client
@@ -2789,6 +2798,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// no-op and the gate fail-opens.
 	if deps.geoReader != nil {
 		handler.WithGeoReader(deps.geoReader)
+	}
+	if deps.asnReader != nil {
+		handler.WithASNReader(deps.asnReader)
 	}
 	// ADR-904 — per-rule hit counts, flushed to Postgres once a minute. Only
 	// a store with the hit-count capability gets a recorder, so test and

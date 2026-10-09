@@ -8,7 +8,7 @@
 export type EdgeRuleListResponse = {
   id: string;
   name: string;
-  kind: 'ip' | 'country' | 'host' | 'string';
+  kind: 'ip' | 'country' | 'host' | 'string' | 'asn';
   description?: string;
   item_count: number;
   /**
