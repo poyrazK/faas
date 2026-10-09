@@ -184,7 +184,10 @@ func _RealtimeHistory_GetDurableCursor_Handler(srv interface{}, ctx context.Cont
 	if interceptor == nil {
 		return srv.(RealtimeHistoryServer).GetDurableCursor(ctx, in)
 	}
-	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: RealtimeHistory_GetDurableCursor_FullMethodName}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RealtimeHistory_GetDurableCursor_FullMethodName,
+	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RealtimeHistoryServer).GetDurableCursor(ctx, req.(*DurableCursorRequest))
 	}
@@ -199,7 +202,10 @@ func _RealtimeHistory_AdvanceDurableCursor_Handler(srv interface{}, ctx context.
 	if interceptor == nil {
 		return srv.(RealtimeHistoryServer).AdvanceDurableCursor(ctx, in)
 	}
-	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: RealtimeHistory_AdvanceDurableCursor_FullMethodName}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RealtimeHistory_AdvanceDurableCursor_FullMethodName,
+	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RealtimeHistoryServer).AdvanceDurableCursor(ctx, req.(*AdvanceDurableCursorRequest))
 	}
@@ -214,7 +220,10 @@ func _RealtimeHistory_ResetDurableCursor_Handler(srv interface{}, ctx context.Co
 	if interceptor == nil {
 		return srv.(RealtimeHistoryServer).ResetDurableCursor(ctx, in)
 	}
-	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: RealtimeHistory_ResetDurableCursor_FullMethodName}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RealtimeHistory_ResetDurableCursor_FullMethodName,
+	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RealtimeHistoryServer).ResetDurableCursor(ctx, req.(*AdvanceDurableCursorRequest))
 	}
