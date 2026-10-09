@@ -3370,13 +3370,18 @@ func (s *server) handler() http.Handler {
 	// /signup, /login/forgot, /v1/auth/google, and /v1/auth/github.
 	mux.Handle("POST /login", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
-	}, s.fromTrustedOrigin(http.HandlerFunc(s.postLoginEmail))))
+	}, s.fromTrustedOrigin(browserAuthForm(http.HandlerFunc(s.postLoginEmail), auth.finishBrowserLogin))))
 	mux.Handle("POST /signup", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, s.fromTrustedOrigin(http.HandlerFunc(s.postSignup))))
+	// GET renders the form the sign-in page's "Forgot password?" link opens
+	// (it was 405, production hunt #8).
+	mux.Handle("GET "+forgotPasswordPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, http.HandlerFunc(auth.renderForgotPasswordForm)))
 	mux.Handle("POST /login/forgot", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
-	}, http.HandlerFunc(s.postForgotPassword)))
+	}, browserAuthForm(http.HandlerFunc(s.postForgotPassword), auth.finishBrowserForgotPassword)))
 	mux.Handle("GET /auth/reset", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		// 410 on invalid/expired token; count every attempt so an
 		// attacker can't enumerate token shapes faster than the
