@@ -31246,6 +31246,17 @@ func (q *Queries) LockCloneCheckpointObjectPublicationKeys(ctx context.Context, 
 	return items, nil
 }
 
+const lockCloneCheckpointUnusedReservationClock = `-- name: LockCloneCheckpointUnusedReservationClock :one
+SELECT generation FROM project_environment_clone_configuration_clock WHERE singleton FOR SHARE
+`
+
+func (q *Queries) LockCloneCheckpointUnusedReservationClock(ctx context.Context, db DBTX) (int64, error) {
+	row := db.QueryRow(ctx, lockCloneCheckpointUnusedReservationClock)
+	var generation int64
+	err := row.Scan(&generation)
+	return generation, err
+}
+
 const lockCreditConsumption = `-- name: LockCreditConsumption :exec
 SELECT pg_advisory_xact_lock(hashtextextended('consume-account-credit:' || $1::text, 0))
 `

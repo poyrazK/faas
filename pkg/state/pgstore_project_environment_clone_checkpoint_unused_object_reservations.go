@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/jackc/pgx/v5"
 	"reflect"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -13,8 +16,8 @@ import (
 // ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation completes only
 // an authenticated private reservation that never acquired a creation journal.
 // Even a planned native creation belongs to the qualified retirement protocol.
-// This deliberately requires the original released checkpoint: incomplete
-// capture compensation needs a separate proof of reservation provenance.
+// Original adoption provenance is required even when source release is incomplete.
+// Source holds and native release authority are never changed by local cleanup.
 func (s *PgStore) ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(ctx context.Context, l ProjectEnvironmentCloneLease, id string) error {
 	if !validCloneLeaseIdentity(l) || !validCloneCredentialSourceID(id) {
 		return ErrInvalidArgument
@@ -26,6 +29,10 @@ func (s *PgStore) ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservatio
 		return mapErr(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	// Synchronize before operation/app locks, matching configuration acquisition.
+	if _, err = sqlc.New().LockCloneCheckpointUnusedReservationClock(ctx, tx); err != nil {
+		return mapErr(err)
+	}
 	op, err := lockCloneWorkloadOperationTx(ctx, tx, l.Operation.AccountID, l.Operation.ProjectID, l.Operation.ID)
 	if err != nil {
 		return err
@@ -46,19 +53,15 @@ func (s *PgStore) ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservatio
 		}
 		return ErrConflict
 	}
-	release, err := readCloneCheckpointReleaseTx(ctx, tx, op)
-	if err != nil {
-		return ErrConflict
-	}
-	if err = validateCloneCheckpointReleaseJournalsWithRetiredTargetsTx(ctx, tx, op, release, false, true); err != nil {
-		return err
-	}
 	records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
 	if err != nil {
 		return err
 	}
 	views, err := cloneBindingViews(records)
 	if err != nil {
+		return err
+	}
+	if err = authenticateUnusedCheckpointAdoptionTx(ctx, tx, op, views); err != nil {
 		return err
 	}
 	var appID string
@@ -140,4 +143,93 @@ func (s *PgStore) ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservatio
 		return err
 	}
 	return mapErr(tx.Commit(ctx))
+}
+
+// A missing release journal is acceptable only for a fully adopted checkpoint.
+// Reconstructing a receipt authenticates its ORIGINAL recorded hash; it never
+// manufactures a capture or a release observation from resource absence.
+func authenticateUnusedCheckpointAdoptionTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, views []ProjectEnvironmentCloneBindings) error {
+	in, err := readCloneCheckpointReleaseTx(ctx, tx, op)
+	if errors.Is(err, ErrNotFound) {
+		if len(op.Resources) < 3 || op.Resources[len(op.Resources)-1].Kind != "data_checkpoint_adoption" {
+			return ErrConflict
+		}
+		row, err := sqlc.New().ReadProjectEnvironmentCloneConfigurationGuard(ctx, tx, sqlc.ReadProjectEnvironmentCloneConfigurationGuardParams{ProjectID: mustPgUUID(op.ProjectID), AccountID: mustPgUUID(op.AccountID)})
+		if err != nil {
+			if errors.Is(mapErr(err), ErrNotFound) {
+				return ErrConflict
+			}
+			return mapErr(err)
+		}
+		fence, err := cloneConfigurationFenceFromSQL(op, row)
+		if err != nil {
+			return err
+		}
+		p := ProjectEnvironmentCloneCheckpointPlan{OperationID: op.ID, AccountID: op.AccountID, ProjectID: op.ProjectID, SourceEnvironment: op.SourceEnvironment, SourceRevisionHash: op.SourceRevisionHash, SourceReleaseSetID: op.SourceReleaseSetID, ConfigurationGeneration: fence.Generation, ConfigurationHeldAt: fence.HeldAt.UTC()}
+		databases := map[string]bool{}
+		for _, v := range views {
+			for _, db := range v.Postgres {
+				if databases[db.DatabaseID] {
+					continue
+				}
+				databases[db.DatabaseID] = true
+				hash, err := ProjectEnvironmentCloneDatabaseSourceHash(db)
+				if err != nil {
+					return ErrConflict
+				}
+				p.Sources = append(p.Sources, ProjectEnvironmentCloneCheckpointSource{Kind: "managed_postgres", ID: db.DatabaseID, BackendID: db.BackendID, BackendFingerprint: db.BackendFingerprint, ProviderResourceID: db.ProviderResourceID, DataResourceID: db.DataResourceID, DefinitionSHA256: hash})
+			}
+			for _, b := range v.Buckets {
+				p.Sources = append(p.Sources, ProjectEnvironmentCloneCheckpointSource{Kind: "object_storage", ID: b.ID, AppID: v.AppID, Scope: v.SourceScope, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, ProviderResourceID: b.PhysicalName, DefinitionSHA256: cloneCheckpointSHA(b)})
+			}
+		}
+		sort.Slice(p.Sources, func(i, j int) bool { return p.Sources[i].Kind+p.Sources[i].ID < p.Sources[j].Kind+p.Sources[j].ID })
+		captured, err := time.Parse(time.RFC3339Nano, op.Resources[0].CapturePoint)
+		if err != nil {
+			return ErrConflict
+		}
+		r := ProjectEnvironmentCloneCheckpointReceipt{RequestID: op.ID, PlanSHA256: op.Resources[0].SourceVersion, CheckpointID: op.Resources[0].TargetID, CapturedAt: captured.UTC(), CompleteWriterCoverage: true}
+		for _, source := range p.Sources {
+			var identity string
+			switch source.Kind {
+			case "managed_postgres":
+				snapshot, err := readClonePostgresSnapshotTx(ctx, tx, op, source.ID)
+				if err != nil {
+					return ErrConflict
+				}
+				identity = snapshot.ProviderSnapshotID
+			case "object_storage":
+				manifest, err := projectEnvironmentCloneObjectManifestDB(ctx, tx, op.AccountID, op.ProjectID, op.ID, source.ID)
+				if err != nil {
+					return ErrConflict
+				}
+				identity = manifest.Hash
+			}
+			r.Sources = append(r.Sources, ProjectEnvironmentCloneCheckpointSourceReceipt{Kind: source.Kind, ID: source.ID, CaptureIdentity: identity})
+		}
+		in = ProjectEnvironmentCloneCheckpointRelease{Plan: p, Receipt: r, AdoptionSHA256: op.Resources[len(op.Resources)-1].SourceVersion, State: "planned"}
+	} else if err != nil {
+		return err
+	}
+	// Validate the persisted request shape independently of the contents-only
+	// reader. No unknown or rewound release state can authorize compensation.
+	switch in.State {
+	case "planned":
+		if !in.RequestedAt.IsZero() || in.ObservationSHA256 != "" {
+			return ErrConflict
+		}
+	case "requested", "released":
+		if in.RequestedAt.IsZero() || in.RequestedAt.Before(in.Receipt.CapturedAt) || in.RequestedAt.After(time.Now()) {
+			return ErrConflict
+		}
+		if in.State == "requested" && in.ObservationSHA256 != "" || in.State == "released" && !validCloneObjectSHA256(in.ObservationSHA256) {
+			return ErrConflict
+		}
+	default:
+		return ErrConflict
+	}
+	if !validCloneObjectSHA256(in.AdoptionSHA256) {
+		return ErrConflict
+	}
+	return validateCloneCheckpointAdoptionJournalsTx(ctx, tx, op, in, false, true, true)
 }

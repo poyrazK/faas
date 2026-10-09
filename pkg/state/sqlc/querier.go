@@ -1579,6 +1579,7 @@ type Querier interface {
 	LockCheckedRollbackScope(ctx context.Context, db DBTX, arg LockCheckedRollbackScopeParams) ([]pgtype.UUID, error)
 	LockCloneCheckpointObjectPublicationBucket(ctx context.Context, db DBTX, arg LockCloneCheckpointObjectPublicationBucketParams) (ObjectBucket, error)
 	LockCloneCheckpointObjectPublicationKeys(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]pgtype.UUID, error)
+	LockCloneCheckpointUnusedReservationClock(ctx context.Context, db DBTX) (int64, error)
 	// Keep the historical broad lock key, also shared with refund compensation.
 	LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error
 	LockCustomerOperationAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)

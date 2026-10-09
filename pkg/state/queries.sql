@@ -15384,3 +15384,6 @@ AND o.id=sqlc.arg(operation_id)::uuid AND o.status='compensating'
 AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp()
 AND EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_unused_object_reservations u WHERE u.operation_id=o.id AND u.source_bucket_id=b.environment_clone_source_bucket_id AND u.target_bucket_id=b.id)
 AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets t WHERE t.operation_id=o.id AND t.source_bucket_id=b.environment_clone_source_bucket_id);
+
+-- name: LockCloneCheckpointUnusedReservationClock :one
+SELECT generation FROM project_environment_clone_configuration_clock WHERE singleton FOR SHARE;

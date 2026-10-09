@@ -72,7 +72,16 @@ func validateCloneCheckpointReleaseJournalsTx(ctx context.Context, tx pgx.Tx, op
 // Only compensation can authenticate original placement metadata after target
 // retirement. This permits no new capture, creation, copy or publication.
 func validateCloneCheckpointReleaseJournalsWithRetiredTargetsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, in ProjectEnvironmentCloneCheckpointRelease, requireHolds, allowRetired bool) error {
-	if allowRetired && (op.Status != CloneOperationCompensating || requireHolds || in.State != "released") {
+	return validateCloneCheckpointAdoptionJournalsTx(ctx, tx, op, in, requireHolds, allowRetired, false)
+}
+
+// Incomplete-release authentication is restricted to unused local reservation
+// compensation. It grants no native retirement or capturing write authority.
+func validateCloneCheckpointAdoptionJournalsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, in ProjectEnvironmentCloneCheckpointRelease, requireHolds, allowRetired, allowIncomplete bool) error {
+	if allowIncomplete && (!allowRetired || op.Status != CloneOperationCompensating || requireHolds) {
+		return ErrConflict
+	}
+	if allowRetired && (op.Status != CloneOperationCompensating || requireHolds || !allowIncomplete && in.State != "released") {
 		return ErrConflict
 	}
 	records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)

@@ -8860,3 +8860,37 @@ requires a fully released checkpoint: cleanup of earlier incomplete captures
 still needs a separate authenticated reservation-provenance path. Final stage
 publication and native provider qualification remain outstanding; public
 full-stage capture stays gated and live R2/OVH qualification remains deferred.
+
+### Unused object cleanup before source release completes
+
+Unused reservation compensation now authenticates complete adoption before
+source release has completed. Planned and requested release journals retain
+exact original receipt, frozen placement and adoption digest checks. If release
+has not been recorded, compensation reconstructs the original plan from the
+owned configuration hold and frozen source catalogue, and the original receipt
+from retained snapshot/manifest identities. Both must match the hashes already
+recorded in the captured intent, receipt and complete adoption resource roster.
+This is authentication of original local provenance, not a new provider receipt.
+Missing or changed capture records, replaced configuration ownership/generation,
+rewound released journals and incomplete adoption remain conflicts.
+
+Only the unused local cleanup path can authenticate an incomplete release. Native
+retirement still requires the original released checkpoint; capture/adoption and
+native creation writers retain their capturing-state and release prerequisites.
+Compensation never changes a release request, source write/configuration holds,
+or retained snapshots. Original holds remain necessary to authenticate adoption
+before a release journal exists, including on replay. Local reservation evidence,
+lease fencing, atomic deletion, lost-reply recovery and revival rejection remain
+unchanged. The database configuration guard admits only the exact provisioning to
+deleted transition backed by a committed local completion row under the
+operation's own held guard and live compensation lease. Placement, policy,
+source buckets and credential mutations retain the guard. The cleanup locks the
+configuration clock before operation/application rows, matching acquisition
+order. Downgrade refuses active completion evidence that still depends on owned
+source holds. Tests cover adoption before any release journal, planned release,
+requested/unknown native release, worker handoff, unchanged source authority and
+corrupted receipts, snapshots, manifests and configuration provenance.
+
+Reservations lacking complete authenticated adoption remain blocked. Source
+barrier compensation and final stage publication are separate remaining work;
+public full-stage capture stays gated and live R2/OVH qualification is deferred.
