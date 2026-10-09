@@ -3437,6 +3437,54 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/events/verify-publication:
+    post:
+      tags: [events]
+      operationId: verifyAppEventPublication
+      summary: Compare intended publication content with retained acceptance.
+      description: |
+        Read-only despite POST: requires an owned app, apps:read/admin, MFA and rate limits.
+        Accepts the original app publish body within its existing 1 MiB limit and
+        derives the same stable app/key identity. Compares normalized type, schema
+        version and semantic JSON data using the ordinary publication identity rules.
+        Occurrence time and trace metadata are excluded. Current schema admission
+        rules do not invalidate verification of previously accepted content.
+        Returns match, conflict or unavailable with HTTP 200. Match and conflict
+        include the retained original receipt from the same comparison snapshot.
+        Conflict is an observation, not a publish rejection. Unavailable cannot
+        distinguish never accepted, pruning or concurrent acceptance not yet visible.
+        No append, fanout, lease, replay, retention refresh or idempotency response
+        cache occurs. Neither match nor conflict establishes consumer execution.
+        Request and stored payloads and raw producer keys are not returned.
+        Read errors remain errors rather than being reported as unavailable.
+        Query parameters are rejected; use the existing status read for consumer evidence.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Owned application for the exact producer-key content comparison.
+          schema: { type: string }
+      requestBody:
+        required: true
+        description: Original application producer-key publication intent.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppPublishEventRequest' }
+      responses:
+        '200':
+          description: Content comparison observation with retained acceptance when available.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppEventPublicationVerification' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
   /v1/apps/{slug}/events/publish-status:
     get:
       tags: [events]
@@ -47350,6 +47398,27 @@ components:
           maxItems: 100
           items: { $ref: '#/components/schemas/EventPreviewSubscription' }
         truncated: { type: boolean, description: True when either sample omits additional candidates. }
+
+    AppEventPublicationVerification:
+      type: object
+      additionalProperties: false
+      description: Snapshot comparison of intended content with an existing retained publication.
+      required: [app_id, source, event_id, observed_at, status, receipt_url]
+      properties:
+        app_id: { type: string, format: uuid }
+        source: { type: string }
+        event_id: { type: string }
+        observed_at: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [match, conflict, unavailable]
+          description: Whether retained normalized type, schema version and JSON data match the supplied intent.
+        reason:
+          type: string
+          enum: [not_retained_or_not_observed]
+          description: Verification could not observe a retained identity; nonpublication remains unproven.
+        receipt_url: { type: string, format: uri-reference }
+        receipt: { $ref: '#/components/schemas/PublishEventResponse' }
 
     AppEventPublishStatusResponse:
       type: object

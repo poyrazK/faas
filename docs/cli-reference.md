@@ -1695,6 +1695,22 @@ Inspect receipt expiry, backfill holds and account storage
 | `--window <DURATION>` | expiry lookahead (1s..720h; default 24h) |  |
 | `--limit <N>` | maximum sampled receipts (1..100) |  |
 
+### events publish-app-verify
+
+Compare an original publish file with retained content without publishing
+
+`gregale events publish-app-verify [--file <PATH>] <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | Original publish JSON with key, type and data |  |
+
+Examples:
+
+```sh
+gregale events publish-app-verify my-app --file event.json --json
+```
+
 ### events publish-app-status
 
 Reconcile retained publication and consumer evidence without submitting an event

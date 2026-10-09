@@ -22,28 +22,8 @@ func cmdEventsPublishApp(args []string) int {
 	if len(pos) != 1 || *path == "" || rejectUnexpectedFlagArgs(fs) {
 		return printErr("Invalid arguments", fmt.Errorf("use events publish-app APP --file PATH"))
 	}
-	f, err := os.Open(*path)
+	req, err := readAppPublishEventRequest(*path)
 	if err != nil {
-		return printErr("Cannot read event", err)
-	}
-	defer func() { _ = f.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(f, api.AppEventPublishBodyMaxBytes+1))
-	if err != nil {
-		return printErr("Cannot read event", err)
-	}
-	if int64(len(raw)) > api.AppEventPublishBodyMaxBytes {
-		return printErr("Invalid event", fmt.Errorf("event exceeds body limit"))
-	}
-	var req api.AppPublishEventRequest
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
-		return printErr("Invalid event", err)
-	}
-	if decoder.Decode(new(any)) != io.EOF {
-		return printErr("Invalid event", fmt.Errorf("expected one JSON object"))
-	}
-	if err := req.Validate(); err != nil {
 		return printErr("Invalid event", err)
 	}
 	client, err := authedClient()
@@ -57,4 +37,32 @@ func cmdEventsPublishApp(args []string) int {
 		return printErr("Publish failed; retry with the same application, key and content", err)
 	}
 	return jsonOut(writeJSON(out))
+}
+
+func readAppPublishEventRequest(path string) (api.AppPublishEventRequest, error) {
+	var req api.AppPublishEventRequest
+	f, err := os.Open(path)
+	if err != nil {
+		return req, err
+	}
+	defer func() { _ = f.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(f, api.AppEventPublishBodyMaxBytes+1))
+	if err != nil {
+		return req, err
+	}
+	if int64(len(raw)) > api.AppEventPublishBodyMaxBytes {
+		return req, fmt.Errorf("event exceeds body limit")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		return req, err
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return req, fmt.Errorf("expected one JSON object")
+	}
+	if err := req.Validate(); err != nil {
+		return req, err
+	}
+	return req, nil
 }

@@ -128,6 +128,9 @@ from .app_error_sample_response_headers_sample import AppErrorSampleResponseHead
 from .app_error_summary_item import AppErrorSummaryItem
 from .app_error_summary_item_error_class import AppErrorSummaryItemErrorClass
 from .app_errors_summary_response import AppErrorsSummaryResponse
+from .app_event_publication_verification import AppEventPublicationVerification
+from .app_event_publication_verification_reason import AppEventPublicationVerificationReason
+from .app_event_publication_verification_status import AppEventPublicationVerificationStatus
 from .app_event_publish_status_response import AppEventPublishStatusResponse
 from .app_event_publish_status_response_reason import AppEventPublishStatusResponseReason
 from .app_event_publish_status_response_status import AppEventPublishStatusResponseStatus
@@ -3217,6 +3220,9 @@ __all__ = (
     "AppErrorsSummaryResponse",
     "AppErrorSummaryItem",
     "AppErrorSummaryItemErrorClass",
+    "AppEventPublicationVerification",
+    "AppEventPublicationVerificationReason",
+    "AppEventPublicationVerificationStatus",
     "AppEventPublishStatusResponse",
     "AppEventPublishStatusResponseReason",
     "AppEventPublishStatusResponseStatus",

@@ -72,6 +72,7 @@ export type { AppErrorRequestsResponse } from './AppErrorRequestsResponse.js';
 export type { AppErrorSampleResponse } from './AppErrorSampleResponse.js';
 export type { AppErrorSummaryItem } from './AppErrorSummaryItem.js';
 export type { AppErrorsSummaryResponse } from './AppErrorsSummaryResponse.js';
+export type { AppEventPublicationVerification } from './AppEventPublicationVerification.js';
 export type { AppEventPublishStatusResponse } from './AppEventPublishStatusResponse.js';
 export type { AppHealthCapacity } from './AppHealthCapacity.js';
 export type { AppHealthChangedWebhookPayload } from './AppHealthChangedWebhookPayload.js';

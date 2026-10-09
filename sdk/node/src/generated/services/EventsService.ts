@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppEventPublicationVerification } from '../models/AppEventPublicationVerification.js';
 import type { AppEventPublishStatusResponse } from '../models/AppEventPublishStatusResponse.js';
 import type { AppPublishEventRequest } from '../models/AppPublishEventRequest.js';
 import type { AppPublishEventResponse } from '../models/AppPublishEventResponse.js';
@@ -101,6 +102,63 @@ export class EventsService {
         \`profile_investigation_limit\`.
         `,
         500: `The router could not read the current subscription set.`,
+      },
+    });
+  }
+  /**
+   * Compare intended publication content with retained acceptance.
+   * Read-only despite POST: requires an owned app, apps:read/admin, MFA and rate limits.
+   * Accepts the original app publish body within its existing 1 MiB limit and
+   * derives the same stable app/key identity. Compares normalized type, schema
+   * version and semantic JSON data using the ordinary publication identity rules.
+   * Occurrence time and trace metadata are excluded. Current schema admission
+   * rules do not invalidate verification of previously accepted content.
+   * Returns match, conflict or unavailable with HTTP 200. Match and conflict
+   * include the retained original receipt from the same comparison snapshot.
+   * Conflict is an observation, not a publish rejection. Unavailable cannot
+   * distinguish never accepted, pruning or concurrent acceptance not yet visible.
+   * No append, fanout, lease, replay, retention refresh or idempotency response
+   * cache occurs. Neither match nor conflict establishes consumer execution.
+   * Request and stored payloads and raw producer keys are not returned.
+   * Read errors remain errors rather than being reported as unavailable.
+   * Query parameters are rejected; use the existing status read for consumer evidence.
+   *
+   * @returns AppEventPublicationVerification Content comparison observation with retained acceptance when available.
+   * @throws ApiError
+   */
+  public static verifyAppEventPublication({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Owned application for the exact producer-key content comparison.
+     */
+    slug: string,
+    /**
+     * Original application producer-key publication intent.
+     */
+    requestBody: AppPublishEventRequest,
+  }): CancelablePromise<AppEventPublicationVerification> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/events/verify-publication',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        500: `code: capacity — server-side error; retry with backoff.`,
       },
     });
   }

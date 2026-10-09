@@ -2995,3 +2995,23 @@ Neither processing nor accepted proves successful handler execution. Inspect eac
 Recipient pages default to 100 rows and allow up to 200. Follow `evidence.next_after` using `after`. Global routing summaries cover retained consumers beyond the returned page; execution rows cover only that page. Pages are live snapshots and cursors bind the original acceptance identity. If pruning/republication makes a cursor stale, restart observation without inferring continuity of the prior acceptance. Each request has a five-second deadline and no-store response.
 
 The CLI always prints JSON and exits 2 for unavailable, 0 for retained acceptance, and nonzero for read/validation errors. Exit 0 is not a delivery-success assertion. Go uses `GetAppEventPublishStatus`, Node `getAppEventPublishStatus`, and Python `get_app_event_publish_status`. The standalone Go SDK preserves recipient rows as `json.RawMessage`; the root Go SDK and generated SDKs use existing typed receipt models. See [ADR-848](adr/848-application-producer-key-publication-status.md).
+
+### Verify original publication content without publishing
+
+```sh
+gregale events publish-app-verify my-app --file event.json --json
+```
+
+`POST /v1/apps/{slug}/events/verify-publication` accepts the same original JSON body as app-key publishing, including its exact key, type, data and optional schema version/time. Despite POST, it only reads: apps:read/admin, MFA, app ownership and rate limits apply. It rejects query parameters and uses the existing 1 MiB body limit and five-second deadline.
+
+Verification compares normalized type, schema version and semantic JSON data using the same retained-identity comparison as publication. Object formatting/order does not make otherwise equal JSON conflict. Occurrence time and trace metadata are excluded. Today's schema registration/admission rules do not invalidate comparison with previously accepted content.
+
+| Status | Meaning | CLI exit |
+| --- | --- | --- |
+| `match` | Retained content matches the supplied publication intent. | 0 |
+| `conflict` | The same app/key identifies different retained type, schema version or data. | 1 |
+| `unavailable` | No retained acceptance is visible; nonpublication is not proven. | 2 |
+
+Match and conflict both include the original retained acceptance receipt, read in the same comparison snapshot. No supplied or stored event data is returned. Other read failures remain errors, not unavailable. None of these results automatically submits an event or refreshes retention. A match does not prove handler execution or side effects; use publish-app-status and its consumer evidence separately. A reaccepted key after pruning can describe a newer acceptance, so compare known acceptance timestamps when assessing continuity.
+
+Go exposes `VerifyAppEventPublication`; Node and Python expose `verifyAppEventPublication` / `verify_app_event_publication`. The CLI always emits JSON. No migration is required. See [ADR-849](adr/849-app-publication-content-verification.md).

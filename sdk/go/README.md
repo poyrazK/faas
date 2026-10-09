@@ -414,3 +414,5 @@ status, err := client.GetAppEventPublishStatus(ctx, "my-app", faas.AppEventPubli
 ```
 
 `processing` and `accepted` prove retained acceptance, while accepted only means routing settled, not successful handler execution. `unavailable` cannot establish nonpublication and must not automatically trigger another publish. Follow `status.Evidence.NextAfter` using `After` (default 100, maximum 200 recipients). The standalone SDK exposes typed receipt metadata and lossless `json.RawMessage` recipient rows; the root Go SDK uses the existing full receipt DTOs.
+
+Read-only content verification: `client.VerifyAppEventPublication(ctx, "my-app", originalRequest)` compares the original `AppPublishEventRequest` without publishing. Status is match/conflict/unavailable; match and conflict include the retained original receipt from the same snapshot. Comparison uses normalized type/schema version and semantic JSON data, excluding occurrence time and trace metadata. Matching acceptance does not prove consumer execution, and unavailable must not automatically trigger a publish.
