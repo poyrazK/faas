@@ -120,14 +120,53 @@ func pgRouteHealthReport(ctx context.Context, db sqlc.DBTX, snapshot RoutePolicy
 		}
 	}
 	routehealth.Evaluate(&report, anchor, unavailable)
+	if unavailable == "" && report.StableDeploymentID != "" {
+		if err := pgPooledRouteHealth(ctx, db, snapshot.Account.ID, g, &report, anchor); err != nil {
+			return report, err
+		}
+	}
 	return report, nil
+}
+
+// pgPooledRouteHealth re-reads only routes that lacked one-minute requests
+// over two halves of the stage so far, with unchanged thresholds (ADR-846).
+func pgPooledRouteHealth(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport, anchor *time.Time) error {
+	windows, ok := routehealth.PooledWindows(anchor, report.CheckedAt)
+	if !ok {
+		return nil
+	}
+	selected := api.RouteHealthGate{Routes: []api.RouteHealthRoute{}}
+	pooled := *report
+	pooled.Routes = []api.RouteHealthFinding{}
+	for i, f := range report.Routes {
+		if i >= len(g.Routes) || !routehealth.NeedsPooledEvidence(f) {
+			continue
+		}
+		selected.Routes = append(selected.Routes, g.Routes[i])
+		pooled.Routes = append(pooled.Routes, api.RouteHealthFinding{
+			WatchStatuses: f.WatchStatuses, Method: f.Method, Path: f.Path, CheckLatency: f.CheckLatency, MaxP95MS: f.MaxP95MS,
+			Windows: append([]api.RouteHealthWindowEvidence(nil), windows...),
+		})
+	}
+	if len(pooled.Routes) == 0 {
+		return nil
+	}
+	if err := pgRouteHealthObservationsInWindows(ctx, db, accountID, selected, &pooled, api.RouteHealthInvestigationSelection{}, windows); err != nil {
+		return err
+	}
+	routehealth.Evaluate(&pooled, anchor, "")
+	routehealth.ApplyPooled(report, pooled.Routes)
+	return nil
 }
 func pgRouteHealthObservations(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport) error {
 	return pgRouteHealthObservationsForCustomer(ctx, db, accountID, g, report, api.RouteHealthInvestigationSelection{})
 }
 
 func pgRouteHealthObservationsForCustomer(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport, selection api.RouteHealthInvestigationSelection) error {
-	windows := routehealth.Windows(report.CheckedAt)
+	return pgRouteHealthObservationsInWindows(ctx, db, accountID, g, report, selection, routehealth.Windows(report.CheckedAt))
+}
+
+func pgRouteHealthObservationsInWindows(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport, selection api.RouteHealthInvestigationSelection, windows []api.RouteHealthWindowEvidence) error {
 	routesJSON, err := json.Marshal(g.Routes)
 	if err != nil {
 		return fmt.Errorf("encode selected routes: %w", err)

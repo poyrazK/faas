@@ -167,6 +167,20 @@ new observations.
 At least 20 represented requests are required on each deployment **per route,
 per window**. Counts preserve telemetry publisher aggregation weights.
 
+### Low-traffic routes
+
+A route that is unknown only because its one-minute windows lack requests is
+re-evaluated over the stage so far: from the observation anchor to the newest
+closed minute, capped at the newest 30 minutes and split into two equal,
+consecutive halves of at least two minutes each. Each half uses the same
+request minimums and thresholds, and both must agree. The finding reports
+`evidence_window: pooled` with the pooled windows when this reaches a healthy
+or regressed verdict; otherwise the one-minute finding is kept. A route with
+about five candidate requests per minute therefore gets a verdict after about
+eight minutes of a stage. A regressed one-minute window is never pooled away.
+Customer cohorts, investigations and production monitoring keep one-minute
+windows.
+
 A window regresses when the candidate has at least two 5xx responses, a rate
 of at least 5%, at least three times stable's rate, and at least five percentage
 points above stable. Two regressing windows confirm a regressed route. Two

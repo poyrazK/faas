@@ -9020,6 +9020,14 @@ const (
 	RouteHealthSeedLookback = 7 * 24 * time.Hour
 )
 
+// RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
+// (ADR-846): two equal halves of at least RouteHealthPooledMinSpan in total,
+// covering at most the newest RouteHealthPooledMaxSpan of the stage.
+const (
+	RouteHealthPooledMinSpan = 4 * time.Minute
+	RouteHealthPooledMaxSpan = 30 * time.Minute
+)
+
 // RouteHealth bounds the opt-in observed-traffic canary guard (ADR-454).
 const (
 	RouteHealthMaxRoutes                  = 20
