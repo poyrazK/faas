@@ -161,9 +161,11 @@ func TestDevLoopMetal(t *testing.T) {
 	if _, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{RequireAuthn: &falsy}); status != http.StatusOK {
 		t.Fatalf("disable require_authn: status %d", status)
 	}
-	// ADR-741: what `gregale dev --debug` sets before the first sync.
-	if _, status := doReq(t, h, key, http.MethodPut, "/v1/apps/"+slug+"/secrets/"+api.DevDebugEnv, api.PutAppSecretRequest{Value: api.DevDebugRuntimeNode}); status/100 != 2 {
-		t.Fatalf("set debug secret: status %d", status)
+	// ADR-741: `gregale dev --debug` sets this as a sealed secret; the harness
+	// has no secret sealing key, so set the same variable as plain app env.
+	// guest-init reads it from the process environment either way.
+	if _, status := doReq(t, h, key, http.MethodPut, "/v1/apps/"+slug+"/env/"+api.DevDebugEnv, api.PutAppEnvRequest{Value: api.DevDebugRuntimeNode}); status/100 != 2 {
+		t.Fatalf("set debug env: status %d", status)
 	}
 
 	first := postDevSource(t, h, key, slug, devLoopFixture(t, "dev loop v1"))
