@@ -47,11 +47,11 @@ class SelectTest(unittest.TestCase):
         # The migration gate in the checks job owns migrations' tests.
         self.assertEqual(test, [])
 
-    def test_global_inputs_select_everything_except_dedicated_suites(self):
-        everything, _, vet, test = ap.select(["go.sum"], PKGS)
+    def test_global_inputs_vet_everything_but_test_only_changed(self):
+        everything, _, vet, test = ap.select(["go.sum", "pkg/util/x.go"], PKGS)
         self.assertTrue(everything)
         self.assertEqual(vet, sorted(PKGS))
-        self.assertEqual(test, ["cmd/apid", "pkg/api", "pkg/db", "pkg/state", "pkg/util"])
+        self.assertEqual(test, ["pkg/util"])
 
     def test_dotfile_paths_are_not_mangled(self):
         everything, _, _, _ = ap.select([".github/workflows/ci-light.yml"], PKGS)

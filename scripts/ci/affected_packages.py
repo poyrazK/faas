@@ -11,8 +11,8 @@ package lists derived from `go list`:
   test     changed packages, optionally narrowed to one shard: tested
   split    selected packages too slow for one shard, tested by name per shard
 
-Global inputs (go.mod, go.sum, this selector and the light workflow) select
-every package. The light tier keeps a pull request under ~10 minutes by
+Global inputs (go.mod, go.sum, this selector and the light workflow) vet
+every package; tests still cover changed packages only. The light tier keeps a pull request under ~10 minutes by
 compile-checking importers instead of testing them; the mega tier (ci.yml)
 runs every package's -race tests nightly and before every release.
 
@@ -101,12 +101,15 @@ def select(paths, pkgs):
         owner = owning_package(p, pkgs)
         if owner is not None:
             changed.add(owner)
+    # A global input (dependency bump, CI change) vets every package but still
+    # tests only changed ones: re-running the whole tree would blow the light
+    # budget, and the mega tier tests everything nightly and before release.
     if everything:
-        vet = test = set(pkgs)
+        vet = set(pkgs)
     else:
         changed_paths = {pkgs[d]["path"] for d in changed}
         vet = set(changed) | {d for d, info in pkgs.items() if info["imports"] & changed_paths}
-        test = set(changed)
+    test = set(changed)
     test = {d for d in test if not d.startswith(EXCLUDED_TEST_PREFIXES)}
     return everything, sorted(changed), sorted(vet), sorted(test)
 
