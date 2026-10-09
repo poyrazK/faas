@@ -786,7 +786,7 @@ alongside the connection and delivery counters.
 
 Subscribe an app webhook to `realtime.inbox.acknowledged` and
 `realtime.inbox.gap` to react to device progress without polling. Apply
-`20261008180000001_managed_realtime_inbox_webhooks.sql` before upgrading apid.
+`20261008180000201_managed_realtime_inbox_webhooks.sql` before upgrading apid.
 This uses the existing app webhook dispatcher; it must be running to deliver
 committed events. The inbox preview flags described above still apply.
 
@@ -861,7 +861,7 @@ gregale realtime send-principal demo ENDPOINT_ID --principal USER_ID \
 On the principal-send API request, use `delivery: "retained"`, a stable
 `message_id`, and `fallback_after_seconds: 60`. Values 1..86400 request a
 fallback; zero or omission disables it. Live sends cannot set a deadline.
-Apply `20261008190000001_managed_realtime_notification_fallbacks.sql` before
+Apply `20261008190000544_managed_realtime_notification_fallbacks.sql` before
 upgrading apid. The existing inbox preview flags and app webhook dispatcher
 are required. Clients use `consumeRealtimeInbox` as described above.
 
@@ -949,7 +949,7 @@ migration is needed.
 Retained channels and principal inboxes support versioned edits and deletions.
 Use the caller's stable channel idempotency key or inbox message ID; channel
 messages published without a key cannot be edited. Initial messages have
-version 1. Apply `20261008200000001_managed_realtime_message_mutations.sql`
+version 1. Apply `20261008200000549_managed_realtime_message_mutations.sql`
 before upgrading apid, realtime nodes, and the SDK/application handlers.
 The existing retained and resume preview flags apply.
 
@@ -1011,7 +1011,7 @@ The migration is forward-only so rollback cannot discard redaction metadata.
 Read progress records a person's explicit "seen through sequence N" signal.
 It is shared by all devices for the verified principal, independently of
 connection ACKs, device inbox checkpoints, and notification fallback timers.
-Apply `20261008210000001_managed_realtime_read_progress.sql`, then upgrade apid,
+Apply `20261008210000379_managed_realtime_read_progress.sql`, then upgrade apid,
 realtime nodes, and the SDK. The retained/resume preview flags remain required.
 
 ```sh
@@ -1197,7 +1197,7 @@ a newer registration is protected from stale responses. Web Push destinations
 must be public HTTPS endpoints; redirects are rejected and addresses are checked
 again at dial time. Provider response bodies are never copied into history/logs.
 
-Apply migration `20261008220000001_managed_realtime_push.sql` before starting an
+Apply migration `20261008220000559_managed_realtime_push.sql` before starting an
 upgraded apid. This feature shares the retained-history preview gate. No provider
 requests are made until configured credentials, a registered device, and a due
 fallback are present.
@@ -1296,7 +1296,7 @@ requires inbox resynchronization. Requests already sent to a provider cannot be
 recalled. Fallback webhooks remain backend events; handlers that send their own
 notifications should consult these preferences too.
 
-Apply `20261008230000001_managed_realtime_push_preferences.sql` after the push
+Apply `20261008230000833_managed_realtime_push_preferences.sql` after the push
 migration and upgrade push workers before exposing preference controls. The
 migration backfills existing notifications into the `notifications` category
 and keeps their original 24-hour expiry.
@@ -1392,7 +1392,7 @@ still apply. Scheduling a digest does not extend inbox retention or affect its
 ACK cursor. Apps must handle inbox resynchronization if a delayed alert opens
 beyond retained history.
 
-Apply `20261009000000001_managed_realtime_push_digests.sql` after the preferences
+Apply `20261009000000328_managed_realtime_push_digests.sql` after the preferences
 migration and upgrade push workers before exposing digest controls. Existing
 notifications receive an empty group key; new preference fields remain optional.
 Use the upgraded SDK when editing digest preferences, since preference updates
@@ -1438,7 +1438,7 @@ payloads expose `priority`. This setting controls Gregale scheduling; it does no
 request operating-system critical-alert or Do Not Disturb privileges. Reusing a
 message ID with a different priority is an idempotency conflict.
 
-Apply `20261009010000001_managed_realtime_notification_priority.sql` after the
+Apply `20261009010000634_managed_realtime_notification_priority.sql` after the
 digest migration before running this server version. Existing rows become normal
 priority. The migration has not been applied as part of this change.
 
@@ -1467,7 +1467,7 @@ change their retention, sequence, or acknowledgement behavior. Reusing a message
 ID with a different lifetime is an idempotency conflict. Provider requests already
 in flight cannot be recalled.
 
-The migration `20261009020000001_managed_realtime_notification_ttl.sql` follows
+The migration `20261009020000050_managed_realtime_notification_ttl.sql` follows
 the notification-priority migration. It has not been applied in this workspace.
 
 ### Notification collapse keys
@@ -1501,7 +1501,7 @@ expiration apply to the replacement alert as usual. Alerts already submitted to
 a provider cannot be recalled; collapse affects Gregale's queued push deliveries.
 Fallback webhook consumers handle any collapse of their own downstream alerts.
 
-Apply `20261009030000001_managed_realtime_notification_collapse.sql` after the
+Apply `20261009030000163_managed_realtime_notification_collapse.sql` after the
 notification-TTL migration before running this version. Existing alerts have no
 collapse key. The migration has not been applied in this workspace.
 
@@ -1547,7 +1547,7 @@ this conservatively limits logical delivery attempts rather than counting only
 successful notifications. Reservations are persisted and cleaned after two hours.
 No provider request already in flight can be recalled.
 
-Apply `20261009040000001_managed_realtime_push_rate_limits.sql` after the collapse
+Apply `20261009040000359_managed_realtime_push_rate_limits.sql` after the collapse
 migration. It has not been applied in this workspace.
 
 ### Scheduled notifications
@@ -1585,7 +1585,7 @@ acknowledgement deadline and include `notification_not_before`; external fallbac
 consumers must honor that value when scheduling their own deliveries. Provider
 requests already in flight cannot be recalled.
 
-Apply `20261009050000001_managed_realtime_scheduled_notifications.sql` after the
+Apply `20261009050000366_managed_realtime_scheduled_notifications.sql` after the
 rate-limit migration. It has not been applied in this workspace.
 
 ### Cancel or reschedule queued notifications
@@ -1661,7 +1661,7 @@ This is bounded diagnostic history, not a permanent audit log. Existing records
 are not backfilled; events start when the feature is enabled. Endpoint deletion
 removes its timeline.
 
-Apply `20261009060000001_managed_realtime_notification_timeline.sql` after the
+Apply `20261009060000888_managed_realtime_notification_timeline.sql` after the
 scheduled-notification migration. It has not been applied in this workspace.
 
 ### Notification delivery-status webhooks
@@ -1703,7 +1703,7 @@ its removal remains visible in the notification timeline. Existing terminal
 records are not backfilled. Disabling or deleting a webhook follows the existing
 outbox and subscription rules.
 
-Apply `20261009070000001_managed_realtime_notification_webhooks.sql` after the
+Apply `20261009070000012_managed_realtime_notification_webhooks.sql` after the
 timeline migration. It has not been applied in this workspace.
 
 ### Channel snapshots
@@ -1738,7 +1738,7 @@ The helper returns the baseline only after that callback completes; use it for
 `initialSequence` or the consumer's `onResync` callback. Existing cursor stores
 remain authoritative on normal reconnects.
 
-Apply `20261009080000001_managed_realtime_channel_snapshots.sql` after the
+Apply `20261009080000572_managed_realtime_channel_snapshots.sql` after the
 notification-webhook migration. It has not been applied in this workspace.
 
 ### Atomic batch publishing
@@ -1774,7 +1774,7 @@ include `publishRealtimeChannelBatch`, taking a stable ID, byte payloads and a
 callback that submits its request through your authorized backend transport.
 Do not expose management credentials to browsers.
 
-Apply `20261009090000001_managed_realtime_atomic_batches.sql` after the snapshots
+Apply `20261009090000912_managed_realtime_atomic_batches.sql` after the snapshots
 migration. It has not been applied in this workspace.
 
 ### Filtered retained-channel subscriptions
@@ -1876,7 +1876,7 @@ reads require read scopes. The Go client exposes Put/GetManagedRealtimeEventSche
 Node/browser exports include `realtimeEventSchemaMetadata` to select a version
 without manually formatting its metadata fields.
 
-Apply `20261009110000001_managed_realtime_event_schemas.sql` after the subscription
+Apply `20261009110000048_managed_realtime_event_schemas.sql` after the subscription
 filter migration. It has not been applied in this workspace.
 
 ### Built-in channel state reducers
@@ -1940,7 +1940,7 @@ read scopes for GET and deploy-write scopes for PUT/DELETE. The Go client expose
 Put/Get/DeleteManagedRealtimeReducer. Node/browser exports include
 `realtimeReducerEvent` to encode operation bytes for retained publishing or batches.
 
-Apply `20261009120000001_managed_realtime_channel_reducers.sql` after the event-schema
+Apply `20261009120000338_managed_realtime_channel_reducers.sql` after the event-schema
 migration. It has not been applied in this workspace.
 
 ### Optimistic concurrency for retained publishing
