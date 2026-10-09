@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -74,6 +74,8 @@ class EdgeRuleThrottleAction:
     bucket per ISO 3166-1 alpha-2 country resolved from the
     gateway's trusted client IP. When `"ip"`, one bucket per
     trusted client IP (IPv6 clients keyed by their /64).
+    When `"composite"`, one bucket per combination of
+    `key_fields` (ADR-835).
     Each non-empty
     value activates the bounded design: when the
     per-rule consumer set exceeds
@@ -104,6 +106,21 @@ class EdgeRuleThrottleAction:
     `key_by` is `""` or `"none"` — the cap is moot for
     non-per-consumer rules.
     """
+    key_fields: list[str] | Unset = UNSET
+    """ADR-835. Required iff `key_by="composite"`: the request
+    fields combined into one bucket identity. Each is one of
+    ip, country, api_key, consumer_id, jwt_subject, jwt_claim
+    (with `jwt_claim_name`), method, path or `header:<name>`.
+    A field the request lacks makes the identity missing, so
+    `missing_key_policy` applies.
+    """
+    count_statuses: list[int] | Unset = UNSET
+    """ADR-835. When set, requests are admitted while the bucket
+    has a token but only responses with one of these statuses
+    charge it, e.g. [401, 403] to limit failed logins without
+    limiting successful ones. Across gateways the admission
+    check uses each gateway's last-known shared balance.
+    """
     missing_key_policy: EdgeRuleThrottleActionMissingKeyPolicy | Unset = "shared"
     """Behavior when an authentication-backed dimension is not
     available on the request. `"shared"` places all such
@@ -129,6 +146,14 @@ class EdgeRuleThrottleAction:
 
         max_keys_per_rule = self.max_keys_per_rule
 
+        key_fields: list[str] | Unset = UNSET
+        if not isinstance(self.key_fields, Unset):
+            key_fields = self.key_fields
+
+        count_statuses: list[int] | Unset = UNSET
+        if not isinstance(self.count_statuses, Unset):
+            count_statuses = self.count_statuses
+
         missing_key_policy: str | Unset = UNSET
         if not isinstance(self.missing_key_policy, Unset):
             missing_key_policy = self.missing_key_policy
@@ -147,6 +172,10 @@ class EdgeRuleThrottleAction:
             field_dict["jwt_claim_name"] = jwt_claim_name
         if max_keys_per_rule is not UNSET:
             field_dict["max_keys_per_rule"] = max_keys_per_rule
+        if key_fields is not UNSET:
+            field_dict["key_fields"] = key_fields
+        if count_statuses is not UNSET:
+            field_dict["count_statuses"] = count_statuses
         if missing_key_policy is not UNSET:
             field_dict["missing_key_policy"] = missing_key_policy
 
@@ -170,6 +199,10 @@ class EdgeRuleThrottleAction:
 
         max_keys_per_rule = d.pop("max_keys_per_rule", UNSET)
 
+        key_fields = cast(list[str], d.pop("key_fields", UNSET))
+
+        count_statuses = cast(list[int], d.pop("count_statuses", UNSET))
+
         _missing_key_policy = d.pop("missing_key_policy", UNSET)
         missing_key_policy: EdgeRuleThrottleActionMissingKeyPolicy | Unset
         if isinstance(_missing_key_policy, Unset):
@@ -183,6 +216,8 @@ class EdgeRuleThrottleAction:
             key_by=key_by,
             jwt_claim_name=jwt_claim_name,
             max_keys_per_rule=max_keys_per_rule,
+            key_fields=key_fields,
+            count_statuses=count_statuses,
             missing_key_policy=missing_key_policy,
         )
 

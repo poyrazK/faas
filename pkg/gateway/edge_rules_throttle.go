@@ -94,6 +94,11 @@ type EdgeRuleThrottleResolved struct {
 	// MissingKeyPolicy is "shared" (or empty for back-compat) or
 	// "reject". Reject makes the selected identity dimension mandatory.
 	MissingKeyPolicy string
+	// ADR-835: KeyFields are the composite key's fields (KeyBy ==
+	// "composite"); CountStatuses, when non-nil, charges the bucket only
+	// for responses with one of these statuses.
+	KeyFields     []string
+	CountStatuses map[int]bool
 }
 
 // PickFirstThrottleMatch is the priority-ASC + methods +

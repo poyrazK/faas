@@ -715,6 +715,8 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				JWTClaimName:      a.JWTClaimName,
 				MaxKeysPerRule:    a.MaxKeysPerRule,
 				MissingKeyPolicy:  a.MissingKeyPolicy,
+				KeyFields:         a.KeyFields,
+				CountStatuses:     a.CountStatuses,
 			}
 		}
 	case state.EdgeRuleKindGeo:

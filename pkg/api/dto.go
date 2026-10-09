@@ -9128,6 +9128,13 @@ type EdgeRuleThrottleAction struct {
 	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
 	MaxKeysPerRule    int     `json:"max_keys_per_rule,omitempty"`
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
+	// KeyFields (ADR-835) are the request fields a key_by="composite" rule
+	// combines into one bucket identity, e.g. ["ip", "path"].
+	KeyFields []string `json:"key_fields,omitempty"`
+	// CountStatuses (ADR-835), when set, makes the rule charge its bucket
+	// only for responses with one of these statuses; requests are still
+	// rejected while the bucket is empty.
+	CountStatuses []int `json:"count_statuses,omitempty"`
 }
 
 // ThrottleKeyByNone is the explicit Phase-3 opt-out value. The empty
@@ -9147,6 +9154,9 @@ const (
 	// sanitized X-Forwarded-For hop); IPv6 clients are keyed by their /64 so
 	// one host cannot dodge the limit by rotating addresses in its prefix.
 	ThrottleKeyByIP = "ip"
+	// ThrottleKeyByComposite keys one bucket per combination of KeyFields
+	// values (ADR-835).
+	ThrottleKeyByComposite = "composite"
 
 	// ThrottleMissingKeyShared preserves the permissive historical posture for
 	// a dimensional rule when the request has no usable identity: all such
@@ -9182,11 +9192,79 @@ const ThrottleMaxKeysPerRuleDefault = 1000
 // update.
 func ThrottleKeyByIsPerConsumer(keyBy string) bool {
 	switch keyBy {
-	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim, ThrottleKeyByCountry, ThrottleKeyByIP:
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim, ThrottleKeyByCountry, ThrottleKeyByIP, ThrottleKeyByComposite:
 		return true
 	default:
 		return false
 	}
+}
+
+// ADR-835 bounds.
+const (
+	ThrottleKeyFieldsMax     = 4
+	ThrottleCountStatusesMax = 16
+)
+
+var throttleHeaderNameRegex = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$")
+
+// ThrottleKeyFieldName parses a composite key field: one of the single
+// key_by dimensions, "method", "path", or "header:<name>". It returns the
+// field kind and, for headers, the canonical header name.
+func ThrottleKeyFieldName(field string) (kind, header string, ok bool) {
+	switch field {
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim,
+		ThrottleKeyByCountry, ThrottleKeyByIP, "method", "path":
+		return field, "", true
+	}
+	if name, found := strings.CutPrefix(field, "header:"); found && throttleHeaderNameRegex.MatchString(name) {
+		return "header", http.CanonicalHeaderKey(name), true
+	}
+	return "", "", false
+}
+
+// validateThrottleKeyFields checks a composite rule's fields.
+func validateThrottleKeyFields(a *EdgeRuleThrottleAction) *Problem {
+	if len(a.KeyFields) == 0 || len(a.KeyFields) > ThrottleKeyFieldsMax {
+		return ErrValidation(fmt.Sprintf("throttle action: key_by=\"composite\" needs 1..%d key_fields (got %d)", ThrottleKeyFieldsMax, len(a.KeyFields)))
+	}
+	seen := map[string]bool{}
+	usesClaim := false
+	for _, f := range a.KeyFields {
+		kind, _, ok := ThrottleKeyFieldName(f)
+		if !ok {
+			return ErrValidation(fmt.Sprintf("throttle action: key field %q is not one of ip, country, api_key, consumer_id, jwt_subject, jwt_claim, method, path, header:<name>", f))
+		}
+		if seen[strings.ToLower(f)] {
+			return ErrValidation(fmt.Sprintf("throttle action: key field %q is repeated", f))
+		}
+		seen[strings.ToLower(f)] = true
+		usesClaim = usesClaim || kind == ThrottleKeyByJWTClaim
+	}
+	if usesClaim && !jwtClaimNameRegex.MatchString(a.JWTClaimName) {
+		return ErrValidation("throttle action: key field jwt_claim needs jwt_claim_name matching ^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
+	}
+	if !usesClaim && a.JWTClaimName != "" {
+		return ErrValidation("throttle action: jwt_claim_name requires the jwt_claim key field")
+	}
+	return nil
+}
+
+// validateThrottleCountStatuses checks count_statuses.
+func validateThrottleCountStatuses(statuses []int) *Problem {
+	if len(statuses) > ThrottleCountStatusesMax {
+		return ErrValidation(fmt.Sprintf("throttle action: at most %d count_statuses (got %d)", ThrottleCountStatusesMax, len(statuses)))
+	}
+	seen := map[int]bool{}
+	for _, code := range statuses {
+		if code < 100 || code > 599 {
+			return ErrValidation(fmt.Sprintf("throttle action: count_statuses entry %d is not an HTTP status (100..599)", code))
+		}
+		if seen[code] {
+			return ErrValidation(fmt.Sprintf("throttle action: count_statuses entry %d is repeated", code))
+		}
+		seen[code] = true
+	}
+	return nil
 }
 
 // ThrottleValidationContext is the per-plan ceiling that
@@ -9243,6 +9321,12 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 			"throttle action: burst %d exceeds the plan ceiling %d — a throttle rule is strictly a tightening primitive",
 			a.Burst, ctx.PlanMaxBurst))
 	}
+	if prob := validateThrottleCountStatuses(a.CountStatuses); prob != nil {
+		return prob
+	}
+	if a.KeyBy != ThrottleKeyByComposite && len(a.KeyFields) > 0 {
+		return ErrValidation("throttle action: key_fields requires key_by=\"composite\"")
+	}
 	dimensional := ThrottleKeyByIsPerConsumer(a.KeyBy)
 	switch a.MissingKeyPolicy {
 	case "":
@@ -9282,6 +9366,13 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 		if err := validateThrottleMaxKeys(a.MaxKeysPerRule, ctx.PlanMaxKeysPerRule); err != nil {
 			return err
 		}
+	case ThrottleKeyByComposite:
+		if prob := validateThrottleKeyFields(a); prob != nil {
+			return prob
+		}
+		if err := validateThrottleMaxKeys(a.MaxKeysPerRule, ctx.PlanMaxKeysPerRule); err != nil {
+			return err
+		}
 	case ThrottleKeyByJWTClaim:
 		if a.JWTClaimName == "" {
 			return ErrValidation("throttle action: jwt_claim_name is required when key_by=\"jwt_claim\"")
@@ -9296,7 +9387,7 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 		}
 	default:
 		return ErrValidation(fmt.Sprintf(
-			"throttle action: key_by %q is not in the closed vocab (allowed: \"\", \"none\", \"api_key\", \"consumer_id\", \"jwt_subject\", \"jwt_claim\", \"country\", \"ip\")",
+			"throttle action: key_by %q is not in the closed vocab (allowed: \"\", \"none\", \"api_key\", \"consumer_id\", \"jwt_subject\", \"jwt_claim\", \"country\", \"ip\", \"composite\")",
 			a.KeyBy))
 	}
 	return nil

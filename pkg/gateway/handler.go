@@ -4453,22 +4453,37 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 	// dimensional rules derive a deterministic bounded shard from the rule,
 	// dimension kind, and value inside AllowWithCentralConsumerKey.
 	centralKey := "rule:" + rule.ID + ":" + string(app.Plan)
-	allowed := false
+	// When MaxKeysPerRule == 0 (resolver-default; cmd-side
+	// compileThrottleRules substitutes the plan default) use the
+	// platform default as defence-in-depth against a direct-DB write.
+	cap := rule.MaxKeysPerRule
+	if cap <= 0 {
+		cap = api.ThrottleMaxKeysPerRuleDefault
+	}
+	charge := func(ctx context.Context) bool {
+		if dimensional {
+			return h.routeConsumerLimiter.AllowWithCentralConsumerKey(
+				ctx, bucketKey, rule.KeyBy, consumerID,
+				rule.RequestsPerSecond, float64(rule.Burst), cap, centralKey,
+			)
+		}
+		return h.routeLimiter.AllowWithCentralParams(ctx, bucketKey, rule.RequestsPerSecond, float64(rule.Burst), centralKey)
+	}
+	var allowed bool
+	if len(rule.CountStatuses) > 0 && hasResponseStatusHooks(r.Context()) {
+		// ADR-835: admit while the bucket has a token; charge it only when
+		// the response status is one the rule counts.
+		allowed = h.throttleHasToken(rule, dimensional, bucketKey, consumerID, cap)
+		if allowed {
+			h.chargeThrottleOnResponse(r.Context(), rule, dimensional, charge)
+		}
+	} else {
+		allowed = charge(r.Context())
+	}
 	deniedLimiter := h.routeLimiter
 	deniedBucketKey := bucketKey
 	policy := rateLimitScopeRoute
 	if dimensional {
-		// When MaxKeysPerRule == 0 (resolver-default; cmd-side
-		// compileThrottleRules substitutes the plan default) use the
-		// platform default as defence-in-depth against a direct-DB write.
-		cap := rule.MaxKeysPerRule
-		if cap <= 0 {
-			cap = api.ThrottleMaxKeysPerRuleDefault
-		}
-		allowed = h.routeConsumerLimiter.AllowWithCentralConsumerKey(
-			r.Context(), bucketKey, rule.KeyBy, consumerID,
-			rule.RequestsPerSecond, float64(rule.Burst), cap, centralKey,
-		)
 		deniedLimiter = h.routeConsumerLimiter
 		deniedBucketKey = h.routeConsumerLimiter.consumerBucketKey(bucketKey, consumerID)
 		policy = "per-consumer"
@@ -4479,10 +4494,6 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 			}
 			h.metrics.ObserveRouteConsumerThrottleDecision(rule.KeyBy, outcome)
 		}
-	} else {
-		allowed = h.routeLimiter.AllowWithCentralParams(
-			r.Context(), bucketKey, rule.RequestsPerSecond, float64(rule.Burst), centralKey,
-		)
 	}
 	if !allowed {
 		w.Header().Set("Retry-After", "1")
@@ -4543,6 +4554,16 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 // configured GeoIP database. A missing database, forged XFF, lookup error, or
 // uncovered address is unavailable and fails closed.
 func (h *Handler) resolveThrottleDimension(r *http.Request, rule *EdgeRuleThrottleResolved) (string, bool, string) {
+	if rule.KeyBy == api.ThrottleKeyByComposite {
+		return h.resolveCompositeThrottleKey(r, rule)
+	}
+	return h.resolveThrottleField(r, rule.KeyBy, rule.JWTClaimName)
+}
+
+// resolveThrottleField resolves one dimension (a single key_by value or one
+// composite key field) with the same trust and fail-closed rules.
+func (h *Handler) resolveThrottleField(r *http.Request, keyBy, claimName string) (string, bool, string) {
+	rule := &EdgeRuleThrottleResolved{KeyBy: keyBy, JWTClaimName: claimName}
 	if rule.KeyBy == api.ThrottleKeyByIP {
 		clientIP, ok := clientIPFromTrustedXFF(r)
 		if !ok {
@@ -5696,8 +5717,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// single trusted forwarded hop; country is looked up lazily.
 	trustedIP, _ := clientIPFromTrustedXFF(r)
 	requestCtx = WithEdgeRuleMatchContext(requestCtx, NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits))
+	// ADR-835: response-counted throttles charge once the status is known.
+	requestCtx, statusHooks := withResponseStatusHooks(requestCtx)
 	r = r.WithContext(requestCtx)
 	defer func() {
+		statusHooks.run(rec.status)
 		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
 		requestSpan.End()
 	}()

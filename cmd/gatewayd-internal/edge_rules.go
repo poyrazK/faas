@@ -1770,6 +1770,19 @@ func compileAsyncRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleAsyncReso
 // is a free function — it doesn't need any adapter state.
 // Out-of-bound values are clamped silently; the caller logs a
 // slog.Warn with the rule ID.
+// throttleCountStatuses turns ADR-835 count_statuses into a set; nil keeps
+// the rule charging every request.
+func throttleCountStatuses(codes []int) map[int]bool {
+	if len(codes) == 0 {
+		return nil
+	}
+	out := make(map[int]bool, len(codes))
+	for _, c := range codes {
+		out[c] = true
+	}
+	return out
+}
+
 func compileThrottleRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleThrottleResolved, []gateway.PathGlobError) {
 	if len(storeRules) == 0 {
 		return nil, nil
@@ -1847,6 +1860,8 @@ func compileThrottleRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleThrott
 			KeyBy:          r.Action.Throttle.KeyBy,
 			JWTClaimName:   r.Action.Throttle.JWTClaimName,
 			MaxKeysPerRule: maxKeys,
+			KeyFields:      r.Action.Throttle.KeyFields,
+			CountStatuses:  throttleCountStatuses(r.Action.Throttle.CountStatuses),
 			MissingKeyPolicy: func() string {
 				if r.Action.Throttle.MissingKeyPolicy == api.ThrottleMissingKeyReject {
 					return api.ThrottleMissingKeyReject

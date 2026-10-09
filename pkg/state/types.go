@@ -7762,6 +7762,9 @@ type EdgeRuleThrottleAction struct {
 	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
 	MaxKeysPerRule    int     `json:"max_keys_per_rule,omitempty"`
 	MissingKeyPolicy  string  `json:"missing_key_policy,omitempty"`
+	// ADR-835: composite keys and response-status counting.
+	KeyFields     []string `json:"key_fields,omitempty"`
+	CountStatuses []int    `json:"count_statuses,omitempty"`
 }
 
 // EdgeRuleAsyncAction configures a durable async route. Omitted retry and age

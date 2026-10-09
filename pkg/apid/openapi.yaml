@@ -54536,7 +54536,7 @@ components:
           example: 200
         key_by:
           type: string
-          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country", "ip"]
+          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country", "ip", "composite"]
           default: ""
           description: |
             Per-consumer keying dimension (ADR-104 / issue #881
@@ -54551,6 +54551,8 @@ components:
             bucket per ISO 3166-1 alpha-2 country resolved from the
             gateway's trusted client IP. When `"ip"`, one bucket per
             trusted client IP (IPv6 clients keyed by their /64).
+            When `"composite"`, one bucket per combination of
+            `key_fields` (ADR-835).
             Each non-empty
             value activates the bounded design: when the
             per-rule consumer set exceeds
@@ -54588,6 +54590,29 @@ components:
             `plan.ThrottleMaxKeysPerRule`. Must be 0 when
             `key_by` is `""` or `"none"` — the cap is moot for
             non-per-consumer rules.
+        key_fields:
+          type: array
+          maxItems: 4
+          description: |
+            ADR-835. Required iff `key_by="composite"`: the request
+            fields combined into one bucket identity. Each is one of
+            ip, country, api_key, consumer_id, jwt_subject, jwt_claim
+            (with `jwt_claim_name`), method, path or `header:<name>`.
+            A field the request lacks makes the identity missing, so
+            `missing_key_policy` applies.
+          items: { type: string }
+          example: ["ip", "path"]
+        count_statuses:
+          type: array
+          maxItems: 16
+          description: |
+            ADR-835. When set, requests are admitted while the bucket
+            has a token but only responses with one of these statuses
+            charge it, e.g. [401, 403] to limit failed logins without
+            limiting successful ones. Across gateways the admission
+            check uses each gateway's last-known shared balance.
+          items: { type: integer, minimum: 100, maximum: 599 }
+          example: [401]
         missing_key_policy:
           type: string
           enum: ["shared", "reject"]

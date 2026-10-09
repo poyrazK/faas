@@ -272,21 +272,23 @@ type BudgetPolicyPreview struct {
 // known outer rate ceilings. The trace does not resolve authenticated or
 // trusted-geolocation identities and never consults or consumes a live bucket.
 type ThrottlePolicyPreview struct {
-	RequestsPerSecond float64 `json:"requests_per_second"`
-	Burst             int     `json:"burst"`
-	GatewayRateRPS    float64 `json:"gateway_rate_rps"`
-	GatewayBurst      int     `json:"gateway_burst"`
-	KeyBy             string  `json:"key_by"`
-	JWTClaimName      string  `json:"jwt_claim_name,omitempty"`
-	MaxKeysPerRule    int     `json:"max_keys_per_rule"`
-	MaxKeysSource     string  `json:"max_keys_source"`
-	MissingKeyPolicy  string  `json:"missing_key_policy"`
-	PlanCeilingStatus string  `json:"plan_ceiling_status"`
-	PlanMaxRPS        int     `json:"plan_max_rps,omitempty"`
-	PlanMaxBurst      int     `json:"plan_max_burst,omitempty"`
-	AppRequestRPS     int     `json:"app_request_rps,omitempty"`
-	AppRequestBurst   int     `json:"app_request_burst,omitempty"`
-	AccountRequestRPM int     `json:"account_request_rpm,omitempty"`
+	RequestsPerSecond float64  `json:"requests_per_second"`
+	Burst             int      `json:"burst"`
+	GatewayRateRPS    float64  `json:"gateway_rate_rps"`
+	GatewayBurst      int      `json:"gateway_burst"`
+	KeyBy             string   `json:"key_by"`
+	JWTClaimName      string   `json:"jwt_claim_name,omitempty"`
+	MaxKeysPerRule    int      `json:"max_keys_per_rule"`
+	MaxKeysSource     string   `json:"max_keys_source"`
+	MissingKeyPolicy  string   `json:"missing_key_policy"`
+	KeyFields         []string `json:"key_fields,omitempty"`
+	CountStatuses     []int    `json:"count_statuses,omitempty"`
+	PlanCeilingStatus string   `json:"plan_ceiling_status"`
+	PlanMaxRPS        int      `json:"plan_max_rps,omitempty"`
+	PlanMaxBurst      int      `json:"plan_max_burst,omitempty"`
+	AppRequestRPS     int      `json:"app_request_rps,omitempty"`
+	AppRequestBurst   int      `json:"app_request_burst,omitempty"`
+	AccountRequestRPM int      `json:"account_request_rpm,omitempty"`
 }
 
 // RetryPolicyPreview reports a matching rule's effective replay policy and
@@ -1615,6 +1617,8 @@ func previewThrottleRule(rule api.EdgeRuleResponse, input Input) (string, string
 		JWTClaimName:      action.JWTClaimName,
 		MaxKeysPerRule:    action.MaxKeysPerRule,
 		MissingKeyPolicy:  action.MissingKeyPolicy,
+		KeyFields:         action.KeyFields,
+		CountStatuses:     action.CountStatuses,
 		PlanCeilingStatus: "unavailable",
 	}
 	if policy.KeyBy == "" {
@@ -1649,8 +1653,18 @@ func previewThrottleRule(rule api.EdgeRuleResponse, input Input) (string, string
 
 func throttlePolicyReason(policy ThrottlePolicyPreview) string {
 	keying := fmt.Sprintf("key_by=%s", policy.KeyBy)
+	if len(policy.KeyFields) > 0 {
+		keying += fmt.Sprintf(" fields=%s", strings.Join(policy.KeyFields, "+"))
+	}
 	if policy.JWTClaimName != "" {
 		keying += fmt.Sprintf(" claim=%q", policy.JWTClaimName)
+	}
+	if len(policy.CountStatuses) > 0 {
+		codes := make([]string, len(policy.CountStatuses))
+		for i, c := range policy.CountStatuses {
+			codes[i] = strconv.Itoa(c)
+		}
+		keying += fmt.Sprintf(", charged only for responses %s", strings.Join(codes, "/"))
 	}
 	maxKeys := fmt.Sprintf("max_keys_per_rule=%d (%s)", policy.MaxKeysPerRule, policy.MaxKeysSource)
 	reason := fmt.Sprintf("matched route-throttle rule has configured %.3g requests/s, burst %d (gateway effective %.3g requests/s and burst %d), %s, missing_key_policy=%s, %s", policy.RequestsPerSecond, policy.Burst, policy.GatewayRateRPS, policy.GatewayBurst, keying, policy.MissingKeyPolicy, maxKeys)
