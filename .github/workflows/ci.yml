@@ -45,10 +45,14 @@ permissions:
   security-events: write
 
 env:
-  # Pin CI to Go 1.26.9 so govulncheck uses the patched standard library.
-  # go.mod targets Go 1.26.0 and selects this exact patch with its toolchain
-  # directive.
+  # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
+  # and the go.mod toolchain directive resolve to the same Go runtime.
+  # Go 1.26.9 fixes the reachable stdlib advisories reported by the
+  # October 2026 supply-chain gate. Keep all runtime/build pins aligned
+  # with the go.mod toolchain directive.
   GO_VERSION: "1.26.9"
+  # Bound cold CLI compilation just as the apid compiler guard below does.
+  GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
   # vacuum is the OpenAPI ruleset linter used by `make spec-check`.
   # Both the version and the SHA-256 pin are mirrored from the upstream
   # checksum file at https://github.com/daveshanley/vacuum/releases — never
@@ -112,18 +116,79 @@ jobs:
   # and spec-check (~3:54) — run in parallel instead of in series. Wall
   # time drops from 10:44 to ~max(test, unit-tests, spec-check) ≈ ~4:40.
   #
-  # `test` (lint + build + small checks), `unit-tests` (race-enabled Go
-  # test suite + pg integration), and `spec-check` (vacuum lint + AST
-  # parity) all start independently on PR open. No `needs:` between them.
+  # Lint shards, race-enabled unit tests, and spec-check start independently.
+  # The existing required `test` job retains a failing result if any lint
+  # shard fails, then runs its build and repository policy checks.
   # The job ID `test` is preserved so the commented-out `needs: test` in
   # cd-digitalocean.yml still resolves if anyone re-enables it.
+  go-lint:
+    name: Go lint (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+      GOMEMLIMIT: 10GiB
+      GOGC: 100
+      GOMAXPROCS: 4
+    steps:
+      - uses: actions/checkout@v7
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore lint shard cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-
+            go-lint-${{ runner.os }}-
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: install linter
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+          install-only: true
+          skip-cache: true
+      - name: validate lint configuration and shard executor
+        run: |
+          golangci-lint config verify
+          python3 scripts/ci/check_gosec_baseline.py
+          python3 -m unittest discover -s scripts/ci -p check_gosec_baseline_test.py
+          python3 -m unittest discover -s scripts/ci -p lint_go_shard_test.py
+      - name: lint every assigned package
+        run: python3 scripts/ci/lint_go_shard.py --shard ${{ matrix.shard }} --shards 4 -- golangci-lint
+      - name: save lint shard cache
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
   test:
     name: lint + build
+    needs: go-lint
+    if: always()
     runs-on: ubuntu-latest
-    # Checkout/setup plus cold-cache analysis exhausted sixty minutes.
-    # Leave time for analysis, cold builds and the remaining policy gates.
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
+      - name: require all lint shards
+        env:
+          LINT_RESULT: ${{ needs.go-lint.result }}
+        run: test "$LINT_RESULT" = success
       - uses: actions/checkout@v7
         with:
           # PR-4a compares the PR head against the event's base SHA and
@@ -170,48 +235,19 @@ jobs:
       - name: CVE monitor parser and issue-payload tests
         run: scripts/ci/cve-monitor_test.sh
 
-      # golangci-lint replaces bare gofmt + go vet with a curated set of
-      # checks. v2.14.0 is built with Go 1.26 and supports the go.mod Go 1.26
-      # target (golangci-lint v1.x is built with Go 1.23 and refuses newer
-      # go directives — see golangci/golangci-lint#5873).
-      # action v8 requires golangci-lint >= v2.1.0; v9 is current.
       # S4 PR-4a advisory: a useful regression pin should fail on the
       # merge-base. This report is intentionally non-blocking while the
       # repository accumulates baseline coverage; the table identifies tests
       # that are absent or already passing on the base.
       - name: advisory regression pin report
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
         run: make regression-pin-check
       - name: regression-pin checker tests
         run: make regression-pin-check-test
-      - name: lint (golangci-lint v2.14.0)
-        uses: golangci/golangci-lint-action@v9
-        env:
-          # Lint constructs its own SSA from source. Its export-data compile
-          # needs type checking, without costly inlining of the giant API package.
-          GOFLAGS: '-p=1 "-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1 -l" "-gcflags=github.com/onebox-faas/faas/pkg/sched=-dwarf=false -c=1"'
-          # Bound analysis memory after repeated hosted-runner shutdowns.
-          GOMEMLIMIT: 3GiB
-          GOGC: 75
-          GOMAXPROCS: 2
-        with:
-          version: v2.14.0
-          # The newer Go 1.26 analyzers report baseline findings throughout
-          # the existing tree. Retain the repository analyzer policies and gate findings
-          # introduced since this event's base revision while the baseline is
-          # addressed separately. Cold analysis exceeded fifty minutes on the
-          # route lifecycle release; allow sixty-five without raising memory.
-          args: >-
-            --timeout=65m
-            --new-from-merge-base=${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
-          # The action's own cache is keyed per 7-day interval and never re-saved
-          # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
-          skip-cache: true
-
       # Re-runs the same checks golangci-lint covers as a fallback, in case
       # the lint step is skipped (e.g. workflow_dispatch with no Go file
       # changes). Keeps the existing local Makefile contract honest.
@@ -219,12 +255,14 @@ jobs:
         run: test -z "$(gofmt -l $(find . -name '*.go'))" || (gofmt -l $(find . -name '*.go'); exit 1)
       - name: vet
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
         run: go vet ./...
       - name: build
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
         run: make build
 
       # S2 PR-2b: a pure nil-return MemStore method can make a handler test
@@ -637,7 +675,7 @@ jobs:
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit test debug metadata and serialize its backend; keep optimization.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
@@ -669,7 +707,7 @@ jobs:
             ~/go/pkg/mod
           key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
-  # The complete state test inventory runs on two independent PostgreSQL
+  # The complete state test inventory runs on four independent PostgreSQL
   # runners. Fuzz seeds and runnable examples belong to exactly one shard;
   # Go's registered list guards against silently omitting a new test family.
   unit-tests-state:
@@ -680,7 +718,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     permissions:
       contents: read
       id-token: write
@@ -716,7 +754,7 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          # Both shards compile the identical ./pkg/state race test binary, so
+          # All shards compile the identical ./pkg/state race test binary, so
           # they share one cache entry (written by shard 1 only, below).
           key: go-state-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
@@ -726,10 +764,10 @@ jobs:
         run: |
           mkdir -p coverage
           go test -race -coverpkg=./pkg/state -covermode=atomic -list . ./pkg/state > coverage/state-inventory.txt
-          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -check -list-file=coverage/state-inventory.txt
+          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=4 -check -list-file=coverage/state-inventory.txt
       - name: state tests (shard ${{ matrix.shard }})
         run: |
-          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=2 -shard=${{ matrix.shard }})
+          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=4 -shard=${{ matrix.shard }})
           go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
       - name: upload state coverage
         uses: actions/upload-artifact@v4
@@ -788,7 +826,7 @@ jobs:
             job_timeout_minutes: 30
     # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
     # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
-    # in its two deterministic shards above.
+    # in its four deterministic shards above.
     # Allow headroom for race compilation, coverage, PostgreSQL contract gates,
     # and artifact upload after the main suite completes.
     timeout-minutes: ${{ matrix.job_timeout_minutes }}
@@ -862,6 +900,9 @@ jobs:
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
       - name: unit tests (pg shard 2${{ matrix.id }})
         env:
+          GOGC: 10
+          GOMEMLIMIT: 2GiB
+          GOMAXPROCS: 2
           GREGALE_GITOPS_ACCEPTANCE: ${{ matrix.gitops_acceptance && '1' || '' }}
         run: |
           mkdir -p coverage
@@ -952,7 +993,7 @@ jobs:
             ~/go/pkg/mod
           key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
-  # Require all three compatible profiles. A half-suite or parity-only profile
+  # Require all five compatible profiles. A partial suite or parity-only profile
   # cannot replace the full exact-package 70% gate.
   state-coverage:
     name: pkg/state coverage gate (all shards)
@@ -970,7 +1011,7 @@ jobs:
           merge-multiple: true
       - name: exact pkg/state coverage gate
         run: |
-          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard2a.out
+          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard2a.out
       - name: coverage floor (ship-blocking packages)
         run: make coverage-floor COVERDIR=coverage
 
@@ -1169,7 +1210,7 @@ jobs:
     # memory and the runner was shut down (exit 143) right after pkg/vmmdgrpc
     # in 12 of 22 runs, main included. Mirror unit-tests-pg-1's bounds.
     env:
-      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
       GOMEMLIMIT: 2GiB
       GOGC: 10
       GOMAXPROCS: 2
@@ -1265,7 +1306,7 @@ jobs:
     env:
       GOVULNCHECK_VERSION: "1.7.0"
       # Several contract gates compile the APID test package.
-      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
       GOMEMLIMIT: 2GiB
       GOGC: 10
       GOMAXPROCS: 2
@@ -1913,7 +1954,7 @@ jobs:
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit test debug metadata and serialize its backend; keep optimization.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
@@ -1963,7 +2004,7 @@ jobs:
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit test debug metadata and serialize its backend; keep optimization.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2

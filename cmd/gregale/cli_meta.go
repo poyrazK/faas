@@ -439,7 +439,7 @@ func projectsCLICompletionPositions() []cliCompletionPosition {
 
 // templateNames13 is the canonical template catalog. The historical name is
 // retained because tests and completion metadata refer to this package-local
-// symbol; it now contains all 19 embedded templates. Mirrors
+// symbol; it contains all embedded templates. Mirrors
 // cmd/gregale/templates/embed.go::Names verbatim; the ClosedSet literals
 // in deploy/init reference this const so goconst stops flagging the
 // duplicated 13-name lists. Kept in sync with the embed FS by the
@@ -480,6 +480,7 @@ var templateNames13 = []string{
 	"customer-operation-job-export",
 	"customer-operation-workflow-export",
 	"data-api",
+	"data-api-starter",
 }
 
 // cliCommands is the manifest. One entry per top-level command in
@@ -3289,11 +3290,24 @@ var cliCommands = []cliCommand{
 				{Name: "resume", Short: "resume configuration and deployment of an existing app"},
 			}},
 			{Name: "types", Short: "Generate types in an owner-authenticated app task", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "output", Value: "FILE", Short: "generated TypeScript output"},
+				{Name: "output", Value: "FILE", Short: "generated TypeScript or snapshot output"},
 				{Name: "check", Short: "fail if the output file is stale"},
+				{Name: "snapshot", Short: "export a JSON baseline for data-api diff"},
 				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
 			}},
-			{Name: "refresh", Short: "Request a fresh restart to reload the database schema", Positionals: []string{"<name>"}},
+			{Name: "diff", Short: "Compare the current schema with a saved JSON baseline", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "baseline", Value: "FILE", Req: true, Short: "JSON snapshot exported with types --snapshot"},
+				{Name: "check", Short: "fail on breaking contract changes"},
+				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
+			}, Examples: []string{"gregale data-api diff notes-data --baseline schema.json --check"}},
+			{Name: "refresh", Short: "Request a fresh restart to reload the database schema", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "wait", Short: "wait for fresh-restart completion and Data API readiness"},
+				{Name: "timeout", Value: "DURATION", Short: "complete wait deadline (default 5m, maximum 1h; requires --wait)"},
+			}, Examples: []string{"gregale data-api refresh notes-data --wait --timeout 5m"}},
+			{Name: "sync", Short: "Run migrations, refresh the API, export types and check the client", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "config", Value: "FILE", Req: true, Short: "JSON workflow with output, migrate and check argument arrays"},
+				{Name: "timeout", Value: "DURATION", Short: "entire workflow deadline (default 20m, maximum 1h)"},
+			}, Examples: []string{"gregale data-api sync notes-data --config data-api.json"}},
 		},
 	},
 	{

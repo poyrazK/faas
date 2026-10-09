@@ -695,7 +695,8 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 
 .PHONY: lint
 lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
-	@$(GO) tool golangci-lint run
+	@python3 scripts/ci/check_gosec_baseline.py
+	@GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
 .PHONY: runbook-sql-check
 runbook-sql-check: ## Reject mutating SQL in normal operator docs; emergency recipes live under docs/break-glass
@@ -990,8 +991,7 @@ clean: ## Remove build artifacts
 # sqlc install path. CI drops the tarball at $$HOME/.local/sqlc/bin/sqlc
 # (see .github/workflows/ci.yml `install sqlc` step); the same path is
 # the local-dev convention so make sqlc-check works without a `go
-# install` round-trip — which avoids compiling the cgo-heavy sqlc tree on
-# every cold CI runner even though the pinned Go 1.26.9 toolchain supports it.
+# install` round-trip and compiling sqlc's large dependency tree.
 SQLC         ?= $(HOME)/.local/sqlc/bin/sqlc
 # Bumped from v1.27.0 (IAM-3) — v1.27.0's pg_query_go cgo clashes with
 # the macOS SDK strchrnul declaration and `go install` fails on this
@@ -1303,12 +1303,25 @@ terraform-provider-check: ## Build and test the Terraform/OpenTofu provider modu
 sdk-unit-node: ## Run Node SDK unit tests (no fixture required)
 	@cd sdk/node && npm ci && npm run test:unit
 
-.PHONY: data-api-check data-api-acceptance
+.PHONY: data-api-check data-api-acceptance data-api-packaging-check data-api-browser-acceptance
 data-api-check: ## Runtime and typed application client unit checks
 	@bash scripts/test-data-api.sh
 
 data-api-acceptance: ## Disposable PostgreSQL/PostgREST application API acceptance
 	@bash scripts/test-data-api.sh --integration
+
+data-api-browser-acceptance: ## Real browser CORS acceptance with disposable PostgreSQL
+	@DATA_API_BROWSER_REQUIRED=1 bash scripts/test-data-api.sh --integration
+
+data-api-packaging-check: ## Reproducible CLI/SDK bundle and fresh starter installation
+	@bash scripts/test-data-api-packaging.sh
+
+.PHONY: data-api-staging-check data-api-staging-canary
+data-api-staging-check: ## Staging canary harness contracts without provider calls
+	@node --test tests/data-api/staging/canary.test.mjs
+
+data-api-staging-canary: ## Opt-in isolated Data API deployment through Gregale's remote builder
+	@bash scripts/ci/run-data-api-staging-canary.sh
 
 .PHONY: sdk-gen-python
 sdk-gen-python: ## Regenerate sdk/python/faas_sdk from api/openapi.yaml

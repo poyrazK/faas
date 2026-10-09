@@ -268,7 +268,7 @@ func docsURLForTemplate(name string) string {
 		return storageDocsURL
 	case "secret-reload-node":
 		return secretsDocsURL
-	case "data-api":
+	case "data-api", "data-api-starter":
 		return "https://gregale.dev/docs/data-api"
 	case "mcp-node":
 		return "https://gregale.dev/docs/mcp"
@@ -439,6 +439,14 @@ func nextStepsFor(tpl string) []string {
 		}
 	case "data-api":
 		return []string{"Create the Data API with its database and application JWT issuer:", "  gregale data-api create <slug> --database <database> --issuer https://issuer.example --jwks-url https://issuer.example/jwks --audience <audience>", "Generate typed database contracts:", "  gregale data-api types <slug> --output database.types.ts", "See README.md for migration and RLS setup."}
+	case "data-api-starter":
+		return []string{
+			"Read README.md to reserve the migration app and attach its managed migration binding.",
+			"Pin the paired CLI and SDK with node tools/artifacts.mjs pin /path/to/bundle/data-api-bundle.json.",
+			"Create the Data API with your application JWT issuer, then automate changes:",
+			"  gregale data-api sync notes-data --config data-api.json",
+			"The scaffold includes versioned migrations, two-user RLS checks and application CI.",
+		}
 	case "rest-api-postgres":
 		return []string{
 			"Reserve the app, then attach managed runtime and migration bindings:",

@@ -1,4 +1,4 @@
-# ADR-829 · Object-storage entity outbox commit contract
+# ADR-903 · Object-storage entity outbox commit contract
 
 - **Status:** accepted for internal engine implementation; delivery and qualification pending
 - **Date:** 2026-10-09
