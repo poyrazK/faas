@@ -2735,7 +2735,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:        dispatchInspect,
 		DocSlug:     "inspect",
-		Short:       "Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context)",
+		Short:       "Explain an app from its runtime, deployment, API, data, scaling, and release signals (linked app or interactive picker)",
 		Examples:    []string{"gregale inspect my-api", "gregale inspect my-api --watch", "gregale inspect my-api --watch --interval 5s --timeout 10m --json", "gregale inspect my-api --upstreams"},
 		Positionals: []string{"[<slug>]"},
 		// Leaf-selectors are flags on this verb, not positional
@@ -3018,7 +3018,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "logs",
 		DocSlug:     "logs",
-		Short:       "Query runtime logs and HTTP request events",
+		Short:       "Query runtime logs and HTTP request events (linked app or interactive picker)",
 		Examples:    []string{"gregale logs my-api --follow", "gregale logs my-api --since 1h --level error"},
 		Positionals: []string{"[<slug>]"},
 		Flags: []cliFlag{
@@ -3077,10 +3077,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "open",
 		DocSlug: "open",
-		Short:   "Open the app's URL (slug defaults to linked context)",
+		Short:   "Open the app's URL (linked app or interactive picker)",
 		Subcommands: []cliSub{
 			{Name: "docs", Short: "Open a CLI docs page (open docs [<slug>])"},
 		},
+		Flags:       []cliFlag{{Name: "app", Short: appSlugFlagUsage, Value: "SLUG"}, {Name: "dashboard", Short: "open the dashboard page instead of the live URL", Bool: true}},
 		Positionals: []string{"[<slug>]"},
 	},
 	{

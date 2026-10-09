@@ -5862,10 +5862,16 @@ func cmdOpen(args []string) int {
 		return cmdOpenDocs(args[1:])
 	}
 	fs := newFlagSet("open", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	dash := fs.Bool("dashboard", false, "open the dashboard page instead of the live URL")
 	flags, positional := splitArgsForFlags(args, "dashboard")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	var mergeErr error
+	positional, mergeErr = mergeAppFlag(positional, *appFlag, 1)
+	if mergeErr != nil {
+		return printErr("Invalid app target", mergeErr)
 	}
 	if len(positional) > 1 {
 		PrintUsage(os.Stderr, "usage: gregale open [<slug>] [--dashboard] (slug defaults to linked project context)", "open")
@@ -5876,13 +5882,9 @@ func cmdOpen(args []string) int {
 		slug = positional[0]
 	} else {
 		var resolveErr error
-		slug, resolveErr = resolveAppFlagOrContext("")
+		slug, resolveErr = resolveReadAppTarget("")
 		if resolveErr != nil {
-			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale open [<slug>] [--dashboard] (slug defaults to linked project context)", "open")
-				return 1
-			}
-			return printErr("Could not read local project context", resolveErr)
+			return readAppTargetError(resolveErr)
 		}
 	}
 	client, err := authedClient()
@@ -6181,23 +6183,6 @@ func cmdLogs(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all] (slug defaults to linked project context)", "logs")
 		return 1
 	}
-	slug := ""
-	if pos, mergeErr := mergeAppFlag(fs.Args(), *app, 1); mergeErr != nil {
-		PrintUsage(os.Stderr, "usage: gregale logs [<slug>|--app SLUG] ...\nerror: "+mergeErr.Error(), "logs")
-		return 1
-	} else if len(pos) == 1 {
-		slug = pos[0]
-	} else {
-		var resolveErr error
-		slug, resolveErr = resolveAppFlagOrContext("")
-		if resolveErr != nil {
-			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale logs [<slug>] ... (slug defaults to linked project context)", "logs")
-				return 1
-			}
-			return printErr("Could not read local project context", resolveErr)
-		}
-	}
 	if logsFlagWasSet(fs, "deployment") && logsFlagWasSet(fs, "release") {
 		PrintUsage(os.Stderr, "--release and --deployment are aliases; use only one", "logs")
 		return 2
@@ -6280,6 +6265,19 @@ func cmdLogs(args []string) int {
 		PrintUsage(os.Stderr, sinceErr.Error(), "logs")
 		return 2
 	}
+	slug := ""
+	if pos, mergeErr := mergeAppFlag(fs.Args(), *app, 1); mergeErr != nil {
+		PrintUsage(os.Stderr, "usage: gregale logs [<slug>|--app SLUG] ...\nerror: "+mergeErr.Error(), "logs")
+		return 1
+	} else if len(pos) == 1 {
+		slug = pos[0]
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveReadAppTarget("")
+		if resolveErr != nil {
+			return readAppTargetError(resolveErr)
+		}
+	}
 	// ADR-198: --deployment accepts a vN handle. `slug` is already
 	// resolved above (positional, else linked project), so the revision is
 	// unambiguous without a second flag. A uuid short-circuits.
@@ -6334,20 +6332,6 @@ func cmdLogsTail(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale logs tail [<slug>] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] (slug defaults to linked project context)", "logs")
 		return 1
 	}
-	slug := ""
-	if fs.NArg() == 1 {
-		slug = fs.Arg(0)
-	} else {
-		var resolveErr error
-		slug, resolveErr = resolveAppFlagOrContext("")
-		if resolveErr != nil {
-			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale logs tail [<slug>] ... (slug defaults to linked project context)", "logs")
-				return 1
-			}
-			return printErr("Could not read local project context", resolveErr)
-		}
-	}
 	if *follow {
 		PrintFail(os.Stderr, "--follow is redundant with `logs tail` (alias always follows); drop the flag")
 		return 2
@@ -6360,6 +6344,16 @@ func cmdLogsTail(args []string) int {
 	if sinceErr != nil {
 		PrintUsage(os.Stderr, sinceErr.Error(), "logs")
 		return 2
+	}
+	slug := ""
+	if fs.NArg() == 1 {
+		slug = fs.Arg(0)
+	} else {
+		var resolveErr error
+		slug, resolveErr = resolveReadAppTarget("")
+		if resolveErr != nil {
+			return readAppTargetError(resolveErr)
+		}
 	}
 	return runLogs(context.Background(), slug, *deployment, api.LogFilter{
 		Grep:  *grep,

@@ -53,7 +53,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`routes`](#routes) | Analyze route changes, migrations, lifecycle and production policies |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
 | [`init`](#init) | Scaffold a project from a built-in template |
-| [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context) |
+| [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (linked app or interactive picker) |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]; slug defaults to linked context) |
 | [`run`](#run) | Run untrusted code in an isolated disposable microVM |
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
@@ -73,11 +73,11 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`profile`](#profile) | Manage named API connections and isolated credentials |
 | [`context`](#context) | Show the linked project and default app context |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
-| [`logs`](#logs) | Query runtime logs and HTTP request events |
+| [`logs`](#logs) | Query runtime logs and HTTP request events (linked app or interactive picker) |
 | [`metrics`](#metrics) | Per-app or account-wide metrics (slug defaults to linked context) |
 | [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]; slug defaults to linked context) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
-| [`open`](#open) | Open the app&#39;s URL (slug defaults to linked context) |
+| [`open`](#open) | Open the app&#39;s URL (linked app or interactive picker) |
 | [`orgs`](#orgs) | Manage orgs, members, and workspace activity |
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
@@ -6395,7 +6395,7 @@ gregale init --template hello-node --path ./my-api
 
 ## inspect
 
-Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context)
+Explain an app from its runtime, deployment, API, data, scaling, and release signals (linked app or interactive picker)
 
 `gregale inspect [<slug>] [--upstreams] [--scope <scope>] [--errors] [--watch] [--interval <DURATION>] [--timeout <DURATION>] [--json]`
 
@@ -7607,7 +7607,7 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 ## logs
 
-Query runtime logs and HTTP request events
+Query runtime logs and HTTP request events (linked app or interactive picker)
 
 `gregale logs [<slug>] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
 
@@ -7724,9 +7724,14 @@ Disable MFA
 
 ## open
 
-Open the app&#39;s URL (slug defaults to linked context)
+Open the app&#39;s URL (linked app or interactive picker)
 
-`gregale open [<subcommand>] [<slug>]`
+`gregale open [<subcommand>] [<slug>] [--app <SLUG>] [--dashboard]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
+| `--dashboard` | open the dashboard page instead of the live URL |  |
 
 ### open docs
 

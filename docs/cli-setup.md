@@ -5,6 +5,25 @@ binary itself. No checked-in copies in `contrib/completion/`; the
 binary is the source of truth. This doc covers the install path for
 each shell, plus the man-page install for offline / CI use.
 
+## Selecting an app
+
+`gregale logs`, `gregale logs tail`, `gregale inspect`, and `gregale open`
+use an explicit app slug first, then the app saved by `gregale link`.
+When neither identifies an app, an interactive terminal offers an app picker.
+Type search text to filter by app slug, project, or status, then enter a
+displayed number or exact slug. `/` clears the filter; `q` or Ctrl-C cancels.
+An empty answer does not select an app.
+
+The picker stays within the linked project when one exists. It shows project
+membership and status, and labels any saved environment as the linked
+environment. These app commands do not select an environment deployment.
+Selection applies only to this invocation and does not change the saved link.
+
+JSON output, `--non-interactive`, and redirected input or output never prompt.
+For scripts, pass the slug explicitly or save a specific app with
+`gregale link <project-slug> --app <slug>`. `gregale open` also accepts
+`--app <slug>`.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
