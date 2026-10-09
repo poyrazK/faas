@@ -364,10 +364,28 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      # Native clone fixtures pin pg_database/pg_roles across SQL phases.
+      # Private databases still share those catalogues with other packages;
+      # their concurrent create/drop cleanup must not mutate state fixtures.
+      postgres_state:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       # Handler fixtures clone one fully migrated template database.
       FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+      SPLIT_DATABASE_URL: postgres://faas:faas@localhost:5433/faas?sslmode=disable
     steps:
       - uses: actions/checkout@v7
         with:
@@ -412,7 +430,10 @@ jobs:
       - name: enable PostgreSQL TLS for credential qualification
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
-        run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
+          SPLIT_POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres_state.id }}
+        run: |
+          bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
+          bash scripts/ci/enable_postgres_tls.sh "$SPLIT_POSTGRES_SERVICE_CONTAINER"
       # -race on every tested package: races are the failures hardest to
       # trace back later. Changed packages plus the §6.2 invariant tests
       # (tests/property) when anything in their import tree changed.
@@ -452,6 +473,7 @@ jobs:
           # timer, and the registered inventory must match before execution.
           for pkg in $SPLIT; do
             (
+              export DATABASE_URL="$SPLIT_DATABASE_URL"
               inventory="$(mktemp "$RUNNER_TEMP/light-test-inventory-${SHARD}.XXXXXX")"
               go test -race -list . "$pkg" > "$inventory"
               go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=6 -check -list-file="$inventory"
