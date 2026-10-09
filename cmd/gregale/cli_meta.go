@@ -1528,7 +1528,7 @@ var cliCommands = []cliCommand{
 			{Name: "cancel", Short: "Cancel a run", Positionals: []string{"<name>", "<run-id>"}},
 			{Name: "tasks", Short: "List tasks for one run", Positionals: []string{"<name>", "<run-id>"}},
 			{Name: "attempts", Short: "List retained attempts for one task", Positionals: []string{"<name>", "<run-id>", "<task-index>"}},
-			{Name: "retry", Short: "Retry one failed task", Positionals: []string{"<name>", "<run-id>", "<task-index>"}},
+			{Name: "retry", Short: "Retry one failed task", Positionals: []string{"[<name>]", "[<run-id>]", "[<task-index>]"}, Flags: []cliFlag{{Name: "interactive", Bool: true, Short: "choose a failed task, review eligibility, and confirm one retry"}}, Examples: []string{"gregale jobs retry --interactive"}},
 			{Name: "replay-failed", Short: "Replay unsuccessful tasks in a linked run", Positionals: []string{"<name>", "<run-id>"}},
 			{Name: "artifact-url", Short: "Verify a managed result and get a signed URL", Positionals: []string{"<name>", "<run-id>", "<task-index>", "<artifact-name>"}},
 			{Name: "logs", Short: "Tail logs for one task", Positionals: []string{"[<name>]", "[<run-id>]", "[<task-index>]"}, Examples: []string{"gregale jobs logs --interactive"}, Flags: []cliFlag{

@@ -547,6 +547,23 @@ selected task is running or retried while you browse; the picker shows the
 attempt observed during selection. For scripts, use
 `jobs logs NAME RUN_ID TASK_INDEX --max-bytes N --json`.
 
+## Retry a Job task interactively
+
+```sh
+gregale jobs retry --interactive
+```
+
+Choose a Job, run, and task through paginated pickers. Tasks are filtered to
+failed, timeout, out-of-memory, and cancelled states. Review the current error,
+attempt count, retry maximum, and eligibility before confirming one retry.
+The CLI rereads the task and retry policy before submission and stops if they
+changed. This client-side recheck is not an atomic lock; the server checks
+status, remaining budget, image readiness, and flexible start-window eligibility.
+
+A retry executes the task again and can repeat its effects. Cancellation before
+confirmation submits nothing. After acceptance, the CLI prints commands to
+inspect tasks and logs. For scripts, use `jobs retry NAME RUN_ID TASK_INDEX`.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

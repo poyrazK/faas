@@ -3757,7 +3757,17 @@ List retained attempts for one task
 
 Retry one failed task
 
-`gregale jobs retry <name> <run-id> <task-index>`
+`gregale jobs retry [--interactive] [<name>] [<run-id>] [<task-index>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--interactive` | choose a failed task, review eligibility, and confirm one retry |  |
+
+Examples:
+
+```sh
+gregale jobs retry --interactive
+```
 
 ### jobs replay-failed
 

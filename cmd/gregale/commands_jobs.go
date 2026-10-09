@@ -792,6 +792,9 @@ func cmdJobsArtifactURL(args []string) int {
 // The server enforces the task state and retry budget; this command only
 // validates the stable positional shape before making the request.
 func cmdJobsRetry(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" {
+		return cmdJobsRetryInteractive()
+	}
 	if len(args) != 3 {
 		PrintUsage(os.Stderr, "usage: gregale jobs retry <name> <run-id> <task-index>", "jobs")
 		return 1

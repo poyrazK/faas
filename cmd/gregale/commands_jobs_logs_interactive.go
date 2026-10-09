@@ -36,66 +36,13 @@ func cmdJobsLogsInteractiveArgs(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	prompt := &startPrompt{reader: bufio.NewReader(osStdin), writer: osStderr}
-	var jobs []api.JobResponse
-	choice, err := chooseJobLogPage(ctx, prompt, "Choose a Job.", func(ctx context.Context, offset int) ([]string, int, error) {
-		page, err := client.ListJobs(ctx, 20, offset)
-		jobs = page.Jobs
-		labels := []string{}
-		for _, job := range jobs {
-			if !jobSlugPattern.MatchString(job.Name) || !jobRunIDPattern.MatchString(job.ID) {
-				return nil, -1, errors.New("invalid Job identity")
-			}
-			labels = append(labels, oneLine(job.Name))
-		}
-		return labels, page.NextOffset, err
-	})
+	job, run, task, selected, err := chooseJobTask(ctx, client, prompt, false)
 	if err != nil {
 		return jobLogPickerError(err)
 	}
-	if choice < 0 {
+	if !selected {
 		return 0
 	}
-	job := jobs[choice]
-	var runs []api.JobRunResponse
-	choice, err = chooseJobLogPage(ctx, prompt, "Choose a run for "+job.Name+".", func(ctx context.Context, offset int) ([]string, int, error) {
-		page, err := client.ListJobRunsPage(ctx, job.Name, 20, offset)
-		runs = page.Runs
-		labels := []string{}
-		for _, run := range runs {
-			if run.JobID != job.ID || run.AccountID != job.AccountID || !jobRunIDPattern.MatchString(run.ID) {
-				return nil, -1, errors.New("run does not belong to the selected Job")
-			}
-			labels = append(labels, fmt.Sprintf("%s · %s · %s", oneLine(run.CreatedAt), oneLine(run.AggregateStatus), run.ID))
-		}
-		return labels, page.NextOffset, err
-	})
-	if err != nil {
-		return jobLogPickerError(err)
-	}
-	if choice < 0 {
-		return 0
-	}
-	run := runs[choice]
-	var tasks []api.JobTaskResponse
-	choice, err = chooseJobLogPage(ctx, prompt, "Choose a task.", func(ctx context.Context, offset int) ([]string, int, error) {
-		page, err := client.ListJobRunTasksPage(ctx, job.Name, run.ID, 20, offset)
-		tasks = page.Tasks
-		labels := []string{}
-		for _, task := range tasks {
-			if task.RunID != run.ID || task.TaskIndex < 0 {
-				return nil, -1, errors.New("task does not belong to the selected run")
-			}
-			labels = append(labels, fmt.Sprintf("Task %d · %s · attempt %d · %s", task.TaskIndex, oneLine(task.Status), task.Attempt, oneLine(task.ErrorMessage)))
-		}
-		return labels, page.NextOffset, err
-	})
-	if err != nil {
-		return jobLogPickerError(err)
-	}
-	if choice < 0 {
-		return 0
-	}
-	task := tasks[choice]
 	command := []string{"gregale"}
 	if profile := currentProfile(); profile != "default" {
 		command = append(command, "--profile", quoteLogCommandArg(profile))
@@ -154,4 +101,72 @@ func chooseJobLogPage(ctx context.Context, prompt *startPrompt, title string, lo
 		return choice, nil
 	}
 	return -1, errors.New("page limit reached; use the explicit jobs logs command")
+}
+
+func chooseJobTask(ctx context.Context, client *api.Client, prompt *startPrompt, retryOnly bool) (api.JobResponse, api.JobRunResponse, api.JobTaskResponse, bool, error) {
+	var jobs []api.JobResponse
+	choice, err := chooseJobLogPage(ctx, prompt, "Choose a Job.", func(ctx context.Context, offset int) ([]string, int, error) {
+		page, err := client.ListJobs(ctx, 20, offset)
+		jobs = page.Jobs
+		labels := []string{}
+		for _, job := range jobs {
+			if !jobSlugPattern.MatchString(job.Name) || !jobRunIDPattern.MatchString(job.ID) {
+				return nil, -1, errors.New("invalid Job identity")
+			}
+			labels = append(labels, oneLine(job.Name))
+		}
+		return labels, page.NextOffset, err
+	})
+	if err != nil {
+		return api.JobResponse{}, api.JobRunResponse{}, api.JobTaskResponse{}, false, err
+	}
+	if choice < 0 {
+		return api.JobResponse{}, api.JobRunResponse{}, api.JobTaskResponse{}, false, nil
+	}
+	job := jobs[choice]
+	var runs []api.JobRunResponse
+	choice, err = chooseJobLogPage(ctx, prompt, "Choose a run for "+job.Name+".", func(ctx context.Context, offset int) ([]string, int, error) {
+		page, err := client.ListJobRunsPage(ctx, job.Name, 20, offset)
+		runs = page.Runs
+		labels := []string{}
+		for _, run := range runs {
+			if run.JobID != job.ID || run.AccountID != job.AccountID || !jobRunIDPattern.MatchString(run.ID) {
+				return nil, -1, errors.New("run does not belong to the selected Job")
+			}
+			labels = append(labels, fmt.Sprintf("%s · %s · %s", oneLine(run.CreatedAt), oneLine(run.AggregateStatus), run.ID))
+		}
+		return labels, page.NextOffset, err
+	})
+	if err != nil {
+		return api.JobResponse{}, api.JobRunResponse{}, api.JobTaskResponse{}, false, err
+	}
+	if choice < 0 {
+		return api.JobResponse{}, api.JobRunResponse{}, api.JobTaskResponse{}, false, nil
+	}
+	run := runs[choice]
+	var tasks []api.JobTaskResponse
+	choice, err = chooseJobLogPage(ctx, prompt, "Choose a task.", func(ctx context.Context, offset int) ([]string, int, error) {
+		page, err := client.ListJobRunTasksPage(ctx, job.Name, run.ID, 20, offset)
+		tasks = nil
+		labels := []string{}
+		for _, task := range page.Tasks {
+			if task.RunID != run.ID || task.TaskIndex < 0 {
+				return nil, -1, errors.New("task does not belong to the selected run")
+			}
+			if retryOnly && !jobTaskRetryStatus(task.Status) {
+				continue
+			}
+			tasks = append(tasks, task)
+			labels = append(labels, fmt.Sprintf("Task %d · %s · attempt %d · %s", task.TaskIndex, oneLine(task.Status), task.Attempt, oneLine(task.ErrorMessage)))
+		}
+		return labels, page.NextOffset, err
+	})
+	if err != nil {
+		return api.JobResponse{}, api.JobRunResponse{}, api.JobTaskResponse{}, false, err
+	}
+	if choice < 0 {
+		return api.JobResponse{}, api.JobRunResponse{}, api.JobTaskResponse{}, false, nil
+	}
+	task := tasks[choice]
+	return job, run, task, true, nil
 }
