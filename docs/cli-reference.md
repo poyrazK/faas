@@ -3911,14 +3911,21 @@ List registry credentials for the job
 
 Store a registry credential for the job
 
-`gregale jobs registry set --registry <HOST> --user <USER> [--password-stdin] [--password <PASSWORD>] <job>`
+`gregale jobs registry set [--interactive] --registry <HOST> --user <USER> [--password-stdin] [--password <PASSWORD>] [<job>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | choose a Job, enter a hidden token, and review add or replace |  |
 | `--registry <HOST>` | registry host | required |
 | `--user <USER>` | registry user | required |
 | `--password-stdin` | read the password from stdin |  |
 | `--password <PASSWORD>` | registry password (prefer --password-stdin) |  |
+
+Examples:
+
+```sh
+gregale jobs registry set --interactive
+```
 
 #### jobs registry rm
 

@@ -1550,7 +1550,8 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "registry", Short: "Manage private registry credentials for one job", Subcommands: []cliSub{
 				{Name: "list", Short: "List registry credentials for the job", Positionals: []string{"<job>"}},
-				{Name: "set", Short: "Store a registry credential for the job", Positionals: []string{"<job>"}, Flags: []cliFlag{
+				{Name: "set", Short: "Store a registry credential for the job", Positionals: []string{"[<job>]"}, Examples: []string{"gregale jobs registry set --interactive"}, Flags: []cliFlag{
+					{Name: "interactive", Bool: true, Short: "choose a Job, enter a hidden token, and review add or replace"},
 					{Name: "registry", Short: "registry host", Value: "HOST", Req: true},
 					{Name: "user", Short: "registry user", Value: "USER", Req: true},
 					{Name: "password-stdin", Short: "read the password from stdin"},

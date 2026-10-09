@@ -62,6 +62,9 @@ func cmdJobsRegistryList(args []string) int {
 }
 
 func cmdJobsRegistrySet(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" {
+		return cmdJobsRegistrySetInteractive()
+	}
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale jobs registry set <job> --registry <h> --user <u> (--password-stdin|--password <p>)", "jobs")
 		return 1

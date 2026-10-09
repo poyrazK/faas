@@ -766,6 +766,24 @@ and prints a `jobs wait` command. The flow only reads history; it never starts
 or retries a run. For scripts, use `jobs occurrences NAME --json` with explicit
 pagination flags.
 
+## Set Job registry credentials interactively
+
+```sh
+gregale jobs registry set --interactive
+```
+
+Pick a Job, enter a registry host and username, then enter a hidden password or
+token. The review identifies whether the selected host's credential will be
+added or replaced, showing the existing username for replacement. New entries
+are checked against the returned quota before token entry.
+
+Confirm before saving. The CLI rereads Job identity and selected credential
+metadata and stops if either changed; last-use timestamps do not block saving.
+This client-side check is not an atomic server lock. All prompts share one raw
+terminal reader, and terminal echo is restored before the write request.
+Token contents are not printed. For scripts, use the existing explicit command
+with `--password-stdin`.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
