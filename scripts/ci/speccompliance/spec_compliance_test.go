@@ -1,4 +1,4 @@
-package main
+package speccompliance
 
 // spec_compliance_test.go is the CI gate that keeps api/openapi.yaml honest.
 // It walks the Go AST of cmd/apid/server.go (routes), the pkg/api/* DTO files
@@ -322,11 +322,13 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	"EventReplayPreviewOptions":      true, // client-only query options; the wire parameters are declared on the route
+	"EventReplayBackfillItemsQuery":  true, // client-only pagination/filter options; the wire parameters are declared on the route
+	"WorkflowSchedulePreviewInput":   true, // client-side request builder input; the wire parameters are query fields
+	"WorkflowSchedulePreviewOptions": true, // client-only query options; the wire parameters are declared on the route
 	// Version listing carries these fields as individual query parameters,
 	// documented on the GET route; it has no JSON request body.
-	"ObjectVersionListRequest":      true,
-	"EventReplayPreviewOptions":     true, // client-only query options; the wire parameters are declared on the route
-	"EventReplayBackfillItemsQuery": true, // client-only pagination/filter options; the wire parameters are declared on the route
+	"ObjectVersionListRequest": true,
 	// ADR-563 native adapter primitives. Customer per-version lock management
 	// is not part of the ADR-564 bucket API capability.
 	"ObjectVersionRetention": true,
@@ -382,6 +384,7 @@ var dtoExclude = map[string]bool{
 	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
 	"AutomationHealthOptions":                         true, // client-only query parameters for the documented automation health response
 	"WorkflowRunListOptions":                          true, // client-only history query parameters for the documented run list response
+	"ListWorkflowScheduleOccurrencesOptions":          true, // client-only history query parameters; the occurrence response DTOs are in the public spec
 	"InboundWebhookEndpointRow":                       true,
 	"AppLogDrainRow":                                  true,
 	"QueueBindingRow":                                 true,
@@ -633,7 +636,7 @@ var schemaSpecOnly = map[string]bool{
 
 // findRepoRoot walks up from the working directory until it finds a go.mod.
 // Returns the directory containing go.mod. Used to anchor the spec path
-// regardless of cwd (the test runs with cwd = cmd/apid, not repo root).
+// regardless of cwd, including when this standalone test runs from its package.
 func findRepoRoot() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -655,9 +658,8 @@ func findRepoRoot() (string, error) {
 // --- Test entry point ------------------------------------------------------
 
 func TestSpecCompliance(t *testing.T) {
-	// Locate the repo root by walking up from this test file until we find
-	// a go.mod. Tests run with cwd = cmd/apid, so naive ../.. lands inside
-	// .claude/worktrees/<name>/, not the repo root.
+	// Locate the repo root by walking up from this test package until we find
+	// a go.mod, rather than assuming a fixed number of parent directories.
 	root, err := findRepoRoot()
 	if err != nil {
 		t.Fatalf("find repo root: %v", err)
@@ -1054,6 +1056,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_storage_usage.go"),
 		filepath.Join(root, "pkg", "api", workflowFile),
 		filepath.Join(root, "pkg", "api", "workflow_schedules.go"),
+		filepath.Join(root, "pkg", "api", "workflow_queued_cancel.go"),
 		filepath.Join(root, "pkg", "api", "automations.go"),
 		filepath.Join(root, "pkg", "api", "automation_simulation.go"),
 		filepath.Join(root, "pkg", "api", "workflow_outbound.go"),
@@ -1061,6 +1064,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "workflow_join.go"),
 		filepath.Join(root, "pkg", "api", "workflow_foreach.go"),
 		filepath.Join(root, "pkg", "api", "workflow_resume.go"),
+		filepath.Join(root, "pkg", "api", "workflow_diagnostics.go"),
+		filepath.Join(root, "pkg", "api", "workflow_schedule_preview.go"),
 		filepath.Join(root, "pkg", "api", secretsFile),
 		filepath.Join(root, "pkg", "api", "secret_references.go"),
 		filepath.Join(root, "pkg", "api", envFile),

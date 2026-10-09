@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -53,7 +54,14 @@ func (s *PgStore) ResumeWorkflowRun(ctx context.Context, opts WorkflowResumeOpti
 	if target.PlatformTenantRequired && platformTenantID == "" {
 		return nil, nil, 0, ErrWorkflowResumeUnavailable
 	}
-	run := WorkflowRun{ID: opts.RunID, AppID: opts.AppID, PlatformTenantID: pgUUIDString(row.PlatformTenantID), WorkflowName: row.WorkflowName, Status: row.Status, CurrentStep: workflowResumeTextPtr(row.CurrentStep), Input: row.Input, Output: row.Output, DefinitionSnapshot: row.DefinitionSnapshot, ScheduledFor: row.ScheduledFor.Time, StartedAt: workflowResumeTimePtr(row.StartedAt), FinishedAt: workflowResumeTimePtr(row.FinishedAt), LastError: workflowResumeTextPtr(row.LastError), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time, ResumeCount: int(row.ResumeCount), CancelledAt: workflowResumeTimePtr(row.CancelledAt)}
+	run := WorkflowRun{ID: opts.RunID, AppID: opts.AppID, DeploymentID: pgUUIDString(row.DeploymentID), PlatformTenantID: pgUUIDString(row.PlatformTenantID), WorkflowName: row.WorkflowName, Status: row.Status, CurrentStep: workflowResumeTextPtr(row.CurrentStep), Input: row.Input, Output: row.Output, DefinitionSnapshot: row.DefinitionSnapshot, ScheduledFor: row.ScheduledFor.Time, StartedAt: workflowResumeTimePtr(row.StartedAt), FinishedAt: workflowResumeTimePtr(row.FinishedAt), LastError: workflowResumeTextPtr(row.LastError), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time, ResumeCount: int(row.ResumeCount), CancelledAt: workflowResumeTimePtr(row.CancelledAt)}
+	targetSnapshot, err := q.GetWorkflowRecoveryTarget(ctx, tx, sqlc.GetWorkflowRecoveryTargetParams{RunID: mustPgUUID(run.ID), StaleMs: int64(WorkflowRunStaleAfter / time.Millisecond)})
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if err := workflowRecoveryTargetError(run, workflowRecoveryTargetFromSQLC(targetSnapshot)); err != nil {
+		return nil, nil, 0, err
+	}
 	rows, err := q.WorkflowResumeSteps(ctx, tx, mustPgUUID(run.ID))
 	if err != nil {
 		return nil, nil, 0, err

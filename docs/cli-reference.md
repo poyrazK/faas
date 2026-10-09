@@ -3620,13 +3620,81 @@ gregale workflows list --app billing --created-after 2026-10-01T00:00:00Z --crea
 
 ### workflows schedules
 
-Inspect recurring workflow schedules and their latest admission
+Inspect recurring workflow schedules and preview their next fires
 
-`gregale workflows schedules --app <SLUG>`
+`gregale workflows schedules <preview> --app <SLUG>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+
+#### workflows schedules preview
+
+Simulate upcoming fires and the next catch-up decision
+
+`gregale workflows schedules preview --app <SLUG> --workflow <NAME> [--at <RFC3339>] [--since <RFC3339>] [--count <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--workflow <NAME>` | schedule workflow name | required |
+| `--at <RFC3339>` | hypothetical evaluator time |  |
+| `--since <RFC3339>` | simulated previous evaluation time |  |
+| `--count <N>` | upcoming fires to return (1..20, default 5) |  |
+
+Examples:
+
+```sh
+gregale workflows schedules preview --app billing --workflow nightly
+gregale workflows schedules preview --app billing --workflow nightly --at 2027-03-28T00:00:00Z --count 8
+```
+
+### workflows schedule-history
+
+Inspect recurring workflow admission history
+
+`gregale workflows schedule-history <replay-preview|replay> --app <SLUG> [--platform-tenant-id <UUID>] [--cursor <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | application slug | required |
+| `--platform-tenant-id <UUID>` | filter by tenant UUID |  |
+| `--cursor <UUID>` | next cursor from the previous page |  |
+| `--limit <N>` | maximum occurrences (1-200) |  |
+
+#### workflows schedule-history replay-preview
+
+Check selected skipped occurrences against current definitions, overlap, and quota
+
+`gregale workflows schedule-history replay-preview --app <SLUG> --occurrence-id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--occurrence-id <UUID>` | skipped occurrence UUID (repeat up to 20 times) | required |
+
+Examples:
+
+```sh
+gregale workflows schedule-history replay-preview --app billing --occurrence-id <uuid>
+```
+
+#### workflows schedule-history replay
+
+Replay eligible skipped occurrences using the current workflow and normal quota
+
+`gregale workflows schedule-history replay --app <SLUG> --occurrence-id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--occurrence-id <UUID>` | skipped occurrence UUID (repeat up to 20 times) | required |
+
+Examples:
+
+```sh
+gregale workflows schedule-history replay --app billing --occurrence-id <uuid>
+```
 
 ### workflows run
 
@@ -3645,6 +3713,19 @@ Trigger a new workflow run
 Show details of a workflow run
 
 `gregale workflows status <run_id>`
+
+### workflows diagnose
+
+Inspect queue reasons and preview recovery without changing the run
+
+`gregale workflows diagnose <run_id>`
+
+Examples:
+
+```sh
+gregale workflows diagnose <run_id>
+gregale --json workflows diagnose <run_id>
+```
 
 ### workflows steps
 
@@ -3686,6 +3767,43 @@ List continuation history for a workflow run
 Cancel an active workflow run
 
 `gregale workflows cancel <run_id>`
+
+### workflows cancel-queued-preview
+
+Preview selected runs that are still pending and have never started
+
+`gregale workflows cancel-queued-preview --app <SLUG> [--workflow-name <NAME>] --run-id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--workflow-name <NAME>` | require an exact workflow name |  |
+| `--run-id <UUID>` | selected run UUID (repeat up to 20 times) | required |
+
+Examples:
+
+```sh
+gregale workflows cancel-queued-preview --app billing --run-id <uuid> --run-id <uuid>
+```
+
+### workflows cancel-queued
+
+Cancel selected runs that remain pending and have never started
+
+`gregale workflows cancel-queued --app <SLUG> [--workflow-name <NAME>] --run-id <UUID> --yes`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--workflow-name <NAME>` | require an exact workflow name |  |
+| `--run-id <UUID>` | selected run UUID (repeat up to 20 times) | required |
+| `--yes` | confirm cancellation of eligible selected runs | required |
+
+Examples:
+
+```sh
+gregale workflows cancel-queued --app billing --run-id <uuid> --yes
+```
 
 ### workflows events
 

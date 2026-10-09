@@ -19,8 +19,8 @@ multi-architecture Go images for guest-init, runc and BuildKit builds.
 Use x/net v0.60.0 and x/crypto v0.57.0 with their selected transitive versions.
 Regenerate BuildKit's vendor tree from that graph so the compiled source and
 reported module versions agree. Keep the existing source release and repository
-patches. Build the pinned lint tool with the project compiler rather than using
-its upstream Go 1.25 binary. Retain every lint and vulnerability rule.
+patches. Use main’s pinned golangci-lint v2.14.0, which supports Go 1.26. Retain
+its existing rules and baseline policy, and every vulnerability rule.
 
 The independent Go SDK keeps its Go 1.23 language requirement. Historical
 validation evidence retains the compiler versions actually used. Compiler
