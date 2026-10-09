@@ -3765,7 +3765,17 @@ gregale jobs wait my-job RUN_ID --timeout 10m --json
 
 Cancel a run
 
-`gregale jobs cancel <name> <run-id>`
+`gregale jobs cancel [--interactive] [<name>] [<run-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--interactive` | choose an unfinished run, review progress, and confirm cancellation |  |
+
+Examples:
+
+```sh
+gregale jobs cancel --interactive
+```
 
 ### jobs tasks
 

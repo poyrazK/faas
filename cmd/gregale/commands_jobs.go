@@ -658,6 +658,9 @@ func cmdJobsOccurrences(args []string) int {
 // tasks: the server SIGTERMs via vmmd; the guest's job supervisor
 // handles the 30s grace window before SIGKILL.
 func cmdJobsCancel(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" {
+		return cmdJobsCancelInteractive()
+	}
 	if len(args) != 2 {
 		PrintUsage(os.Stderr, "usage: gregale jobs cancel <name> <run-id>", "jobs")
 		return 1

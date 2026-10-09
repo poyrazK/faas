@@ -137,6 +137,10 @@ func chooseJobTask(ctx context.Context, client *api.Client, prompt *startPrompt,
 }
 
 func chooseJobRun(ctx context.Context, client *api.Client, prompt *startPrompt) (api.JobResponse, api.JobRunResponse, bool, error) {
+	return chooseJobRunFiltered(ctx, client, prompt, false)
+}
+
+func chooseJobRunFiltered(ctx context.Context, client *api.Client, prompt *startPrompt, unfinishedOnly bool) (api.JobResponse, api.JobRunResponse, bool, error) {
 	job, selected, err := chooseJob(ctx, client, prompt)
 	if err != nil || !selected {
 		return job, api.JobRunResponse{}, selected, err
@@ -145,12 +149,16 @@ func chooseJobRun(ctx context.Context, client *api.Client, prompt *startPrompt) 
 	var runs []api.JobRunResponse
 	choice, err = chooseJobLogPage(ctx, prompt, "Choose a run for "+job.Name+".", func(ctx context.Context, offset int) ([]string, int, error) {
 		page, err := client.ListJobRunsPage(ctx, job.Name, 20, offset)
-		runs = page.Runs
+		runs = nil
 		labels := []string{}
-		for _, run := range runs {
+		for _, run := range page.Runs {
 			if run.JobID != job.ID || run.AccountID != job.AccountID || !jobRunIDPattern.MatchString(run.ID) {
 				return nil, -1, errors.New("run does not belong to the selected Job")
 			}
+			if unfinishedOnly && !jobRunUnfinished(run) {
+				continue
+			}
+			runs = append(runs, run)
 			labels = append(labels, fmt.Sprintf("%s · %s · %s", oneLine(run.CreatedAt), oneLine(run.AggregateStatus), run.ID))
 		}
 		return labels, page.NextOffset, err

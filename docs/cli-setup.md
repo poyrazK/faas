@@ -605,6 +605,25 @@ only stop observation.
 For input manifests, environment overrides, flexible execution, or scripts,
 use `jobs run NAME` with explicit flags.
 
+## Cancel a Job run interactively
+
+```sh
+gregale jobs cancel --interactive
+```
+
+Choose a Job and an unfinished run through paginated pickers. Only queued and
+running runs are shown. Review fresh task counts and confirm cancellation.
+The CLI rereads progress after confirmation; if the run finished, it submits
+nothing, and if status or counts changed, it asks you to rerun the command to
+review current progress. This client-side check is not an atomic server lock.
+
+Cancellation stops pending work and requests termination of running tasks; it
+cannot undo effects already produced. An inspection command is printed before
+submission, including the active profile, so it is available if the request
+fails or times out. The response confirms recorded cancellation, not that every
+running task has finished terminating. Use `jobs tasks NAME RUN_ID` to inspect.
+Explicit `jobs cancel NAME RUN_ID` remains available for scripts.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
