@@ -60,6 +60,16 @@ func TestSavingsMetal(t *testing.T) {
 		t.Fatalf("create app: status=%d", got)
 	}
 	appID := mustGetAppID(t, h, key, "hello")
+	// vmmd keeps VMs running across a restart, so idle-park the woken
+	// instance before the harness stops or its microVM leaks on the host.
+	t.Cleanup(func() {
+		setAppIdleTimeout(t, h, key, "hello", api.IdleTimeoutFloorSeconds)
+		parkCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if _, err := e2etest.WaitForAppParked(parkCtx, t, pool, appID, 60*time.Second); err != nil {
+			t.Errorf("teardown: app not parked, its microVM will leak: %v", err)
+		}
+	})
 	// Pro defaults to bearer public auth (ADR-079); the wake below is anonymous.
 	if body, code := doReq(t, h, key, http.MethodPatch, "/v1/apps/hello", map[string]any{
 		"require_authn": false, "public_auth": map[string]any{"mode": "open"},
