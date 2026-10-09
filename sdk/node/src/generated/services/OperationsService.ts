@@ -240,7 +240,8 @@ export class OperationsService {
         410: `The retained result expired; its identity remains reserved for the deduplication window.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -289,7 +290,8 @@ export class OperationsService {
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -388,7 +390,8 @@ export class OperationsService {
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -542,7 +545,8 @@ export class OperationsService {
         409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -1258,7 +1262,8 @@ export class OperationsService {
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1320,7 +1325,8 @@ export class OperationsService {
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1382,7 +1388,8 @@ export class OperationsService {
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1444,7 +1451,8 @@ export class OperationsService {
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1506,7 +1514,8 @@ export class OperationsService {
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -1589,7 +1598,8 @@ export class OperationsService {
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -1650,7 +1660,8 @@ export class OperationsService {
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -1742,7 +1753,8 @@ export class OperationsService {
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -1808,7 +1820,8 @@ export class OperationsService {
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -1913,7 +1926,8 @@ export class OperationsService {
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -1992,7 +2006,8 @@ export class OperationsService {
         410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -2066,7 +2081,8 @@ export class OperationsService {
         409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -2147,7 +2163,8 @@ export class OperationsService {
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -2228,7 +2245,8 @@ export class OperationsService {
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -2932,7 +2950,8 @@ export class OperationsService {
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
