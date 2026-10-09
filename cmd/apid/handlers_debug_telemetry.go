@@ -2220,6 +2220,7 @@ func debugRegressionRowToItem(row sqlc.ListActiveRegressionsByAppRow) api.DebugR
 			item.Factor = formatFloat2(f.Float64)
 		}
 	}
+	item.SuspectedDependency = parseSuspectedDependency(row.SuspectedDependency)
 	return item
 }
 

@@ -162,6 +162,24 @@ diagnosis `dependency_regression` with a headline such as
 `postgresql "SELECT orders" slowed from 82ms to 191ms p95 since the previous
 deployment (v80)`.
 
+The regression detector applies the same comparison when it opens or
+re-confirms a route regression: it compares the route between the
+detector's own current and baseline deployments and stores the top
+regressed classified dependency (never an anonymous application span) in
+`debug_regression_observations.suspected_dependency`, a bounded jsonb
+object (≤ 1 KiB, CHECKed). The regressions API, `gregale debug regressions`
+(SUSPECTED column), the live `debug_regression_changed` event and the
+`debug.regression.detected`/`resolved` webhooks carry it, so the alert names
+the dependency without anyone opening request evidence. A pass that cannot
+compute a suspect keeps the previously stored one; span reads are bounded
+and best-effort and never block recording the regression.
+
+Customer-submitted spans (the public OTLP endpoint and the in-guest bridge)
+have the platform-reserved `gregale.*` attributes stripped at ingest, so an
+app cannot present its own spans as managed bindings, outbound integrations
+or guest transport. Platform producers use the retained service-spans
+exporter, which is not affected.
+
 ## Consequences
 
 - Opted-in managed-runtime apps get DB, cache and HTTP client spans on the

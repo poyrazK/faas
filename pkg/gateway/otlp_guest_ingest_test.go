@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -69,6 +70,41 @@ func TestAddOTLPTraceExportCrossAccountRejected(t *testing.T) {
 	accepted, rejected, err := acc.AddOTLPTraceExport(uuid.New(), "application/x-protobuf", "", guestExportProto(t, traceID(1), traceID(2)), 4<<20)
 	if err != nil || accepted != 1 || rejected != 1 {
 		t.Fatalf("cross-account: accepted=%d rejected=%d err=%v", accepted, rejected, err)
+	}
+}
+
+// adr: 829 — customer spans cannot claim platform dependency identity.
+func TestAddOTLPTraceExportStripsPlatformAttributes(t *testing.T) {
+	acc := NewSpansAccumulator()
+	acct := uuid.New()
+	tid := traceID(9)
+	body, err := proto.Marshal(&collectortracepb.ExportTraceServiceRequest{ResourceSpans: []*tracepb.ResourceSpans{{ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{{
+		TraceId: tid, SpanId: []byte{0, 0, 0, 0, 0, 0, 0, 1}, Name: "forged", StartTimeUnixNano: 1, EndTimeUnixNano: 2,
+		Attributes: []*commonpb.KeyValue{
+			{Key: "gregale.dependency.type", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "managed_binding"}}},
+			{Key: "gregale.dependency.kind", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "postgres"}}},
+			{Key: "db.system", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "postgresql"}}},
+		},
+	}}}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := acc.AddOTLPTraceExport(acct, "application/x-protobuf", "", body, 4<<20); err != nil {
+		t.Fatal(err)
+	}
+	spans, _ := acc.DrainAndRemove(formatTraceID(tid))
+	if len(spans) != 1 {
+		t.Fatalf("spans = %d", len(spans))
+	}
+	attrs := spans[0].Attributes
+	if _, ok := attrs["gregale.dependency.type"]; ok {
+		t.Fatalf("platform attribute survived: %v", attrs)
+	}
+	if _, ok := attrs["gregale.dependency.kind"]; ok {
+		t.Fatalf("platform attribute survived: %v", attrs)
+	}
+	if attrs["db.system"] != "postgresql" {
+		t.Fatalf("semantic attribute dropped: %v", attrs)
 	}
 }
 

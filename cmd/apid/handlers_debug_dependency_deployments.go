@@ -7,6 +7,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
 	"time"
@@ -90,15 +91,7 @@ func observedDeployments(rows []sqlc.ListRequestTelemetryDependencySpansRow) []d
 // observed deployment when empty) with the newest deployment created before
 // it. route, when set, restricts both sides to one stored route ("GET /checkout").
 func buildDebugDependencyDeploymentComparison(rows []sqlc.ListRequestTelemetryDependencySpansRow, currentID, route string, maxItems int) *api.DebugDependencyDeploymentComparison {
-	scoped := rows
-	if route != "" {
-		scoped = make([]sqlc.ListRequestTelemetryDependencySpansRow, 0, len(rows))
-		for _, row := range rows {
-			if row.Route == route {
-				scoped = append(scoped, row)
-			}
-		}
-	}
+	scoped := scopeDependencyRows(rows, route)
 	deployments := observedDeployments(scoped)
 	var current, previous *debugDeploymentObservation
 	for i := range deployments {
@@ -114,6 +107,43 @@ func buildDebugDependencyDeploymentComparison(rows []sqlc.ListRequestTelemetryDe
 	if current == nil || previous == nil {
 		return nil
 	}
+	return compareDependencyDeployments(scoped, current, previous, route, maxItems)
+}
+
+// buildDebugDependencyComparisonBetween compares two named deployments, as
+// the regression detector does with its own current/baseline pair.
+func buildDebugDependencyComparisonBetween(rows []sqlc.ListRequestTelemetryDependencySpansRow, currentID, previousID, route string, maxItems int) *api.DebugDependencyDeploymentComparison {
+	scoped := scopeDependencyRows(rows, route)
+	var current, previous *debugDeploymentObservation
+	deployments := observedDeployments(scoped)
+	for i := range deployments {
+		switch deployments[i].id {
+		case currentID:
+			current = &deployments[i]
+		case previousID:
+			previous = &deployments[i]
+		}
+	}
+	if current == nil || previous == nil {
+		return nil
+	}
+	return compareDependencyDeployments(scoped, current, previous, route, maxItems)
+}
+
+func scopeDependencyRows(rows []sqlc.ListRequestTelemetryDependencySpansRow, route string) []sqlc.ListRequestTelemetryDependencySpansRow {
+	if route == "" {
+		return rows
+	}
+	scoped := make([]sqlc.ListRequestTelemetryDependencySpansRow, 0, len(rows))
+	for _, row := range rows {
+		if row.Route == route {
+			scoped = append(scoped, row)
+		}
+	}
+	return scoped
+}
+
+func compareDependencyDeployments(scoped []sqlc.ListRequestTelemetryDependencySpansRow, current, previous *debugDeploymentObservation, route string, maxItems int) *api.DebugDependencyDeploymentComparison {
 	items, _, truncated, _, _ := buildDebugDependencyRollup(scoped, func(row sqlc.ListRequestTelemetryDependencySpansRow) (bool, bool) {
 		switch row.DeploymentID {
 		case current.id:
@@ -134,4 +164,47 @@ func buildDebugDependencyDeploymentComparison(rows []sqlc.ListRequestTelemetryDe
 	}
 	comparison.Route = route
 	return comparison
+}
+
+// suspectedDependency picks the regressed dependency to name in a route
+// regression: a classified dependency (app or platform), never an
+// anonymous application span. Items arrive regressions-first by current p95.
+func suspectedDependency(comparison *api.DebugDependencyDeploymentComparison) *api.DebugSuspectedDependency {
+	if comparison == nil {
+		return nil
+	}
+	for _, item := range comparison.Dependencies {
+		if !item.Regression || item.Type == "" || item.Type == "application" {
+			continue
+		}
+		return &api.DebugSuspectedDependency{
+			Type: item.Type, Kind: item.Kind, Name: item.Name,
+			P95BaseMS: item.BaselineP95MS, P95MS: item.CurrentP95MS, RegressionFactor: item.RegressionFactor,
+		}
+	}
+	return nil
+}
+
+// encodeSuspectedDependency returns the jsonb value for the observation row;
+// nil keeps the previously stored suspect.
+func encodeSuspectedDependency(suspect *api.DebugSuspectedDependency) []byte {
+	if suspect == nil {
+		return nil
+	}
+	raw, err := json.Marshal(suspect)
+	if err != nil || len(raw) > 1024 {
+		return nil
+	}
+	return raw
+}
+
+func parseSuspectedDependency(raw []byte) *api.DebugSuspectedDependency {
+	if len(raw) == 0 {
+		return nil
+	}
+	var suspect api.DebugSuspectedDependency
+	if err := json.Unmarshal(raw, &suspect); err != nil || suspect.Name == "" {
+		return nil
+	}
+	return &suspect
 }

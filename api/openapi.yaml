@@ -62957,6 +62957,19 @@ components:
         acknowledged_at: { type: string, format: date-time }
         dismissed_until: { type: string, format: date-time }
         resolved_at: { type: string, format: date-time }
+        suspected_dependency: { $ref: '#/components/schemas/DebugSuspectedDependency' }
+
+    DebugSuspectedDependency:
+      type: object
+      description: "The classified dependency whose p95 regressed most between the previous and the regressed deployment on this route (ADR-829). Bounded and redacted; also sent in debug.regression.* webhooks."
+      required: [type, name, p95_base_ms, p95_ms, regression_factor]
+      properties:
+        type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
+        kind: { type: string, maxLength: 64 }
+        name: { type: string, maxLength: 96 }
+        p95_base_ms: { type: integer, format: int64, minimum: 0 }
+        p95_ms: { type: integer, format: int64, minimum: 0 }
+        regression_factor: { type: number, minimum: 0 }
 
     DebugRegressionActionRequest:
       type: object

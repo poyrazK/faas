@@ -11132,6 +11132,22 @@ type DebugRegressionItem struct {
 	AcknowledgedAt  string `json:"acknowledged_at,omitempty"`
 	DismissedUntil  string `json:"dismissed_until,omitempty"`
 	ResolvedAt      string `json:"resolved_at,omitempty"`
+	// SuspectedDependency is the dependency whose p95 regressed most between
+	// the previous and this deployment on the route (ADR-829 §5); absent when
+	// no dependency regressed or no spans were retained.
+	SuspectedDependency *DebugSuspectedDependency `json:"suspected_dependency,omitempty"`
+}
+
+// DebugSuspectedDependency is a bounded, redacted dependency identity with
+// its p95 on the previous (base) and the regressed deployment. The same JSON
+// object is stored on the observation and sent in regression webhooks.
+type DebugSuspectedDependency struct {
+	Type             string  `json:"type"`
+	Kind             string  `json:"kind,omitempty"`
+	Name             string  `json:"name"`
+	P95BaseMS        int64   `json:"p95_base_ms"`
+	P95MS            int64   `json:"p95_ms"`
+	RegressionFactor float64 `json:"regression_factor"`
 }
 
 // DebugRegressionsResponse is the wire envelope for the debug

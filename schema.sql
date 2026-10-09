@@ -2185,7 +2185,8 @@ BEGIN
         'last_detected_at', NEW.last_detected_at,
         'state', NEW.state,
         'transition_id', transition_id,
-        'resolved_at', NEW.resolved_at
+        'resolved_at', NEW.resolved_at,
+        'suspected_dependency', NEW.suspected_dependency
     );
 
     INSERT INTO app_webhook_deliveries
@@ -14176,12 +14177,14 @@ CREATE TABLE public.debug_regression_observations (
     acknowledged_at timestamp with time zone,
     dismissed_until timestamp with time zone,
     resolved_at timestamp with time zone,
+    suspected_dependency jsonb,
     CONSTRAINT debug_regression_observations_affected_count_check CHECK ((affected_count >= 0)),
     CONSTRAINT debug_regression_observations_p95_base_ms_check CHECK ((p95_base_ms >= 0)),
     CONSTRAINT debug_regression_observations_p95_ms_check CHECK ((p95_ms >= 0)),
     CONSTRAINT debug_regression_observations_regression_factor_check CHECK ((regression_factor >= 1.0)),
     CONSTRAINT debug_regression_observations_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
-    CONSTRAINT debug_regression_observations_state_check CHECK ((state = ANY (ARRAY['active'::text, 'acknowledged'::text, 'dismissed'::text, 'resolved'::text])))
+    CONSTRAINT debug_regression_observations_state_check CHECK ((state = ANY (ARRAY['active'::text, 'acknowledged'::text, 'dismissed'::text, 'resolved'::text]))),
+    CONSTRAINT debug_regression_observations_suspected_dependency_check CHECK (((suspected_dependency IS NULL) OR ((jsonb_typeof(suspected_dependency) = 'object'::text) AND (octet_length((suspected_dependency)::text) <= 1024))))
 );
 
 

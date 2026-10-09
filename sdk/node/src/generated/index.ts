@@ -364,6 +364,7 @@ export type { DebugRunningFlowSummary } from './models/DebugRunningFlowSummary.j
 export type { DebugRunningObservation } from './models/DebugRunningObservation.js';
 export type { DebugRunningRequestAttribution } from './models/DebugRunningRequestAttribution.js';
 export type { DebugRunningResponse } from './models/DebugRunningResponse.js';
+export type { DebugSuspectedDependency } from './models/DebugSuspectedDependency.js';
 export type { DebugTelemetryListFilters } from './models/DebugTelemetryListFilters.js';
 export type { DebugTelemetryListResponse } from './models/DebugTelemetryListResponse.js';
 export type { DebugTelemetryRequestItem } from './models/DebugTelemetryRequestItem.js';

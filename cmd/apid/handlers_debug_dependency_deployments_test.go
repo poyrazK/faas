@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/debugger"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -73,6 +74,55 @@ func TestBuildDebugDependencyDeploymentComparison(t *testing.T) {
 	older := buildDebugDependencyDeploymentComparison(rows, "dep-80", "GET /checkout", 0)
 	if older == nil || older.CurrentDeploymentID != "dep-80" || older.PreviousDeploymentID != "dep-79" {
 		t.Fatalf("explicit comparison = %+v", older)
+	}
+}
+
+// adr: 829 — the regression detector names the regressed dependency.
+func TestSuspectedDependencyBetweenDetectorDeployments(t *testing.T) {
+	v80 := time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
+	v81 := v80.Add(time.Hour)
+	v82 := v81.Add(time.Hour)
+	var rows []sqlc.ListRequestTelemetryDependencySpansRow
+	for i := 0; i < 8; i++ {
+		rows = append(rows, dependencyRow(t, "dep-80", "v80", v80, "/checkout", 80))
+		rows = append(rows, dependencyRow(t, "dep-81", "v81", v81, "/checkout", 190))
+		// A newer deployment the detector is not comparing must be ignored.
+		rows = append(rows, dependencyRow(t, "dep-82", "v82", v82, "/checkout", 20))
+	}
+	comparison := buildDebugDependencyComparisonBetween(rows, "dep-81", "dep-80", "GET /checkout", 0)
+	if comparison == nil || comparison.CurrentDeploymentID != "dep-81" || comparison.PreviousDeploymentID != "dep-80" {
+		t.Fatalf("comparison = %+v", comparison)
+	}
+	suspect := suspectedDependency(comparison)
+	if suspect == nil || suspect.Type != "app_dependency" || suspect.Kind != "postgresql" || suspect.Name != "SELECT orders" ||
+		suspect.P95BaseMS != 80 || suspect.P95MS != 190 {
+		t.Fatalf("suspect = %+v", suspect)
+	}
+	raw := encodeSuspectedDependency(suspect)
+	if got := parseSuspectedDependency(raw); got == nil || *got != *suspect {
+		t.Fatalf("round trip = %+v from %s", got, raw)
+	}
+	if buildDebugDependencyComparisonBetween(rows, "dep-81", "dep-79", "GET /checkout", 0) != nil {
+		t.Fatal("missing baseline deployment produced a comparison")
+	}
+}
+
+func TestSuspectedDependencySkipsApplicationSpansAndNil(t *testing.T) {
+	if suspectedDependency(nil) != nil || encodeSuspectedDependency(nil) != nil || parseSuspectedDependency(nil) != nil {
+		t.Fatal("nil inputs must stay nil")
+	}
+	comparison := &api.DebugDependencyDeploymentComparison{Dependencies: []api.DebugDependencyLatencyItem{
+		{Type: "application", Name: "render", Regression: true, BaselineP95MS: 10, CurrentP95MS: 90},
+		{Type: "app_dependency", Kind: "redis", Name: "GET", Regression: false},
+	}}
+	if got := suspectedDependency(comparison); got != nil {
+		t.Fatalf("suspect = %+v, want none", got)
+	}
+	if parseSuspectedDependency([]byte(`{"type":"app_dependency"}`)) != nil {
+		t.Fatal("suspect without a name accepted")
+	}
+	if parseSuspectedDependency([]byte(`not json`)) != nil {
+		t.Fatal("invalid json accepted")
 	}
 }
 

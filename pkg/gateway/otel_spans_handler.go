@@ -313,7 +313,7 @@ func summarizeSpan(sp *tracepb.Span) summarizedSpan {
 	if end > start {
 		dur = end - start
 	}
-	attrs := flattenAttributes(sp.GetAttributes())
+	attrs := stripPlatformAttributes(flattenAttributes(sp.GetAttributes()))
 	return summarizedSpan{
 		TraceID:           formatTraceID(sp.GetTraceId()),
 		SpanID:            formatSpanID(sp.GetSpanId()),
@@ -333,6 +333,22 @@ func summarizeSpan(sp *tracepb.Span) summarizedSpan {
 // formatTraceID hex-encodes an OTLP trace_id (16 bytes) into the
 // 32-char lowercase string the database CHECK constraint
 // enforces. Empty bytes → empty string (caller validates).
+// stripPlatformAttributes removes the platform-reserved gregale.* namespace
+// from customer-submitted spans. Only platform producers (the retained
+// service-spans exporter) may classify a span as a managed binding,
+// outbound integration or guest transport; a customer span claiming that
+// identity would otherwise be presented as platform evidence (ADR-829).
+// This path serves only customer ingest: the public OTLP endpoint and the
+// in-guest bridge.
+func stripPlatformAttributes(attrs map[string]string) map[string]string {
+	for key := range attrs {
+		if strings.HasPrefix(key, "gregale.") {
+			delete(attrs, key)
+		}
+	}
+	return attrs
+}
+
 func formatTraceID(b []byte) string {
 	if len(b) == 0 {
 		return ""
