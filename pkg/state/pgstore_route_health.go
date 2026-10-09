@@ -158,6 +158,11 @@ func pgPooledRouteHealth(ctx context.Context, db sqlc.DBTX, accountID string, g 
 		report.Routes[i].PooledWindows = pooled.Routes[k].Windows
 	}
 	routehealth.Evaluate(report, anchor, "")
+	// Probes count only for opted-in routes that pooling left sparse (ADR-847).
+	if err := pgSyntheticRouteHealth(ctx, db, accountID, g, report, anchor, windows); err != nil {
+		return err
+	}
+	routehealth.Evaluate(report, anchor, "")
 	return nil
 }
 func pgRouteHealthObservations(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport) error {

@@ -527,11 +527,14 @@ type MemStore struct {
 	routeMonitorConfigs       map[string]api.RouteMonitorConfig
 	routeMonitorNextCheck     map[string]time.Time
 	routeMonitorIncidents     map[string][]api.RouteMonitorIncident
-	routeHealthGates          map[string]api.RouteHealthGate
-	routeHealthHistory        map[string][]routeHealthStoredDecision
-	routeHealthNotifications  map[string]routeHealthNotificationState
-	profilePeriodicMonitors   map[string]*memPeriodicMonitor
-	profileAlertStates        map[string]profileAlertState
+	// routeProbeData holds ADR-847 probe rounds and results; lazily created.
+	routeProbeOnce           sync.Once
+	routeProbeData           *memRouteProbes
+	routeHealthGates         map[string]api.RouteHealthGate
+	routeHealthHistory       map[string][]routeHealthStoredDecision
+	routeHealthNotifications map[string]routeHealthNotificationState
+	profilePeriodicMonitors  map[string]*memPeriodicMonitor
+	profileAlertStates       map[string]profileAlertState
 	// edgeRuleGeneration mirrors edge_rule_generation_seq. Gaps are allowed;
 	// values never decrease during the MemStore lifetime.
 	edgeRuleGeneration int64

@@ -17289,3 +17289,44 @@ FROM recipients WHERE cardinality(ids)>0 ON CONFLICT(event,source_id) DO NOTHING
 SELECT d.scope::text FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=sqlc.arg(deployment_id)::text::uuid AND a.id=sqlc.arg(app_id)::text::uuid
  AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted';
+-- name: ListRouteProbeTargets :many
+-- ADR-847: apps whose route health gate opts a selector into probes and that
+-- have exactly one in-flight canary candidate in the default scope.
+SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug, d.id::text AS candidate_id
+FROM route_health_gates g
+JOIN apps a ON a.id = g.app_id AND a.account_id = g.account_id AND a.status <> 'deleted'
+JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
+ AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+WHERE jsonb_path_exists(g.routes, '$[*].probe')
+ORDER BY a.id, d.id
+LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ClaimRouteProbeRound :one
+INSERT INTO route_probe_rounds (app_id, window_start)
+VALUES (sqlc.arg(app_id)::text::uuid, sqlc.arg(window_start))
+ON CONFLICT (app_id, window_start) DO NOTHING
+RETURNING app_id::text;
+
+-- name: RecordRouteProbeObservation :exec
+INSERT INTO route_probe_observations (app_id, account_id, deployment_id, method, path, window_start, requests, server_errors, unauthenticated)
+VALUES (sqlc.arg(app_id)::text::uuid, sqlc.arg(account_id)::text::uuid, sqlc.arg(deployment_id)::text::uuid, sqlc.arg(method), sqlc.arg(path), sqlc.arg(window_start), sqlc.arg(requests), sqlc.arg(server_errors), sqlc.arg(unauthenticated))
+ON CONFLICT (app_id, deployment_id, method, path, window_start) DO UPDATE SET
+ requests = route_probe_observations.requests + EXCLUDED.requests,
+ server_errors = route_probe_observations.server_errors + EXCLUDED.server_errors,
+ unauthenticated = route_probe_observations.unauthenticated + EXCLUDED.unauthenticated;
+
+-- name: RouteProbeObservations :many
+SELECT deployment_id::text AS deployment_id, method, path, window_start, requests, server_errors, unauthenticated
+FROM route_probe_observations
+WHERE app_id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid
+ AND deployment_id IN (sqlc.arg(candidate_id)::text::uuid, sqlc.arg(stable_id)::text::uuid)
+ AND window_start >= sqlc.arg(since) AND window_start < sqlc.arg(until)
+ORDER BY window_start, method, path;
+
+-- name: PruneRouteProbeObservations :exec
+DELETE FROM route_probe_observations WHERE window_start < sqlc.arg(before);
+
+-- name: PruneRouteProbeRounds :exec
+DELETE FROM route_probe_rounds WHERE window_start < sqlc.arg(before);
+

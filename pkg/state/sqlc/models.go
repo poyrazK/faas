@@ -6568,6 +6568,24 @@ type RoutePolicyReceipt struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type RouteProbeObservation struct {
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Method          string
+	Path            string
+	WindowStart     pgtype.Timestamptz
+	Requests        int64
+	ServerErrors    int64
+	Unauthenticated int64
+}
+
+type RouteProbeRound struct {
+	AppID       pgtype.UUID
+	WindowStart pgtype.Timestamptz
+	ClaimedAt   pgtype.Timestamptz
+}
+
 type RouteRemovalApproval struct {
 	ID                    pgtype.UUID
 	AppID                 pgtype.UUID
