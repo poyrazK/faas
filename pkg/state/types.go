@@ -7937,6 +7937,9 @@ type EdgeRule struct {
 	// ExpiresAt, when set, is the instant after which the gateway stops
 	// applying the rule. Expired rows are kept for the listing.
 	ExpiresAt *time.Time
+	// Match (ADR-733) is the optional structured condition ANDed with the
+	// fixed selectors; nil applies the rule to every selected request.
+	Match     *api.EdgeRuleMatchExpr
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -8087,6 +8090,7 @@ type CreateEdgeRuleParams struct {
 	Name         string
 	Description  string
 	ExpiresAt    *time.Time
+	Match        *api.EdgeRuleMatchExpr
 }
 
 // UpdateEdgeRuleParams carries the optional fields of
@@ -8115,6 +8119,9 @@ type UpdateEdgeRuleParams struct {
 	Description *string
 	// ExpiresAt: non-nil sets the expiry; a non-nil pointer to nil clears it.
 	ExpiresAt **time.Time
+	// Match: non-nil replaces the condition; ClearMatch removes it.
+	Match      *api.EdgeRuleMatchExpr
+	ClearMatch bool
 }
 
 // EdgeRuleQuotaError is returned by CreateEdgeRuleIfUnderQuota when

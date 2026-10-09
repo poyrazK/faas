@@ -22269,6 +22269,7 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 		Name:         strings.TrimSpace(in.Name),
 		Description:  in.Description,
 		ExpiresAt:    in.ExpiresAt,
+		Match:        in.Match,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -22394,6 +22395,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 		Name:         strings.TrimSpace(in.Name),
 		Description:  in.Description,
 		ExpiresAt:    in.ExpiresAt,
+		Match:        in.Match,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -22972,6 +22974,12 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 	}
 	if p.ExpiresAt != nil {
 		r.ExpiresAt = *p.ExpiresAt
+	}
+	switch {
+	case p.ClearMatch:
+		r.Match = nil
+	case p.Match != nil:
+		r.Match = p.Match
 	}
 	r.UpdatedAt = time.Now()
 	stored := r

@@ -2129,6 +2129,7 @@ type EdgeRule struct {
 	Name         pgtype.Text
 	Description  pgtype.Text
 	ExpiresAt    pgtype.Timestamptz
+	MatchExpr    []byte
 }
 
 type EdgeRuleChangeLog struct {

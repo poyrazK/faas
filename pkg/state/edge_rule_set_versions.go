@@ -65,24 +65,25 @@ var (
 // edgeRuleSnapshotRow is the per-rule JSON shape the edge_rule_set_snapshot
 // SQL function emits (to_jsonb of the selected edge_rules columns).
 type edgeRuleSnapshotRow struct {
-	ID           string            `json:"id"`
-	AccountID    string            `json:"account_id"`
-	AppID        string            `json:"app_id"`
-	MatchHost    string            `json:"match_host"`
-	MatchPath    string            `json:"match_path"`
-	MatchMethods []string          `json:"match_methods"`
-	MatchHeaders map[string]string `json:"match_headers"`
-	Priority     int               `json:"priority"`
-	Enabled      bool              `json:"enabled"`
-	Kind         string            `json:"kind"`
-	Action       EdgeRuleAction    `json:"action"`
-	ValidateMode string            `json:"validate_mode"`
-	CorsPresetID *string           `json:"cors_preset_id"`
-	ManifestKey  *string           `json:"manifest_key"`
-	Name         *string           `json:"name"`
-	Description  *string           `json:"description"`
-	ExpiresAt    *time.Time        `json:"expires_at"`
-	CreatedAt    time.Time         `json:"created_at"`
+	ID           string                 `json:"id"`
+	AccountID    string                 `json:"account_id"`
+	AppID        string                 `json:"app_id"`
+	MatchHost    string                 `json:"match_host"`
+	MatchPath    string                 `json:"match_path"`
+	MatchMethods []string               `json:"match_methods"`
+	MatchHeaders map[string]string      `json:"match_headers"`
+	Priority     int                    `json:"priority"`
+	Enabled      bool                   `json:"enabled"`
+	Kind         string                 `json:"kind"`
+	Action       EdgeRuleAction         `json:"action"`
+	ValidateMode string                 `json:"validate_mode"`
+	CorsPresetID *string                `json:"cors_preset_id"`
+	ManifestKey  *string                `json:"manifest_key"`
+	Name         *string                `json:"name"`
+	Description  *string                `json:"description"`
+	ExpiresAt    *time.Time             `json:"expires_at"`
+	CreatedAt    time.Time              `json:"created_at"`
+	MatchExpr    *api.EdgeRuleMatchExpr `json:"match_expr"`
 }
 
 func (r edgeRuleSnapshotRow) rule() EdgeRule {
@@ -92,6 +93,7 @@ func (r edgeRuleSnapshotRow) rule() EdgeRule {
 		MatchHeaders: r.MatchHeaders, Priority: r.Priority, Enabled: r.Enabled,
 		Kind: EdgeRuleKind(r.Kind), Action: r.Action, ValidateMode: r.ValidateMode,
 		CorsPresetID: r.CorsPresetID, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
+		Match: r.MatchExpr,
 	}
 	if r.ManifestKey != nil {
 		out.ManifestKey = *r.ManifestKey
@@ -245,11 +247,13 @@ func (s *PgStore) RestoreEdgeRuleSetVersion(ctx context.Context, appID string, v
 		insert into edge_rules (
 			id, account_id, app_id, match_host, match_path, match_methods,
 			match_headers, priority, enabled, kind, action, validate_mode,
-			cors_preset_id, manifest_key, name, description, expires_at, created_at
+			cors_preset_id, manifest_key, name, description, expires_at, created_at,
+			match_expr
 		)
 		select id, account_id, app_id, match_host, match_path, match_methods,
 		       match_headers, priority, enabled, kind, action, validate_mode,
-		       cors_preset_id, manifest_key, name, description, expires_at, created_at
+		       cors_preset_id, manifest_key, name, description, expires_at, created_at,
+		       match_expr
 		from jsonb_populate_recordset(null::edge_rules,
 			(select rules from edge_rule_set_versions where app_id = $1 and version = $2))`,
 		appID, version,

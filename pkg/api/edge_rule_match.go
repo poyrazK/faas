@@ -93,6 +93,12 @@ func CompileEdgeRuleMatch(expr *EdgeRuleMatchExpr) (*EdgeRuleMatchProgram, error
 	return &EdgeRuleMatchProgram{root: root}, nil
 }
 
+// NeverMatchingEdgeRuleProgram is a condition that holds for no request. The
+// gateway uses it for a stored condition that fails to compile.
+func NeverMatchingEdgeRuleProgram() *EdgeRuleMatchProgram {
+	return &EdgeRuleMatchProgram{root: matchNode{any: []matchNode{}}}
+}
+
 // ValidateEdgeRuleMatch reports a validation Problem for an invalid
 // condition (nil is valid).
 func ValidateEdgeRuleMatch(expr *EdgeRuleMatchExpr) *Problem {
