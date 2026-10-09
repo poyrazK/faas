@@ -39,6 +39,20 @@ func TestMain(m *testing.M) {
 	// developer's real OS credentials. Explicit test doubles still take
 	// precedence through effectiveKeyring.
 	keyring.MockInit()
+	// os.UserConfigDir ignores XDG_CONFIG_HOME on macOS and uses
+	// $HOME/Library/Application Support, so a test that isolates only XDG
+	// would read and overwrite the developer's real CLI config, tokens and
+	// sessions. Point HOME and the XDG roots at a process-wide temp
+	// directory; tests that need their own still override them per test.
+	isolatedHome, err := os.MkdirTemp("", "gregale-cli-test-home-")
+	if err != nil {
+		panic(err)
+	}
+	for key, value := range map[string]string{"HOME": isolatedHome, "XDG_CONFIG_HOME": isolatedHome + "/.config", "XDG_CACHE_HOME": isolatedHome + "/.cache"} {
+		if err := os.Setenv(key, value); err != nil {
+			panic(err)
+		}
+	}
 	previousNoColor, hadNoColor := os.LookupEnv("NO_COLOR")
 	_ = os.Unsetenv("NO_COLOR")
 	resetNOColorCache()
@@ -51,6 +65,7 @@ func TestMain(m *testing.M) {
 	} else {
 		_ = os.Unsetenv("NO_COLOR")
 	}
+	_ = os.RemoveAll(isolatedHome)
 	os.Exit(code)
 }
 

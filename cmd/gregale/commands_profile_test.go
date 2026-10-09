@@ -17,6 +17,8 @@ import (
 func setupConnectionProfiles(t *testing.T) {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 	t.Setenv("FAAS_TOKEN", "")
 	t.Setenv("FAAS_API", "")
 	t.Setenv("FAAS_JSON", "")
