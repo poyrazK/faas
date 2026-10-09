@@ -50,6 +50,46 @@ type FinancialCostsResponse struct {
 	MissingBillComponents []string              `json:"missing_bill_components"`
 }
 
+// FinancialAppCostsResponse is the portion of retained usage costs directly
+// attributed to one application. It deliberately has no invoice or forecast
+// fields: those sources are account scoped and cannot be reliably assigned to
+// an individual application.
+type FinancialAppCostsResponse struct {
+	AppID                 string                   `json:"app_id"`
+	AppSlug               string                   `json:"app_slug"`
+	Currency              string                   `json:"currency"`
+	PeriodStart           time.Time                `json:"period_start"`
+	PeriodEnd             time.Time                `json:"period_end"`
+	AsOf                  time.Time                `json:"as_of"`
+	KnownUsageMillicents  int64                    `json:"known_usage_millicents"`
+	Meters                []FinancialAppMeterCosts `json:"meters"`
+	Scope                 string                   `json:"scope"`
+	ScopeDescription      string                   `json:"scope_description"`
+	BillEstimateAvailable bool                     `json:"bill_estimate_available"`
+	MissingBillComponents []string                 `json:"missing_bill_components"`
+}
+
+// FinancialAppMeterCosts contains exact workload allocations and the source
+// coverage status for one meter. Coverage is account-wide because the sampler
+// publishes complete windows for the account, not per application.
+type FinancialAppMeterCosts struct {
+	Meter         string                       `json:"meter"`
+	Coverage      FinancialMeterCoverage       `json:"coverage"`
+	Unit          string                       `json:"unit,omitempty"`
+	Quantity      int64                        `json:"quantity"`
+	NetMillicents int64                        `json:"net_millicents"`
+	Allocations   []FinancialAppCostAllocation `json:"allocations"`
+}
+
+// FinancialAppCostAllocation is a workload's share of an app-attributed meter
+// cost. Net costs are already allocated from the account-level allowance.
+type FinancialAppCostAllocation struct {
+	Attribution   financial.Attribution `json:"attribution"`
+	Unit          string                `json:"unit"`
+	Quantity      int64                 `json:"quantity"`
+	NetMillicents int64                 `json:"net_millicents"`
+}
+
 type FinancialForecastResponse struct {
 	PeriodStart           time.Time             `json:"period_start"`
 	PeriodEnd             time.Time             `json:"period_end"`

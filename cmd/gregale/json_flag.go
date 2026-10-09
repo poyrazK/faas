@@ -213,14 +213,14 @@ func (w *jsonFlagErrorWriter) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 	w.wrote = true
-	err := writeJSONProblemTo(w.dst, api.Problem{
+	err := writeJSONProblemWithExit(w.dst, api.Problem{
 		Type:    docsSiteURL + "/errors/invalid-request",
 		Title:   "Invalid command flags",
 		Status:  400,
 		Code:    api.CodeValidation,
 		Detail:  normalizeFlagDiagnostic(strings.TrimSpace(string(p))),
 		DocsURL: cliDocsURL,
-	})
+	}, 1)
 	return len(p), err
 }
 
@@ -347,6 +347,20 @@ func writeJSONProblem(p api.Problem) error {
 
 func writeJSONProblemTo(w io.Writer, p api.Problem) error {
 	b, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(append(b, '\n'))
+	return err
+}
+
+// Client error metadata supplements the server's stable Problem code.
+func writeJSONProblemWithExit(w io.Writer, p api.Problem, code int) error {
+	b, err := json.Marshal(struct {
+		api.Problem
+		Category string `json:"category"`
+		ExitCode int    `json:"exit_code"`
+	}{p, exitCategory(code), code})
 	if err != nil {
 		return err
 	}

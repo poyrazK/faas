@@ -145,7 +145,7 @@ func cmdWebhooksAdd(args []string) int {
 	target := fs.String("target-url", "", "HTTPS target URL (required)")
 	secret := fs.String("secret", "", "HMAC-SHA256 secret (optional; auto-minted if empty)")
 	var events multiFlag
-	fs.Var(&events, "event", "event name (repeat for multiple); empty = all events")
+	fs.Var(&events, "event", "event name (repeat for multiple); empty = standard events; select app.health.changed explicitly")
 	policy := fs.String("retry-policy", "default", "retry policy: default|aggressive|none")
 	format := fs.String("delivery-format", "json", "delivery format: json|cloudevents")
 	if err := fs.Parse(args); err != nil {
@@ -307,11 +307,14 @@ func cmdWebhookDeliveries(args []string) int {
 	status := fs.String("status", "", "filter by status (pending|in_flight|succeeded|failed|dead)")
 	pageSize := fs.Int("page-size", 50, "page size (1..100)")
 	pageToken := fs.String("page-token", "", "opaque cursor from previous call")
-	if err := fs.Parse(args); err != nil {
+	fs.StringVar(pageToken, "cursor", "", "alias for --page-token")
+	fs.IntVar(pageSize, "limit", 50, "alias for --page-size (1..100)")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale webhooks deliveries --app <slug> <id> [--status X] [--page-size N] [--page-token T]", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhooks deliveries --app <slug> <id> [--status X] [--limit N] [--cursor T] [--all]", "webhooks")
 		return 1
 	}
 	id := fs.Args()[0]
@@ -325,24 +328,29 @@ func cmdWebhookDeliveries(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	out, err := client.ListAppWebhookDeliveries(context.Background(), *slug, id, api.ListAppWebhookDeliveriesOptions{
-		Status:    *status,
-		PageSize:  *pageSize,
-		PageToken: *pageToken,
+	items, next, err := collectListPages(context.Background(), *pageToken, *all, func(ctx context.Context, cursor string) ([]api.AppWebhookDeliveryResponse, string, error) {
+		page, err := client.ListAppWebhookDeliveries(ctx, *slug, id, api.ListAppWebhookDeliveriesOptions{
+			Status: *status, PageSize: *pageSize, PageToken: cursor,
+		})
+		return page.Deliveries, page.NextToken, err
 	})
+	out := api.AppWebhookDeliveryListResponse{Deliveries: items, NextToken: next}
 	if err != nil {
 		return printErr("Request failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(out))
+		return jsonOut(writeJSON(struct {
+			api.AppWebhookDeliveryListResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{out, next}))
 	}
 	for _, d := range out.Deliveries {
-		fmt.Printf("%-32s %-10s attempt=%-2d status=%-10s code=%-4d %s\n",
+		_, _ = fmt.Fprintf(osStdout, "%-32s %-10s attempt=%-2d status=%-10s code=%-4d %s\n",
 			d.ID, d.Event, d.Attempt, d.Status,
 			d.LastResponseCode, truncate(d.LastError, 60))
 	}
 	if out.NextToken != "" {
-		fmt.Fprintf(os.Stderr, "next page: --page-token %s\n", out.NextToken)
+		_, _ = fmt.Fprintf(osStderr, "next page: --cursor %s\n", out.NextToken)
 	}
 	return 0
 }
@@ -495,12 +503,14 @@ var validAppWebhookEvents = map[string]struct{}{
 	"rollout.aborted":                  {},
 	"job.finished":                     {},
 	"usage_statement.finalized":        {},
+	"app.health.changed":               {},
 }
 
 var webhookEventVocab = []string{
 	"realtime.message.read",
 	"realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required",
 	"app.parked", "app.woken", "deployment.live", "deployment.failed",
+	"app.health.changed",
 	"rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized",
 }
 

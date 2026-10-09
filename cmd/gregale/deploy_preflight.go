@@ -132,6 +132,9 @@ func deployPreflightRelease(safe bool, canaryPreset string, trafficPercent int, 
 }
 
 func renderDeployPreflight(w io.Writer, summary deployPreflightSummary) {
+	if nonInteractive && w == osStdout {
+		w = osStderr
+	}
 	_, _ = fmt.Fprintln(w, "Deployment plan:")
 	_, _ = fmt.Fprintf(w, "  %-14s %s\n", "app:", summary.Slug)
 	_, _ = fmt.Fprintf(w, "  %-14s %s\n", "source:", summary.Source)

@@ -12,7 +12,10 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -139,34 +142,40 @@ func TestCmdDeploysStatus_Failed(t *testing.T) {
 	}
 }
 
-// TestCmdDeploysStatus_ParallelFetches — A1: the errgroup fan-out
-// over GetDeployment + GetDeploymentStages runs in parallel.
-// Proves the parallelization by inserting a 50ms delay on BOTH
-// endpoints and asserting the total round-trip latency is below
-// the sum-of-delays threshold (90ms < 100ms = 2*50ms serial).
-//
-// Review finding C5: the pre-fix version only delayed ONE
-// endpoint (50ms depPath). A serial fan-out also finishes in
-// ~51ms and the test passes — the assertion was a false
-// positive. Post-fix, both endpoints carry 50ms, so:
-//
-//   - parallel fan-out: ~50ms (max of the two, fired concurrently)
-//   - serial fan-out:   ~100ms (50ms + 50ms sequential)
-//
-// The 90ms gate fails serial cleanly while keeping the test
-// robust to CI scheduler jitter (50ms + 40ms scheduler overhead
-// stays comfortably under).
+// TestCmdDeploysStatus_ParallelFetches requires both requests to arrive before
+// either response is released. A serial implementation cannot cross the barrier.
 func TestCmdDeploysStatus_ParallelFetches(t *testing.T) {
 	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	stagesPath := "/v1/deployments/" + showTestID + "/stages"
 	depPath := "/v1/deployments/" + showTestID
-	hooks := showServerHooks{
-		Delays: map[string]time.Duration{
-			stagesPath: 50 * time.Millisecond,
-			depPath:    50 * time.Millisecond,
-		},
+	ready := make(chan struct{})
+	var arrivals atomic.Int32
+	payloads := map[string][]byte{
+		stagesPath: stageStateAllCompleted(now),
+		depPath:    deploymentResponseLive(showTestID, now),
 	}
-	srv := showServerDual(t, stageStateAllCompleted(now), deploymentResponseLive(showTestID, now), hooks)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, ok := payloads[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		if arrivals.Add(1) == 2 {
+			close(ready)
+		}
+		select {
+		case <-ready:
+		case <-time.After(5 * time.Second):
+			t.Error("deployment and stages requests did not overlap")
+			http.Error(w, "parallel fetch barrier timed out", http.StatusGatewayTimeout)
+			return
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
@@ -175,17 +184,11 @@ func TestCmdDeploysStatus_ParallelFetches(t *testing.T) {
 	jsonOutput = false
 	defer func() { jsonOutput = false }()
 
-	start := time.Now()
 	if code := cmdDeploysStatus([]string{showTestID}); code != 0 {
 		t.Fatalf("cmdDeploysStatus parallel = %d, want 0", code)
 	}
-	elapsed := time.Since(start)
-	// Parallel fan-out: ~50ms (both endpoints fire concurrently;
-	// the wall clock is the max of the two). Serial fan-out:
-	// ~100ms (50ms + 50ms sequential). Threshold 90ms fails
-	// serial cleanly while tolerating CI scheduler jitter.
-	if elapsed > 90*time.Millisecond {
-		t.Errorf("parallel fetch took %v, want < 90ms (proves errgroup fan-out; serial would be ~100ms)", elapsed)
+	if arrivals.Load() != 2 {
+		t.Fatalf("request arrivals = %d, want 2", arrivals.Load())
 	}
 	// Output must still render — the parallel fetch succeeded.
 	if !strings.Contains(stdout.String(), "Source downloaded") {

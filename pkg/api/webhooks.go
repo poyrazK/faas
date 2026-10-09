@@ -86,6 +86,7 @@ var AllowedAppWebhookEvents = []string{
 	"realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required",
 	"operation.effect",
 	"app.parked", "app.woken",
+	"app.health.changed",
 	"deployment.live", "deployment.failed",
 	"rollout.completed", "rollout.aborted",
 	"job.finished",

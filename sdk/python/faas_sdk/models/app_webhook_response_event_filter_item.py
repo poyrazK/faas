@@ -1,6 +1,7 @@
 from typing import Literal
 
 AppWebhookResponseEventFilterItem = Literal[
+    "app.health.changed",
     "app.parked",
     "app.woken",
     "debug.regression.detected",
@@ -45,6 +46,7 @@ AppWebhookResponseEventFilterItem = Literal[
 ]
 
 APP_WEBHOOK_RESPONSE_EVENT_FILTER_ITEM_VALUES: set[AppWebhookResponseEventFilterItem] = {
+    "app.health.changed",
     "app.parked",
     "app.woken",
     "debug.regression.detected",

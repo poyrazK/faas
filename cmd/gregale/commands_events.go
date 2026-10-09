@@ -233,29 +233,32 @@ func writeEventPreviewSubscription(subscription api.EventPreviewSubscription) {
 // focused operational view for event-triggered invocations and routing
 // failures that happen before invocation creation.
 func cmdEventsDeliveries(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "all")
 	fs := newFlagSet("events deliveries", flag.ContinueOnError)
 	eventSource := fs.String("event-source", "", "narrow event filter to one published source; requires --event-id")
 	eventID := fs.String("event-id", "", "filter by published event id")
 	deliveryState := fs.String("state", "", "filter by delivery state; failed includes recipient fanout failures")
 	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
 	fanoutBefore := fs.String("fanout-before", "", "pagination cursor (NextFanoutBefore from a prior call)")
-	limit := fs.Int("limit", 20, "max deliveries (1..200)")
+	limit := fs.Int("limit", 20, "page size per stream (1..200)")
+	all := fs.Bool("all", false, "walk both streams using their independent cursors")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) ||
 		(strings.TrimSpace(*eventSource) != "" && strings.TrimSpace(*eventID) == "") ||
 		validateCLILimit("limit", *limit, 200) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events deliveries <app> [--event-source SOURCE --event-id ID] [--state STATE] [--before CURSOR] [--fanout-before CURSOR] [--limit N]", "events")
+		PrintUsage(os.Stderr, "usage: gregale events deliveries <app> [--event-source SOURCE --event-id ID] [--state STATE] [--before CURSOR] [--fanout-before CURSOR] [--limit N] [--all]", "events")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListEventDeliveriesPageByEventIdentity(context.Background(), positional[0],
-		strings.TrimSpace(*eventSource), strings.TrimSpace(*eventID), *deliveryState, *before, *fanoutBefore, *limit)
+	resp, err := collectEventDeliveryPages(context.Background(), *before, *fanoutBefore, *all, func(ctx context.Context, before, fanoutBefore string) (api.EventDeliveryListResponse, error) {
+		return client.ListEventDeliveriesPageByEventIdentity(ctx, positional[0],
+			strings.TrimSpace(*eventSource), strings.TrimSpace(*eventID), *deliveryState, before, fanoutBefore, *limit)
+	})
 	if err != nil {
 		return printErr("Could not list event deliveries", err)
 	}
@@ -264,7 +267,6 @@ func cmdEventsDeliveries(args []string) int {
 	}
 	if len(resp.Deliveries) == 0 && len(resp.FanoutFailures) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no event deliveries)")
-		return 0
 	}
 	if len(resp.Deliveries) > 0 {
 		_, _ = fmt.Fprintln(osStdout, "INVOCATION\tINVOCATION_SOURCE\tEVENT\tSOURCE\tTYPE\tSTATE\tATTEMPTS\tCREATED\tERROR")
@@ -281,9 +283,6 @@ func cmdEventsDeliveries(args []string) int {
 				oneLine(delivery.LastError),
 			)
 		}
-		if resp.NextBefore != "" {
-			_, _ = fmt.Fprintf(osStdout, "... more invocations — pass --before %s\n", resp.NextBefore)
-		}
 	}
 	if len(resp.FanoutFailures) > 0 {
 		_, _ = fmt.Fprintln(osStdout, "PRE-INVOCATION FANOUT FAILURES")
@@ -296,6 +295,9 @@ func cmdEventsDeliveries(args []string) int {
 			)
 		}
 	}
+	if resp.NextBefore != "" {
+		_, _ = fmt.Fprintf(osStdout, "... more invocations — pass --before %s\n", resp.NextBefore)
+	}
 	if resp.NextFanoutBefore != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more fanout failures — pass --fanout-before %s\n", resp.NextFanoutBefore)
 	}
@@ -305,37 +307,47 @@ func cmdEventsDeliveries(args []string) int {
 // cmdEventsFanoutHistory shows immutable pre-invocation routing outcomes and
 // explicit replay requests for one event recipient set.
 func cmdEventsFanoutHistory(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "all")
 	fs := newFlagSet("events fanout-history", flag.ContinueOnError)
 	eventSource := fs.String("event-source", "", "published event source")
 	eventID := fs.String("event-id", "", "published event id")
 	subscriptionID := fs.String("subscription-id", "", "narrow history to one recipient")
 	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
-	limit := fs.Int("limit", 20, "max history rows (1..200)")
+	limit := fs.Int("limit", 20, "page size (1..200)")
+	fs.StringVar(before, "cursor", "", "alias for --before")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) ||
 		strings.TrimSpace(*eventSource) == "" || strings.TrimSpace(*eventID) == "" ||
 		validateCLILimit("limit", *limit, 200) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events fanout-history <app> --event-source SOURCE --event-id ID [--subscription-id ID] [--before CURSOR] [--limit N]", "events")
+		PrintUsage(os.Stderr, "usage: gregale events fanout-history <app> --event-source SOURCE --event-id ID [--subscription-id ID] [--cursor CURSOR] [--limit N] [--all]", "events")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListEventFanoutAttemptHistory(context.Background(), positional[0],
-		strings.TrimSpace(*eventSource), strings.TrimSpace(*eventID), strings.TrimSpace(*subscriptionID), *before, *limit)
+	var resp api.EventFanoutAttemptHistoryResponse
+	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.EventFanoutAttemptResponse, string, error) {
+		page, err := client.ListEventFanoutAttemptHistory(ctx, positional[0],
+			strings.TrimSpace(*eventSource), strings.TrimSpace(*eventID), strings.TrimSpace(*subscriptionID), cursor, *limit)
+		resp = page
+		return page.History, page.NextBefore, err
+	})
+	resp.History, resp.NextBefore = items, next
 	if err != nil {
 		return printErr("Could not list event fanout history", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(resp))
+		return jsonOut(writeJSON(struct {
+			api.EventFanoutAttemptHistoryResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{resp, next}))
 	}
 	if len(resp.History) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no event fanout history)")
-		return 0
 	}
 	_, _ = fmt.Fprintln(osStdout, "EVENT\tSOURCE\tSUBSCRIPTION\tACTION\tSTATE\tATTEMPT\tFAILURE_CODE\tRETRYABLE\tRECORDED\tERROR")
 	for _, row := range resp.History {
@@ -345,7 +357,7 @@ func cmdEventsFanoutHistory(args []string) int {
 			row.Retryable, row.OccurredAt.Format(time.RFC3339), oneLine(row.LastError))
 	}
 	if resp.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "... more history — pass --before %s\n", resp.NextBefore)
+		_, _ = fmt.Fprintf(osStdout, "... more history — pass --cursor %s\n", resp.NextBefore)
 	}
 	return 0
 }

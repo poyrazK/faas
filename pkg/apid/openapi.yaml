@@ -9380,6 +9380,92 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/health:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppHealth
+      summary: Explain observed app serving health.
+      description: |
+        Read-only assessment of default-scope HTTP serving deployments,
+        replica readiness, node evidence and the last 5 minutes of request
+        telemetry scoped to current traffic-bearing default releases. It never wakes
+        or probes a workload. Structural evidence is available on every plan;
+        request telemetry follows the existing Hobby+ metrics entitlement.
+        Missing, failed, stale or truncated evidence cannot confirm health.
+        A failed latest release does not erase older serving evidence.
+        Scale-to-zero idle is expected when no warm replicas are required.
+        Worker and job execution health is not assessed.
+        Requires apps:read or admin scope. No MFA required.
+      responses:
+        '200':
+          description: Evidence assessment, including unknown checks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppHealthResponse'
+        '401':
+          description: Authentication required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Read scope required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: App not found for this account.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Rate limit exceeded.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/health/history:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listAppHealthHistory
+      summary: Read recorded app health changes.
+      description: |
+        Requires apps:read or admin; no MFA required. Background collection
+        records default HTTP serving assessments independently of dashboard
+        reads, without waking or probing workloads. Baseline, meaningful
+        changes and expired-evidence gaps are newest first. Times describe
+        observations or evidence expiry, not exact incident start/end times.
+        Retains up to 100 entries within 4 MiB and 30 days per app; each entry
+        is bounded to 64 KiB. Missing, foreign, aged or pruned cursors return
+        404. Latest retains its original time; collector_fresh is false when
+        unavailable or expired. Reads never create or refresh stored evidence.
+      parameters:
+        - name: limit
+          description: Maximum number of retained observations to return.
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: before
+          in: query
+          description: ID of the last retained entry from the preceding page.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Recorded observations and collection freshness; Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppHealthHistoryPage' }
+        default:
+          description: Invalid page parameters, access denial, missing cursor, or unavailable storage.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/metrics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -12187,6 +12273,26 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/operational-summary:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppOperationalSummary
+      summary: Read current production monitoring and recovery progress.
+      description: "Requires app read access and completed MFA. Joins current default-scope production route evidence, metadata for the saved open incident, pending checked rollbacks across app scopes, and pending or failed restart handoffs. Reads do not wake workloads, change traffic, or declare incident recovery. Component availability and bounded-list truncation are explicit. Deployment smoke verification remains a separate launch-time result. Customer identities, request evidence, free-form rollback reasons and internal restart errors are omitted. No query parameters are accepted."
+      responses:
+        '200':
+          description: Independently observed operational facts; unavailable components remain explicit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppOperationalSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/route-monitor:
     parameters:
@@ -16448,6 +16554,77 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/deployments/{id}/runtime:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getDeploymentRuntime
+      summary: Inspect immutable runtime base identity.
+      description: |
+        Read-only artifact evidence for Gregale-managed function runtimes (ADR-736).
+        Older artifacts return unknown rather than inferring their base from builder
+        provenance. Published candidates are limited to the same family and architecture,
+        at most 50 newest publications. Publication does not establish upgrade compatibility.
+        No VM is booted and no deployment, traffic or environment setting is changed.
+      responses:
+        '200':
+          description: Current binding and published candidates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentRuntimeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: Runtime evidence is temporarily unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/deployments/{id}/runtime/upgrade-preview:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: previewRuntimeUpgrade
+      summary: Preview a runtime base change without applying it.
+      description: |
+        Compares exact published component identities (ADR-736). This planning-only
+        response cannot authorize an update. Runtime family changes, architecture changes
+        and unknown current provenance block the plan. Same-family changes still require
+        native qualification, a rebuilt candidate, fresh readiness and guarded rollout.
+        Execution is unavailable; publication order does not prove a newer interpreter
+        patch or a compatible update. Existing health history is advisory evidence.
+      parameters:
+        - name: target
+          in: query
+          required: true
+          description: Exact published runtime release identity to compare.
+          schema:
+            type: string
+            pattern: '^[a-f0-9]{64}$'
+      responses:
+        '200':
+          description: Read-only component comparison and required steps.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeUpgradePreviewResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: The runtime preview could not read its evidence.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /v1/deployments/{id}/stages:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -33834,6 +34011,100 @@ components:
           type: integer
           minimum: 1
 
+
+    RuntimeReleaseResponse:
+      type: object
+      description: Exact published runtime base bytes; host kernel and function runner are separate components.
+      additionalProperties: false
+      required: [id, runtime, architecture, source_digest, guest_init_digest, base_digest, layout_version, published_at, qualification]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        runtime:
+          type: string
+          enum: [node22, node24, python312, python313, go124, go124-alpine]
+        architecture:
+          type: string
+          enum: [amd64, arm64]
+        source_digest:
+          type: string
+          description: Immutable OCI source manifest digest.
+        guest_init_digest:
+          type: string
+          description: SHA-256 of the PID 1 binary injected into this base.
+        base_digest:
+          type: string
+          description: SHA-256 of the exact published ext4 bytes.
+        layout_version:
+          type: string
+        published_at:
+          type: string
+          format: date-time
+        qualification:
+          type: string
+          enum: [not_evaluated]
+          description: Publication alone establishes no upgrade compatibility verdict.
+    DeploymentRuntimeResponse:
+      description: Recorded deployment runtime binding and published same-family base candidates.
+      type: object
+      additionalProperties: false
+      required: [deployment_id, status, reason, current, releases]
+      properties:
+        deployment_id:
+          type: string
+        status:
+          type: string
+          enum: [pinned, unknown, unsupported]
+        reason:
+          type: string
+        current:
+          anyOf:
+            - $ref: '#/components/schemas/RuntimeReleaseResponse'
+            - type: 'null'
+        releases:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/RuntimeReleaseResponse'
+    RuntimeUpgradePreviewResponse:
+      description: Component comparison and qualification requirements for a read-only runtime update plan.
+      type: object
+      additionalProperties: false
+      required: [deployment_id, current, target, disposition, changes, blockers, required_steps, rebuild_required, cold_start_required, execution_available]
+      properties:
+        deployment_id:
+          type: string
+        current:
+          anyOf:
+            - $ref: '#/components/schemas/RuntimeReleaseResponse'
+            - type: 'null'
+        target:
+          $ref: '#/components/schemas/RuntimeReleaseResponse'
+        disposition:
+          type: string
+          enum: [blocked, no_change, review_required]
+        changes:
+          type: array
+          items:
+            type: string
+            enum: [runtime_source, guest_init, base_layout, base_bytes]
+        blockers:
+          type: array
+          items:
+            type: string
+        required_steps:
+          type: array
+          items:
+            type: string
+        rebuild_required:
+          type: boolean
+        cold_start_required:
+          type: boolean
+        execution_available:
+          type: boolean
+          enum: [false]
+          description: Preview only; no runtime update operation is implemented.
     DetachEnvironmentGitSourceRequest:
       type: object
       description: Release this binding's Git ownership at the supplied generation while retaining its history.
@@ -34837,6 +35108,81 @@ components:
         requirements_sha256: { type: string }
         configuration_sha256: { type: string }
         report: { $ref: '#/components/schemas/RouteRequirementsReport' }
+    AppOperationalSummary:
+      type: object
+      description: Read-only current production route health, open incident metadata and pending recovery work, shared by inspect and the app dashboard.
+      required: [version, app_id, checked_at, monitoring, recovery, recommendations]
+      properties:
+        version: { type: integer, enum: [1] }
+        app_id: { type: string }
+        checked_at: { type: string, format: date-time }
+        monitoring: { $ref: '#/components/schemas/AppOperationalMonitoring' }
+        recovery: { $ref: '#/components/schemas/AppOperationalRecovery' }
+        recommendations:
+          type: array
+          items: { $ref: '#/components/schemas/AppOperationalRecommendation' }
+    AppOperationalMonitoring:
+      type: object
+      description: Recent default-scope route-monitor evaluation with observed-only coverage. Unknown or unavailable health is independent of deployment smoke verification.
+      required: [available, status, reason, coverage, incidents_available]
+      properties:
+        available: { type: boolean }
+        status: { type: string }
+        reason: { type: string }
+        coverage: { type: string }
+        deployment_id: { type: string }
+        checked_at: { type: string, format: date-time }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        incidents_available: { type: boolean }
+        incident: { $ref: '#/components/schemas/AppOperationalIncident' }
+    AppOperationalIncident:
+      type: object
+      description: Metadata for the app's open production-route incident. Reading this summary never closes the incident or includes saved request evidence.
+      required: [id, deployment_id, opened_at]
+      properties:
+        id: { type: string }
+        deployment_id: { type: string }
+        opened_at: { type: string, format: date-time }
+    AppOperationalRecovery:
+      type: object
+      description: Bounded app-scoped pending rollbacks and pending or failed restart handoffs. Availability and truncation are explicit; accepted work does not establish completed recovery.
+      required: [rollbacks_available, restarts_available, rollbacks_truncated, restarts_truncated, rollbacks, restarts]
+      properties:
+        rollbacks_available: { type: boolean }
+        restarts_available: { type: boolean }
+        rollbacks_truncated: { type: boolean }
+        restarts_truncated: { type: boolean }
+        rollbacks:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/AppOperationalRollback' }
+        restarts:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/RuntimeConfigRestartStatusResponse' }
+    AppOperationalRollback:
+      type: object
+      description: Pending checked rollback progress with stable codes and target selection; free-form reasons and blocker diagnostics are omitted.
+      required: [id, scope, status, target_deployment_id, current_deployment_id, updated_at]
+      properties:
+        id: { type: string }
+        scope: { type: string }
+        status: { type: string }
+        code: { type: string }
+        target_deployment_id: { type: string }
+        current_deployment_id: { type: string }
+        updated_at: { type: string, format: date-time }
+    AppOperationalRecommendation:
+      type: object
+      description: An actionable explanation of current operational evidence and an existing command or status endpoint for investigation.
+      required: [code, severity, message, next]
+      properties:
+        code: { type: string }
+        severity: { type: string, enum: [info, warning, error] }
+        message: { type: string }
+        next: { type: string }
+
     RouteMonitorRoute:
       type: object
       description: "Exact normalized production telemetry label with absolute budgets. Omitted max_5xx_rate_bps disables errors; zero is a selected zero-error budget. Zero or omitted max_p95_ms disables latency. At least one budget is required."
@@ -36348,6 +36694,43 @@ components:
         accrued: { $ref: '#/components/schemas/FinancialContractCosts' }
         forecast: { $ref: '#/components/schemas/FinancialForecast' }
         price_contracts: { type: array, items: { $ref: '#/components/schemas/FinancialPriceContract' } }
+    FinancialAppCostAllocation:
+      type: object
+      description: Workload share of a meter cost attributed to one application.
+      required: [attribution, unit, quantity, net_millicents]
+      properties:
+        attribution: { $ref: '#/components/schemas/FinancialAttribution' }
+        unit: { type: string }
+        quantity: { type: integer, format: int64 }
+        net_millicents: { type: integer, format: int64 }
+    FinancialAppMeterCosts:
+      type: object
+      description: Application-attributed meter costs with source coverage and workload allocations.
+      required: [meter, coverage, quantity, net_millicents, allocations]
+      properties:
+        meter: { type: string }
+        coverage: { $ref: '#/components/schemas/FinancialMeterCoverage' }
+        unit: { type: string }
+        quantity: { type: integer, format: int64 }
+        net_millicents: { type: integer, format: int64 }
+        allocations: { type: array, items: { $ref: '#/components/schemas/FinancialAppCostAllocation' } }
+    FinancialAppCostsResponse:
+      type: object
+      description: Retained usage costs directly attributed to one application; invoice and forecast amounts remain account scoped.
+      required: [app_id, app_slug, currency, period_start, period_end, as_of, known_usage_millicents, meters, scope, scope_description, bill_estimate_available, missing_bill_components]
+      properties:
+        app_id: { type: string }
+        app_slug: { type: string }
+        currency: { type: string, enum: [EUR] }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        known_usage_millicents: { type: integer, format: int64 }
+        meters: { type: array, items: { $ref: '#/components/schemas/FinancialAppMeterCosts' } }
+        scope: { type: string }
+        scope_description: { type: string }
+        bill_estimate_available: { type: boolean }
+        missing_bill_components: { type: array, items: { type: string } }
     FinancialCostsResponse:
       type: object
       description: Account usage costs for a UTC period; invoice facts remain separate.
@@ -53749,6 +54132,257 @@ components:
           x-since: "2026-08"
           x-issue: "436"
 
+    AppHealthChangedWebhookPayload:
+      type: object
+      additionalProperties: false
+      description: |
+        Versioned app.health.changed data. Explicit app-owned subscriptions
+        receive sampled status changes after a silent baseline. At most one
+        event per app every five minutes; pending changes combine to the latest
+        observed status, and returning to the last announced status cancels them.
+        Evidence gaps reset the comparison without inferring recovery. Unknown
+        is a confidence change, never a confirmed outage or recovery. The
+        transition points to retained history; evaluated_at describes the fresh
+        assessment used to queue this event. Delivery remains at least once.
+      required: [version, app_id, scope, transition_id, transition_observed_at, previous_status, status, change, phase, evaluated_at, queued_at, coalesced, cooldown_seconds, serving_deployment_ids, history_path]
+      properties:
+        version: { type: integer, enum: [1] }
+        app_id: { type: string }
+        scope: { type: string, enum: [default] }
+        transition_id: { type: string, format: uuid }
+        transition_observed_at: { type: string, format: date-time }
+        previous_status: { type: string, enum: [healthy, degraded, unhealthy, unknown], description: Last announced or silently established comparison status. }
+        status: { type: string, enum: [healthy, degraded, unhealthy, unknown] }
+        change: { type: string, enum: [worsened, improved, unconfirmed, confirmed] }
+        phase: { type: string, enum: [serving, idle, deploying, not_deployed, maintenance, unsupported, unknown] }
+        evaluated_at: { type: string, format: date-time }
+        queued_at: { type: string, format: date-time }
+        coalesced: { type: boolean, description: Changes were combined during the notification cooldown. }
+        cooldown_seconds: { type: integer, minimum: 1, description: Minimum spacing between app health notification intents. }
+        latest_deployment_id: { type: string }
+        serving_deployment_ids:
+          type: array
+          items: { type: string }
+        history_path: { type: string, description: Authenticated cursor-paged history; locate transition_id while retained. }
+    AppHealthHistoryPage:
+      description: Retained default HTTP health observations with independent background collection freshness.
+      type: object
+      additionalProperties: false
+      required: [app_id, scope, entries, collector_fresh, interval_seconds]
+      properties:
+        app_id: { type: string }
+        scope: { type: string, enum: [default] }
+        entries:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/AppHealthHistoryEntry' }
+        next_cursor: { type: string, format: uuid }
+        latest:
+          description: Latest background assessment with its original timestamp; may be stale.
+          allOf: [{ $ref: '#/components/schemas/AppHealthResponse' }]
+        collector_fresh:
+          type: boolean
+          description: Latest background assessment exists and has not expired. This is collection freshness, not app health.
+        interval_seconds:
+          type: integer
+          description: Minimum target spacing per app; fleet load and failures can delay observations.
+    AppHealthHistoryEntry:
+      description: Original baseline, meaningful transition, or expired-evidence gap; times do not imply continuous incident duration.
+      type: object
+      additionalProperties: false
+      required: [id, kind, observed_at, assessment]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [baseline, transition, gap] }
+        observed_at:
+          type: string
+          format: date-time
+          description: Assessment time, or previous evidence expiry for a gap entry.
+        previous_status:
+          type: string
+          enum: [healthy, degraded, unhealthy, unknown]
+        assessment: { $ref: '#/components/schemas/AppHealthResponse' }
+    AppHealthResponse:
+      description: Read-only observed health of default-scope HTTP serving workloads.
+      type: object
+      additionalProperties: false
+      required: [app_id, status, phase, summary, scope, evaluated_at, valid_for_seconds, serving_deployment_ids, capacity, checks]
+      properties:
+        app_id:
+          type: string
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy, unknown]
+        phase:
+          type: string
+          enum: [serving, idle, starting, deploying, stopped, not_deployed, maintenance, unsupported, unknown]
+        summary:
+          type: string
+        scope:
+          type: string
+          enum: [default]
+        evaluated_at:
+          type: string
+          format: date-time
+        valid_for_seconds:
+          type: integer
+          minimum: 1
+          description: Maximum age before clients must reconfirm this assessment.
+        metrics_as_of:
+          type: string
+          format: date-time
+          description: Actual telemetry sample time; absent when unconfirmed.
+        serving_deployment_ids:
+          type: array
+          items:
+            type: string
+        latest_deployment_id:
+          type: string
+        capacity:
+          $ref: '#/components/schemas/AppHealthCapacity'
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppHealthCheck'
+        requests:
+          $ref: '#/components/schemas/AppHealthRequests'
+    AppHealthCapacity:
+      description: Measured serving replica counts, with explicit evidence availability.
+      type: object
+      additionalProperties: false
+      required: [known, required, ready, starting, unready, unknown]
+      properties:
+        known:
+          type: boolean
+          description: False when instance evidence is unavailable or truncated.
+        required:
+          type: integer
+          minimum: 0
+        ready:
+          type: integer
+          minimum: 0
+        starting:
+          type: integer
+          minimum: 0
+        unready:
+          type: integer
+          minimum: 0
+        unknown:
+          type: integer
+          minimum: 0
+    AppHealthCheck:
+      description: Safe evidence explanation and an optional inspection destination.
+      type: object
+      additionalProperties: false
+      required: [code, status, detail]
+      properties:
+        code:
+          type: string
+          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection]
+        status:
+          type: string
+          enum: [pass, warning, fail, unknown, not_applicable]
+        detail:
+          type: string
+          description: Safe explanation without raw backend errors or probe output.
+        reason:
+          type: string
+          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed]
+          description: Stable diagnostic reason, when available.
+        action:
+          type: string
+          enum: [deployments, configuration, logs, metrics, errors]
+        deployment_id:
+          type: string
+        findings:
+          type: array
+          maxItems: 64
+          description: Independent replica readiness failures and missing evidence, with failures first and stable target order within severity.
+          items:
+            $ref: '#/components/schemas/AppHealthFinding'
+        findings_truncated:
+          type: boolean
+          description: Additional findings were omitted; capacity counts still cover the complete bounded instance scan.
+    AppHealthFinding:
+      description: A safe, independent readiness finding for a serving replica.
+      type: object
+      additionalProperties: false
+      required: [reason, status, detail, deployment_id, instance_id, source]
+      properties:
+        reason:
+          type: string
+          enum: [readiness_configuration_unavailable, readiness_missing, readiness_timestamp_invalid, required_probe_unready, node_evidence_missing, node_unavailable, node_timestamp_invalid, node_heartbeat_stale, node_recovering]
+        status:
+          type: string
+          enum: [fail, unknown]
+        detail:
+          type: string
+          description: Safe explanation without probe output or infrastructure addresses.
+        deployment_id:
+          type: string
+        instance_id:
+          type: string
+        source:
+          type: string
+          description: node, configuration, primary_app, or sidecar followed by a colon and the declared companion name.
+        observed_at:
+          type: string
+          format: date-time
+          description: Recorded readiness transition or last node heartbeat; absent for missing evidence. A transition time is not a probe heartbeat.
+    AppHealthRequests:
+      description: Scoped request evidence; counts are confirmed only when known is true. Covers current serving releases, excluding previous releases and other scopes.
+      type: object
+      additionalProperties: false
+      required: [known, coverage, window_seconds, deployment_ids, request_count, server_errors, error_rate_pct, policy]
+      properties:
+        known:
+          type: boolean
+        coverage:
+          type: string
+          enum: [serving_deployments]
+        window_seconds:
+          type: integer
+          minimum: 1
+        deployment_ids:
+          type: array
+          items:
+            type: string
+        request_count:
+          type: integer
+          format: int64
+          minimum: 0
+        server_errors:
+          type: integer
+          format: int64
+          minimum: 0
+        error_rate_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+        policy:
+          $ref: '#/components/schemas/AppHealthRequestPolicy'
+    AppHealthRequestPolicy:
+      description: Diagnostic severity defaults, independent of customer SLO configuration. Error thresholds require both minimum request and server-error counts.
+      type: object
+      additionalProperties: false
+      required: [minimum_requests, minimum_server_errors, warning_error_rate_pct, unhealthy_error_rate_pct]
+      properties:
+        minimum_requests:
+          type: integer
+          format: int64
+          minimum: 1
+        minimum_server_errors:
+          type: integer
+          format: int64
+          minimum: 1
+        warning_error_rate_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+        unhealthy_error_rate_pct:
+          type: number
+          minimum: 0
+          maximum: 100
     AppMetricsResponse:
       description: |
         Per-app metrics snapshot (issue #273 / ADR-041). Latencies are
@@ -59062,10 +59696,11 @@ components:
         target_url: { type: string, minLength: 8, maxLength: 2048 }
         webhook_secret_sealed_masked: { type: string, enum: ["***"] }
         event_filter:
+          description: Subscribed events; an empty filter selects standard platform events. app.health.changed requires explicit selection.
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -59961,10 +60596,11 @@ components:
         target_url: { type: string, minLength: 8, maxLength: 2048 }
         webhook_secret: { type: string, minLength: 1, maxLength: 256 }
         event_filter:
+          description: Events to subscribe to; omit or leave empty for standard platform events. Select app.health.changed explicitly to enable health notifications.
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -60042,10 +60678,11 @@ components:
         target_url: { type: string, minLength: 8, maxLength: 2048 }
         webhook_secret: { type: string, minLength: 1, maxLength: 256 }
         event_filter:
+          description: Replacement event selection; an empty array restores standard platform events. Include app.health.changed to opt into health notifications.
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required", "realtime.message.read", "realtime.notification.sent", "realtime.notification.failed", "realtime.notification.expired", "realtime.notification.cancelled", "realtime.notification.superseded", "realtime.schedule.published", "realtime.schedule.failed", "realtime.schedule.skipped", "app.health.changed"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

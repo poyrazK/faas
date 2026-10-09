@@ -1238,6 +1238,7 @@ func (noopNotifier) WaitFor(_ context.Context, _ string, _ func(payload string) 
 // New routes append here; do not introduce per-feature sub-muxes.
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/apps/{slug}/operational-summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppOperationalSummary))))
 	mux.HandleFunc("GET /v1/apps/{slug}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppBindingInventory))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageListSurface...)(s.listBuckets))))
 	mux.HandleFunc("GET /v1/apps/{slug}/upload-routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageListSurface...)(s.listObjectUploadRoutes))))
@@ -1698,6 +1699,8 @@ func (s *server) handler() http.Handler {
 	// ScopesReadSurface). Mirrors getApp's IDOR-safe loadApp so a
 	// cross-account slug is a 404, not a 200 with another tenant's
 	// data.
+	mux.HandleFunc("GET /v1/apps/{slug}/health", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppHealth)))
+	mux.HandleFunc("GET /v1/apps/{slug}/health/history", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listAppHealthHistory)))
 	mux.HandleFunc("GET /v1/apps/{slug}/metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppMetrics)))
 	// Security policy observations are available on every plan where the
 	// optional pre-auth guard can be configured, including Free.
@@ -2112,6 +2115,8 @@ func (s *server) handler() http.Handler {
 	// Builds (ADR-038). The provenance route is the only /v1/builds
 	// surface today; deployments.id remains the parent resource.
 	// Build:read scope (api.ScopesReadSurface) gates the read.
+	mux.HandleFunc("GET /v1/deployments/{id}/runtime", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getDeploymentRuntime)))
+	mux.HandleFunc("GET /v1/deployments/{id}/runtime/upgrade-preview", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.previewRuntimeUpgrade)))
 	mux.HandleFunc("GET /v1/builds/{id}/provenance", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getBuildProvenance)))
 	// PR-D / issue #791: GET /v1/cron-fire-now-requests/{request_id} is
 	// the customer-visible read surface for the row that
