@@ -391,3 +391,9 @@ See [parent-scoped retries](../../docs/event-driven.md#retry-failures-from-one-r
 retained unresolved terminal-admission jobs. `counts_complete=False` marks
 lower-bound counts; prolonged waits measure time since admission completion.
 See [execution recovery health](../../docs/adr/835-execution-recovery-health-alerts.md).
+
+Use `faas_sdk.api.events.get_event_recovery_notifications` for a read-only report
+of admission/execution capture and each selected receiver's current delivery.
+Missing selection or pruned delivery evidence remains unknown; capture alone
+does not prove acknowledgement. Retained dead deliveries link to independent
+retry. See [notification delivery reports](../../docs/adr/836-recovery-notification-delivery-report.md).

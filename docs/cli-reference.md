@@ -1933,6 +1933,12 @@ Assess frozen recovery eligibility and optimistic timing
 
 `gregale events recovery-preflight <job-id>`
 
+### events recovery-notifications
+
+Inspect recovery notification capture and receiver acknowledgements
+
+`gregale events recovery-notifications <job-id>`
+
 ### events recovery-health
 
 Inspect active recovery progress and expiry risk

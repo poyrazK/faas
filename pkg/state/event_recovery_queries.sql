@@ -223,16 +223,20 @@ SELECT account_id FROM event_recovery_jobs WHERE id=sqlc.arg(job_id)::uuid;
 
 -- name: EventRecoveryEnqueueNotification :exec
 WITH recipients AS (
- SELECT array_agg(h.id ORDER BY h.id) AS ids FROM app_webhooks h
+ SELECT coalesce(array_agg(h.id ORDER BY h.id),'{}'::uuid[]) AS ids FROM app_webhooks h
  JOIN event_recovery_jobs j ON j.id=sqlc.arg(job_id)::uuid AND h.account_id=j.account_id AND h.app_id=j.app_id
  WHERE h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR sqlc.arg(event)::text=ANY(h.event_filter))
+), captured AS (
+ UPDATE event_recovery_jobs j SET notification_receipts=j.notification_receipts||jsonb_build_object(sqlc.arg(event)::text,
+ jsonb_build_object('event_id',sqlc.arg(event_id)::uuid,'captured_at',CASE WHEN sqlc.arg(event)::text='event_recovery.execution_finished' THEN j.execution_finished_at ELSE j.completed_at END,'recipient_webhook_ids',to_jsonb(r.ids)))
+ FROM recipients r WHERE j.id=sqlc.arg(job_id)::uuid AND j.state IN ('completed','cancelled')
+ AND NOT j.notification_receipts ? sqlc.arg(event)::text
+ RETURNING j.id,j.account_id,j.app_id,j.completed_at,j.execution_finished_at,r.ids
 )
 INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids,created_at)
-SELECT sqlc.arg(event_id)::uuid,j.account_id,j.app_id,sqlc.arg(event)::text,j.id,sqlc.arg(payload)::jsonb,r.ids,CASE WHEN sqlc.arg(event)::text='event_recovery.execution_finished' THEN j.execution_finished_at ELSE j.completed_at END
-FROM event_recovery_jobs j CROSS JOIN recipients r
-WHERE j.id=sqlc.arg(job_id)::uuid AND j.state IN ('completed','cancelled') AND cardinality(r.ids)>0
+SELECT sqlc.arg(event_id)::uuid,j.account_id,j.app_id,sqlc.arg(event)::text,j.id,sqlc.arg(payload)::jsonb,j.ids,CASE WHEN sqlc.arg(event)::text='event_recovery.execution_finished' THEN j.execution_finished_at ELSE j.completed_at END
+FROM captured j WHERE cardinality(j.ids)>0
 ON CONFLICT (event,source_id) DO NOTHING;
-
 
 -- name: EventRecoveryScheduleTerminalState :one
 UPDATE event_recovery_jobs SET updated_at=sqlc.arg(now_at)::timestamptz,next_attempt_at=sqlc.arg(next_at)::timestamptz,
@@ -363,3 +367,26 @@ WHERE j.account_id=sqlc.arg(account_id) AND j.app_id=sqlc.arg(app_id)
  AND r.replay_created_at=i.replay_created_at AND r.recorded_at<=sqlc.arg(now_at)
  WHERE i.job_id=j.id AND i.state='queued' AND r.job_id IS NULL)
 ORDER BY j.completed_at,j.id LIMIT sqlc.arg(job_limit);
+
+-- name: EventRecoveryNotificationEvidence :one
+SELECT j.notification_receipts,j.execution_notification_captured,a.slug AS app_slug
+FROM event_recovery_jobs j JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
+WHERE j.id=sqlc.arg(job_id)::uuid AND j.account_id=sqlc.arg(account_id)::uuid;
+
+-- name: EventRecoveryNotificationOutbox :many
+SELECT id,event,created_at,recipient_webhook_ids FROM app_webhook_event_outbox
+WHERE source_id=sqlc.arg(job_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND event IN ('event_recovery.completed','event_recovery.cancelled','event_recovery.expired','event_recovery.execution_finished');
+
+-- name: EventRecoveryNotificationDeliveries :many
+SELECT d.webhook_id,d.id,d.status,d.attempt,d.replay_generation,coalesce(d.last_response_code,0)::integer AS last_response_code,
+ d.next_attempt_at,d.delivered_at,(h.id IS NOT NULL)::boolean AS receiver_available
+FROM app_webhook_deliveries d
+LEFT JOIN app_webhooks h ON h.id=d.webhook_id AND h.account_id=d.account_id AND h.app_id=d.app_id AND h.scope='app'
+WHERE d.source_event_id=sqlc.arg(event_id)::uuid AND d.event=sqlc.arg(event)::text
+ AND d.account_id=sqlc.arg(account_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
+ORDER BY d.webhook_id,d.id LIMIT sqlc.arg(receiver_limit)::integer;
+
+-- name: EventRecoveryNotificationReceivers :many
+SELECT id FROM app_webhooks WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND scope='app' AND id=ANY(sqlc.arg(webhook_ids)::uuid[]);

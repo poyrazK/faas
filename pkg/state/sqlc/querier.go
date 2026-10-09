@@ -639,7 +639,11 @@ type Querier interface {
 	EventRecoveryLock(ctx context.Context, db DBTX, arg EventRecoveryLockParams) (EventRecoveryJob, error)
 	EventRecoveryNextItem(ctx context.Context, db DBTX, jobID pgtype.UUID) (EventRecoveryItem, error)
 	EventRecoveryNextJob(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRecoveryJob, error)
+	EventRecoveryNotificationDeliveries(ctx context.Context, db DBTX, arg EventRecoveryNotificationDeliveriesParams) ([]EventRecoveryNotificationDeliveriesRow, error)
+	EventRecoveryNotificationEvidence(ctx context.Context, db DBTX, arg EventRecoveryNotificationEvidenceParams) (EventRecoveryNotificationEvidenceRow, error)
 	EventRecoveryNotificationJob(ctx context.Context, db DBTX, jobID pgtype.UUID) (pgtype.UUID, error)
+	EventRecoveryNotificationOutbox(ctx context.Context, db DBTX, arg EventRecoveryNotificationOutboxParams) ([]EventRecoveryNotificationOutboxRow, error)
+	EventRecoveryNotificationReceivers(ctx context.Context, db DBTX, arg EventRecoveryNotificationReceiversParams) ([]pgtype.UUID, error)
 	EventRecoveryPause(ctx context.Context, db DBTX, arg EventRecoveryPauseParams) error
 	EventRecoveryPreflight(ctx context.Context, db DBTX, arg EventRecoveryPreflightParams) ([]EventRecoveryPreflightRow, error)
 	EventRecoveryPreflightJob(ctx context.Context, db DBTX, arg EventRecoveryPreflightJobParams) (EventRecoveryJob, error)

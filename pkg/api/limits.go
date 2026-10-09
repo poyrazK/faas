@@ -9422,3 +9422,6 @@ const (
 	EventRecoveryExecutionWaitWarning      = 15 * time.Minute
 	EventRecoveryExecutionRetentionWarning = 24 * time.Hour
 )
+
+// EventRecoveryNotificationReceiversMax bounds each notification report.
+const EventRecoveryNotificationReceiversMax = 100

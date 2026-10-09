@@ -2658,3 +2658,53 @@ restore ordering after newer deliveries have advanced.
 Apply the child-request migration before upgrading the API and scheduler. Go,
 Node and Python use their existing recovery preview/create methods with the new
 fields. See [ADR-834](adr/834-parent-scoped-execution-recovery-retries.md).
+
+### Inspect recovery notification delivery
+
+```bash
+gregale events recovery-notifications JOB_ID
+gregale events recovery-notifications JOB_ID --json
+```
+
+This read-only report separates admission notification capture from execution
+notification capture and receiver acknowledgement. Each receiver shows its
+current delivery state, attempt count and replay generation, last HTTP response
+code, next retry when scheduled, and whether its subscription still exists.
+Retained deliveries link to the existing attempt-history API. Dead deliveries
+with a retained subscription show the existing independent retry command:
+
+```bash
+gregale webhooks retry --app APP WEBHOOK_ID DELIVERY_ID
+```
+
+Retry still requires the normal write authorization and MFA. Reporting never
+retries deliveries, captures notifications, or changes handler execution.
+
+New captures preserve the selected receiver IDs on the job, even when none
+match. A retained outbox can supply historical selection evidence. Once only
+individual deliveries remain, the report cannot prove which other receivers
+were selected: `recipients_known=false`, `counts_complete=false`, and
+acknowledgement remains unknown. Missing or pruned delivery evidence also remains
+unknown. `awaiting_relay` requires a retained outbox; it does not imply that a
+removed receiver will receive a delivery. Current subscriptions are never used
+to reconstruct past selection. Receiver availability means that a subscription
+exists, not that it is enabled or reachable.
+
+`acknowledgement_status=acknowledged` requires complete known selection and a
+succeeded delivery for every selected receiver. An empty known selection is
+`no_receivers`. Transport acknowledgement does not prove downstream effects;
+receivers must still deduplicate the stable event ID. Admission and execution
+notifications have no relative delivery-order guarantee.
+
+The report returns up to 100 receivers per notification (current per-app plan
+quotas top out at 25), marks incomplete counts, and shares the five-second recovery
+read budget. Receiver snapshots are retained with the job for its existing
+30-day retention period. Wrong-account and pruned jobs return not found.
+
+The endpoint is `GET /v1/event-recoveries/{jobID}/notifications`, requiring
+apps-read/admin scope and MFA. SDKs expose Go `GetEventRecoveryNotifications`,
+Node `EventsService.getEventRecoveryNotifications`, and Python
+`faas_sdk.api.events.get_event_recovery_notifications`. Apply migration
+`20261009140935781` before API/scheduler upgrades. See
+[ADR-836](adr/836-recovery-notification-delivery-report.md) for historical evidence
+and downgrade limits.

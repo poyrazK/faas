@@ -18,6 +18,7 @@ import type { EventRecoveryHistory } from '../models/EventRecoveryHistory.js';
 import type { EventRecoveryItems } from '../models/EventRecoveryItems.js';
 import type { EventRecoveryJob } from '../models/EventRecoveryJob.js';
 import type { EventRecoveryJobs } from '../models/EventRecoveryJobs.js';
+import type { EventRecoveryNotifications } from '../models/EventRecoveryNotifications.js';
 import type { EventRecoveryPreflight } from '../models/EventRecoveryPreflight.js';
 import type { EventRecoveryPreview } from '../models/EventRecoveryPreview.js';
 import type { EventRecoveryRateRequest } from '../models/EventRecoveryRateRequest.js';
@@ -2051,6 +2052,36 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         504: `Recovery preflight timed out.`,
+      },
+    });
+  }
+  /**
+   * Inspect recovery notification capture and receiver acknowledgements.
+   * Requires apps:read or admin and MFA. Read-only account-scoped report for a retained recovery job. Admission and execution notifications are separate. Preserved receiver snapshots and retained outbox rows can establish complete selection; retained deliveries alone cannot. Reports up to 100 receivers per notification and marks incomplete counts. Missing/pruned evidence is unknown, never proof of acknowledgement. Existing retry paths require their normal write scope and MFA. No query parameters are accepted.
+   * @returns EventRecoveryNotifications Current metadata-only notification and delivery report.
+   * @throws ApiError
+   */
+  public static getEventRecoveryNotifications({
+    jobId,
+  }: {
+    /**
+     * Retained recovery job ID.
+     */
+    jobId: string,
+  }): CancelablePromise<EventRecoveryNotifications> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/notifications',
+      path: {
+        'jobID': jobId,
+      },
+      errors: {
+        400: `Invalid recovery notification job ID or unsupported query parameters.`,
+        401: `Authentication is required to inspect recovery notification delivery.`,
+        403: `Read scope or MFA required.`,
+        404: `Recovery job not found or not owned.`,
+        429: `Request rate limited.`,
+        500: `Internal notification reporting failure or invalid capture metadata.`,
       },
     });
   }

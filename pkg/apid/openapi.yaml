@@ -27534,6 +27534,72 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/event-recoveries/{jobID}/notifications:
+    get:
+      tags:
+      - events
+      operationId: getEventRecoveryNotifications
+      summary: Inspect recovery notification capture and receiver acknowledgements.
+      description: Requires apps:read or admin and MFA. Read-only account-scoped report
+        for a retained recovery job. Admission and execution notifications are separate.
+        Preserved receiver snapshots and retained outbox rows can establish complete
+        selection; retained deliveries alone cannot. Reports up to 100 receivers per
+        notification and marks incomplete counts. Missing/pruned evidence is unknown,
+        never proof of acknowledgement. Existing retry paths require their normal write
+        scope and MFA. No query parameters are accepted.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: jobID
+        in: path
+        required: true
+        description: Retained recovery job ID.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Current metadata-only notification and delivery report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventRecoveryNotifications'
+        '400':
+          description: Invalid recovery notification job ID or unsupported query parameters.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Authentication is required to inspect recovery notification delivery.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Read scope or MFA required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Recovery job not found or not owned.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Request rate limited.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          description: Internal notification reporting failure or invalid capture metadata.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /v1/event-recoveries/{jobID}/history:
     get:
       tags: [events]
@@ -47612,6 +47678,204 @@ components:
           minimum: 0
         execution:
           $ref: '#/components/schemas/EventRecoveryExecutionSummary'
+    EventRecoveryNotifications:
+      type: object
+      additionalProperties: false
+      description: Metadata-only recovery notification report. A captured event does not
+        imply acknowledgement. Reads do not capture events, relay the outbox or retry
+        deliveries. Missing or pruned receiver evidence remains unknown.
+      required:
+      - job_id
+      - app_id
+      - app_slug
+      - observed_at
+      - receiver_limit
+      - notifications
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        app_id:
+          type: string
+          format: uuid
+        app_slug:
+          type: string
+        observed_at:
+          type: string
+          format: date-time
+        receiver_limit:
+          type: integer
+          enum:
+          - 100
+        notifications:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            $ref: '#/components/schemas/EventRecoveryNotification'
+    EventRecoveryNotification:
+      type: object
+      additionalProperties: false
+      description: Receiver selection is frozen at capture, including an empty selection.
+        Retained deliveries alone cannot prove the complete selection. Counts describe
+        observed receivers and may be lower bounds. Unknown receivers prevent acknowledged
+        status; no_receivers is distinct from acknowledgement. Pending captures have no
+        receiver selection yet.
+      required:
+      - kind
+      - capture_status
+      - evidence_source
+      - recipients_known
+      - counts_complete
+      - acknowledgement_status
+      - pending_count
+      - in_flight_count
+      - succeeded_count
+      - failed_count
+      - dead_count
+      - awaiting_relay_count
+      - unknown_count
+      - receivers
+      properties:
+        kind:
+          type: string
+          enum:
+          - admission
+          - execution
+        event:
+          type: string
+          enum:
+          - event_recovery.completed
+          - event_recovery.cancelled
+          - event_recovery.expired
+          - event_recovery.execution_finished
+        event_id:
+          type: string
+          format: uuid
+        capture_status:
+          type: string
+          enum:
+          - pending
+          - captured
+          - not_applicable
+          - unknown
+        captured_at:
+          type: string
+          format: date-time
+        evidence_source:
+          type: string
+          enum:
+          - capture_snapshot
+          - retained_outbox
+          - retained_deliveries
+          - unavailable
+        recipients_known:
+          type: boolean
+        selected_recipient_count:
+          type: integer
+          format: int64
+          minimum: 0
+        counts_complete:
+          type: boolean
+        acknowledgement_status:
+          type: string
+          enum:
+          - unacknowledged
+          - acknowledged
+          - no_receivers
+          - unknown
+          - not_applicable
+        pending_count:
+          type: integer
+          format: int64
+          minimum: 0
+        in_flight_count:
+          type: integer
+          format: int64
+          minimum: 0
+        succeeded_count:
+          type: integer
+          format: int64
+          minimum: 0
+        failed_count:
+          type: integer
+          format: int64
+          minimum: 0
+        dead_count:
+          type: integer
+          format: int64
+          minimum: 0
+        awaiting_relay_count:
+          type: integer
+          format: int64
+          minimum: 0
+        unknown_count:
+          type: integer
+          format: int64
+          minimum: 0
+        receivers:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/EventRecoveryNotificationReceiver'
+    EventRecoveryNotificationReceiver:
+      type: object
+      additionalProperties: false
+      description: A receiver from the frozen selection or retained delivery evidence.
+        awaiting_relay requires a retained outbox; otherwise absent delivery evidence
+        is unknown. Attempt counts reset on manual retry; replay_generation distinguishes
+        budgets. No payloads, target URLs, errors, headers or secrets are included.
+      required:
+      - webhook_id
+      - receiver_available
+      - status
+      - attempt
+      - replay_generation
+      - last_response_code
+      properties:
+        webhook_id:
+          type: string
+          format: uuid
+        receiver_available:
+          type: boolean
+          description: The selected subscription still exists in this account and app;
+            this does not assert that it is enabled or its target is reachable.
+        delivery_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - pending
+          - in_flight
+          - succeeded
+          - failed
+          - dead
+          - awaiting_relay
+          - unknown
+        attempt:
+          type: integer
+          minimum: 0
+        replay_generation:
+          type: integer
+          minimum: 0
+        last_response_code:
+          type: integer
+          minimum: 0
+        next_attempt_at:
+          type: string
+          format: date-time
+        delivered_at:
+          type: string
+          format: date-time
+        attempts_path:
+          type: string
+          description: Relative path to existing paginated attempt history, when the delivery
+            and subscription are retained.
+        retry_path:
+          type: string
+          description: Relative POST path for existing independent dead-letter retry,
+            when available. Reporting never invokes it.
     EventRecoveryHealth:
       description: "Application admission health and bounded unresolved execution health with sampled actionable jobs."
       type: object

@@ -133,16 +133,23 @@ func (m *MemStore) ProcessNextEventRecoveryExecutionNotification(ctx context.Con
 }
 
 func (m *MemStore) enqueueRecoveryExecutionNotificationLocked(job *memEventRecoveryJob, payload api.EventRecoveryExecutionFinishedWebhookPayload) {
+	if _, captured := job.NotificationReceipts[string(AppWebhookEventRecoveryExecutionFinished)]; captured {
+		return
+	}
 	recipients := []string{}
 	for _, hook := range m.appWebhooks {
 		if hook.Scope == AppWebhookScopeApp && sameMemUUID(hook.AccountID, job.AccountID) && sameMemUUID(hook.AppID, job.Job.AppID) && hook.Enabled && appWebhookMatches(hook.EventFilter, AppWebhookEventRecoveryExecutionFinished) {
 			recipients = append(recipients, hook.ID)
 		}
 	}
+	sort.Strings(recipients)
+	if job.NotificationReceipts == nil {
+		job.NotificationReceipts = map[string]recoveryNotificationReceipt{}
+	}
+	job.NotificationReceipts[string(AppWebhookEventRecoveryExecutionFinished)] = recoveryNotificationReceipt{EventID: payload.EventID, CapturedAt: payload.ExecutionFinishedAt, RecipientWebhookIDs: append([]string{}, recipients...)}
 	if len(recipients) == 0 {
 		return
 	}
-	sort.Strings(recipients)
 	data, _ := json.Marshal(payload)
 	if m.appWebhookEventOutbox == nil {
 		m.appWebhookEventOutbox = map[string]appWebhookOutboxEvent{}

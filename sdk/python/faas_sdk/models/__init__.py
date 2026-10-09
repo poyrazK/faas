@@ -1043,6 +1043,16 @@ from .event_recovery_job_health_status import EventRecoveryJobHealthStatus
 from .event_recovery_job_health_wait_reason import EventRecoveryJobHealthWaitReason
 from .event_recovery_job_state import EventRecoveryJobState
 from .event_recovery_jobs import EventRecoveryJobs
+from .event_recovery_notification import EventRecoveryNotification
+from .event_recovery_notification_acknowledgement_status import EventRecoveryNotificationAcknowledgementStatus
+from .event_recovery_notification_capture_status import EventRecoveryNotificationCaptureStatus
+from .event_recovery_notification_event import EventRecoveryNotificationEvent
+from .event_recovery_notification_evidence_source import EventRecoveryNotificationEvidenceSource
+from .event_recovery_notification_kind import EventRecoveryNotificationKind
+from .event_recovery_notification_receiver import EventRecoveryNotificationReceiver
+from .event_recovery_notification_receiver_status import EventRecoveryNotificationReceiverStatus
+from .event_recovery_notifications import EventRecoveryNotifications
+from .event_recovery_notifications_receiver_limit import EventRecoveryNotificationsReceiverLimit
 from .event_recovery_preflight import EventRecoveryPreflight
 from .event_recovery_preflight_capacity_scopes import EventRecoveryPreflightCapacityScopes
 from .event_recovery_preflight_item import EventRecoveryPreflightItem
@@ -4064,6 +4074,16 @@ __all__ = (
     "EventRecoveryJobHealthWaitReason",
     "EventRecoveryJobs",
     "EventRecoveryJobState",
+    "EventRecoveryNotification",
+    "EventRecoveryNotificationAcknowledgementStatus",
+    "EventRecoveryNotificationCaptureStatus",
+    "EventRecoveryNotificationEvent",
+    "EventRecoveryNotificationEvidenceSource",
+    "EventRecoveryNotificationKind",
+    "EventRecoveryNotificationReceiver",
+    "EventRecoveryNotificationReceiverStatus",
+    "EventRecoveryNotifications",
+    "EventRecoveryNotificationsReceiverLimit",
     "EventRecoveryPreflight",
     "EventRecoveryPreflightCapacityScopes",
     "EventRecoveryPreflightItem",

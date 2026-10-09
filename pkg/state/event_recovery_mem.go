@@ -21,6 +21,8 @@ type memEventRecoveryItem struct {
 	SnapshotPosition int
 }
 type memEventRecoveryJob struct {
+	NotificationReceipts          map[string]recoveryNotificationReceipt
+	NotificationDeliveryIDs       map[string]map[string]string
 	ExecutionNotificationCaptured bool
 	NextExecutionNotificationAt   time.Time
 
