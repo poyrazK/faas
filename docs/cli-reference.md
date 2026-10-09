@@ -3240,6 +3240,23 @@ Manage scheduled HTTP requests and deployment commands
 
 `gregale crons [<subcommand>]`
 
+### crons next
+
+Show upcoming expression times across app tasks, with state and policy caveats
+
+`gregale crons next [--app <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (linked app or picker by default) |  |
+
+Examples:
+
+```sh
+gregale crons next --app my-api
+gregale crons next --app my-api --json
+```
+
 ### crons list
 
 List cron rules

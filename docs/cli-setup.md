@@ -345,6 +345,32 @@ repeated cursors and bounds page traversal. Only `--app` can accompany
 `--before`, `--limit`, or `--run` as appropriate. The guide reads history without
 firing or canceling tasks.
 
+## View upcoming scheduled tasks
+
+```sh
+gregale crons next --app my-api
+gregale crons next --app my-api --json
+# Use the linked app, or choose one in a terminal:
+gregale crons next
+```
+
+The overview lists HTTP and command tasks, sorted by their next expression time.
+Each row includes the task ID, state, timezone, kind, and target. Times use the
+task's timezone and include the UTC offset; sorting compares actual instants.
+Disabled and suspended tasks remain visible after active tasks, without a next
+time. Schedule policies and overlap controls are labelled when present.
+
+Expression times are candidates, not execution guarantees. Overlap decisions,
+start deadlines, missed-run policies, and execution delays may skip or delay a
+run. The command uses Gregale's shared cron grammar and daylight-saving behavior
+and reads task metadata without firing or updating tasks.
+
+JSON contains `app_slug`, `as_of`, and `items`, including `next_expression_at`,
+state, policy metadata, and execution notes. Invalid schedule metadata is shown
+per task and produces a nonzero exit status while retaining other results.
+Tasks using host-local `Local` timezone need an explicit IANA timezone for a
+reliable preview. Scripts need an explicit or linked app and never prompt.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
