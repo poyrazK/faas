@@ -8964,3 +8964,23 @@ of a later capture's configuration hold. This is a private coordinator seam;
 there is no built-in qualified R2/OVH adapter or public full-stage admission.
 Final whole-stage publication and remaining target compensation are separate
 work. Live provider qualification remains deferred.
+
+### PostgreSQL target compensation proof contract
+
+Private checkpoint target compensation now pins the original retained snapshot,
+restore owner and optional isolation journal. A terminal observation must prove
+permanent fencing of the original restore owner request and every recorded
+isolation request, exact owned target absence, and unchanged source and snapshot.
+Even unused reservations require a permanent restore fence; provider not-found
+cannot settle a delayed or queued restore. Unknown restore outcomes may report an
+independently authenticated owned physical target in their terminal observation,
+without rewriting the original restore plan. Known physical targets must match
+exactly, and source physical resources cannot be cleanup targets. Terminal proof
+replay is immutable and bound to the complete original plan digest.
+
+This is a proof contract, not a native deletion coordinator or mutation authority.
+The remaining implementation must authenticate frozen journals, durably claim
+cleanup dispatch once, observe unknown outcomes without redispatch, and atomically
+retire owned catalogue rows only after credential retirement and this proof. It
+must also block the legacy deletion-only cleanup path for common checkpoints.
+Public full-stage admission remains gated; provider qualification is outstanding.
