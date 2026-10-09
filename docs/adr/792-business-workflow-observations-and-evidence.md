@@ -6,7 +6,7 @@ Accepted for the customer Operations HTTP implementation.
 
 ## Context
 
-Versioned workflow contracts (ADR-725) establish transition continuity and
+Versioned workflow contracts (ADR-818) establish transition continuity and
 milestone evidence. Applications also need to explain business decisions,
 blocked actions, dependencies, confirmed effects, and recovery without moving
 their business rules or external side effects into the platform.

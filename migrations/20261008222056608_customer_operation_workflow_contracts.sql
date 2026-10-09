@@ -1,4 +1,4 @@
--- ADR-725: pin workflow contract versions and retain transition evidence.
+-- ADR-818: pin workflow contract versions and retain transition evidence.
 -- +goose Up
 ALTER TABLE customer_operation_workflow_state_reports
     ADD COLUMN IF NOT EXISTS contract_version integer NOT NULL DEFAULT 1
