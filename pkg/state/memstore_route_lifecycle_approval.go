@@ -47,7 +47,7 @@ func (m *MemStore) ApproveRouteLifecycle(_ context.Context, accountID, appID, ac
 		return a, err
 	}
 	b, c := m.deployments[r.BaselineDeploymentID], m.deployments[r.CandidateDeploymentID]
-	if !routeRemovalProductionScope(b.Scope) || !routeRemovalProductionScope(c.Scope) || !sameLifecycleScope(b.Scope, c.Scope) || !(b.Status == DeployLive && b.TrafficPercent > 0 || b.ID == removal.BaselineDeploymentID) {
+	if !routeRemovalProductionScope(b.Scope) || !routeRemovalProductionScope(c.Scope) || !sameLifecycleScope(b.Scope, c.Scope) || ((b.Status != DeployLive || b.TrafficPercent <= 0) && b.ID != removal.BaselineDeploymentID) {
 		return a, &RouteLifecycleReviewBlockedError{"baseline_not_applicable_to_candidate"}
 	}
 	mappings, _, _ := normalizeLifecycleMappings(r.Mappings)

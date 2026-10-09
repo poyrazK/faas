@@ -42,25 +42,25 @@ func cmdRoutesLifecycleHistory(args []string) int {
 		return jsonOut(writeJSON(page))
 	}
 	if len(page.Entries) == 0 {
-		fmt.Fprintln(osStdout, "No production lifecycle reviews.")
+		_, _ = fmt.Fprintln(osStdout, "No production lifecycle reviews.")
 		return 0
 	}
 	for _, e := range page.Entries {
-		fmt.Fprintf(osStdout, "%s  %s  %s  deployment=%s  scope=%s  recovery=%t\n", previewReportText(e.ID), e.ReviewedAt.Format(time.RFC3339), previewReportText(e.Outcome), previewReportText(e.DeploymentID), previewReportText(e.Scope), e.Recovery)
+		_, _ = fmt.Fprintf(osStdout, "%s  %s  %s  deployment=%s  scope=%s  recovery=%t\n", previewReportText(e.ID), e.ReviewedAt.Format(time.RFC3339), previewReportText(e.Outcome), previewReportText(e.DeploymentID), previewReportText(e.Scope), e.Recovery)
 		if len(e.Decision.Reasons) > 0 {
-			fmt.Fprintf(osStdout, "  reasons: %s\n", previewReportText(strings.Join(e.Decision.Reasons, ", ")))
+			_, _ = fmt.Fprintf(osStdout, "  reasons: %s\n", previewReportText(strings.Join(e.Decision.Reasons, ", ")))
 		}
 		for _, a := range e.Approvals {
-			fmt.Fprintf(osStdout, "  approval=%s used=%t status=%s reason=%s\n", previewReportText(a.ID), a.Used, previewReportText(a.Status), previewReportText(a.StatusReason))
+			_, _ = fmt.Fprintf(osStdout, "  approval=%s used=%t status=%s reason=%s\n", previewReportText(a.ID), a.Used, previewReportText(a.Status), previewReportText(a.StatusReason))
 		}
 		if !e.EvidenceAvailable {
-			fmt.Fprintln(osStdout, "  Historical binding evidence was not recorded.")
+			_, _ = fmt.Fprintln(osStdout, "  Historical binding evidence was not recorded.")
 		} else if e.Truncated {
-			fmt.Fprintln(osStdout, "  Binding metadata truncated; read approval receipts for full pins.")
+			_, _ = fmt.Fprintln(osStdout, "  Binding metadata truncated; read approval receipts for full pins.")
 		}
 	}
 	if page.NextCursor != "" {
-		fmt.Fprintf(osStdout, "Next page: --before %s\n", previewReportText(page.NextCursor))
+		_, _ = fmt.Fprintf(osStdout, "Next page: --before %s\n", previewReportText(page.NextCursor))
 	}
 	return 0
 }

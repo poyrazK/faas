@@ -212,25 +212,25 @@ func cmdRoutesSunsets(args []string) int {
 			return code
 		}
 	} else {
-		fmt.Fprintf(osStdout, "Route sunsets for %s — deployment %s\n", previewReportText(slug), previewReportText(*deployment))
-		fmt.Fprintf(osStdout, "Metadata: %s; capture source %s; capture hash %s; captured %s; import hash %s\n", report.MetadataSource, previewReportText(report.CaptureSource), previewReportText(report.CaptureSHA256), previewReportText(report.CapturedAt), previewReportText(report.ImportedSHA256))
+		_, _ = fmt.Fprintf(osStdout, "Route sunsets for %s — deployment %s\n", previewReportText(slug), previewReportText(*deployment))
+		_, _ = fmt.Fprintf(osStdout, "Metadata: %s; capture source %s; capture hash %s; captured %s; import hash %s\n", report.MetadataSource, previewReportText(report.CaptureSource), previewReportText(report.CaptureSHA256), previewReportText(report.CapturedAt), previewReportText(report.ImportedSHA256))
 		for _, row := range report.Routes {
-			fmt.Fprintf(osStdout, "%s %s: %s; sunset %s; %d observed requests; last %s; contract %s; telemetry %s\n", previewReportText(row.Method), previewReportText(row.Path), row.Status, previewReportText(row.SunsetAt), row.Requests, previewReportText(row.LastObservedAt), row.ContractStatus, row.Evidence)
+			_, _ = fmt.Fprintf(osStdout, "%s %s: %s; sunset %s; %d observed requests; last %s; contract %s; telemetry %s\n", previewReportText(row.Method), previewReportText(row.Path), row.Status, previewReportText(row.SunsetAt), row.Requests, previewReportText(row.LastObservedAt), row.ContractStatus, row.Evidence)
 			for _, caller := range row.Customers {
-				fmt.Fprintf(osStdout, "  consumer %s tenant %s: %d requests, last %s\n", previewReportText(caller.ConsumerID), previewReportText(caller.PlatformTenantID), caller.Requests, previewReportText(caller.LastObservedAt))
+				_, _ = fmt.Fprintf(osStdout, "  consumer %s tenant %s: %d requests, last %s\n", previewReportText(caller.ConsumerID), previewReportText(caller.PlatformTenantID), caller.Requests, previewReportText(caller.LastObservedAt))
 			}
 			for _, target := range row.Successors {
-				fmt.Fprintf(osStdout, "  successor %s %s %s: %s; %d requests; %d old-route callers also observed; %s\n", previewReportText(target.To.App), previewReportText(target.To.Method), previewReportText(target.To.Path), target.ContractStatus, target.Requests, target.CallersAlsoObserved, target.Evidence)
+				_, _ = fmt.Fprintf(osStdout, "  successor %s %s %s: %s; %d requests; %d old-route callers also observed; %s\n", previewReportText(target.To.App), previewReportText(target.To.Method), previewReportText(target.To.Path), target.ContractStatus, target.Requests, target.CallersAlsoObserved, target.Evidence)
 				if !target.IdentityComparable {
-					fmt.Fprintln(osStdout, "    Caller identity overlap is unavailable across apps.")
+					_, _ = fmt.Fprintln(osStdout, "    Caller identity overlap is unavailable across apps.")
 				}
 			}
 			for _, finding := range row.Findings {
-				fmt.Fprintf(osStdout, "  %s\n", finding)
+				_, _ = fmt.Fprintf(osStdout, "  %s\n", finding)
 			}
 		}
 		for _, caveat := range report.Caveats {
-			fmt.Fprintf(osStdout, "Note: %s\n", caveat)
+			_, _ = fmt.Fprintf(osStdout, "Note: %s\n", caveat)
 		}
 	}
 	for _, row := range report.Routes {

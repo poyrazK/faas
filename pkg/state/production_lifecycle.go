@@ -157,17 +157,6 @@ func (m *MemStore) checkProductionLifecycleLocked(proposed map[string]int) error
 	return nil
 }
 
-func pgAuthorizeLifecycleActivation(ctx context.Context, tx pgx.Tx, id string) error {
-	dark, err := sqlc.New().ReadLifecycleDarkActivation(ctx, tx, id)
-	if err != nil {
-		return routePolicyReadError(err)
-	}
-	if dark {
-		return nil
-	}
-	return pgAuthorizeProductionLifecycle(ctx, tx, id, false)
-}
-
 func pgLockProductionLifecycleApp(ctx context.Context, tx pgx.Tx, appID string) error {
 	accountID, err := sqlc.New().ReadLifecycleAppOwner(ctx, tx, appID)
 	if err != nil {

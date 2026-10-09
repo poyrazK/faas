@@ -18,7 +18,7 @@ func readLifecycleApprovalJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	body, err := io.ReadAll(io.LimitReader(file, api.RoutePolicyRequestMaxBytes+1))
 	if err != nil {
 		return err
@@ -102,7 +102,7 @@ func cmdRoutesLifecyclePrepareApproval(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(request))
 	}
-	fmt.Fprintf(osStdout, "Saved pinned lifecycle approval request to %s. Review its mappings, then submit with routes lifecycle approve. Compatibility is checked by the server.\n", previewReportText(*out))
+	_, _ = fmt.Fprintf(osStdout, "Saved pinned lifecycle approval request to %s. Review its mappings, then submit with routes lifecycle approve. Compatibility is checked by the server.\n", previewReportText(*out))
 	return 0
 }
 func cmdRoutesLifecycleApprove(args []string) int {
@@ -159,9 +159,9 @@ func printLifecycleApproval(receipt api.RouteLifecycleApproval) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(receipt))
 	}
-	fmt.Fprintf(osStdout, "Lifecycle approval %s: %s; expires %s\n", previewReportText(receipt.ID), previewReportText(receipt.Compatibility), receipt.ValidUntil.UTC().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(osStdout, "Lifecycle approval %s: %s; expires %s\n", previewReportText(receipt.ID), previewReportText(receipt.Compatibility), receipt.ValidUntil.UTC().Format(time.RFC3339))
 	if receipt.InvalidatedAt != nil {
-		fmt.Fprintln(osStdout, "Invalidated by a capture or routing configuration change; a fresh review is required.")
+		_, _ = fmt.Fprintln(osStdout, "Invalidated by a capture or routing configuration change; a fresh review is required.")
 	}
 	return 0
 }

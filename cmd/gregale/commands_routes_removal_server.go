@@ -56,7 +56,9 @@ func cmdRouteRemovalServer(name string, args []string) int {
 		return printErr("Invalid approval", errors.New("provide exact deployment IDs, --expected-revision, --readiness, --mapping and --acknowledge-observed-only"))
 	}
 	if output != nil && *output != "" {
-		if _, err := os.Lstat(*output); err == nil || !errors.Is(err, os.ErrNotExist) {
+		// The CLI user explicitly selects this local output path. Publishing
+		// uses an exclusive link in writeRoutePolicyPlan and never overwrites.
+		if _, err := os.Lstat(*output); err == nil || !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: explicit local --out path, not remote input.
 			return printErr("Invalid --out", errors.New("choose a new file"))
 		}
 	}
@@ -152,17 +154,17 @@ func cmdRouteRemovalServer(name string, args []string) int {
 }
 
 func renderRouteRemovalServerCheck(w io.Writer, check api.RouteRemovalCheck) {
-	fmt.Fprintf(w, "Route removal: %s (policy %s, revision %d)\n", check.Status, check.Policy.Mode, check.Policy.Revision)
+	_, _ = fmt.Fprintf(w, "Route removal: %s (policy %s, revision %d)\n", check.Status, check.Policy.Mode, check.Policy.Revision)
 	if check.EarliestApprovalAt != nil {
-		fmt.Fprintf(w, "Earliest approval: %s\n", check.EarliestApprovalAt.UTC().Format(time.RFC3339))
+		_, _ = fmt.Fprintf(w, "Earliest approval: %s\n", check.EarliestApprovalAt.UTC().Format(time.RFC3339))
 	}
 	if check.ApprovalValidUntil != nil {
-		fmt.Fprintf(w, "Approval expires: %s\n", check.ApprovalValidUntil.UTC().Format(time.RFC3339))
+		_, _ = fmt.Fprintf(w, "Approval expires: %s\n", check.ApprovalValidUntil.UTC().Format(time.RFC3339))
 	}
 	for _, blocker := range check.Blockers {
-		fmt.Fprintf(w, "Blocker: %s\n", blocker)
+		_, _ = fmt.Fprintf(w, "Blocker: %s\n", blocker)
 	}
 	for _, action := range check.NextActions {
-		fmt.Fprintf(w, "Next: %s\n", action)
+		_, _ = fmt.Fprintf(w, "Next: %s\n", action)
 	}
 }

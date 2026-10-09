@@ -77,9 +77,9 @@ func cmdRoutesLifecycleDeclarations(args []string) int {
 			return code
 		}
 	} else {
-		fmt.Fprintf(osStdout, "Lifecycle declaration review for %s: %s\n", previewReportText(positional[0]), review.Outcome)
+		_, _ = fmt.Fprintf(osStdout, "Lifecycle declaration review for %s: %s\n", previewReportText(positional[0]), review.Outcome)
 		for _, f := range review.Findings {
-			fmt.Fprintf(osStdout, "%s %s: %s (%s)\n", previewReportText(f.Method), previewReportText(f.Path), f.Code, f.Severity)
+			_, _ = fmt.Fprintf(osStdout, "%s %s: %s (%s)\n", previewReportText(f.Method), previewReportText(f.Path), f.Code, f.Severity)
 		}
 	}
 	if *fail && review.Blocking() {

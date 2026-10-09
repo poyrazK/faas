@@ -87,21 +87,21 @@ func cmdRoutesSunsetsDiff(args []string) int {
 			return code
 		}
 	} else {
-		fmt.Fprintf(osStdout, "Sunset changes for %s: %s\n", previewReportText(report.App), report.Outcome)
+		_, _ = fmt.Fprintf(osStdout, "Sunset changes for %s: %s\n", previewReportText(report.App), report.Outcome)
 		for _, finding := range report.Findings {
-			fmt.Fprintf(osStdout, "Evidence: %s\n", finding)
+			_, _ = fmt.Fprintf(osStdout, "Evidence: %s\n", finding)
 		}
 		for _, change := range report.Changes {
-			fmt.Fprintf(osStdout, "%s %s: %s (%s)\n", previewReportText(change.Method), previewReportText(change.Path), change.Classification, strings.Join(change.Signals, ", "))
+			_, _ = fmt.Fprintf(osStdout, "%s %s: %s (%s)\n", previewReportText(change.Method), previewReportText(change.Path), change.Classification, strings.Join(change.Signals, ", "))
 			for _, caller := range change.NewlyObservedCallers {
-				fmt.Fprintf(osStdout, "  newly observed consumer %s tenant %s, last %s\n", previewReportText(caller.ConsumerID), previewReportText(caller.PlatformTenantID), previewReportText(caller.LastObservedAt))
+				_, _ = fmt.Fprintf(osStdout, "  newly observed consumer %s tenant %s, last %s\n", previewReportText(caller.ConsumerID), previewReportText(caller.PlatformTenantID), previewReportText(caller.LastObservedAt))
 			}
 			for _, caller := range change.ReobservedCallers {
-				fmt.Fprintf(osStdout, "  reobserved consumer %s tenant %s, last %s\n", previewReportText(caller.ConsumerID), previewReportText(caller.PlatformTenantID), previewReportText(caller.LastObservedAt))
+				_, _ = fmt.Fprintf(osStdout, "  reobserved consumer %s tenant %s, last %s\n", previewReportText(caller.ConsumerID), previewReportText(caller.PlatformTenantID), previewReportText(caller.LastObservedAt))
 			}
 		}
 		for _, caveat := range report.Caveats {
-			fmt.Fprintf(osStdout, "Note: %s\n", caveat)
+			_, _ = fmt.Fprintf(osStdout, "Note: %s\n", caveat)
 		}
 	}
 	if *incomplete && len(report.Findings) > 0 {
@@ -124,7 +124,7 @@ func readRouteSunsetReport(path string) (routeSunsetReport, error) {
 	if err != nil {
 		return report, errors.New("use a readable regular sunset report without symlinks")
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	body, err := io.ReadAll(io.LimitReader(file, api.RouteImpactReportMaxBytes+1))
 	if err != nil || int64(len(body)) > api.RouteImpactReportMaxBytes {
 		return report, errors.New("sunset report exceeds the report size limit or could not be read")

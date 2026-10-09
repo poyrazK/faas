@@ -244,7 +244,7 @@ func readRouteMigrationDeploymentSetAllowEmpty(ctx context.Context, client *api.
 			return nil, fmt.Errorf("deployment %s returned incomplete identity for app %s", id, app)
 		}
 		inventory, spec := readRouteLifecycleInventory(ctx, client, app, id, deployment.AppID)
-		if inventory.Status != "available" && !(allowEmpty && inventory.Reason == "deployment_contract_has_no_paths") {
+		if inventory.Status != "available" && (!allowEmpty || inventory.Reason != "deployment_contract_has_no_paths") {
 			spec = nil
 		}
 		result[app] = routeMigrationLoadedDeployment{

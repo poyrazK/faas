@@ -38,7 +38,7 @@ func (s *PgStore) ListRouteLifecycleHistory(ctx context.Context, accountID, appI
 	if err != nil {
 		return page, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err = pgRoutePolicySnapshot(ctx, tx, accountID, appID, false); err != nil {
 		return page, err
 	}
