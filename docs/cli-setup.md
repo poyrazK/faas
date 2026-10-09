@@ -40,6 +40,24 @@ This mode requires terminal input and output and cannot be combined with JSON,
 automation mode, setting flags, or the saved-plan flags. For scripts, use
 `scale --plan ... --out plan.json`, then `scale --apply plan.json --confirm`.
 
+## Guided secret entry
+
+Run `gregale secrets set --app my-api --interactive` to enter secret names
+and hidden, single-line values directly. Choose a scope (the linked environment
+is the default) and retention: preserve existing classes, persistent, or
+ephemeral. Ephemeral secrets disable VM snapshots for their scope.
+
+Review the app, scope, retention, and names before confirming. Values are kept
+out of the review and shell arguments. Empty names finish entry; Ctrl-C or
+Ctrl-D cancels before saving. Duplicate names and values exceeding the account
+plan's byte limit are rejected during entry. Keys are saved individually, so
+an error may leave earlier keys saved. After a successful save, the flow offers
+an optional fresh restart, defaulting to no.
+
+The flow requires terminal input and output. It cannot be combined with JSON,
+automation mode, positional values, `--from-stdin`, or `--restart`. For scripts,
+use the existing `--from-stdin` option.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

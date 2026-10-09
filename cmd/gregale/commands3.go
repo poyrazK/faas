@@ -469,6 +469,7 @@ func secretRuntimeReloadTargetsLabel(currentVersion int64, targets []api.SecretR
 func secretsSet(args []string) int {
 	fs := newFlagSet("secrets set", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
+	interactive := fs.Bool("interactive", false, "enter secrets with hidden values and review before saving")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to write into (defaults to linked project environment)")
 	secretClass := fs.String("class", "", "snapshot retention (persistent or ephemeral; omitted updates preserve the class)")
@@ -488,6 +489,12 @@ func secretsSet(args []string) int {
 	if *secretClass != "" && *secretClass != api.SecretClassPersistent && *secretClass != api.SecretClassEphemeral {
 		fmt.Fprintln(os.Stderr, "secret set: --class must be persistent or ephemeral")
 		return 1
+	}
+	if *interactive {
+		if *fromStdin || fs.NArg() != 0 || *restart {
+			return printErr("Invalid interactive secret flags", errors.New("--interactive takes no KEY=VALUE pairs, --from-stdin, or --restart; the flow offers a restart after saving"))
+		}
+		return secretsSetInteractive(*app, *scope, *secretClass)
 	}
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
 	if resolveErr != nil {
@@ -551,14 +558,18 @@ func secretsSet(args []string) int {
 		return printErr("Not logged in", err)
 	}
 
+	return writeSecretsPairs(context.Background(), client, *app, pairs, *scope, *secretClass, *restart)
+}
+
+func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []secretsPair, scope, secretClass string, restart bool) int {
 	keys := make([]string, 0, len(pairs))
 	for _, p := range pairs {
-		if err := client.SetSecretWithScopeAndClass(context.Background(), *app, p.Key, p.Value, *scope, *secretClass); err != nil {
+		if err := client.SetSecretWithScopeAndClass(ctx, app, p.Key, p.Value, scope, secretClass); err != nil {
 			return printErr("Set "+p.Key+" failed", err)
 		}
 		keys = append(keys, p.Key)
 		if !jsonOutput {
-			PrintOK(osStdout, "%s set (scope=%s)", p.Key, scopeOrDefault(*scope))
+			PrintOK(osStdout, "%s set (scope=%s)", p.Key, scopeOrDefault(scope))
 		}
 	}
 	// Move 1 PR-A: post-write quota stamp. After every successful
@@ -582,16 +593,16 @@ func secretsSet(args []string) int {
 	// scopes posture — pkg/api/limits.go::SecretCountMax doc). Pass
 	// scope="" to ListSecretsWithScope for the cross-scope total.
 	if !jsonOutput {
-		printSecretsQuotaStamp(client, *app, *scope)
+		printSecretsQuotaStamp(client, app, scope)
 	}
-	if *restart {
-		out, err := client.RestartAppFresh(context.Background(), *app)
+	if restart {
+		out, err := client.RestartAppFresh(ctx, app)
 		if err != nil {
 			return printErr("Restart failed", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(secretsSetReceipt{
-				App: *app, Status: "updated", Scope: scopeOrDefault(*scope), Keys: keys,
+				App: app, Status: "updated", Scope: scopeOrDefault(scope), Keys: keys,
 				RestartRequested: true, WakeID: out.WakeID,
 			}))
 		}
@@ -600,7 +611,7 @@ func secretsSet(args []string) int {
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(secretsSetReceipt{
-			App: *app, Status: "updated", Scope: scopeOrDefault(*scope), Keys: keys,
+			App: app, Status: "updated", Scope: scopeOrDefault(scope), Keys: keys,
 			Warnings: []string{"Updated secrets apply on the next cold wake; running instances keep their current environment. Use --restart to apply now."},
 		}))
 	}
@@ -648,6 +659,8 @@ func reorderSecretsSetArgs(args []string) ([]string, error) {
 			strings.HasPrefix(a, "--scope=") || strings.HasPrefix(a, "-scope=") ||
 			strings.HasPrefix(a, "--class=") || strings.HasPrefix(a, "-class=") ||
 			strings.HasPrefix(a, "--timeout=") || strings.HasPrefix(a, "-timeout=") ||
+			a == "--interactive" || a == "-interactive" ||
+			strings.HasPrefix(a, "--interactive=") || strings.HasPrefix(a, "-interactive=") ||
 			a == "--from-stdin" || a == "-from-stdin" ||
 			strings.HasPrefix(a, "--from-stdin=") || strings.HasPrefix(a, "-from-stdin=") ||
 			a == "--restart" || a == "-restart" ||

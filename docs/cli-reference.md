@@ -9047,11 +9047,12 @@ gregale secrets list --app my-api --older-than 90d
 
 Set a sealed secret; ephemeral values disable VM snapshots for the scope
 
-`gregale secrets set --app <slug> [--from-stdin] [--scope <SCOPE>] [--class <CLASS>] [--restart] [<KEY=VALUE>...]`
+`gregale secrets set --app <slug> [--interactive] [--from-stdin] [--scope <SCOPE>] [--class <CLASS>] [--restart] [<KEY=VALUE>...]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--interactive` | enter hidden values and confirm names, scope, and retention before saving |  |
 | `--from-stdin` | read KEY=VALUE pairs from stdin |  |
 | `--scope <SCOPE>` | env scope to write (defaults to linked project environment) |  |
 | `--class <CLASS>` | retention: persistent by default; ephemeral disables init/warm captures and forces cold boots; omission preserves an existing class | one of `persistent` · `ephemeral` |
@@ -9060,6 +9061,7 @@ Set a sealed secret; ephemeral values disable VM snapshots for the scope
 Examples:
 
 ```sh
+gregale secrets set --app my-api --interactive
 gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL"
 printf '%s\n' "DATABASE_URL=$DATABASE_URL" | gregale secrets set --app my-api --from-stdin
 gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL" --restart
