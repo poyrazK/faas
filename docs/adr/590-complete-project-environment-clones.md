@@ -8782,3 +8782,52 @@ retirement journal, atomic bucket-state completion and the private compensation
 coordinator are still required before dispatching any native deletion. Local
 publication withdrawal is not native retirement proof. No provider adapter or
 public full-stage path is enabled; live R2/OVH qualification remains deferred.
+
+### Private durable native object retirement
+
+Private checkpoint compensation now reserves, claims and finishes native target
+retirement through an append-only SQLC journal. Only the operation's current
+compensating worker lease can use it. The original released checkpoint, frozen
+bindings, manifests and deterministic private target placement are authenticated
+before every transition. The original creation record and optional copy record
+are pinned in full, including unknown outcomes. Copy inventory must match the
+original manifest and source placement; any existing comparison also witnesses
+completed original copy and its unchanged digest. Local publication must already
+be withdrawn with its entire revoked credential audit matrix, secrets and grants
+matching exactly. Foreign credentials, including revoked rows, remain blockers.
+
+Claim changes planned to requested and commits before granting dispatch. Failed
+or lost claim acknowledgement grants no dispatch authority. A requested or
+retired journal is never dispatched again, including after worker handoff. If a
+claimed request has no independently available closure receipt, compensation
+stops until that proof becomes available; absence does not justify retrying the
+native write. Missing creation means no native request was locally authorized,
+not proof of native bucket deletion. Missing or changed dependencies of an
+existing creation are conflicts rather than skipped cleanup.
+
+Finish validates the permanent-fence/source-preservation receipt defined above,
+then records it and marks the exact owned bucket deleted in one transaction.
+The lease is checked again after both mutations. Late expiry rolls back both
+changes. Terminal replay authenticates the same receipt and requires the bucket
+to remain deleted; revival or changed provenance is rejected without repair.
+Compensation alone can authenticate original placement metadata after sibling
+target deletion. Capture, creation, copy and publication retain their existing
+live-target checks. Retained original checkpoint journals remain necessary for
+provenance, but source health and renewed provider retention are not cleanup
+prerequisites. Retirement request plans are bounded by
+`ObjectCheckpointRetirementPlanMaxBytes` (17 MiB, including original copy
+inventory and creation metadata). Downgrade refuses every owned journal state,
+including completed retirement evidence.
+
+The private coordinator withdraws local object publication before native IO,
+renews the compensation lease per source, checks admission around dispatch and
+observation, and processes only frozen source bindings. It accepts a qualified
+retirement/observation adapter; no built-in R2 or OVH adapter is enabled. Tests
+cover lost reserve/claim/native/finish replies, immutable worker handoff, partial
+creation/copy, planned requests, unknown outcomes, no-creation behavior, stale
+workers, admission fences, foreign placement/credentials/grants, changed copy
+provenance and deadlines, late expiry before and after bucket mutation, atomic
+rollback, changed terminal receipts, revival and guarded migration round trips.
+Native provider qualification and the final full-stage publication bridge remain
+outstanding. Public full-stage capture stays gated, and live R2/OVH qualification
+remains deferred at the user's request.

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"reflect"
 	"time"
 )
@@ -20,6 +21,13 @@ type ProjectEnvironmentCloneCheckpointObjectRetirement struct {
 	Plan                     ProjectEnvironmentCloneCheckpointObjectRetirementPlan
 	State, ObservationSHA256 string
 	RequestedAt              time.Time
+	Observation              ProjectEnvironmentCloneCheckpointObjectRetirementObservation
+}
+
+type ProjectEnvironmentCloneCheckpointObjectRetirementStore interface {
+	ReserveProjectEnvironmentCloneCheckpointObjectRetirement(context.Context, ProjectEnvironmentCloneLease, string) (ProjectEnvironmentCloneCheckpointObjectRetirement, error)
+	ClaimProjectEnvironmentCloneCheckpointObjectRetirement(context.Context, ProjectEnvironmentCloneLease, string) (ProjectEnvironmentCloneCheckpointObjectRetirement, bool, error)
+	FinishProjectEnvironmentCloneCheckpointObjectRetirement(context.Context, ProjectEnvironmentCloneLease, string, ProjectEnvironmentCloneCheckpointObjectRetirementObservation) error
 }
 
 // Absence alone is insufficient: a qualified native observer must attest that

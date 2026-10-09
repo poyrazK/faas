@@ -7913,5 +7913,19 @@
       "withdrawn_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_retirements",
+    "columns": [
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "retired_at",
+      "source_bucket_id",
+      "state"
+    ],
+    "kind": "operational"
   }
 ]

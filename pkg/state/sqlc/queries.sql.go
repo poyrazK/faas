@@ -2581,6 +2581,41 @@ func (q *Queries) ClaimCloneCheckpointObjectCopy(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const claimCloneCheckpointObjectRetirement = `-- name: ClaimCloneCheckpointObjectRetirement :one
+UPDATE project_environment_clone_checkpoint_object_retirements i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_bucket_id=$2::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='compensating'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_bucket_id, i.plan, i.state, i.requested_at, i.observation, i.observation_sha256, i.retired_at
+`
+
+type ClaimCloneCheckpointObjectRetirementParams struct {
+	OperationID      pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointObjectRetirement(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectRetirementParams) (ProjectEnvironmentCloneCheckpointObjectRetirement, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointObjectRetirement,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
 const claimCloneCheckpointObjectTarget = `-- name: ClaimCloneCheckpointObjectTarget :one
 UPDATE project_environment_clone_checkpoint_object_targets t SET state='requested',requested_at=clock_timestamp()
 WHERE t.operation_id=$1::uuid AND t.source_bucket_id=$2::uuid AND t.state='planned'
@@ -13353,6 +13388,71 @@ func (q *Queries) FinishCloneCheckpointObjectCopy(ctx context.Context, db DBTX, 
 	return result.RowsAffected(), nil
 }
 
+const finishCloneCheckpointObjectRetirement = `-- name: FinishCloneCheckpointObjectRetirement :execrows
+UPDATE project_environment_clone_checkpoint_object_retirements i SET state='retired',observation=$1::jsonb,observation_sha256=$2::text,retired_at=clock_timestamp()
+WHERE i.operation_id=$3::uuid AND i.source_bucket_id=$4::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='compensating'
+AND o.revision=$5::bigint AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointObjectRetirementParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	SourceBucketID    pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointObjectRetirement(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectRetirementParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointObjectRetirement,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointObjectRetirementBucket = `-- name: FinishCloneCheckpointObjectRetirementBucket :execrows
+UPDATE object_buckets b SET state='deleted',attempt_count=0,last_error_code='',retry_at=clock_timestamp(),updated_at=clock_timestamp()
+FROM project_environment_clone_operations o
+WHERE b.id=$1::uuid AND b.environment_clone_operation_id=o.id
+AND b.environment_clone_source_bucket_id=$2::uuid AND b.account_id=o.account_id
+AND b.state IN ('provisioning','ready','deleting') AND b.lease_token IS NULL AND b.lease_until IS NULL
+AND NOT b.public_read AND b.serve_at IS NULL
+AND o.id=$3::uuid AND o.status='compensating' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp()
+AND EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_retirements i WHERE i.operation_id=o.id AND i.source_bucket_id=b.environment_clone_source_bucket_id AND i.state='retired')
+`
+
+type FinishCloneCheckpointObjectRetirementBucketParams struct {
+	TargetBucketID   pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointObjectRetirementBucket(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectRetirementBucketParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointObjectRetirementBucket,
+		arg.TargetBucketID,
+		arg.SourceBucketID,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishCloneCheckpointObjectTargetBucket = `-- name: FinishCloneCheckpointObjectTargetBucket :execrows
 UPDATE object_buckets b SET state='ready',updated_at=clock_timestamp()
 WHERE b.id=$1::uuid AND b.environment_clone_operation_id=$2::uuid
@@ -17260,6 +17360,43 @@ func (q *Queries) InsertCloneCheckpointObjectPublicationSecret(ctx context.Conte
 		arg.CredentialID,
 	)
 	return err
+}
+
+const insertCloneCheckpointObjectRetirement = `-- name: InsertCloneCheckpointObjectRetirement :one
+INSERT INTO project_environment_clone_checkpoint_object_retirements(operation_id,source_bucket_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='compensating' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_bucket_id, plan, state, requested_at, observation, observation_sha256, retired_at
+`
+
+type InsertCloneCheckpointObjectRetirementParams struct {
+	SourceBucketID   pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectRetirementParams) (ProjectEnvironmentCloneCheckpointObjectRetirement, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointObjectRetirement,
+		arg.SourceBucketID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
 }
 
 const insertCloneCheckpointObjectTarget = `-- name: InsertCloneCheckpointObjectTarget :one
@@ -47732,6 +47869,31 @@ func (q *Queries) ReadCloneCheckpointObjectPublicationSecrets(ctx context.Contex
 		return nil, err
 	}
 	return items, nil
+}
+
+const readCloneCheckpointObjectRetirement = `-- name: ReadCloneCheckpointObjectRetirement :one
+SELECT operation_id, source_bucket_id, plan, state, requested_at, observation, observation_sha256, retired_at FROM project_environment_clone_checkpoint_object_retirements WHERE operation_id=$1 AND source_bucket_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointObjectRetirementParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointObjectRetirement(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectRetirementParams) (ProjectEnvironmentCloneCheckpointObjectRetirement, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointObjectRetirement, arg.OperationID, arg.SourceBucketID)
+	var i ProjectEnvironmentCloneCheckpointObjectRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
 }
 
 const readCloneCheckpointObjectTarget = `-- name: ReadCloneCheckpointObjectTarget :one

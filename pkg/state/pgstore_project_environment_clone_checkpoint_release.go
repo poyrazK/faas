@@ -66,6 +66,15 @@ func readCloneCheckpointReleaseTx(ctx context.Context, tx pgx.Tx, op ProjectEnvi
 // Reconstruct the original adoption from retained local journals, never from
 // current source configuration. Missing or modified captures cannot be repaired.
 func validateCloneCheckpointReleaseJournalsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, in ProjectEnvironmentCloneCheckpointRelease, requireHolds bool) error {
+	return validateCloneCheckpointReleaseJournalsWithRetiredTargetsTx(ctx, tx, op, in, requireHolds, false)
+}
+
+// Only compensation can authenticate original placement metadata after target
+// retirement. This permits no new capture, creation, copy or publication.
+func validateCloneCheckpointReleaseJournalsWithRetiredTargetsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, in ProjectEnvironmentCloneCheckpointRelease, requireHolds, allowRetired bool) error {
+	if allowRetired && (op.Status != CloneOperationCompensating || requireHolds || in.State != "released") {
+		return ErrConflict
+	}
 	records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
 	if err != nil {
 		return err
@@ -74,7 +83,11 @@ func validateCloneCheckpointReleaseJournalsTx(ctx context.Context, tx pgx.Tx, op
 	if err != nil {
 		return err
 	}
-	if err := validateCloneCheckpointReleasePlan(op, in, views); err != nil {
+	validatePlan := validateCloneCheckpointReleasePlan
+	if allowRetired {
+		validatePlan = validateCloneCheckpointReleasePlanContents
+	}
+	if err := validatePlan(op, in, views); err != nil {
 		return fmt.Errorf("checkpoint release original plan: %w", err)
 	}
 	adoption := ProjectEnvironmentCloneCheckpointAdoption{Receipt: in.Receipt}
@@ -103,14 +116,18 @@ func validateCloneCheckpointReleaseJournalsTx(ctx context.Context, tx pgx.Tx, op
 			if err != nil {
 				return err
 			}
-			row, err := sqlc.New().ReadProjectEnvironmentCloneObjectBucket(ctx, tx, sqlc.ReadProjectEnvironmentCloneObjectBucketParams{AccountID: mustPgUUID(op.AccountID), AppID: mustPgUUID(source.AppID), ID: mustPgUUID(manifest.TargetBucketID), EnvironmentCloneOperationID: mustPgUUID(op.ID)})
+			row, err := readCloneCheckpointReleaseTargetTx(ctx, tx, op, source.AppID, manifest.TargetBucketID, allowRetired)
 			if err != nil {
 				return ErrConflict
 			}
 			target := objectBucketFromSQL(row)
 			want.ID = target.ID
 			want.PhysicalName = "gregale-" + strings.ReplaceAll(target.ID, "-", "")
-			if validateCloneBucketReservation(want, target, frozen) != nil {
+			placement := target
+			if allowRetired && (placement.State == "deleting" || placement.State == "deleted") {
+				placement.State = "ready"
+			}
+			if validateCloneBucketReservation(want, placement, frozen) != nil {
 				return ErrConflict
 			}
 			captured := ProjectEnvironmentCloneCheckpointManifest{SourceBucketID: source.ID, Hash: manifest.Hash, CapturedAt: manifest.CapturedAt, Objects: make([]ProjectEnvironmentCloneObjectVersion, len(manifest.Objects))}
@@ -155,6 +172,13 @@ func validateCloneCheckpointReleaseJournalsTx(ctx context.Context, tx pgx.Tx, op
 		}
 	}
 	return nil
+}
+
+func readCloneCheckpointReleaseTargetTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, appID, targetID string, allowRetired bool) (sqlc.ObjectBucket, error) {
+	if allowRetired {
+		return sqlc.New().LockCloneCheckpointObjectPublicationBucket(ctx, tx, sqlc.LockCloneCheckpointObjectPublicationBucketParams{AccountID: mustPgUUID(op.AccountID), AppID: mustPgUUID(appID), ID: mustPgUUID(targetID), EnvironmentCloneOperationID: mustPgUUID(op.ID)})
+	}
+	return sqlc.New().ReadProjectEnvironmentCloneObjectBucket(ctx, tx, sqlc.ReadProjectEnvironmentCloneObjectBucketParams{AccountID: mustPgUUID(op.AccountID), AppID: mustPgUUID(appID), ID: mustPgUUID(targetID), EnvironmentCloneOperationID: mustPgUUID(op.ID)})
 }
 
 func (s *PgStore) ProjectEnvironmentCloneCheckpointReleaseForLease(ctx context.Context, lease ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneCheckpointRelease, error) {

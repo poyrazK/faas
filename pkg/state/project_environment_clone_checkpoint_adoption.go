@@ -77,7 +77,16 @@ func cloneCheckpointAdoptionSHA(in ProjectEnvironmentCloneCheckpointAdoption) st
 }
 
 func validateCloneCheckpointAdoptionReceipt(op ProjectEnvironmentCloneOperation, in ProjectEnvironmentCloneCheckpointAdoption) error {
-	if op.Status != CloneOperationCapturing || len(op.Resources) < 2 {
+	if op.Status != CloneOperationCapturing {
+		return ErrConflict
+	}
+	return validateCloneCheckpointAdoptionReceiptContents(op, in)
+}
+
+// Immutable receipt authentication is also needed during compensation. This
+// helper grants no adoption authority; writers retain the capturing-state fence.
+func validateCloneCheckpointAdoptionReceiptContents(op ProjectEnvironmentCloneOperation, in ProjectEnvironmentCloneCheckpointAdoption) error {
+	if len(op.Resources) < 2 {
 		return ErrConflict
 	}
 	intent, proof := op.Resources[0], op.Resources[1]

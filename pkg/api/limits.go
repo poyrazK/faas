@@ -8823,3 +8823,6 @@ const EnvironmentFieldOwnershipMaxPaths = 1024
 // entitlement. One retained original request exists per private target bucket.
 const ObjectCheckpointVerificationPlanMaxBytes = 16 << 20
 const ObjectCheckpointVerificationBytesPerSideMax int64 = 5 << 40
+
+// Native retirement embeds the bounded original copy plan plus creation metadata.
+const ObjectCheckpointRetirementPlanMaxBytes = 17 << 20

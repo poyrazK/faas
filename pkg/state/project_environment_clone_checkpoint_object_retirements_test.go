@@ -189,3 +189,33 @@ func TestCheckpointObjectRetirementPlanTampering(t *testing.T) {
 		t.Fatal("copy evidence without an original copy journal accepted")
 	}
 }
+
+func TestCheckpointObjectRetirementReceiptAuthenticationDoesNotGrantCaptureAuthority(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	bucket := ProjectEnvironmentCloneObjectBucket{ID: "source", BackendID: "backend", BackendFingerprint: strings.Repeat("b", 64), PhysicalName: "production-source"}
+	views := []ProjectEnvironmentCloneBindings{{AppID: "app", SourceScope: "production", ProjectEnvironmentCloneBindingDefinitions: ProjectEnvironmentCloneBindingDefinitions{Buckets: []ProjectEnvironmentCloneObjectBucket{bucket}}}}
+	op := ProjectEnvironmentCloneOperation{ID: "owner", AccountID: "account", ProjectID: "project", SourceEnvironment: "production", SourceRevisionHash: strings.Repeat("a", 64)}
+	plan := ProjectEnvironmentCloneCheckpointPlan{OperationID: op.ID, AccountID: op.AccountID, ProjectID: op.ProjectID, SourceEnvironment: op.SourceEnvironment, SourceRevisionHash: op.SourceRevisionHash, ConfigurationGeneration: 2, ConfigurationHeldAt: now.Add(-time.Second), Sources: []ProjectEnvironmentCloneCheckpointSource{{Kind: "object_storage", ID: bucket.ID, AppID: "app", Scope: "production", BackendID: bucket.BackendID, BackendFingerprint: bucket.BackendFingerprint, ProviderResourceID: bucket.PhysicalName, DefinitionSHA256: cloneCheckpointSHA(bucket)}}}
+	receipt := ProjectEnvironmentCloneCheckpointReceipt{RequestID: op.ID, PlanSHA256: cloneCheckpointSHA(plan), CheckpointID: "checkpoint", CapturedAt: now, CompleteWriterCoverage: true, Sources: []ProjectEnvironmentCloneCheckpointSourceReceipt{{Kind: "object_storage", ID: bucket.ID, CaptureIdentity: "retained"}}}
+	point := now.Format(time.RFC3339Nano)
+	op.Resources = []ProjectEnvironmentCloneResource{{Kind: "data_checkpoint", Name: op.SourceEnvironment, SourceID: op.ID, TargetID: receipt.CheckpointID, SourceVersion: receipt.PlanSHA256, CapturePoint: point, Status: "captured"}, {Kind: "data_checkpoint_receipt", Name: op.SourceEnvironment, SourceID: receipt.CheckpointID, SourceVersion: cloneCheckpointSHA(receipt), CapturePoint: point, Status: "captured"}}
+	in := ProjectEnvironmentCloneCheckpointRelease{Plan: plan, Receipt: receipt, State: "released"}
+	adoption := ProjectEnvironmentCloneCheckpointAdoption{Receipt: receipt}
+	for _, status := range []string{CloneOperationCapturing, CloneOperationCompensating, CloneOperationFailed, CloneOperationReady} {
+		op.Status = status
+		if err := validateCloneCheckpointAdoptionReceiptContents(op, adoption); err != nil {
+			t.Fatal("immutable receipt authentication", status, err)
+		}
+		if err := validateCloneCheckpointReleasePlanContents(op, in, views); err != nil {
+			t.Fatal("immutable release authentication", status, err)
+		}
+		capture := status == CloneOperationCapturing
+		if (validateCloneCheckpointAdoptionReceipt(op, adoption) == nil) != capture || (validateCloneCheckpointReleasePlan(op, in, views) == nil) != capture {
+			t.Fatal("frozen receipt granted capture authority", status)
+		}
+	}
+	op.Resources[1].SourceVersion = strings.Repeat("f", 64)
+	if validateCloneCheckpointAdoptionReceiptContents(op, adoption) == nil || validateCloneCheckpointReleasePlanContents(op, in, views) == nil {
+		t.Fatal("changed frozen receipt accepted")
+	}
+}

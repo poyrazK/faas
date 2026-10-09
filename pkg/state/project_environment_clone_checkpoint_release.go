@@ -88,12 +88,19 @@ func validateCloneCheckpointReleaseObservation(in ProjectEnvironmentCloneCheckpo
 }
 
 func validateCloneCheckpointReleasePlan(op ProjectEnvironmentCloneOperation, in ProjectEnvironmentCloneCheckpointRelease, views []ProjectEnvironmentCloneBindings) error {
+	if op.Status != CloneOperationCapturing {
+		return ErrConflict
+	}
+	return validateCloneCheckpointReleasePlanContents(op, in, views)
+}
+
+func validateCloneCheckpointReleasePlanContents(op ProjectEnvironmentCloneOperation, in ProjectEnvironmentCloneCheckpointRelease, views []ProjectEnvironmentCloneBindings) error {
 	p, r := in.Plan, in.Receipt
 	if p.OperationID != op.ID || p.AccountID != op.AccountID || p.ProjectID != op.ProjectID || p.SourceEnvironment != op.SourceEnvironment ||
 		p.SourceRevisionHash != op.SourceRevisionHash || p.SourceReleaseSetID != op.SourceReleaseSetID || p.ConfigurationGeneration < 2 ||
 		p.ConfigurationHeldAt.IsZero() || p.ConfigurationHeldAt.Location() != time.UTC || p.ConfigurationHeldAt.Nanosecond()%1000 != 0 ||
 		r.CapturedAt.Before(p.ConfigurationHeldAt) || r.PlanSHA256 != cloneCheckpointSHA(p) ||
-		validateCloneCheckpointAdoptionReceipt(op, ProjectEnvironmentCloneCheckpointAdoption{Receipt: r}) != nil {
+		validateCloneCheckpointAdoptionReceiptContents(op, ProjectEnvironmentCloneCheckpointAdoption{Receipt: r}) != nil {
 		return ErrConflict
 	}
 	expected := map[string]ProjectEnvironmentCloneCheckpointSource{}

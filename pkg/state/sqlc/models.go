@@ -5082,6 +5082,17 @@ type ProjectEnvironmentCloneCheckpointObjectPublication struct {
 	WithdrawnAt pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneCheckpointObjectRetirement struct {
+	OperationID       pgtype.UUID
+	SourceBucketID    pgtype.UUID
+	Plan              []byte
+	State             string
+	RequestedAt       pgtype.Timestamptz
+	Observation       []byte
+	ObservationSha256 pgtype.Text
+	RetiredAt         pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneCheckpointObjectTarget struct {
 	OperationID       pgtype.UUID
 	SourceBucketID    pgtype.UUID
