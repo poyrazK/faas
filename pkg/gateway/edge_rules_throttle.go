@@ -77,6 +77,7 @@ import "net/http"
 //     0 = use plan default at apply time (resolver
 //     in cmd-side compileThrottleRules).
 type EdgeRuleThrottleResolved struct {
+	EdgeRuleCondition
 	ID                string
 	AccountID         string
 	AppID             string

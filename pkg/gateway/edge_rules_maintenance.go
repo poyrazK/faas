@@ -48,6 +48,7 @@ import "net/http"
 // Message may be empty (the generic Problem body is fine for v1);
 // the 512-byte cap is apid-Validate-only.
 type EdgeRuleMaintenanceResolved struct {
+	EdgeRuleCondition
 	ID                string
 	AccountID         string
 	AppID             string

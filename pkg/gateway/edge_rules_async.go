@@ -17,6 +17,7 @@ import (
 // retry and maximum-age controls override the invocation defaults; omitted
 // controls preserve the existing behavior.
 type EdgeRuleAsyncResolved struct {
+	EdgeRuleCondition
 	ID               string
 	AccountID        string
 	AppID            string

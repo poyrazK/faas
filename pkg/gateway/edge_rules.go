@@ -143,6 +143,7 @@ const reasonOther = "other"
 // PR 4-7's per-kind actions read them out of `state.EdgeRule` again
 // at the kind-specific code path.
 type EdgeRuleResolved struct {
+	EdgeRuleCondition
 	ID            string
 	AccountID     string
 	AppID         string
@@ -159,6 +160,7 @@ type EdgeRuleResolved struct {
 // for trailing-`*` From patterns — applied via stdlib path.Match
 // + string replace at filter time).
 type EdgeRuleRewriteResolved struct {
+	EdgeRuleCondition
 	ID           string
 	AccountID    string
 	AppID        string
@@ -175,6 +177,7 @@ type EdgeRuleRewriteResolved struct {
 // ∈ {301,302,307,308}; the loader defaults to 302 when 0. Headers
 // are stamped on the response via w.Header().Set before the redirect.
 type EdgeRuleRedirectResolved struct {
+	EdgeRuleCondition
 	ID           string
 	AccountID    string
 	AppID        string
@@ -203,6 +206,7 @@ type EdgeRuleHeaderOp struct {
 // Ops apply in declared order (Cloudflare's "first wins" rule for
 // `set`); the order is preserved from the customer's wire input.
 type EdgeRuleHeadersResolved struct {
+	EdgeRuleCondition
 	ID              string
 	AccountID       string
 	AppID           string
@@ -229,6 +233,7 @@ type EdgeRuleHeadersResolved struct {
 // at create-time so the gateway stamper can trust the input
 // shape.
 type EdgeRuleCORSResolved struct {
+	EdgeRuleCondition
 	ID               string
 	AccountID        string
 	AppID            string
@@ -261,6 +266,7 @@ type EdgeRuleCORSResolved struct {
 // per the apid-Validate guard (ADR-091 D10). Algorithms is the
 // closed {RS,ES}{256,384,512} vocabulary (HS* dropped — D11).
 type EdgeRuleJWTResolved struct {
+	EdgeRuleCondition
 	ID             string
 	AccountID      string
 	AppID          string
@@ -297,6 +303,7 @@ type EdgeRuleJWTResolved struct {
 // parse error — apid-Validate already calls net.ParseCIDR once,
 // but the SQL hotfix path means we can't trust the validator.
 type EdgeRuleIPResolved struct {
+	EdgeRuleCondition
 	ID           string
 	AccountID    string
 	AppID        string
@@ -328,6 +335,7 @@ type EdgeRuleIPResolved struct {
 // to pass-through unless this is true. Body validation needs the
 // full body, which streaming doesn't have.
 type EdgeRuleValidateResolved struct {
+	EdgeRuleCondition
 	ID                  string
 	AccountID           string
 	AppID               string
@@ -363,6 +371,7 @@ type EdgeRuleValidateResolved struct {
 // for defense-in-depth (the §11 spirit — abuse gates must not
 // hinge on a single validator's correctness).
 type EdgeRuleGeoResolved struct {
+	EdgeRuleCondition
 	ID           string
 	AccountID    string
 	AppID        string

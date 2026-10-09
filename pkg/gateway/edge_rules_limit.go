@@ -43,6 +43,7 @@ import "net/http"
 // picks the right cap per request based on whether the inbound is
 // on the streaming path.
 type EdgeRuleLimitResolved struct {
+	EdgeRuleCondition
 	ID                    string
 	AccountID             string
 	AppID                 string

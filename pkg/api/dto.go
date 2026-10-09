@@ -9607,8 +9607,10 @@ type EdgeRuleResponse struct {
 	// reports that it has passed (the row is kept for the listing).
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Expired   bool       `json:"expired,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	// Match (ADR-733) is the optional condition ANDed with the selectors.
+	Match     *EdgeRuleMatchExpr `json:"match,omitempty"`
+	CreatedAt time.Time          `json:"created_at"`
+	UpdatedAt time.Time          `json:"updated_at"`
 }
 
 // Edge-rule metadata bounds; the edge_rules CHECK constraints mirror them.
@@ -9643,18 +9645,19 @@ func ValidateEdgeRuleMetadata(name, description *string, expiresAt *time.Time, n
 // action-level `action.validate_mode` (deprecated). Empty == 'block'
 // (the SQL-side default; the column is NOT NULL).
 type CreateEdgeRuleRequest struct {
-	MatchHost    string            `json:"match_host"`
-	MatchPath    string            `json:"match_path"`
-	MatchMethods []string          `json:"match_methods,omitempty"`
-	MatchHeaders map[string]string `json:"match_headers,omitempty"`
-	Priority     *int              `json:"priority,omitempty"`
-	Enabled      *bool             `json:"enabled,omitempty"`
-	Kind         string            `json:"kind"`
-	ValidateMode string            `json:"validate_mode,omitempty"`
-	Action       json.RawMessage   `json:"action"`
-	Name         string            `json:"name,omitempty"`
-	Description  string            `json:"description,omitempty"`
-	ExpiresAt    *time.Time        `json:"expires_at,omitempty"`
+	MatchHost    string             `json:"match_host"`
+	MatchPath    string             `json:"match_path"`
+	MatchMethods []string           `json:"match_methods,omitempty"`
+	MatchHeaders map[string]string  `json:"match_headers,omitempty"`
+	Priority     *int               `json:"priority,omitempty"`
+	Enabled      *bool              `json:"enabled,omitempty"`
+	Kind         string             `json:"kind"`
+	ValidateMode string             `json:"validate_mode,omitempty"`
+	Action       json.RawMessage    `json:"action"`
+	Name         string             `json:"name,omitempty"`
+	Description  string             `json:"description,omitempty"`
+	ExpiresAt    *time.Time         `json:"expires_at,omitempty"`
+	Match        *EdgeRuleMatchExpr `json:"match,omitempty"`
 }
 
 // UpdateEdgeRuleRequest is the wire shape for PATCH /v1/edge-rules/{id}.
@@ -9681,6 +9684,9 @@ type UpdateEdgeRuleRequest struct {
 	// then applies indefinitely). Setting both is rejected.
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	ClearExpiresAt bool       `json:"clear_expires_at,omitempty"`
+	// Match replaces the condition (ADR-733); ClearMatch removes it.
+	Match      *EdgeRuleMatchExpr `json:"match,omitempty"`
+	ClearMatch bool               `json:"clear_match,omitempty"`
 }
 
 // EdgeRuleSetVersionResponse (ADR-732) describes one recorded state of an

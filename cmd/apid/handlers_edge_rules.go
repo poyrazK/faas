@@ -89,6 +89,7 @@ func edgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 		Description:  r.Description,
 		ExpiresAt:    r.ExpiresAt,
 		Expired:      r.EdgeRuleExpired(time.Now()),
+		Match:        r.Match,
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 	}
@@ -464,6 +465,7 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		Name:         req.Name,
 		Description:  req.Description,
 		ExpiresAt:    utcTimePtr(req.ExpiresAt),
+		Match:        req.Match,
 	}, limits)
 	if err != nil {
 		convergence.abort(r.Context())
@@ -537,6 +539,9 @@ func validateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 		return api.ErrValidation(fmt.Sprintf("match_path exceeds 2048 chars (got %d)", len(req.MatchPath)))
 	}
 	if prob := api.ValidateEdgeRuleMetadata(&req.Name, &req.Description, req.ExpiresAt, time.Now()); prob != nil {
+		return prob
+	}
+	if prob := api.ValidateEdgeRuleMatch(req.Match); prob != nil {
 		return prob
 	}
 	if req.Priority != nil {
@@ -881,6 +886,14 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, prob)
 		return
 	}
+	if req.Match != nil && req.ClearMatch {
+		api.WriteProblem(w, api.ErrValidation("match and clear_match are mutually exclusive"))
+		return
+	}
+	if prob := api.ValidateEdgeRuleMatch(req.Match); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if req.Action != nil {
 		prob := validateEdgeRuleAction(string(row.Kind), *req.Action, acct.Plan)
 		if prob != nil {
@@ -1000,6 +1013,8 @@ func edgeRuleUpdateParamsFrom(req api.UpdateEdgeRuleRequest, kind state.EdgeRule
 		Enabled:      req.Enabled,
 		Name:         req.Name,
 		Description:  req.Description,
+		Match:        req.Match,
+		ClearMatch:   req.ClearMatch,
 	}
 	switch {
 	case req.ClearExpiresAt:

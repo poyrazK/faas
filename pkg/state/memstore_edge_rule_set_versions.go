@@ -63,6 +63,7 @@ func edgeRuleSnapshotRows(rules []EdgeRule) []edgeRuleSnapshotRow {
 			MatchHeaders: r.MatchHeaders, Priority: r.Priority, Enabled: r.Enabled,
 			Kind: string(r.Kind), Action: r.Action, ValidateMode: r.ValidateMode,
 			CorsPresetID: r.CorsPresetID, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
+			MatchExpr: r.Match,
 		}
 		if r.ManifestKey != "" {
 			row.ManifestKey = &r.ManifestKey
