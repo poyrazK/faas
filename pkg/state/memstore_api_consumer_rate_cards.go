@@ -8,11 +8,18 @@ import (
 	"github.com/google/uuid"
 )
 
-func (m *MemStore) CreateAPIConsumerRateCard(_ context.Context, accountID, appID, currency string, price int64, effectiveFrom time.Time) (APIConsumerRateCard, error) {
+func (m *MemStore) CreateAPIConsumerRateCard(ctx context.Context, accountID, appID, currency string, price int64, effectiveFrom time.Time) (APIConsumerRateCard, error) {
+	return m.CreateAPIConsumerRateCardWithAllowance(ctx, accountID, appID, currency, price, 0, effectiveFrom)
+}
+
+func (m *MemStore) CreateAPIConsumerRateCardWithAllowance(_ context.Context, accountID, appID, currency string, price, includedUnitsPerMonth int64, effectiveFrom time.Time) (APIConsumerRateCard, error) {
 	currency = normalizeAPIConsumerRateCardCurrency(currency)
 	effectiveFrom = effectiveFrom.UTC()
 	if err := validateAPIConsumerRateCardInput("CreateAPIConsumerRateCard", accountID, appID, currency, price, effectiveFrom); err != nil {
 		return APIConsumerRateCard{}, err
+	}
+	if includedUnitsPerMonth < 0 {
+		return APIConsumerRateCard{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -29,6 +36,7 @@ func (m *MemStore) CreateAPIConsumerRateCard(_ context.Context, accountID, appID
 		Currency:               currency,
 		Unit:                   APIConsumerRateCardUnitRequest,
 		PriceMillicentsPerUnit: price,
+		IncludedUnitsPerMonth:  includedUnitsPerMonth,
 		EffectiveFrom:          effectiveFrom,
 		CreatedAt:              now,
 	}

@@ -98,8 +98,12 @@ func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput
 		if bucket.BillableUnits < 0 || bucket.PriceMillicentsPerUnit < 0 || bucket.AmountMillicents < 0 {
 			return fmt.Errorf("consumer usage statement: bucket %d values must be non-negative", i)
 		}
+		if bucket.ChargedUnits != nil && *bucket.ChargedUnits < 0 {
+			return fmt.Errorf("consumer usage statement: bucket %d charged_units must be non-negative", i)
+		}
 		if bucket.RateCardID == "" {
-			if bucket.Currency != "" || bucket.PriceMillicentsPerUnit != 0 || bucket.AmountMillicents != 0 {
+			if bucket.Currency != "" || bucket.PriceMillicentsPerUnit != 0 || bucket.AmountMillicents != 0 ||
+				(bucket.ChargedUnits != nil && *bucket.ChargedUnits != 0) {
 				return fmt.Errorf("consumer usage statement: bucket %d unpriced bucket has pricing fields", i)
 			}
 			if unpriced > maxAPIConsumerUsageStatementInt64-bucket.BillableUnits {
@@ -115,6 +119,13 @@ func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput
 			}
 			if input.Currency == "" || bucket.Currency != input.Currency {
 				return fmt.Errorf("consumer usage statement: bucket %d currency does not match statement currency", i)
+			}
+			charged := bucket.Charged()
+			if bucket.PriceMillicentsPerUnit != 0 && charged > maxAPIConsumerUsageStatementInt64/bucket.PriceMillicentsPerUnit {
+				return fmt.Errorf("consumer usage statement: bucket %d amount overflow", i)
+			}
+			if bucket.AmountMillicents != charged*bucket.PriceMillicentsPerUnit {
+				return fmt.Errorf("consumer usage statement: bucket %d amount must equal charged units times price", i)
 			}
 		}
 		if units > maxAPIConsumerUsageStatementInt64-bucket.BillableUnits || amount > maxAPIConsumerUsageStatementInt64-bucket.AmountMillicents {
@@ -153,7 +164,7 @@ func sameAPIConsumerUsageStatementSnapshot(draft APIConsumerUsageStatement, inpu
 	}
 	for i := range draft.Buckets {
 		a, b := draft.Buckets[i], input.Buckets[i]
-		if !a.WindowStart.Equal(b.WindowStart) || a.BillableUnits != b.BillableUnits || a.RateCardID != b.RateCardID ||
+		if !a.WindowStart.Equal(b.WindowStart) || a.BillableUnits != b.BillableUnits || a.Charged() != b.Charged() || a.RateCardID != b.RateCardID ||
 			a.Currency != b.Currency || a.PriceMillicentsPerUnit != b.PriceMillicentsPerUnit || a.AmountMillicents != b.AmountMillicents {
 			return false
 		}

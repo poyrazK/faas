@@ -232,3 +232,76 @@ func TestAPIConsumerUsageStatementRevisionsAndLateUsage(t *testing.T) {
 	post(path+"/"+overlap.ID+"/finalize", struct{}{}, http.StatusOK)
 	post(path+"/"+overlap.ID+"/handoff", api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "inv-3"}, http.StatusConflict)
 }
+
+// adr: 844 — a rate card's monthly allowance is free, cannot be backdated,
+// and late usage that exhausts it sooner is billed as an adjustment.
+func TestAPIConsumerRateCardAllowanceInStatements(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Minute)
+	if now.Add(10*time.Minute).Month() != now.Month() {
+		t.Skip("allowance months must not roll over during the test")
+	}
+	e := setup(t, api.PlanHobby)
+	mustSeedApp(t, e, "consumer-allowance")
+	created := e.do(t, http.MethodPost, "/v1/apps/consumer-allowance/consumers", api.CreateAPIConsumerRequest{
+		ExternalRef: "allowance-customer", Name: "Allowance Customer",
+	}, nil)
+	var consumer api.APIConsumerResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &consumer); err != nil || created.Code != http.StatusCreated {
+		t.Fatalf("create consumer: %d %s", created.Code, created.Body)
+	}
+	cards := "/v1/apps/consumer-allowance/rate-cards"
+	past := now.Add(-time.Hour)
+	if res := e.do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{
+		Currency: "EUR", PriceMillicentsPerUnit: 10, IncludedUnitsPerMonth: 5, EffectiveFrom: &past,
+	}, nil); res.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("backdated allowance card: %d %s, want 422", res.Code, res.Body)
+	}
+	res := e.do(t, http.MethodPost, cards, api.CreateAPIConsumerRateCardRequest{
+		Currency: "EUR", PriceMillicentsPerUnit: 10, IncludedUnitsPerMonth: 5, EffectiveFrom: &now,
+	}, nil)
+	var card api.APIConsumerRateCardResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &card); err != nil || res.Code != http.StatusCreated || card.IncludedUnitsPerMonth != 5 {
+		t.Fatalf("allowance card: %d %s", res.Code, res.Body)
+	}
+	m0, m1 := now.Add(time.Minute), now.Add(2*time.Minute)
+	record := func(at time.Time, units int64) {
+		t.Helper()
+		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+			EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID,
+			ConsumerKey: consumer.ID, WindowStart: at, RequestCount: units, BillableUnits: units,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := "/v1/apps/consumer-allowance/consumers/" + consumer.ID + "/usage-statements"
+	end := now.Add(time.Hour)
+	draft := func() api.APIConsumerUsageStatementResponse {
+		t.Helper()
+		res := e.do(t, http.MethodPost, path, api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &now, PeriodEnd: &end}, nil)
+		var out api.APIConsumerUsageStatementResponse
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil || res.Code != http.StatusCreated {
+			t.Fatalf("draft: %d %s", res.Code, res.Body)
+		}
+		return out
+	}
+
+	record(m0, 3)
+	record(m1, 4)
+	first := draft()
+	if first.BillableUnits != 7 || first.AmountMillicents != 20 || len(first.Buckets) != 2 ||
+		first.Buckets[0].ChargedUnits != 0 || first.Buckets[1].ChargedUnits != 2 {
+		t.Fatalf("first statement = %+v, want 5 free and 2 charged units", first)
+	}
+	if res := e.do(t, http.MethodPost, path+"/"+first.ID+"/finalize", struct{}{}, nil); res.Code != http.StatusOK {
+		t.Fatalf("finalize: %d %s", res.Code, res.Body)
+	}
+
+	// Two late units in the first minute are free, but the second minute
+	// now exceeds the allowance by two more units.
+	record(m0, 2)
+	adjustment := draft()
+	if adjustment.Revision != 2 || adjustment.BillableUnits != 2 || adjustment.AmountMillicents != 20 || len(adjustment.Buckets) != 2 ||
+		adjustment.Buckets[0].ChargedUnits != 0 || adjustment.Buckets[1].BillableUnits != 0 || adjustment.Buckets[1].ChargedUnits != 2 {
+		t.Fatalf("adjustment = %+v, want 2 added units and 2 newly charged units", adjustment)
+	}
+}

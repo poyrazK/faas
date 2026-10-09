@@ -19,6 +19,9 @@ class APIConsumerUsageStatementBucketResponse:
 
     window_start: datetime.datetime
     billable_units: int
+    charged_units: int
+    """Units this revision bills at the price; the rest are covered by the monthly allowance. An adjustment may charge
+    units it does not add when late usage exhausted the allowance sooner."""
     amount_millicents: int
     rate_card_id: UUID | Unset = UNSET
     currency: str | Unset = UNSET
@@ -29,6 +32,8 @@ class APIConsumerUsageStatementBucketResponse:
         window_start = self.window_start.isoformat()
 
         billable_units = self.billable_units
+
+        charged_units = self.charged_units
 
         amount_millicents = self.amount_millicents
 
@@ -46,6 +51,7 @@ class APIConsumerUsageStatementBucketResponse:
             {
                 "window_start": window_start,
                 "billable_units": billable_units,
+                "charged_units": charged_units,
                 "amount_millicents": amount_millicents,
             }
         )
@@ -65,6 +71,8 @@ class APIConsumerUsageStatementBucketResponse:
 
         billable_units = d.pop("billable_units")
 
+        charged_units = d.pop("charged_units")
+
         amount_millicents = d.pop("amount_millicents")
 
         _rate_card_id = d.pop("rate_card_id", UNSET)
@@ -81,6 +89,7 @@ class APIConsumerUsageStatementBucketResponse:
         api_consumer_usage_statement_bucket_response = cls(
             window_start=window_start,
             billable_units=billable_units,
+            charged_units=charged_units,
             amount_millicents=amount_millicents,
             rate_card_id=rate_card_id,
             currency=currency,

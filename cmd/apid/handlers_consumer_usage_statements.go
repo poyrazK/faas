@@ -26,7 +26,7 @@ func apiConsumerUsageStatementResponse(statement state.APIConsumerUsageStatement
 		out.Buckets = append(out.Buckets, api.APIConsumerUsageStatementBucketResponse{
 			WindowStart: bucket.WindowStart.UTC(), BillableUnits: bucket.BillableUnits,
 			RateCardID: bucket.RateCardID, Currency: bucket.Currency,
-			PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, AmountMillicents: bucket.AmountMillicents,
+			PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, ChargedUnits: bucket.Charged(), AmountMillicents: bucket.AmountMillicents,
 		})
 	}
 	return out
@@ -144,24 +144,25 @@ func (s *server) planAPIConsumerUsageStatement(r *http.Request, accountID, appID
 	if !ok {
 		return state.APIConsumerUsageStatementInput{}, false, errors.New("API consumer pricing is unavailable")
 	}
-	usage, err := usageStore.ListAPIConsumerUsage(r.Context(), accountID, appID, consumerID, start, end)
+	// Monthly allowances count from the start of start's month (ADR-844).
+	usage, err := usageStore.ListAPIConsumerUsage(r.Context(), accountID, appID, consumerID, billing.MonthStart(start), end)
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
-	}
-	delta, err := billing.APIConsumerUsageDelta(usage, revisions)
-	if err != nil {
-		return state.APIConsumerUsageStatementInput{}, false, err
-	}
-	if len(delta) == 0 && len(revisions) > 0 {
-		return state.APIConsumerUsageStatementInput{}, true, nil
 	}
 	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(r.Context(), accountID, appID)
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
 	}
-	quote, err := billing.QuoteAPIConsumerUsage(cards, delta)
+	current, err := billing.QuoteAPIConsumerUsageFrom(cards, usage, start)
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
+	}
+	quote, err := billing.APIConsumerStatementDelta(current, revisions)
+	if err != nil {
+		return state.APIConsumerUsageStatementInput{}, false, err
+	}
+	if len(quote.Buckets) == 0 && len(revisions) > 0 {
+		return state.APIConsumerUsageStatementInput{}, true, nil
 	}
 	input := state.APIConsumerUsageStatementInput{
 		AccountID: accountID, AppID: appID, ConsumerID: consumerID,
@@ -174,13 +175,24 @@ func (s *server) planAPIConsumerUsageStatement(r *http.Request, accountID, appID
 		input.PriorStatus = revisions[len(revisions)-1].Status
 	}
 	for _, bucket := range quote.Buckets {
-		input.Buckets = append(input.Buckets, state.APIConsumerUsageStatementBucket{
-			WindowStart: bucket.WindowStart, BillableUnits: bucket.BillableUnits,
-			RateCardID: bucket.RateCardID, Currency: bucket.Currency,
-			PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, AmountMillicents: bucket.AmountMillicents,
-		})
+		input.Buckets = append(input.Buckets, statementBucketFromCharge(bucket))
 	}
 	return input, false, nil
+}
+
+// statementBucketFromCharge persists a priced minute; charged_units is
+// recorded only for priced buckets, where it determines the amount.
+func statementBucketFromCharge(bucket billing.APIConsumerUsageChargeBucket) state.APIConsumerUsageStatementBucket {
+	out := state.APIConsumerUsageStatementBucket{
+		WindowStart: bucket.WindowStart, BillableUnits: bucket.BillableUnits,
+		RateCardID: bucket.RateCardID, Currency: bucket.Currency,
+		PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, AmountMillicents: bucket.AmountMillicents,
+	}
+	if bucket.RateCardID != "" {
+		charged := bucket.ChargedUnits
+		out.ChargedUnits = &charged
+	}
+	return out
 }
 
 func (s *server) persistAPIConsumerUsageStatement(w http.ResponseWriter, r *http.Request, acct state.Account,

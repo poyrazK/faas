@@ -5336,7 +5336,7 @@ Examples:
 ```sh
 gregale consumers create my-api --external-ref customer-42 --name "Customer 42"
 gregale consumers key-create my-api CONSUMER_ID --name production --scopes read,write
-gregale consumers rate-card-create my-api --currency EUR --price-millicents 25
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 --included-units 10000
 gregale consumers statement-draft my-api CONSUMER_ID --month 2026-09
 gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id INV-1001
 ```
@@ -5426,12 +5426,13 @@ List an app&#39;s per-request price versions
 
 Add an immutable per-request price version
 
-`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--effective-from <RFC3339>] <slug>`
+`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--effective-from <RFC3339>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--currency <CODE>` | ISO-4217 currency | required |
 | `--price-millicents <N>` | price per request; 100000 = 1.00 | required |
+| `--included-units <N>` | free requests per consumer per UTC calendar month |  |
 | `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
 
 ### consumers statements

@@ -14,9 +14,29 @@ import (
 func apiConsumerRateCardResponse(card state.APIConsumerRateCard) api.APIConsumerRateCardResponse {
 	return api.APIConsumerRateCardResponse{
 		ID: card.ID, AppID: card.AppID, Currency: card.Currency, Unit: card.Unit,
-		PriceMillicentsPerUnit: card.PriceMillicentsPerUnit,
-		EffectiveFrom:          card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC(),
+		PriceMillicentsPerUnit: card.PriceMillicentsPerUnit, IncludedUnitsPerMonth: card.IncludedUnitsPerMonth,
+		EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC(),
 	}
+}
+
+// rateCardAllowanceProblem rejects a card that would change which past
+// minutes were free (ADR-844). Allowances are consumed in minute order from
+// the start of each month, so once any card carries one, a backdated card
+// could re-split units that statements already billed.
+func rateCardAllowanceProblem(req api.CreateAPIConsumerRateCardRequest, effectiveFrom time.Time, existing []state.APIConsumerRateCard) *api.Problem {
+	if req.IncludedUnitsPerMonth < 0 {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid rate card", "included_units_per_month must be non-negative")
+	}
+	allowanceInUse := req.IncludedUnitsPerMonth > 0
+	for _, card := range existing {
+		allowanceInUse = allowanceInUse || card.IncludedUnitsPerMonth > 0
+	}
+	if allowanceInUse && effectiveFrom.Before(time.Now().UTC().Truncate(time.Minute)) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid rate card", "effective_from cannot be in the past once a rate card includes units")
+	}
+	return nil
 }
 
 func (s *server) apiConsumerRateCardStore(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, state.APIConsumerRateCardStore, bool) {
@@ -99,7 +119,11 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	card, err := store.CreateAPIConsumerRateCard(r.Context(), acct.ID, app.ID, req.Currency, req.PriceMillicentsPerUnit, effectiveFrom)
+	if problem := rateCardAllowanceProblem(req, effectiveFrom, existing); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	card, err := store.CreateAPIConsumerRateCardWithAllowance(r.Context(), acct.ID, app.ID, req.Currency, req.PriceMillicentsPerUnit, req.IncludedUnitsPerMonth, effectiveFrom)
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
@@ -112,6 +136,7 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 	s.audit.Emit(r.Context(), "api_consumer_rate_card.created", &acct.ID, map[string]any{
 		"app_id": app.ID, "rate_card_id": card.ID, "currency": card.Currency,
 		"price_millicents_per_unit": card.PriceMillicentsPerUnit,
+		"included_units_per_month":  card.IncludedUnitsPerMonth,
 		"effective_from":            card.EffectiveFrom.UTC().Format(time.RFC3339),
 	})
 	writeJSON(w, http.StatusCreated, apiConsumerRateCardResponse(card))
@@ -155,12 +180,13 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrInternal("could not load API consumer rate cards"))
 		return
 	}
-	usage, err := usageStore.ListAPIConsumerUsage(r.Context(), acct.ID, app.ID, consumer.ID, since, until)
+	// Earlier usage in since's month consumes the monthly allowance (ADR-844).
+	usage, err := usageStore.ListAPIConsumerUsage(r.Context(), acct.ID, app.ID, consumer.ID, billing.MonthStart(since), until)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not load API consumer usage"))
 		return
 	}
-	quote, err := billing.QuoteAPIConsumerUsage(cards, usage)
+	quote, err := billing.QuoteAPIConsumerUsageFrom(cards, usage, since)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not calculate API consumer usage quote"))
 		return
@@ -177,6 +203,7 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 			WindowStart: bucket.WindowStart, BillableUnits: bucket.BillableUnits,
 			RateCardID: bucket.RateCardID, Currency: bucket.Currency,
 			PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit,
+			ChargedUnits:           bucket.ChargedUnits,
 			AmountMillicents:       bucket.AmountMillicents,
 		})
 	}

@@ -10,7 +10,7 @@ import (
 )
 
 const apiConsumerRateCardSelectCols = `id, account_id, app_id, currency, unit,
-       price_millicents_per_unit, effective_from, created_at`
+       price_millicents_per_unit, included_units_per_month, effective_from, created_at`
 
 type apiConsumerRateCardRowScanner interface {
 	Scan(dest ...any) error
@@ -25,6 +25,7 @@ func scanAPIConsumerRateCardRow(row apiConsumerRateCardRowScanner) (APIConsumerR
 		&card.Currency,
 		&card.Unit,
 		&card.PriceMillicentsPerUnit,
+		&card.IncludedUnitsPerMonth,
 		&card.EffectiveFrom,
 		&card.CreatedAt,
 	); err != nil {
@@ -36,17 +37,24 @@ func scanAPIConsumerRateCardRow(row apiConsumerRateCardRowScanner) (APIConsumerR
 }
 
 func (s *PgStore) CreateAPIConsumerRateCard(ctx context.Context, accountID, appID, currency string, price int64, effectiveFrom time.Time) (APIConsumerRateCard, error) {
+	return s.CreateAPIConsumerRateCardWithAllowance(ctx, accountID, appID, currency, price, 0, effectiveFrom)
+}
+
+func (s *PgStore) CreateAPIConsumerRateCardWithAllowance(ctx context.Context, accountID, appID, currency string, price, includedUnitsPerMonth int64, effectiveFrom time.Time) (APIConsumerRateCard, error) {
 	currency = normalizeAPIConsumerRateCardCurrency(currency)
 	effectiveFrom = effectiveFrom.UTC()
 	if err := validateAPIConsumerRateCardInput("CreateAPIConsumerRateCard", accountID, appID, currency, price, effectiveFrom); err != nil {
 		return APIConsumerRateCard{}, err
 	}
+	if includedUnitsPerMonth < 0 {
+		return APIConsumerRateCard{}, ErrInvalidArgument
+	}
 	row := s.pool.QueryRow(ctx,
 		`insert into api_consumer_rate_cards
-		       (account_id, app_id, currency, unit, price_millicents_per_unit, effective_from)
-		 values ($1::uuid, $2::uuid, $3, $4, $5, $6)
+		       (account_id, app_id, currency, unit, price_millicents_per_unit, included_units_per_month, effective_from)
+		 values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)
 		 returning `+apiConsumerRateCardSelectCols,
-		accountID, appID, currency, APIConsumerRateCardUnitRequest, price, effectiveFrom)
+		accountID, appID, currency, APIConsumerRateCardUnitRequest, price, includedUnitsPerMonth, effectiveFrom)
 	card, err := scanAPIConsumerRateCardRow(row)
 	if err != nil {
 		var pgErr *pgconn.PgError

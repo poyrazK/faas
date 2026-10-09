@@ -18,6 +18,9 @@ type APIConsumerRateCardStore interface {
 	CreateAPIConsumerRateCard(context.Context, string, string, string, int64, time.Time) (APIConsumerRateCard, error)
 	GetAPIConsumerRateCardByID(context.Context, string, string) (APIConsumerRateCard, error)
 	ListAPIConsumerRateCardsForApp(context.Context, string, string) ([]APIConsumerRateCard, error)
+	// CreateAPIConsumerRateCardWithAllowance also sets the card's monthly
+	// free allowance per consumer; CreateAPIConsumerRateCard includes none.
+	CreateAPIConsumerRateCardWithAllowance(ctx context.Context, accountID, appID, currency string, price, includedUnitsPerMonth int64, effectiveFrom time.Time) (APIConsumerRateCard, error)
 }
 
 func validateAPIConsumerRateCardInput(op, accountID, appID, currency string, price int64, effectiveFrom time.Time) error {

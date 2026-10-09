@@ -62,10 +62,10 @@ func TestCmdConsumersMonetizationLifecycle(t *testing.T) {
 	if key.Name != "prod" || strings.Join(key.Scopes, ",") != "read,write" || !strings.Contains(stdout.String(), "ck_secret_once") {
 		t.Fatalf("key-create body=%+v output=%q", key, stdout.String())
 	}
-	if code := cmdConsumers([]string{"rate-card-create", "my-api", "--currency", "eur", "--price-millicents", "25"}); code != 0 {
+	if code := cmdConsumers([]string{"rate-card-create", "my-api", "--currency", "eur", "--price-millicents", "25", "--included-units", "10000"}); code != 0 {
 		t.Fatalf("rate-card-create exit = %d", code)
 	}
-	if card.Currency != "EUR" || card.PriceMillicentsPerUnit != 25 || !strings.Contains(stdout.String(), "EUR 0.00025") {
+	if card.Currency != "EUR" || card.PriceMillicentsPerUnit != 25 || card.IncludedUnitsPerMonth != 10000 || !strings.Contains(stdout.String(), "EUR 0.00025") {
 		t.Fatalf("rate card body=%+v output=%q", card, stdout.String())
 	}
 	if code := cmdConsumers([]string{"statement-draft", "my-api", "c1", "--month", "2026-09"}); code != 0 {
@@ -96,6 +96,8 @@ func TestCmdConsumersRejectsBadArgumentsBeforeCallingAPI(t *testing.T) {
 		"sub-minute period":       {"statement-draft", "my-api", "c1", "--period-start", "2026-09-01T00:00:30Z", "--period-end", "2026-09-02T00:00:00Z"},
 		"unknown scope":           {"key-create", "my-api", "c1", "--name", "k", "--scopes", "root"},
 		"missing price":           {"rate-card-create", "my-api", "--currency", "EUR"},
+		"negative allowance":      {"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "1", "--included-units", "-1"},
+		"tenant allowance":        {"rate-card-create", "--id", "t1", "--currency", "EUR", "--price-millicents", "1", "--included-units", "5"},
 		"bad currency":            {"rate-card-create", "my-api", "--currency", "EURO", "--price-millicents", "1"},
 		"missing invoice":         {"statement-handoff", "my-api", "c1", "s1"},
 		"tenant without id":       {"rate-cards"},

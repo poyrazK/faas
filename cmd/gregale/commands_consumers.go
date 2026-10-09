@@ -36,13 +36,13 @@ var consumerVerbPositionals = map[string][]string{
 
 const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff> <slug> [consumer-id] [id] [flags]"
 
-// consumerFlags holds every leaf flag; consumerFlagsAllowed decides which
+// consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.
 type consumerFlags struct {
 	externalRef, name, scopes, expires string
 	since, until                       string
 	currency, effectiveFrom            string
-	priceMillicents                    int64
+	priceMillicents, includedUnits     int64
 	periodStart, periodEnd, month      string
 	invoiceID                          string
 }
@@ -52,7 +52,7 @@ var consumerVerbFlags = map[string][]string{
 	"key-create":        {"name", "scopes", "expires"},
 	"usage":             {"since", "until"},
 	"quote":             {"since", "until"},
-	"rate-card-create":  {"currency", "price-millicents", "effective-from"},
+	"rate-card-create":  {"currency", "price-millicents", "included-units", "effective-from"},
 	"statement-draft":   {"period-start", "period-end", "month"},
 	"statement-handoff": {"invoice-id"},
 }
@@ -80,6 +80,7 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
 	fs.StringVar(&f.currency, "currency", "", "ISO-4217 currency, e.g. EUR (rate-card-create)")
 	fs.Int64Var(&f.priceMillicents, "price-millicents", -1, "price per request in millicents; 100000 = 1.00 (rate-card-create)")
+	fs.Int64Var(&f.includedUnits, "included-units", 0, "free requests per consumer per UTC calendar month (rate-card-create)")
 	fs.StringVar(&f.effectiveFrom, "effective-from", "", "UTC minute the price starts, RFC3339 (default: next minute)")
 	fs.StringVar(&f.periodStart, "period-start", "", "statement period start, RFC3339 UTC minute")
 	fs.StringVar(&f.periodEnd, "period-end", "", "statement period end (exclusive), RFC3339 UTC minute")
@@ -143,7 +144,12 @@ func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
 	case "key-create":
 		return buildConsumerKeyRequest(f)
 	case "rate-card-create":
-		return buildRateCardRequest(f.currency, f.priceMillicents, f.effectiveFrom)
+		req, err := buildRateCardRequest(f.currency, f.priceMillicents, f.effectiveFrom)
+		if f.includedUnits < 0 {
+			return nil, errors.New("--included-units must be non-negative")
+		}
+		req.IncludedUnitsPerMonth = f.includedUnits
+		return req, err
 	case "statement-draft":
 		start, end, err := statementPeriod(f.periodStart, f.periodEnd, f.month)
 		if err != nil {
@@ -348,12 +354,13 @@ func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
 		_, _ = fmt.Fprintf(tw, "Window\t%s – %s\nBillable units\t%d\nUnpriced units\t%d\nEstimate\t%s\n",
 			v.PeriodStart.Format(time.RFC3339), v.PeriodEnd.Format(time.RFC3339), v.BillableUnits, v.UnpricedUnits, formatMillicents(v.Currency, v.AmountMillicents))
 	case api.APIConsumerRateCardListResponse:
-		_, _ = fmt.Fprintln(tw, "ID\tEFFECTIVE FROM\tPRICE PER REQUEST")
+		_, _ = fmt.Fprintln(tw, "ID\tEFFECTIVE FROM\tPRICE PER REQUEST\tINCLUDED PER MONTH")
 		for _, c := range v.RateCards {
-			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\n", c.ID, c.EffectiveFrom.Format(time.RFC3339), formatMillicents(c.Currency, c.PriceMillicentsPerUnit))
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", c.ID, c.EffectiveFrom.Format(time.RFC3339), formatMillicents(c.Currency, c.PriceMillicentsPerUnit), c.IncludedUnitsPerMonth)
 		}
 	case api.APIConsumerRateCardResponse:
-		_, _ = fmt.Fprintf(tw, "Rate card\t%s\nEffective from\t%s\nPrice per request\t%s\n", v.ID, v.EffectiveFrom.Format(time.RFC3339), formatMillicents(v.Currency, v.PriceMillicentsPerUnit))
+		_, _ = fmt.Fprintf(tw, "Rate card\t%s\nEffective from\t%s\nPrice per request\t%s\nIncluded per month\t%d requests per consumer\n",
+			v.ID, v.EffectiveFrom.Format(time.RFC3339), formatMillicents(v.Currency, v.PriceMillicentsPerUnit), v.IncludedUnitsPerMonth)
 	case api.APIConsumerUsageStatementListResponse:
 		_, _ = fmt.Fprintln(tw, "ID\tPERIOD START\tPERIOD END\tREVISION\tUNITS\tAMOUNT")
 		for _, s := range v.Statements {
@@ -362,6 +369,13 @@ func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
 		}
 	case api.APIConsumerUsageStatementResponse:
 		printStatementSummary(tw, v.ID, v.PeriodStart, v.PeriodEnd, v.Revision, v.Status, v.Currency, v.BillableUnits, v.UnpricedUnits, v.AmountMillicents)
+		var charged int64
+		for _, bucket := range v.Buckets {
+			charged += bucket.ChargedUnits
+		}
+		if priced := v.BillableUnits - v.UnpricedUnits; charged != priced {
+			_, _ = fmt.Fprintf(tw, "Charged units\t%d\t(the monthly allowance covers the rest; an adjustment can charge units that were free before)\n", charged)
+		}
 	case api.APIConsumerUsageStatementHandoffResponse:
 		_, _ = fmt.Fprintf(tw, "Statement\t%s\nInvoice\t%s\nAmount\t%s\n", v.StatementID, v.ExternalInvoiceID, formatMillicents(v.Currency, v.AmountMillicents))
 	default:

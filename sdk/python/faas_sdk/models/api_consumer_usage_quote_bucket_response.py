@@ -19,6 +19,8 @@ class APIConsumerUsageQuoteBucketResponse:
 
     window_start: datetime.datetime
     billable_units: int
+    charged_units: int
+    """Units billed at the price; the rest are covered by the rate card's monthly allowance."""
     amount_millicents: int
     rate_card_id: UUID | Unset = UNSET
     currency: str | Unset = UNSET
@@ -29,6 +31,8 @@ class APIConsumerUsageQuoteBucketResponse:
         window_start = self.window_start.isoformat()
 
         billable_units = self.billable_units
+
+        charged_units = self.charged_units
 
         amount_millicents = self.amount_millicents
 
@@ -46,6 +50,7 @@ class APIConsumerUsageQuoteBucketResponse:
             {
                 "window_start": window_start,
                 "billable_units": billable_units,
+                "charged_units": charged_units,
                 "amount_millicents": amount_millicents,
             }
         )
@@ -65,6 +70,8 @@ class APIConsumerUsageQuoteBucketResponse:
 
         billable_units = d.pop("billable_units")
 
+        charged_units = d.pop("charged_units")
+
         amount_millicents = d.pop("amount_millicents")
 
         _rate_card_id = d.pop("rate_card_id", UNSET)
@@ -81,6 +88,7 @@ class APIConsumerUsageQuoteBucketResponse:
         api_consumer_usage_quote_bucket_response = cls(
             window_start=window_start,
             billable_units=billable_units,
+            charged_units=charged_units,
             amount_millicents=amount_millicents,
             rate_card_id=rate_card_id,
             currency=currency,

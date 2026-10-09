@@ -25,6 +25,7 @@ class APIConsumerRateCardResponse:
     currency: str
     unit: APIConsumerRateCardResponseUnit
     price_millicents_per_unit: int
+    included_units_per_month: int
     effective_from: datetime.datetime
     created_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -40,6 +41,8 @@ class APIConsumerRateCardResponse:
 
         price_millicents_per_unit = self.price_millicents_per_unit
 
+        included_units_per_month = self.included_units_per_month
+
         effective_from = self.effective_from.isoformat()
 
         created_at = self.created_at.isoformat()
@@ -53,6 +56,7 @@ class APIConsumerRateCardResponse:
                 "currency": currency,
                 "unit": unit,
                 "price_millicents_per_unit": price_millicents_per_unit,
+                "included_units_per_month": included_units_per_month,
                 "effective_from": effective_from,
                 "created_at": created_at,
             }
@@ -73,6 +77,8 @@ class APIConsumerRateCardResponse:
 
         price_millicents_per_unit = d.pop("price_millicents_per_unit")
 
+        included_units_per_month = d.pop("included_units_per_month")
+
         effective_from = datetime.datetime.fromisoformat(d.pop("effective_from"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
@@ -83,6 +89,7 @@ class APIConsumerRateCardResponse:
             currency=currency,
             unit=unit,
             price_millicents_per_unit=price_millicents_per_unit,
+            included_units_per_month=included_units_per_month,
             effective_from=effective_from,
             created_at=created_at,
         )

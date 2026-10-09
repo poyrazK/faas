@@ -835,8 +835,11 @@ type APIConsumerRateCard struct {
 	Currency               string
 	Unit                   string
 	PriceMillicentsPerUnit int64
-	EffectiveFrom          time.Time
-	CreatedAt              time.Time
+	// IncludedUnitsPerMonth is the free allowance per consumer per UTC
+	// calendar month while this card is effective (ADR-844).
+	IncludedUnitsPerMonth int64
+	EffectiveFrom         time.Time
+	CreatedAt             time.Time
 }
 
 // PlatformTenantRateCard is an immutable, versioned customer-facing request
@@ -873,7 +876,24 @@ type APIConsumerUsageStatementBucket struct {
 	RateCardID             string    `json:"rate_card_id,omitempty"`
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	// ChargedUnits is how many units this bucket bills at its price
+	// (ADR-844). Nil on buckets written before allowances existed, where
+	// every priced unit was charged; read it through Charged. An adjustment
+	// may charge more units than it adds when late usage used allowance
+	// that later minutes had consumed.
+	ChargedUnits     *int64 `json:"charged_units,omitempty"`
+	AmountMillicents int64  `json:"amount_millicents"`
+}
+
+// Charged returns the units this bucket bills at its price.
+func (b APIConsumerUsageStatementBucket) Charged() int64 {
+	if b.RateCardID == "" {
+		return 0
+	}
+	if b.ChargedUnits == nil {
+		return b.BillableUnits
+	}
+	return *b.ChargedUnits
 }
 
 // APIConsumerUsageStatement is a durable, auditable snapshot of a consumer's

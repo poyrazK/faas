@@ -18,6 +18,9 @@ class CreateAPIConsumerRateCardRequest:
 
     price_millicents_per_unit: int
     currency: str | Unset = "EUR"
+    included_units_per_month: int | Unset = 0
+    """Free request units per consumer per UTC calendar month while this card is effective, consumed in minute order.
+    Once any card includes units, effective_from cannot be in the past."""
     effective_from: datetime.datetime | None | Unset = UNSET
     """UTC minute at which this version starts; omitted means the next UTC minute."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -26,6 +29,8 @@ class CreateAPIConsumerRateCardRequest:
         price_millicents_per_unit = self.price_millicents_per_unit
 
         currency = self.currency
+
+        included_units_per_month = self.included_units_per_month
 
         effective_from: None | str | Unset
         if isinstance(self.effective_from, Unset):
@@ -44,6 +49,8 @@ class CreateAPIConsumerRateCardRequest:
         )
         if currency is not UNSET:
             field_dict["currency"] = currency
+        if included_units_per_month is not UNSET:
+            field_dict["included_units_per_month"] = included_units_per_month
         if effective_from is not UNSET:
             field_dict["effective_from"] = effective_from
 
@@ -55,6 +62,8 @@ class CreateAPIConsumerRateCardRequest:
         price_millicents_per_unit = d.pop("price_millicents_per_unit")
 
         currency = d.pop("currency", UNSET)
+
+        included_units_per_month = d.pop("included_units_per_month", UNSET)
 
         def _parse_effective_from(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -76,6 +85,7 @@ class CreateAPIConsumerRateCardRequest:
         create_api_consumer_rate_card_request = cls(
             price_millicents_per_unit=price_millicents_per_unit,
             currency=currency,
+            included_units_per_month=included_units_per_month,
             effective_from=effective_from,
         )
 

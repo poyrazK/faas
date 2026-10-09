@@ -11,6 +11,7 @@ export type APIConsumerRateCardResponse = {
   currency: string;
   unit: 'request';
   price_millicents_per_unit: number;
+  included_units_per_month: number;
   effective_from: string;
   created_at: string;
 };

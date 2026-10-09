@@ -112,7 +112,9 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 	case "rate-cards":
 		out, err = client.ListPlatformTenantRateCards(ctx, f.id)
 	case "rate-card-create":
-		out, err = client.CreatePlatformTenantRateCard(ctx, f.id, api.CreatePlatformTenantRateCardRequest(rateCard))
+		out, err = client.CreatePlatformTenantRateCard(ctx, f.id, api.CreatePlatformTenantRateCardRequest{
+			Currency: rateCard.Currency, PriceMillicentsPerUnit: rateCard.PriceMillicentsPerUnit, EffectiveFrom: rateCard.EffectiveFrom,
+		})
 	case "statements":
 		out, err = client.ListPlatformTenantStatements(ctx, f.id, start, end)
 	case "statement-draft":

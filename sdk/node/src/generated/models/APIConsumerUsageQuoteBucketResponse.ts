@@ -11,6 +11,10 @@ export type APIConsumerUsageQuoteBucketResponse = {
   rate_card_id?: string;
   currency?: string;
   price_millicents_per_unit?: number;
+  /**
+   * Units billed at the price; the rest are covered by the rate card's monthly allowance.
+   */
+  charged_units: number;
   amount_millicents: number;
 };
 

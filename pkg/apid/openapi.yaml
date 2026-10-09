@@ -42331,18 +42331,20 @@ components:
       properties:
         currency: { type: string, pattern: '^[A-Z]{3}$', default: EUR, example: EUR }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0, example: 1000 }
+        included_units_per_month: { type: integer, format: int64, minimum: 0, default: 0, example: 10000, description: "Free request units per consumer per UTC calendar month while this card is effective, consumed in minute order. Once any card includes units, effective_from cannot be in the past." }
         effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which this version starts; omitted means the next UTC minute." }
 
     APIConsumerRateCardResponse:
       description: "Immutable, versioned app-level price for one API request unit."
       type: object
-      required: [id, app_id, currency, unit, price_millicents_per_unit, effective_from, created_at]
+      required: [id, app_id, currency, unit, price_millicents_per_unit, included_units_per_month, effective_from, created_at]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         unit: { type: string, enum: [request] }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        included_units_per_month: { type: integer, format: int64, minimum: 0 }
         effective_from: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
 
@@ -42358,13 +42360,14 @@ components:
     APIConsumerUsageQuoteBucketResponse:
       description: "One durable usage minute priced by the rate card effective at that minute."
       type: object
-      required: [window_start, billable_units, amount_millicents]
+      required: [window_start, billable_units, charged_units, amount_millicents]
       properties:
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
         rate_card_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        charged_units: { type: integer, format: int64, minimum: 0, description: "Units billed at the price; the rest are covered by the rate card's monthly allowance." }
         amount_millicents: { type: integer, format: int64, minimum: 0 }
 
     APIConsumerUsageQuoteResponse:
@@ -42396,13 +42399,14 @@ components:
     APIConsumerUsageStatementBucketResponse:
       description: "One UTC minute captured in a durable usage statement."
       type: object
-      required: [window_start, billable_units, amount_millicents]
+      required: [window_start, billable_units, charged_units, amount_millicents]
       properties:
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
         rate_card_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        charged_units: { type: integer, format: int64, minimum: 0, description: "Units this revision bills at the price; the rest are covered by the monthly allowance. An adjustment may charge units it does not add when late usage exhausted the allowance sooner." }
         amount_millicents: { type: integer, format: int64, minimum: 0 }
 
     APIConsumerUsageStatementResponse:

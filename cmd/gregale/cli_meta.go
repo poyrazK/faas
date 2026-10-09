@@ -2234,7 +2234,7 @@ var cliCommands = []cliCommand{
 		Examples: []string{
 			"gregale consumers create my-api --external-ref customer-42 --name \"Customer 42\"",
 			"gregale consumers key-create my-api CONSUMER_ID --name production --scopes read,write",
-			"gregale consumers rate-card-create my-api --currency EUR --price-millicents 25",
+			"gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 --included-units 10000",
 			"gregale consumers statement-draft my-api CONSUMER_ID --month 2026-09",
 			"gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id INV-1001",
 		},
@@ -2265,6 +2265,7 @@ var cliCommands = []cliCommand{
 			{Name: "rate-card-create", Short: "Add an immutable per-request price version", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "currency", Short: "ISO-4217 currency", Value: "CODE", Req: true},
 				{Name: "price-millicents", Short: "price per request; 100000 = 1.00", Value: "N", Req: true},
+				{Name: "included-units", Short: "free requests per consumer per UTC calendar month", Value: "N"},
 				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
 			}},
 			{Name: "statements", Short: "List a consumer's usage statements and revisions", Positionals: []string{"<slug>", "<consumer-id>"}},

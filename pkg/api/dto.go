@@ -1274,9 +1274,12 @@ type APIConsumerUsageResponse struct {
 // price. If effective_from is omitted, the server starts the card at the next
 // UTC minute so no partial minute is priced under two different cards.
 type CreateAPIConsumerRateCardRequest struct {
-	Currency               string     `json:"currency"`
-	PriceMillicentsPerUnit int64      `json:"price_millicents_per_unit"`
-	EffectiveFrom          *time.Time `json:"effective_from,omitempty"`
+	Currency               string `json:"currency"`
+	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
+	// IncludedUnitsPerMonth is a free allowance per consumer per UTC
+	// calendar month while this card is effective (ADR-844).
+	IncludedUnitsPerMonth int64      `json:"included_units_per_month,omitempty"`
+	EffectiveFrom         *time.Time `json:"effective_from,omitempty"`
 }
 
 // APIConsumerRateCardResponse is the owner-facing representation of one
@@ -1287,6 +1290,7 @@ type APIConsumerRateCardResponse struct {
 	Currency               string    `json:"currency"`
 	Unit                   string    `json:"unit"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit"`
+	IncludedUnitsPerMonth  int64     `json:"included_units_per_month"`
 	EffectiveFrom          time.Time `json:"effective_from"`
 	CreatedAt              time.Time `json:"created_at"`
 }
@@ -1305,7 +1309,10 @@ type APIConsumerUsageQuoteBucketResponse struct {
 	RateCardID             string    `json:"rate_card_id,omitempty"`
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	// ChargedUnits is how many units are billed; the rest are covered by
+	// the rate card's monthly allowance.
+	ChargedUnits     int64 `json:"charged_units"`
+	AmountMillicents int64 `json:"amount_millicents"`
 }
 
 // APIConsumerUsageQuoteResponse is a deterministic estimate from durable
@@ -1338,7 +1345,11 @@ type APIConsumerUsageStatementBucketResponse struct {
 	RateCardID             string    `json:"rate_card_id,omitempty"`
 	Currency               string    `json:"currency,omitempty"`
 	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
-	AmountMillicents       int64     `json:"amount_millicents"`
+	// ChargedUnits is how many units are billed; the rest are covered by
+	// the rate card's monthly allowance. An adjustment may charge units it
+	// does not add when late usage exhausted the allowance sooner.
+	ChargedUnits     int64 `json:"charged_units"`
+	AmountMillicents int64 `json:"amount_millicents"`
 }
 
 // APIConsumerUsageStatementResponse is an immutable, auditable usage
