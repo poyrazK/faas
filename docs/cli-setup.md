@@ -79,6 +79,24 @@ This mode requires terminal input and output. For scripts or JSON output,
 use explicit `--to` and `--expected-current` flags. The guided mode accepts
 only `--timeout` and `--poll-interval` alongside `--interactive`.
 
+## Guided custom-domain setup
+
+Run `gregale domains setup api.example.com --app my-api` to bind a domain,
+show the DNS records to publish, and wait for ownership verification and an
+unexpired TLS certificate. Add `--environment staging` for an environment
+binding. An existing binding is reused only when its app and environment match.
+
+After publishing the records, confirm when to start checking. Pending results
+include available DNS and certificate diagnostics. The wait defaults to 10
+minutes; `--timeout` accepts up to 1 hour, and `--poll-interval` accepts 5 seconds
+to 1 minute. Timeout returns a failure status and prints a command to continue
+checking the same binding. Leaving the flow preserves the binding and records.
+For app bindings, the flow offers a default-domain change with a separate
+confirmation, defaulting to no. Environment bindings keep their environment routing.
+
+Setup requires terminal input and output. For scripts or JSON output, use the
+existing `domains add`, `domains verify`, and `domains set-default` commands.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

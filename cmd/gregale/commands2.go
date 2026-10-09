@@ -4829,10 +4829,12 @@ func cmdTraffic(args []string) int {
 func cmdDomains(args []string) int {
 	parent, _ := lookupCliCommand("domains")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale domains <list|add|rm|set-default|verify|show|status|doctor> [args]", "domains")
+		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|rm|set-default|verify|show|status|doctor> [args]", "domains")
 		return 1
 	}
 	switch args[0] {
+	case "setup":
+		return cmdDomainsSetup(args[1:])
 	case subList:
 		client, err := authedClient()
 		if err != nil {

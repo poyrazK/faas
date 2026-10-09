@@ -1930,6 +1930,12 @@ var cliCommands = []cliCommand{
 		DocSlug: "domains",
 		Short:   "Manage custom domains",
 		Subcommands: []cliSub{
+			{Name: "setup", Short: "Guide DNS setup, wait for verification and TLS, and offer a default-domain change", Positionals: []string{"<domain>"}, Examples: []string{"gregale domains setup api.example.com --app my-api"}, Flags: []cliFlag{
+				{Name: "app", Short: "app to attach to", Value: "SLUG", Req: true},
+				{Name: "environment", Short: "project environment to route to", Value: "SLUG"},
+				{Name: "timeout", Short: "verification wait deadline (default 10m, maximum 1h)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "verification interval (5s..1m, default 10s)", Value: "DURATION"},
+			}},
 			{Name: subList, Short: "List custom domain bindings"},
 			{Name: subAdd, Short: "Bind a custom domain to an app or project environment", Positionals: []string{"[<domain>]"}, Flags: []cliFlag{
 				{Name: "domain", Short: "domain to attach (or the first argument)", Value: "DOMAIN"},

@@ -4599,6 +4599,25 @@ Manage custom domains
 
 `gregale domains [<subcommand>]`
 
+### domains setup
+
+Guide DNS setup, wait for verification and TLS, and offer a default-domain change
+
+`gregale domains setup --app <SLUG> [--environment <SLUG>] [--timeout <DURATION>] [--poll-interval <DURATION>] <domain>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app to attach to | required |
+| `--environment <SLUG>` | project environment to route to |  |
+| `--timeout <DURATION>` | verification wait deadline (default 10m, maximum 1h) |  |
+| `--poll-interval <DURATION>` | verification interval (5s..1m, default 10s) |  |
+
+Examples:
+
+```sh
+gregale domains setup api.example.com --app my-api
+```
+
 ### domains list
 
 List custom domain bindings
