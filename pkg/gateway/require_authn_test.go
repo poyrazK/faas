@@ -342,6 +342,7 @@ func TestRequireAuthn_AllowsWakesBeforeAuthz(t *testing.T) {
 	}
 }
 
+// adr: 079
 // production-us hunt #8 / ADR-079 §2: a bearer key unlocks an app only with
 // apps:read (or admin). A usage:read key minted for billing tooling opened
 // every private app of the account.
