@@ -138,6 +138,10 @@ type JailerVMM struct {
 	// budget. Production supplies a bounded async archive sink; the callback
 	// must not perform disk or network I/O while the ring mutex is held.
 	evictedLine func(instance string, line logbuf.Line)
+	// committedLine observes every line an app VM's ring accepts, keyed
+	// by app id (ADR-746 log line counts). It runs under the ring mutex,
+	// so it must only update in-memory counters.
+	committedLine func(appID string, line logbuf.Line)
 	// retiredLines receives the lines a ring still holds when its VM is
 	// torn down. Without it a log volume under the ring budget never
 	// reaches the archive, so a parked instance had no retained logs.
@@ -546,6 +550,33 @@ func (v *JailerVMM) WithLogEvictionCallback(cb func(instance string, line logbuf
 	return v
 }
 
+// WithLogCommitCallback installs the per-line observer every future app
+// ring invokes as it accepts a line (ADR-746). Builder VMs and instances
+// without an app id are not observed. The callback runs under the ring
+// mutex, so it must not block.
+func (v *JailerVMM) WithLogCommitCallback(cb func(appID string, line logbuf.Line)) *JailerVMM {
+	v.mu.Lock()
+	v.committedLine = cb
+	v.mu.Unlock()
+	return v
+}
+
+// registerAppRing registers the instance's ring and, for app VMs, wires the
+// commit observer with the app id the wake carried in its correlation
+// fields. Build logs never count against the app being built.
+func (v *JailerVMM) registerAppRing(ctx context.Context, l Lease) *logbuf.Ring {
+	r := v.registerRing(l.Instance)
+	fields, _ := wire.FromContext(ctx)
+	v.mu.Lock()
+	observe := v.committedLine
+	v.mu.Unlock()
+	if observe != nil && !l.IsBuilder && fields.AppID != "" {
+		appID := fields.AppID
+		r.SetCommitCallback(func(line logbuf.Line) { observe(appID, line) })
+	}
+	return r
+}
+
 // WithLogRetireCallback installs the callback that receives every line a
 // ring still holds when an app VM's ring is retired (park, destroy, failed
 // boot). The callback runs outside the ring lock.
@@ -946,7 +977,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 			_ = v.Kill(context.WithoutCancel(ctx), l)
 		}
 	}()
-	_ = v.registerRing(l.Instance)
+	_ = v.registerAppRing(ctx, l)
 
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
@@ -1880,7 +1911,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// Move 4 (issue #254): register the per-instance ring BEFORE
 	// startJailer so cmd.Stdout captures every byte the resumed FC
 	// writes, including the boot echo and the resume hook's ack.
-	_ = v.registerRing(l.Instance)
+	_ = v.registerAppRing(ctx, l)
 	if err = v.startJailer(ctx, l); err != nil {
 		return err
 	}

@@ -910,6 +910,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		jailer.WithLogEvictionCallback(archiveSink.Enqueue)
 		jailer.WithLogRetireCallback(archiveSink.Retire)
 	}
+	// ADR-746: count error and warn guest log lines per app for log alerts.
+	jailer.WithLogCommitCallback(newAppLogLineCounter(ops.Registry()).Observe)
 	// Activity tracker (PR-B, issue #462): per-instance in-flight
 	// ForwardHTTP request counter. It is shared by the gRPC server's
 	// stats surface and the liveness loop so load-correlated probe misses

@@ -9437,3 +9437,11 @@ const (
 	EventConsumerExecutionRootsMax       = 1000
 	EventConsumerExecutionInvocationsMax = 5000
 )
+
+// Log line counts (ADR-746): vmmd counts error and warn lines per app as they
+// enter the instance ring. Apps past the per-vmmd cap share app_id="other";
+// plain-text lines are classified from at most the scan window.
+const (
+	LogLineCounterMaxApps = 10000
+	LogLevelScanBytes     = 512
+)
