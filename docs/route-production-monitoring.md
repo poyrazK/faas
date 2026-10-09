@@ -18,6 +18,13 @@ Create a JSON file using exact gateway-normalized method/path labels:
 100 basis points means a 1% 5xx budget. Omission disables error monitoring for a
 route; zero selects a zero-error budget. A positive `max_p95_ms` selects latency.
 Each route requires at least one budget. Values exactly at a budget are allowed.
+
+Budgets need at least 20 requests per window. A route that is unknown only
+because its one-minute windows are too sparse is also judged over the newest 30
+minutes since the release or configuration change, split into two halves, with
+the same budgets. Such findings report `evidence_window: pooled` and their
+`pooled_windows`, and can open incidents and trigger an
+[automatic rollback](#automatic-rollback).
 Select at most 20 distinct labels, with no wildcards, expanded URLs or queries.
 
 ```sh

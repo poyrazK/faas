@@ -66,11 +66,14 @@ func TestRouteHealthPostgresPoolsSparseStageEvidence(t *testing.T) {
 			if f.Status != scenario || f.EvidenceWindow != "pooled" || r.Status != scenario {
 				t.Fatalf("pooled %s finding = %+v (report %s)", scenario, f, r.Status)
 			}
-			span := f.Windows[1].End.Sub(f.Windows[0].Start)
-			if span < api.RouteHealthPooledMinSpan || span > api.RouteHealthPooledMaxSpan || !f.Windows[0].End.Equal(f.Windows[1].Start) {
-				t.Fatalf("pooled windows = %+v", f.Windows)
+			if len(f.Windows) != api.RouteHealthWindows || f.Windows[0].End.Sub(f.Windows[0].Start) != api.RouteHealthWindow {
+				t.Fatalf("one-minute windows were replaced: %+v", f.Windows)
 			}
-			for _, w := range f.Windows {
+			span := f.PooledWindows[1].End.Sub(f.PooledWindows[0].Start)
+			if span < api.RouteHealthPooledMinSpan || span > api.RouteHealthPooledMaxSpan || !f.PooledWindows[0].End.Equal(f.PooledWindows[1].Start) {
+				t.Fatalf("pooled windows = %+v", f.PooledWindows)
+			}
+			for _, w := range f.PooledWindows {
 				if w.Candidate.Requests < api.RouteHealthMinRequests || w.Stable.Requests < api.RouteHealthMinRequests {
 					t.Fatalf("pooled window lacks requests: %+v", w)
 				}

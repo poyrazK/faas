@@ -124,6 +124,12 @@ func Evaluate(r *api.RouteMonitorReport, unavailable string) {
 	evaluateCustomers(r, unavailable)
 }
 func evaluateFinding(f *api.RouteMonitorFinding, anchor *time.Time, unavailable string) {
+	evaluateWindows(f, anchor, unavailable)
+	applyPooledEvidence(f, anchor, unavailable)
+}
+
+// evaluateWindows derives window and finding verdicts from f.Windows.
+func evaluateWindows(f *api.RouteMonitorFinding, anchor *time.Time, unavailable string) {
 	errors, latencies := []string{}, []string{}
 	for j := range f.Windows {
 		w := &f.Windows[j]
@@ -240,6 +246,18 @@ func ValidateReport(r api.RouteMonitorReport) error {
 			c := w.Observed
 			if !w.Start.Equal(expected[j].Start) || !w.End.Equal(expected[j].End) || !validMonitorCounts(c) {
 				return errors.New("invalid monitor observations")
+			}
+		}
+		if len(f.PooledWindows) > 0 {
+			pooled, ok := PooledWindows(r.ObservationAnchor, r.CheckedAt)
+			if !ok || len(f.PooledWindows) != len(pooled) {
+				return errors.New("invalid pooled monitor windows")
+			}
+			copy.Routes[i].PooledWindows = slices.Clone(f.PooledWindows)
+			for j, w := range f.PooledWindows {
+				if !w.Start.Equal(pooled[j].Start) || !w.End.Equal(pooled[j].End) || !validMonitorCounts(w.Observed) {
+					return errors.New("invalid pooled monitor observations")
+				}
 			}
 		}
 	}
