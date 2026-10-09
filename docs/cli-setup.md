@@ -564,6 +564,25 @@ A retry executes the task again and can repeat its effects. Cancellation before
 confirmation submits nothing. After acceptance, the CLI prints commands to
 inspect tasks and logs. For scripts, use `jobs retry NAME RUN_ID TASK_INDEX`.
 
+## Follow a Job run
+
+```sh
+gregale jobs wait --interactive
+gregale jobs wait my-job RUN_ID --timeout 10m
+```
+
+Choose a Job and run through paginated pickers, or provide the name and UUID.
+The CLI polls that exact run and prints changed status and task counts. Waiting
+only reads status; interrupting or timing out does not cancel the run.
+`--poll-interval` defaults to 2 seconds and `--timeout` to 10 minutes; both
+must be positive. A command to resume waiting is printed before observation.
+
+Exit codes are 0 for succeeded, 1 for failed/cancelled/dead-letter or read errors,
+124 for timeout, and 130 for interruption. With `--json`, an explicit target
+returns one final receipt containing the last observed run (when available),
+exit code, resume command, and any read/wait error. Retried runs can reopen;
+waiting stops at the first terminal status it observes.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

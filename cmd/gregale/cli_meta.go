@@ -1525,6 +1525,11 @@ var cliCommands = []cliCommand{
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
 				{Name: "limit", Short: "max occurrence decisions (1..200)", Value: "N"},
 			}},
+			{Name: "wait", Short: "Follow one Job run until completion", Positionals: []string{"[<name>]", "[<run-id>]"}, Flags: []cliFlag{
+				{Name: "interactive", Bool: true, Short: "choose a Job and run"},
+				{Name: "timeout", Value: "DURATION", Short: "maximum wait duration (default 10m)"},
+				{Name: "poll-interval", Value: "DURATION", Short: "polling interval (default 2s)"},
+			}, Examples: []string{"gregale jobs wait --interactive", "gregale jobs wait my-job RUN_ID --timeout 10m --json"}},
 			{Name: "cancel", Short: "Cancel a run", Positionals: []string{"<name>", "<run-id>"}},
 			{Name: "tasks", Short: "List tasks for one run", Positionals: []string{"<name>", "<run-id>"}},
 			{Name: "attempts", Short: "List retained attempts for one task", Positionals: []string{"<name>", "<run-id>", "<task-index>"}},

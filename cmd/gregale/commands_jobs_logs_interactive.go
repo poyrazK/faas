@@ -104,46 +104,11 @@ func chooseJobLogPage(ctx context.Context, prompt *startPrompt, title string, lo
 }
 
 func chooseJobTask(ctx context.Context, client *api.Client, prompt *startPrompt, retryOnly bool) (api.JobResponse, api.JobRunResponse, api.JobTaskResponse, bool, error) {
-	var jobs []api.JobResponse
-	choice, err := chooseJobLogPage(ctx, prompt, "Choose a Job.", func(ctx context.Context, offset int) ([]string, int, error) {
-		page, err := client.ListJobs(ctx, 20, offset)
-		jobs = page.Jobs
-		labels := []string{}
-		for _, job := range jobs {
-			if !jobSlugPattern.MatchString(job.Name) || !jobRunIDPattern.MatchString(job.ID) {
-				return nil, -1, errors.New("invalid Job identity")
-			}
-			labels = append(labels, oneLine(job.Name))
-		}
-		return labels, page.NextOffset, err
-	})
-	if err != nil {
-		return api.JobResponse{}, api.JobRunResponse{}, api.JobTaskResponse{}, false, err
+	job, run, selected, err := chooseJobRun(ctx, client, prompt)
+	if err != nil || !selected {
+		return job, run, api.JobTaskResponse{}, selected, err
 	}
-	if choice < 0 {
-		return api.JobResponse{}, api.JobRunResponse{}, api.JobTaskResponse{}, false, nil
-	}
-	job := jobs[choice]
-	var runs []api.JobRunResponse
-	choice, err = chooseJobLogPage(ctx, prompt, "Choose a run for "+job.Name+".", func(ctx context.Context, offset int) ([]string, int, error) {
-		page, err := client.ListJobRunsPage(ctx, job.Name, 20, offset)
-		runs = page.Runs
-		labels := []string{}
-		for _, run := range runs {
-			if run.JobID != job.ID || run.AccountID != job.AccountID || !jobRunIDPattern.MatchString(run.ID) {
-				return nil, -1, errors.New("run does not belong to the selected Job")
-			}
-			labels = append(labels, fmt.Sprintf("%s · %s · %s", oneLine(run.CreatedAt), oneLine(run.AggregateStatus), run.ID))
-		}
-		return labels, page.NextOffset, err
-	})
-	if err != nil {
-		return api.JobResponse{}, api.JobRunResponse{}, api.JobTaskResponse{}, false, err
-	}
-	if choice < 0 {
-		return api.JobResponse{}, api.JobRunResponse{}, api.JobTaskResponse{}, false, nil
-	}
-	run := runs[choice]
+	var choice int
 	var tasks []api.JobTaskResponse
 	choice, err = chooseJobLogPage(ctx, prompt, "Choose a task.", func(ctx context.Context, offset int) ([]string, int, error) {
 		page, err := client.ListJobRunTasksPage(ctx, job.Name, run.ID, 20, offset)
@@ -169,4 +134,48 @@ func chooseJobTask(ctx context.Context, client *api.Client, prompt *startPrompt,
 	}
 	task := tasks[choice]
 	return job, run, task, true, nil
+}
+
+func chooseJobRun(ctx context.Context, client *api.Client, prompt *startPrompt) (api.JobResponse, api.JobRunResponse, bool, error) {
+	var jobs []api.JobResponse
+	choice, err := chooseJobLogPage(ctx, prompt, "Choose a Job.", func(ctx context.Context, offset int) ([]string, int, error) {
+		page, err := client.ListJobs(ctx, 20, offset)
+		jobs = page.Jobs
+		labels := []string{}
+		for _, job := range jobs {
+			if !jobSlugPattern.MatchString(job.Name) || !jobRunIDPattern.MatchString(job.ID) {
+				return nil, -1, errors.New("invalid Job identity")
+			}
+			labels = append(labels, oneLine(job.Name))
+		}
+		return labels, page.NextOffset, err
+	})
+	if err != nil {
+		return api.JobResponse{}, api.JobRunResponse{}, false, err
+	}
+	if choice < 0 {
+		return api.JobResponse{}, api.JobRunResponse{}, false, nil
+	}
+	job := jobs[choice]
+	var runs []api.JobRunResponse
+	choice, err = chooseJobLogPage(ctx, prompt, "Choose a run for "+job.Name+".", func(ctx context.Context, offset int) ([]string, int, error) {
+		page, err := client.ListJobRunsPage(ctx, job.Name, 20, offset)
+		runs = page.Runs
+		labels := []string{}
+		for _, run := range runs {
+			if run.JobID != job.ID || run.AccountID != job.AccountID || !jobRunIDPattern.MatchString(run.ID) {
+				return nil, -1, errors.New("run does not belong to the selected Job")
+			}
+			labels = append(labels, fmt.Sprintf("%s · %s · %s", oneLine(run.CreatedAt), oneLine(run.AggregateStatus), run.ID))
+		}
+		return labels, page.NextOffset, err
+	})
+	if err != nil {
+		return api.JobResponse{}, api.JobRunResponse{}, false, err
+	}
+	if choice < 0 {
+		return api.JobResponse{}, api.JobRunResponse{}, false, nil
+	}
+	run := runs[choice]
+	return job, run, true, nil
 }

@@ -3735,6 +3735,25 @@ Inspect recurring schedule decisions
 | `--all` | walk every page using --limit and --cursor |  |
 | `--limit <N>` | max occurrence decisions (1..200) |  |
 
+### jobs wait
+
+Follow one Job run until completion
+
+`gregale jobs wait [--interactive] [--timeout <DURATION>] [--poll-interval <DURATION>] [<name>] [<run-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--interactive` | choose a Job and run |  |
+| `--timeout <DURATION>` | maximum wait duration (default 10m) |  |
+| `--poll-interval <DURATION>` | polling interval (default 2s) |  |
+
+Examples:
+
+```sh
+gregale jobs wait --interactive
+gregale jobs wait my-job RUN_ID --timeout 10m --json
+```
+
 ### jobs cancel
 
 Cancel a run
