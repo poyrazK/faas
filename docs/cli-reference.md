@@ -5849,13 +5849,14 @@ gregale routes monitor preview my-api --routes production-routes.json --customer
 
 Save advisory production route budgets
 
-`gregale routes monitor set --mode <MODE> --routes <PATH> --expected-revision <N> <slug>`
+`gregale routes monitor set --mode <MODE> --routes <PATH> --expected-revision <N> [--on-violation <ACTION>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--mode <MODE>` | enabled or disabled | required; one of `enabled` · `disabled` |
 | `--routes <PATH>` | JSON array of exact method/path labels with max_5xx_rate_bps and/or max_p95_ms | required |
 | `--expected-revision <N>` | current monitor revision; 0 initially | required |
+| `--on-violation <ACTION>` | report (default) or rollback to the last healthy deployment when an error budget is violated within 30 minutes of release | one of `report` · `rollback` |
 
 #### routes monitor report
 

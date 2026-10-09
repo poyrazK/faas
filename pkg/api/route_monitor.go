@@ -11,15 +11,18 @@ type RouteMonitorRoute struct {
 	MaxP95MS      int64  `json:"max_p95_ms,omitempty"`
 }
 type RouteMonitorConfig struct {
-	CustomerGroupBy string              `json:"customer_group_by,omitempty"`
-	AppID           string              `json:"app_id"`
-	Enabled         bool                `json:"enabled"`
-	Revision        int64               `json:"revision"`
-	Routes          []RouteMonitorRoute `json:"routes"`
-	UpdatedAt       *time.Time          `json:"updated_at,omitempty"`
+	CustomerGroupBy string `json:"customer_group_by,omitempty"`
+	// OnViolation is "report" (default, omitted) or "rollback" (ADR-845).
+	OnViolation string              `json:"on_violation,omitempty"`
+	AppID       string              `json:"app_id"`
+	Enabled     bool                `json:"enabled"`
+	Revision    int64               `json:"revision"`
+	Routes      []RouteMonitorRoute `json:"routes"`
+	UpdatedAt   *time.Time          `json:"updated_at,omitempty"`
 }
 type SetRouteMonitorRequest struct {
 	CustomerGroupBy  string              `json:"customer_group_by,omitempty"`
+	OnViolation      string              `json:"on_violation,omitempty"`
 	Enabled          bool                `json:"enabled"`
 	ExpectedRevision *int64              `json:"expected_revision"`
 	Routes           []RouteMonitorRoute `json:"routes"`
@@ -169,6 +172,20 @@ type RouteMonitorIncident struct {
 	TimelineTruncated    bool                                `json:"timeline_truncated,omitempty"`
 	Escalations          []RouteMonitorIncidentEscalation    `json:"escalations,omitempty"`
 	EscalationsTruncated bool                                `json:"escalations_truncated,omitempty"`
+	// Rollback records the single automatic rollback decision for an
+	// incident when on_violation is rollback (ADR-845).
+	Rollback *RouteMonitorIncidentRollback `json:"rollback,omitempty"`
+}
+
+// RouteMonitorIncidentRollback is "claimed" while apid requests the checked
+// rollback, then "requested" with its operation or "skipped" with a reason.
+type RouteMonitorIncidentRollback struct {
+	Status             string    `json:"status"`
+	Reason             string    `json:"reason,omitempty"`
+	Route              string    `json:"route,omitempty"`
+	TargetDeploymentID string    `json:"target_deployment_id,omitempty"`
+	OperationID        string    `json:"operation_id,omitempty"`
+	DecidedAt          time.Time `json:"decided_at"`
 }
 type RouteMonitorIncidentPage struct {
 	AppID      string                 `json:"app_id"`

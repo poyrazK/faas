@@ -144,7 +144,7 @@ func (s *PgStore) SetRouteMonitor(ctx context.Context, accountID, appID string, 
 	if req.Enabled && (!owner.Account.Plan.DebugTelemetryEnabled() || !owner.Account.MayDeploy()) {
 		return c, ErrRouteInvestigationPlan
 	}
-	if c.Enabled == req.Enabled && c.CustomerGroupBy == req.CustomerGroupBy && routemonitor.RoutesEqual(c.Routes, req.Routes) {
+	if c.Enabled == req.Enabled && c.CustomerGroupBy == req.CustomerGroupBy && routemonitor.OnViolation(c.OnViolation) == routemonitor.OnViolation(req.OnViolation) && routemonitor.RoutesEqual(c.Routes, req.Routes) {
 		return c, tx.Commit(ctx)
 	}
 	if c.Revision >= api.RouteRequirementsMaxRevision {
@@ -165,7 +165,7 @@ func (s *PgStore) SetRouteMonitor(ctx context.Context, accountID, appID string, 
 	if err != nil {
 		return c, fmt.Errorf("encode monitor routes: %w", err)
 	}
-	if err := sqlc.New().WriteRouteMonitorConfig(ctx, tx, sqlc.WriteRouteMonitorConfigParams{AppID: appID, AccountID: accountID, Enabled: req.Enabled, Revision: c.Revision + 1, Routes: body, CustomerGroupBy: req.CustomerGroupBy}); err != nil {
+	if err := sqlc.New().WriteRouteMonitorConfig(ctx, tx, sqlc.WriteRouteMonitorConfigParams{AppID: appID, AccountID: accountID, Enabled: req.Enabled, Revision: c.Revision + 1, Routes: body, CustomerGroupBy: req.CustomerGroupBy, OnViolation: routemonitor.OnViolation(req.OnViolation)}); err != nil {
 		return c, fmt.Errorf("write monitor config: %w", err)
 	}
 	c, err = pgRouteMonitorConfig(ctx, tx, accountID, appID)

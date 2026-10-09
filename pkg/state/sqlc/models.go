@@ -6507,6 +6507,7 @@ type RouteMonitor struct {
 	CustomerGroupBy       string
 	CustomerRecoveryState []byte
 	LastHealthyDeployment []byte
+	OnViolation           string
 }
 
 type RouteMonitorIncident struct {

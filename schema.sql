@@ -23137,11 +23137,13 @@ CREATE TABLE public.route_monitors (
     customer_group_by text DEFAULT ''::text NOT NULL,
     customer_recovery_state jsonb DEFAULT '{}'::jsonb NOT NULL,
     last_healthy_deployment jsonb DEFAULT '{}'::jsonb NOT NULL,
+    on_violation text DEFAULT 'report'::text NOT NULL,
     CONSTRAINT route_monitors_check CHECK (((NOT enabled) OR (jsonb_array_length(routes) > 0))),
     CONSTRAINT route_monitors_customer_group_by_check CHECK ((customer_group_by = ANY (ARRAY[''::text, 'tenant'::text, 'consumer'::text]))),
     CONSTRAINT route_monitors_customer_recovery_state_check CHECK (((jsonb_typeof(customer_recovery_state) = 'object'::text) AND (octet_length((customer_recovery_state)::text) <= 262144))),
     CONSTRAINT route_monitors_last_healthy_deployment_check CHECK (((jsonb_typeof(last_healthy_deployment) = 'object'::text) AND (octet_length((last_healthy_deployment)::text) <= 2048))),
     CONSTRAINT route_monitors_next_check_at_check CHECK (isfinite(next_check_at)),
+    CONSTRAINT route_monitors_on_violation_check CHECK ((on_violation = ANY (ARRAY['report'::text, 'rollback'::text]))),
     CONSTRAINT route_monitors_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
     CONSTRAINT route_monitors_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20) AND (octet_length((routes)::text) <= 16384))),
     CONSTRAINT route_monitors_updated_at_check CHECK (isfinite(updated_at))

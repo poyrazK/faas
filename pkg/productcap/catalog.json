@@ -356,7 +356,7 @@
       "id": "production-route-monitoring",
       "name": "Production route budgets",
       "category": "observability",
-      "description": "Check absolute per-route error and p95 budgets against the serving production deployment, with incidents, per-customer impact and regression webhooks.",
+      "description": "Check absolute per-route error and p95 budgets against the serving production deployment, with incidents, per-customer impact, regression webhooks and opt-in automatic rollback of early error-budget incidents.",
       "maturity": "preview",
       "plans": [
         "hobby",

@@ -35831,6 +35831,7 @@ components:
         app_id: {"type": "string", "format": "uuid"}
         enabled: {"type": "boolean"}
         customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Saved request-time identity dimension used for per-cohort budget evaluation."}
+        on_violation: {"type": "string", "enum": ["rollback"], "description": "Present only when a confirmed error-budget incident that opens within 30 minutes of the deployment serving all traffic requests a checked rollback to the incident's healthy baseline (ADR-845). Omitted for the default report-only action."}
         revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
         updated_at: {"type": "string", "format": "date-time"}
@@ -35842,6 +35843,7 @@ components:
       properties:
         enabled: {"type": "boolean"}
         customer_group_by: {"type": "string", "enum": ["tenant", "consumer"], "description": "Optional request-time identity dimension. Omission disables per-cohort evaluation."}
+        on_violation: {"type": "string", "enum": ["report", "rollback"], "description": "report (default) only records incidents. rollback requests one checked rollback per early error-budget incident and requires at least one route with max_5xx_rate_bps."}
         expected_revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
     PreviewRouteMonitorRequest:
@@ -36013,6 +36015,18 @@ components:
         timeline_truncated: {"type": "boolean", "description": "True when older evaluations were dropped to preserve the opening baseline and bounded incident size."}
         escalations: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorIncidentEscalation"}, "maxItems": 20, "description": "Newest newly violated route/signal transitions with bounded evidence captured at each transition."}
         escalations_truncated: {"type": "boolean", "description": "True when older escalation records were dropped to preserve the newest transition details and incident size."}
+        rollback: {"$ref": "#/components/schemas/RouteMonitorIncidentRollback"}
+    RouteMonitorIncidentRollback:
+      type: object
+      description: "The single automatic rollback decision for an incident when on_violation is rollback (ADR-845). claimed is transient while the checked rollback is requested."
+      required: [status, decided_at]
+      properties:
+        status: {"type": "string", "enum": ["claimed", "requested", "skipped"]}
+        reason: {"type": "string", "enum": ["latency_only_violation", "outside_rollback_window", "no_healthy_baseline", "rollback_target_ineligible"]}
+        route: {"type": "string", "maxLength": 256, "description": "First error-budget route that triggered the decision, as METHOD /path."}
+        target_deployment_id: {"type": "string", "format": "uuid"}
+        operation_id: {"type": "string", "format": "uuid", "description": "Checked rollback operation readable at /v1/apps/{slug}/rollbacks/{operation}."}
+        decided_at: {"type": "string", "format": "date-time"}
     RouteMonitorIncidentTimelineEntry:
       type: object
       description: "One confirmed production monitor evaluation. It contains no customer identifiers or request details."
