@@ -121,9 +121,10 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    # Full cold-cache lint takes around forty minutes with bounded memory.
-    # Leave time for analysis, cold builds and the remaining policy gates.
-    timeout-minutes: 90
+    # Full cold-cache lint exceeded fifty minutes with bounded memory.
+    # Leave a ninety-minute analysis budget plus time for cold builds and
+    # the remaining policy gates; keep every analyzer and the memory caps.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7
         with:
@@ -172,7 +173,7 @@ jobs:
         run: scripts/ci/cve-monitor_test.sh
 
       # golangci-lint replaces bare gofmt + go vet with a curated set of
-      # checks. v2.14.0 is built with Go 1.26 and supports the go.mod Go 1.26
+      # checks. v2.14.0 is built with Go 1.27 and supports the go.mod Go 1.26
       # target (golangci-lint v1.x is built with Go 1.23 and refuses newer
       # go directives — see golangci/golangci-lint#5873).
       # action v8 requires golangci-lint >= v2.1.0; v9 is current.
@@ -206,10 +207,12 @@ jobs:
           # The newer Go 1.26 analyzers report baseline findings throughout
           # the existing tree. Keep all rules enabled, but gate only findings
           # introduced since this event's base revision while the baseline is
-          # addressed separately. The expanded repository needs up to fifty
-          # minutes for cold-cache analysis under these memory bounds.
+          # addressed separately. A full cold-cache run exceeded fifty
+          # minutes under these memory bounds. Retain every analyzer and
+          # source; verbose timing makes future slow stages diagnosable.
           args: >-
-            --timeout=50m
+            --verbose
+            --timeout=90m
             --new-from-merge-base=${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
           # The action's own cache is keyed per 7-day interval and never re-saved
           # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
