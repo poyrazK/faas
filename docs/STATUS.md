@@ -55,8 +55,10 @@ Alerts for both features are in `faas_crash_snapshots`
 also passed `TestLiveForkMetal` (live forks see the instance's current
 memory, the serving instance keeps running) and the PgStore live-fork and
 SDK-trigger tests, again with no new leaks. `TestCrashSnapshotSDKMetal`
-failed there because guest-init dialed vsock through `net.FileConn`, which
-does not support AF_VSOCK; the fix is in, and its metal rerun is pending.
+first failed there because guest-init dialed vsock through `net.FileConn`,
+which does not support AF_VSOCK; after that fix it passes (refused without
+opt-in, the app captures itself mid-request, and a fork of the capture
+resumes inside the same call with `in_fork`), with no new leaks.
 
 Image runtime recovery update (2026-10-07): required primary image command
 checks now continue throughout serving VM lifetimes. Repeated fresh failures
