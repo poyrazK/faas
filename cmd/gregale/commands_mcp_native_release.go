@@ -936,7 +936,7 @@ func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		if err := mcpNativeCheckWorkers(ctx, c, p, s); err != nil {
 			return err
 		}
-		if err := c.Park(ctx, slug); err != nil {
+		if err := c.ParkIfDeployment(ctx, slug, s.PreviousDeployments[slug]); err != nil {
 			return err
 		}
 		s.Parked[slug] = true

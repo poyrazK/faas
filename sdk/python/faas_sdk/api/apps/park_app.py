@@ -6,6 +6,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.park_app_body import ParkAppBody
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -13,8 +14,10 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     slug: str,
     *,
+    body: ParkAppBody | Unset = UNSET,
     fresh: bool | Unset = False,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
 
     params: dict[str, Any] = {}
 
@@ -30,6 +33,12 @@ def _get_kwargs(
         "params": params,
     }
 
+    if not isinstance(body, Unset):
+        _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -57,6 +66,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         response_409 = Problem.from_dict(response.json())
 
         return response_409
+
+    if response.status_code == 422:
+        response_422 = Problem.from_dict(response.json())
+
+        return response_422
 
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
@@ -87,6 +101,7 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    body: ParkAppBody | Unset = UNSET,
     fresh: bool | Unset = False,
 ) -> Response[Any | Problem]:
     """Manually park all running instances.
@@ -94,6 +109,7 @@ def sync_detailed(
     Args:
         slug (str):
         fresh (bool | Unset):  Default: False.
+        body (ParkAppBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -105,6 +121,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        body=body,
         fresh=fresh,
     )
 
@@ -119,6 +136,7 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    body: ParkAppBody | Unset = UNSET,
     fresh: bool | Unset = False,
 ) -> Any | Problem | None:
     """Manually park all running instances.
@@ -126,6 +144,7 @@ def sync(
     Args:
         slug (str):
         fresh (bool | Unset):  Default: False.
+        body (ParkAppBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -138,6 +157,7 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        body=body,
         fresh=fresh,
     ).parsed
 
@@ -146,6 +166,7 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    body: ParkAppBody | Unset = UNSET,
     fresh: bool | Unset = False,
 ) -> Response[Any | Problem]:
     """Manually park all running instances.
@@ -153,6 +174,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         fresh (bool | Unset):  Default: False.
+        body (ParkAppBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -164,6 +186,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        body=body,
         fresh=fresh,
     )
 
@@ -176,6 +199,7 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    body: ParkAppBody | Unset = UNSET,
     fresh: bool | Unset = False,
 ) -> Any | Problem | None:
     """Manually park all running instances.
@@ -183,6 +207,7 @@ async def asyncio(
     Args:
         slug (str):
         fresh (bool | Unset):  Default: False.
+        body (ParkAppBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -196,6 +221,7 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            body=body,
             fresh=fresh,
         )
     ).parsed

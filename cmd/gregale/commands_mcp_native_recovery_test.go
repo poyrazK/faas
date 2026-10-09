@@ -21,12 +21,12 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 	original := mcpNativeCheckWorkers
 	defer func() { mcpNativeCheckWorkers = original }()
 	for _, tc := range []struct {
-		name                                                                                      string
-		changed, parked, incompatible, race, lost, postFailure, retirementChanged, retirementLost bool
+		name                                                                                                      string
+		changed, parked, incompatible, race, lost, postFailure, retirementChanged, retirementLost, retirementRace bool
 	}{
 		{name: "healthy"}, {name: "traffic changed", changed: true}, {name: "worker parked", parked: true},
 		{name: "worker incompatible", incompatible: true}, {name: "CAS race", race: true},
-		{name: "lost response", lost: true}, {name: "canonical unhealthy", postFailure: true}, {name: "retire changed generation", retirementChanged: true}, {name: "retire lost park response", retirementLost: true},
+		{name: "lost response", lost: true}, {name: "canonical unhealthy", postFailure: true}, {name: "retire changed generation", retirementChanged: true}, {name: "retire lost park response", retirementLost: true}, {name: "retire deployment changes at park", retirementRace: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mcpNativeCheckWorkers = func(context.Context, *Client, mcpNativeReleasePlan, *mcpNativeReleaseState) error {
@@ -119,7 +119,15 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				case "/v1/apps/candidate-worker/logs":
 					fmt.Fprint(w, "event: log\ndata: {\"instance\":\"candidate-instance\",\"line\":\"{\\\"event\\\":\\\"mcp_task_worker_started\\\",\\\"claimFence\\\":true,\\\"workerID\\\":\\\"12345678-1234-1234-1234-123456789abc\\\"}\"}\n\n")
 				case "/v1/apps/candidate-worker/park":
+					var body map[string]string
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["expected_deployment_id"] != "worker-candidate" {
+						t.Errorf("missing deployment guard: %v %v", body, err)
+					}
 					parks++
+					if tc.retirementRace {
+						api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Deployment changed", "changed during retirement"))
+						return
+					}
 					retired = true
 					if tc.retirementLost && parks == 1 {
 						w.WriteHeader(500)
@@ -189,6 +197,12 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				if tc.retirementChanged {
 					if err == nil || parks != 0 {
 						t.Fatal("retired changed generation")
+					}
+					return
+				}
+				if tc.retirementRace {
+					if err == nil || retired || s.Stage != "retirement_pending" {
+						t.Fatalf("generation race retired candidate or lost checkpoint: %v %+v", err, s)
 					}
 					return
 				}

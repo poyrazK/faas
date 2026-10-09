@@ -6195,3 +6195,28 @@ func TestStripePaymentSucceeded_UndoesDunningDeletion(t *testing.T) {
 		t.Fatalf("after paying: status = %s, deletion_requested_at = %v; want active and unscheduled", got.Status, got.DeletionRequestedAt)
 	}
 }
+
+func TestParkAppRejectsChangedDeployment(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "guarded-worker")
+	first, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: appID, ImageDigest: "sha256:first", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: appID, ImageDigest: "sha256:second", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "POST", "/v1/apps/guarded-worker/park", map[string]string{"expected_deployment_id": first.ID}, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale park: %d %s", rec.Code, rec.Body)
+	}
+	app, _ := e.store.AppByID(t.Context(), appID)
+	if app.Status != state.AppActive {
+		t.Fatalf("stale park changed status: %s", app.Status)
+	}
+	rec = e.do(t, "POST", "/v1/apps/guarded-worker/park", map[string]string{"expected_deployment_id": second.ID}, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("current park: %d %s", rec.Code, rec.Body)
+	}
+}

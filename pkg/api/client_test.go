@@ -1796,3 +1796,25 @@ func TestCreateCORSEdgeRule_HonoursExplicitMaxAge(t *testing.T) {
 		t.Errorf("explicit MaxAgeSeconds: got %d want %d", gotAction.MaxAgeSeconds, 1200)
 	}
 }
+
+func TestParkIfDeploymentKeepsGuardOnDrainRetry(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["expected_deployment_id"] != "recorded-deployment" {
+			t.Errorf("guard missing: %v %v", body, err)
+		}
+		if calls == 1 {
+			WriteProblem(w, ErrCapacity("app instances did not drain before the park deadline").WithHeader("Retry-After", "1"))
+			return
+		}
+		WriteProblem(w, NewProblem(http.StatusConflict, CodeConflict, "Deployment changed", "changed"))
+	}))
+	defer srv.Close()
+	err := NewClient(srv.URL, "token").ParkIfDeployment(t.Context(), "worker", "recorded-deployment")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Problem.Code != CodeConflict || calls != 2 {
+		t.Fatalf("calls=%d err=%v", calls, err)
+	}
+}

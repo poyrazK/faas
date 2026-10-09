@@ -91,7 +91,7 @@ func retireMCPNativeWorker(ctx context.Context, c *Client, p mcpNativeReleasePla
 	if err := saveMCPNativeState(state, *s); err != nil {
 		return err
 	}
-	if err := c.Park(ctx, p.WorkerApp); err != nil {
+	if err := c.ParkIfDeployment(ctx, p.WorkerApp, s.WorkerDeployment); err != nil {
 		return err
 	}
 	return nil

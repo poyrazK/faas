@@ -1101,9 +1101,10 @@ journal; never substitute another artifact. Changed source or policy
 content and namespace/API environment changes block resume. Do not edit or remove
 the journals while a release process is running.
 
-Coordinate other deployments and app-wide operations during rollout: generation
-checks and web promotion compare-and-swap detect changes, but app park is an
-app-wide API without a deployment comparison guard. There is no automatic
+Worker parking sends `expected_deployment_id`; the API compares the latest
+deployment under the same app lock used by deployment creation before committing
+the park transition. A changed generation returns conflict, including on drain
+retries, and leaves the release journal resumable. There is no automatic
 rollback; a failure after promotion may leave the new web revision serving while
 worker draining is incomplete. Check both journals and the recorded deployments,
 restore health, and resume. Log retention must include worker startup records;
@@ -1174,9 +1175,9 @@ legacy or missing startup records stop quarantine instead of silently allowing
 claims.
 They apply to the captured worker IDs, not to arbitrary future processes. A
 restarted candidate with different worker IDs or a changed app generation stops
-retirement; investigate it rather than substituting IDs in the journal. Coordinate
-other deployments and app-wide operations, since the park API has no generation
-compare-and-swap. Quarantine remains in place if a later check fails. All recovery
+retirement; investigate it rather than substituting IDs in the journal. The
+conditional park API also rejects a generation change between the health checks
+and parking. Quarantine remains in place if a later check fails. All recovery
 and retirement stages block resuming the original rollout; use a new plan/journal
 for a subsequent release. Runtime database credentials supply the existing
 worker-table UPDATE privilege; observer credentials remain read-only.
