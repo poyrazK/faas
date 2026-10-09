@@ -343,3 +343,11 @@ Use `faas_sdk.api.events.publish_event_batch.sync_detailed` or
 can include rejected or unknown items. Retry with the original source/id/content;
 duplicates retain their original receipt and do not create more deliveries.
 See [batch publication](../../docs/event-driven.md#batch-event-publishing).
+
+## Event retention health
+
+The generated events service exposes `getEventRetentionHealth` (Node) or
+`faas_sdk.api.events.get_event_retention_health` (Python). Filter receipt
+observations by source/app and choose an expiry lookahead; storage utilization
+remains account-wide. Recovery preflight also returns current receipt expiry
+warnings and backfill holds. See [retention health](../../docs/event-driven.md#retention-health-and-expiry-alerts).

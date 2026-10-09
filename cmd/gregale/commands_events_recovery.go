@@ -361,6 +361,10 @@ func cmdEventsRecoveryPreflight(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Recovery %s: %s | active: %t\nPending: %d | eligible: %d | waiting: %d | likely skipped: %d | unknown: %d\n", oneLine(out.JobID), oneLine(out.State), out.Active, out.PendingCount, out.EligibleCount, out.WaitingCount, out.LikelySkippedCount, out.UnknownCount)
 	_, _ = fmt.Fprintf(osStdout, "Optimistic admission minimum: %.0fs at %d/s | remaining lifetime: %.0fs | fits before expiry: %t\n", out.MinimumDrainSeconds, out.RatePerSecond, out.RemainingLifetimeSeconds, out.FitsBeforeExpiry)
+	_, _ = fmt.Fprintf(osStdout, "Receipt retention warnings: %d | current backfill holds: %d\n", out.ReceiptRetentionWarningCount, out.ReceiptRetentionHeldCount)
+	if out.EarliestUnheldRetainUntil != nil {
+		_, _ = fmt.Fprintf(osStdout, "Earliest unheld receipt retention boundary: %s | optimistic drain crosses boundary: %t\n", out.EarliestUnheldRetainUntil.Format(time.RFC3339), out.MinimumDrainCrossesReceiptRetention)
+	}
 	if out.AssumesImmediateResume {
 		_, _ = fmt.Fprintln(osStdout, "Timing assumes immediate resume of this paused job.")
 	}

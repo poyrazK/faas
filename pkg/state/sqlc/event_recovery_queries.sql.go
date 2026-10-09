@@ -899,14 +899,16 @@ func (q *Queries) EventRecoveryPause(ctx context.Context, db DBTX, arg EventReco
 const eventRecoveryPreflight = `-- name: EventRecoveryPreflight :many
 WITH slots AS MATERIALIZED (
  SELECT s.invocation_id, s.account_id, s.app_id, s.subscription_id FROM event_delivery_slots s JOIN invocations v ON v.id=s.invocation_id
- WHERE s.account_id=$3::uuid AND v.state IN ('pending','dispatching')
+ WHERE s.account_id=$5::uuid AND v.state IN ('pending','dispatching')
 ), totals AS (
  SELECT count(*)::bigint AS account_count,count(*) FILTER (WHERE slots.app_id=j.app_id)::bigint AS app_count
- FROM slots CROSS JOIN event_recovery_jobs j WHERE j.id=$2::uuid
+ FROM slots CROSS JOIN event_recovery_jobs j WHERE j.id=$4::uuid
 ), consumers AS (
  SELECT app_id,subscription_id,count(*)::bigint AS consumer_count FROM slots GROUP BY app_id,subscription_id
 )
 SELECT item.position,acct.plan,
+ (o.delivered_at + $1::bigint * interval '1 second')::timestamptz AS receipt_retain_until,
+ coalesce(event_receipt_retention_hold(o.account_id,o.id,o.created_at,$2::timestamptz)<>'',false)::boolean AS receipt_retention_held,
  CASE WHEN app.status='deleted' THEN 'target_unavailable'
  WHEN j.selection->>'mode'='execution' THEN CASE
   WHEN inv.id IS NULL OR inv.state<>item.expected_progress->>'state' OR inv.attempts<>(item.expected_progress->>'attempts')::integer
@@ -914,7 +916,7 @@ SELECT item.position,acct.plan,
    OR inv.completed_at IS DISTINCT FROM (item.expected_progress->>'completed_at')::timestamptz
    OR EXISTS (SELECT 1 FROM invocation_plain_replays p WHERE p.parent_invocation_id=inv.id)
    OR EXISTS (SELECT 1 FROM invocation_keyed_replays k WHERE k.parent_invocation_id=inv.id) THEN 'changed'
-  WHEN inv.work_expires_at<=$1::timestamptz OR inv.start_deadline_at<=$1::timestamptz THEN 'expired'
+  WHEN inv.work_expires_at<=$3::timestamptz OR inv.start_deadline_at<=$3::timestamptz THEN 'expired'
   WHEN o.id IS NULL OR NOT (EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) r WHERE r->>'id'=item.subscription_id AND r->>'app_id'=j.app_id::text)
    OR EXISTS (SELECT 1 FROM event_fanout_recipients r WHERE r.outbox_id=o.id AND r.subscription_id=item.subscription_id AND r.recipient->>'app_id'=j.app_id::text)) THEN 'receipt_expired'
   WHEN inv.state='dead_letter' AND NOT EXISTS (SELECT 1 FROM production_dead_letter_events e WHERE e.id=nullif(item.expected_progress->>'dead_letter_id','')::uuid AND e.account_id=j.account_id AND e.app_id=j.app_id AND e.source='invocation' AND e.source_id=inv.id AND e.replayed_at IS NULL) THEN 'changed'
@@ -930,7 +932,7 @@ SELECT item.position,acct.plan,
    OR coalesce(routed.state,o.recipient_progress->item.subscription_id->>'state','pending')<>'failed'
    OR (o.recipient_claims AND coalesce(routed.state,'')<>'failed') THEN 'changed'
   WHEN NOT o.recipient_claims AND o.state='processing' THEN 'legacy_claim'
-  WHEN event_recipient_delivery_deadline(recipient.value,o.created_at,'{}'::jsonb)<=$1::timestamptz THEN 'expired'
+  WHEN event_recipient_delivery_deadline(recipient.value,o.created_at,'{}'::jsonb)<=$3::timestamptz THEN 'expired'
   ELSE 'eligible' END END::text AS reason,
  (slot.invocation_id IS NOT NULL AND j.selection->>'mode'='execution')::boolean AS capacity_tracked,
  totals.account_count,totals.app_count,coalesce(c.consumer_count,0)::bigint AS consumer_count
@@ -944,29 +946,35 @@ LEFT JOIN platform_tenants tenant ON tenant.id=inv.platform_tenant_id AND tenant
 LEFT JOIN event_delivery_slots slot ON slot.invocation_id=inv.id
 LEFT JOIN consumers c ON c.app_id=slot.app_id AND c.subscription_id=slot.subscription_id
 CROSS JOIN totals
-WHERE j.id=$2::uuid AND j.account_id=$3::uuid AND item.state='pending'
-ORDER BY item.position LIMIT $4::integer
+WHERE j.id=$4::uuid AND j.account_id=$5::uuid AND item.state='pending'
+ORDER BY item.position LIMIT $6::integer
 `
 
 type EventRecoveryPreflightParams struct {
-	NowAt     pgtype.Timestamptz
-	JobID     pgtype.UUID
-	AccountID pgtype.UUID
-	PageLimit int32
+	RetentionSeconds int64
+	JobCutoffAt      pgtype.Timestamptz
+	NowAt            pgtype.Timestamptz
+	JobID            pgtype.UUID
+	AccountID        pgtype.UUID
+	PageLimit        int32
 }
 
 type EventRecoveryPreflightRow struct {
-	Position        int64
-	Plan            string
-	Reason          string
-	CapacityTracked bool
-	AccountCount    int64
-	AppCount        int64
-	ConsumerCount   int64
+	Position             int64
+	Plan                 string
+	ReceiptRetainUntil   pgtype.Timestamptz
+	ReceiptRetentionHeld bool
+	Reason               string
+	CapacityTracked      bool
+	AccountCount         int64
+	AppCount             int64
+	ConsumerCount        int64
 }
 
 func (q *Queries) EventRecoveryPreflight(ctx context.Context, db DBTX, arg EventRecoveryPreflightParams) ([]EventRecoveryPreflightRow, error) {
 	rows, err := db.Query(ctx, eventRecoveryPreflight,
+		arg.RetentionSeconds,
+		arg.JobCutoffAt,
 		arg.NowAt,
 		arg.JobID,
 		arg.AccountID,
@@ -982,6 +990,8 @@ func (q *Queries) EventRecoveryPreflight(ctx context.Context, db DBTX, arg Event
 		if err := rows.Scan(
 			&i.Position,
 			&i.Plan,
+			&i.ReceiptRetainUntil,
+			&i.ReceiptRetentionHeld,
 			&i.Reason,
 			&i.CapacityTracked,
 			&i.AccountCount,

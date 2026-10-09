@@ -3171,6 +3171,8 @@ const (
 	AlertMetricEventExecutionDeadLetterRatePerSecond AlertMetric = "event_execution_dead_letter_rate_per_second"
 	AlertMetricEventHandlerFailurePct                AlertMetric = "event_handler_failure_pct"
 	AlertMetricEventCompletionLatencyP95Seconds      AlertMetric = "event_completion_latency_p95_seconds"
+	AlertMetricEventRetentionExpiringReceipts        AlertMetric = "event_retention_expiring_receipts"
+	AlertMetricEventStorageUtilizationPct            AlertMetric = "event_storage_utilization_pct"
 	AlertMetricEventRecoveryCapacityWaitJobs         AlertMetric = "event_recovery_capacity_wait_jobs"
 	AlertMetricEventRecoveryStalledJobs              AlertMetric = "event_recovery_stalled_jobs"
 	AlertMetricEventRecoveryExpiringJobs             AlertMetric = "event_recovery_expiring_jobs"

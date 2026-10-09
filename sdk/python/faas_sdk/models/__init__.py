@@ -1054,6 +1054,10 @@ from .event_replay_preview_match_original_recipient import EventReplayPreviewMat
 from .event_replay_preview_response import EventReplayPreviewResponse
 from .event_replay_preview_response_coverage import EventReplayPreviewResponseCoverage
 from .event_replay_preview_retention import EventReplayPreviewRetention
+from .event_retention_health import EventRetentionHealth
+from .event_retention_sample import EventRetentionSample
+from .event_retention_sample_hold_reason import EventRetentionSampleHoldReason
+from .event_retention_sample_status import EventRetentionSampleStatus
 from .event_routing_retry_policy import EventRoutingRetryPolicy
 from .event_routing_retry_policy_response import EventRoutingRetryPolicyResponse
 from .event_schema import EventSchema
@@ -4058,6 +4062,10 @@ __all__ = (
     "EventReplayPreviewResponse",
     "EventReplayPreviewResponseCoverage",
     "EventReplayPreviewRetention",
+    "EventRetentionHealth",
+    "EventRetentionSample",
+    "EventRetentionSampleHoldReason",
+    "EventRetentionSampleStatus",
     "EventRoutingRetryPolicy",
     "EventRoutingRetryPolicyResponse",
     "EventSchema",

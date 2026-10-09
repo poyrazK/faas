@@ -699,3 +699,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-814: Read-only recovery preflight](814-recovery-preflight.md)
 
 - [ADR-829: Bounded batch event publication](829-batch-event-publication.md)
+
+- [ADR-830: Event retention health and expiry warnings](830-event-retention-health.md)

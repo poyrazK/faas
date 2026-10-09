@@ -3481,6 +3481,60 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
+  /v1/events/retention:
+    get:
+      tags: [events]
+      operationId: getEventRetentionHealth
+      summary: Inspect receipt pruning eligibility, backfill holds and account storage.
+      description: |
+        Read-only account snapshot under apps:read/admin scopes and MFA.
+        Receipt retention is 30 days after routing settles; unsettled receipts
+        have no pruning deadline. Reports current eligible, upcoming expiring
+        and held receipts using the pruning worker's shared hold predicate.
+        Running backfills pin their acceptance ranges; retained completed
+        backfills pin retryable failed items. Bulk recovery jobs do not pin
+        receipts. Eligible means the nominal deadline has passed without a
+        current backfill hold, not that pruning will occur immediately.
+        Source/app filters affect receipt counts and samples only. Storage
+        usage and utilization always cover the entire account; utilization
+        is the maximum of count and byte percentages and can exceed 100 after
+        a plan downgrade. Samples are bounded and ordered by nominal deadline,
+        source and id. No payloads, work keys, mutations or reservations.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: source
+          in: query
+          description: Exact event source filter.
+          schema: { type: string, maxLength: 256 }
+        - name: app
+          in: query
+          description: Owned application slug; matches captured or backfilled recipients.
+          schema: { type: string }
+        - name: window
+          in: query
+          description: Expiry lookahead as a Go duration, in whole seconds from 1s to 720h.
+          schema: { type: string, default: 24h }
+        - name: limit
+          in: query
+          description: Maximum sampled receipts; aggregate counts include every match.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: Current retention and account storage health.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRetentionHealth' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504':
+          description: Snapshot exceeded its bounded read budget.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/events:publish-batch:
     post:
       tags: [events]
@@ -46879,6 +46933,49 @@ components:
         account_id: { type: string, format: uuid }
         receipt_url: { type: string, format: uri-reference, description: Account-authenticated relative URL for this event receipt. }
 
+    EventRetentionSample:
+      description: Receipt nearing or past its nominal retention deadline, without payloads.
+      type: object
+      additionalProperties: false
+      required: [event_source, event_id, accepted_at, retain_until, retained_bytes, status, hold_reason]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        accepted_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time }
+        retained_bytes: { type: integer, format: int64, minimum: 0 }
+        status: { type: string, enum: [held, eligible_for_pruning, expiring] }
+        hold_reason: { type: string, enum: ['', backfill_running, backfill_retryable] }
+    EventRetentionHealth:
+      description: Filtered receipt observations and unfiltered account-wide retained storage utilization.
+      type: object
+      additionalProperties: false
+      required: [observed_at, window_seconds, retained_receipts, retained_bytes, unsettled_receipts, unknown_deadline_receipts, held_receipts, running_backfill_holds, retryable_backfill_holds, held_due_receipts, eligible_for_pruning, expiring_receipts, storage, storage_count_utilization_pct, storage_bytes_utilization_pct, storage_utilization_pct, sample, sample_truncated]
+      properties:
+        observed_at: { type: string, format: date-time }
+        window_seconds: { type: integer, format: int64, minimum: 1, maximum: 2592000 }
+        event_source: { type: string }
+        app_id: { type: string, format: uuid }
+        retained_receipts: { type: integer, format: int64, minimum: 0 }
+        retained_bytes: { type: integer, format: int64, minimum: 0 }
+        unknown_deadline_receipts: { type: integer, format: int64, minimum: 0, description: Settled receipts missing a settlement timestamp; expiry cannot be determined. }
+        unsettled_receipts: { type: integer, format: int64, minimum: 0 }
+        held_receipts: { type: integer, format: int64, minimum: 0 }
+        running_backfill_holds: { type: integer, format: int64, minimum: 0 }
+        retryable_backfill_holds: { type: integer, format: int64, minimum: 0 }
+        held_due_receipts: { type: integer, format: int64, minimum: 0 }
+        eligible_for_pruning: { type: integer, format: int64, minimum: 0 }
+        expiring_receipts: { type: integer, format: int64, minimum: 0 }
+        storage: { $ref: '#/components/schemas/EventStorageUsageResponse' }
+        storage_count_utilization_pct: { type: number, minimum: 0 }
+        storage_bytes_utilization_pct: { type: number, minimum: 0 }
+        storage_utilization_pct: { type: number, minimum: 0 }
+        sample:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventRetentionSample' }
+        sample_truncated: { type: boolean }
+
     PublishEventBatchRequest:
       description: Bounded collection of independently accepted event envelopes.
       type: object
@@ -47267,6 +47364,8 @@ components:
       additionalProperties: false
       required: [position, status, reason]
       properties:
+        receipt_retain_until: { type: string, format: date-time, description: Nominal receipt retention boundary when routing has settled. }
+        receipt_retention_held: { type: boolean, description: Current backfill hold; not a promise of future protection. }
         position: { type: integer, format: int64, minimum: 1 }
         status: { type: string, enum: [eligible, waiting, likely_skipped, unknown] }
         reason: { type: string, enum: [eligible, capacity, legacy_claim, changed, expired, target_unavailable, receipt_expired, unknown] }
@@ -47277,6 +47376,10 @@ components:
       additionalProperties: false
       required: [job_id, observed_at, state, active, pending_count, eligible_count, waiting_count, likely_skipped_count, unknown_count, reason_counts, capacity_scopes, rate_per_second, remaining_lifetime_seconds, minimum_drain_seconds, earliest_drain_at, fits_before_expiry, assumes_immediate_resume, sample]
       properties:
+        receipt_retention_warning_count: { type: integer, format: int64, minimum: 0, description: Pending items with unheld receipt deadlines at or before the later of 24 hours from observation and optimistic drain. }
+        receipt_retention_held_count: { type: integer, format: int64, minimum: 0, description: Pending items currently pinned by a backfill. }
+        earliest_unheld_retain_until: { type: string, format: date-time }
+        minimum_drain_crosses_receipt_retention: { type: boolean, description: Rate-only optimistic drain reaches or exceeds the earliest currently unheld receipt boundary; false is not a retention guarantee. }
         job_id: { type: string, format: uuid }
         observed_at: { type: string, format: date-time }
         state: { type: string, enum: [running, paused, completed, cancelled] }
@@ -52658,6 +52761,8 @@ components:
             - event_recovery_stalled_jobs
             - event_recovery_expiring_jobs
             - event_recovery_capacity_wait_jobs
+            - event_retention_expiring_receipts
+            - event_storage_utilization_pct
             - workflow_failures
             - workflow_schedule_quota_skips
             - workflow_pending_age_seconds
@@ -52717,7 +52822,7 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -52757,7 +52862,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_retention_expiring_receipts, event_storage_utilization_pct]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }

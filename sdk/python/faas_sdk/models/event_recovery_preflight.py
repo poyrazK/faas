@@ -8,6 +8,7 @@ from uuid import UUID
 from attrs import define as _attrs_define
 
 from ..models.event_recovery_preflight_state import EventRecoveryPreflightState, check_event_recovery_preflight_state
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.event_recovery_preflight_capacity_scopes import EventRecoveryPreflightCapacityScopes
@@ -44,6 +45,15 @@ class EventRecoveryPreflight:
     """Active job and optimistic earliest drain strictly precedes expiry; true is not a guarantee of completion."""
     assumes_immediate_resume: bool
     sample: list[EventRecoveryPreflightItem]
+    receipt_retention_warning_count: int | Unset = UNSET
+    """Pending items with unheld receipt deadlines at or before the later of 24 hours from observation and
+    optimistic drain."""
+    receipt_retention_held_count: int | Unset = UNSET
+    """Pending items currently pinned by a backfill."""
+    earliest_unheld_retain_until: datetime.datetime | Unset = UNSET
+    minimum_drain_crosses_receipt_retention: bool | Unset = UNSET
+    """Rate-only optimistic drain reaches or exceeds the earliest currently unheld receipt boundary; false is not a
+    retention guarantee."""
 
     def to_dict(self) -> dict[str, Any]:
         job_id = str(self.job_id)
@@ -85,6 +95,16 @@ class EventRecoveryPreflight:
             sample_item = sample_item_data.to_dict()
             sample.append(sample_item)
 
+        receipt_retention_warning_count = self.receipt_retention_warning_count
+
+        receipt_retention_held_count = self.receipt_retention_held_count
+
+        earliest_unheld_retain_until: str | Unset = UNSET
+        if not isinstance(self.earliest_unheld_retain_until, Unset):
+            earliest_unheld_retain_until = self.earliest_unheld_retain_until.isoformat()
+
+        minimum_drain_crosses_receipt_retention = self.minimum_drain_crosses_receipt_retention
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -109,6 +129,14 @@ class EventRecoveryPreflight:
                 "sample": sample,
             }
         )
+        if receipt_retention_warning_count is not UNSET:
+            field_dict["receipt_retention_warning_count"] = receipt_retention_warning_count
+        if receipt_retention_held_count is not UNSET:
+            field_dict["receipt_retention_held_count"] = receipt_retention_held_count
+        if earliest_unheld_retain_until is not UNSET:
+            field_dict["earliest_unheld_retain_until"] = earliest_unheld_retain_until
+        if minimum_drain_crosses_receipt_retention is not UNSET:
+            field_dict["minimum_drain_crosses_receipt_retention"] = minimum_drain_crosses_receipt_retention
 
         return field_dict
 
@@ -160,6 +188,19 @@ class EventRecoveryPreflight:
 
             sample.append(sample_item)
 
+        receipt_retention_warning_count = d.pop("receipt_retention_warning_count", UNSET)
+
+        receipt_retention_held_count = d.pop("receipt_retention_held_count", UNSET)
+
+        _earliest_unheld_retain_until = d.pop("earliest_unheld_retain_until", UNSET)
+        earliest_unheld_retain_until: datetime.datetime | Unset
+        if isinstance(_earliest_unheld_retain_until, Unset):
+            earliest_unheld_retain_until = UNSET
+        else:
+            earliest_unheld_retain_until = datetime.datetime.fromisoformat(_earliest_unheld_retain_until)
+
+        minimum_drain_crosses_receipt_retention = d.pop("minimum_drain_crosses_receipt_retention", UNSET)
+
         event_recovery_preflight = cls(
             job_id=job_id,
             observed_at=observed_at,
@@ -179,6 +220,10 @@ class EventRecoveryPreflight:
             fits_before_expiry=fits_before_expiry,
             assumes_immediate_resume=assumes_immediate_resume,
             sample=sample,
+            receipt_retention_warning_count=receipt_retention_warning_count,
+            receipt_retention_held_count=receipt_retention_held_count,
+            earliest_unheld_retain_until=earliest_unheld_retain_until,
+            minimum_drain_crosses_receipt_retention=minimum_drain_crosses_receipt_retention,
         )
 
         return event_recovery_preflight

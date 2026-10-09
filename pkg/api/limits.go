@@ -9403,3 +9403,12 @@ const (
 	EventPublishBatchBodyMaxBytes int64 = 1 << 20
 	EventPublishBatchTimeout            = 30 * time.Second
 )
+
+// Retention observations are bounded read-only snapshots (ADR-830).
+const (
+	EventRetentionDefaultWindow  = 24 * time.Hour
+	EventRetentionMaxWindow      = 30 * 24 * time.Hour
+	EventRetentionSampleMax      = 100
+	EventRetentionSourceMaxBytes = 256
+	EventRetentionRequestTimeout = 15 * time.Second
+)

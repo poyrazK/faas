@@ -103,6 +103,8 @@ func TruncateRunes(s string, maxRunes int) string {
 // Issue #1395 B3 adds three durable observability metrics backed by
 // app_errors, request_telemetry, and usage_daily.
 var AllowedAlertRuleMetrics = []string{
+	"event_retention_expiring_receipts",
+	"event_storage_utilization_pct",
 	"event_execution_dead_letters",
 	"event_execution_dead_letter_rate_per_second",
 	"event_handler_failure_pct",
@@ -195,7 +197,7 @@ func AllowedAlertRuleAction(v string) bool {
 // Pre-auth target observations and signal health can be influenced by
 // external login traffic. Their alerts must never change a deployment.
 func AlertRuleActionAllowedForMetric(metric, action string) bool {
-	if IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || metric == "pre_auth_target_threshold" || metric == "pre_auth_target_signal_gap_pct" ||
+	if IsEventRetentionAlertMetric(metric) || IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || metric == "pre_auth_target_threshold" || metric == "pre_auth_target_signal_gap_pct" ||
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
 		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" {
 		return action == "" || action == "webhook"

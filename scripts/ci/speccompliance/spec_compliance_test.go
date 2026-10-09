@@ -322,6 +322,7 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	"EventRetentionQuery":            true, // client-only retention query options; route parameters are the wire contract
 	"EventReplayPreviewOptions":      true, // client-only query options; the wire parameters are declared on the route
 	"EventReplayBackfillItemsQuery":  true, // client-only pagination/filter options; the wire parameters are declared on the route
 	"WorkflowSchedulePreviewInput":   true, // client-side request builder input; the wire parameters are query fields
@@ -1041,6 +1042,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "event_recovery_list.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_notifications.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_preflight.go"),
+		filepath.Join(root, "pkg", "api", "event_retention.go"),
 		filepath.Join(root, "pkg", "api", "event_routing_retry_policy.go"),
 		filepath.Join(root, "pkg", "api", "event_schema_rollout.go"),
 		filepath.Join(root, "pkg", "api", "event_schema_versions.go"),

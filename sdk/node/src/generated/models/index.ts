@@ -525,6 +525,8 @@ export type { EventReplayBackfillRetryResponse } from './EventReplayBackfillRetr
 export type { EventReplayPreviewMatch } from './EventReplayPreviewMatch.js';
 export type { EventReplayPreviewResponse } from './EventReplayPreviewResponse.js';
 export type { EventReplayPreviewRetention } from './EventReplayPreviewRetention.js';
+export type { EventRetentionHealth } from './EventRetentionHealth.js';
+export type { EventRetentionSample } from './EventRetentionSample.js';
 export type { EventRoutingRetryPolicy } from './EventRoutingRetryPolicy.js';
 export type { EventRoutingRetryPolicyResponse } from './EventRoutingRetryPolicyResponse.js';
 export type { EventSchema } from './EventSchema.js';

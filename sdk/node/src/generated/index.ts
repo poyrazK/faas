@@ -531,6 +531,8 @@ export type { EventReplayBackfillRetryResponse } from './models/EventReplayBackf
 export type { EventReplayPreviewMatch } from './models/EventReplayPreviewMatch.js';
 export type { EventReplayPreviewResponse } from './models/EventReplayPreviewResponse.js';
 export type { EventReplayPreviewRetention } from './models/EventReplayPreviewRetention.js';
+export type { EventRetentionHealth } from './models/EventRetentionHealth.js';
+export type { EventRetentionSample } from './models/EventRetentionSample.js';
 export type { EventRoutingRetryPolicy } from './models/EventRoutingRetryPolicy.js';
 export type { EventRoutingRetryPolicyResponse } from './models/EventRoutingRetryPolicyResponse.js';
 export type { EventSchema } from './models/EventSchema.js';

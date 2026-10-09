@@ -331,13 +331,7 @@ DELETE FROM event_replay_jobs WHERE id IN (
 WITH picked AS MATERIALIZED (
     SELECT o.id,o.account_id FROM event_fanout_outbox o
 WHERE o.state='delivered' AND o.delivered_at < sqlc.arg(before_at)::timestamptz
-      AND NOT EXISTS (
-          SELECT 1 FROM event_replay_jobs j WHERE j.account_id=o.account_id AND (
-              (j.state='running' AND o.created_at>=j.from_at AND o.created_at<j.cutoff_at)
-              OR (j.state='completed_with_failures' AND j.completed_at>=sqlc.arg(job_cutoff_at)::timestamptz
-                  AND EXISTS (SELECT 1 FROM event_replay_job_items i WHERE i.job_id=j.id
-                              AND i.outbox_id=o.id AND i.state='failed' AND i.retryable))
-          ))
+      AND event_receipt_retention_hold(o.account_id,o.id,o.created_at,sqlc.arg(job_cutoff_at)::timestamptz)=''
     ORDER BY o.delivered_at,o.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE OF o SKIP LOCKED
 ), unlocked AS MATERIALIZED (
     SELECT id FROM picked WHERE pg_try_advisory_xact_lock(hashtextextended(account_id::text,625))

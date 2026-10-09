@@ -858,6 +858,74 @@ gregale events publish --id evt-123 --source billing.stripe --type invoice.paid 
   --data '{"amount":150}'
 ```
 
+### Retention health and expiry alerts
+
+Inspect retained receipts and storage pressure before scheduling recovery:
+
+```sh
+gregale events retention --window 24h --json
+gregale events retention --source orders --app order-worker --window 6h --limit 20
+```
+
+`GET /v1/events/retention` accepts the same `source`, `app`, `window` and `limit`
+query parameters under account read scopes and MFA. The lookahead is a whole-second
+Go duration from `1s` through `720h`, default `24h`; samples are capped at 100.
+Aggregate counts include all matching receipts. Samples contain identities and
+nominal deadlines, ordered by deadline, source and id, with `sample_truncated`
+when more matches exist. Payloads and work keys are not returned.
+
+Receipt retention begins when routing settles, not when the producer accepts an
+event or a handler finishes. The nominal boundary is settlement plus 30 days.
+Unsettled receipts have no pruning deadline. Settled receipts missing a settlement
+timestamp are counted as `unknown_deadline_receipts`; expiry alerts degrade
+rather than treating these as healthy zero. Hold counts describe settled receipts.
+`eligible_for_pruning` counts
+unheld receipts strictly past that boundary. `expiring_receipts` counts unheld
+receipts from the observation instant through the lookahead, inclusive.
+`held_receipts` and `held_due_receipts` distinguish backfill pins from upcoming
+expiry and overdue cleanup. Holds use the exact pruning predicate: running
+backfills pin their account acceptance ranges, and retained completed backfills
+with retryable failed items pin those receipts. Running holds take precedence
+when a receipt has both reasons; hold counts count receipts, not jobs.
+
+Bulk recovery jobs do not pin receipts. A current backfill hold is an observation,
+not a guarantee it will last through a later recovery. Pruning eligibility does
+not mean immediate deletion: batching and locks can delay cleanup. No read
+extends retention or triggers pruning or recovery.
+
+Source and app filters apply to receipt counts and samples. App attribution uses
+captured or backfilled recipient membership; older receipts without that
+attribution remain visible in the account-wide report. The `storage` object and
+all utilization percentages always cover the entire account. Maximum utilization
+is the larger of count and byte utilization; a plan downgrade can put it above
+100%. Filtered receipt bytes can differ from account usage, and platform receipts
+with no customer storage charge can still appear in receipt counts.
+
+Create webhook-only alerts through existing app alert rules:
+
+- `event_retention_expiring_receipts` counts unheld app receipts already eligible
+  for pruning or expiring within the rule's `5m`, `15m`, `1h`, `6h` or `24h` lookahead.
+- `event_storage_utilization_pct` observes the account-wide maximum count/byte
+  utilization; use a threshold such as 90 to warn before storage fills.
+
+These metrics require an owned app, omit `event_subscription_id`, and use current
+observations rather than historical aggregation. Storage rules attached to different
+apps observe the same account pressure. Existing cooldown and recovery webhook
+notifications apply; no rules are installed automatically. Read failures produce
+degraded observations rather than healthy zeros, and deployment actions are prohibited.
+
+`events recovery-preflight` also reports pending items whose unheld receipt
+boundary falls before the later of 24 hours from observation and optimistic drain.
+It includes current hold counts, the earliest unheld boundary and a flag when the
+rate-only minimum drain reaches or crosses it. Counts refer to pending items,
+which may share a receipt. Missing receipts retain their existing classification.
+A false crossing flag does not guarantee protection: future waits and changing
+holds can still cause receipts to be pruned before recovery.
+
+Apply the retention-health migration before upgrading binaries. Remove the new
+alert rules and downgrade binaries before rolling it back. See
+[ADR-830](adr/830-event-retention-health.md).
+
 ### Batch event publishing
 
 Use `POST /v1/events:publish-batch` to publish 1–100 events in one request

@@ -28,6 +28,7 @@ import type { EventReplayBackfillRequest } from '../models/EventReplayBackfillRe
 import type { EventReplayBackfillRetryRequest } from '../models/EventReplayBackfillRetryRequest.js';
 import type { EventReplayBackfillRetryResponse } from '../models/EventReplayBackfillRetryResponse.js';
 import type { EventReplayPreviewResponse } from '../models/EventReplayPreviewResponse.js';
+import type { EventRetentionHealth } from '../models/EventRetentionHealth.js';
 import type { EventRoutingRetryPolicy } from '../models/EventRoutingRetryPolicy.js';
 import type { EventRoutingRetryPolicyResponse } from '../models/EventRoutingRetryPolicyResponse.js';
 import type { EventSchema } from '../models/EventSchema.js';
@@ -147,6 +148,71 @@ export class EventsService {
         \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect receipt pruning eligibility, backfill holds and account storage.
+   * Read-only account snapshot under apps:read/admin scopes and MFA.
+   * Receipt retention is 30 days after routing settles; unsettled receipts
+   * have no pruning deadline. Reports current eligible, upcoming expiring
+   * and held receipts using the pruning worker's shared hold predicate.
+   * Running backfills pin their acceptance ranges; retained completed
+   * backfills pin retryable failed items. Bulk recovery jobs do not pin
+   * receipts. Eligible means the nominal deadline has passed without a
+   * current backfill hold, not that pruning will occur immediately.
+   * Source/app filters affect receipt counts and samples only. Storage
+   * usage and utilization always cover the entire account; utilization
+   * is the maximum of count and byte percentages and can exceed 100 after
+   * a plan downgrade. Samples are bounded and ordered by nominal deadline,
+   * source and id. No payloads, work keys, mutations or reservations.
+   *
+   * @returns EventRetentionHealth Current retention and account storage health.
+   * @throws ApiError
+   */
+  public static getEventRetentionHealth({
+    source,
+    app,
+    window = '24h',
+    limit = 100,
+  }: {
+    /**
+     * Exact event source filter.
+     */
+    source?: string,
+    /**
+     * Owned application slug; matches captured or backfilled recipients.
+     */
+    app?: string,
+    /**
+     * Expiry lookahead as a Go duration, in whole seconds from 1s to 720h.
+     */
+    window?: string,
+    /**
+     * Maximum sampled receipts; aggregate counts include every match.
+     */
+    limit?: number,
+  }): CancelablePromise<EventRetentionHealth> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/events/retention',
+      query: {
+        'source': source,
+        'app': app,
+        'window': window,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        504: `Snapshot exceeded its bounded read budget.`,
       },
     });
   }

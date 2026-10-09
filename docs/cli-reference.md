@@ -1682,6 +1682,19 @@ Retry a bounded batch of failed backfill deliveries
 | `--limit <N>` | failed routing recipients to requeue (1..100; default 100) |  |
 | `--yes` | confirm requeueing failed event deliveries | required |
 
+### events retention
+
+Inspect receipt expiry, backfill holds and account storage
+
+`gregale events retention [--source <SOURCE>] [--app <APP>] [--window <DURATION>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--source <SOURCE>` | exact event source |  |
+| `--app <APP>` | receipt application filter; storage remains account-wide |  |
+| `--window <DURATION>` | expiry lookahead (1s..720h; default 24h) |  |
+| `--limit <N>` | maximum sampled receipts (1..100) |  |
+
 ### events publish-batch
 
 Publish a bounded JSONL batch with per-event results
