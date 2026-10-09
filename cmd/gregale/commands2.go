@@ -4221,7 +4221,7 @@ func validateDeploymentReason(reason string) error {
 	return nil
 }
 
-const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--wait] [--timeout 10m] [--poll-interval 2s] [--json]"
+const rollbackUsage = "usage: gregale rollback <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--wait] [--timeout 10m] [--poll-interval 2s] [--json]"
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
@@ -4247,6 +4247,7 @@ func cmdRollback(args []string) int {
 	}
 	slug := args[0]
 	var to, current, reason string
+	interactive := false
 	checked := false
 	var err error
 	wait := false
@@ -4255,6 +4256,8 @@ func cmdRollback(args []string) int {
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
 		switch {
+		case a == "--interactive":
+			interactive = true
 		case a == "--to":
 			i++
 			if i >= len(rest) {
@@ -4307,6 +4310,25 @@ func cmdRollback(args []string) int {
 		default:
 			return printErr("Unexpected argument", fmt.Errorf("%q (rollback takes one <slug>; pass the target with --to)", a))
 		}
+	}
+	if interactive {
+		for i := 0; i < len(rest); i++ {
+			switch {
+			case rest[i] == "--interactive":
+			case rest[i] == "--timeout" || rest[i] == "--poll-interval":
+				i++ // The parser above already checked the value.
+			case strings.HasPrefix(rest[i], "--timeout=") || strings.HasPrefix(rest[i], "--poll-interval="):
+			default:
+				return printErr("Invalid interactive rollback flags", errors.New("--interactive accepts only --timeout and --poll-interval; choose the target and confirm in the flow"))
+			}
+		}
+		if err := validateRollbackFlags(false, "", "", "", false, timeout, interval); err != nil {
+			return printErr("Invalid rollback", err)
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", errors.New("--interactive requires terminal input and output; use --to and --expected-current for scripts or JSON"))
+		}
+		return cmdRollbackInteractive(slug, timeout, interval)
 	}
 	if err := validateRollbackFlags(checked, to, current, reason, wait, timeout, interval); err != nil {
 		return printErr("Invalid rollback", err)

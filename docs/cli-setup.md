@@ -58,6 +58,27 @@ The flow requires terminal input and output. It cannot be combined with JSON,
 automation mode, positional values, `--from-stdin`, or `--restart`. For scripts,
 use the existing `--from-stdin` option.
 
+## Guided rollback
+
+Run `gregale rollback my-api --interactive` to choose a historical release
+from the app's deployment history. The list shows revision (or deployment ID),
+creation date, status, and scope. The flow identifies a completed release
+serving full traffic in that same scope, then shows the selected release's
+summary. Summary changes compare that release with its own predecessor.
+
+Enter an optional reason and confirm (default: no). The request pins both the
+selected target and the observed current deployment. The checked rollback API
+rechecks artifact availability, deployment state, bindings, and handoff
+requirements; a changed current deployment requires a fresh review. The flow
+waits for completion and uses the existing operation report to show blockers.
+`--timeout` and `--poll-interval` control the wait. Interruption or a wait timeout
+does not undo an accepted rollback; use its operation ID with
+`gregale rollback status my-api --operation <id> --wait` to continue observing.
+
+This mode requires terminal input and output. For scripts or JSON output,
+use explicit `--to` and `--expected-current` flags. The guided mode accepts
+only `--timeout` and `--poll-interval` alongside `--interactive`.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
