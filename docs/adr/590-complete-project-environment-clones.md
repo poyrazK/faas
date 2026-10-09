@@ -8232,6 +8232,20 @@ publication. Activation, atomic binding/secret publication, retained-secret eras
 and live native provider qualification remain separate requirements. Live R2/OVH
 qualification remains deferred at the user's request.
 
+### Checkpoint terminal compensation gate
+
+The generic operation transition now refuses `compensating` to `compensated`
+for inventories containing common-checkpoint roots or evidence. Marking every
+resource `compensated` is not proof of native cleanup, especially after unknown
+capture, restore or isolation outcomes. Such operations remain recoverable in
+`compensating`; legacy source-revision compensation remains available.
+
+Opening this terminal transition requires an atomic whole-stage reconciler that
+authenticates original source compensation, target and credential retirement,
+publication withdrawal, and retained checkpoint cleanup. The individual journals
+implemented so far do not establish that complete terminal condition. Public
+full-stage admission and live provider qualification remain gated.
+
 Validation: the targeted PostgreSQL coordinator suite passes connection-value
 preparation, credential retirement/preparation, native restoration, SQL isolation,
 data verification and private runtime readiness. New cases cover original-password
