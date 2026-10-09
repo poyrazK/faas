@@ -2559,6 +2559,62 @@
     "kind": "operational"
   },
   {
+    "table": "edge_rule_events",
+    "columns": [
+      "app_id",
+      "client_ip",
+      "country",
+      "host",
+      "id",
+      "method",
+      "occurred_at",
+      "outcome",
+      "path",
+      "request_id",
+      "rule_id",
+      "user_agent"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "edge_rule_hit_counts",
+    "columns": [
+      "app_id",
+      "bucket_start",
+      "hits",
+      "outcome",
+      "rule_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "edge_rule_lists",
+    "columns": [
+      "account_id",
+      "created_at",
+      "description",
+      "id",
+      "items",
+      "kind",
+      "name",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "edge_rule_set_versions",
+    "columns": [
+      "app_id",
+      "created_at",
+      "id",
+      "rule_count",
+      "rules",
+      "rules_sha256",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "edge_rules",
     "columns": [
       "account_id",
@@ -2566,14 +2622,19 @@
       "app_id",
       "cors_preset_id",
       "created_at",
+      "description",
       "enabled",
+      "expires_at",
       "id",
       "kind",
       "manifest_key",
+      "match_expr",
       "match_headers",
       "match_host",
       "match_methods",
       "match_path",
+      "mode",
+      "name",
       "priority",
       "updated_at",
       "validate_mode"
