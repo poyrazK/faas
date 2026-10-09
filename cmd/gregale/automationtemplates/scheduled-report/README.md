@@ -29,4 +29,4 @@ Checks require complete traces by default and return exit code 1 for an assertio
 
 Deploy the required handlers first. After editing and validating the definition, save a draft with `gregale automations apply --app APP_SLUG --file automation.yaml --expected-version 0` for a new name. For an existing name, use its current version. Publish with `gregale automations publish --app APP_SLUG --name scheduled-report --expected-version VERSION --scenarios scenarios.yaml`, using the version returned by apply. This checks the saved draft before publishing and blocks publication if a scenario fails. Publishing can enable automatic starts for an event automation. Review trigger settings before publishing.
 
-Docs: https://gregale.dev/docs/automations
+Docs: https://gregale.dev/docs/cli#gregale-automations
