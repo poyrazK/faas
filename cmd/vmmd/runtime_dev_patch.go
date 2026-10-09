@@ -42,9 +42,13 @@ func (r *runtimeConfigReceiver) handleRuntimeDevPatch(instance string, req runti
 	if !r.devPatchEnabled || !ok || r.mgr == nil {
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: runtimeDevPatchDisabled})
 	}
+	// guest-init polls from boot, before the wake publishes the instance as
+	// live. Not-live must stay retryable: a disabled answer here would end
+	// the guest's loop and the snapshot prime would carry that dead loop
+	// into every instance restored from it.
 	deploymentID, appID, _, err := r.mgr.InstanceRuntimeSecretIdentity(instance)
 	if err != nil || deploymentID == "" || appID == "" {
-		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: runtimeDevPatchDisabled})
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: runtimeDevPatchUnavailable})
 	}
 	requestCtx, cancel := context.WithTimeout(r.ctx, 4*time.Second)
 	defer cancel()

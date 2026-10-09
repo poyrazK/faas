@@ -113,3 +113,20 @@ func TestRuntimeDevPatchRefusals(t *testing.T) {
 		})
 	}
 }
+
+// A guest polls from boot, before the wake publishes the instance as live.
+// That answer must stay retryable: guest-init stops polling for good on
+// dev_patch_disabled, and the snapshot prime would carry the dead loop into
+// every restored instance.
+func TestRuntimeDevPatchNotYetLiveIsRetryable(t *testing.T) {
+	f := newRuntimeDevPatchFixture(t, true, true)
+	f.publish(t, "patch", false)
+	f.receiver.mgr = fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil)
+	response := sendRuntimeConfigTestRequest(t, f.receiver, runtimeConfigRequest{Kind: runtimeDevPatchKind})
+	if response.Error != runtimeDevPatchUnavailable || response.DevPatch != nil {
+		t.Fatalf("poll before the instance is live = %+v, want %q", response, runtimeDevPatchUnavailable)
+	}
+	if f.diverged.Has("instance-1") {
+		t.Fatal("a not-live poll marked the instance as diverged")
+	}
+}
