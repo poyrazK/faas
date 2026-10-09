@@ -83,6 +83,17 @@
       "acceptance_test": "pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence"
     },
     {
+      "id": "custom-metric-history",
+      "name": "Custom metric history",
+      "category": "observability",
+      "description": "Chart and alert on the app's own pushed metrics, such as orders pending or failed payments, with history and OpenTelemetry ingestion.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/745-custom-metric-history",
+      "operator_flag": "FAAS_CUSTOM_METRIC_HISTORY_ENABLED",
+      "acceptance_test": "cmd/apid/custom_metric_exporter_test.go::TestCustomMetricExporterExportsOnlyFreshValues"
+    },
+    {
       "id": "declarative-response-caching",
       "name": "Declarative response caching",
       "category": "edge",
