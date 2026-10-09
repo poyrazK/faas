@@ -194,6 +194,9 @@ func TestMemStore_EdgeRuleSetVersions_RecordAndRestore(t *testing.T) {
 	v3, err := m.GetEdgeRuleSetVersion(ctx, app, 3)
 	if err != nil || v3.RulesSHA256 != v1.RulesSHA256 {
 		t.Fatalf("restore version digest mismatch: %v", err)
+	}
+}
+
 // TestMemStore_EdgeRule_ListOrderMatchesGatewayOrder pins the tie order:
 // rules default to priority 100, so ties are the common case, and the
 // listing the dashboard presents as the match order must be the order the
