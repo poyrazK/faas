@@ -16,16 +16,12 @@ package sched
 // (api/errors.go:267). These tests pin that contract under fuzz-style
 // contention.
 //
-// Caveat (documented by design): per-app appMu serialises concurrent
-// Wakes for the SAME app (engine.go:1038 — `e.appMu[appID]` is keyed by
-// appID). So a parallelism storm on one app does not actually exercise
-// a race in the ledger — it exercises the lock-then-ledger path. The
-// property still holds (the cap is enforced), but the test is really a
-// "gate is the ledger" assertion, not a "lock is racy" assertion. A
-// future property test against the ledger directly (without the engine
-// wrapping it) would be more aggressive; the existing
-// `FuzzLedgerInvariants` (ledger_property_test.go:49) already does that
-// for the ledger's resident-RAM math.
+// Admission is serialised under appMu, but the slow vmmd boot happens
+// outside that lock. The Wake test holds every admitted boot until the
+// excess callers have been denied, so none can reuse a RUNNING instance
+// through Wake's idempotent fast path. This exercises the engine's cap
+// decision rather than depending on goroutine scheduling. The existing
+// FuzzLedgerInvariants also checks the ledger directly.
 //
 // Why we still want this test: the engine's error path matters. A
 // Wake that gets denied at Admit must surface `*api.Problem{Code:
@@ -49,8 +45,7 @@ import (
 )
 
 // TestProperty_EngineWake_RespectsMaxConcurrency — six goroutines all
-// calling Wake for the same Free app (MaxConcurrency=1 from plan.Limits;
-// we override to 3 so we observe an actual cap, not just 1-vs-0).
+// calling Wake for the same Pro app with MaxConcurrency=3.
 //
 // Properties the test asserts:
 //
@@ -58,16 +53,12 @@ import (
 //     not "any positive <6")
 //   - exactly 3 Wakes return *api.Problem{Code: api.CodePlanLimitConcur};
 //     we use errors.As to assert the precise wire type (not just err != nil)
-//   - state.ListInstancesForApp returns exactly 6 rows: 3 RUNNING + 3 FAILED
-//     (engine.go:264 transitions the failed row to StateFailed in the
-//     same goroutine)
+//   - state.ListInstancesForApp returns exactly 3 RUNNING rows; the
+//     wake gate refuses excess callers before creating an instance
 //   - the ledger.Concurrency(appID) returns exactly 3 (the cap)
 //
-// The fakeVMM is configured with sleepFor=10ms so each successful boot
-// holds the per-app lock long enough for the contention to be real
-// without making the test slow. We do NOT use bootStarted/bootRelease
-// fencing — those channels are capacity 1 (engine_test.go:52-53) and
-// would deadlock the second concurrent Wake.
+// A shared boot-release channel prevents successful boots from becoming
+// reusable until all three excess callers have reached the cap decision.
 func TestProperty_EngineWake_RespectsMaxConcurrency(t *testing.T) {
 	store := state.NewMemStore()
 	const maxConc = 3
@@ -78,21 +69,53 @@ func TestProperty_EngineWake_RespectsMaxConcurrency(t *testing.T) {
 	// via limits.MaxConcurrency; Hobby caps at 2; Pro at 5. Use Pro
 	// with maxConc=3 → effective cap = 3.
 	_, app, _ := seedApp(t, store, api.PlanPro, 128, maxConc)
-	vmm := &fakeVMM{sleepFor: 10 * time.Millisecond}
+	const goroutines = 6 // 2x the cap
+	bootStarted := make(chan struct{}, goroutines)
+	bootRelease := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseBoots := func() { releaseOnce.Do(func() { close(bootRelease) }) }
+	defer releaseBoots()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	vmm := &fakeVMM{bootStarted: bootStarted, bootRelease: bootRelease}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
 
-	const goroutines = 6 // 2x the cap
 	results := make(chan error, goroutines)
 	for i := 0; i < goroutines; i++ {
 		go func() {
-			_, err := e.Wake(context.Background(), app.ID, "", "", "")
+			_, err := e.Wake(ctx, app.ID, "", "", "")
 			results <- err
 		}()
 	}
 
+	for i := 0; i < maxConc; i++ {
+		select {
+		case <-bootStarted:
+		case <-ctx.Done():
+			t.Fatal("admitted wakes did not reach vmmd before the deadline")
+		}
+	}
+	observed := make([]error, 0, goroutines)
+	for i := 0; i < goroutines-maxConc; i++ {
+		select {
+		case err := <-results:
+			observed = append(observed, err)
+		case <-ctx.Done():
+			t.Fatal("excess wakes did not reach the cap decision while admitted boots were held")
+		}
+	}
+	releaseBoots()
+	for i := 0; i < maxConc; i++ {
+		select {
+		case err := <-results:
+			observed = append(observed, err)
+		case <-ctx.Done():
+			t.Fatal("admitted wakes did not complete after vmmd was released")
+		}
+	}
+
 	var ok, denied int
-	for i := 0; i < goroutines; i++ {
-		err := <-results
+	for _, err := range observed {
 		if err == nil {
 			ok++
 			continue

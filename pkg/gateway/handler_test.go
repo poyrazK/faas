@@ -1317,8 +1317,9 @@ func histogramMeanObservation(t *testing.T, h prometheus.Histogram) time.Duratio
 // histogram must reflect the time to first upstream response byte, not the
 // time to drain the full upstream body. We construct an upstream that
 // flushes headers immediately, then sleeps 100ms before writing the body,
-// and assert the observed wake latency is well under what a full-body
-// measurement would have produced.
+// and compare the histogram with the actual first-byte timestamp captured
+// by the production proxy. Runner scheduling can delay even localhost
+// headers beyond 100ms; that delay still belongs in the wake measurement.
 func TestMetricsSpec12_FirstByteNotFullBody(t *testing.T) {
 	const bodyGap = 100 * time.Millisecond
 
@@ -1339,6 +1340,24 @@ func TestMetricsSpec12_FirstByteNotFullBody(t *testing.T) {
 		upstream: upstream.Listener.Addr().String(),
 	}
 	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	var firstByteLatency time.Duration
+	var firstByteAt, bodyFinishedAt time.Time
+	h.proxyFor = func(addr string, cap int64) http.Handler {
+		proxy := defaultProxy(addr, cap)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start, ok := StartTimeFromContext(r.Context())
+			if !ok {
+				t.Fatal("request start timestamp missing")
+			}
+			proxy.ServeHTTP(w, r)
+			bodyFinishedAt = time.Now()
+			firstByteAt, ok = FirstByteFrom(r)
+			if !ok {
+				t.Fatal("production proxy did not record the first upstream byte")
+			}
+			firstByteLatency = firstByteAt.Sub(start)
+		})
+	}
 
 	req := httptest.NewRequest("GET", "http://firstbyte.apps.dom/", nil)
 	rec := httptest.NewRecorder()
@@ -1347,16 +1366,21 @@ func TestMetricsSpec12_FirstByteNotFullBody(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 
-	// First-byte observation must be much shorter than the body gap would
-	// suggest for a full-body measurement. We allow generous slack for
-	// localhost jitter and Go scheduler stalls, but a full-body measurement
-	// would land >= bodyGap.
+	if rec.Body.String() != "body-after-delay" {
+		t.Fatalf("body = %q, want the complete delayed upstream body", rec.Body.String())
+	}
+	if !firstByteAt.Before(bodyFinishedAt) {
+		t.Fatal("first-byte timestamp did not precede completion of the delayed body")
+	}
+	// Match the real proxy timestamp rather than an absolute localhost SLO.
+	// One nanosecond permits the histogram's float-seconds conversion; a
+	// full-body or fallback observation includes the delayed body and fails.
 	got := histogramMeanObservation(t, h.metrics.wakeLatency)
 	if got == 0 {
 		t.Fatal("wake_latency observation missing")
 	}
-	if got >= bodyGap {
-		t.Errorf("wake_latency observation = %v, want < %v (first-byte, not full body)", got, bodyGap)
+	if delta := got - firstByteLatency; delta < -time.Nanosecond || delta > time.Nanosecond {
+		t.Errorf("wake_latency observation = %v, want first-byte latency %v", got, firstByteLatency)
 	}
 	// Sanity: the observation should not be so small as to suggest the
 	// trace fired before wakeStart (negative durations would be < 0; the
