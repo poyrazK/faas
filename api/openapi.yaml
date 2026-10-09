@@ -10616,7 +10616,7 @@ paths:
       - name: project
         in: path
         required: true
-        description: Stable local project label used to derive the developer URL.
+        description: Project label of the developer session that published the patch.
         schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
       - name: generation
         in: path
@@ -10686,7 +10686,7 @@ paths:
         - name: workspace_id
           in: query
           required: false
-          description: Opaque local workspace identity returned by the CLI derivation. Omit only to target a legacy session.
+          description: Opaque local workspace identity of the environment to read, as derived by the CLI. Omit only to read a legacy session.
           schema: { type: string, pattern: '^[a-f0-9]{32}$' }
       responses:
         '200':

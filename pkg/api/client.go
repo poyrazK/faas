@@ -911,9 +911,15 @@ func (c *Client) GetDevSession(ctx context.Context, project, workspaceID string)
 // GetDevPatchStatus reports whether a published developer live patch reached
 // the running environment (GET /v1/dev/sessions/{project}/patches/{generation}).
 func (c *Client) GetDevPatchStatus(ctx context.Context, project, workspaceID string, generation int64) (DevPatchStatusResponse, error) {
+	return c.GetDevSessionsProjectPatchesGeneration(ctx, project, generation, workspaceID)
+}
+
+// GetDevSessionsProjectPatchesGeneration is the path-shaped SDK method for
+// GET /v1/dev/sessions/{project}/patches/{generation}.
+func (c *Client) GetDevSessionsProjectPatchesGeneration(ctx context.Context, project string, generation int64, workspaceID ...string) (DevPatchStatusResponse, error) {
 	path := "/v1/dev/sessions/" + project + "/patches/" + strconv.FormatInt(generation, 10)
-	if workspaceID != "" {
-		path += "?" + url.Values{"workspace_id": {workspaceID}}.Encode()
+	if len(workspaceID) > 0 && workspaceID[0] != "" {
+		path += "?" + url.Values{"workspace_id": {workspaceID[0]}}.Encode()
 	}
 	var out DevPatchStatusResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
