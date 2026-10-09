@@ -874,6 +874,10 @@ from .edge_rule_throttle_action_missing_key_policy import EdgeRuleThrottleAction
 from .edge_rule_validate_action import EdgeRuleValidateAction
 from .edge_rule_validate_action_schema import EdgeRuleValidateActionSchema
 from .edge_rule_validate_action_validate_mode import EdgeRuleValidateActionValidateMode
+from .edge_rule_validate_parameters import EdgeRuleValidateParameters
+from .edge_rule_validate_parameters_headers import EdgeRuleValidateParametersHeaders
+from .edge_rule_validate_parameters_path import EdgeRuleValidateParametersPath
+from .edge_rule_validate_parameters_query import EdgeRuleValidateParametersQuery
 from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .egress_flow_log_entry import EgressFlowLogEntry
@@ -3878,6 +3882,10 @@ __all__ = (
     "EdgeRuleValidateAction",
     "EdgeRuleValidateActionSchema",
     "EdgeRuleValidateActionValidateMode",
+    "EdgeRuleValidateParameters",
+    "EdgeRuleValidateParametersHeaders",
+    "EdgeRuleValidateParametersPath",
+    "EdgeRuleValidateParametersQuery",
     "EgressCircuitBreakerPolicy",
     "EgressCircuitBreakerPolicyState",
     "EgressFlowLogEntry",

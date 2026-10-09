@@ -488,20 +488,23 @@ func ComputeDryRun(importedDoc []byte, existingRules []state.EdgeRule) (DryRunSu
 			if _, covered := existing[glob+"|"+m+"|validate"]; covered {
 				continue
 			}
-			schema, ok := requestBodyValidateSchema(spec, pi.Methods[m])
-			if !ok {
-				continue
+			validate := map[string]any{"validate_mode": "observe"}
+			if schema, ok := requestBodyValidateSchema(spec, pi.Methods[m]); ok {
+				validate["schema"] = schema
+			}
+			if params := requestParameterSchemas(spec, pi, pi.Methods[m], template); params != nil {
+				validate["parameters"] = params
+			}
+			if len(validate) == 1 {
+				continue // neither a JSON body nor a parameter the gateway can check
 			}
 			out.Suggestions = append(out.Suggestions, EdgeRuleSuggestion{
 				Path:    glob,
 				Methods: []string{m},
 				Kind:    "validate",
 				Action: map[string]any{
-					"kind": "validate",
-					"validate": map[string]any{
-						"schema":        schema,
-						"validate_mode": "observe",
-					},
+					"kind":     "validate",
+					"validate": validate,
 				},
 			})
 		}

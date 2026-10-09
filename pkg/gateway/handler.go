@@ -3461,6 +3461,15 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	if !rule.ApplyWhileStreaming && isUpgradeRequest(r) {
 		return false
 	}
+	// Path, query, and header parameters are checked before the body is
+	// read, so a rejected request never pays for buffering.
+	if rule.Parameters != nil && h.validateEdgeRuleParameters(w, r, rec, rule) {
+		return true
+	}
+	if rule.NoBodySchema {
+		h.recordEdgeRuleValidateMatch(r, rule)
+		return false
+	}
 	// Content-Type gate: when the rule restricts Content-Types,
 	// anything outside the list returns 415. Empty
 	// ContentTypes = pass-through (back-compat with rules that
@@ -3537,177 +3546,22 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 		ContentType: ct,
 	}, rule)
 	if err != nil {
-		switch {
-		case errors.Is(err, ErrValidateSchemaExternalRef):
-			// Compile-time defense fired at runtime —
-			// shouldn't happen if apid-Validate was
-			// correct. 502 signals "the gateway
-			// dependency is broken"; ops will see the
-			// alarm + slog.
-			api.WriteProblem(w, api.NewProblem(http.StatusBadGateway,
-				api.CodeBadGateway, "Edge rule compile error",
-				"validate rule contains an external $ref/$id; refusing to validate"))
-		case errors.Is(err, ErrValidateSchemaInvalid),
-			errors.Is(err, ErrValidateSchemaEmpty),
-			errors.Is(err, ErrValidateSchemaTooLarge):
-			// Broken stored schema — deploy bug. 500.
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				api.CodeInternal, "Edge rule schema error",
-				"validate rule schema is broken"))
-		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				api.CodeInternal, "Edge rule validator error", err.Error()))
-		}
-		if h.edgeRuleAudit != nil {
-			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_failed", nil, map[string]any{
-				"rule_id":   rule.ID,
-				"from_host": r.Host,
-				"reason":    "validator_error",
-				"err":       err.Error(),
-			})
-		}
-		if h.metrics != nil {
-			h.metrics.ObserveEdgeRuleMatch("validate", "failed")
-			// PR-C: validator error (502 / 500) is a non-2xx
-			// wire write — emit apply error so the §12 chip
-			// surfaces the broken rule.
-			h.metrics.ObserveEdgeRuleApply("validate", "error")
-		}
+		h.writeEdgeRuleValidateError(w, r, rule, err)
 		return true
 	}
 	if !res.OK {
-		// Translate to api.FieldError on the 422 problem+json.
-		// res.FirstError may be nil if the schema failed but
-		// the library returned no FieldError — treat as a
-		// generic 422 with an empty errors slice.
-		var errs []api.FieldError
-		if res.FirstError != nil {
-			errs = []api.FieldError{{
-				Field:    res.FirstError.Field,
-				Expected: res.FirstError.Expected,
-				Got:      res.FirstError.Got,
-			}}
-		}
-		// validate_mode (issue #975 #3 / Mega-Foundation #979-a)
-		// selects the post-failure behavior. Default empty string
-		// == 'block' to match the schema-side default at 00293.
-		// `observe` and `warn` never reject — they count the
-		// failure in the validate_failures metric and let the
-		// proxy leg run. `warn` additionally stamps
-		// X-Validation-Warning: <rule_id> via the statusRecorder
-		// so the customer's API consumer can see the warning
-		// without the gateway changing the response status.
-		//
-		// Body has already been buffered and r.Body restored
-		// above (line ~2384), so the proxy leg reads the same
-		// bytes regardless of mode.
-		mode := rule.ValidateMode
-		if mode == "" {
-			mode = api.ValidateModeBlock
-		}
-		var reason string
-		if res.FirstError != nil {
-			reason = res.FirstError.Reason()
-		} else {
-			reason = reasonOther
-		}
-		if h.metrics != nil {
-			// ADR-128 §5: pass appID + ruleID so the
-			// gateway_validate_failures_total counter can
-			// localize failures to a specific rule on a
-			// specific app. The rule_id label is admitted
-			// through ruleLabelSet (cap 256 per app;
-			// overflow → "__other__") so the Prometheus
-			// series set stays bounded.
-			h.metrics.ObserveEdgeRuleValidateFailure(rule.AppID, rule.ID, mode, reason)
-		}
-		switch mode {
-		case api.ValidateModeObserve:
-			// Counted, no header, no reject. Audit tag
-			// fires so the failure is queryable from the
-			// ledger even when the response is 200.
-			if h.edgeRuleAudit != nil {
-				auditData := map[string]any{
-					"rule_id":   rule.ID,
-					"from_host": r.Host,
-					"reason":    "schema_mismatch",
-					"mode":      mode,
-				}
-				if res.FirstError != nil {
-					auditData["field"] = res.FirstError.Field
-					auditData["expected"] = res.FirstError.Expected
-				}
-				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_failed", nil, auditData)
-			}
-			if h.metrics != nil {
-				// Match is the "rule fired and returned a
-				// verdict" counter; the per-{mode,reason}
-				// counter is the validate_failures_total
-				// line above. Both increment so the
-				// dashboard can correlate.
-				h.metrics.ObserveEdgeRuleMatch("validate", "match")
-				h.metrics.ObserveEdgeRuleApply("validate", "success")
-			}
-			return false
-		case api.ValidateModeWarn:
-			// Like observe, plus stamp the X-Validation-Warning
-			// header on the proxied response. The header op
-			// goes through the same statusRecorder hook the
-			// CORS / headers rules use, so the value lands
-			// on the response on the way back to the client.
-			// The header value is the rule ID (uuid), not
-			// the failing field — keeps any PII in the
-			// field path out of the response.
-			rec.installHeaderOps([]EdgeRuleHeaderOp{
-				{Action: "set", Name: "X-Validation-Warning", Value: rule.ID},
-			})
-			if h.edgeRuleAudit != nil {
-				auditData := map[string]any{
-					"rule_id":   rule.ID,
-					"from_host": r.Host,
-					"reason":    "schema_mismatch",
-					"mode":      mode,
-				}
-				if res.FirstError != nil {
-					auditData["field"] = res.FirstError.Field
-					auditData["expected"] = res.FirstError.Expected
-				}
-				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_failed", nil, auditData)
-			}
-			if h.metrics != nil {
-				h.metrics.ObserveEdgeRuleMatch("validate", "match")
-				h.metrics.ObserveEdgeRuleApply("validate", "success")
-			}
-			return false
-		default:
-			// 'block' (and the empty-string coerce) — the
-			// pre-existing 422 path. Behavior preserved.
-			api.WriteProblemWithErrors(w, api.NewProblem(http.StatusUnprocessableEntity,
-				api.CodeRequestValidationFailed, "Invalid request",
-				fmt.Sprintf("body does not match schema for rule %s", rule.ID)), errs)
-			if h.edgeRuleAudit != nil {
-				auditData := map[string]any{
-					"rule_id":   rule.ID,
-					"from_host": r.Host,
-					"reason":    "schema_mismatch",
-					"mode":      mode,
-				}
-				if res.FirstError != nil {
-					auditData["field"] = res.FirstError.Field
-					auditData["expected"] = res.FirstError.Expected
-				}
-				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_failed", nil, auditData)
-			}
-			if h.metrics != nil {
-				h.metrics.ObserveEdgeRuleMatch("validate", "blocked")
-				// PR-C: 422 schema mismatch is a non-2xx wire
-				// write — emit apply error so the §12 chip
-				// surfaces the customer's malformed payload.
-				h.metrics.ObserveEdgeRuleApply("validate", "error")
-			}
-			return true
-		}
+		// Body has already been buffered and r.Body restored above, so the
+		// proxy leg reads the same bytes in observe and warn modes.
+		return h.handleEdgeRuleValidateMismatch(w, r, rec, rule, res,
+			fmt.Sprintf("body does not match schema for rule %s", rule.ID))
 	}
+	h.recordEdgeRuleValidateMatch(r, rule)
+	return false
+}
+
+// recordEdgeRuleValidateMatch records a request that passed every check of
+// its validate rule.
+func (h *Handler) recordEdgeRuleValidateMatch(r *http.Request, rule *EdgeRuleValidateResolved) {
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.validate_matched", nil, map[string]any{
 			"rule_id":   rule.ID,
@@ -3722,7 +3576,6 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 		// Mirrors applyEdgeRuleIP (handler.go:1572).
 		h.metrics.ObserveEdgeRuleApply("validate", "success")
 	}
-	return false
 }
 
 // streamingFor is the canonical 4-conjunct gate that decides

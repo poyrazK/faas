@@ -140,6 +140,51 @@ func TestSimulateValidateRuleBlockDoesNotExposeSubmittedBody(t *testing.T) {
 	}
 }
 
+func TestSimulateValidateRuleParameters(t *testing.T) {
+	params := &api.EdgeRuleValidateParameters{
+		PathTemplate: "/users/{id}",
+		Path:         json.RawMessage(`{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}`),
+		Headers:      json.RawMessage(`{"type":"object","properties":{"x-tenant":{"type":"string"}},"required":["x-tenant"]}`),
+	}
+	rule := func(p *api.EdgeRuleValidateParameters) api.EdgeRuleResponse {
+		action, err := json.Marshal(map[string]any{"validate": api.EdgeRuleValidateAction{Parameters: p}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return api.EdgeRuleResponse{ID: "params", Enabled: true, Kind: "validate", MatchHost: "*", MatchPath: "/users/?*", Action: action}
+	}
+	input := func(path, tenant string) edgeruletrace.Input {
+		in := edgeruletrace.Input{App: "demo", Host: "example.com", Path: path, Method: http.MethodGet, Headers: http.Header{}, AppMaintenanceLoaded: true}
+		if tenant != "" {
+			in.Headers.Set("X-Tenant", tenant)
+		}
+		return in
+	}
+	for _, tc := range []struct {
+		name, path, tenant, outcome string
+	}{
+		{name: "valid without a body", path: "/users/7", tenant: "t1", outcome: "validated"},
+		{name: "path value has the wrong type", path: "/users/abc", tenant: "t1", outcome: "validation_failed"},
+		{name: "required header missing", path: "/users/7", outcome: "validation_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := edgeruletrace.Simulate(input(tc.path, tc.tenant), []api.EdgeRuleResponse{rule(params)})
+			if err != nil {
+				t.Fatalf("Simulate: %v", err)
+			}
+			if got := result.Simulation.Steps[0].Outcome; got != tc.outcome {
+				t.Fatalf("outcome = %q, want %q (%#v)", got, tc.outcome, result.Simulation)
+			}
+		})
+	}
+	withQuery := *params
+	withQuery.Query = json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"}}}`)
+	result, err := edgeruletrace.Simulate(input("/users/7", "t1"), []api.EdgeRuleResponse{rule(&withQuery)})
+	if err != nil || result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_query_parameters" {
+		t.Fatalf("query schema simulation = %#v, err=%v", result.Simulation, err)
+	}
+}
+
 func TestSimulateValidateRuleModes(t *testing.T) {
 	for _, tc := range []struct {
 		mode       string

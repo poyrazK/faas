@@ -445,6 +445,7 @@ export type { EdgeRuleRouteAction } from './models/EdgeRuleRouteAction.js';
 export type { EdgeRuleSuggestion } from './models/EdgeRuleSuggestion.js';
 export type { EdgeRuleThrottleAction } from './models/EdgeRuleThrottleAction.js';
 export type { EdgeRuleValidateAction } from './models/EdgeRuleValidateAction.js';
+export type { EdgeRuleValidateParameters } from './models/EdgeRuleValidateParameters.js';
 export type { EgressCircuitBreakerPolicy } from './models/EgressCircuitBreakerPolicy.js';
 export type { EgressFlowLogEntry } from './models/EgressFlowLogEntry.js';
 export type { EgressFlowLogResponse } from './models/EgressFlowLogResponse.js';

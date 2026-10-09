@@ -349,6 +349,30 @@ type EdgeRuleValidateResolved struct {
 	// schema-mismatch branch to decide whether to 422, pass-through,
 	// or pass-through with the X-Validation-Warning header.
 	ValidateMode string
+	// NoBodySchema marks a parameter-only rule: the body is not read or
+	// validated. The zero value keeps body validation for existing rules.
+	NoBodySchema bool
+	// Parameters holds the compiled path, query, and header schemas
+	// (ADR-091 amendment: request parameters); nil when none are set.
+	Parameters *EdgeRuleValidateParamsResolved
+}
+
+// EdgeRuleValidateParamsResolved is the compiled form of
+// api.EdgeRuleValidateParameters. A location whose Set is false is not
+// validated.
+type EdgeRuleValidateParamsResolved struct {
+	PathTemplate string
+	Path         EdgeRuleParamSchemaResolved
+	Query        EdgeRuleParamSchemaResolved
+	Headers      EdgeRuleParamSchemaResolved
+}
+
+// EdgeRuleParamSchemaResolved is one compiled parameter schema plus the
+// declared property kinds used to convert string values before validation.
+type EdgeRuleParamSchemaResolved struct {
+	Set    bool
+	Digest [32]byte
+	Kinds  map[string]api.EdgeRuleParamKind
 }
 
 // EdgeRuleGeoResolved is the kind=geo subset (ADR-091 D21/D22).
@@ -1134,6 +1158,9 @@ type JWTClaims struct {
 type EdgeValidateIn struct {
 	Body        []byte
 	ContentType string
+	// Digest, when set, selects a compiled parameter schema instead of
+	// the rule's body SchemaDigest.
+	Digest *[32]byte
 }
 
 // EdgeValidateFieldError is one per-field entry of a validation

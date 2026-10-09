@@ -53451,6 +53451,44 @@ components:
           type: array
           items: { type: string, format: cidr }
 
+    EdgeRuleValidateParameters:
+      description: |
+        Path, query, and header validation for a kind=validate rule
+        (ADR-091 amendment: request parameters). Each schema is a JSON
+        Schema object whose properties are parameter names; property types
+        must be string, integer, number, boolean, or an array of those.
+        Request values are converted to the declared type before
+        validation, and a value that does not convert stays a string so
+        the schema reports it. All three are checked before the body is
+        read, in the rule's validate_mode; errors name the location
+        (`path/id`, `query/limit`, `headers/x-tenant`).
+      type: object
+      properties:
+        path_template:
+          type: string
+          description: |
+            OpenAPI path template, such as `/users/{id}`. Required with
+            `path`. The rule's `match_path` must equal the template with
+            each placeholder replaced by `?*` (`/users/?*`), and each
+            segment may hold at most one placeholder.
+        path:
+          type: object
+          additionalProperties: true
+          description: Object schema whose properties are exactly the template's placeholders.
+        query:
+          type: object
+          additionalProperties: true
+          description: |
+            Object schema over every query parameter; a repeated name
+            becomes an array, and `additionalProperties: false` rejects
+            unknown parameters.
+        headers:
+          type: object
+          additionalProperties: true
+          description: |
+            Object schema over the headers it declares, named in lowercase.
+            Comma-separated values become an array for array properties.
+
     EdgeRuleValidateAction:
       description: |
         Customer-supplied JSON Schema (Draft 2020-12) evaluated against
@@ -53469,10 +53507,13 @@ components:
         ship an external `$ref`.
 
         Field-by-field:
-          * `schema` — required JSON Schema document (Draft 2020-12).
-            Capped at 64 KiB. External `$ref` / `$id` URLs are
-            rejected at create-time; internal pointers (`#/definitions/Foo`)
-            pass through.
+          * `schema` — JSON Schema document (Draft 2020-12) for the
+            request body. Capped at 64 KiB. External `$ref` / `$id` URLs
+            are rejected at create-time; internal pointers
+            (`#/definitions/Foo`) pass through. Optional when
+            `parameters` is set, so a body-less request can be validated.
+          * `parameters` — optional path, query, and header schemas,
+            checked before the body is read (ADR-091 amendment).
           * `content_types` — optional media-type allowlist.
             Closed set `application/*`. Empty = match any.
           * `apply_while_streaming` — per-rule opt-in for the
@@ -53484,8 +53525,8 @@ components:
           * `max_body_bytes` — per-rule inbound body cap. 0 =
             inherit `MaxRequestBodyBytes` (per-plan 25 MB buffered /
             100 MB streaming). Must be > 0 and <= `MaxRequestBodyBytes`.
+        At least one of `schema` and `parameters` is required.
       type: object
-      required: [schema]
       properties:
         schema:
           type: object
@@ -53494,6 +53535,8 @@ components:
             is preserved byte-exact across apid↔gatewayd round-trips
             so the SHA-256 cache key in `pkg/edgevalidate` is stable.
           additionalProperties: true
+        parameters:
+          $ref: '#/components/schemas/EdgeRuleValidateParameters'
         content_types:
           type: array
           description: |

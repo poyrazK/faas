@@ -99,11 +99,15 @@ func (a *edgeValidateAdapter) Validate(ctx context.Context, req *gateway.EdgeVal
 	if rule == nil {
 		return nil, gateway.ErrValidateSchemaInvalid
 	}
+	digest := rule.SchemaDigest
+	if req.Digest != nil {
+		digest = *req.Digest
+	}
 	res, err := a.mgr.Validate(ctx, &edgevalidate.In{
 		Body:        req.Body,
 		ContentType: req.ContentType,
 	}, &edgevalidate.Rule{
-		SchemaDigest:        rule.SchemaDigest,
+		SchemaDigest:        digest,
 		ApplyWhileStreaming: rule.ApplyWhileStreaming,
 		RejectUnknownFields: rule.RejectUnknownFields,
 	})

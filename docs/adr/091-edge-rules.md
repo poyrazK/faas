@@ -1050,3 +1050,49 @@ common typo fails fast without a round-trip.
 - `cmd/e2e/edge_rules_cors_e2e_test.go` gains a `*+credentials`
   reject case so the footgun guard is e2e-covered (it was
   unit-tested in `cmd/apid/handlers_edge_rules_test.go` only).
+
+## Amendment (2026-10-09): request parameters for kind=validate
+
+Before this amendment `kind=validate` checked only the JSON request body, so a
+GET or DELETE route could not be validated at all and malformed path, query,
+and header values always reached the app (and woke it).
+
+The validate action gains an optional `parameters` object
+(`api.EdgeRuleValidateParameters`): `path_template` plus `path`, `query`, and
+`headers` schemas. Each schema is a JSON Schema object whose properties are
+parameter names, typed string, integer, number, boolean, or an array of those.
+The body `schema` becomes optional when parameters are set; at least one of
+the two is required.
+
+- **Evaluation.** The gateway checks path, then query, then headers, before
+  the body is read, through the same compiled-schema validator, in the
+  rule's `validate_mode`. A block-mode mismatch is a 422 whose error field is
+  prefixed with the location (`path/id`, `query/limit`, `headers/x-tenant`);
+  observe and warn record the mismatch and the remaining checks still run. A
+  parameter-only rule never reads the body.
+- **Value conversion.** Request values are strings. Each declared property is
+  converted to its type first; a value that does not convert stays a string
+  so the schema reports it. Query sees every parameter (a repeated name
+  becomes an array; `additionalProperties: false` rejects unknown ones).
+  Headers see only declared names, which must be lowercase; comma lists split
+  for array properties. Path values come from the escaped path, segment by
+  segment, then are unescaped, so an encoded `/` cannot shift segments.
+- **Path alignment.** `path` requires `path_template`; its properties must be
+  exactly the template's placeholders, at most one per segment, and the
+  rule's `match_path` must equal `api.OpenAPIPathGlob(path_template)`. apid
+  enforces this on create and on a `match_path`-only update; gateway
+  compilation re-checks and drops a misaligned row.
+- **OpenAPI apply.** Generated suggestions now include operations that only
+  have parameters. Cookie parameters, `content`-encoded parameters, non-default
+  styles (including `explode: false`), object-typed parameters, and the
+  headers OpenAPI says to ignore (Accept, Content-Type, Authorization) are
+  skipped; a path schema is emitted only when every placeholder is usable. A
+  top-level component `$ref` is dereferenced so a shared integer ID keeps its
+  type.
+- **Trace.** `gregale edge-rules trace` simulates path and header schemas; a
+  rule with a query schema stops as incomplete because the trace input does
+  not carry the query string.
+
+Rejected: coercing values inside the JSON Schema (custom keywords tie rules
+to one validator); validating cookies (session data, not API contract);
+treating a non-converting value as absent (it would hide malformed input).

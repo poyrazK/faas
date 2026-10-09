@@ -2016,10 +2016,18 @@ func resolveCORSPreset(rule api.EdgeRuleResponse, action *api.EdgeRuleCORSAction
 
 func previewValidateRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
 	action, ok := decodeAction[api.EdgeRuleValidateAction](rule.Action, "validate")
-	if !ok || len(action.Schema) == 0 {
+	if !ok || (len(action.Schema) == 0 && action.Parameters.Empty()) {
 		return "unavailable", "rule schema is missing or invalid; gateway compilation would reject it", nil
 	}
 	preview := &ActionPreview{Type: "validate"}
+	if !action.Parameters.Empty() {
+		if outcome, reason, done := previewValidateParameters(rule, *action, input, preview); done {
+			return outcome, reason, preview
+		}
+		if len(action.Schema) == 0 {
+			return "validated", "request parameters satisfy the rule's schemas", preview
+		}
+	}
 	// Real HTTP parsers remove optional whitespace around field values. The
 	// CLI/dashboard parser retains bytes for exact edge-rule header matches,
 	// so trim OWS here to mirror the gateway's parsed Content-Type value.
@@ -2119,6 +2127,91 @@ func previewLimitRule(rule api.EdgeRuleResponse, input Input) (string, string, *
 		return "body_too_large", fmt.Sprintf("request body is %d bytes; it exceeds both the buffered limit (%d bytes) and streaming limit (%d bytes)", bodyBytes, bufferedCap, streamingCap), preview
 	}
 	return "needs_streaming_context", fmt.Sprintf("request body is %d bytes; the buffered limit is %d bytes and streaming limit is %d bytes, so the outcome depends on unavailable gateway streaming context", bodyBytes, bufferedCap, streamingCap), preview
+}
+
+// previewValidateParameters simulates the path and header schemas of a
+// validate rule. The trace input carries no query string, so a rule with a
+// query schema stops as incomplete instead of guessing. done is false when
+// every parameter check passed (or failed in observe/warn mode) and the body
+// check should run next.
+func previewValidateParameters(rule api.EdgeRuleResponse, action api.EdgeRuleValidateAction, input Input, preview *ActionPreview) (string, string, bool) {
+	p := action.Parameters
+	if prob := p.Validate(rule.MatchPath); prob != nil {
+		return "unavailable", "validation parameters are invalid; gateway compilation would reject the rule", true
+	}
+	if len(p.Query) > 0 {
+		return "needs_query_parameters", "the rule validates query parameters, which this trace does not collect", true
+	}
+	for _, loc := range []struct {
+		name   string
+		schema json.RawMessage
+	}{{"path", p.Path}, {"headers", p.Headers}} {
+		if len(loc.schema) == 0 {
+			continue
+		}
+		kinds, err := api.EdgeRuleParamKinds(loc.schema)
+		if err != nil {
+			return "unavailable", "validation parameters are invalid; gateway compilation would reject the rule", true
+		}
+		values := map[string][]string{}
+		if loc.name == "path" {
+			pathValues, ok := api.PathTemplateValues(p.PathTemplate, input.Path)
+			if !ok {
+				return validateModeOutcome(rule, action, preview, "request path does not fit the rule's path_template")
+			}
+			for name, v := range pathValues {
+				values[name] = []string{v}
+			}
+		} else {
+			for name := range kinds {
+				if raw := input.Headers.Values(name); len(raw) > 0 {
+					values[name] = raw
+				}
+			}
+		}
+		instance, err := api.EdgeRuleParamInstance(kinds, values)
+		if err != nil {
+			return "unavailable", "validation parameters could not be evaluated", true
+		}
+		compiled, err := edgevalidate.Compile(loc.schema, false)
+		if err != nil {
+			return "unavailable", "validation parameter schema could not be compiled; check the stored edge rule", true
+		}
+		fieldErr, err := compiled.Validate(instance)
+		if err != nil {
+			return "unavailable", "validation parameter schema evaluation failed", true
+		}
+		if fieldErr == nil {
+			continue
+		}
+		preview.ValidationField = loc.name + fieldErr.Field
+		preview.ValidationKeyword = fieldErr.Expected
+		outcome, reason, done := validateModeOutcome(rule, action, preview,
+			fmt.Sprintf("%s parameters do not match the JSON Schema at %s (keyword %s)", loc.name, preview.ValidationField, fieldErr.Expected))
+		if done {
+			return outcome, reason, true
+		}
+	}
+	return "", "", false
+}
+
+// validateModeOutcome maps a parameter mismatch to the rule's validate_mode.
+// Block stops the trace; observe and warn record the mismatch and continue.
+func validateModeOutcome(rule api.EdgeRuleResponse, action api.EdgeRuleValidateAction, preview *ActionPreview, reason string) (string, string, bool) {
+	mode := rule.ValidateMode
+	if mode == "" {
+		mode = action.ValidateMode
+	}
+	switch mode {
+	case api.ValidateModeObserve:
+		return "validation_failed_observe", reason, false
+	case api.ValidateModeWarn:
+		preview.ResponseHeaderOps = []api.EdgeRuleHeaderOp{{Action: "set", Name: "X-Validation-Warning", Value: rule.ID}}
+		return "validation_failed_warn", reason, false
+	default:
+		preview.StatusCode = http.StatusUnprocessableEntity
+		return "validation_failed", reason, true
+	}
 }
 
 func validationFailureReason(fieldErr *edgevalidate.FieldError) string {

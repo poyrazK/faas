@@ -1985,14 +1985,30 @@ func (g *gatewaydEdgeRules) compileValidateRules(storeRules []state.EdgeRule) ([
 			// the caller.
 			continue
 		}
-		d, err := g.validate.CompileSchema(schemaBytes, action.RejectOnUnknown)
-		if err != nil {
+		noBody := len(schemaBytes) == 0
+		if noBody && action.Parameters.Empty() {
 			parseErrs = append(parseErrs, gateway.PathGlobError{
-				RuleID: r.ID, Glob: "validate", Err: err,
+				RuleID: r.ID, Glob: "validate", Err: errors.New("validate rule has neither a body schema nor parameters"),
 			})
 			continue
 		}
-		digest = d
+		if !noBody {
+			d, err := g.validate.CompileSchema(schemaBytes, action.RejectOnUnknown)
+			if err != nil {
+				parseErrs = append(parseErrs, gateway.PathGlobError{
+					RuleID: r.ID, Glob: "validate", Err: err,
+				})
+				continue
+			}
+			digest = d
+		}
+		params, err := g.compileValidateParameters(action.Parameters, r.MatchPath)
+		if err != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{
+				RuleID: r.ID, Glob: "validate.parameters", Err: err,
+			})
+			continue
+		}
 		var contentTypes []string
 		if len(action.ContentTypes) > 0 {
 			contentTypes = append(contentTypes, action.ContentTypes...)
@@ -2030,10 +2046,43 @@ func (g *gatewaydEdgeRules) compileValidateRules(storeRules []state.EdgeRule) ([
 			RejectUnknownFields: action.RejectOnUnknown,
 			MaxBodyBytes:        action.MaxBodyBytes,
 			ValidateMode:        mode,
+			NoBodySchema:        noBody,
+			Parameters:          params,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out, parseErrs
+}
+
+// compileValidateParameters compiles each configured parameter schema and
+// records its property kinds. It re-runs the apid shape checks so a row that
+// bypassed apid is dropped rather than half-applied.
+func (g *gatewaydEdgeRules) compileValidateParameters(p *api.EdgeRuleValidateParameters, matchPath string) (*gateway.EdgeRuleValidateParamsResolved, error) {
+	if p.Empty() {
+		return nil, nil
+	}
+	if prob := p.Validate(matchPath); prob != nil {
+		return nil, errors.New(prob.Detail)
+	}
+	out := &gateway.EdgeRuleValidateParamsResolved{PathTemplate: p.PathTemplate}
+	for _, loc := range []struct {
+		raw  []byte
+		into *gateway.EdgeRuleParamSchemaResolved
+	}{{p.Path, &out.Path}, {p.Query, &out.Query}, {p.Headers, &out.Headers}} {
+		if len(loc.raw) == 0 {
+			continue
+		}
+		kinds, err := api.EdgeRuleParamKinds(loc.raw)
+		if err != nil {
+			return nil, err
+		}
+		digest, err := g.validate.CompileSchema(loc.raw, false)
+		if err != nil {
+			return nil, err
+		}
+		*loc.into = gateway.EdgeRuleParamSchemaResolved{Set: true, Digest: digest, Kinds: kinds}
+	}
+	return out, nil
 }
 
 // validatePathGlob runs stdlib path.Match(glob, "") to detect a

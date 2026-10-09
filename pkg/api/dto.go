@@ -8537,12 +8537,17 @@ var edgeRuleValidateRefURLPattern = regexp.MustCompile(`"\s*(\$ref|\$id)\s*"\s*:
 //     decoders may still read it from a response. The field will
 //     be removed in the release after the deprecation notice.
 type EdgeRuleValidateAction struct {
-	Schema                json.RawMessage `json:"schema"`
+	// Schema validates the JSON request body. It may be omitted when
+	// Parameters is set, so a body-less operation can still be validated.
+	Schema                json.RawMessage `json:"schema,omitempty"`
 	ContentTypes          []string        `json:"content_types,omitempty"`
 	ApplyWhileStreaming   bool            `json:"apply_while_streaming,omitempty"`
 	RejectOnUnknownFields bool            `json:"reject_on_unknown_fields,omitempty"`
 	MaxBodyBytes          int             `json:"max_body_bytes,omitempty"`
 	ValidateMode          string          `json:"validate_mode,omitempty"`
+	// Parameters validates path, query, and header values before the body
+	// is read (ADR-091 amendment: request parameters).
+	Parameters *EdgeRuleValidateParameters `json:"parameters,omitempty"`
 }
 
 // EdgeRuleRetryAction is the wire shape for a kind=retry edge rule
@@ -8777,7 +8782,12 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 		return ErrValidation("validate action is required")
 	}
 	if len(a.Schema) == 0 {
-		return ErrValidation("validate action: schema is required")
+		if a.Parameters.Empty() {
+			return ErrValidation("validate action: schema or parameters is required")
+		}
+		// Parameter-only rule: the body checks below do not apply. The
+		// parameter schemas are checked against match_path by the caller.
+		return a.validateMode()
 	}
 	if len(a.Schema) > MaxEdgeRuleValidateSchemaBytes {
 		return ErrValidation(fmt.Sprintf(
@@ -8830,11 +8840,14 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 			"validate action: max_body_bytes exceeds the platform cap (%d > %d)",
 			a.MaxBodyBytes, MaxRequestBodyBytes))
 	}
-	// ValidateMode: optional; empty == 'block' (the strictest mode,
-	// matches the NOT NULL DEFAULT 'block' the migration adds at
-	// 00293). Any non-empty value must be one of the three closed
-	// strings; an unknown value gets a 422 with the allowed list,
-	// not a 500.
+	return a.validateMode()
+}
+
+// validateMode checks the deprecated action-level validate_mode: empty ==
+// 'block' (the strictest mode, matching the NOT NULL DEFAULT 'block' added at
+// 00293). Any non-empty value must be one of the three closed strings; an
+// unknown value gets a 422 with the allowed list, not a 500.
+func (a *EdgeRuleValidateAction) validateMode() *Problem {
 	if a.ValidateMode != "" &&
 		a.ValidateMode != ValidateModeBlock &&
 		a.ValidateMode != ValidateModeObserve &&

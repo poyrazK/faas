@@ -7575,6 +7575,9 @@ type EdgeRuleValidateAction struct {
 	// is intentionally permissive — the closed-set enforcement
 	// lives at the apid write boundary (pkg/api.Validate).
 	ValidateMode string `json:"validate_mode,omitempty"`
+	// Parameters validates path, query, and header values (ADR-091
+	// amendment: request parameters). Nil keeps body-only behaviour.
+	Parameters *api.EdgeRuleValidateParameters `json:"parameters,omitempty"`
 }
 
 // EdgeRuleLimitAction carries the per-rule body caps for kind=limit.
