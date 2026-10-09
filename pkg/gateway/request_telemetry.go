@@ -168,6 +168,9 @@ type requestTelemetryRecorder struct {
 	head   int
 	len    int
 
+	appLosses          map[uuid.UUID]int64
+	unattributedLosses int64
+
 	// overwrittenTotal counts rows lost before the publisher can drain them.
 	overwrittenTotal atomic.Int64
 
@@ -192,6 +195,7 @@ func NewRequestTelemetryRecorder(cfg RequestTelemetryConfig, log *slog.Logger) *
 		cfg:           cfg,
 		log:           log,
 		ring:          make([]RequestTelemetryRow, cfg.RingSize),
+		appLosses:     make(map[uuid.UUID]int64),
 		wakeThreshold: threshold,
 		wakeArmed:     true,
 	}
@@ -239,6 +243,7 @@ func (r *requestTelemetryRecorder) enqueue(row RequestTelemetryRow) {
 		r.len++
 	} else {
 		// ring full — overwrite head, advance head by 1
+		r.recordAppLossLocked(r.ring[r.head])
 		r.ring[r.head] = row
 		r.head = (r.head + 1) % len(r.ring)
 		r.overwrittenTotal.Add(1)
@@ -397,4 +402,19 @@ func telemetryTraceID(requestID string) string {
 		}
 	}
 	return requestID
+}
+
+// Loss journal cardinality is bounded by ring capacity. Unknown/overflow losses
+// retain a global counter, preventing pressure from hiding missing evidence.
+func (r *requestTelemetryRecorder) recordAppLossLocked(row RequestTelemetryRow) {
+	n := int64(normalizedRequestTelemetryCount(row.Count))
+	if row.AppID == uuid.Nil {
+		r.unattributedLosses += n
+		return
+	}
+	if _, ok := r.appLosses[row.AppID]; !ok && len(r.appLosses) >= len(r.ring) {
+		r.unattributedLosses += n
+		return
+	}
+	r.appLosses[row.AppID] += n
 }

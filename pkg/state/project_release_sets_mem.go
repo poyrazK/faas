@@ -30,6 +30,7 @@ func (m *MemStore) publishProjectReleaseSet(accountID, projectID, environment st
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	project, ok := m.projects[projectID]
 	if !ok || project.AccountID != accountID {
 		return ProjectReleaseSet{}, ErrNotFound

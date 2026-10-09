@@ -1052,7 +1052,9 @@ func detectSchemaBreak(out *Diff, base *api.DeploymentResponse, p Pending,
 // detectStructuralSchemaBreak projects the baseline and pending
 // edge-rule lists onto the embedded OpenAPI spec and runs the
 // structural differ on the two projected specs. Each SchemaBreak
-// becomes one Break with Code "schema_response_changed",
+// becomes one error Break with Code "schema_response_changed"; changed
+// unsupported schemas become a warning so they are never presented as a
+// clean comparison or as a confirmed regression.
 // SeverityError (structural breaks are wire-shape breaks
 // customers must react to), and Field set to the path/method/
 // status anchor so the customer sees exactly which endpoint
@@ -1080,8 +1082,8 @@ func detectStructuralSchemaBreak(out *Diff, baseRules, pendingRules []api.Create
 	if err != nil {
 		return
 	}
-	breaks := openapidiff.Compare(baselineSpec, proposedSpec)
-	for _, sb := range breaks {
+	comparison := openapidiff.CompareDetailed(baselineSpec, proposedSpec)
+	for _, sb := range comparison.Breaks {
 		field := sb.Path
 		if sb.Method != "" {
 			field = field + " " + sb.Method
@@ -1101,6 +1103,24 @@ func detectStructuralSchemaBreak(out *Diff, baseRules, pendingRules []api.Create
 			Limit:    AsAny(sb.Before),
 		})
 	}
+	for _, unknown := range comparison.Unknowns {
+		field := unknown.Path
+		if unknown.Method != "" {
+			field += " " + unknown.Method
+		}
+		if unknown.Status != "" {
+			field += " " + unknown.Status
+		}
+		if unknown.PathInSchema != "" {
+			field += " " + unknown.PathInSchema
+		}
+		out.Breaks = append(out.Breaks, Break{
+			Code:     "schema_response_unknown",
+			Severity: SeverityWarn,
+			Reason:   "response schema compatibility could not be classified",
+			Field:    field,
+		})
+	}
 }
 
 // schemaBreakReason renders a one-line customer-facing reason
@@ -1113,7 +1133,9 @@ func schemaBreakReason(sb openapidiff.SchemaBreak) string {
 	case openapidiff.SchemaKindFieldRemoved:
 		return "schema field removed"
 	case openapidiff.SchemaKindRequiredAdded:
-		return "schema field required"
+		return "response contract now guarantees the field"
+	case openapidiff.SchemaKindRequiredRemoved:
+		return "response contract no longer guarantees the field"
 	case openapidiff.SchemaKindNullabilityChange:
 		return "schema nullability changed"
 	default:

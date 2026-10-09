@@ -256,3 +256,10 @@ func TestValidateImport_SniffFalsePositive(t *testing.T) {
 		t.Fatal("expected ValidationError on sniff false-positive (junk JSON with openapi key)")
 	}
 }
+
+func TestImportLifecycleDates(t *testing.T) {
+	_, _, err := openapiimport.ValidateImport([]byte(`{"openapi":"3.0.0","info":{"title":"test","version":"1"},"paths":{"/old":{"get":{"deprecated":true,"x-gregale-deprecated-at":"2026-12-01T00:00:00Z","x-gregale-sunset-at":"2026-10-01T00:00:00Z","x-gregale-successor":"https://example.com/v2"}}}}`))
+	if !openapiimport.IsValidationError(err) {
+		t.Fatalf("expected lifecycle validation failure: %v", err)
+	}
+}
