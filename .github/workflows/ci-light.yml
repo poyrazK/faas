@@ -341,9 +341,10 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # Cold API race compilation can take 14 minutes; allow setup and the
-    # existing 16-minute per-package test budget to finish afterward.
-    timeout-minutes: 35
+    # Cold API race compilation can take 14 minutes. A change touching both
+    # cmd/apid and pkg/state then runs a third of each, one after the other,
+    # beside its other packages; that needed more than 30 minutes.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
