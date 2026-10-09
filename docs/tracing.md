@@ -1,0 +1,78 @@
+# Request tracing
+
+Request tracing shows what happened inside your app during a slow or failed
+request: database queries, cache calls and outbound HTTP requests, each with
+its duration, attached to the request in the production debugger. Turn it on
+with one setting. You don't need an API key, an exporter configuration or any
+code changes.
+
+```yaml
+# gregale.yaml
+tracing:
+  enabled: true
+```
+
+```toml
+# gregale.toml
+[tracing]
+enabled = true
+```
+
+The setting applies from the next deployment. Then open a request with
+`gregale debug requests get <app> <request-id>` or in the dashboard debugger;
+spans from your app appear under the request, and the evidence summary uses
+them to point at the slow dependency.
+
+## What is traced
+
+On the managed Node.js (22, 24) and Python (3.12, 3.13) runtimes, Gregale
+loads OpenTelemetry auto-instrumentation for you:
+
+- **Node.js:** HTTP servers and clients, Express, Fastify, Koa, NestJS,
+  PostgreSQL (`pg`), MySQL, MongoDB, Redis, gRPC and the other libraries
+  supported by `@opentelemetry/auto-instrumentations-node`.
+- **Python:** WSGI/ASGI, Django, Flask, FastAPI, `psycopg2`, `psycopg`,
+  `asyncpg`, SQLAlchemy, Redis, PyMongo, `requests`, `urllib3`, `httpx` and
+  `aiohttp` clients.
+
+Filesystem, DNS and raw socket activity is not traced.
+
+Other apps (Go, Dockerfile builds and container images) can export spans with
+any OpenTelemetry SDK they already include. Inside the app, the standard
+OTLP/HTTP endpoint `http://127.0.0.1:4318/v1/traces` accepts them; Gregale
+sets the standard `OTEL_EXPORTER_OTLP_TRACES_*` variables so most SDKs need no
+configuration.
+
+## Sampling
+
+By default every request's spans are exported. To reduce volume, set a ratio:
+
+```yaml
+tracing:
+  enabled: true
+  sample_ratio: 0.25
+```
+
+Exports also count toward your plan's request telemetry rate limit; spans that
+exceed it are dropped and the app keeps serving.
+
+## Using your own collector
+
+If your app already sets `OTEL_EXPORTER_OTLP_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_TRACES_EXPORTER`, Gregale leaves
+your OpenTelemetry configuration alone, and a Python app that ships its own
+`opentelemetry-sdk` is never instrumented a second time. Your existing exporter
+keeps working; to send spans to the debugger as well, export to the public
+`/v1/otel/v1/traces` endpoint with an API key.
+
+## Limits and behavior
+
+- Available on plans that include the production debugger.
+- Spans are kept with the request record for the plan's debugger retention.
+- Tracing never stops your app from starting. If instrumentation cannot load,
+  for example because of an incompatible library version, the app runs
+  untraced.
+- Instrumentation is loaded before Gregale snapshots your app, so waking from
+  a snapshot adds no startup time; only a cold boot pays the load cost.
+- Pre-fork servers such as gunicorn need OpenTelemetry's usual post-fork
+  initialization in each worker.

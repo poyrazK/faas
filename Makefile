@@ -715,6 +715,11 @@ postmortem: ## Create docs/postmortems/YYYY-MM-DD-NAME.md from the post-mortem t
 test-postmortems: ## Validate completed post-mortems and INDEX links
 	bash scripts/ci/check_postmortems.sh $(CURDIR)
 
+.PHONY: test-runtime-bootstraps
+test-runtime-bootstraps: ## Startup-safety checks for the guest Node/Python profiling and tracing preloads (ADR-819, ADR-829)
+	python3 tests/profiling/bootstrap_test.py
+	python3 tests/tracing/bootstrap_test.py
+
 # ADR-111: packer-builder syntax gate. Delegates to deploy/packer/Makefile:image-validate,
 # which loops `packer validate -syntax-only` over every *.pkr.hcl. Works
 # without cloud creds; gates PR #928. install-packer.sh is the deterministic

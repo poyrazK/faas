@@ -42619,6 +42619,8 @@ components:
       properties:
         profiling:
           $ref: '#/components/schemas/ProfilingConfig'
+        tracing:
+          $ref: '#/components/schemas/TracingConfig'
         slug:
           type: string
           pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
@@ -43142,6 +43144,8 @@ components:
       properties:
         profiling:
           $ref: '#/components/schemas/ProfilingConfig'
+        tracing:
+          $ref: '#/components/schemas/TracingConfig'
         visibility:
           type: [string, "null"]
           enum: [public, internal, null]
@@ -43836,6 +43840,8 @@ components:
       properties:
         profiling:
           $ref: '#/components/schemas/ProfilingConfig'
+        tracing:
+          $ref: '#/components/schemas/TracingConfig'
         entrypoint:
           type: array
           items: { type: string }
@@ -62138,6 +62144,13 @@ components:
       properties:
         enabled: { type: boolean }
         window_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+    TracingConfig:
+      description: "Opt-in zero-config request tracing baked into each deployment (ADR-829). Managed runtimes export database, cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are left untouched."
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        sample_ratio: { type: number, exclusiveMinimum: 0, maximum: 1, default: 1, description: "Fraction of requests whose spans the app exports." }
     ProfileQuery:
       description: Authorized deployment CPU capture window.
       type: object

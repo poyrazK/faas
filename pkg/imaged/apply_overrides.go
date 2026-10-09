@@ -189,6 +189,11 @@ func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest 
 		cfg := *app.Manifest.Profiling
 		manifest.Profiling = &cfg
 	}
+	manifest.Tracing = nil
+	if app.Manifest.Tracing != nil {
+		cfg := *app.Manifest.Tracing
+		manifest.Tracing = &cfg
+	}
 	manifest.ExecutionMode = app.Manifest.ExecutionMode
 	manifest.RestartPolicy = app.Manifest.RestartPolicy
 	manifest.AfterRestore = nil

@@ -90,6 +90,8 @@ type spansWriterReceiver struct {
 	ops     spansWriterMonitor
 	limiter *peraccount.Limiter
 	enabled bool
+	// guest is the ADR-829 in-guest export ingester; nil disables it.
+	guest *guestSpansIngester
 }
 
 // spansWriterMonitor is the metric surface the receiver uses.
@@ -213,8 +215,10 @@ func (r *spansWriterReceiver) observe(outcome string) {
 
 // registerSpansWriterReceiver binds the SpansWriterServer onto
 // a gRPC server. Called from runSpansWriterServer in main.go.
-func registerSpansWriterReceiver(s *grpc.Server, store spansWriterStore, ops spansWriterMonitor, limiter *peraccount.Limiter, enabled bool) {
-	apidpb.RegisterSpansWriterServer(s, newSpansWriterReceiver(store, ops, limiter, enabled))
+func registerSpansWriterReceiver(s *grpc.Server, store spansWriterStore, ops spansWriterMonitor, limiter *peraccount.Limiter, enabled bool, guest *guestSpansIngester) {
+	receiver := newSpansWriterReceiver(store, ops, limiter, enabled)
+	receiver.guest = guest
+	apidpb.RegisterSpansWriterServer(s, receiver)
 }
 
 // Compile-time guards. The bytes import is preserved for the

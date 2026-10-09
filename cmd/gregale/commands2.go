@@ -3941,6 +3941,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PrintWarn(osStderr, "Manifest profiling rollback incomplete: %v", err)
 		}
 	}()
+	tracingTxn, err := stageManifestTracing(ctx, client, slug, sourceDir)
+	if err != nil {
+		return printErr("Manifest tracing policy failed", err)
+	}
+	defer func() {
+		if err := tracingTxn.rollback(ctx); err != nil {
+			PrintWarn(osStderr, "Manifest tracing rollback incomplete: %v", err)
+		}
+	}()
 	defer func() {
 		if stagedManifestTriggerTxn == nil || len(stagedManifestTriggerTxn.steps) == 0 {
 			return
@@ -3955,6 +3964,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	commitManifestTriggers := func() {
 		stagedManifestTriggerTxn.commit()
 		profileTxn.committed = true
+		tracingTxn.committed = true
 	}
 	applyManifestScaling := func() error {
 		if err := applyManifestLifecycle(ctx, client, slug, sourceDir); err != nil {

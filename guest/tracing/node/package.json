@@ -1,0 +1,10 @@
+{
+  "name": "gregale-runtime-tracing",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "@opentelemetry/auto-instrumentations-node": "0.80.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.222.0",
+    "@opentelemetry/sdk-node": "0.222.0"
+  }
+}

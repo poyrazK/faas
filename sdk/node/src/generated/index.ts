@@ -1484,6 +1484,7 @@ export type { ThrottleSuggestionRow } from './models/ThrottleSuggestionRow.js';
 export type { ThrottleSuggestionsResponse } from './models/ThrottleSuggestionsResponse.js';
 export type { Trace } from './models/Trace.js';
 export type { TraceSpan } from './models/TraceSpan.js';
+export type { TracingConfig } from './models/TracingConfig.js';
 export type { TransferOwnershipRequest } from './models/TransferOwnershipRequest.js';
 export type { Trigger } from './models/Trigger.js';
 export type { TriggerDeadLetter } from './models/TriggerDeadLetter.js';
