@@ -843,9 +843,9 @@ export class OperationsService {
     });
   }
   /**
-   * List ranked contributors to a workflow performance group.
+   * List ranked performance contributors for the authenticated customer.
    * Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts.
-   * @returns OperationWorkflowPerformanceInstancesResponse Ranked complete-history contributors and exact selected group distribution.
+   * @returns OperationWorkflowPerformanceInstancesResponse Ranked complete-history contributors within the authenticated customer's selected group.
    * @throws ApiError
    */
   public static listPlatformTenantSelfWorkflowPerformanceInstances({
@@ -871,43 +871,43 @@ export class OperationsService {
      */
     scope: string,
     /**
-     * Declared business workflow to investigate.
+     * Declared workflow to investigate for the authenticated customer.
      */
     workflow: string,
     /**
-     * Completed or ongoing cohort.
+     * Completed or ongoing customer workflow cohort.
      */
     cohort: 'completed' | 'ongoing',
     /**
-     * Overall measure or exact breakdown dimension.
+     * Customer cohort duration measure or exact breakdown dimension.
      */
     dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner',
     /**
-     * Required for state and blocker dimensions.
+     * Contract version required when selecting a customer state or blocker group.
      */
     contractVersion?: number,
     /**
-     * Exact contributing state. Required for the state dimension.
+     * Contributing state in the customer's state dimension.
      */
     state?: string,
     /**
-     * Exact blocker target Operation. Required for the blocker dimension.
+     * Blocker target Operation in the authenticated customer's blocker dimension.
      */
     operation?: string,
     /**
-     * Exact blocker code. Required for the blocker dimension.
+     * Blocker code selecting the customer's exact blocker group.
      */
     code?: string,
     /**
-     * Exact public owner. Mutually exclusive with unassigned.
+     * Public owner of the customer's selected group; mutually exclusive with unassigned.
      */
     owner?: string,
     /**
-     * Select the empty owner group. Mutually exclusive with owner.
+     * Select an empty-owner customer group; mutually exclusive with owner.
      */
     unassigned?: boolean,
     /**
-     * Opaque selector-bound cohort token from the summary or a previous contributor response.
+     * Customer selector-bound cohort token from a prior summary or contributor response.
      */
     cohortToken?: string,
   }): CancelablePromise<OperationWorkflowPerformanceInstancesResponse> {
@@ -933,7 +933,7 @@ export class OperationsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `The retained cohort changed. Refresh the summary and use its new cohort_token.`,
+        409: `The customer's retained cohort changed; refresh its performance summary for a new cohort_token.`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
@@ -994,9 +994,9 @@ export class OperationsService {
     });
   }
   /**
-   * Summarize business workflow performance across retained instances.
+   * Summarize retained business workflow performance for the authenticated customer.
    * Customer identity comes from credentials and tenant overrides are rejected. Requires platform_tenant:operations:read. Explicit app/environment/workflow selection is required. The latest 100 completed and 100 ongoing retained instances form separate cohorts. Matching counts include all retained instances. Incomplete histories are excluded from durations and nearest-rank p50/p95 percentiles with explicit coverage reasons. Each instance contributes one accumulated duration per reported group. At most 1024 reports per instance and 32 output groups per dimension; group truncation does not change cohort totals. Ongoing durations run through evaluation time. No cursor or time-window filter is supported. Retention and newly published reports can change results.
-   * @returns OperationWorkflowPerformanceSummary Separate completed and ongoing cohorts with coverage and ranked durations.
+   * @returns OperationWorkflowPerformanceSummary Authenticated customer performance cohorts with observed durations and retained-history coverage.
    * @throws ApiError
    */
   public static summarizePlatformTenantSelfWorkflowPerformance({
@@ -1013,7 +1013,7 @@ export class OperationsService {
      */
     scope: string,
     /**
-     * Declared workflow name to compare across instances.
+     * Business workflow to compare within the authenticated customer app and environment.
      */
     workflow: string,
   }): CancelablePromise<OperationWorkflowPerformanceSummary> {
@@ -1526,19 +1526,19 @@ export class OperationsService {
      */
     requiredOutcomeCode?: string,
     /**
-     * Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal.
+     * Account attention summary. Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal.
      */
     priority?: 'low' | 'normal' | 'high' | 'urgent',
     /**
-     * Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order.
+     * Account attention summary. Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order.
      */
     sort?: 'updated_at' | 'deadline',
     /**
-     * Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker.
+     * Account attention summary. Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker.
      */
     owner?: string,
     /**
-     * Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false.
+     * Account attention summary. Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false.
      */
     unassigned?: boolean,
     /**
@@ -1644,19 +1644,19 @@ export class OperationsService {
      */
     requiredOutcomeCode?: string,
     /**
-     * Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal.
+     * Customer attention queue. Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal.
      */
     priority?: 'low' | 'normal' | 'high' | 'urgent',
     /**
-     * Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order.
+     * Customer attention queue. Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order.
      */
     sort?: 'updated_at' | 'deadline',
     /**
-     * Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker.
+     * Customer attention queue. Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker.
      */
     owner?: string,
     /**
-     * Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false.
+     * Customer attention queue. Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false.
      */
     unassigned?: boolean,
     /**
@@ -1759,19 +1759,19 @@ export class OperationsService {
      */
     requiredOutcomeCode?: string,
     /**
-     * Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal.
+     * Customer attention summary. Exact effective blocker priority matched with owner and other blocker filters. Omitted blocker priority counts as normal.
      */
     priority?: 'low' | 'normal' | 'high' | 'urgent',
     /**
-     * Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order.
+     * Customer attention summary. Queue ordering. Deadline sorts earliest business deadline first with undated workflows last. Summary groups remain in group-value order.
      */
     sort?: 'updated_at' | 'deadline',
     /**
-     * Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker.
+     * Customer attention summary. Exact case-sensitive public application-assigned blocker owner, limited to 128 UTF-8 bytes without control characters. Mutually exclusive with unassigned=true; owner, blocker code, and target filters must match the same blocker.
      */
     owner?: string,
     /**
-     * Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false.
+     * Customer attention summary. Select workflows with a matching blocker whose owner is empty or absent. Mutually exclusive with owner. Explicit values must be true or false.
      */
     unassigned?: boolean,
     /**

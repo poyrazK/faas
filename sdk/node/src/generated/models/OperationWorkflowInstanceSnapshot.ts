@@ -19,7 +19,7 @@ import type { OperationWorkflowStateHistoryEntry } from './OperationWorkflowStat
 export type OperationWorkflowInstanceSnapshot = {
   bottlenecks?: OperationWorkflowBottlenecks;
   /**
-   * Bounded preview with pending obligations first. Exact counts cover all retained distinct obligations.
+   * Selected instance proof preview with pending obligations first; exact counts include all distinct retained claims.
    */
   resolution_verifications?: Array<OperationWorkflowResolutionVerification>;
   awaiting_verification_count?: number;

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Publication-based proof waiting time and coverage counts for one verification owner within an instance.
+ */
 export type OperationWorkflowVerificationDuration = {
   /**
    * Application-assigned verification owner. Empty means unassigned.

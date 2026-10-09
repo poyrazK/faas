@@ -46,7 +46,8 @@ class OperationWorkflowInstanceSnapshot:
     time. Verification waits use platform publication time. Gaps are excluded and incomplete histories are marked.
     Groups are sorted by observed duration and bounded independently of exact window totals."""
     resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
-    """Bounded preview with pending obligations first. Exact counts cover all retained distinct obligations."""
+    """Selected instance proof preview with pending obligations first; exact counts include all distinct retained
+    claims."""
     awaiting_verification_count: int | Unset = UNSET
     resolution_verification_count: int | Unset = UNSET
     readiness: OperationWorkflowReadinessOverview | Unset = UNSET

@@ -95,7 +95,7 @@ def sync_detailed(
     scope: str,
     workflow: str,
 ) -> Response[OperationWorkflowPerformanceSummary | Problem]:
-    """Summarize business workflow performance across retained instances.
+    """Summarize retained business workflow performance for the authenticated customer.
 
      Customer identity comes from credentials and tenant overrides are rejected. Requires
     platform_tenant:operations:read. Explicit app/environment/workflow selection is required. The latest
@@ -139,7 +139,7 @@ def sync(
     scope: str,
     workflow: str,
 ) -> OperationWorkflowPerformanceSummary | Problem | None:
-    """Summarize business workflow performance across retained instances.
+    """Summarize retained business workflow performance for the authenticated customer.
 
      Customer identity comes from credentials and tenant overrides are rejected. Requires
     platform_tenant:operations:read. Explicit app/environment/workflow selection is required. The latest
@@ -178,7 +178,7 @@ async def asyncio_detailed(
     scope: str,
     workflow: str,
 ) -> Response[OperationWorkflowPerformanceSummary | Problem]:
-    """Summarize business workflow performance across retained instances.
+    """Summarize retained business workflow performance for the authenticated customer.
 
      Customer identity comes from credentials and tenant overrides are rejected. Requires
     platform_tenant:operations:read. Explicit app/environment/workflow selection is required. The latest
@@ -220,7 +220,7 @@ async def asyncio(
     scope: str,
     workflow: str,
 ) -> OperationWorkflowPerformanceSummary | Problem | None:
-    """Summarize business workflow performance across retained instances.
+    """Summarize retained business workflow performance for the authenticated customer.
 
      Customer identity comes from credentials and tenant overrides are rejected. Requires
     platform_tenant:operations:read. Explicit app/environment/workflow selection is required. The latest

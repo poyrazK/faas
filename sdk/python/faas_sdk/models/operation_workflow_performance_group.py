@@ -16,6 +16,8 @@ T = TypeVar("T", bound="OperationWorkflowPerformanceGroup")
 
 @_attrs_define
 class OperationWorkflowPerformanceGroup:
+    """Exact duration dimension and optional contract, state, blocker or owner selectors for contributor reads."""
+
     dimension: OperationWorkflowPerformanceGroupDimension
     contract_version: int | Unset = UNSET
     state: str | Unset = UNSET

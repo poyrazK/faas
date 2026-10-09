@@ -14,6 +14,8 @@ T = TypeVar("T", bound="OperationWorkflowStatePerformance")
 
 @_attrs_define
 class OperationWorkflowStatePerformance:
+    """Cohort duration distribution and evaluated SLA visits for one state and contract version."""
+
     sla_evaluated_visit_count: int
     sla_breached_visit_count: int
     contract_version: int

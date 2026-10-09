@@ -10,6 +10,8 @@ T = TypeVar("T", bound="OperationWorkflowStateDuration")
 
 @_attrs_define
 class OperationWorkflowStateDuration:
+    """Observed time and interval count for one state and contract version within a selected workflow instance."""
+
     contract_version: int
     state: str
     observed_seconds: int

@@ -10,11 +10,13 @@ T = TypeVar("T", bound="OperationWorkflowBlockerDuration")
 
 @_attrs_define
 class OperationWorkflowBlockerDuration:
+    """Observed blocked time and interval count for one target, code, contract version and owner within an instance."""
+
     contract_version: int
     operation: str
     code: str
     owner: str
-    """Empty means unassigned."""
+    """Blocker owner observed in this instance interval; empty means unassigned."""
     observed_seconds: int
     observation_count: int
     ongoing: bool

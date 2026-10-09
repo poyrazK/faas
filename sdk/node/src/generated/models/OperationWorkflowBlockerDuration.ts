@@ -2,12 +2,15 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Observed blocked time and interval count for one target, code, contract version and owner within an instance.
+ */
 export type OperationWorkflowBlockerDuration = {
   contract_version: number;
   operation: string;
   code: string;
   /**
-   * Empty means unassigned.
+   * Blocker owner observed in this instance interval; empty means unassigned.
    */
   owner: string;
   observed_seconds: number;

@@ -10,6 +10,8 @@ T = TypeVar("T", bound="OperationWorkflowVerificationDuration")
 
 @_attrs_define
 class OperationWorkflowVerificationDuration:
+    """Publication-based proof waiting time and coverage counts for one verification owner within an instance."""
+
     owner: str
     """Application-assigned verification owner. Empty means unassigned."""
     observed_seconds: int

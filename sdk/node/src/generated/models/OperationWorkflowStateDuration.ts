@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Observed time and interval count for one state and contract version within a selected workflow instance.
+ */
 export type OperationWorkflowStateDuration = {
   contract_version: number;
   state: string;

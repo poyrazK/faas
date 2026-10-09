@@ -14,11 +14,13 @@ T = TypeVar("T", bound="OperationWorkflowBlockerPerformance")
 
 @_attrs_define
 class OperationWorkflowBlockerPerformance:
+    """Cohort duration distribution for one blocker target, code, contract version and observed owner."""
+
     contract_version: int
     operation: str
     code: str
     owner: str
-    """Empty means unassigned."""
+    """Application-reported blocker owner for this cohort group; empty means unassigned."""
     duration: OperationWorkflowDurationDistribution
     """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
     zero."""

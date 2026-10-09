@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowBlockerResolution } from './OperationWorkflowBlockerResolution.js';
+/**
+ * Retained resolution claim and its exact proof-verification status under the original scoped workflow contract.
+ */
 export type OperationWorkflowResolutionVerification = {
   resolution: OperationWorkflowBlockerResolution;
   resolution_operation_id: string;

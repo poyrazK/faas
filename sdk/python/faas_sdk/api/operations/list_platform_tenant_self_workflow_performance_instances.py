@@ -144,7 +144,7 @@ def sync_detailed(
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceInstancesResponse | Problem]:
-    """List ranked contributors to a workflow performance group.
+    """List ranked performance contributors for the authenticated customer.
 
      Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides
     are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses
@@ -219,7 +219,7 @@ def sync(
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceInstancesResponse | Problem | None:
-    """List ranked contributors to a workflow performance group.
+    """List ranked performance contributors for the authenticated customer.
 
      Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides
     are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses
@@ -289,7 +289,7 @@ async def asyncio_detailed(
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceInstancesResponse | Problem]:
-    """List ranked contributors to a workflow performance group.
+    """List ranked performance contributors for the authenticated customer.
 
      Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides
     are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses
@@ -362,7 +362,7 @@ async def asyncio(
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceInstancesResponse | Problem | None:
-    """List ranked contributors to a workflow performance group.
+    """List ranked performance contributors for the authenticated customer.
 
      Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides
     are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses

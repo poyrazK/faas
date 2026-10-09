@@ -34,6 +34,7 @@ class OperationWorkflowPerformanceInstancesResponse:
     workflow: str
     cohort: OperationWorkflowPerformanceInstancesResponseCohort
     group: OperationWorkflowPerformanceGroup
+    """Exact duration dimension and optional contract, state, blocker or owner selectors for contributor reads."""
     matching_workflow_count: int
     sampled_workflow_count: int
     complete_history_workflow_count: int

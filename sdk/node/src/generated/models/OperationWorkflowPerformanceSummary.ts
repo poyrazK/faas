@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowPerformanceCohort } from './OperationWorkflowPerformanceCohort.js';
+/**
+ * Completed and ongoing workflow cohorts with bounded sampling, history coverage and duration distributions.
+ */
 export type OperationWorkflowPerformanceSummary = {
   /**
    * Opaque selector-bound token for opening consistent contributor views.

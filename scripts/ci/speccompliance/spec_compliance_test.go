@@ -323,10 +323,12 @@ func init() {
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
 	// Workflow list options encode URL query parameters, not JSON request bodies.
-	"OperationWorkflowAttentionOptions":        true,
-	"OperationWorkflowAttentionSummaryOptions": true,
-	"OperationWorkflowOutcomeOptions":          true,
-	"OperationWorkflowOutcomeSummaryOptions":   true,
+	"OperationWorkflowAttentionOptions":           true,
+	"OperationWorkflowAttentionSummaryOptions":    true,
+	"OperationWorkflowOutcomeOptions":             true,
+	"OperationWorkflowOutcomeSummaryOptions":      true,
+	"OperationWorkflowPerformanceOptions":         true,
+	"OperationWorkflowPerformanceInstanceOptions": true,
 
 	"EventReplayPreviewOptions":      true, // client-only query options; the wire parameters are declared on the route
 	"EventReplayBackfillItemsQuery":  true, // client-only pagination/filter options; the wire parameters are declared on the route
@@ -1185,6 +1187,10 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_business_invariants.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_action_preview.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_attention.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_bottlenecks.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_performance.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_performance_instances.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_sla.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_invariants.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_outcomes.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflow_policies.go"),

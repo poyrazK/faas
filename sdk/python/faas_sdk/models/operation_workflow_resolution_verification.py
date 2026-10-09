@@ -22,6 +22,8 @@ T = TypeVar("T", bound="OperationWorkflowResolutionVerification")
 
 @_attrs_define
 class OperationWorkflowResolutionVerification:
+    """Retained resolution claim and its exact proof-verification status under the original scoped workflow contract."""
+
     resolution: OperationWorkflowBlockerResolution
     """Explicit application explanation for clearing one prior blocker occurrence. The source must be a retained
     report in the same owner/business-reference/workflow-instance/contract-version boundary and must contain this

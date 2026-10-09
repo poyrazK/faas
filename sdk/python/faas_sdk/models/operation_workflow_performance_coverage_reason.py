@@ -15,6 +15,8 @@ T = TypeVar("T", bound="OperationWorkflowPerformanceCoverageReason")
 
 @_attrs_define
 class OperationWorkflowPerformanceCoverageReason:
+    """Count of sampled workflows excluded for one retained-history coverage reason."""
+
     reason: OperationWorkflowPerformanceCoverageReasonReason
     workflow_count: int
 

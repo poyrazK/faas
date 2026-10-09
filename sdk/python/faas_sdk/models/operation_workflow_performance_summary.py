@@ -15,6 +15,8 @@ T = TypeVar("T", bound="OperationWorkflowPerformanceSummary")
 
 @_attrs_define
 class OperationWorkflowPerformanceSummary:
+    """Completed and ongoing workflow cohorts with bounded sampling, history coverage and duration distributions."""
+
     cohort_token: str
     """Opaque selector-bound token for opening consistent contributor views."""
     evaluated_at: datetime.datetime

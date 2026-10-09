@@ -14,8 +14,10 @@ T = TypeVar("T", bound="OperationWorkflowVerificationPerformance")
 
 @_attrs_define
 class OperationWorkflowVerificationPerformance:
+    """Cohort verification-wait distribution and pending obligations for one verification owner."""
+
     owner: str
-    """Empty means unassigned."""
+    """Verification recipient for this cohort group; empty means unassigned."""
     pending_resolution_count: int
     duration: OperationWorkflowDurationDistribution
     """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
