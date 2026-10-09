@@ -4,20 +4,34 @@ EventBacklogRecipientWaitingReason = Literal[
     "capacity_account",
     "capacity_app",
     "capacity_consumer",
+    "circuit_open",
+    "circuit_probe_wait",
+    "circuit_recovery_rate_limited",
+    "ordering_blocked",
     "ready",
     "receipt_processing",
     "retry_backoff",
     "routing_in_progress",
+    "subscription_paused",
+    "subscription_rate_limited",
+    "workflow_routing",
 ]
 
 EVENT_BACKLOG_RECIPIENT_WAITING_REASON_VALUES: set[EventBacklogRecipientWaitingReason] = {
     "capacity_account",
     "capacity_app",
     "capacity_consumer",
+    "circuit_open",
+    "circuit_probe_wait",
+    "circuit_recovery_rate_limited",
+    "ordering_blocked",
     "ready",
     "receipt_processing",
     "retry_backoff",
     "routing_in_progress",
+    "subscription_paused",
+    "subscription_rate_limited",
+    "workflow_routing",
 }
 
 

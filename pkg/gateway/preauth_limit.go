@@ -526,8 +526,8 @@ func (h *Handler) recordPreAuthTargetResponse(r *http.Request, rec *statusRecord
 	var subjects [2]string
 	for i := range subjects {
 		dimension := "login_target_" + strconv.Itoa(i)
-		subjects[i] = dimensionalCentralSubjectID(policyID, dimension, target, preAuthTargetShards)
-		admitted, _ := h.preAuthLimiter.allowRate(policyID+"\x00"+dimension, subjects[i], failure.rps, failure.burst, true, false)
+		subjects[i] = dimensionalCentralSubjectID(policyID, dimension, target, preAuthTargetShards)                                // #nosec G602 -- i ranges over this [2]string array.
+		admitted, _ := h.preAuthLimiter.allowRate(policyID+"\x00"+dimension, subjects[i], failure.rps, failure.burst, true, false) // #nosec G602 -- i ranges over this [2]string array.
 		if admitted {
 			localExceeded = false
 		}

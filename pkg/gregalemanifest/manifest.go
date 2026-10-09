@@ -104,14 +104,17 @@ const (
 // persistence. Filter is a JSON object encoded as a string so the same matcher
 // contract is shared by YAML/TOML manifests and the event router.
 type EventTrigger struct {
-	App             string `yaml:"app,omitempty" toml:"app"`
-	Source          string `yaml:"source" toml:"source"`
-	Type            string `yaml:"type" toml:"type"`
-	Filter          string `yaml:"filter,omitempty" toml:"filter"`
-	WorkPolicy      string `yaml:"work_policy,omitempty" toml:"work_policy"`
-	WorkKey         string `yaml:"work_key,omitempty" toml:"work_key"`
-	WorkFairnessKey string `yaml:"work_fairness_key,omitempty" toml:"work_fairness_key"`
-	WorkAction      string `yaml:"work_action,omitempty" toml:"work_action"`
+	SchemaVersions  []string               `yaml:"schema_versions,omitempty" toml:"schema_versions"`
+	Retry           *EventRoutingRetrySpec `yaml:"retry,omitempty" toml:"retry"`
+	App             string                 `yaml:"app,omitempty" toml:"app"`
+	Source          string                 `yaml:"source" toml:"source"`
+	Type            string                 `yaml:"type" toml:"type"`
+	Filter          string                 `yaml:"filter,omitempty" toml:"filter"`
+	Ordered         bool                   `yaml:"ordered,omitempty" toml:"ordered"`
+	WorkPolicy      string                 `yaml:"work_policy,omitempty" toml:"work_policy"`
+	WorkKey         string                 `yaml:"work_key,omitempty" toml:"work_key"`
+	WorkFairnessKey string                 `yaml:"work_fairness_key,omitempty" toml:"work_fairness_key"`
+	WorkAction      string                 `yaml:"work_action,omitempty" toml:"work_action"`
 }
 
 func (t EventTrigger) EffectiveWorkAction() string {
@@ -611,6 +614,12 @@ func (m *Manifest) companionSpecs() ([]CompanionSpec, error) {
 // Validate checks the event pattern and content filter without requiring an
 // account ID. Account ownership is assigned by the authenticated apply path.
 func (t EventTrigger) Validate(idx int) error {
+	if _, err := api.NormalizeEventSchemaVersions(t.SchemaVersions); err != nil {
+		return fmt.Errorf("triggers.event[%d].schema_versions: %w", idx, err)
+	}
+	if _, err := t.RoutingRetryPolicy(); err != nil {
+		return fmt.Errorf("triggers.event[%d].retry: %w", idx, err)
+	}
 	if t.WorkAction != "" && t.WorkAction != "invoke" && t.WorkAction != "cancel_pending" {
 		return fmt.Errorf("triggers.event[%d].work_action must be invoke or cancel_pending", idx)
 	}
@@ -619,6 +628,9 @@ func (t EventTrigger) Validate(idx int) error {
 	}
 	if (t.WorkPolicy == "") != (t.WorkKey == "") {
 		return fmt.Errorf("triggers.event[%d]: work_policy and work_key must be set together", idx)
+	}
+	if t.Ordered && (t.WorkPolicy == "" || t.EffectiveWorkAction() != "invoke") {
+		return fmt.Errorf("triggers.event[%d].ordered requires work_policy, work_key, and work_action=invoke", idx)
 	}
 	if t.WorkPolicy != "" {
 		if err := (workpolicy.Policy{Name: t.WorkPolicy, MaxRunningPerKey: 1}).Validate(); err != nil {
@@ -668,10 +680,11 @@ func (t EventTrigger) AsSubscription(accountID string) (events.Subscription, err
 		return events.Subscription{}, err
 	}
 	subscription := events.Subscription{
-		AccountID: accountID,
-		Source:    t.Source,
-		Type:      t.Type,
-		Filter:    t.FilterJSON(),
+		SchemaVersions: append([]string(nil), t.SchemaVersions...),
+		AccountID:      accountID,
+		Source:         t.Source,
+		Type:           t.Type,
+		Filter:         t.FilterJSON(),
 	}
 	if err := subscription.Validate(); err != nil {
 		return events.Subscription{}, err
@@ -2217,6 +2230,19 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		}
 		if err := trigger.Validate(i); err != nil {
 			return err
+		}
+		if trigger.Ordered {
+			for _, declaration := range m.WorkPolicies {
+				if declaration.Name != trigger.WorkPolicy ||
+					(declaration.App != "" && trigger.App != "" && declaration.App != trigger.App) {
+					continue
+				}
+				policy := declaration.ToPolicy()
+				if policy.MaxRunningPerKey != 1 || policy.PendingUpdates != workpolicy.PendingAll || policy.Debounce != 0 || policy.ExpiresAfter != 0 {
+					return fmt.Errorf("triggers.event[%d].ordered requires work policy %q to use max_running_per_key=1, pending_updates=all, debounce_ms=0, and expires_after_ms=0", i, trigger.WorkPolicy)
+				}
+				break
+			}
 		}
 		key := strings.Join([]string{trigger.App, trigger.Source, trigger.Type, strings.TrimSpace(trigger.Filter)}, "\x00")
 		if _, duplicate := seenEvents[key]; duplicate {

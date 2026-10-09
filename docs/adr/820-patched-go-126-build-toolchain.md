@@ -1,4 +1,4 @@
-# ADR-794: Use the patched Go 1.26 build toolchain
+# ADR-820: Use the patched Go 1.26 build toolchain
 
 - **Status:** accepted
 - **Date:** 2026-10-09

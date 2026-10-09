@@ -89,7 +89,9 @@ func eventReplayPreviewRevision(s EventSubscription) string {
 		ID, Source, Type string
 		Filter           json.RawMessage
 		Created, Updated time.Time
-	}{s.ID, s.Source, s.Type, filter, s.CreatedAt, s.UpdatedAt})
+		SchemaVersions   []string
+		RetryPolicy      *api.EventRoutingRetryPolicy
+	}{s.ID, s.Source, s.Type, filter, s.CreatedAt, s.UpdatedAt, s.SchemaVersions, s.RoutingRetryPolicy})
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
@@ -101,7 +103,7 @@ func eventReplayPreviewWindow(accountID string, q EventReplayPreviewQuery, sub E
 	if workBound {
 		return eventReplayPreviewCursor{}, ErrEventReplayPreviewUnsupported
 	}
-	matcher := eventcontract.Subscription{AccountID: sub.AccountID, Source: sub.Source, Type: sub.Type, Filter: sub.Filter}
+	matcher := eventcontract.Subscription{AccountID: sub.AccountID, Source: sub.Source, Type: sub.Type, Filter: sub.Filter, SchemaVersions: sub.SchemaVersions}
 	if err := matcher.Validate(); err != nil {
 		return eventReplayPreviewCursor{}, fmt.Errorf("validate retained preview target: %w", err)
 	}
@@ -149,7 +151,7 @@ func eventReplayPreviewPgBoundary(t time.Time) pgtype.Timestamptz {
 
 func newEventReplayPreview(sub EventSubscription, slug string, c eventReplayPreviewCursor, now time.Time, earliest *time.Time) api.EventReplayPreviewResponse {
 	return api.EventReplayPreviewResponse{
-		AppSlug: slug, Subscription: api.EventSubscriptionResponse{ID: sub.ID, AppID: sub.AppID, Source: sub.Source, Type: sub.Type, Filter: append(json.RawMessage(nil), sub.Filter...), Enabled: sub.Enabled, CreatedAt: sub.CreatedAt, UpdatedAt: sub.UpdatedAt},
+		AppSlug: slug, Subscription: api.EventSubscriptionResponse{SchemaVersions: append([]string(nil), sub.SchemaVersions...), ID: sub.ID, AppID: sub.AppID, Source: sub.Source, Type: sub.Type, Filter: append(json.RawMessage(nil), sub.Filter...), Enabled: sub.Enabled, CreatedAt: sub.CreatedAt, UpdatedAt: sub.UpdatedAt},
 		SubscriptionRevision: c.Revision, From: c.From, Until: c.Until, CutoffAt: c.CutoffAt, ObservedAt: now, Coverage: "retained_envelopes",
 		Retention: api.EventReplayPreviewRetention{SettledRetentionSeconds: int64(PublishedEventIdentityRetention / time.Second), EarliestRetainedAt: earliest},
 		Matches:   []api.EventReplayPreviewMatch{},
@@ -161,7 +163,7 @@ func evaluateEventReplayPreview(ctx context.Context, out api.EventReplayPreviewR
 	if hasMore {
 		candidates = candidates[:limit]
 	}
-	matcher := eventcontract.Subscription{ID: sub.ID, AccountID: sub.AccountID, Source: sub.Source, Type: sub.Type, Filter: sub.Filter}
+	matcher := eventcontract.Subscription{ID: sub.ID, AccountID: sub.AccountID, Source: sub.Source, Type: sub.Type, Filter: sub.Filter, SchemaVersions: sub.SchemaVersions}
 	for _, row := range candidates {
 		if err := ctx.Err(); err != nil {
 			return out, err
@@ -187,7 +189,18 @@ func evaluateEventReplayPreview(ctx context.Context, out api.EventReplayPreviewR
 			if row.originalRecipient == "captured" {
 				out.AlreadyCapturedCount++
 			}
-			out.Matches = append(out.Matches, api.EventReplayPreviewMatch{EventID: envelope.ID, EventSource: envelope.Source, EventType: envelope.Type, SchemaVersion: envelope.SchemaVersion, AcceptedAt: row.acceptedAt, OriginalRecipient: row.originalRecipient})
+			deadline := EventDeliveryDeadline(PublishedEventRecipient{RoutingRetryPolicy: sub.RoutingRetryPolicy}, row.acceptedAt, PublishedEventRecipientProgress{})
+			var deadlineAt *time.Time
+			if !deadline.IsZero() {
+				deadlineAt = &deadline
+			}
+			expired := !deadline.IsZero() && !deadline.After(out.ObservedAt)
+			if expired {
+				out.ExpiredCount++
+			}
+			out.Matches = append(out.Matches, api.EventReplayPreviewMatch{DeliveryExpired: expired, DeliveryDeadlineAt: deadlineAt, EventID: envelope.ID, EventSource: envelope.Source, EventType: envelope.Type, SchemaVersion: envelope.SchemaVersion, AcceptedAt: row.acceptedAt, OriginalRecipient: row.originalRecipient})
+		case eventcontract.MatchReasonSchemaVersionMismatch:
+			out.SchemaVersionMismatchCount++
 		case eventcontract.MatchReasonFilterMismatch:
 			out.FilterMismatchCount++
 		case eventcontract.MatchReasonPatternMismatch:
@@ -231,7 +244,7 @@ func (s *PgStore) PreviewEventReplay(ctx context.Context, accountID string, quer
 	if err != nil {
 		return api.EventReplayPreviewResponse{}, fmt.Errorf("read replay preview target: %w", err)
 	}
-	sub := EventSubscription{ID: uuidFromPgtype(row.ID).String(), AccountID: uuidFromPgtype(row.AccountID).String(), AppID: uuidFromPgtype(row.AppID).String(), Source: row.Source, Type: row.Type, Filter: row.Filter, Enabled: row.Enabled, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt)}
+	sub := EventSubscription{SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy), ID: uuidFromPgtype(row.ID).String(), AccountID: uuidFromPgtype(row.AccountID).String(), AppID: uuidFromPgtype(row.AppID).String(), Source: row.Source, Type: row.Type, Filter: row.Filter, Enabled: row.Enabled, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt)}
 	now := time.Now().UTC()
 	c, err := eventReplayPreviewWindow(accountID, query, sub, row.WorkBound, now)
 	if err != nil {

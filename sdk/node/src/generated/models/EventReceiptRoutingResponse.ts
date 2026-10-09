@@ -2,10 +2,32 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EventRoutingRetryPolicy } from './EventRoutingRetryPolicy.js';
 /**
  * Recipient routing checkpoint and lifetime attempts; execution attempts are separate.
  */
 export type EventReceiptRoutingResponse = {
+  /**
+   * Captured wall-clock routing deadline.
+   */
+  delivery_deadline_at?: string;
+  /**
+   * Explicit operator override recorded for the current replay generation or backfill.
+   */
+  delivery_age_override?: boolean;
+  routing_retry_policy?: EventRoutingRetryPolicy;
+  /**
+   * Filter reason in the event receipt routing response: why routing was filtered without consuming a routing attempt.
+   */
+  filter_reason?: 'schema_version_mismatch';
+  /**
+   * Retry stop reason in the event receipt routing response: why automatic routing retries stopped; failure_code retains the underlying cause.
+   */
+  retry_stop_reason?: 'non_retryable' | 'max_attempts' | 'max_duration' | 'delivery_expired';
+  /**
+   * Current replay generation duration budget spent on routing attempts and scheduled delays.
+   */
+  retry_spent_ms?: number;
   state: 'pending' | 'processing' | 'filtered' | 'enqueued' | 'failed';
   /**
    * Lifetime routing attempts, including replay generations.

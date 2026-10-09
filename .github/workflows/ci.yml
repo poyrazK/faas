@@ -2345,8 +2345,26 @@ jobs:
         # here, matching the previous full suite; concurrent apply/replay
         # still run with the race detector in migration-checks above.
         run: |
+          set -euo pipefail
           MIGRATION_RUN=$(go run ./scripts/ci/e2eshard -package=./migrations -all-tests -shards=4 -shard=${{ matrix.shard }})
-          go test -count=1 -timeout=60m -run="$MIGRATION_RUN" ./migrations
+          migration_log="migration-results/shard-${{ matrix.shard }}.log"
+          if go test -count=1 -timeout=60m -run="$MIGRATION_RUN" ./migrations 2>&1 | tee "$migration_log"; then
+            exit 0
+          fi
+          python3 - "$migration_log" <<'PY'
+          import pathlib
+          import sys
+
+          lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines()
+          failures = [i for i, line in enumerate(lines) if line.startswith("--- FAIL:")]
+          if not failures:
+              failures = [max(0, len(lines) - 12)]
+          for index in failures:
+              message = "\n".join(lines[index:index + 12])
+              message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error::{message}")
+          PY
+          exit 1
       - name: save Go build + test cache
         # One writer per shared key; see unit-tests-state.
         if: always() && github.event_name == 'push' && matrix.shard == 1
