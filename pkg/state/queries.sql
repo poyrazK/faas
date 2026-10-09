@@ -15552,12 +15552,18 @@ SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots r WHERE
  OR EXISTS(SELECT 1 FROM object_buckets b WHERE b.environment_clone_operation_id=sqlc.arg(operation_id)::uuid);
 
 -- name: CloneCheckpointCaptureRetirementHasBorrowers :one
--- PostgreSQL dependency retirement is not connected yet. Every object intent
--- must belong to an original manifest/target; its terminal proof is read in Go.
-SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
- OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
+-- PostgreSQL copy readers/targets remain gated. Restore/isolation/credential
+-- and object intents require original catalogue owners and terminal proof in Go.
+SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
- OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_postgres_snapshots s WHERE s.operation_id=r.operation_id AND s.source_database_id=r.source_database_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_pg_target_compensations r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_postgres_snapshot_restores s WHERE s.operation_id=r.operation_id AND s.source_database_id=r.source_database_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_isolation r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_postgres_snapshot_restores s WHERE s.operation_id=r.operation_id AND s.source_database_id=r.source_database_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_postgres_snapshot_restores s WHERE s.operation_id=r.operation_id AND s.source_database_id=r.source_database_id))
  OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND NOT EXISTS(
   SELECT 1 FROM project_environment_clone_object_manifests m WHERE m.operation_id=r.operation_id AND m.source_bucket_id=r.source_bucket_id AND m.target_bucket_id=r.target_bucket_id))
  OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_copies r WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND NOT EXISTS(

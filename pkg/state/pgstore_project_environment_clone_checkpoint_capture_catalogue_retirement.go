@@ -28,6 +28,9 @@ func checkpointAdoptedCaptureReadyTx(ctx context.Context, tx pgx.Tx, op ProjectE
 	for _, source := range p.SourceCompensation.Plan.Capture.Sources {
 		if source.Kind == "managed_postgres" {
 			pg++
+			if err = checkpointCapturePostgresTargetRetiredTx(ctx, tx, op, source.ID); err != nil {
+				return err
+			}
 		} else {
 			objects++
 			if err = checkpointCaptureObjectTargetRetiredTx(ctx, tx, op, source); err != nil {
@@ -66,6 +69,45 @@ func checkpointAdoptedCaptureReadyTx(ctx context.Context, tx pgx.Tx, op ProjectE
 		return ErrConflict
 	}
 	return nil
+}
+
+// Local deleted restore labels cannot close native restore/isolation requests.
+// Authenticate the original plan and exact proof digest attached to the restore,
+// and recheck every credential retirement and local publication withdrawal.
+func checkpointCapturePostgresTargetRetiredTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, id string) error {
+	snapshot, err := readClonePostgresSnapshotTx(ctx, tx, op, id)
+	if err != nil {
+		return err
+	}
+	// Only absence of the original restore row means no request authority.
+	// Missing dependencies of an existing restore must remain conflicts.
+	q := sqlc.New()
+	_, err = q.ReadProjectEnvironmentClonePostgresSnapshotRestore(ctx, tx, sqlc.ReadProjectEnvironmentClonePostgresSnapshotRestoreParams{OperationID: mustPgUUID(op.ID), SourceDatabaseID: mustPgUUID(id)})
+	if errors.Is(mapErr(err), ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return mapErr(err)
+	}
+	row, err := q.ReadCloneCheckpointPgTargetCompensation(ctx, tx, sqlc.ReadCloneCheckpointPgTargetCompensationParams{OperationID: mustPgUUID(op.ID), SourceDatabaseID: mustPgUUID(id)})
+	if err != nil {
+		return checkpointPgCompensationDependencyError(mapErr(err))
+	}
+	in, err := checkpointPgTargetCompensationFromSQL(row)
+	if err != nil {
+		return err
+	}
+	if in.State != "compensated" {
+		return ErrConflict
+	}
+	actual, err := checkpointPgTargetCompensationOriginalPlanTx(ctx, tx, op, id, snapshot)
+	if err != nil {
+		return checkpointPgCompensationDependencyError(err)
+	}
+	if err = checkpointPgTargetCompensationMatchesTx(ctx, tx, op, in, actual); err != nil {
+		return err
+	}
+	return checkpointPgTargetCompensationReadyTx(ctx, tx, op, in.Plan)
 }
 
 // An original native creation intent requires its complete authenticated

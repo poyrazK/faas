@@ -212,8 +212,8 @@ type Querier interface {
 	ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error
 	CloneCheckpointCaptureRetirementCatalogueCounts(ctx context.Context, db DBTX, operationID pgtype.UUID) (CloneCheckpointCaptureRetirementCatalogueCountsRow, error)
 	CloneCheckpointCaptureRetirementHasAdoption(ctx context.Context, db DBTX, operationID pgtype.UUID) (pgtype.Bool, error)
-	// PostgreSQL dependency retirement is not connected yet. Every object intent
-	// must belong to an original manifest/target; its terminal proof is read in Go.
+	// PostgreSQL copy readers/targets remain gated. Restore/isolation/credential
+	// and object intents require original catalogue owners and terminal proof in Go.
 	CloneCheckpointCaptureRetirementHasBorrowers(ctx context.Context, db DBTX, operationID pgtype.UUID) (pgtype.Bool, error)
 	CloneCheckpointObjectCredentialIdentityExists(ctx context.Context, db DBTX, credentialID pgtype.UUID) (bool, error)
 	CloneCheckpointObjectTargetHasGrants(ctx context.Context, db DBTX, targetBucketID pgtype.UUID) (bool, error)

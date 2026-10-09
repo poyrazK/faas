@@ -8268,6 +8268,25 @@ replay continues after snapshot catalogue retirement. PostgreSQL restore, reader
 copy-target and credential dependencies remain blocked pending their authenticated
 retirement linkage. Public full-stage admission remains gated.
 
+### PostgreSQL target dependency proofs before capture retirement
+
+Capture retirement now authenticates terminal compensation for every recorded
+PostgreSQL restore. The original frozen release, snapshot, restore owner and
+optional isolation journal must match the saved compensation plan, and the deleted
+restore must reference its exact native terminal proof digest. Missing native
+proof cannot be replaced by deleted state or by missing catalogue dependencies.
+
+Credential preparations require their original authenticated retirement proofs
+and local publication withdrawal, rechecked even after target compensation has
+completed. These checks also protect claim, terminal capture commit and completed
+replay. Target and credential proof replay continues after snapshot retirement;
+proof changes during dispatch leave the capture request pending for observation
+recovery without another dispatch.
+
+PostgreSQL copy readers and copy targets remain blocked until their complete
+retirement provenance is connected. Whole-stage reconciliation and qualified
+native provider adapters remain outstanding; public full-stage admission is gated.
+
 ### Checkpoint terminal compensation gate
 
 The generic operation transition now refuses `compensating` to `compensated`

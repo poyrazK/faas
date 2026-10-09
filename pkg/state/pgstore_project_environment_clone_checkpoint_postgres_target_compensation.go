@@ -34,6 +34,13 @@ func checkpointPgTargetCompensationPlanTx(ctx context.Context, tx pgx.Tx, l Proj
 	if err != nil {
 		return p, checkpointPgCompensationDependencyError(err)
 	}
+	return checkpointPgTargetCompensationOriginalPlanTx(ctx, tx, op, id, snapshot)
+}
+
+// Called only under an authenticated compensation operation lock. Capture
+// retirement has already authenticated the full frozen adoption catalogue.
+func checkpointPgTargetCompensationOriginalPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, id string, snapshot ProjectEnvironmentClonePostgresSnapshot) (ProjectEnvironmentCloneCheckpointPostgresTargetCompensationPlan, error) {
+	var p ProjectEnvironmentCloneCheckpointPostgresTargetCompensationPlan
 	records, err := cloneWorkloadRecordsDB(ctx, tx, op.AccountID, op.ProjectID, op.ID)
 	if err != nil {
 		return p, err
@@ -122,13 +129,17 @@ func readCheckpointPgTargetCompensationTx(ctx context.Context, tx pgx.Tx, l Proj
 	if err != nil {
 		return in, checkpointPgCompensationDependencyError(err)
 	}
+	return in, checkpointPgTargetCompensationMatchesTx(ctx, tx, op, in, actual)
+}
+
+func checkpointPgTargetCompensationMatchesTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, in ProjectEnvironmentCloneCheckpointPostgresTargetCompensation, actual ProjectEnvironmentCloneCheckpointPostgresTargetCompensationPlan) error {
 	if in.State == "compensated" {
-		restore, err := sqlc.New().ReadProjectEnvironmentClonePostgresSnapshotRestore(ctx, tx, sqlc.ReadProjectEnvironmentClonePostgresSnapshotRestoreParams{OperationID: mustPgUUID(op.ID), SourceDatabaseID: mustPgUUID(id)})
+		restore, err := sqlc.New().ReadProjectEnvironmentClonePostgresSnapshotRestore(ctx, tx, sqlc.ReadProjectEnvironmentClonePostgresSnapshotRestoreParams{OperationID: mustPgUUID(op.ID), SourceDatabaseID: mustPgUUID(in.Plan.Restore.SourceDatabaseID)})
 		if err != nil {
-			return in, mapErr(err)
+			return mapErr(err)
 		}
 		if actual.Restore.State != "deleted" || restore.CheckpointCompensationObservationSha256.String != in.ObservationSHA256 {
-			return in, ErrConflict
+			return ErrConflict
 		}
 		// Completed replay authenticates original physical identities after local
 		// retirement, including later snapshot cleanup. It grants no fresh native IO.
@@ -139,9 +150,9 @@ func readCheckpointPgTargetCompensationTx(ctx context.Context, tx pgx.Tx, l Proj
 		actual.Snapshot.CleanupObservedAt = in.Plan.Snapshot.CleanupObservedAt
 	}
 	if !reflect.DeepEqual(actual, in.Plan) {
-		return in, ErrConflict
+		return ErrConflict
 	}
-	return in, nil
+	return nil
 }
 
 // A native target cannot be deleted while another journal still borrows it or
