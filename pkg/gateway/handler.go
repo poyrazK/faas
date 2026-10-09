@@ -7729,6 +7729,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				DeploymentCreatedAt:                  target.DeploymentCreatedAt,
 				ImageDigest:                          target.ImageDigest,
 			}
+			platformFailure := platformFailureUnbillable(r, status)
 			if r.Context().Value(suppressFinancialUsageKey{}) == true {
 				// Rejected admissions remain visible in request telemetry but
 				// cannot become billable via either the outbox or debugger fallback.
@@ -7738,13 +7739,17 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				if status >= 400 {
 					errorCount = 1
 				}
+				billableUnits := int64(1)
+				if platformFailure {
+					billableUnits = 0
+				}
 				usageEvent := usageoutbox.Event{
 					EventID: row.EventID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(),
 					ConsumerID: row.ConsumerID, PlatformTenantID: row.PlatformTenantID,
 					PlatformTenantSurfaceID:              row.PlatformTenantSurfaceID,
 					PlatformTenantJWTAuthorizationRuleID: row.PlatformTenantJWTAuthorizationRuleID,
 					WindowStart:                          row.ReceivedAt.UTC().Truncate(time.Minute),
-					RequestCount:                         1, ErrorCount: errorCount, BillableUnits: 1,
+					RequestCount:                         1, ErrorCount: errorCount, BillableUnits: billableUnits,
 				}
 				if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 					usageEvent.DiscoveredRoute = auditRouteFrom(r)
@@ -7800,9 +7805,16 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				} else if err := h.usageOutbox.Enqueue(usageEvent); err != nil {
 					h.metrics.IncUsageOutboxFailure()
 					h.log.Error("consumer usage outbox append failed", "err", err, "event_id", row.EventID)
+					// The debugger fallback bills every row it writes, so a
+					// platform failure must not reach it.
+					row.UsageOutboxed = platformFailure
 				} else {
 					row.UsageOutboxed = true
 				}
+			} else if platformFailure {
+				// Without an outbox the debugger fallback is the only ledger
+				// writer and bills every row; keep platform failures out of it.
+				row.UsageOutboxed = true
 			}
 			if h.requestTelemetry != nil {
 				h.requestTelemetry.RecordFromObserve(row)
