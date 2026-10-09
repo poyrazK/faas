@@ -5128,6 +5128,14 @@ const (
 	// other signals instead of holding the fleet at a frozen backlog.
 	CustomMetricFreshnessSeconds = 300
 
+	// CustomMetricExportMaxSeries caps one ADR-745 exporter scrape. The
+	// per-app name cap already bounds the table; this bounds a scrape even
+	// if that cap is raised.
+	CustomMetricExportMaxSeries = 50000
+	// CustomMetricExportCacheSeconds reuses one store read across scrapes
+	// from several Prometheus replicas inside the same scrape interval.
+	CustomMetricExportCacheSeconds = 15
+
 	// Scaling policy cooldowns (issue #462 / ADR-058). The
 	// customer-facing knobs are `scale_out_cooldown_s` /
 	// `scale_in_cooldown_s` on the wire; the floor / ceiling

@@ -97,7 +97,78 @@ func (s *PgStore) DeleteCustomMetric(ctx context.Context, appID, name string) er
 	return nil
 }
 
+// CustomMetricSample is one app's pushed gauge for the ADR-745 exporter.
+type CustomMetricSample struct {
+	AppID string
+	Name  string
+	Value float64
+}
+
+// CustomMetricExportStore is the bounded, cross-app read the custom-metric
+// exporter scrapes. Only values observed at or after since are returned —
+// a stopped pusher must show as a gap, not a flat line (ADR-202 freshness).
+type CustomMetricExportStore interface {
+	ListFreshCustomMetrics(ctx context.Context, since time.Time, limit int) ([]CustomMetricSample, error)
+}
+
+var (
+	_ CustomMetricExportStore = (*PgStore)(nil)
+	_ CustomMetricExportStore = (*MemStore)(nil)
+)
+
+// ListFreshCustomMetrics returns at most limit fresh gauges across all apps,
+// ordered by app and name so a capped scrape is deterministic.
+func (s *PgStore) ListFreshCustomMetrics(ctx context.Context, since time.Time, limit int) ([]CustomMetricSample, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT app_id::text, name, value
+		  FROM app_custom_metrics
+		 WHERE observed_at >= $1::timestamptz
+		 ORDER BY app_id, name
+		 LIMIT $2::int
+	`, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list fresh custom metrics: %w", err)
+	}
+	defer rows.Close()
+	var out []CustomMetricSample
+	for rows.Next() {
+		var sample CustomMetricSample
+		if err := rows.Scan(&sample.AppID, &sample.Name, &sample.Value); err != nil {
+			return nil, fmt.Errorf("state: scan fresh custom metric: %w", err)
+		}
+		out = append(out, sample)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list fresh custom metrics: %w", err)
+	}
+	return out, nil
+}
+
 // --- MemStore ------------------------------------------------------------
+
+// ListFreshCustomMetrics mirrors the PgStore ordering and cap.
+func (m *MemStore) ListFreshCustomMetrics(_ context.Context, since time.Time, limit int) ([]CustomMetricSample, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []CustomMetricSample
+	for appID, byName := range m.customMetrics {
+		for _, metric := range byName {
+			if !metric.ObservedAt.Before(since) {
+				out = append(out, CustomMetricSample{AppID: appID, Name: metric.Name, Value: metric.Value})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].AppID != out[j].AppID {
+			return out[i].AppID < out[j].AppID
+		}
+		return out[i].Name < out[j].Name
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
 
 // PutCustomMetric mirrors the PgStore semantics, including the cap applying
 // only to NEW names. The conformance suite runs both implementations against

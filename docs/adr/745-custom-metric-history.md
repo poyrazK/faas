@@ -66,9 +66,9 @@
 
 ## Slices
 
-1. Exporter (`gregale_app_custom_metric`) and the metric kind column.
+1. Exporter (`gregale_app_custom_metric`).
 2. Series endpoint, CLI flag, dashboard chart.
-3. OTLP metrics ingestion.
+3. OTLP metrics ingestion, with the metric kind column it first needs.
 4. `custom_metric` alerts, including baseline comparisons.
 
 ## Follow-ups
