@@ -57,7 +57,7 @@ func TestConfigureDevDebugTurnsInspectorOnAndOff(t *testing.T) {
 
 func TestDevDebugTunnelURL(t *testing.T) {
 	for base, want := range map[string]string{
-		"https://api.gregale.dev":      "wss://api.gregale.dev/v1/apps/dev-api-1/debug",
+		"https://api.gregale.dev":       "wss://api.gregale.dev/v1/apps/dev-api-1/debug",
 		"http://127.0.0.1:8080/prefix/": "ws://127.0.0.1:8080/prefix/v1/apps/dev-api-1/debug",
 	} {
 		if got, err := devDebugTunnelURL(base, "dev-api-1"); err != nil || got != want {
