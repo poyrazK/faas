@@ -111,6 +111,17 @@ func (s *PgStore) PutOperationDefinition(ctx context.Context, def OperationDefin
 		return OperationDefinition{}, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	def.Spec, def.Revision = contract.Spec, contract.Revision
+	var workflowSnapshot []byte
+	if def.Spec.Workflow != "" {
+		workflow, err := operationWorkflowDefinitionTx(ctx, tx, def, api.Plan(plan))
+		if err != nil {
+			return OperationDefinition{}, err
+		}
+		workflowSnapshot, err = json.Marshal(workflow)
+		if err != nil {
+			return OperationDefinition{}, err
+		}
+	}
 	scope, err := q.CustomerOperationDeploymentScope(ctx, tx, sqlc.CustomerOperationDeploymentScopeParams{DeploymentID: deployment, AppID: app, AccountID: account})
 	if err != nil {
 		return OperationDefinition{}, mapErr(err)
@@ -164,7 +175,7 @@ func (s *PgStore) PutOperationDefinition(ctx context.Context, def OperationDefin
 	if err != nil {
 		return OperationDefinition{}, err
 	}
-	row, err := q.InsertCustomerOperationDefinition(ctx, tx, sqlc.InsertCustomerOperationDefinitionParams{ID: id, AccountID: account, AppID: app, Scope: def.Scope, Name: def.Spec.Name, Revision: def.Revision, DeploymentID: deployment, ReleaseID: def.ReleaseID, Spec: spec})
+	row, err := q.InsertCustomerOperationDefinition(ctx, tx, sqlc.InsertCustomerOperationDefinitionParams{ID: id, AccountID: account, AppID: app, Scope: def.Scope, Name: def.Spec.Name, Revision: def.Revision, DeploymentID: deployment, ReleaseID: def.ReleaseID, Spec: spec, WorkflowSnapshot: workflowSnapshot})
 	if err != nil {
 		return OperationDefinition{}, fmt.Errorf("state: insert operation definition: %w", mapErr(err))
 	}
@@ -187,12 +198,24 @@ func (s *PgStore) AdmitOperation(ctx context.Context, admission OperationAdmissi
 	if err != nil {
 		return Operation{}, false, err
 	}
+	// Read the immutable definition before acquiring a transaction connection.
+	// A pool read while holding that connection can exhaust the pool when
+	// many duplicate submissions arrive together. Recheck inside the tx below.
+	hint, err := s.OperationDefinitionByID(ctx, admission.AccountID, admission.DefinitionID)
+	if err != nil {
+		return Operation{}, false, err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return Operation{}, false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	if hint.Spec.Workflow != "" {
+		if err := q.LockWorkflowRunAdmission(ctx, tx, hint.AppID); err != nil {
+			return Operation{}, false, err
+		}
+	}
 	plan, err := q.LockCustomerOperationAccount(ctx, tx, account)
 	if err != nil {
 		return Operation{}, false, mapErr(err)
@@ -281,7 +304,15 @@ func (s *PgStore) AdmitOperation(ctx context.Context, admission OperationAdmissi
 	if pending >= int64(limits.Operations.PendingPerAccount) {
 		return Operation{}, false, NewOperationLimitError("pending_per_account", int64(limits.Operations.PendingPerAccount), int64(pending)+1)
 	}
-	if _, err := enqueueInvocationRow(ctx, tx, inv); err != nil {
+	if def.Spec.Workflow != "" {
+		if err := admitOperationWorkflowTx(ctx, tx, &op, inv, def, api.Plan(plan)); err != nil {
+			return Operation{}, false, err
+		}
+	} else if def.Spec.Job != "" {
+		if err := admitOperationJobTx(ctx, tx, &op, inv, def, api.Plan(plan)); err != nil {
+			return Operation{}, false, err
+		}
+	} else if _, err := enqueueInvocationRow(ctx, tx, inv); err != nil {
 		return Operation{}, false, err
 	}
 	if err := insertOperationPG(ctx, tx, q, op, key, fingerprint, limits.Operations); err != nil {
@@ -303,17 +334,28 @@ func insertOperationPG(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, op Opera
 	tenant, _ := operationUUID(op.PlatformTenantID)
 	definition, _ := operationUUID(op.DefinitionID)
 	invocation, _ := operationUUID(op.CurrentInvocationID)
-	record, err := json.Marshal(op)
+	workflowID, _ := operationUUID(op.WorkflowRunID)
+	record, err := operationRecordJSON(op)
 	if err != nil {
 		return err
 	}
-	if err := q.SetCustomerOperationExecutionIdentity(ctx, tx, sqlc.SetCustomerOperationExecutionIdentityParams{InvocationID: invocation, OperationID: id}); err != nil {
-		return err
+	if op.WorkflowRunID == "" && op.JobRunID == "" {
+		if err := q.SetCustomerOperationExecutionIdentity(ctx, tx, sqlc.SetCustomerOperationExecutionIdentityParams{InvocationID: invocation, OperationID: id}); err != nil {
+			return err
+		}
 	}
-	if err := q.InsertCustomerOperation(ctx, tx, sqlc.InsertCustomerOperationParams{ID: id, AccountID: account, AppID: app, TenantID: tenant, DefinitionID: definition, InvocationID: invocation, State: string(op.State), Record: record, ExpiresAt: pgtype.Timestamptz{Time: op.ExpiresAt, Valid: true}, CreatedAt: pgtype.Timestamptz{Time: op.CreatedAt, Valid: true}}); err != nil {
+	if err := q.InsertCustomerOperation(ctx, tx, sqlc.InsertCustomerOperationParams{ID: id, AccountID: account, AppID: app, TenantID: tenant, DefinitionID: definition, InvocationID: invocation, WorkflowRunID: workflowID, JobRunID: mustPgUUID(op.JobRunID), State: string(op.State), Record: record, ExpiresAt: pgtype.Timestamptz{Time: op.ExpiresAt, Valid: true}, CreatedAt: pgtype.Timestamptz{Time: op.CreatedAt, Valid: true}}); err != nil {
 		return fmt.Errorf("state: insert operation: %w", err)
 	}
-	if err := q.InsertCustomerOperationExecution(ctx, tx, sqlc.InsertCustomerOperationExecutionParams{OperationID: id, Generation: int32(op.Generation), InvocationID: invocation}); err != nil {
+	if op.WorkflowRunID != "" {
+		if err := insertOperationWorkflowExecutionTx(ctx, tx, op, WorkflowRun{ID: op.WorkflowRunID, Status: WorkflowRunStatusPending}, op.CreatedAt); err != nil {
+			return err
+		}
+	} else if op.JobRunID != "" {
+		if err := insertOperationJobExecutionTx(ctx, tx, op, JobTask{RunID: op.JobRunID, Status: "queued", Attempt: 1, CreatedAt: op.CreatedAt}); err != nil {
+			return err
+		}
+	} else if err := q.InsertCustomerOperationExecution(ctx, tx, sqlc.InsertCustomerOperationExecutionParams{OperationID: id, Generation: int32(op.Generation), InvocationID: invocation}); err != nil {
 		return err
 	}
 	if err := q.InsertCustomerOperationEvent(ctx, tx, sqlc.InsertCustomerOperationEventParams{OperationID: id, Sequence: 1, EventType: "accepted", ExecutionID: invocation, Data: initialOperationEvent(op).Data, CreatedAt: pgtype.Timestamptz{Time: op.CreatedAt, Valid: true}}); err != nil {

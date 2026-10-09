@@ -4705,7 +4705,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `data-api` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
 | `--handler <HANDLER>` | function handler |  |
@@ -5194,7 +5194,7 @@ gregale preview show pr-42-my-api
 
 Review deployment route changes, gateway rule drift, and available test/traffic evidence
 
-`gregale preview report [--format <FORMAT>] [--since <DURATION>] [--customer-details] [--baseline-deployment <ID>] [--test-report <PATH>] [--source-impact <PATH>] [--requirements <PATH>] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-policy-drift] [--fail-on-incomplete] [--fail-on-requirements] <preview-slug>`
+`gregale preview report [--format <FORMAT>] [--since <DURATION>] [--customer-details] [--baseline-deployment <ID>] [--test-report <PATH>] [--source-impact <PATH>] [--requirements <PATH>] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-policy-drift] [--fail-on-incomplete] [--fail-on-requirements] [--route-removal-mode <MODE>] [--route-readiness <PATH>] [--route-mapping <PATH>] [--route-owner-approval <PATH>] [--route-evidence-max-age <DURATION>] <preview-slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5211,6 +5211,11 @@ Review deployment route changes, gateway rule drift, and available test/traffic 
 | `--fail-on-policy-drift` | exit 1 for changed or incomplete route rule policy comparison |  |
 | `--fail-on-incomplete` | exit 1 when evidence is missing or needs review |  |
 | `--fail-on-requirements` | exit 1 for violated or unknown route requirements |  |
+| `--route-removal-mode <MODE>` | CLI removal gate: report (default) or enforce | one of `report` · `enforce` |
+| `--route-readiness <PATH>` | migration readiness JSON for the serving production deployment |  |
+| `--route-mapping <PATH>` | reviewed successor mapping JSON |  |
+| `--route-owner-approval <PATH>` | owner attestation bound to this exact change and evidence |  |
+| `--route-evidence-max-age <DURATION>` | maximum route evidence age (default and maximum 72h) |  |
 
 Examples:
 
@@ -5887,7 +5892,11 @@ gregale edge-rules update RULE_ID --kind validate --validate-mode observe
 
 Delete one edge rule
 
-`gregale edge-rules rm <id>`
+`gregale edge-rules rm [--yes] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | skip the typed confirmation (alias: --quiet) |  |
 
 
 ## openapi
@@ -6075,6 +6084,69 @@ gregale routes monitor explain api --incident INCIDENT_UUID --source-impact auto
 
 Review deployed routes for carefully evidenced retirement candidates
 
+#### routes lifecycle declarations
+
+Review lifecycle declarations between captured deployments
+
+`gregale routes lifecycle declarations --from-deployment <UUID> --to-deployment <UUID> [--out <PATH>] [--fail-on-findings] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-deployment <UUID>` | serving baseline deployment | required |
+| `--to-deployment <UUID>` | candidate deployment | required |
+| `--out <PATH>` | save JSON to a new file |  |
+| `--fail-on-findings` | fail on lifecycle regressions or incomplete declarations |  |
+
+#### routes lifecycle prepare-approval
+
+Prepare a pinned successor approval request for review
+
+`gregale routes lifecycle prepare-approval --from-deployment <UUID> --to-deployment <UUID> --mappings <PATH> --out <PATH> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-deployment <UUID>` | serving baseline deployment | required |
+| `--to-deployment <UUID>` | candidate deployment | required |
+| `--mappings <PATH>` | explicit successor mappings and optional destination pins | required |
+| `--out <PATH>` | save request to a new file | required |
+
+#### routes lifecycle approve
+
+Submit a reviewed lifecycle successor approval
+
+`gregale routes lifecycle approve --request <PATH> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request <PATH>` | pinned request JSON | required |
+
+#### routes lifecycle receipt
+
+Read a persisted lifecycle approval receipt
+
+`gregale routes lifecycle receipt --id <UUID> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | approval receipt ID | required |
+
+#### routes lifecycle history
+
+Inspect applied and blocked production lifecycle reviews
+
+`gregale routes lifecycle history [--limit <N>] [--before <ID>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | reviews per page (default 10; maximum 20) |  |
+| `--before <ID>` | retained review ID from next_cursor |  |
+
+Examples:
+
+```sh
+gregale routes lifecycle history api --json
+```
+
 #### routes lifecycle review
 
 Compare captured routes, observed usage, source and requirements
@@ -6095,9 +6167,185 @@ Examples:
 gregale routes lifecycle review api --deployment DEPLOYMENT_UUID --since 14d --source-impact impact.json --out lifecycle-review.json
 ```
 
+### routes sunsets
+
+Review upcoming sunsets and remaining callers
+
+`gregale routes sunsets <diff> [--source <SOURCE>] --deployment <UUID> [--since <WINDOW>] [--within <DURATION>] [--mapping <PATH>] [--out <PATH>] [--fail-on-overdue] [--fail-on-incomplete] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--source <SOURCE>` | metadata source (default deployment) | one of `deployment` · `manual_import` |
+| `--deployment <UUID>` | baseline deployment ID | required |
+| `--since <WINDOW>` | retained telemetry window (default 14d) |  |
+| `--within <DURATION>` | upcoming sunset horizon (default 720h) |  |
+| `--mapping <PATH>` | explicit successor mapping JSON |  |
+| `--out <PATH>` | save report JSON to a new file |  |
+| `--fail-on-overdue` | fail on elapsed sunset dates |  |
+| `--fail-on-incomplete` | fail on missing metadata or incomplete evidence |  |
+
+#### routes sunsets diff
+
+Compare retained sunset evidence and caller regressions
+
+`gregale routes sunsets diff --before <PATH> --after <PATH> [--out <PATH>] [--max-staleness <DURATION>] [--fail-on-regression] [--fail-on-incomplete]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <PATH>` | previous saved report | required |
+| `--after <PATH>` | new saved report | required |
+| `--out <PATH>` | save diff JSON to a new file |  |
+| `--max-staleness <DURATION>` | maximum report age (default 24h) |  |
+| `--fail-on-regression` | fail on observed regressions |  |
+| `--fail-on-incomplete` | fail on stale, changed or incomplete evidence |  |
+
 ### routes migration
 
-Check mapped route successors against immutable deployment contracts
+Suggest successors, review contracts and assess customer cutover readiness
+
+#### routes migration policy
+
+Read or set the app server policy for production route removal
+
+`gregale routes migration policy --app <APP> [--mode <MODE>] [--expected-revision <N>] [--grace-period <DURATION>] [--max-approval-age <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | production app slug | required |
+| `--mode <MODE>` | omit to read; set report or enforce to write | one of `report` · `enforce` |
+| `--expected-revision <N>` | current revision for a write; 0 creates the policy |  |
+| `--grace-period <DURATION>` | server-observed quiet period (default 720h, minimum 1h) |  |
+| `--max-approval-age <DURATION>` | approval TTL (default 1h, maximum 72h) |  |
+
+#### routes migration server-check
+
+Read authoritative removal blockers for an exact candidate
+
+`gregale routes migration server-check --app <APP> --candidate-deployment <ID> [--fail-on-blocked]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | production app slug | required |
+| `--candidate-deployment <ID>` | candidate deployment UUID | required |
+| `--fail-on-blocked` | exit 1 if the server check is blocked |  |
+
+#### routes migration authorize
+
+Store an authenticated admin approval after local and server checks
+
+`gregale routes migration authorize --app <APP> --baseline-deployment <ID> --candidate-deployment <ID> --expected-revision <N> --readiness <PATH> --mapping <PATH> --acknowledge-observed-only <value> [--out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | production app slug | required |
+| `--baseline-deployment <ID>` | serving baseline UUID | required |
+| `--candidate-deployment <ID>` | candidate deployment UUID | required |
+| `--expected-revision <N>` | current server policy revision | required |
+| `--readiness <PATH>` | reviewed migration readiness JSON | required |
+| `--mapping <PATH>` | reviewed same-app successor mapping | required |
+| `--acknowledge-observed-only <value>` | acknowledge the limits of observed telemetry | required |
+| `--out <PATH>` | save server approval receipt to a new file |  |
+
+#### routes migration gate
+
+Explain removed-route blockers; optionally fail a local CI check
+
+`gregale routes migration gate --app <APP> --baseline-deployment <ID> --candidate-deployment <ID> [--candidate-app <APP>] [--readiness <PATH>] [--mapping <PATH>] [--owner-approval <PATH>] [--mode <MODE>] [--max-evidence-age <DURATION>] [--out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | production app slug | required |
+| `--baseline-deployment <ID>` | serving deployment UUID | required |
+| `--candidate-deployment <ID>` | candidate deployment UUID | required |
+| `--candidate-app <APP>` | candidate app slug (defaults to --app; may be a preview) |  |
+| `--readiness <PATH>` | migration readiness JSON for the serving deployment |  |
+| `--mapping <PATH>` | reviewed successor mapping JSON |  |
+| `--owner-approval <PATH>` | owner attestation JSON for this exact change |  |
+| `--mode <MODE>` | report (default) or enforce (exit 1 for blockers) | one of `report` · `enforce` |
+| `--max-evidence-age <DURATION>` | maximum evidence age (default and maximum 72h) |  |
+| `--out <PATH>` | save gate JSON to a new file |  |
+
+Examples:
+
+```sh
+gregale routes migration gate --app api --baseline-deployment BASELINE_UUID --candidate-deployment CANDIDATE_UUID --readiness readiness.json --mapping route-successors.json --owner-approval approval.json --mode enforce
+```
+
+#### routes migration approve
+
+Record a local owner attestation after all cutover checks pass
+
+`gregale routes migration approve --app <APP> --baseline-deployment <ID> --candidate-deployment <ID> [--candidate-app <APP>] --readiness <PATH> --mapping <PATH> --approved-by <OWNER> [--mode <MODE>] [--max-evidence-age <DURATION>] --out <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | production app slug | required |
+| `--baseline-deployment <ID>` | serving deployment UUID | required |
+| `--candidate-deployment <ID>` | candidate deployment UUID | required |
+| `--candidate-app <APP>` | candidate app slug (defaults to --app; may be a preview) |  |
+| `--readiness <PATH>` | migration readiness JSON for the serving deployment | required |
+| `--mapping <PATH>` | mapping reviewed with the route owner | required |
+| `--approved-by <OWNER>` | owner identity asserted in the local attestation | required |
+| `--mode <MODE>` | report or enforce; approvals always reject blockers | one of `report` · `enforce` |
+| `--max-evidence-age <DURATION>` | maximum evidence age (default and maximum 72h) |  |
+| `--out <PATH>` | save the owner attestation to a new file | required |
+
+Examples:
+
+```sh
+gregale routes migration approve --app api --baseline-deployment BASELINE_UUID --candidate-deployment CANDIDATE_UUID --readiness readiness.json --mapping route-successors.json --approved-by owner@example.com --out approval.json
+```
+
+#### routes migration readiness
+
+Refresh mapped contracts and join customer windows into an owner approval checkpoint
+
+`gregale routes migration readiness --mapping <PATH> --from-deployment <APP=ID>... [--to-deployment <APP=ID>]... --snapshot <PATH>... [--grace-period <DURATION>] [--min-windows <COUNT>] [--max-staleness <DURATION>] [--format <FORMAT>] [--out <PATH>] [--fail-on-breaking] [--fail-on-incomplete] [--fail-on-not-ready]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--mapping <PATH>` | version 1 explicit mapping reviewed with the route owner | required |
+| `--from-deployment <APP=ID>` | baseline deployment as APP=ID; repeat for each app | required |
+| `--to-deployment <APP=ID>` | successor deployment as APP=ID; repeat for each app |  |
+| `--snapshot <PATH>` | saved customer tracker JSON; at least two observation windows | required |
+| `--grace-period <DURATION>` | minimum continuous zero-traffic period before owner approval (default 30d) |  |
+| `--min-windows <COUNT>` | minimum distinct complete observation windows (default 2) |  |
+| `--max-staleness <DURATION>` | maximum age of the latest telemetry watermark (default 72h) |  |
+| `--format <FORMAT>` | text, Markdown, or prioritized CSV action queue (default text; --json emits JSON) | one of `text` · `markdown` · `csv` |
+| `--out <PATH>` | save the full readiness report to a new JSON file |  |
+| `--fail-on-breaking` | exit 1 when any successor has a declared breaking change |  |
+| `--fail-on-incomplete` | exit 1 when contract or telemetry evidence is incomplete |  |
+| `--fail-on-not-ready` | exit 1 unless every route is ready for owner approval |  |
+
+Examples:
+
+```sh
+gregale routes migration readiness --mapping route-successors.json --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --snapshot migration-week-1.json --snapshot migration-week-2.json --format markdown --out readiness.json
+```
+
+#### routes migration suggest
+
+Rank successor routes and write a draft mapping for owner review
+
+`gregale routes migration suggest --from-deployment <APP=ID>... --to-deployment <APP=ID>... [--sources <PATH>] [--since <WINDOW>] [--limit <N>] [--without-traffic] [--customer-details] [--out <PATH>] [--report-out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-deployment <APP=ID>` | baseline deployment as APP=ID; repeat for each app | required |
+| `--to-deployment <APP=ID>` | successor deployment as APP=ID; repeat for each app | required |
+| `--sources <PATH>` | optional version 1 mapping selecting sources with empty successors |  |
+| `--since <WINDOW>` | observed usage window (default 14d) |  |
+| `--limit <N>` | candidate rows per source (1–10, default 3) |  |
+| `--without-traffic` | read captured contracts without usage |  |
+| `--customer-details` | include observed source consumer and tenant UUIDs in the report |  |
+| `--out <PATH>` | save a draft version 1 mapping to a new file for owner review |  |
+| `--report-out <PATH>` | save explanations and captured evidence to a new JSON file |  |
+
+Examples:
+
+```sh
+gregale routes migration suggest --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --out route-successors.json --report-out suggestions.json
+```
 
 #### routes migration review
 
@@ -6558,7 +6806,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `data-api` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -6927,6 +7175,104 @@ gregale customer-operations list --app exports --scope production
 gregale customer-operations watch <id> --app exports --timeout 5m --json
 ```
 
+### customer-operations outcomes
+
+List completed workflows with explicit business outcomes
+
+`gregale customer-operations outcomes [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--code <CODE>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned app |  |
+| `--self` | authenticated customer |  |
+| `--app-id <UUID>` | required with --self |  |
+| `--scope <SCOPE>` | explicit environment | required |
+| `--tenant <UUID>` | account customer filter |  |
+| `--workflow <NAME>` | workflow filter |  |
+| `--code <CODE>` | outcome code filter |  |
+| `--limit <N>` | page size 1–100 |  |
+| `--cursor <CURSOR>` | continuation cursor |  |
+
+### customer-operations outcome-summary
+
+Summarize explicit business outcomes
+
+`gregale customer-operations outcome-summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--code <CODE>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--group-by <DIMENSION>` | summary grouping | one of `outcome` · `workflow` · `customer` |
+| `--app <SLUG>` | owned app |  |
+| `--self` | authenticated customer |  |
+| `--app-id <UUID>` | required with --self |  |
+| `--scope <SCOPE>` | explicit environment | required |
+| `--tenant <UUID>` | account customer filter |  |
+| `--workflow <NAME>` | workflow filter |  |
+| `--code <CODE>` | outcome code filter |  |
+| `--limit <N>` | page size 1–100 |  |
+| `--cursor <CURSOR>` | continuation cursor |  |
+
+### customer-operations attention
+
+List workflows needing attention
+
+`gregale customer-operations attention [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned app in account mode |  |
+| `--self` | authenticated customer queue |  |
+| `--app-id <UUID>` | required with --self |  |
+| `--scope <SCOPE>` | explicit environment | required |
+| `--tenant <UUID>` | account customer filter |  |
+| `--workflow <NAME>` | workflow filter |  |
+| `--target-operation <NAME>` | target Operation filter |  |
+| `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
+| `--required-outcome-code <CODE>` | required prerequisite outcome |  |
+| `--blocker-code <CODE>` | blocker code filter |  |
+| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` |
+| `--limit <N>` | page size, 1–100 |  |
+| `--cursor <CURSOR>` | continuation cursor |  |
+
+### customer-operations attention-summary
+
+Summarize workflows needing attention
+
+`gregale customer-operations attention-summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--group-by <DIMENSION>` | summary grouping | one of `workflow` · `blocker_code` · `target_operation` · `customer` · `dependency_status` · `required_outcome_code` |
+| `--app <SLUG>` | owned app in account mode |  |
+| `--self` | authenticated customer queue |  |
+| `--app-id <UUID>` | required with --self |  |
+| `--scope <SCOPE>` | explicit environment | required |
+| `--tenant <UUID>` | account customer filter |  |
+| `--workflow <NAME>` | workflow filter |  |
+| `--target-operation <NAME>` | target Operation filter |  |
+| `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
+| `--required-outcome-code <CODE>` | required prerequisite outcome |  |
+| `--blocker-code <CODE>` | blocker code filter |  |
+| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` |
+| `--limit <N>` | page size, 1–100 |  |
+| `--cursor <CURSOR>` | continuation cursor |  |
+
+### customer-operations bindings
+
+Generate typed application workflow bindings without credentials
+
+`gregale customer-operations bindings --app <SLUG> --plan <PLAN> [--dir <PATH>] --language <LANGUAGE> --output <PATH> [--package <NAME>] [--check]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | selected manifest app | required |
+| `--plan <PLAN>` | explicit target plan | required; one of `free` · `hobby` · `pro` · `scale` |
+| `--dir <PATH>` | source directory, default current directory |  |
+| `--language <LANGUAGE>` | application language | required; one of `typescript` · `javascript` · `go` · `python` |
+| `--output <PATH>` | generated module | required |
+| `--package <NAME>` | Go package name, default workflowbindings |  |
+| `--check` | fail on stale bindings without writing |  |
+
 ### customer-operations doctor
 
 Observe submission blockers, delivery warnings and unverified qualification
@@ -6983,6 +7329,21 @@ Validate source contracts and optional sample input without credentials
 | `--name <NAME>` | selected operation; required for a sample |  |
 | `--input-file <PATH>` | sample JSON input |  |
 
+### customer-operations types
+
+Generate or check TypeScript input and output types
+
+`gregale customer-operations types --app <SLUG> --plan <PLAN> [--dir <PATH>] [--name <NAME>] [--output <PATH>] [--check]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | selected manifest app | required |
+| `--plan <PLAN>` | explicit target plan | required; one of `free` · `hobby` · `pro` · `scale` |
+| `--dir <PATH>` | source directory, default current directory |  |
+| `--name <NAME>` | selected operation; defaults to all |  |
+| `--output <PATH>` | generated declaration path (default customer-operations.generated.d.ts) |  |
+| `--check` | verify generated declarations are current without writing |  |
+
 ### customer-operations start
 
 Submit tenant-owned work with an immutable retry receipt
@@ -7026,6 +7387,17 @@ Read business result and independent delivery status
 | `--app <SLUG>` | required in account mode; omit with --self |  |
 | `--timeout <D>` | local request/wait deadline; work continues |  |
 | `--self` | use authenticated tenant routes; omit --app |  |
+
+### customer-operations inspect
+
+Inspect confirmed steps, uncertain attempts, retained files and retry blockers
+
+`gregale customer-operations inspect [--app <SLUG>] [--timeout <D>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
 
 ### customer-operations events
 
@@ -7095,18 +7467,21 @@ Request cancellation at an observed generation
 
 ### customer-operations recover
 
-Record an evidenced reconciliation decision
+Preview or record an evidenced reconciliation decision
 
-`gregale customer-operations recover [--app <SLUG>] [--timeout <D>] --expected-generation <N> --recovery-id <ID> --resolution <RESOLUTION> --evidence-file <PATH> [--result-file <PATH>] <id>`
+`gregale customer-operations recover [--app <SLUG>] [--timeout <D>] [--expected-generation <N>] [--receipt-file <PATH>] [--preview] [--inspection-revision <REVISION>] [--recovery-id <ID>] [--resolution <RESOLUTION>] [--evidence-file <PATH>] [--result-file <PATH>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | required in account mode; omit with --self |  |
 | `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--expected-generation <N>` | observed generation; stale decisions are rejected | required |
-| `--recovery-id <ID>` | stable decision ID for duplicate requests | required |
-| `--resolution <RESOLUTION>` | explicit reconciliation result | required; one of `succeeded` · `failed` · `cancelled` · `safe_to_retry` |
-| `--evidence-file <PATH>` | nonempty reconciliation evidence | required |
+| `--expected-generation <N>` | observed generation for a new decision or preview; omit to resume |  |
+| `--receipt-file <PATH>` | private immutable decision request; omit selectors to resume |  |
+| `--preview` | read-only plan; exit 4 when blocked; omit decision ID and evidence |  |
+| `--inspection-revision <REVISION>` | optional inspection revision checked when applying |  |
+| `--recovery-id <ID>` | stable decision ID required when applying |  |
+| `--resolution <RESOLUTION>` | explicit resolution for a new decision or preview; omit to resume | one of `succeeded` · `failed` · `cancelled` · `safe_to_retry` |
+| `--evidence-file <PATH>` | nonempty reconciliation evidence required when applying |  |
 | `--result-file <PATH>` | JSON result required for succeeded |  |
 
 ### customer-operations delivery
@@ -8201,19 +8576,66 @@ Deploy a managed PostgREST Data API
 
 Generate types in an owner-authenticated app task
 
-`gregale data-api types [--output <FILE>] [--check] [--timeout <DURATION>] <name>`
+`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--output <FILE>` | generated TypeScript output |  |
+| `--output <FILE>` | generated TypeScript or snapshot output |  |
 | `--check` | fail if the output file is stale |  |
+| `--snapshot` | export a JSON baseline for data-api diff |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
+
+### data-api diff
+
+Compare the current schema with a saved JSON baseline
+
+`gregale data-api diff --baseline <FILE> [--check] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--baseline <FILE>` | JSON snapshot exported with types --snapshot | required |
+| `--check` | fail on breaking contract changes |  |
+| `--timeout <DURATION>` | task wait deadline (default 2m) |  |
+
+Examples:
+
+```sh
+gregale data-api diff notes-data --baseline schema.json --check
+```
 
 ### data-api refresh
 
 Request a fresh restart to reload the database schema
 
-`gregale data-api refresh <name>`
+`gregale data-api refresh [--wait] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for fresh-restart completion and Data API readiness |  |
+| `--timeout <DURATION>` | complete wait deadline (default 5m, maximum 1h; requires --wait) |  |
+
+Examples:
+
+```sh
+gregale data-api refresh notes-data --wait --timeout 5m
+```
+
+### data-api sync
+
+Run migrations, refresh the API, export types and check the client
+
+`gregale data-api sync --config <FILE> [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--config <FILE>` | JSON workflow with output, migrate and check argument arrays | required |
+| `--timeout <DURATION>` | entire workflow deadline (default 20m, maximum 1h) |  |
+
+Examples:
+
+```sh
+gregale data-api sync notes-data --config data-api.json
+```
 
 
 ## ps
@@ -8407,11 +8829,12 @@ Replay one event or --all
 
 Purge one event or --all
 
-`gregale dlq purge [--all] [--limit <N>] <app> [<event-id>]`
+`gregale dlq purge [--all] [--yes] [--limit <N>] <app> [<event-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--all` | purge all events |  |
+| `--all` | purge all events (asks for typed confirmation) |  |
+| `--yes` | skip the --all confirmation (for scripts) |  |
 | `--limit <N>` | page size (1..200) |  |
 
 
@@ -9495,7 +9918,7 @@ Manage deployment traffic split (available on every plan)
 
 Set the traffic split for a deployment
 
-`gregale traffic set [--app <SLUG>] --deployment <ID> --percent <N> [<slug>]`
+`gregale traffic set [--app <SLUG>] --deployment <ID> --percent <N>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9503,11 +9926,18 @@ Set the traffic split for a deployment
 | `--deployment <ID>` | deployment id or vN revision to set the traffic split on | required |
 | `--percent <N>` | traffic weight in [0, 100]; -1 = unset (server default 100) | required |
 
+Examples:
+
+```sh
+gregale traffic set my-api --deployment v7 --percent 30
+gregale traffic set --app my-api --deployment v7 --percent 30
+```
+
 ### traffic promote
 
 Promote a live deployment to 100% production traffic
 
-`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack] [<slug>]`
+`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack] [--route-removal-mode <MODE>] [--route-readiness <PATH>] [--route-mapping <PATH>] [--route-owner-approval <PATH>] [--route-evidence-max-age <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9518,6 +9948,18 @@ Promote a live deployment to 100% production traffic
 | `--max-verification-age <DURATION>` | maximum probe age (default 10m); requires --require-bindings |  |
 | `--allow-unsupported` | waive unsupported queue/outbound probes; requires --require-bindings |  |
 | `--require-application-ack` | require current application acknowledgements; requires --require-bindings |  |
+| `--route-removal-mode <MODE>` | opt-in CLI gate: report or enforce; requires --app and --if-serving | one of `report` · `enforce` |
+| `--route-readiness <PATH>` | readiness JSON for the serving deployment |  |
+| `--route-mapping <PATH>` | reviewed successor mapping JSON |  |
+| `--route-owner-approval <PATH>` | owner attestation bound to this exact change |  |
+| `--route-evidence-max-age <DURATION>` | maximum evidence age (default and maximum 72h) |  |
+
+Examples:
+
+```sh
+gregale traffic promote my-api --deployment v7
+gregale traffic promote --app my-api --deployment v7 --if-serving v6
+```
 
 ### traffic status
 

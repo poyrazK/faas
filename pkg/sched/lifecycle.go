@@ -490,6 +490,13 @@ func (e *Engine) drainServiceDeploymentInstances(ctx context.Context, deployment
 // service rollout helper above intentionally scopes to service replicas; a
 // rollback of a hot request deployment needs the same lifecycle handoff or a
 // one-instance plan can remain occupied by the superseded revision.
+//
+// Every schedd receives the deployment_changed notification; only the app's
+// owner drains (production-us hunt #8: three schedds parked the same
+// instance at once, failing with "exclusive operation busy" and "illegal
+// edge stopped→parked", and the instances lingered until the idle timeout).
+// The reaper repeats this drain for superseded deployments that still have
+// live instances, so a lost or failed notification is repaired.
 func (e *Engine) drainDeploymentInstances(ctx context.Context, deploymentID string, preserveSnapshot bool) {
 	if e == nil || e.store == nil || deploymentID == "" {
 		return
@@ -499,6 +506,16 @@ func (e *Engine) drainDeploymentInstances(ctx context.Context, deploymentID stri
 		if !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("sched: load deployment drain", "deployment", deploymentID, "err", err)
 		}
+		return
+	}
+	app, err := e.store.AppByID(ctx, dep.AppID)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			e.log.Warn("sched: load app for deployment drain", "deployment", deploymentID, "app", dep.AppID, "err", err)
+		}
+		return
+	}
+	if !e.ownsApp(app) {
 		return
 	}
 	instances, err := e.store.ListInstancesForApp(ctx, dep.AppID)

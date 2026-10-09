@@ -419,8 +419,7 @@ func cmdWorkersLogs(args []string) int {
 
 	slug := ""
 	var forwardArgs []string
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
+	for _, arg := range args {
 		if !strings.HasPrefix(arg, "-") && slug == "" {
 			slug = arg
 		} else {

@@ -28,6 +28,18 @@ export type OperationDefinitionSummary = {
   deployment_id: string;
   release_id?: string;
   name: string;
+  /**
+   * Discovered account-owned single-task batch Job; accepted work retains its execution snapshot.
+   */
+  job?: string;
+  /**
+   * Workflow execution selected by this discoverable Operations definition.
+   */
+  workflow?: string;
+  /**
+   * Discovered customer transaction receipt contract for atomic HTTP completion.
+   */
+  transaction_receipt?: 'postgres_v1';
   method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: string;
   owner: 'platform_tenant';

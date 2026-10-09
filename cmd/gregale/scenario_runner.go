@@ -154,6 +154,9 @@ type testWakeEvidence struct {
 	Method   string `json:"method,omitempty"`
 	Status   int    `json:"status,omitempty"`
 	Requests int    `json:"requests"`
+	// EdgeAnswered counts requests the gateway answered without the VM
+	// (the edge health answer); they carry no wake evidence.
+	EdgeAnswered int `json:"edge_answered,omitempty"`
 }
 
 type testServiceWakeEvidence struct {
@@ -1426,6 +1429,9 @@ func verifyTestProfile(ctx context.Context, client testWakeBootClient, slug, pro
 	if evidence.Requests == 0 {
 		return errors.New("assertion command sent no requests through GREGALE_TEST_URL")
 	}
+	if evidence.EdgeAnswered == evidence.Requests {
+		return errors.New("every request was answered at the edge (the health path never reaches the app); add a request to an application route")
+	}
 	if profile == "warm" {
 		if evidence.Header != wire.HotWakeValue || evidence.WakeID != "" {
 			return fmt.Errorf("first request observed wake=%q wake_id=%q; expected hot", evidence.Header, evidence.WakeID)
@@ -1760,6 +1766,8 @@ func waitForTestDelivery(ctx context.Context, client testDeliveryClient, slug, s
 type testProxyRecorder struct {
 	mu       sync.Mutex
 	evidence testWakeEvidence
+	// evidenceSequence is the request sequence the wake evidence came from.
+	evidenceSequence int
 }
 
 type testProxyRequestKey struct{}
@@ -1768,6 +1776,7 @@ func (r *testProxyRecorder) reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.evidence = testWakeEvidence{}
+	r.evidenceSequence = 0
 }
 
 func (r *testProxyRecorder) snapshot() testWakeEvidence {
@@ -1779,17 +1788,27 @@ func (r *testProxyRecorder) snapshot() testWakeEvidence {
 func newTestProxy(target *url.URL) (*httptest.Server, *testProxyRecorder) {
 	recorder := &testProxyRecorder{}
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	originalDirector := proxy.Director
-	proxy.Director = func(request *http.Request) {
+	originalDirector := proxy.Director             //nolint:staticcheck // SA1019: fixture mirrors the retained production forwarding contract.
+	proxy.Director = func(request *http.Request) { //nolint:staticcheck // SA1019: fixture mirrors the retained production forwarding contract.
 		originalDirector(request)
 		request.Host = target.Host
 	}
 	proxy.ModifyResponse = func(response *http.Response) error {
 		recorder.mu.Lock()
 		defer recorder.mu.Unlock()
-		// Requests may finish out of order. The first request to reach the
-		// proxy establishes the profile's wake evidence.
-		if response.Request.Context().Value(testProxyRequestKey{}) == 1 {
+		// The gateway answers the health path itself without consulting the
+		// VM, so that response carries no wake evidence. production-us hunt
+		// #8: `test init` puts GET /healthz first, and every real-VM profile
+		// failed with "first request has no wake_id".
+		if strings.EqualFold(response.Header.Get("X-Faas-Health-Source"), "edge") {
+			recorder.evidence.EdgeAnswered++
+			return nil
+		}
+		// Requests may finish out of order. The earliest request the app
+		// served establishes the profile's wake evidence.
+		sequence, _ := response.Request.Context().Value(testProxyRequestKey{}).(int)
+		if recorder.evidenceSequence == 0 || sequence < recorder.evidenceSequence {
+			recorder.evidenceSequence = sequence
 			recorder.evidence.Header = response.Header.Get(wire.WakeHeader)
 			recorder.evidence.WakeID = response.Header.Get("X-Faas-Wake-ID")
 			recorder.evidence.Status = response.StatusCode

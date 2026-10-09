@@ -138,7 +138,15 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	eventRecoveryExecutionResults map[recoveryResultKey]memRecoveryExecutionResult
+	eventRecoveryExecutionResults   map[recoveryResultKey]memRecoveryExecutionResult
+	productionLifecycleHistory      []api.RouteLifecycleHistoryEntry
+	nextProductionLifecycleReviewID int64
+	productionLifecycleDecisions    map[string]api.RouteGateDecision
+	lifecycleApprovalConfigurations map[string]string
+	lifecycleApprovalSuccessors     map[string]string
+	lifecycleRecovery               bool
+	routeLifecycleApprovals         map[string]api.RouteLifecycleApproval
+	routeRemovalPolicies            map[string]api.RouteRemovalPolicy
 
 	eventCircuitBreakers        map[string]*eventCircuitRecord
 	eventSubscriptionControls   map[string]*memEventSubscriptionControl
@@ -4992,6 +5000,7 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if params.RequireSafeReleaseLease {
 		if m.safeReleaseWorkerLeaseUntil.IsZero() {
 			return Deployment{}, 0, fmt.Errorf("%w: %w", ErrSafeReleaseLeaseUnavailable, ErrSafeReleaseLeaseMissing)
@@ -5157,6 +5166,7 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 
 	d, ok := m.deployments[id]
 	if !ok {
@@ -6007,6 +6017,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
@@ -6365,6 +6376,9 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		if b.AppID == id && b.State != "deleted" {
 			return ErrConflict
 		}
+	}
+	if err := m.prepareOperationJobOwnerPurgeLocked("", id); err != nil {
+		return err
 	}
 	m.forgetOwnedOperationsLocked("", id)
 	delete(m.appDeletionClaims, id)
@@ -7636,10 +7650,14 @@ func (m *MemStore) RecoverRolloutForDeployment(ctx context.Context, appID, deplo
 func (m *MemStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	return m.recoverRolloutLocked(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
 }
 
 func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, auditOverride *DeploymentAudit) (Deployment, int64, error) {
+	previousRecovery := m.lifecycleRecovery
+	m.lifecycleRecovery = action == "abort"
+	defer func() { m.lifecycleRecovery = previousRecovery }()
 	// Validate action at the store boundary so a direct store
 	// caller (CLI test path) gets the same 422 shape as the
 	// handler. The handler also validates via
@@ -7830,6 +7848,13 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		}
 		sort.SliceStable(siblings, func(a, b int) bool { return siblings[a].ID < siblings[b].ID })
 		newWeights := RedistributeTraffic(toHelperSiblings(siblings), 100-stepPct)
+		proposed := map[string]int{target.ID: stepPct}
+		for i, sibling := range siblings {
+			proposed[sibling.ID] = newWeights[i]
+		}
+		if err := m.checkRouteRemovalTrafficLocked(proposed); err != nil {
+			return Deployment{}, 0, err
+		}
 		for i, s := range siblings {
 			other := m.deployments[s.ID]
 			other.TrafficPercent = newWeights[i]
@@ -7860,6 +7885,9 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		return *target, auditID, nil
 
 	case "promote":
+		if err := m.checkRouteRemovalTrafficLocked(map[string]int{target.ID: 100}); err != nil {
+			return Deployment{}, 0, err
+		}
 		if target.CanaryTotalSteps <= 0 || target.CanaryStep >= target.CanaryTotalSteps {
 			return *target, 0, ErrRolloutStateInvalid
 		}
@@ -7937,6 +7965,13 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		}
 		sort.SliceStable(siblings, func(a, b int) bool { return siblings[a].ID < siblings[b].ID })
 		newWeights := RedistributeTraffic(toHelperSiblings(siblings), 100)
+		proposed := map[string]int{}
+		for i, sibling := range siblings {
+			proposed[sibling.ID] = newWeights[i]
+		}
+		if err := m.checkRouteRemovalTrafficLocked(proposed); err != nil {
+			return Deployment{}, 0, err
+		}
 		for i, sibling := range siblings {
 			other := m.deployments[sibling.ID]
 			other.TrafficPercent = newWeights[i]
@@ -8544,6 +8579,7 @@ func (m *MemStore) MarkDeploymentLiveIfLatest(ctx context.Context, id string) er
 func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLatest bool) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
@@ -8685,6 +8721,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		for siblingID, other := range updatedSiblings {
 			proposed[siblingID] = other.TrafficPercent
 		}
+		if err := m.checkProductionLifecycleLocked(proposed); err != nil {
+			return err
+		}
 		if err := m.checkBindingReleaseTrafficLocked(ctx, proposed); err != nil {
 			return err
 		}
@@ -8701,7 +8740,13 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		m.putDeploymentLocked(id, d)
 		return nil
 	}
+	if err := m.checkProductionLifecycleLocked(map[string]int{id: 100}); err != nil {
+		return err
+	}
 	if d.CanaryTotalSteps <= 0 {
+		if err := m.checkRouteRemovalTrafficLocked(map[string]int{id: 100}); err != nil {
+			return err
+		}
 		// Commit the stable cutover as one mutex-protected mutation. The old
 		// live row remains visible throughout the replacement build and is
 		// retired only when the replacement is ready to serve.
@@ -9359,6 +9404,10 @@ func (m *MemStore) MarkAutoRollback(_ context.Context, deploymentID, reason stri
 func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDeploymentID string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
+	previousRecovery := m.lifecycleRecovery
+	m.lifecycleRecovery = true
+	defer func() { m.lifecycleRecovery = previousRecovery }()
 	cur, ok := m.deployments[currentDeploymentID]
 	if !ok || cur.AppID != appID || cur.Status != DeployLive {
 		return "", ErrNotFound
@@ -9387,6 +9436,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		return "", err
 	}
 	if err := m.rejectUncheckedBindingReleaseLocked(cur.AppID, cur.Scope); err != nil {
+		return "", err
+	}
+	if err := m.checkRouteRemovalTrafficLocked(map[string]int{targetID: 100}); err != nil {
 		return "", err
 	}
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(m.deployments[targetID])); err != nil {
@@ -10080,6 +10132,9 @@ func (m *MemStore) UpsertDeploymentOpenAPIDoc(_ context.Context, deploymentID, a
 		row.UpdatedAt = now
 	}
 	previous, existed := m.openAPIDocs[deploymentID]
+	if existed {
+		m.invalidateLifecycleApprovalsLocked(deploymentID, now.UTC())
+	}
 	m.openAPIDocs[deploymentID] = row
 	// Content/truncation changes supersede an old lease; source-only retries do not.
 	if !existed || string(previous.DocSHA256) != string(row.DocSHA256) || previous.Truncated != row.Truncated {
@@ -10099,6 +10154,7 @@ func (m *MemStore) DeleteDeploymentOpenAPIDoc(_ context.Context, deploymentID, a
 	if !ok || row.AccountID != accountID {
 		return ErrNotFound
 	}
+	m.invalidateLifecycleApprovalsLocked(deploymentID, time.Now().UTC())
 	delete(m.openAPIDocs, deploymentID)
 	m.enqueueAutomaticRouteCheckLocked(row.AppID, deploymentID, true)
 	return nil
@@ -11289,6 +11345,7 @@ func (m *MemStore) RequeueBuildIfClaim(_ context.Context, claim Build) error {
 func (m *MemStore) CreateCustomDomain(_ context.Context, domain, appID, token string) (CustomDomain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	now := time.Now()
 	if current, dup := m.domains[domain]; dup {
 		if current.Verified() || current.VerificationExpiresAt.IsZero() || current.VerificationExpiresAt.After(now) {
@@ -11410,6 +11467,7 @@ func (m *MemStore) ListDomainsForAccount(_ context.Context, accountID string) ([
 func (m *MemStore) MarkDomainVerified(_ context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	d, ok := m.domains[domain]
 	if !ok {
 		return ErrNotFound
@@ -11424,6 +11482,7 @@ func (m *MemStore) MarkDomainVerified(_ context.Context, domain string) error {
 func (m *MemStore) MarkDomainVerifiedIfChallenge(_ context.Context, domain, token string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	d, ok := m.domains[domain]
 	if !ok {
 		return false, nil
@@ -11465,6 +11524,7 @@ func (m *MemStore) UpdateCustomDomainCertStatus(_ context.Context, domain string
 func (m *MemStore) DeleteCustomDomain(_ context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	return m.deleteCustomDomainLocked(domain)
 }
 
@@ -11475,6 +11535,7 @@ func (m *MemStore) DeleteCustomDomainWithActivity(_ context.Context, domain stri
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if err := m.deleteCustomDomainLocked(domain); err != nil {
 		return 0, err
 	}
@@ -21317,6 +21378,9 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	if err := m.prepareOperationJobOwnerPurgeLocked(id, ""); err != nil {
+		return err
+	}
 	m.forgetOwnedOperationsLocked(id, "")
 	for bucketID, b := range m.objectBuckets {
 		if b.AccountID == id {
@@ -22241,6 +22305,7 @@ func (m *MemStore) manifestEdgeRuleKeyExistsLocked(appID, manifestKey, excludeID
 func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if m.manifestEdgeRuleKeyExistsLocked(in.AppID, in.ManifestKey, "") {
 		return EdgeRule{}, ErrConflict
 	}
@@ -22285,6 +22350,7 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if m.manifestEdgeRuleKeyExistsLocked(in.AppID, in.ManifestKey, "") {
 		return EdgeRule{}, ErrConflict
 	}
@@ -22920,6 +22986,7 @@ func (m *MemStore) ListCertExpiryStateForWalker(_ context.Context, staleCutoff t
 func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRuleParams) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	r, ok := m.edgeRules[id]
 	if !ok {
 		return EdgeRule{}, ErrNotFound
@@ -22971,6 +23038,7 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 func (m *MemStore) DeleteEdgeRule(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	rule, ok := m.edgeRules[id]
 	if !ok {
 		return ErrNotFound

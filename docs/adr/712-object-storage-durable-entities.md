@@ -256,6 +256,25 @@ cover missing/corrupt hints, restart/backoff/exhaustion, uncertain reservations,
 receipt replay and native provider wire paths; dedicated-host/live-bucket, latency
 and cost qualification remain pending.
 
+## Internal outbox commit contract — 2026-10-09
+
+[ADR-903](903-object-storage-entity-outbox-contract.md) adds bounded outgoing
+intents to the private Go engine transition. State, alarm, receipt and pending
+messages publish through the same manifest CAS. Later transitions, receipt
+replays, restart and cleanup preserve pending work. Deterministic message IDs
+include full entity scope, committed state version and batch ordinal. Pending
+message bytes count inside existing snapshot/storage caps. Exact-scope private
+observation restores only committed work; there is no delivery worker or guest
+outbox field in this slice. Customer handlers remain pure.
+
+Current manifest writes use schema 5 (readers accept 1–5); snapshots containing
+messages use schema 3 (readers accept 1–3). This supersedes the schema-4 writer
+version above without changing alarm reservations. Stop all older entity callers,
+alarm and maintenance workers before upgrading. Downgrade requires an explicit
+storage migration. The preview and native/live-provider qualification status
+remain unchanged; destination admission, deduplicating relay acceptance, fenced
+acknowledgement, retry and external delivery remain the next milestone.
+
 ## Receipt journal and operator cleanup
 
 Schema-2 snapshots contain business state, alarm state and roots for an immutable

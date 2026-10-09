@@ -46,3 +46,18 @@ func TestJobImageContainsExecutableCommand(t *testing.T) {
 		t.Fatalf("image command = %v", config.Config.Cmd)
 	}
 }
+
+func TestCustomerWorkflowImageUsesServingFixture(t *testing.T) {
+	image, _ := CustomerWorkflowImage("test/workflow")
+	var config struct {
+		Config struct {
+			Cmd []string `json:"Cmd"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(image.configBytes, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Config.Cmd) != 2 || config.Config.Cmd[0] != "/job-fixture" || config.Config.Cmd[1] != "customer-workflow" {
+		t.Fatal("workflow image does not serve native HTTP actions")
+	}
+}

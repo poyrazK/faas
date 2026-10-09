@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func promoteTrafficWithBindings(ctx context.Context, client *api.Client, target api.DeploymentResponse, servingID string, age time.Duration, allowUnsupported, requireAck bool) int {
+func promoteTrafficWithBindings(ctx context.Context, client *api.Client, target api.DeploymentResponse, servingID string, age time.Duration, allowUnsupported, requireAck bool, removalGates ...*routeRemovalGateReport) int {
 	req := api.BindingPromotionRequest{MaxVerificationAge: age.String(), AllowUnsupported: allowUnsupported, RequireApplicationAck: requireAck}
 	if servingID != "" {
 		req.ExpectedServingDeploymentID = &servingID
@@ -29,6 +29,12 @@ func promoteTrafficWithBindings(ctx context.Context, client *api.Client, target 
 		return printErr("Traffic promote failed", fmt.Errorf("server did not confirm a passed bindings check for the requested deployment and policy; inspect traffic before retrying"))
 	}
 	if jsonOutput {
+		if len(removalGates) > 0 && removalGates[0] != nil {
+			return jsonOut(writeJSON(struct {
+				api.BindingPromotionResponse
+				RouteRemovalGate *routeRemovalGateReport `json:"route_removal_gate,omitempty"`
+			}{receipt, removalGates[0]}))
+		}
 		return jsonOut(writeJSON(receipt))
 	}
 	if receipt.AlreadyPromoted {

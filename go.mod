@@ -2,12 +2,12 @@ module github.com/onebox-faas/faas
 
 go 1.26.0
 
-// Use the patched Go runtime for the Go 1.26 language target.
+// Select the patched compiler independently of the language target.
 toolchain go1.26.9
 
 // Pinned to match the version CI runs (.github/workflows/ci.yml:
 // golangci-lint-action@v9 with version: v2.14.0). Update both together.
-// `go tool golangci-lint run ./...` in the Makefile picks this up
+// The package-by-package `make lint` executor picks this up
 // automatically; no separate install required.
 tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 

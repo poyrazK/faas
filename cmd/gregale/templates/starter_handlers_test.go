@@ -63,6 +63,10 @@ func TestCustomerPlatformStarterCredentialRecovery(t *testing.T) {
 	runNodeStarterTests(t, "customer-platform", "test/client.test.js")
 }
 
+func TestDataAPIStarterMigrationConfiguration(t *testing.T) {
+	runNodeStarterTests(t, "data-api-starter", "test/migration.test.mjs")
+}
+
 func TestSecretReloadNodeStarterOptsIntoSIGHUP(t *testing.T) {
 	dir, cleanup, err := MaterializeForTest("secret-reload-node")
 	if err != nil {

@@ -79,8 +79,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return errors.New("bridged: invalid dependency gateway URL")
 	}
 	dependencies := httputil.NewSingleHostReverseProxy(target) //nolint:gosec // Operator configuration is restricted above to a literal loopback origin.
-	director := dependencies.Director
-	dependencies.Director = func(r *http.Request) {
+	director := dependencies.Director                          //nolint:staticcheck // SA1019: retain the qualified forwarding contract during the compiler patch.
+	dependencies.Director = func(r *http.Request) {            //nolint:staticcheck // SA1019: supported Go 1.26 API; Rewrite migration needs forwarding-contract qualification.
 		director(r)
 		r.Host = gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, r.Header.Get("X-Gregale-Dev-Environment"), r.Header.Get("X-Gregale-Dev-Dependency"))
 		r.Header.Del("X-Gregale-Dev-Environment")
