@@ -6,6 +6,10 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.operation_doctor_check_execution_kind import (
+    OperationDoctorCheckExecutionKind,
+    check_operation_doctor_check_execution_kind,
+)
 from ..models.operation_doctor_check_impact import OperationDoctorCheckImpact, check_operation_doctor_check_impact
 from ..models.operation_doctor_check_status import OperationDoctorCheckStatus, check_operation_doctor_check_status
 from ..types import UNSET, Unset
@@ -28,6 +32,9 @@ class OperationDoctorCheck:
     name: str | Unset = UNSET
     revision: str | Unset = UNSET
     release_id: UUID | Unset = UNSET
+    execution_kind: OperationDoctorCheckExecutionKind | Unset = UNSET
+    """Immutable execution family for a definition-specific preview admission observation. Omitted for common
+    prerequisites or an ambiguous contract."""
     limit: int | Unset = UNSET
     observed: int | Unset = UNSET
 
@@ -56,6 +63,10 @@ class OperationDoctorCheck:
         if not isinstance(self.release_id, Unset):
             release_id = str(self.release_id)
 
+        execution_kind: str | Unset = UNSET
+        if not isinstance(self.execution_kind, Unset):
+            execution_kind = self.execution_kind
+
         limit = self.limit
 
         observed = self.observed
@@ -81,6 +92,8 @@ class OperationDoctorCheck:
             field_dict["revision"] = revision
         if release_id is not UNSET:
             field_dict["release_id"] = release_id
+        if execution_kind is not UNSET:
+            field_dict["execution_kind"] = execution_kind
         if limit is not UNSET:
             field_dict["limit"] = limit
         if observed is not UNSET:
@@ -121,6 +134,13 @@ class OperationDoctorCheck:
         else:
             release_id = UUID(_release_id)
 
+        _execution_kind = d.pop("execution_kind", UNSET)
+        execution_kind: OperationDoctorCheckExecutionKind | Unset
+        if isinstance(_execution_kind, Unset):
+            execution_kind = UNSET
+        else:
+            execution_kind = check_operation_doctor_check_execution_kind(_execution_kind)
+
         limit = d.pop("limit", UNSET)
 
         observed = d.pop("observed", UNSET)
@@ -136,6 +156,7 @@ class OperationDoctorCheck:
             name=name,
             revision=revision,
             release_id=release_id,
+            execution_kind=execution_kind,
             limit=limit,
             observed=observed,
         )

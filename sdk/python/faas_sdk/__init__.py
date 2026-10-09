@@ -78,16 +78,22 @@ from .idempotency import (
 )
 from .issues import IssueReporter
 from .operations import (
+    CustomerOperationRequest,
     OperationCommitUnknownError,
     OperationConflictError,
     OperationEffect,
     OperationOutcome,
     OperationRequest,
     OperationTransactionResult,
+    awith_customer_operation_transaction,
     awith_operation_transaction,
+    customer_operation_receipt_schema,
+    customer_operation_request_digest,
+    customer_operation_request_from_headers,
     operation_receipt_schema,
     operation_request_digest,
     operation_request_from_headers,
+    with_customer_operation_transaction,
     with_operation_transaction,
 )
 from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
@@ -183,6 +189,12 @@ __all__ = (
     "with_dev_bridge_context",
     "insert_commit_event",
     "CommitEventRouting",
+    "CustomerOperationRequest",
+    "customer_operation_request_from_headers",
+    "customer_operation_request_digest",
+    "customer_operation_receipt_schema",
+    "with_customer_operation_transaction",
+    "awith_customer_operation_transaction",
     "OperationCommitUnknownError",
     "OperationConflictError",
     "OperationEffect",

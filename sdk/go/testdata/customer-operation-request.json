@@ -1,0 +1,17 @@
+{
+  "headers": {
+    "x-faas-tenant-id": "bbbbbbbc-2222-4222-8222-bbbbbbbbbbbb",
+    "x-faas-app-id": "cccccccd-3333-4333-8333-cccccccccccc",
+    "x-faas-platform-tenant-id": "ddddddde-4444-4444-8444-dddddddddddd",
+    "x-gregale-customer-operation-id": "aaaaaaab-1111-4111-8111-aaaaaaaaaaaa",
+    "x-gregale-customer-operation-receipt-version": "1",
+    "x-gregale-customer-operation-receipt-binding": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "x-gregale-operation-attempt": "1",
+    "x-gregale-operation-capability": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "x-faas-invocation-id": "eeeeeeef-5555-4555-8555-eeeeeeeeeeee"
+  },
+  "method": "POST",
+  "path": "/orders/fulfill?region=eu",
+  "body_base64": "eyJvcmRlcl9pZCI6MTIzLCJsYWJlbCI6Is+AIn0=",
+  "digest": "63e4b80211f0f2a5c896e325d9bd30a11d9f2481ab8c26df3aceaf0fbb4f98bd"
+}
