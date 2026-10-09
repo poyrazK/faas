@@ -42,6 +42,7 @@ type edgeRuleConvergence struct {
 	done              sync.Once
 	generation        int64
 	appID             string
+	accountID         string
 	ruleID            string
 	operation         string
 	hosts             []string
@@ -82,8 +83,15 @@ func (s *server) prepareEdgeRuleMutationLocked(ctx context.Context, appID, ruleI
 		unlock(ctx)
 		return nil, err
 	}
+	// The owner scopes the gateway fence to this account's apps. A failed
+	// lookup leaves it empty, which fences every app on the hosts: the
+	// conservative pre-scoping behaviour, never a skipped fence.
+	var accountID string
+	if app, lookupErr := s.store.AppByID(ctx, appID); lookupErr == nil {
+		accountID = app.AccountID
+	}
 	conv := &edgeRuleConvergence{
-		notif: s.notif, generation: generation, appID: appID, ruleID: ruleID,
+		notif: s.notif, generation: generation, appID: appID, accountID: accountID, ruleID: ruleID,
 		operation: operation, hosts: canonicalEdgeRuleHosts(hosts), expected: map[string]struct{}{},
 		cancel: func() {}, unlock: unlock,
 	}
@@ -168,7 +176,7 @@ func canonicalEdgeRuleHosts(hosts []string) []string {
 
 func (c *edgeRuleConvergence) payload(phase string) (string, error) {
 	body, err := json.Marshal(db.EdgeRuleChangedPayload{
-		AppID: c.appID, RuleID: c.ruleID, Operation: c.operation, Phase: phase,
+		AppID: c.appID, AccountID: c.accountID, RuleID: c.ruleID, Operation: c.operation, Phase: phase,
 		Generation: c.generation, MatchHosts: c.hosts,
 	})
 	return string(body), err

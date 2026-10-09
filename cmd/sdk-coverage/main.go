@@ -883,6 +883,17 @@ var methodRouteMap = map[string]string{
 	"GET /v1/edge-rules/{id}":         "GetEdgeRule",
 	"PATCH /v1/edge-rules/{id}":       "UpdateEdgeRule",
 	"DELETE /v1/edge-rules/{id}":      "DeleteEdgeRule",
+	// ADR-905 §2 — rule-set versions and rollback.
+	"GET /v1/apps/{slug}/edge-rules/versions":           "ListEdgeRuleSetVersions",
+	"GET /v1/apps/{slug}/edge-rules/versions/{version}": "GetEdgeRuleSetVersion",
+	"POST /v1/apps/{slug}/edge-rules/rollback":          "RollbackEdgeRules",
+	"GET /v1/apps/{slug}/edge-rules/stats":              "GetEdgeRuleStats",
+	"GET /v1/apps/{slug}/edge-rules/events":             "ListEdgeRuleEvents",
+	"GET /v1/edge-rule-lists":                           "ListEdgeRuleLists",
+	"POST /v1/edge-rule-lists":                          "CreateEdgeRuleList",
+	"GET /v1/edge-rule-lists/{name}":                    "GetEdgeRuleList",
+	"PATCH /v1/edge-rule-lists/{name}":                  "UpdateEdgeRuleList",
+	"DELETE /v1/edge-rule-lists/{name}":                 "DeleteEdgeRuleList",
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// recommender. Auto-derivation would produce
 	// "GetAppsSlugThrottle-suggestions" (literal hyphen) due to the

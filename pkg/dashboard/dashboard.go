@@ -973,6 +973,34 @@ type AppEdgeRulesData struct {
 	Action                 string
 	SecurityHeadersEnabled bool
 	ErrorMessage           string
+	// Events is the ADR-908 security-events section.
+	Events EdgeRuleEventsPageData
+}
+
+// EdgeRuleEventsPageData is the filterable security-events table (ADR-908).
+// Filter values echo the request; NextURL continues the listing.
+type EdgeRuleEventsPageData struct {
+	Rule         string
+	Outcome      string
+	Since        string
+	SinceLabel   string
+	Events       []EdgeRuleEventPageItem
+	NextURL      string
+	ErrorMessage string
+}
+
+// EdgeRuleEventPageItem is one sampled rule match.
+type EdgeRuleEventPageItem struct {
+	OccurredAt string
+	RuleID     string
+	RuleLabel  string
+	Outcome    string
+	Method     string
+	HostPath   string
+	ClientIP   string
+	Country    string
+	UserAgent  string
+	RequestID  string
 }
 
 // EdgeRuleTraceFormData keeps the submitted request context and read-only
@@ -1007,6 +1035,11 @@ type EdgeRulePageItem struct {
 	CreatedAt      string
 	UpdatedAt      string
 	SecurityPreset bool
+	// ADR-904/908: name, mode and 24 h hit counts.
+	Name       string
+	Mode       string
+	Matched24h int64
+	Logged24h  int64
 }
 
 // CorsPresetPageItem is the read-only preset summary shown beside an app's

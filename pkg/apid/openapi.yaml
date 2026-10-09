@@ -25602,6 +25602,130 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/edge-rule-lists:
+    get:
+      tags: [edge_rules]
+      operationId: listEdgeRuleLists
+      summary: List the account's reusable edge-rule lists.
+      description: |
+        ADR-907. Items are omitted here; fetch one list for its items.
+        referenced_by names the rules whose match conditions use the list.
+      responses:
+        '200':
+          description: The account's lists, by name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListEdgeRuleListsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [edge_rules]
+      operationId: createEdgeRuleList
+      summary: Create a reusable edge-rule list.
+      description: |
+        ADR-907. Items are validated for the list kind and stored
+        canonicalized, deduplicated and sorted. Lists per account and items
+        per list are plan limits.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEdgeRuleListRequest' }
+      responses:
+        '201':
+          description: The created list.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: plan_limit_edge_rule_lists | plan_limit_edge_rule_list_items'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: 'code: edge_rule_list_exists'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/edge-rule-lists/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{0,63}$' }
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeRuleList
+      summary: Get one edge-rule list with its items.
+      responses:
+        '200':
+          description: The list.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: 'code: edge_rule_list_not_found'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [edge_rules]
+      operationId: updateEdgeRuleList
+      summary: Edit an edge-rule list.
+      description: |
+        ADR-907. items replaces the list; add and remove edit it in place
+        (remove applies after add) and cannot be combined with items.
+        Gateways pick up the change for every referencing rule within a few
+        seconds; no rule-set version is recorded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateEdgeRuleListRequest' }
+      responses:
+        '200':
+          description: The updated list.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: plan_limit_edge_rule_list_items'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: 'code: edge_rule_list_not_found'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [edge_rules]
+      operationId: deleteEdgeRuleList
+      summary: Delete an unreferenced edge-rule list.
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: 'code: edge_rule_list_not_found'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: 'code: edge_rule_list_in_use (rules still reference the list)'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/edge-rules:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -25612,6 +25736,10 @@ paths:
       responses:
         '200':
           description: Edge rules for this app, ordered by priority ASC.
+          headers:
+            ETag:
+              description: The app's current edge-rule set version, for If-Match on later mutations.
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -25624,6 +25752,12 @@ paths:
       tags: [edge_rules]
       operationId: createEdgeRule
       summary: Create an edge rule on an app.
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
+          schema: { type: string }
       description: |
         Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
         validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
@@ -25661,6 +25795,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/EdgeRuleConflict' }
+        '412':
+          description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -25684,6 +25823,12 @@ paths:
       tags: [edge_rules]
       operationId: updateEdgeRule
       summary: Partial-update an edge rule.
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
+          schema: { type: string }
       description: |
         Every field is optional. `kind` is NOT patchable — rotating
         kind mid-life would break the action union. To change kind,
@@ -25703,17 +25848,209 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '412':
+          description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     delete:
       tags: [edge_rules]
       operationId: deleteEdgeRule
       summary: Delete an edge rule.
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
+          schema: { type: string }
       responses:
         '204':
           description: The cors preset was deleted. Referencing edge_rules.cors_preset_id was atomically cleared via ON DELETE SET NULL; the gateway compile path fails closed until the customer wires a new preset or inlines fallback values.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '412':
+          description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/versions:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: listEdgeRuleSetVersions
+      summary: List recorded versions of an app's edge-rule set, newest first.
+      description: |
+        Every committed change to an app's edge rules records the whole rule
+        set as a new version (ADR-905). Up to the 50 newest versions are
+        returned, without rule bodies; the newest 100 are retained.
+      responses:
+        '200':
+          description: Versions, newest first.
+          headers:
+            ETag:
+              description: The app's current edge-rule set version, for If-Match on later mutations.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EdgeRuleSetVersionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/versions/{version}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: version
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeRuleSetVersion
+      summary: Fetch one recorded edge-rule set version with its rules.
+      responses:
+        '200':
+          description: The version and the rules it recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleSetVersionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/events:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: listEdgeRuleEvents
+      summary: Sampled requests each edge rule matched, newest first.
+      description: |
+        ADR-908. Gateways keep the first 10 matches of each rule per minute
+        as full events (request ID, method, host, path without query string,
+        trusted client IP, country, user agent); hit counts (stats) cover
+        every match. Events are kept 7 days; how far back a plan can read is
+        a plan limit (Free 24 h, Hobby 72 h, Pro and Scale 7 days), and a
+        longer since is clamped (the response reports the effective start).
+      parameters:
+        - name: rule
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: outcome
+          in: query
+          required: false
+          schema: { type: string, enum: [matched, logged] }
+        - name: since
+          in: query
+          required: false
+          description: Duration such as 1h, 24h or 7d.
+          schema: { type: string, default: '24h' }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: next_cursor from the previous page.
+          schema: { type: string }
+      responses:
+        '200':
+          description: One page of events.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleEventsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/stats:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeRuleStats
+      summary: Per-rule match counts for an app over a window.
+      description: |
+        ADR-904. Gateways count each rule's matches (matched for enforced
+        rules, logged for log-mode rules), at most once per rule per request,
+        and flush them into hourly buckets once a minute; buckets are kept
+        for 14 days. Rules with no matches in the window are omitted.
+      parameters:
+        - name: window
+          in: query
+          required: false
+          schema: { type: string, enum: ['1h', '24h', '7d'], default: '24h' }
+      responses:
+        '200':
+          description: Per-rule counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleStatsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/rollback:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [edge_rules]
+      operationId: rollbackEdgeRules
+      summary: Restore an app's edge rules to a recorded version.
+      description: |
+        Replaces every current rule with the version's rules in one
+        transaction, preserving rule IDs, behind fleet convergence. The
+        restore is recorded as a new version. Refused when the version
+        exceeds the current plan's edge-rule quotas or references a deleted
+        CORS preset.
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RollbackEdgeRulesRequest' }
+      responses:
+        '200':
+          description: The rules now in force.
+          headers:
+            ETag:
+              description: The app's current edge-rule set version, for If-Match on later mutations.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EdgeRuleResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The version references a CORS preset that no longer exists.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '412':
+          description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/throttle-suggestions:
@@ -60094,6 +60431,12 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        name: { type: string, description: Operator-facing rule name. }
+        description: { type: string, description: Operator-facing description. }
+        expires_at: { type: string, format: date-time, description: When the gateway stops applying the rule. }
+        expired: { type: boolean, description: True once expires_at has passed and the rule no longer applies. }
+        match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
 
     DeploymentRoutePolicySnapshotResponse:
       description: Immutable gateway edge-rule state recorded on the deployment's first live transition.
@@ -60157,6 +60500,11 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
+        name: { type: string, maxLength: 100, description: Operator-facing rule name. }
+        description: { type: string, maxLength: 1000, description: Operator-facing description. }
+        expires_at: { type: string, format: date-time, description: When the gateway stops applying the rule. }
+        match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -60200,6 +60548,170 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
+        name: { type: string, maxLength: 100, description: Operator-facing rule name. }
+        description: { type: string, maxLength: 1000, description: Operator-facing description. }
+        expires_at: { type: string, format: date-time, description: When the gateway stops applying the rule. }
+        clear_expires_at: { type: boolean, description: Remove the expiry so the rule applies indefinitely. }
+        match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        clear_match: { type: boolean, description: Remove the match condition. }
+        mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
+
+    EdgeRuleMatchExpr:
+      description: |
+        ADR-906 match condition, ANDed with the rule's fixed selectors. A node
+        is exactly one of all, any, not, or a field/op leaf. Fields: method,
+        path, host, client_ip, country, header:<name>, cookie:<name>,
+        query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,
+        exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-907:
+        list names an account list whose kind fits the field). Depth at most 4,
+        at most 32 nodes, 64 values per leaf, values and regexes at most 256
+        bytes. An untrusted client IP or country is absent.
+      type: object
+      properties:
+        all:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        any:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        not: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
+        field: { type: string, example: "cookie:beta" }
+        op:
+          type: string
+          enum: [eq, ne, in, not_in, prefix, suffix, contains, exists, missing, regex, cidr, in_list]
+        value: { type: string, maxLength: 256 }
+        values:
+          type: array
+          maxItems: 64
+          items: { type: string, maxLength: 256 }
+        list: { type: string, description: Account list name for op in_list. }
+
+    EdgeRuleListResponse:
+      description: A reusable account-level list (ADR-907).
+      type: object
+      required: [id, name, kind, item_count, referenced_by, created_at, updated_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [ip, country, host, string] }
+        description: { type: string }
+        item_count: { type: integer, minimum: 0 }
+        items:
+          type: array
+          description: Present when one list is fetched.
+          items: { type: string }
+        referenced_by:
+          type: array
+          description: IDs of rules whose match conditions use the list.
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ListEdgeRuleListsResponse:
+      type: object
+      required: [lists]
+      properties:
+        lists:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleListResponse' }
+
+    CreateEdgeRuleListRequest:
+      type: object
+      required: [name, kind]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{0,63}$' }
+        kind:
+          type: string
+          enum: [ip, country, host, string]
+          description: ip (addresses and CIDRs, for client_ip), country (ISO 3166-1 alpha-2), host (exact hosts and *.suffix patterns), string (exact values, for path, header, cookie and query fields).
+        description: { type: string, maxLength: 500 }
+        items:
+          type: array
+          items: { type: string, maxLength: 256 }
+
+    UpdateEdgeRuleListRequest:
+      type: object
+      properties:
+        description: { type: string, maxLength: 500 }
+        items:
+          type: array
+          description: Replace every item. Cannot be combined with add or remove.
+          items: { type: string, maxLength: 256 }
+        add:
+          type: array
+          items: { type: string, maxLength: 256 }
+        remove:
+          type: array
+          items: { type: string, maxLength: 256 }
+
+    EdgeRuleEventsResponse:
+      description: A page of sampled edge-rule matches (ADR-908).
+      type: object
+      required: [since, events]
+      properties:
+        since: { type: string, format: date-time, description: Effective window start after the plan clamp. }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleEventResponse' }
+        next_cursor: { type: string }
+
+    EdgeRuleEventResponse:
+      type: object
+      required: [id, rule_id, outcome, occurred_at]
+      properties:
+        id: { type: string }
+        rule_id: { type: string }
+        rule_name: { type: string, description: Empty once the rule is deleted. }
+        rule_kind: { type: string }
+        outcome: { type: string, enum: [matched, logged] }
+        occurred_at: { type: string, format: date-time }
+        request_id: { type: string }
+        method: { type: string }
+        host: { type: string }
+        path: { type: string, description: Request path without the query string. }
+        client_ip: { type: string, description: Trusted client IP, when known. }
+        country: { type: string }
+        user_agent: { type: string }
+
+    EdgeRuleStatsResponse:
+      description: Per-rule match counts over a window (ADR-904).
+      type: object
+      required: [window, since, rules]
+      properties:
+        window: { type: string, enum: ['1h', '24h', '7d'] }
+        since: { type: string, format: date-time }
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleHitStatsResponse' }
+
+    EdgeRuleHitStatsResponse:
+      type: object
+      required: [rule_id, matched, logged]
+      properties:
+        rule_id: { type: string }
+        matched: { type: integer, format: int64, minimum: 0, description: Requests an enforced rule matched. }
+        logged: { type: integer, format: int64, minimum: 0, description: Requests a log-mode rule matched. }
+
+    EdgeRuleSetVersionResponse:
+      description: One recorded state of an app's whole edge-rule set (ADR-905).
+      type: object
+      required: [version, rule_count, rules_sha256, created_at, current]
+      properties:
+        version: { type: integer, minimum: 1 }
+        rule_count: { type: integer, minimum: 0 }
+        rules_sha256: { type: string, description: Digest of the recorded rule set. }
+        created_at: { type: string, format: date-time }
+        current: { type: boolean, description: True for the app's latest version. }
+        rules:
+          type: array
+          description: The recorded rules; present only when a single version is fetched.
+          items: { $ref: '#/components/schemas/EdgeRuleResponse' }
+
+    RollbackEdgeRulesRequest:
+      type: object
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1, description: The version to restore. }
 
     EdgeRuleRouteAction:
       description: 'Re-targets the matched request to another app owned by the same account.'
@@ -60571,6 +61083,9 @@ components:
           maxLength: 128
           pattern: '^[^\s]{1,128}$'
           description: Optional verified custom JWT claim name whose exact value resolves to a platform tenant external_ref in the app owner's account. Supports namespaced claims. When set, unknown, suspended, or unavailable tenants are rejected before the request reaches the guest.
+        require_exp:
+          type: boolean
+          description: 'Reject tokens that carry no `exp` claim. Off by default: `exp` is validated only when present, so a token minted without one never expires unless this is set.'
 
     EdgeRuleIPAction:
       description: 'CIDR allow/deny evaluator. Deny is checked AFTER allow so a single-IP deny wins.'
@@ -61171,7 +61686,7 @@ components:
           example: 200
         key_by:
           type: string
-          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"]
+          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country", "ip", "composite"]
           default: ""
           description: |
             Per-consumer keying dimension (ADR-104 / issue #881
@@ -61184,7 +61699,11 @@ components:
             When `"jwt_claim"`, one bucket per value of the
             claim named by `jwt_claim_name`. When `"country"`, one
             bucket per ISO 3166-1 alpha-2 country resolved from the
-            gateway's trusted client IP. Each non-empty
+            gateway's trusted client IP. When `"ip"`, one bucket per
+            trusted client IP (IPv6 clients keyed by their /64).
+            When `"composite"`, one bucket per combination of
+            `key_fields` (ADR-909).
+            Each non-empty
             value activates the bounded design: when the
             per-rule consumer set exceeds
             `max_keys_per_rule`, all over-cap callers collapse
@@ -61221,6 +61740,29 @@ components:
             `plan.ThrottleMaxKeysPerRule`. Must be 0 when
             `key_by` is `""` or `"none"` — the cap is moot for
             non-per-consumer rules.
+        key_fields:
+          type: array
+          maxItems: 4
+          description: |
+            ADR-909. Required iff `key_by="composite"`: the request
+            fields combined into one bucket identity. Each is one of
+            ip, country, api_key, consumer_id, jwt_subject, jwt_claim
+            (with `jwt_claim_name`), method, path or `header:<name>`.
+            A field the request lacks makes the identity missing, so
+            `missing_key_policy` applies.
+          items: { type: string }
+          example: ["ip", "path"]
+        count_statuses:
+          type: array
+          maxItems: 16
+          description: |
+            ADR-909. When set, requests are admitted while the bucket
+            has a token but only responses with one of these statuses
+            charge it, e.g. [401, 403] to limit failed logins without
+            limiting successful ones. Across gateways the admission
+            check uses each gateway's last-known shared balance.
+          items: { type: integer, minimum: 100, maximum: 599 }
+          example: [401]
         missing_key_policy:
           type: string
           enum: ["shared", "reject"]

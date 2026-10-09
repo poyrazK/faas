@@ -12,6 +12,7 @@ import type { EdgeRuleIPAction } from './EdgeRuleIPAction.js';
 import type { EdgeRuleJWTAction } from './EdgeRuleJWTAction.js';
 import type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
 import type { EdgeRuleMaintenanceAction } from './EdgeRuleMaintenanceAction.js';
+import type { EdgeRuleMatchExpr } from './EdgeRuleMatchExpr.js';
 import type { EdgeRuleRedirectAction } from './EdgeRuleRedirectAction.js';
 import type { EdgeRuleRespondAction } from './EdgeRuleRespondAction.js';
 import type { EdgeRuleRetryAction } from './EdgeRuleRetryAction.js';
@@ -42,5 +43,30 @@ export type UpdateEdgeRuleRequest = {
    * Replaces the jsonb column whole.
    */
   action?: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction);
+  /**
+   * Operator-facing rule name.
+   */
+  name?: string;
+  /**
+   * Operator-facing description.
+   */
+  description?: string;
+  /**
+   * When the gateway stops applying the rule.
+   */
+  expires_at?: string;
+  /**
+   * Remove the expiry so the rule applies indefinitely.
+   */
+  clear_expires_at?: boolean;
+  match?: EdgeRuleMatchExpr;
+  /**
+   * Remove the match condition.
+   */
+  clear_match?: boolean;
+  /**
+   * enforce (default) or log; a log-mode rule is matched and counted but never acts.
+   */
+  mode?: 'enforce' | 'log';
 };
 

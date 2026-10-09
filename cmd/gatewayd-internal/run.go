@@ -2182,7 +2182,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// them when deps.authMw is non-nil (which it always is
 	// outside unit tests).
 	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw)
-	deps.requireAuthnAudit = newGatewaydAuditor(deps.pgStore, log)
+	// Request-path audit rows (authn gates, edge-rule denials and matches)
+	// go through one bounded async writer so attack traffic cannot turn into
+	// synchronous Postgres inserts on the request path.
+	requestPathAudit := newAsyncAuditStore(ctx, deps.pgStore, asyncAuditQueueCapacity, log)
+	deps.requireAuthnAudit = newGatewaydAuditor(requestPathAudit, log)
 	// Build the validate adapter before the edge-rule matcher captures it.
 	// Assigning a nil *edgeValidateAdapter to the validateCompiler interface
 	// produces a non-nil interface whose first CompileSchema call panics.
@@ -2208,7 +2212,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// single-consumer queue.
 	go watchDurableControlPlaneChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
 	deps.declaredRoutesMatcher = newDeclaredRoutesMatcher(pgStore)
-	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(deps.pgStore, log))
+	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(requestPathAudit, log))
 	// ADR-091 D21 — build the pkg/geoip.Reader backed by the
 	// DB-IP Lite .mmdb file at FAAS_GEOIP_DB_PATH. The Reader
 	// is nil-safe: a missing file logs a WARN and the reader
@@ -2785,6 +2789,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// no-op and the gate fail-opens.
 	if deps.geoReader != nil {
 		handler.WithGeoReader(deps.geoReader)
+	}
+	// ADR-904 — per-rule hit counts, flushed to Postgres once a minute. Only
+	// a store with the hit-count capability gets a recorder, so test and
+	// legacy wiring keep counting disabled.
+	if hitStore, ok := any(deps.pgStore).(state.EdgeRuleHitStore); ok && deps.pgStore != nil {
+		hitCounter := newEdgeRuleHitCounter()
+		handler.WithEdgeRuleHitRecorder(hitCounter)
+		go hitCounter.run(ctx, hitStore, log)
 	}
 	// PR-B — arm the per-rule JSON-Schema validator that
 	// applyEdgeRuleValidate consults. nil-safe:

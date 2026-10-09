@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -36,11 +37,19 @@ func TestEdgeRulesLoaderFailureIsNotNegativeCached(t *testing.T) {
 	const host = "retry.example.com"
 	store := &fakeEdgeRuleStore{err: errors.New("database unavailable")}
 	matcher := newGatewaydEdgeRules(store, newQuietLogger(), nil, nil)
+	now := time.Unix(1_000, 0)
+	matcher.clock = func() time.Time { return now }
 	if matcher.MatchRoute(context.Background(), host, "/", "GET") != nil {
 		t.Fatal("unexpected route")
 	}
 	store.err = nil
 	store.rules = map[string][]state.EdgeRule{host: {sampleRouteRule("recovered", 100, host, "/", nil, "target")}}
+	// Inside the retry backoff the failure is still reported as a failure
+	// (JWT fails closed), never as a cached empty rule set.
+	if rule := matcher.MatchJWT(context.Background(), host, "/", "GET"); rule == nil || !rule.Unavailable {
+		t.Fatalf("MatchJWT inside backoff = %v; want fail-closed Unavailable", rule)
+	}
+	now = now.Add(edgeRuleLoadRetryBackoff)
 	if rule := matcher.MatchRoute(context.Background(), host, "/", "GET"); rule == nil || rule.ID != "recovered" {
 		t.Fatal("failed read was cached as no rules")
 	}

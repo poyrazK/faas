@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -118,6 +119,38 @@ func TestMemStore_EdgeRule_ValidateModeEmptyStaysEmpty(t *testing.T) {
 	}
 }
 
+// An expired rule stays listed (with its metadata) but is no longer returned
+// by the gateway read, so it stops applying without being deleted.
+func TestMemStore_EdgeRule_ExpiredRuleListedButNotServed(t *testing.T) {
+	m, ctx := state.NewMemStore(), context.Background()
+	acct, app := memEdgeRuleSeedAccount(t, m, ctx, api.PlanPro, "expiry")
+	past := time.Now().Add(-time.Minute)
+	params := memSampleValidateRuleParams(acct, app, "expiry.example.com", "block")
+	params.Name, params.Description, params.ExpiresAt = " Spring sale block ", "temporary", &past
+	created, err := m.CreateEdgeRule(ctx, params)
+	if err != nil {
+		t.Fatalf("CreateEdgeRule: %v", err)
+	}
+	if created.Name != "Spring sale block" || created.Description != "temporary" {
+		t.Fatalf("metadata = %q / %q", created.Name, created.Description)
+	}
+	listed, _ := m.ListEdgeRulesForApp(ctx, app)
+	if len(listed) != 1 || !listed[0].EdgeRuleExpired(time.Now()) {
+		t.Fatalf("expired rule not listed as expired: %+v", listed)
+	}
+	served, _ := m.MatchEdgeRulesForHost(ctx, "expiry.example.com")
+	if len(served) != 0 {
+		t.Fatalf("expired rule still served to the gateway: %+v", served)
+	}
+	var cleared *time.Time
+	if _, err := m.UpdateEdgeRule(ctx, created.ID, state.UpdateEdgeRuleParams{ExpiresAt: &cleared}); err != nil {
+		t.Fatalf("UpdateEdgeRule: %v", err)
+	}
+	if served, _ := m.MatchEdgeRulesForHost(ctx, "expiry.example.com"); len(served) != 1 {
+		t.Fatal("clearing the expiry did not re-activate the rule")
+	}
+}
+
 func TestMemStore_EdgeRule_ManifestKeyUniquePerApp(t *testing.T) {
 	m, ctx := state.NewMemStore(), context.Background()
 	acct, app := memEdgeRuleSeedAccount(t, m, ctx, api.PlanPro, "manifest-key")
@@ -132,5 +165,67 @@ func TestMemStore_EdgeRule_ManifestKeyUniquePerApp(t *testing.T) {
 	}
 	if _, err := m.CreateEdgeRule(ctx, params); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate manifest key error = %v, want ErrConflict", err)
+	}
+}
+
+// MemStore mirrors the ADR-905 version trigger: one version per effective
+// change, none for a no-op, and restore appends a version equal to the target.
+func TestMemStore_EdgeRuleSetVersions_RecordAndRestore(t *testing.T) {
+	m, ctx := state.NewMemStore(), context.Background()
+	acct, app := memEdgeRuleSeedAccount(t, m, ctx, api.PlanPro, "versions")
+	r1, err := m.CreateEdgeRule(ctx, memSampleValidateRuleParams(acct, app, "v.example.com", "block"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreateEdgeRule(ctx, memSampleValidateRuleParams(acct, app, "v.example.com", "block")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateEdgeRule(ctx, r1.ID, state.UpdateEdgeRuleParams{}); err != nil {
+		t.Fatal(err)
+	}
+	if latest, _ := m.LatestEdgeRuleSetVersion(ctx, app); latest != 2 {
+		t.Fatalf("latest = %d, want 2 (no-op update records nothing)", latest)
+	}
+	restore, err := m.RestoreEdgeRuleSetVersion(ctx, app, 1, api.MustLimitsFor(api.PlanPro))
+	if err != nil || len(restore.Rules) != 1 || restore.Rules[0].ID != r1.ID {
+		t.Fatalf("restore = %+v, %v", restore, err)
+	}
+	v1, _ := m.GetEdgeRuleSetVersion(ctx, app, 1)
+	v3, err := m.GetEdgeRuleSetVersion(ctx, app, 3)
+	if err != nil || v3.RulesSHA256 != v1.RulesSHA256 {
+		t.Fatalf("restore version digest mismatch: %v", err)
+	}
+}
+
+// TestMemStore_EdgeRule_ListOrderMatchesGatewayOrder pins the tie order:
+// rules default to priority 100, so ties are the common case, and the
+// listing the dashboard presents as the match order must be the order the
+// gateway read evaluates (oldest first).
+func TestMemStore_EdgeRule_ListOrderMatchesGatewayOrder(t *testing.T) {
+	m, ctx := state.NewMemStore(), context.Background()
+	acct, app := memEdgeRuleSeedAccount(t, m, ctx, api.PlanPro, "tie-order")
+	for range 5 {
+		if _, err := m.CreateEdgeRule(ctx, memSampleValidateRuleParams(acct, app, "tie.example.com", "block")); err != nil {
+			t.Fatalf("CreateEdgeRule: %v", err)
+		}
+	}
+	listed, err := m.ListEdgeRulesForApp(ctx, app)
+	if err != nil {
+		t.Fatalf("ListEdgeRulesForApp: %v", err)
+	}
+	matched, err := m.MatchEdgeRulesForHost(ctx, "tie.example.com")
+	if err != nil {
+		t.Fatalf("MatchEdgeRulesForHost: %v", err)
+	}
+	if len(listed) != 5 || len(matched) != 5 {
+		t.Fatalf("got %d listed, %d matched; want 5", len(listed), len(matched))
+	}
+	for i := range listed {
+		if listed[i].ID != matched[i].ID {
+			t.Fatalf("position %d: listing has %s, gateway read has %s", i, listed[i].ID, matched[i].ID)
+		}
+		if i > 0 && listed[i].CreatedAt.Before(listed[i-1].CreatedAt) {
+			t.Fatalf("position %d: listing is not oldest first", i)
+		}
 	}
 }
