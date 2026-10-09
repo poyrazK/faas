@@ -205,3 +205,40 @@ func TestRecordRestoreWorkingSet(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// adr: 224 — a prefetch must cover every recorded byte, not just the head of
+// each range: the kernel truncates one FADV_WILLNEED to the readahead window.
+func TestAdviseRangesPassesKernelArguments(t *testing.T) {
+	ranges := []fileRange{{0, 4 << 20}, {8 << 20, 6 << 20}}
+	type adviceCall struct {
+		fd, advice int
+		off, size  int64
+	}
+	var calls []adviceCall
+	const fd = 17
+	if err := adviseRanges(fd, ranges, func(gotFD int, off, size int64, advice int) error {
+		calls = append(calls, adviceCall{fd: gotFD, advice: advice, off: off, size: size})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	wantCount := 0
+	for _, r := range ranges {
+		wantCount += int((r.Len + int64(adviseChunk) - 1) / int64(adviseChunk))
+	}
+	if len(calls) != wantCount {
+		t.Fatalf("made %d advice calls, want %d", len(calls), wantCount)
+	}
+	callIndex := 0
+	for _, r := range ranges {
+		for off := r.Off; off < r.Off+r.Len; off += int64(adviseChunk) {
+			wantSize := min(int64(adviseChunk), r.Off+r.Len-off)
+			got := calls[callIndex]
+			if got.fd != fd || got.off != off || got.size != wantSize || got.advice != unix.FADV_WILLNEED {
+				t.Errorf("advice call %d = %+v, want fd=%d range=%d+%d advice=FADV_WILLNEED", callIndex, got, fd, off, wantSize)
+			}
+			callIndex++
+		}
+	}
+}

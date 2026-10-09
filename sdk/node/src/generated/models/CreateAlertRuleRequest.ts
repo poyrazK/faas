@@ -27,7 +27,7 @@ export type CreateAlertRuleRequest = {
   webhook_secret: string;
   cooldown_minutes?: number;
   /**
-   * What to do when the rule fires. Omit to default to webhook. Pre-auth target metrics support webhook only.
+   * What to do when the rule fires. Omit to default to webhook. Pre-auth target and workflow metrics support webhook only.
    */
   action?: 'webhook' | 'rollback' | 'demote' | 'promote';
 };

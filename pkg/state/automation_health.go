@@ -27,6 +27,7 @@ type WorkflowAutomationHealth struct {
 	CompletedRunCount int64
 	ActiveRunCount    int64
 	QueuedRunCount    int64
+	Queue             *api.AutomationQueueHealth
 	StatusCounts      map[string]int64
 	P50DurationMS     *int64
 	P95DurationMS     *int64
@@ -51,14 +52,18 @@ func emptyWorkflowAutomationHealth() WorkflowAutomationHealth {
 	}
 }
 
-func (m *MemStore) GetWorkflowAutomationHealth(_ context.Context, appID, name string, after, before time.Time) (WorkflowAutomationHealth, error) {
+func (m *MemStore) GetWorkflowAutomationHealth(ctx context.Context, appID, name string, after, before time.Time) (WorkflowAutomationHealth, error) {
 	if appID == "" || name == "" || after.After(before) || before.Sub(after) > api.WorkflowAutomationHealthMaxRange {
 		return WorkflowAutomationHealth{}, ErrWorkflowInvalidCreatedRange
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return WorkflowAutomationHealth{}, err
+	}
 
 	health := emptyWorkflowAutomationHealth()
+	health.Queue = m.workflowAutomationQueueHealthLocked(appID, name, time.Now().UTC())
 	durations := make([]float64, 0)
 	topFailures := make(map[string]map[string]time.Time)
 	for _, run := range m.workflowRuns {

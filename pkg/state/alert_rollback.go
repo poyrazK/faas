@@ -64,7 +64,7 @@ func alertRollbackActive(d alertRollbackDeployment) bool {
 	return d.Status == DeployLive && d.CanaryTotalSteps > 0 && d.CanaryStep < d.CanaryTotalSteps && (d.RolloutState == "pending" || d.RolloutState == "rolling_out")
 }
 func alertRollbackMetricAllowed(metric AlertMetric) bool {
-	return metric != AlertMetricPreAuthTargetThreshold && metric != AlertMetricPreAuthTargetSignalGapPct
+	return api.AlertRuleActionAllowedForMetric(string(metric), string(AlertActionRollback))
 }
 func alertRollbackFireID(id string) string {
 	parsed, err := uuid.Parse(id)

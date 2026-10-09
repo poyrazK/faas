@@ -99,7 +99,15 @@ func workflowScheduleResponses(deployment state.Deployment, cursors []state.Work
 		timezone, _ := cronexpr.NormalizeTimezone(trigger.Timezone)
 		item := api.WorkflowScheduleResponse{WorkflowName: definition.Name, DeploymentID: deployment.ID,
 			Schedule: trigger.Schedule, Timezone: timezone, Overlap: trigger.Overlap,
+			CatchUp: trigger.ScheduleCatchUpPolicy(),
 			Enabled: trigger.Enabled == nil || *trigger.Enabled}
+		window, err := trigger.ScheduleCatchUpWindow()
+		if err != nil {
+			return nil, err
+		}
+		if window > 0 {
+			item.CatchUpWindow = window.String()
+		}
 		if item.Overlap == "" {
 			item.Overlap = "skip"
 		}

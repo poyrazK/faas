@@ -3,9 +3,10 @@
 # codebase (errcheck fired for us before; staticcheck catches shadowing,
 # type-mismatch flags, etc.).
 #
-# Schema v2 — the module tool dependency and CI action both pin v2.11.4,
-# which supports the patched Go 1.26 toolchain. The explicit rules below stay
-# enabled when the toolchain changes.
+# Schema v2 — required by golangci-lint >= v2.0. CI pins v2.14.0, built
+# with Go 1.26 to support the repository's 'go 1.26.9' directive (v1.x was
+# built with Go 1.23 and rejected newer go directives — see
+# golangci/golangci-lint#5873).
 version: "2"
 
 # Disable default linters — explicit allow-list below.
@@ -125,6 +126,8 @@ linters:
     #     helper or carry a //nolint:forbidigo comment with a
     #     documented reason reviewed in the PR
     #
+    # Keep the forbidigo policy explicit here so local and CI runs use
+    # the same repository-specific rules across linter releases.
     forbidigo:
       # Don't analyze godoc — stdlib only, no test fixtures in docs.
       exclude-godoc-examples: false
@@ -197,10 +200,8 @@ linters:
     # that DO matter here (hardcoded secrets, SQL injection, weak crypto, TLS
     # config, bind-all, etc.) stay active.
     #
-    # NOTE: only rule IDs present in the pinned golangci-lint gosec ruleset
-    # are valid here — the action runs `config verify` (strict JSON-schema). The
-    # exclusion list does not suppress additional taint rules introduced by newer
-    # supported versions of the linter.
+    # Keep exclusions aligned with the gosec ruleset bundled in the pinned
+    # golangci-lint release. Review new taint rules before adding exclusions.
     gosec:
       excludes:
         - G101 # hardcoded credentials: spec §11 names (CodePlanLimitSecrets, SecretKeyPattern, secretsEnvPath) are stable identifiers, not secrets
@@ -399,7 +400,7 @@ linters:
       # staticcheck's dataflow analyzer doesn't know t.Fatalf
       # terminates. Blanket-excluding the directory rather than
       # chasing individual files is the load-bearing choice here —
-      # the v2.4.0 linter ships enough false-positives in this
+      # the pinned linter ships enough false-positives in this
       # surface that path-by-path maintenance falls behind within
       # a week. If a real nil-deref is later introduced, the
       # unit tests under that file (not staticcheck) will catch

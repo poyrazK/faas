@@ -2104,6 +2104,10 @@ type DomainDoctorObservation struct {
 	CertCheckedAt   pgtype.Timestamptz
 }
 
+type DurableWorkRetainedDeploymentRef struct {
+	DeploymentID pgtype.UUID
+}
+
 type EdgeRule struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID
@@ -5053,6 +5057,7 @@ type PlatformTenantWorkflowScheduleCursor struct {
 	Status           string
 	LastRunID        pgtype.UUID
 	UpdatedAt        pgtype.Timestamptz
+	LastAdmittedAt   pgtype.Timestamptz
 }
 
 type PrPreviewSet struct {
@@ -7091,12 +7096,31 @@ type WorkflowCallbackWebhookBinding struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type WorkflowCodePin struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	ExpiresAt    pgtype.Timestamptz
+}
+
+type WorkflowDispatchCursor struct {
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	ScopeKey         string
+	LastClaimedAt    pgtype.Timestamptz
+}
+
 type WorkflowEvent struct {
 	ID         pgtype.UUID
 	RunID      pgtype.UUID
 	EventName  string
 	Payload    []byte
 	ReceivedAt pgtype.Timestamptz
+}
+
+type WorkflowEventCodeRef struct {
+	OutboxID     int64
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
 }
 
 type WorkflowEventReceipt struct {
@@ -7121,6 +7145,10 @@ type WorkflowOperationEffect struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type WorkflowRetainedDeploymentRef struct {
+	DeploymentID pgtype.UUID
+}
+
 type WorkflowRun struct {
 	ID                       pgtype.UUID
 	AppID                    pgtype.UUID
@@ -7143,6 +7171,7 @@ type WorkflowRun struct {
 	PlatformTenantID         pgtype.UUID
 	CreateIdempotencyKey     pgtype.Text
 	CreateRequestFingerprint []byte
+	DeploymentID             pgtype.UUID
 }
 
 type WorkflowRunResume struct {
@@ -7165,6 +7194,22 @@ type WorkflowScheduleCursor struct {
 	Status          string
 	LastRunID       pgtype.UUID
 	UpdatedAt       pgtype.Timestamptz
+	LastAdmittedAt  pgtype.Timestamptz
+}
+
+type WorkflowScheduleOccurrence struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	WorkflowName     string
+	DeploymentID     pgtype.UUID
+	ScheduledFor     pgtype.Timestamptz
+	EvaluatedAt      pgtype.Timestamptz
+	Status           string
+	RunID            pgtype.UUID
+	DefinitionHash   string
+	ReplayRunID      pgtype.UUID
+	ReplayedAt       pgtype.Timestamptz
 }
 
 type WorkflowStep struct {

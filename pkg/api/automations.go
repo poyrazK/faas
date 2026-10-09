@@ -64,6 +64,31 @@ type AutomationHealthStepFailure struct {
 	LastFailedAt   time.Time `json:"last_failed_at"`
 }
 
+const (
+	AutomationQueueReady            = "ready"
+	AutomationQueueScheduled        = "scheduled"
+	AutomationQueueRetryBackoff     = "retry_backoff"
+	AutomationQueueParkedWait       = "parked_wait"
+	AutomationQueueAppCapacity      = "app_capacity"
+	AutomationQueueTenantCapacity   = "tenant_capacity"
+	AutomationQueueWorkflowCapacity = "workflow_capacity"
+)
+
+// AutomationQueueHealth is a current admission snapshot. It contains neither
+// customer payloads nor tenant/run identities, and does not estimate worker occupancy.
+type AutomationQueueHealth struct {
+	ObservedAt          time.Time        `json:"observed_at"`
+	WaitingRunCount     int64            `json:"waiting_run_count"`
+	DueRunCount         int64            `json:"due_run_count"`
+	StaleRunCount       int64            `json:"stale_run_count"`
+	OldestDueAgeSeconds float64          `json:"oldest_due_age_seconds"`
+	AppRunningCount     int64            `json:"app_running_count"`
+	AppDispatchLimit    int              `json:"app_dispatch_limit"`
+	TenantDispatchLimit int              `json:"tenant_dispatch_limit"`
+	AppAtCapacity       bool             `json:"app_at_capacity"`
+	ReasonCounts        map[string]int64 `json:"reason_counts"`
+}
+
 // AutomationHealthResponse contains bounded operational aggregates, never
 // customer run payloads or error strings.
 type AutomationHealthResponse struct {
@@ -75,6 +100,7 @@ type AutomationHealthResponse struct {
 	CompletedRunCount int64                         `json:"completed_run_count"`
 	ActiveRunCount    int64                         `json:"active_run_count"`
 	QueuedRunCount    int64                         `json:"queued_run_count"`
+	Queue             *AutomationQueueHealth        `json:"queue,omitempty"`
 	SuccessRate       float64                       `json:"success_rate"`
 	StatusCounts      map[string]int64              `json:"status_counts"`
 	P50DurationMS     *int64                        `json:"p50_duration_ms,omitempty"`

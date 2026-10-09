@@ -336,6 +336,8 @@ from .automation_health_response_status_counts import AutomationHealthResponseSt
 from .automation_health_run import AutomationHealthRun
 from .automation_health_run_status import AutomationHealthRunStatus
 from .automation_health_step_failure import AutomationHealthStepFailure
+from .automation_queue_health import AutomationQueueHealth
+from .automation_queue_health_reason_counts import AutomationQueueHealthReasonCounts
 from .automation_response import AutomationResponse
 from .automation_response_source import AutomationResponseSource
 from .automation_revision_response import AutomationRevisionResponse
@@ -1343,6 +1345,7 @@ from .list_workflow_callbacks_response import ListWorkflowCallbacksResponse
 from .list_workflow_resumes_response import ListWorkflowResumesResponse
 from .list_workflow_runs_response import ListWorkflowRunsResponse
 from .list_workflow_runs_status import ListWorkflowRunsStatus
+from .list_workflow_schedule_occurrences_response import ListWorkflowScheduleOccurrencesResponse
 from .list_workflow_schedules_response import ListWorkflowSchedulesResponse
 from .list_workflow_schedules_response_unavailable_reason import ListWorkflowSchedulesResponseUnavailableReason
 from .list_workflow_step_attempts_response import ListWorkflowStepAttemptsResponse
@@ -2594,6 +2597,7 @@ from .tenant_surface_response_cert_kind import TenantSurfaceResponseCertKind
 from .tenant_surface_response_cert_state import TenantSurfaceResponseCertState
 from .tenant_surface_response_status import TenantSurfaceResponseStatus
 from .tenant_workflow_schedule_response import TenantWorkflowScheduleResponse
+from .tenant_workflow_schedule_response_catch_up import TenantWorkflowScheduleResponseCatchUp
 from .tenant_workflow_schedule_response_overlap import TenantWorkflowScheduleResponseOverlap
 from .test_alert_preset_response import TestAlertPresetResponse
 from .test_alert_preset_response_status import TestAlertPresetResponseStatus
@@ -2776,6 +2780,11 @@ from .workflow_callback_webhook_binding_response import WorkflowCallbackWebhookB
 from .workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
 from .workflow_callback_webhook_receipt_response_status import WorkflowCallbackWebhookReceiptResponseStatus
 from .workflow_condition_spec import WorkflowConditionSpec
+from .workflow_diagnostic_blocker import WorkflowDiagnosticBlocker
+from .workflow_diagnostic_blocker_code import WorkflowDiagnosticBlockerCode
+from .workflow_diagnostic_step import WorkflowDiagnosticStep
+from .workflow_diagnostic_step_kind import WorkflowDiagnosticStepKind
+from .workflow_diagnostic_step_status import WorkflowDiagnosticStepStatus
 from .workflow_finished_webhook_payload import WorkflowFinishedWebhookPayload
 from .workflow_finished_webhook_payload_status import WorkflowFinishedWebhookPayloadStatus
 from .workflow_for_each_action_spec import WorkflowForEachActionSpec
@@ -2789,13 +2798,40 @@ from .workflow_join_spec import WorkflowJoinSpec
 from .workflow_outbound_spec import WorkflowOutboundSpec
 from .workflow_outbound_spec_method import WorkflowOutboundSpecMethod
 from .workflow_outbound_spec_query import WorkflowOutboundSpecQuery
+from .workflow_queued_run_cancel_outcome import WorkflowQueuedRunCancelOutcome
+from .workflow_queued_run_cancel_outcome_outcome import WorkflowQueuedRunCancelOutcomeOutcome
+from .workflow_queued_run_cancel_outcome_status import WorkflowQueuedRunCancelOutcomeStatus
+from .workflow_queued_run_cancel_request import WorkflowQueuedRunCancelRequest
+from .workflow_queued_run_cancel_response import WorkflowQueuedRunCancelResponse
+from .workflow_resume_preview import WorkflowResumePreview
 from .workflow_resume_response import WorkflowResumeResponse
 from .workflow_resume_response_previous_status import WorkflowResumeResponsePreviousStatus
 from .workflow_retry_spec import WorkflowRetrySpec
 from .workflow_retry_spec_backoff import WorkflowRetrySpecBackoff
+from .workflow_run_diagnostics_response import WorkflowRunDiagnosticsResponse
+from .workflow_run_diagnostics_response_state_reason import WorkflowRunDiagnosticsResponseStateReason
+from .workflow_run_diagnostics_response_status import WorkflowRunDiagnosticsResponseStatus
 from .workflow_run_response import WorkflowRunResponse
 from .workflow_run_response_status import WorkflowRunResponseStatus
+from .workflow_schedule_catch_up_preview import WorkflowScheduleCatchUpPreview
+from .workflow_schedule_catch_up_preview_outcome import WorkflowScheduleCatchUpPreviewOutcome
+from .workflow_schedule_catch_up_preview_policy import WorkflowScheduleCatchUpPreviewPolicy
+from .workflow_schedule_dst_behavior import WorkflowScheduleDSTBehavior
+from .workflow_schedule_dst_behavior_fall_fold import WorkflowScheduleDSTBehaviorFallFold
+from .workflow_schedule_dst_behavior_mode import WorkflowScheduleDSTBehaviorMode
+from .workflow_schedule_dst_behavior_spring_gap import WorkflowScheduleDSTBehaviorSpringGap
+from .workflow_schedule_fire_preview import WorkflowScheduleFirePreview
+from .workflow_schedule_fire_preview_dst_adjustment import WorkflowScheduleFirePreviewDstAdjustment
+from .workflow_schedule_occurrence_response import WorkflowScheduleOccurrenceResponse
+from .workflow_schedule_occurrence_response_status import WorkflowScheduleOccurrenceResponseStatus
+from .workflow_schedule_preview_response import WorkflowSchedulePreviewResponse
+from .workflow_schedule_preview_response_overlap import WorkflowSchedulePreviewResponseOverlap
+from .workflow_schedule_replay_outcome import WorkflowScheduleReplayOutcome
+from .workflow_schedule_replay_outcome_outcome import WorkflowScheduleReplayOutcomeOutcome
+from .workflow_schedule_replay_request import WorkflowScheduleReplayRequest
+from .workflow_schedule_replay_response import WorkflowScheduleReplayResponse
 from .workflow_schedule_response import WorkflowScheduleResponse
+from .workflow_schedule_response_catch_up import WorkflowScheduleResponseCatchUp
 from .workflow_schedule_response_last_status import WorkflowScheduleResponseLastStatus
 from .workflow_schedule_response_overlap import WorkflowScheduleResponseOverlap
 from .workflow_spec import WorkflowSpec
@@ -2808,6 +2844,7 @@ from .workflow_step_spec import WorkflowStepSpec
 from .workflow_step_spec_input_type_0 import WorkflowStepSpecInputType0
 from .workflow_step_spec_method import WorkflowStepSpecMethod
 from .workflow_trigger_spec import WorkflowTriggerSpec
+from .workflow_trigger_spec_catch_up import WorkflowTriggerSpecCatchUp
 from .workflow_trigger_spec_filter import WorkflowTriggerSpecFilter
 from .workflow_trigger_spec_overlap import WorkflowTriggerSpecOverlap
 from .workflow_trigger_spec_type import WorkflowTriggerSpecType
@@ -3151,6 +3188,8 @@ __all__ = (
     "AutomationHealthRun",
     "AutomationHealthRunStatus",
     "AutomationHealthStepFailure",
+    "AutomationQueueHealth",
+    "AutomationQueueHealthReasonCounts",
     "AutomationResponse",
     "AutomationResponseSource",
     "AutomationRevisionResponse",
@@ -4138,6 +4177,7 @@ __all__ = (
     "ListWorkflowResumesResponse",
     "ListWorkflowRunsResponse",
     "ListWorkflowRunsStatus",
+    "ListWorkflowScheduleOccurrencesResponse",
     "ListWorkflowSchedulesResponse",
     "ListWorkflowSchedulesResponseUnavailableReason",
     "ListWorkflowStepAttemptsResponse",
@@ -5333,6 +5373,7 @@ __all__ = (
     "TenantSurfaceResponseCertState",
     "TenantSurfaceResponseStatus",
     "TenantWorkflowScheduleResponse",
+    "TenantWorkflowScheduleResponseCatchUp",
     "TenantWorkflowScheduleResponseOverlap",
     "TestAlertPresetResponse",
     "TestAlertPresetResponseStatus",
@@ -5499,6 +5540,11 @@ __all__ = (
     "WorkflowCallbackWebhookReceiptResponse",
     "WorkflowCallbackWebhookReceiptResponseStatus",
     "WorkflowConditionSpec",
+    "WorkflowDiagnosticBlocker",
+    "WorkflowDiagnosticBlockerCode",
+    "WorkflowDiagnosticStep",
+    "WorkflowDiagnosticStepKind",
+    "WorkflowDiagnosticStepStatus",
     "WorkflowFinishedWebhookPayload",
     "WorkflowFinishedWebhookPayloadStatus",
     "WorkflowForEachActionSpec",
@@ -5512,13 +5558,40 @@ __all__ = (
     "WorkflowOutboundSpec",
     "WorkflowOutboundSpecMethod",
     "WorkflowOutboundSpecQuery",
+    "WorkflowQueuedRunCancelOutcome",
+    "WorkflowQueuedRunCancelOutcomeOutcome",
+    "WorkflowQueuedRunCancelOutcomeStatus",
+    "WorkflowQueuedRunCancelRequest",
+    "WorkflowQueuedRunCancelResponse",
+    "WorkflowResumePreview",
     "WorkflowResumeResponse",
     "WorkflowResumeResponsePreviousStatus",
     "WorkflowRetrySpec",
     "WorkflowRetrySpecBackoff",
+    "WorkflowRunDiagnosticsResponse",
+    "WorkflowRunDiagnosticsResponseStateReason",
+    "WorkflowRunDiagnosticsResponseStatus",
     "WorkflowRunResponse",
     "WorkflowRunResponseStatus",
+    "WorkflowScheduleCatchUpPreview",
+    "WorkflowScheduleCatchUpPreviewOutcome",
+    "WorkflowScheduleCatchUpPreviewPolicy",
+    "WorkflowScheduleDSTBehavior",
+    "WorkflowScheduleDSTBehaviorFallFold",
+    "WorkflowScheduleDSTBehaviorMode",
+    "WorkflowScheduleDSTBehaviorSpringGap",
+    "WorkflowScheduleFirePreview",
+    "WorkflowScheduleFirePreviewDstAdjustment",
+    "WorkflowScheduleOccurrenceResponse",
+    "WorkflowScheduleOccurrenceResponseStatus",
+    "WorkflowSchedulePreviewResponse",
+    "WorkflowSchedulePreviewResponseOverlap",
+    "WorkflowScheduleReplayOutcome",
+    "WorkflowScheduleReplayOutcomeOutcome",
+    "WorkflowScheduleReplayRequest",
+    "WorkflowScheduleReplayResponse",
     "WorkflowScheduleResponse",
+    "WorkflowScheduleResponseCatchUp",
     "WorkflowScheduleResponseLastStatus",
     "WorkflowScheduleResponseOverlap",
     "WorkflowSpec",
@@ -5531,6 +5604,7 @@ __all__ = (
     "WorkflowStepSpecInputType0",
     "WorkflowStepSpecMethod",
     "WorkflowTriggerSpec",
+    "WorkflowTriggerSpecCatchUp",
     "WorkflowTriggerSpecFilter",
     "WorkflowTriggerSpecOverlap",
     "WorkflowTriggerSpecType",
