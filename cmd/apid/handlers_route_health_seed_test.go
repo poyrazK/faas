@@ -103,11 +103,11 @@ func TestAdvanceCanarySeedsReportModeRouteHealth(t *testing.T) {
 // adr: 844
 func TestSeedRouteHealthSkipsConfiguredAndIneligible(t *testing.T) {
 	rows := []sqlc.RequestTelemetryRouteCustomersRow{seedUsageRow("POST", "/checkout", 3, 100)}
-	ctx := context.Background()
 
 	t.Run("customer opted out with an empty selector list", func(t *testing.T) {
 		e := setup(t, api.PlanPro)
 		app, _, canary := seedCanaryFixture(t, e, "seed-opt-out")
+		ctx := t.Context()
 		zero := int64(0)
 		if _, err := e.store.SetRouteHealthGate(ctx, e.acct.ID, app.ID, api.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: &zero, Routes: []api.RouteHealthRoute{}}); err != nil {
 			t.Fatal(err)
@@ -121,6 +121,7 @@ func TestSeedRouteHealthSkipsConfiguredAndIneligible(t *testing.T) {
 	t.Run("later canary stage", func(t *testing.T) {
 		e := setup(t, api.PlanPro)
 		app, _, canary := seedCanaryFixture(t, e, "seed-later-stage")
+		ctx := t.Context()
 		canary.CanaryStep = 1
 		e.s.store = &seedTelemetryStore{MemStore: e.store, rows: rows}
 		e.s.seedDefaultRouteHealthGate(ctx, e.acct, app, canary)
@@ -131,6 +132,7 @@ func TestSeedRouteHealthSkipsConfiguredAndIneligible(t *testing.T) {
 	t.Run("no observed routes", func(t *testing.T) {
 		e := setup(t, api.PlanPro)
 		app, _, canary := seedCanaryFixture(t, e, "seed-no-traffic")
+		ctx := t.Context()
 		e.s.store = &seedTelemetryStore{MemStore: e.store}
 		e.s.seedDefaultRouteHealthGate(ctx, e.acct, app, canary)
 		if gate, _ := e.store.GetRouteHealthGate(ctx, e.acct.ID, app.ID); gate.Revision != 0 {
@@ -143,6 +145,7 @@ func TestSeedRouteHealthSkipsConfiguredAndIneligible(t *testing.T) {
 			t.Skip("free plan includes request telemetry")
 		}
 		app, _, canary := seedCanaryFixture(t, e, "seed-free")
+		ctx := t.Context()
 		store := &seedTelemetryStore{MemStore: e.store, rows: rows}
 		e.s.store = store
 		e.s.seedDefaultRouteHealthGate(ctx, e.acct, app, canary)

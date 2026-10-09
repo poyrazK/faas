@@ -65,9 +65,9 @@ func TestRouteMonitorRollbackRequestsCheckedRollbackOnce(t *testing.T) {
 
 // adr: 845
 func TestRouteMonitorRollbackSkipsOrIgnores(t *testing.T) {
-	ctx := t.Context()
 	t.Run("incident outside the post-release window", func(t *testing.T) {
 		e, app, _, _, incidentID := routeMonitorRollbackFixture(t, "rollback", api.RouteMonitorRollbackWindow+time.Minute)
+		ctx := t.Context()
 		e.s.applyRouteMonitorRollback(ctx, state.RouteMonitorTarget{AccountID: e.acct.ID, AppID: app.ID})
 		incident, err := e.store.GetRouteMonitorIncident(ctx, e.acct.ID, app.ID, incidentID)
 		if err != nil || incident.Rollback == nil || incident.Rollback.Status != "skipped" || incident.Rollback.Reason != routemonitor.RollbackSkipOutsideWindow {
@@ -76,6 +76,7 @@ func TestRouteMonitorRollbackSkipsOrIgnores(t *testing.T) {
 	})
 	t.Run("report mode", func(t *testing.T) {
 		e, app, _, _, incidentID := routeMonitorRollbackFixture(t, "", time.Minute)
+		ctx := t.Context()
 		e.s.applyRouteMonitorRollback(ctx, state.RouteMonitorTarget{AccountID: e.acct.ID, AppID: app.ID})
 		incident, err := e.store.GetRouteMonitorIncident(ctx, e.acct.ID, app.ID, incidentID)
 		if err != nil || incident.Rollback != nil {
