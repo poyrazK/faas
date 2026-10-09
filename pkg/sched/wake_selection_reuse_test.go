@@ -1,3 +1,4 @@
+// spec: §6 — schedd owns admission; a deployment cutover mid-wake fails closed.
 package sched
 
 import (

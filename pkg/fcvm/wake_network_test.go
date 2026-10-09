@@ -1,3 +1,4 @@
+// adr: 009 — each wake builds its own netns around the identical inner network world.
 package fcvm
 
 import (

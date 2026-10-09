@@ -1,3 +1,4 @@
+// adr: 005 — a failed restore must unmount cleanly so the cold-boot fallback always works.
 package fcvm
 
 import (
