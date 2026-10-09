@@ -661,6 +661,24 @@ and a profile-aware inspection command. Once ready, use `jobs run --interactive`
 For recurring schedules, environment variables, empty command arguments,
 custom policies, or scripts, use the explicit CLI or API as appropriate.
 
+## Wait for a Job image to become ready
+
+```sh
+gregale jobs info my-job --wait-ready --timeout 5m
+```
+
+Follow image preparation without starting a run. The wait shows status changes,
+returns when ready, and reports image preparation failures. Guided creation
+also offers this wait for a pending image. The wait pins Job identity and image
+reference, then pins the resolved digest once available; a changed target stops
+observation. A printed resume command reads current configuration on a new wait.
+
+`--timeout` defaults to 5 minutes and `--poll-interval` to 2 seconds; both must
+be positive. Exit codes are 0 for ready, 1 for failure/read errors/changed target,
+124 for timeout, and 130 for interruption. With `--json`, one final receipt
+contains the last observed Job, exit code, resume command, and any error.
+Interrupting or timing out leaves image preparation running independently.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

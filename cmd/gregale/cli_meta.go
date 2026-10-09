@@ -1484,7 +1484,11 @@ var cliCommands = []cliCommand{
 				{Name: "schedule-policy", Value: "JSON", Short: "versioned recurring schedule policy JSON"},
 				{Name: "failure-rules", Value: "JSON", Short: "versioned exit-code and outcome retry rules JSON"},
 			}},
-			{Name: "info", Short: "Show one job", Positionals: []string{"<name>"}},
+			{Name: "info", Short: "Show a Job or wait for its image to be ready", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "wait-ready", Bool: true, Short: "wait for selected image preparation"},
+				{Name: "timeout", Value: "DURATION", Short: "maximum image wait (default 5m)"},
+				{Name: "poll-interval", Value: "DURATION", Short: "polling interval (default 2s)"},
+			}, Examples: []string{"gregale jobs info my-job --wait-ready --timeout 5m"}},
 			{Name: "update", Short: "Update one job", Positionals: []string{"[<name>]"}, Examples: []string{"gregale jobs update --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Bool: true, Short: "choose a Job, edit prefilled settings, and confirm changes"},
 				{Name: "image", Value: "REF", Short: "new OCI image"},

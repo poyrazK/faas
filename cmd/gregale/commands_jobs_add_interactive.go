@@ -146,5 +146,14 @@ func cmdJobsAddInteractive() int {
 		command = append(command, "--profile", quoteLogCommandArg(profile))
 	}
 	_, _ = fmt.Fprintln(osStdout, "Inspection command (POSIX shells):\n"+strings.Join(append(command, "jobs", "info", quoteLogCommandArg(job.Name)), " "))
+	if job.ImageMaterializationStatus == "pending" || job.ImageMaterializationStatus == "verifying_legacy" {
+		follow, inputErr := prompt.confirm(ctx, "Wait up to 5 minutes for this image to become ready?")
+		if inputErr != nil {
+			return startInputExit(inputErr)
+		}
+		if follow {
+			return outputJobImageWait(ctx, client, job, 5*time.Minute, 2*time.Second)
+		}
+	}
 	return 0
 }

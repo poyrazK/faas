@@ -258,6 +258,9 @@ func cmdJobsAdd(args []string) int {
 // posture as `gregale apps info`).
 func cmdJobsInfo(args []string) int {
 	if len(args) != 1 {
+		return cmdJobsInfoWaitArgs(args)
+	}
+	if len(args) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale jobs info <name>", "jobs")
 		return 1
 	}

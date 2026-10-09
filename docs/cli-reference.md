@@ -3664,9 +3664,21 @@ gregale jobs add --interactive
 
 ### jobs info
 
-Show one job
+Show a Job or wait for its image to be ready
 
-`gregale jobs info <name>`
+`gregale jobs info [--wait-ready] [--timeout <DURATION>] [--poll-interval <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait-ready` | wait for selected image preparation |  |
+| `--timeout <DURATION>` | maximum image wait (default 5m) |  |
+| `--poll-interval <DURATION>` | polling interval (default 2s) |  |
+
+Examples:
+
+```sh
+gregale jobs info my-job --wait-ready --timeout 5m
+```
 
 ### jobs update
 
