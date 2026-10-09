@@ -1816,7 +1816,7 @@ Channel snapshots are not automatically filtered; your backend must provide
 application state appropriate for the selected scope.
 
 Upgrade apid and realtimed together: the private history RPC now carries metadata.
-Apply `20261009100000001_managed_realtime_subscription_filters.sql` after the batch
+Apply `20261009100000943_managed_realtime_subscription_filters.sql` after the batch
 migration. It has not been applied in this workspace.
 
 ### Versioned channel event schemas
