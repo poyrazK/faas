@@ -36,11 +36,11 @@ func Hash(b Bundle) string {
 }
 
 func Load(path string) (map[string]Bundle, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // Operator-configured registry path, never a customer-provided path.
 	if err != nil {
 		return nil, errors.New("validator bundle registry is unavailable")
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	body, err := io.ReadAll(io.LimitReader(f, api.MaxDurableEntityValidatorRegistryBytes+1))
 	if err != nil || len(body) > api.MaxDurableEntityValidatorRegistryBytes {
 		return nil, errors.New("validator registry exceeds its byte limit")

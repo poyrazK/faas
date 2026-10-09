@@ -75,20 +75,20 @@ func (s *server) waitIsolatedRestoreValidator(ctx context.Context, accountID, ex
 			return row.Result, nil
 		}
 		if err != nil && ctx.Err() == nil {
-			s.cancelRestoreValidator(accountID, executionID)
+			s.cancelRestoreValidator(ctx, accountID, executionID)
 			return nil, err
 		}
 		select {
 		case <-ctx.Done():
-			s.cancelRestoreValidator(accountID, executionID)
+			s.cancelRestoreValidator(ctx, accountID, executionID)
 			return nil, ctx.Err()
 		case <-ticker.C:
 		}
 	}
 }
 
-func (s *server) cancelRestoreValidator(accountID, executionID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), api.DurableEntityReleaseTimeout)
+func (s *server) cancelRestoreValidator(parent context.Context, accountID, executionID string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), api.DurableEntityReleaseTimeout)
 	defer cancel()
 	_, _ = s.store.RequestExecutionCancellation(ctx, accountID, executionID, time.Now().UTC())
 }

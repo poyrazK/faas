@@ -66,10 +66,6 @@ func (m *Manager) execute(ctx context.Context, claim Claim, request Request, han
 	return m.commitMode(ctx, claim, value, state, request.ID, fingerprint, transition, preserveDelivery)
 }
 
-func (m *Manager) commit(ctx context.Context, claim Claim, base manifest, state snapshot, requestID, fingerprint string, transition Transition) (Result, error) {
-	return m.commitMode(ctx, claim, base, state, requestID, fingerprint, transition, false)
-}
-
 func (m *Manager) commitMode(ctx context.Context, claim Claim, base manifest, state snapshot, requestID, fingerprint string, transition Transition, preserveDelivery bool) (Result, error) {
 	if !json.Valid(transition.Data) || !json.Valid(transition.Result) || !validAlarm(transition.AlarmAt) {
 		return Result{}, ErrInvalid

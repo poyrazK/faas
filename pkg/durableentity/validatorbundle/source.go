@@ -5,6 +5,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path"
@@ -28,16 +29,16 @@ func (a *Artifacts) Build(ctx context.Context, appID, deploymentID, archive, roo
 	if root != "" && (path.Clean(root) != root || strings.HasPrefix(root, "/") || root == ".." || strings.HasPrefix(root, "../") || strings.Contains(root, "\\")) {
 		return ErrArtifactUnavailable
 	}
-	f, err := os.Open(archive)
+	f, err := os.Open(archive) //nolint:forbidigo // Trusted build lifecycle supplies the verified source archive path.
 	if err != nil {
 		return ErrArtifactUnavailable
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	zip, err := gzip.NewReader(f)
 	if err != nil {
 		return ErrArtifactUnavailable
 	}
-	defer zip.Close()
+	defer func() { _ = zip.Close() }()
 	limited := &io.LimitedReader{R: zip, N: api.MaxDurableEntityValidatorBuildArchiveBytes + 1}
 	tr := tar.NewReader(limited)
 	name := "gregale.validator.json"
@@ -51,7 +52,7 @@ func (a *Artifacts) Build(ctx context.Context, appID, deploymentID, archive, roo
 			return ctx.Err()
 		}
 		header, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -63,7 +64,8 @@ func (a *Artifacts) Build(ctx context.Context, appID, deploymentID, archive, roo
 		if strings.TrimPrefix(header.Name, "./") != name {
 			continue
 		}
-		if found || (header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA) || header.Size <= 0 || header.Size > api.MaxDurableEntityValidatorRegistryBytes {
+		// archive/tar normalizes legacy regular-file headers to TypeReg.
+		if found || header.Typeflag != tar.TypeReg || header.Size <= 0 || header.Size > api.MaxDurableEntityValidatorRegistryBytes {
 			return ErrArtifactUnavailable
 		}
 		body, err := io.ReadAll(io.LimitReader(tr, api.MaxDurableEntityValidatorRegistryBytes+1))

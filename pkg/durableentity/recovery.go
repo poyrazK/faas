@@ -62,7 +62,9 @@ func validRecoveryRevision(value string) bool {
 		return false
 	}
 	for _, c := range value {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+		decimal := c >= '0' && c <= '9'
+		hexLetter := c >= 'a' && c <= 'f'
+		if !decimal && !hexLetter {
 			return false
 		}
 	}

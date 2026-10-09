@@ -110,7 +110,7 @@ func packageBundle(root, entry string, names []string) (validatorbundle.Bundle, 
 	if err != nil {
 		return b, fmt.Errorf("validator root unavailable")
 	}
-	defer rootFS.Close()
+	defer func() { _ = rootFS.Close() }()
 	total := 0
 	for _, name := range names {
 		// Validate normalized paths before accessing the filesystem.
@@ -132,11 +132,11 @@ func packageBundle(root, entry string, names []string) (validatorbundle.Bundle, 
 		}
 		info, err := f.Stat()
 		if err != nil || !info.Mode().IsRegular() {
-			f.Close()
+			_ = f.Close()
 			return b, fmt.Errorf("validator source must contain regular files")
 		}
 		body, err := io.ReadAll(io.LimitReader(f, int64(api.MaxDurableEntityValidatorRegistryBytes-total)+1))
-		f.Close()
+		_ = f.Close()
 		if err != nil || len(body) > api.MaxDurableEntityValidatorRegistryBytes-total {
 			return b, fmt.Errorf("validator source exceeds registry byte limit")
 		}
@@ -155,13 +155,13 @@ func publishArtifact(path string, body []byte) error {
 		return err
 	}
 	temporary := f.Name()
-	defer os.Remove(temporary)
+	defer func() { _ = os.Remove(temporary) }()
 	if _, err = f.Write(body); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	if err = f.Sync(); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	if err = f.Close(); err != nil {
