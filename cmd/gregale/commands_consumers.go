@@ -28,6 +28,7 @@ var consumerVerbPositionals = map[string][]string{
 	"key-revoke":         {"slug", "consumer-id", "key-id"},
 	"usage":              {"slug", "consumer-id"},
 	"quote":              {"slug", "consumer-id"},
+	"completeness":       {"slug", "consumer-id"},
 	"rate-cards":         {"slug"},
 	"rate-card-create":   {"slug"},
 	"statements":         {"slug", "consumer-id"},
@@ -42,7 +43,7 @@ var consumerVerbPositionals = map[string][]string{
 	"plan-history":       {"slug", "consumer-id"},
 }
 
-const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|plans|plan-create|plan-update|set-plan|plan-history> <slug> [consumer-id] [id] [flags]"
+const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|plans|plan-create|plan-update|set-plan|plan-history> <slug> [consumer-id] [id] [flags]"
 
 // consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.
@@ -64,6 +65,7 @@ var consumerVerbFlags = map[string][]string{
 	"key-create":        {"name", "scopes", "expires"},
 	"usage":             {"since", "until"},
 	"quote":             {"since", "until"},
+	"completeness":      {"period-start", "period-end", "month"},
 	"rate-card-create":  {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from"},
 	"plan-create":       {"name", "max-requests-per-minute", "max-units-per-month"},
 	"plan-update":       {"plan", "max-requests-per-minute", "max-units-per-month"},
@@ -143,6 +145,7 @@ func runConsumers(verb string, args []string, f consumerFlags) int {
 	if err != nil {
 		return printErr("Consumers "+verb+" failed", err)
 	}
+	warnUsageGaps(context.Background(), client, verb, args, out)
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
@@ -180,7 +183,7 @@ func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
 		return buildConsumerKeyRequest(f)
 	case "rate-card-create":
 		return buildAppRateCardRequest(f)
-	case "statement-draft":
+	case "statement-draft", "completeness":
 		start, end, err := statementPeriod(f.periodStart, f.periodEnd, f.month)
 		if err != nil {
 			return nil, err
@@ -394,6 +397,9 @@ func callConsumers(ctx context.Context, client *Client, verb string, args []stri
 		return client.GetAPIConsumerUsage(ctx, slug, args[1], api.APIConsumerUsageOptions{Since: f.since, Until: f.until})
 	case "quote":
 		return client.GetAPIConsumerUsageQuote(ctx, slug, args[1], api.APIConsumerUsageOptions{Since: f.since, Until: f.until})
+	case "completeness":
+		period := request.(api.CreateAPIConsumerUsageStatementRequest)
+		return client.GetAPIConsumerUsageCompleteness(ctx, slug, args[1], *period.PeriodStart, *period.PeriodEnd)
 	case "rate-cards":
 		return client.ListAPIConsumerRateCards(ctx, slug)
 	case "rate-card-create":
@@ -425,6 +431,25 @@ func callConsumerStatements(ctx context.Context, client *Client, verb string, ar
 		return client.ClaimAPIConsumerUsageStatement(ctx, slug, consumerID, args[2], request.(api.ClaimAPIConsumerUsageStatementRequest))
 	}
 	return nil, fmt.Errorf("unknown consumers verb %q", verb)
+}
+
+// warnUsageGaps checks a drafted or finalized statement's period against
+// request telemetry (ADR-848) and warns on stderr when telemetry saw
+// successful requests the billing ledger lacks. It is advisory: a failed
+// check never fails the command.
+func warnUsageGaps(ctx context.Context, client *Client, verb string, args []string, out any) {
+	statement, ok := out.(api.APIConsumerUsageStatementResponse)
+	if !ok || (verb != "statement-draft" && verb != "statement-finalize") {
+		return
+	}
+	check, err := client.GetAPIConsumerUsageCompleteness(ctx, args[0], args[1], statement.PeriodStart, statement.PeriodEnd)
+	if err != nil || check.Status != "gaps_detected" {
+		return
+	}
+	_, _ = fmt.Fprintf(osStderr, "Warning: request telemetry saw at least %d successful requests this statement does not bill (%s – %s).\n"+
+		"Run `gregale consumers completeness %s %s --period-start %s --period-end %s` before invoicing.\n",
+		check.MissingRequests, check.CheckedFrom.Format(time.RFC3339), check.CheckedUntil.Format(time.RFC3339),
+		args[0], args[1], statement.PeriodStart.Format(time.RFC3339), statement.PeriodEnd.Format(time.RFC3339))
 }
 
 // formatMillicents renders an exact amount (100,000 millicents per currency
@@ -522,6 +547,8 @@ func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
 		if priced := v.BillableUnits - v.UnpricedUnits; charged != priced {
 			_, _ = fmt.Fprintf(tw, "Charged units\t%d\t(the monthly allowance covers the rest; an adjustment can charge units that were free before)\n", charged)
 		}
+	case api.APIConsumerUsageCompletenessResponse:
+		printUsageCompleteness(tw, v)
 	case api.APIConsumerUsageStatementHandoffResponse:
 		_, _ = fmt.Fprintf(tw, "Statement\t%s\nInvoice\t%s\nAmount\t%s\n", v.StatementID, v.ExternalInvoiceID, formatMillicents(v.Currency, v.AmountMillicents))
 	default:
@@ -542,5 +569,25 @@ func printStatementSummary(tw *tabwriter.Writer, id string, start, end time.Time
 	}
 	if revision > 1 && status != "superseded" {
 		_, _ = fmt.Fprintf(tw, "Note\tthis revision bills only units not covered by earlier finalized revisions\n")
+	}
+}
+
+// printUsageCompleteness explains a completeness check (ADR-848) in terms
+// of what the operator should do before invoicing.
+func printUsageCompleteness(tw *tabwriter.Writer, v api.APIConsumerUsageCompletenessResponse) {
+	_, _ = fmt.Fprintf(tw, "Status\t%s\n", v.Status)
+	if !v.CheckedUntil.After(v.CheckedFrom) {
+		_, _ = fmt.Fprintf(tw, "Note\tno settled hours within request telemetry's 14-day retention to check\n")
+		return
+	}
+	_, _ = fmt.Fprintf(tw, "Checked\t%s – %s\nBilled successful requests\t%d\nTelemetry successful requests\t%d\nConfirmed\t%d\nMissing (at least)\t%d\n",
+		v.CheckedFrom.Format(time.RFC3339), v.CheckedUntil.Format(time.RFC3339), v.LedgerRequests, v.TelemetryRequests, v.ConfirmedRequests, v.MissingRequests)
+	switch v.Status {
+	case "gaps_detected":
+		_, _ = fmt.Fprintf(tw, "Note\ttelemetry saw requests the billing ledger lacks; investigate before finalizing\n")
+	case "partial":
+		_, _ = fmt.Fprintf(tw, "Note\ttelemetry is sampled, so it confirms only part of the billed usage; no gaps found\n")
+	case "unverifiable":
+		_, _ = fmt.Fprintf(tw, "Note\trequest telemetry holds no evidence for this period (disabled, sampled out, or expired)\n")
 	}
 }

@@ -176,6 +176,31 @@ gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id
 Statements cannot overlap: once a period is handed off, a different period
 covering the same minutes cannot be handed off for that consumer.
 
+### Check usage before invoicing
+
+The completeness check compares a consumer's billed requests with Gregale's
+request telemetry, hour by hour:
+
+```bash
+gregale consumers completeness my-api CONSUMER_ID --month 2026-09
+```
+
+Both sides count only successful requests, so unbilled errors, rate-limit
+rejections and platform failures never look like gaps. The result is one of:
+
+| Status | Meaning |
+|---|---|
+| `verified` | Telemetry confirms every billed request and saw none that is missing. |
+| `partial` | No gaps, but telemetry is sampled and confirms only part of the billed requests. |
+| `gaps_detected` | Telemetry saw successful requests the ledger never billed. `missing_requests` is a lower bound. |
+| `unverifiable` | Telemetry has no data for the period: it is disabled, sampled out or expired. |
+
+Only whole UTC hours that ended at least 10 minutes ago and fall within
+telemetry's 14-day retention are checked. Run it before you finalize a
+month-end statement. `statement-draft` and `statement-finalize` print a
+warning when the check finds gaps. The check is advisory: it never blocks
+finalizing and stores nothing.
+
 ## Customers across several apps
 
 To bill one customer across several apps, link their consumers to a
@@ -193,7 +218,9 @@ those consumers with app statements.
 - Tiers are graduated. Pricing every request in the month at the price of the
   step the month ends in is not available.
 - Usage is recorded when a request finishes. If the gateway crashes before the
-  record is written to disk, that request can be lost. Reconcile with your own
+  record is written to disk, that request can be lost. The completeness check
+  finds such losses only while request telemetry still holds the period
+  (14 days) and only where telemetry was not sampled. Reconcile with your own
   records before closing a high-value invoice.
 - Gregale records the handoff to your billing system but never charges your
   customers.
@@ -201,5 +228,6 @@ those consumers with app statements.
 See [ADR-843](adr/843-app-consumer-statement-revisions-and-platform-failure-billing.md),
 [ADR-844](adr/844-api-consumer-monthly-allowances.md),
 [ADR-845](adr/845-api-consumer-graduated-tiers.md),
-[ADR-846](adr/846-api-consumer-route-weights.md), and
-[ADR-847](adr/847-api-consumer-plans.md) for the billing rules.
+[ADR-846](adr/846-api-consumer-route-weights.md),
+[ADR-847](adr/847-api-consumer-plans.md), and
+[ADR-848](adr/848-api-consumer-usage-completeness.md) for the billing rules.

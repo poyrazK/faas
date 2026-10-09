@@ -10,6 +10,7 @@ import type { APIConsumerPlanResponse } from '../models/APIConsumerPlanResponse.
 import type { APIConsumerRateCardListResponse } from '../models/APIConsumerRateCardListResponse.js';
 import type { APIConsumerRateCardResponse } from '../models/APIConsumerRateCardResponse.js';
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
+import type { APIConsumerUsageCompletenessResponse } from '../models/APIConsumerUsageCompletenessResponse.js';
 import type { APIConsumerUsageQuoteResponse } from '../models/APIConsumerUsageQuoteResponse.js';
 import type { APIConsumerUsageResponse } from '../models/APIConsumerUsageResponse.js';
 import type { APIConsumerUsageStatementHandoffResponse } from '../models/APIConsumerUsageStatementHandoffResponse.js';
@@ -232,6 +233,60 @@ export class ConsumersService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/usage/quote',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      query: {
+        'since': since,
+        'until': until,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Check one API consumer's billed usage against request telemetry.
+   * Compares successful requests in the billing ledger with successful
+   * requests in request telemetry, hour by hour, so usage the ledger
+   * never received is visible before a statement is invoiced. Only whole
+   * UTC hours that have settled (10 minutes) and that telemetry still
+   * retains (14 days) are checked. Telemetry is sampled, so it proves a
+   * lower bound of missing usage but cannot prove completeness of every
+   * request. Read-only; nothing is stored.
+   *
+   * @returns APIConsumerUsageCompletenessResponse Completeness of billed usage over the checked hours.
+   * @throws ApiError
+   */
+  public static getApiConsumerUsageCompleteness({
+    slug,
+    consumerId,
+    since,
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer identity whose billed usage is checked.
+     */
+    consumerId: string,
+    /**
+     * RFC3339 start of the period to check, usually a statement's period_start.
+     */
+    since: string,
+    /**
+     * RFC3339 exclusive end of the period to check; at most 90 days after since.
+     */
+    until: string,
+  }): CancelablePromise<APIConsumerUsageCompletenessResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-completeness',
       path: {
         'slug': slug,
         'consumer_id': consumerId,

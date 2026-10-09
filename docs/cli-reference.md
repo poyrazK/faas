@@ -5339,6 +5339,7 @@ gregale consumers key-create my-api CONSUMER_ID --name production --scopes read,
 gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 --included-units 10000
 gregale consumers rate-card-create my-api --currency EUR --tier 10000:0 --tier 1000000:25 --tier inf:10
 gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 --weight "POST /generate=20"
+gregale consumers completeness my-api CONSUMER_ID --month 2026-09
 gregale consumers statement-draft my-api CONSUMER_ID --month 2026-09
 gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id INV-1001
 gregale consumers plan-create my-api --name free --max-requests-per-minute 60 --max-units-per-month 1000
@@ -5419,6 +5420,18 @@ Estimate a consumer&#39;s charges with current rate cards
 |---|---|---|
 | `--since <RFC3339>` | window start |  |
 | `--until <RFC3339>` | window end |  |
+
+### consumers completeness
+
+Check billed usage against request telemetry before invoicing
+
+`gregale consumers completeness [--month <YYYY-MM>] [--period-start <RFC3339>] [--period-end <RFC3339>] <slug> <consumer-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--month <YYYY-MM>` | calendar month |  |
+| `--period-start <RFC3339>` | period start (UTC minute) |  |
+| `--period-end <RFC3339>` | exclusive period end (UTC minute) |  |
 
 ### consumers rate-cards
 

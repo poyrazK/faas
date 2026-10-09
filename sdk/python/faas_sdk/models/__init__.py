@@ -104,6 +104,8 @@ from .api_consumer_rate_card_tier import APIConsumerRateCardTier
 from .api_consumer_response import APIConsumerResponse
 from .api_consumer_response_status import APIConsumerResponseStatus
 from .api_consumer_usage_bucket_response import APIConsumerUsageBucketResponse
+from .api_consumer_usage_completeness_response import APIConsumerUsageCompletenessResponse
+from .api_consumer_usage_completeness_response_status import APIConsumerUsageCompletenessResponseStatus
 from .api_consumer_usage_quote_bucket_response import APIConsumerUsageQuoteBucketResponse
 from .api_consumer_usage_quote_response import APIConsumerUsageQuoteResponse
 from .api_consumer_usage_response import APIConsumerUsageResponse
@@ -3132,6 +3134,8 @@ __all__ = (
     "APIConsumerResponse",
     "APIConsumerResponseStatus",
     "APIConsumerUsageBucketResponse",
+    "APIConsumerUsageCompletenessResponse",
+    "APIConsumerUsageCompletenessResponseStatus",
     "APIConsumerUsageQuoteBucketResponse",
     "APIConsumerUsageQuoteResponse",
     "APIConsumerUsageResponse",

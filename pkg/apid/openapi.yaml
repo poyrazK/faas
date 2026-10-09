@@ -8575,6 +8575,46 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-completeness:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer identity whose billed usage is checked.
+        schema: { type: string, format: uuid }
+      - name: since
+        in: query
+        required: true
+        description: RFC3339 start of the period to check, usually a statement's period_start.
+        schema: { type: string, format: date-time }
+      - name: until
+        in: query
+        required: true
+        description: RFC3339 exclusive end of the period to check; at most 90 days after since.
+        schema: { type: string, format: date-time }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerUsageCompleteness
+      summary: Check one API consumer's billed usage against request telemetry.
+      description: |
+        Compares successful requests in the billing ledger with successful
+        requests in request telemetry, hour by hour, so usage the ledger
+        never received is visible before a statement is invoiced. Only whole
+        UTC hours that have settled (10 minutes) and that telemetry still
+        retains (14 days) are checked. Telemetry is sampled, so it proves a
+        lower bound of missing usage but cannot prove completeness of every
+        request. Read-only; nothing is stored.
+      responses:
+        '200':
+          description: Completeness of billed usage over the checked hours.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageCompletenessResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/consumers/{consumer_id}/usage-statements:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -42598,6 +42638,25 @@ components:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerUsageQuoteBucketResponse' }
         as_of: { type: string, format: date-time }
+
+    APIConsumerUsageCompletenessResponse:
+      description: "Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-848)."
+      type: object
+      required: [consumer_id, status, checked_from, checked_until, ledger_requests, telemetry_requests, confirmed_requests, missing_requests, hours_checked, hours_without_telemetry]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [verified, partial, gaps_detected, unverifiable]
+          description: "gaps_detected means telemetry saw successful requests the ledger never billed; partial means telemetry confirms only part of the billed requests; unverifiable means telemetry holds no evidence for them."
+        checked_from: { type: string, format: date-time, description: "First whole UTC hour checked, clamped to request telemetry retention." }
+        checked_until: { type: string, format: date-time, description: "Exclusive end of the checked hours, clamped to hours that have settled." }
+        ledger_requests: { type: integer, format: int64, minimum: 0, description: "Successful requests in the billing ledger." }
+        telemetry_requests: { type: integer, format: int64, minimum: 0, description: "Successful requests in request telemetry." }
+        confirmed_requests: { type: integer, format: int64, minimum: 0, description: "Billed successful requests telemetry corroborates." }
+        missing_requests: { type: integer, format: int64, minimum: 0, description: "Lower bound of successful requests telemetry saw that the ledger lacks." }
+        hours_checked: { type: integer, minimum: 0 }
+        hours_without_telemetry: { type: integer, minimum: 0, description: "Hours with billed requests but no telemetry." }
 
     CreateAPIConsumerUsageStatementRequest:
       description: "Explicit UTC-minute period to snapshot as an immutable usage statement."

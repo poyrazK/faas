@@ -2237,6 +2237,7 @@ var cliCommands = []cliCommand{
 			"gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 --included-units 10000",
 			"gregale consumers rate-card-create my-api --currency EUR --tier 10000:0 --tier 1000000:25 --tier inf:10",
 			"gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 --weight \"POST /generate=20\"",
+			"gregale consumers completeness my-api CONSUMER_ID --month 2026-09",
 			"gregale consumers statement-draft my-api CONSUMER_ID --month 2026-09",
 			"gregale consumers statement-handoff my-api CONSUMER_ID STATEMENT_ID --invoice-id INV-1001",
 			"gregale consumers plan-create my-api --name free --max-requests-per-minute 60 --max-units-per-month 1000",
@@ -2264,6 +2265,11 @@ var cliCommands = []cliCommand{
 			{Name: "quote", Short: "Estimate a consumer's charges with current rate cards", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "since", Short: "window start", Value: "RFC3339"},
 				{Name: "until", Short: "window end", Value: "RFC3339"},
+			}},
+			{Name: "completeness", Short: "Check billed usage against request telemetry before invoicing", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
+				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
+				{Name: "period-start", Short: "period start (UTC minute)", Value: "RFC3339"},
+				{Name: "period-end", Short: "exclusive period end (UTC minute)", Value: "RFC3339"},
 			}},
 			{Name: "rate-cards", Short: "List an app's per-request price versions", Positionals: []string{"<slug>"}},
 			{Name: "rate-card-create", Short: "Add an immutable per-request price version", Positionals: []string{"<slug>"}, Flags: []cliFlag{

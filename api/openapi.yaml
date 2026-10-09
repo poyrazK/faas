@@ -8575,6 +8575,46 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-completeness:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer identity whose billed usage is checked.
+        schema: { type: string, format: uuid }
+      - name: since
+        in: query
+        required: true
+        description: RFC3339 start of the period to check, usually a statement's period_start.
+        schema: { type: string, format: date-time }
+      - name: until
+        in: query
+        required: true
+        description: RFC3339 exclusive end of the period to check; at most 90 days after since.
+        schema: { type: string, format: date-time }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerUsageCompleteness
+      summary: Check one API consumer's billed usage against request telemetry.
+      description: |
+        Compares successful requests in the billing ledger with successful
+        requests in request telemetry, hour by hour, so usage the ledger
+        never received is visible before a statement is invoiced. Only whole
+        UTC hours that have settled (10 minutes) and that telemetry still
+        retains (14 days) are checked. Telemetry is sampled, so it proves a
+        lower bound of missing usage but cannot prove completeness of every
+        request. Read-only; nothing is stored.
+      responses:
+        '200':
+          description: Completeness of billed usage over the checked hours.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageCompletenessResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/consumers/{consumer_id}/usage-statements:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -8599,8 +8639,8 @@ paths:
     post:
       tags: [consumers]
       operationId: createAPIConsumerUsageStatement
-      summary: Snapshot an API consumer usage quote.
-      description: Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period returns the original snapshot.
+      summary: Snapshot an API consumer usage quote or create a late-usage adjustment.
+      description: Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged draft replays. If usage or effective prices changed, the open draft becomes superseded and a new draft revision is created. After finalization, new units create the next revision containing only those units; no new units replay the latest revision. Finalized revisions are never rewritten.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -8610,12 +8650,12 @@ paths:
             schema: { $ref: '#/components/schemas/CreateAPIConsumerUsageStatementRequest' }
       responses:
         '200':
-          description: The existing statement for this consumer and period.
+          description: The latest existing revision; the period has no new usage or the draft is unchanged.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
         '201':
-          description: The newly created usage statement snapshot.
+          description: The newly created statement revision.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
@@ -8623,6 +8663,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanLimit' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}:
     parameters:
@@ -8773,6 +8814,119 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanLimit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/consumer-plans:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerPlans
+      summary: List an app's consumer plans.
+      responses:
+        '200':
+          description: Consumer plans by name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: createAPIConsumerPlan
+      summary: Create a named consumer plan.
+      description: |
+        A plan bundles enforcement limits with its own rate-card history
+        (rate cards created with plan_id). App-wide rate cards are the default
+        plan for consumers without an assignment. At most 20 plans per app.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIConsumerPlanRequest' }
+      responses:
+        '201':
+          description: The new plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLimit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/consumer-plans/{plan_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: plan_id
+        in: path
+        required: true
+        description: Consumer plan UUID.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [consumers]
+      operationId: updateAPIConsumerPlanLimits
+      summary: Replace a consumer plan's limits.
+      description: Limits are enforcement, not prices, so they change in place; the gateway applies them within 15 seconds. Prices change through new rate-card versions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAPIConsumerPlanLimitsRequest' }
+      responses:
+        '200':
+          description: The updated plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer whose plan assignments are listed or appended.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerPlanAssignments
+      summary: List a consumer's plan assignments, oldest first.
+      responses:
+        '200':
+          description: Append-only plan history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanAssignmentListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: assignAPIConsumerPlan
+      summary: Move a consumer onto a plan from a UTC minute.
+      description: The assignment takes effect from effective_from (default the next minute; never in the past) and requires the target plan to have a rate card in force then. Statements price each minute with the plan in force; monthly allowances and tiers keep counting across the change. An empty plan_id returns the consumer to the default plan.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignAPIConsumerPlanRequest' }
+      responses:
+        '201':
+          description: The new assignment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerPlanAssignmentResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
@@ -42330,18 +42484,114 @@ components:
       properties:
         currency: { type: string, pattern: '^[A-Z]{3}$', default: EUR, example: EUR }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0, example: 1000 }
+        included_units_per_month: { type: integer, format: int64, minimum: 0, default: 0, example: 10000, description: "Free request units per consumer per UTC calendar month while this card is effective, consumed in minute order. Once any card includes units, effective_from cannot be in the past." }
+        tiers:
+          type: array
+          minItems: 2
+          maxItems: 10
+          description: "Optional graduated ladder that replaces price_millicents_per_unit and included_units_per_month. Each consumer's units are counted per UTC calendar month in minute order and priced by the step their position falls in. Bounds increase strictly, only the last step is unbounded, and only the first step may be free. Statements of periods priced by a tiered card must cover exactly one UTC calendar month."
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        route_weights:
+          type: object
+          maxProperties: 50
+          description: "Counts each request on a listed \"METHOD /template\" route as that many units (1..1000, at most 50 routes); unlisted routes count 1. Weighted units feed included units, tiers, and statements. Route labels match the app's declared or discovered route templates."
+          additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
+        plan_id: { type: string, format: uuid, description: "Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot be backdated." }
         effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which this version starts; omitted means the next UTC minute." }
+
+    CreateAPIConsumerPlanRequest:
+      description: "Named consumer plan. Zero limits are unlimited."
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', example: pro }
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0, description: "Admitted requests per consumer per minute; over the limit the gateway returns 429." }
+        max_units_per_month: { type: integer, format: int64, minimum: 0, description: "Weighted units per consumer per UTC month; over the cap the gateway returns 429 until the month ends." }
+
+    UpdateAPIConsumerPlanLimitsRequest:
+      description: "Replacement limits for a consumer plan."
+      type: object
+      required: [max_requests_per_minute, max_units_per_month]
+      properties:
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
+        max_units_per_month: { type: integer, format: int64, minimum: 0 }
+
+    APIConsumerPlanResponse:
+      description: "Named consumer plan with enforcement limits."
+      type: object
+      required: [id, app_id, name, max_requests_per_minute, max_units_per_month, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        name: { type: string }
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0 }
+        max_units_per_month: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    APIConsumerPlanListResponse:
+      description: "An app's consumer plans by name."
+      type: object
+      required: [plans]
+      properties:
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerPlanResponse' }
+
+    AssignAPIConsumerPlanRequest:
+      description: "Plan assignment; an empty plan_id returns the consumer to the default plan."
+      type: object
+      properties:
+        plan_id: { type: string, format: uuid }
+        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute the plan takes effect; omitted means the next minute." }
+
+    APIConsumerPlanAssignmentResponse:
+      description: "One append-only plan assignment; no plan_id is the default plan."
+      type: object
+      required: [id, consumer_id, effective_from, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        plan_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    APIConsumerPlanAssignmentListResponse:
+      description: "A consumer's plan assignments, oldest first."
+      type: object
+      required: [assignments]
+      properties:
+        assignments:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerPlanAssignmentResponse' }
+
+    APIConsumerRateCardTier:
+      description: "One step of a graduated per-request price ladder."
+      type: object
+      required: [up_to, price_millicents_per_unit]
+      properties:
+        up_to: { type: [integer, "null"], format: int64, minimum: 1, description: "Exclusive upper bound of this step's monthly position; null for the unbounded last step." }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
 
     APIConsumerRateCardResponse:
       description: "Immutable, versioned app-level price for one API request unit."
       type: object
-      required: [id, app_id, currency, unit, price_millicents_per_unit, effective_from, created_at]
+      required: [id, app_id, currency, unit, price_millicents_per_unit, included_units_per_month, effective_from, created_at]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         unit: { type: string, enum: [request] }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        included_units_per_month: { type: integer, format: int64, minimum: 0 }
+        tiers:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        route_weights:
+          type: object
+          description: "Units charged per request on a listed route; unlisted routes count 1."
+          additionalProperties: { type: integer, format: int64, minimum: 1 }
+        plan_id: { type: string, format: uuid }
         effective_from: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
 
@@ -42357,13 +42607,18 @@ components:
     APIConsumerUsageQuoteBucketResponse:
       description: "One durable usage minute priced by the rate card effective at that minute."
       type: object
-      required: [window_start, billable_units, amount_millicents]
+      required: [window_start, billable_units, charged_units, amount_millicents]
       properties:
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
         rate_card_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        charged_units: { type: integer, format: int64, minimum: 0, description: "Units billed at the price; the rest are covered by the rate card's monthly allowance." }
+        tier_units:
+          type: array
+          description: "Units per step of a tiered rate card's ladder."
+          items: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64, minimum: 0 }
 
     APIConsumerUsageQuoteResponse:
@@ -42384,6 +42639,25 @@ components:
           items: { $ref: '#/components/schemas/APIConsumerUsageQuoteBucketResponse' }
         as_of: { type: string, format: date-time }
 
+    APIConsumerUsageCompletenessResponse:
+      description: "Comparison of an API consumer's billing ledger with request telemetry over successful requests (ADR-848)."
+      type: object
+      required: [consumer_id, status, checked_from, checked_until, ledger_requests, telemetry_requests, confirmed_requests, missing_requests, hours_checked, hours_without_telemetry]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [verified, partial, gaps_detected, unverifiable]
+          description: "gaps_detected means telemetry saw successful requests the ledger never billed; partial means telemetry confirms only part of the billed requests; unverifiable means telemetry holds no evidence for them."
+        checked_from: { type: string, format: date-time, description: "First whole UTC hour checked, clamped to request telemetry retention." }
+        checked_until: { type: string, format: date-time, description: "Exclusive end of the checked hours, clamped to hours that have settled." }
+        ledger_requests: { type: integer, format: int64, minimum: 0, description: "Successful requests in the billing ledger." }
+        telemetry_requests: { type: integer, format: int64, minimum: 0, description: "Successful requests in request telemetry." }
+        confirmed_requests: { type: integer, format: int64, minimum: 0, description: "Billed successful requests telemetry corroborates." }
+        missing_requests: { type: integer, format: int64, minimum: 0, description: "Lower bound of successful requests telemetry saw that the ledger lacks." }
+        hours_checked: { type: integer, minimum: 0 }
+        hours_without_telemetry: { type: integer, minimum: 0, description: "Hours with billed requests but no telemetry." }
+
     CreateAPIConsumerUsageStatementRequest:
       description: "Explicit UTC-minute period to snapshot as an immutable usage statement."
       type: object
@@ -42395,25 +42669,31 @@ components:
     APIConsumerUsageStatementBucketResponse:
       description: "One UTC minute captured in a durable usage statement."
       type: object
-      required: [window_start, billable_units, amount_millicents]
+      required: [window_start, billable_units, charged_units, amount_millicents]
       properties:
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
         rate_card_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
-        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        charged_units: { type: integer, format: int64, minimum: 0, description: "Units this revision bills at the price; the rest are covered by the monthly allowance. An adjustment may charge units it does not add when late usage exhausted the allowance sooner." }
+        tier_units:
+          type: array
+          description: "Units per step of a tiered rate card's ladder. In an adjustment revision, entries are differences and can be negative when late usage moved billed units into a cheaper step."
+          items: { type: integer, format: int64 }
+        amount_millicents: { type: integer, format: int64, description: "Exact charge for this minute. Negative only on a tiered adjustment line that re-rates billed units into a cheaper step; a revision's total is never negative." }
 
     APIConsumerUsageStatementResponse:
-      description: "Immutable, auditable API consumer usage snapshot."
+      description: "Immutable, auditable API consumer usage snapshot. One period can hold several revisions: a changed draft is superseded by the next revision, and every revision after a finalized one carries only usage that arrived later."
       type: object
-      required: [id, consumer_id, period_start, period_end, status, billable_units, unpriced_units, amount_millicents, priced, buckets, as_of, created_at]
+      required: [id, consumer_id, period_start, period_end, revision, status, billable_units, unpriced_units, amount_millicents, priced, buckets, as_of, created_at]
       properties:
         id: { type: string, format: uuid }
         consumer_id: { type: string, format: uuid }
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
-        status: { type: string, enum: [draft, finalized] }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [draft, finalized, superseded] }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         billable_units: { type: integer, format: int64, minimum: 0 }
         unpriced_units: { type: integer, format: int64, minimum: 0 }

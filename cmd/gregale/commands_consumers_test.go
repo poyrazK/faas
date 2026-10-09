@@ -50,6 +50,8 @@ func TestCmdConsumersMonetizationLifecycle(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&claim)
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(api.APIConsumerUsageStatementHandoffResponse{StatementID: "s3", ExternalInvoiceID: claim.ExternalInvoiceID, Currency: "EUR", AmountMillicents: 100})
+		case "GET " + base + "/usage-completeness":
+			_ = json.NewEncoder(w).Encode(api.APIConsumerUsageCompletenessResponse{ConsumerID: "c1", Status: "verified"})
 		default:
 			t.Errorf("unexpected route %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
