@@ -260,6 +260,8 @@ jobs:
           GOMAXPROCS: 2
         run: go vet ./...
       - name: build
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
         run: make build
 
       # S2 PR-2b: a pure nil-return MemStore method can make a handler test
