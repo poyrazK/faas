@@ -9166,10 +9166,11 @@ gregale secrets set --app my-api SESSION_TOKEN="$SESSION_TOKEN" --class ephemera
 
 Remove a sealed secret (alias: rm)
 
-`gregale secrets unset --app <slug> [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] <KEY>`
+`gregale secrets unset [--interactive] --app <slug> [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] [<KEY>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | choose a secret name, review scope and runtime options, and confirm removal |  |
 | `--app <slug>` | app slug | required |
 | `--scope <SCOPE>` | env scope to delete from (defaults to linked project environment) |  |
 | `--restart` | restart the app so running instances drop the removed secret now |  |
@@ -9179,6 +9180,7 @@ Remove a sealed secret (alias: rm)
 Examples:
 
 ```sh
+gregale secrets unset --app my-api --interactive
 gregale secrets unset --app my-api OLD_API_KEY
 gregale secrets unset --app my-api OLD_API_KEY --scope staging
 gregale secrets unset --app my-api OLD_API_KEY --wait-for-ack

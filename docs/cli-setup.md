@@ -192,6 +192,27 @@ It requires an interactive terminal; for scripts, use
 `gregale link PROJECT --app APP --environment ENV`. Run `gregale context` to
 inspect saved defaults or `gregale unlink` to remove them.
 
+## Guided secret removal
+
+```sh
+gregale secrets unset --app my-api --interactive
+gregale secrets unset --app my-api --scope staging --interactive
+```
+
+The guide lists secret names only in the selected scope, using the linked
+environment when `--scope` is omitted (otherwise `default`). Choose a key,
+choose whether to request a fresh app restart and wait up to two minutes for
+runtime removal acknowledgement, then review the app, scope, and key before
+confirming. It rechecks the selected secret before removal and stops if the
+secret's update metadata has changed.
+
+Without a restart, running instances retain their boot environment until the
+next cold wake. A restart affects the app. If restart or acknowledgement fails
+after removal, the removal has already happened; the command reports that
+outcome. The guide requires an interactive terminal. Scripts can continue to
+use `gregale secrets unset --app APP KEY --scope SCOPE` with `--restart`,
+`--wait-for-ack`, and `--timeout` as needed.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
