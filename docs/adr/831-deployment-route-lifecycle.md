@@ -1,4 +1,4 @@
-# ADR-792: Deployment-specific route lifecycle metadata
+# ADR-831: Deployment-specific route lifecycle metadata
 
 Status: Accepted
 

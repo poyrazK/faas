@@ -147,6 +147,9 @@ type MemStore struct {
 	routeLifecycleApprovals         map[string]api.RouteLifecycleApproval
 	routeRemovalPolicies            map[string]api.RouteRemovalPolicy
 
+	eventCircuitBreakers        map[string]*eventCircuitRecord
+	eventSubscriptionControls   map[string]*memEventSubscriptionControl
+	eventRecoveryJobs           map[string]*memEventRecoveryJob
 	deploymentDependencyGates   map[string]DeploymentDependencyGate
 	invocationAttemptHistory    map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID     int64

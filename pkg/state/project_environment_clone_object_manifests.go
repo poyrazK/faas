@@ -86,7 +86,7 @@ func validateProjectEnvironmentCloneObjectManifest(manifest ProjectEnvironmentCl
 func ProjectEnvironmentCloneObjectManifestHash(items []ProjectEnvironmentCloneObjectVersion) (string, error) {
 	for i, item := range items {
 		if !validCloneObjectKey(item.Key) || item.VersionID == "" || item.Deleted ||
-			(i > 0 && items[i-1].Key >= item.Key) {
+			(i > 0 && items[i-1].Key >= item.Key) { // #nosec G602 -- i ranges over items and i > 0 guards the preceding element.
 			return "", ErrInvalidProjectEnvironmentCloneOperation
 		}
 	}

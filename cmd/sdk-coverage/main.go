@@ -1115,6 +1115,38 @@ var methodRouteMap = map[string]string{
 	"GET /v1/event-replays/{jobID}/items":                               "ListEventReplayBackfillItems",
 	"POST /v1/event-replays/{jobID}/retry-failed":                       "RetryFailedEventReplayBackfill",
 
+	// Events delivery controls and durable recovery use descriptive SDK verbs.
+	"GET /v1/apps/{slug}/workflow-event-replay-preview":                                 "PreviewWorkflowEventReplay",
+	"POST /v1/apps/{slug}/workflow-event-replays":                                       "CreateWorkflowEventReplayBackfill",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control":         "GetEventSubscriptionDeliveryControl",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pause":  "PauseEventSubscription",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/resume": "ResumeEventSubscription",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/health":                   "GetEventConsumerHealth",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-health":         "GetEventConsumerExecutionHealth",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy":             "GetEventSubscriptionRetryPolicy",
+	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy":             "SetEventSubscriptionRetryPolicy",
+	"DELETE /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy":          "ResetEventSubscriptionRetryPolicy",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker":          "GetEventCircuitBreaker",
+	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker":          "SetEventCircuitBreaker",
+	"DELETE /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker":       "DisableEventCircuitBreaker",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker/reset":   "ResetEventCircuitBreaker",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions":          "GetEventSubscriptionSchemaVersions",
+	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions":          "SetEventSubscriptionSchemaVersions",
+	"DELETE /v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions":       "ResetEventSubscriptionSchemaVersions",
+	"POST /v1/event-schemas:preview-rollout":                                            "PreviewEventSchemaRollout",
+	"GET /v1/apps/{slug}/event-recoveries":                                              "ListEventRecoveries",
+	"POST /v1/apps/{slug}/event-recoveries":                                             "CreateEventRecovery",
+	"GET /v1/apps/{slug}/event-recoveries/health":                                       "GetEventRecoveryHealth",
+	"POST /v1/apps/{slug}/event-recoveries/preview":                                     "PreviewEventRecovery",
+	"GET /v1/event-recoveries/{jobID}":                                                  "GetEventRecovery",
+	"GET /v1/event-recoveries/{jobID}/items":                                            "ListEventRecoveryItems",
+	"GET /v1/event-recoveries/{jobID}/history":                                          "ListEventRecoveryHistory",
+	"GET /v1/event-recoveries/{jobID}/preflight":                                        "GetEventRecoveryPreflight",
+	"POST /v1/event-recoveries/{jobID}/cancel":                                          "CancelEventRecovery",
+	"POST /v1/event-recoveries/{jobID}/pause":                                           "PauseEventRecovery",
+	"POST /v1/event-recoveries/{jobID}/resume":                                          "ResumeEventRecovery",
+	"PUT /v1/event-recoveries/{jobID}/rate":                                             "SetEventRecoveryRate",
+
 	// Issue #279 — operator credits. The auto-derivation produces
 	// "PostAdminAccountsIdCredits" which reads as a Swagger-style
 	// artifact; the SDK verb is "issue" (the operator's mental
@@ -1706,16 +1738,19 @@ func loadSpec(path string) (map[string]map[string]any, error) {
 // names declared on *Client (the public SDK surface).
 func loadClientMethods(dir string) (map[string]bool, error) {
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dir, func(os.FileInfo) bool { return true }, parser.ParseComments)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	pkg, ok := pkgs[sdkPackageName]
-	if !ok {
-		return nil, fmt.Errorf("package %q not found in %s (found %d packages)", sdkPackageName, dir, len(pkgs))
+	files, packages, err := parseClientSourceFiles(fset, dir, entries)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("package %q not found in %s (found %d packages)", sdkPackageName, dir, len(packages))
 	}
 	out := map[string]bool{}
-	for _, file := range pkg.Files {
+	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			fd, ok := n.(*ast.FuncDecl)
 			if !ok || fd.Recv == nil || !fd.Name.IsExported() {
@@ -1730,6 +1765,26 @@ func loadClientMethods(dir string) (map[string]bool, error) {
 		})
 	}
 	return out, nil
+}
+
+// Inspect every Go source file, including build-tagged sources, for SDK parity.
+func parseClientSourceFiles(fset *token.FileSet, dir string, entries []os.DirEntry) ([]*ast.File, map[string]bool, error) {
+	var files []*ast.File
+	packages := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, filepath.Join(dir, entry.Name()), nil, parser.ParseComments)
+		if err != nil {
+			return nil, nil, err
+		}
+		packages[file.Name.Name] = true
+		if file.Name.Name == sdkPackageName {
+			files = append(files, file)
+		}
+	}
+	return files, packages, nil
 }
 
 func isClientRecv(recv *ast.FieldList) bool {

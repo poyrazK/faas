@@ -158,35 +158,54 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND source=sqlc.arg(source)::text AN
 
 -- name: EventBacklogRecipients :many
 SELECT b.*, o.source, o.event_id, o.event_type, coalesce(a.slug,'')::text AS app_slug,
-       (a.id IS NOT NULL AND a.status <> 'deleted')::boolean AS target_available
+       (a.id IS NOT NULL AND a.status <> 'deleted')::boolean AS target_available, ordering.blocker AS ordering_blocker, control.reason::text AS delivery_control_reason
 FROM event_routing_backlog b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id
 LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+
+LEFT JOIN LATERAL (SELECT event_recipient_order_blocker(b.outbox_id,b.subscription_id,
+ (SELECT item FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) item WHERE item->>'id'=b.subscription_id LIMIT 1),b.routing_mode='recipient') AS blocker) ordering ON b.routing_state='pending'
+CROSS JOIN LATERAL (SELECT event_subscription_delivery_waiting_reason(b.account_id,b.app_id,b.subscription_id,sqlc.arg(observed_at)::timestamptz) AS reason) control
+CROSS JOIN LATERAL (SELECT CASE WHEN b.routing_state='pending' AND NOT (b.routing_mode='event' AND coalesce(b.lease_until>sqlc.arg(observed_at)::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason(b.routing_state,b.capacity_scope,b.routing_mode,b.lease_until,b.next_attempt_at,b.consumer_kind,ordering.blocker,sqlc.arg(observed_at)::timestamptz) END AS reason) observation
 WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.accepted_at<=sqlc.arg(cutoff)::timestamptz
   AND (sqlc.narg(app_id)::uuid IS NULL OR b.app_id=sqlc.narg(app_id)::uuid)
   AND (sqlc.arg(subscription_id)::text='' OR b.subscription_id=sqlc.arg(subscription_id)::text)
+  AND (sqlc.arg(consumer_kind)::text='' OR b.consumer_kind=sqlc.arg(consumer_kind)::text)
+  AND (sqlc.arg(origin)::text='' OR b.origin=sqlc.arg(origin)::text)
   AND (sqlc.arg(routing_state)::text='' OR b.routing_state=sqlc.arg(routing_state)::text)
+  AND (sqlc.arg(waiting_reason)::text='' OR observation.reason=sqlc.arg(waiting_reason)::text)
   AND (sqlc.arg(capacity_scope)::text='' OR b.capacity_scope=sqlc.arg(capacity_scope)::text)
   AND (sqlc.narg(after_accepted_at)::timestamptz IS NULL OR
        (b.accepted_at,b.outbox_id,b.subscription_id)>(sqlc.narg(after_accepted_at)::timestamptz,sqlc.arg(after_outbox_id)::bigint,sqlc.arg(after_subscription_id)::text))
 ORDER BY b.accepted_at,b.outbox_id,b.subscription_id LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: EventBacklogConsumers :many
-SELECT b.app_id,b.subscription_id,coalesce(a.slug,'')::text AS app_slug,
+SELECT b.app_id,b.subscription_id,b.consumer_kind,coalesce(a.slug,'')::text AS app_slug,
        (a.id IS NOT NULL AND a.status<>'deleted')::boolean AS target_available,
        count(*)::bigint AS waiting_recipients,
        count(*) FILTER (WHERE b.routing_state='pending')::bigint AS pending_recipients,
        count(*) FILTER (WHERE b.routing_state='processing')::bigint AS processing_recipients,
        count(*) FILTER (WHERE b.capacity_scope<>'')::bigint AS capacity_waiting_recipients,
+       count(*) FILTER (WHERE observation.reason='ordering_blocked')::bigint AS ordering_waiting_recipients,
        min(b.accepted_at)::timestamptz AS oldest_accepted_at
-FROM event_routing_backlog b LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+FROM event_routing_backlog b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+
+LEFT JOIN LATERAL (SELECT event_recipient_order_blocker(b.outbox_id,b.subscription_id,
+ (SELECT item FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) item WHERE item->>'id'=b.subscription_id LIMIT 1),b.routing_mode='recipient') AS blocker) ordering ON b.routing_state='pending'
+CROSS JOIN LATERAL (SELECT event_subscription_delivery_waiting_reason(b.account_id,b.app_id,b.subscription_id,sqlc.arg(observed_at)::timestamptz) AS reason) control
+CROSS JOIN LATERAL (SELECT CASE WHEN b.routing_state='pending' AND NOT (b.routing_mode='event' AND coalesce(b.lease_until>sqlc.arg(observed_at)::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason(b.routing_state,b.capacity_scope,b.routing_mode,b.lease_until,b.next_attempt_at,b.consumer_kind,ordering.blocker,sqlc.arg(observed_at)::timestamptz) END AS reason) observation
 WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.accepted_at<=sqlc.arg(cutoff)::timestamptz
   AND (sqlc.narg(app_id)::uuid IS NULL OR b.app_id=sqlc.narg(app_id)::uuid)
   AND (sqlc.arg(subscription_id)::text='' OR b.subscription_id=sqlc.arg(subscription_id)::text)
+  AND (sqlc.arg(consumer_kind)::text='' OR b.consumer_kind=sqlc.arg(consumer_kind)::text)
+  AND (sqlc.arg(origin)::text='' OR b.origin=sqlc.arg(origin)::text)
   AND (sqlc.arg(routing_state)::text='' OR b.routing_state=sqlc.arg(routing_state)::text)
+  AND (sqlc.arg(waiting_reason)::text='' OR observation.reason=sqlc.arg(waiting_reason)::text)
   AND (sqlc.arg(capacity_scope)::text='' OR b.capacity_scope=sqlc.arg(capacity_scope)::text)
-  AND (sqlc.narg(after_app_id)::uuid IS NULL OR (b.app_id,b.subscription_id)>(sqlc.narg(after_app_id)::uuid,sqlc.arg(after_subscription_id)::text))
-GROUP BY b.app_id,b.subscription_id,a.id,a.slug,a.status
-ORDER BY b.app_id,b.subscription_id LIMIT sqlc.arg(page_limit)::integer;
+  AND (sqlc.narg(after_app_id)::uuid IS NULL OR (b.app_id,b.subscription_id)>(sqlc.narg(after_app_id)::uuid,sqlc.arg(after_subscription_id)::text)
+       OR ((b.app_id,b.subscription_id)=(sqlc.narg(after_app_id)::uuid,sqlc.arg(after_subscription_id)::text)
+           AND sqlc.arg(after_consumer_kind)::text<>'' AND b.consumer_kind>sqlc.arg(after_consumer_kind)::text))
+GROUP BY b.app_id,b.subscription_id,b.consumer_kind,a.id,a.slug,a.status
+ORDER BY b.app_id,b.subscription_id,b.consumer_kind LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: EventBacklogUnattributed :one
 SELECT count(*)::bigint FROM event_fanout_outbox

@@ -938,7 +938,7 @@ const (
 	NotifyCachePurge = "cache_purge_requested"
 	// NotifyAppOpenAPIDocChanged (ADR-126 / issue #975 item #2)
 	// {"app_id":uuid, "op":"created|replaced|deleted"}.
-	//   Deployment capture triggers also send app_id/deployment_id (ADR-792).
+	//   Deployment capture triggers also send app_id/deployment_id (ADR-831).
 	//   gatewayd-internal invalidates declaration/lifecycle caches.
 	//   apid listens (cmd/apid/openapi_doc_subscriber.go
 	//   wires it alongside NotifyEdgeRuleChanged); the payload

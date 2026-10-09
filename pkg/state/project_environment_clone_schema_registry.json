@@ -177,6 +177,7 @@
       "cooldown_minutes",
       "created_at",
       "enabled",
+      "event_subscription_id",
       "failure_source",
       "id",
       "last_evaluated_at",
@@ -2781,11 +2782,13 @@
       "capacity_scope",
       "details_truncated",
       "failure_code",
+      "filter_reason",
       "history_bytes",
       "id",
       "last_error",
       "occurred_at",
       "outbox_id",
+      "retry_stop_reason",
       "retryable",
       "state",
       "subscription_id"
@@ -2851,6 +2854,7 @@
       "backfill_job_id",
       "capacity_deferrals",
       "claim_token",
+      "delivery_deadline_at",
       "generation",
       "generation_capacity_deferrals",
       "lease_until",
@@ -2860,6 +2864,70 @@
       "state",
       "subscription_id",
       "total_attempts"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_recovery_history",
+    "columns": [
+      "action",
+      "actor_id",
+      "actor_kind",
+      "id",
+      "job_id",
+      "occurred_at",
+      "previous_rate",
+      "previous_state",
+      "rate",
+      "reason",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_recovery_items",
+    "columns": [
+      "event_id",
+      "event_source",
+      "event_type",
+      "expected_progress",
+      "failed_at",
+      "failure_code",
+      "job_id",
+      "outbox_id",
+      "position",
+      "reason",
+      "replay_created_at",
+      "replay_generation",
+      "replay_invocation_id",
+      "retryable",
+      "state",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_recovery_jobs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "capacity_scope",
+      "capacity_wait_observed_at",
+      "capacity_wait_started_at",
+      "completed_at",
+      "created_at",
+      "expires_at",
+      "id",
+      "last_progress_at",
+      "next_attempt_at",
+      "paused_at",
+      "rate_per_second",
+      "selection",
+      "state",
+      "updated_at",
+      "wait_reason",
+      "window_count",
+      "window_started_at"
     ],
     "kind": "operational"
   },
@@ -2893,6 +2961,7 @@
       "cursor_at",
       "cursor_outbox_id",
       "cutoff_at",
+      "consumer_kind",
       "duplicate_policy",
       "earliest_retained_at",
       "filtered_count",
@@ -2910,7 +2979,8 @@
       "subscription_id",
       "subscription_revision",
       "until_at",
-      "updated_at"
+      "updated_at",
+      "workflow_name"
     ],
     "kind": "operational"
   },
@@ -2923,12 +2993,15 @@
       "attempts",
       "capacity_deferrals",
       "capacity_scope",
+      "consumer_kind",
       "lease_until",
       "next_attempt_at",
+      "origin",
       "outbox_id",
       "routing_mode",
       "routing_state",
-      "subscription_id"
+      "subscription_id",
+      "workflow_name"
     ],
     "kind": "operational"
   },
@@ -2961,12 +3034,40 @@
     "kind": "operational"
   },
   {
+    "table": "event_subscription_circuit_breakers",
+    "columns": [
+      "account_id",
+      "app_id",
+      "policy",
+      "state_data",
+      "subscription_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_subscription_delivery_controls",
+    "columns": [
+      "account_id",
+      "app_id",
+      "paused",
+      "paused_at",
+      "rate_per_second",
+      "subscription_id",
+      "updated_at",
+      "window_count",
+      "window_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_subscription_work_bindings",
     "columns": [
       "action",
       "app_id",
       "fairness_key_selector",
       "key_selector",
+      "ordered",
       "policy_name",
       "subscription_id"
     ],
@@ -2981,6 +3082,8 @@
       "enabled",
       "filter",
       "id",
+      "routing_retry_policy",
+      "schema_versions",
       "source",
       "type",
       "updated_at"

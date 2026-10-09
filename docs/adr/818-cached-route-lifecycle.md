@@ -4,7 +4,7 @@ Status: Accepted
 
 ## Context
 
-ADR-792 omitted lifecycle headers on cache hits because stored bodies did not
+ADR-831 omitted lifecycle headers on cache hits because stored bodies did not
 identify their serving deployment. Current rollout selection is insufficient:
 the cached response may have come from a different production split member.
 
@@ -17,7 +17,7 @@ remain readable without the field; never infer their origin from a key.
 
 Fresh and all stale replay paths filter stored lifecycle headers and resolve
 current metadata from the recorded deployment capture, using the original
-public method/path. This reuses ADR-792 ownership checks, notifications and
+public method/path. This reuses ADR-831 ownership checks, notifications and
 TTL behavior. Capture updates change guidance without evicting bodies. Missing
 captures and legacy records omit advisory headers while retaining the response.
 
@@ -29,7 +29,7 @@ source. Clear failed-origin guidance before resolving the cached body's metadata
 
 ## Consequences
 
-This closes ADR-792's cache-hit publication limitation without changing cache
+This closes ADR-831's cache-hit publication limitation without changing cache
 keys, traffic selection, retention windows or removal approval. Mixed-version
 Redis readers ignore the optional field and legacy entries gain metadata only
 on a normal origin refresh. There is no schema migration or new endpoint.
