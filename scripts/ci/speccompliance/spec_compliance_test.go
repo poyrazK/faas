@@ -328,8 +328,6 @@ var dtoExclude = map[string]bool{
 	"ObjectVersionListRequest":          true,
 	"EventRecoveryListQuery":            true, // client-only recovery pagination and filters; wire parameters live on the route
 	"WorkflowEventReplayPreviewOptions": true, // client-only preview query options; wire parameters live on the route
-	"EventReplayPreviewOptions":         true, // client-only query options; the wire parameters are declared on the route
-	"EventReplayBackfillItemsQuery":     true, // client-only pagination/filter options; the wire parameters are declared on the route
 	// ADR-563 native adapter primitives. Customer per-version lock management
 	// is not part of the ADR-564 bucket API capability.
 	"ObjectVersionRetention": true,
