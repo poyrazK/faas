@@ -49,8 +49,14 @@ func serveCrashCapture(mux *http.ServeMux) {
 		mu.Lock()
 		last = append(json.RawMessage(nil), answer...)
 		mu.Unlock()
+		// ?ok=1 answers 200, so the gateway's 5xx trigger does not also ask
+		// for a capture.
+		status := http.StatusInternalServerError
+		if r.URL.Query().Get("ok") == "1" {
+			status = http.StatusOK
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(status)
 		_, _ = w.Write(answer)
 	})
 	mux.HandleFunc("/last-capture", func(w http.ResponseWriter, _ *http.Request) {

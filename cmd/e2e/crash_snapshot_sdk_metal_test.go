@@ -99,9 +99,11 @@ func TestCrashSnapshotSDKMetal(t *testing.T) {
 
 	var answer sdkCaptureAnswer
 	t.Run("refused-without-opt-in", func(t *testing.T) {
-		_, body, status := doReqHeaders(t, h, "hello.apps.test.example", http.MethodGet, "/boom", nil)
-		if status != http.StatusInternalServerError || json.Unmarshal(body, &answer) != nil || answer.Status != "refused" {
-			t.Fatalf("/boom without opt-in = %d %s, want 500 with refused", status, body)
+		// A 200 answer: a 500 here would make the gateway's async 5xx
+		// trigger race the opt-in below and take the app's one capture.
+		_, body, status := doReqHeaders(t, h, "hello.apps.test.example", http.MethodGet, "/boom?ok=1", nil)
+		if status != http.StatusOK || json.Unmarshal(body, &answer) != nil || answer.Status != "refused" {
+			t.Fatalf("/boom without opt-in = %d %s, want 200 with refused", status, body)
 		}
 	})
 
