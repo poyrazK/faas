@@ -1,10 +1,10 @@
 # ADR-830: Platform security headers on customer app responses
 
-- **Status:** proposed
+- **Status:** accepted (2026-10-09)
 - **Date:** 2026-10-09
 - **Amends:** spec §11 "Response headers (issue #249)"
-- **Decision needed:** product owner. This ADR proposes; it does not change
-  behaviour until accepted.
+- **Decision:** accepted by the product owner on 2026-10-09; implemented
+  alongside this ADR.
 
 ## Context
 

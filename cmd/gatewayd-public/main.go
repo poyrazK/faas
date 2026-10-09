@@ -636,7 +636,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// timeout that fires before gatewayd-internal replies still carries the
 	// same correlation id a CDN/Worker can preserve.
 	publicHandler = gateway.RequestIDMiddleware(publicHandler)
-	publicHandler = httpsec.Static(publicHandler)
+	// ADR-830: forced headers on Gregale-owned hosts; on customer hosts the
+	// platform values are defaults the proxy hop replaces with the app's.
+	appsDomain := platformAppsDomain()
+	publicHandler = httpsec.ForSurface(
+		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHost(r.Host, appsDomain) },
+		true, publicHandler)
 
 	// Control mux + listeners. Combine opsMetrics.Registry() with
 	// budgetReg into a prometheus.Gatherers so /metrics exposes

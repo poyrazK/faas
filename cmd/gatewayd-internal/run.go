@@ -3446,10 +3446,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The order is httpsec.Nonce outer / httpsec.Static inner so the
 	// CSP can be set before Static runs (it doesn't matter for the
 	// static headers, but keeps the middleware chain readable).
-	publicHandler = httpsec.Static(httpsec.Nonce(
-		func(r *http.Request) bool { return isApidPath(r.URL.Path) },
-		publicHandler,
-	))
+	// ADR-830: Gregale-owned hosts keep the forced static set; on customer
+	// hosts this hop sets nothing so the app's own value is the only copy
+	// gatewayd-public sees, and gatewayd-public fills defaults.
+	appsDomain := deps.appsDomain
+	publicHandler = httpsec.ForSurface(
+		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHost(r.Host, appsDomain) },
+		false,
+		httpsec.Nonce(func(r *http.Request) bool { return isApidPath(r.URL.Path) }, publicHandler),
+	)
 
 	// HSTS is seeded from the environment before the listener is built and
 	// then reconciled by the runtime-config watcher above. Do not re-read the

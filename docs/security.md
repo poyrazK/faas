@@ -254,6 +254,35 @@ a suitable threshold.
 `failure_central_fallback`, and `untrusted_source`
 decisions without putting IP addresses or paths in metric labels.
 
+## Security headers on your app
+
+Your app controls its own security headers. When a response sets one of
+the headers below, directly or through a `kind=headers` edge rule, Gregale
+sends your value unchanged. When it sets none, Gregale adds a default:
+
+| Header | Default on `*.gregale.dev` | Default on your custom domain |
+|---|---|---|
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | `max-age=31536000` |
+| `X-Content-Type-Options` | `nosniff` | `nosniff` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | `strict-origin-when-cross-origin` |
+| `X-Frame-Options` | none | none |
+| `Permissions-Policy` | none | none |
+
+On a custom domain, HSTS does not include subdomains by default because
+Gregale does not serve your other subdomains. Add `includeSubDomains` (and
+`preload`) yourself once every subdomain serves HTTPS. Set `X-Frame-Options`
+or a `Content-Security-Policy` `frame-ancestors` directive if your pages must
+not be framed, and `Permissions-Policy` to restrict browser features.
+
+```sh
+gregale edge-rules create --app my-api --kind headers --match-host my-api.example.com \
+  --headers-response-set 'X-Frame-Options:DENY'
+```
+
+Before 2026-10-09 these headers were fixed by the platform, including HSTS
+with `includeSubDomains` on custom domains. Browsers that cached that HSTS
+policy keep it until it expires (up to a year after their last visit).
+
 ## Outbound connections and DNS
 
 Workloads reach the internet by name. Outbound TCP is allowed only to addresses

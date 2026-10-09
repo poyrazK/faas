@@ -76,16 +76,20 @@ func hstsEnabled() bool {
 // middleware's headers and the handler's Content-Type.
 func Static(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set(HeaderXFrameOptions, ValueXFrameOptions)
-		h.Set(HeaderXContentTypeOptions, ValueXContentTypeOptions)
-		h.Set(HeaderReferrerPolicy, ValueReferrerPolicy)
-		h.Set(HeaderPermissionsPolicy, ValuePermissionsPolicy)
-		if hstsEnabled() {
-			h.Set(HeaderStrictTransportSecurity, ValueHSTSMaxAge)
-		}
+		setStatic(w.Header())
 		next.ServeHTTP(w, r)
 	})
+}
+
+// setStatic writes the forced platform values of the five static headers.
+func setStatic(h http.Header) {
+	h.Set(HeaderXFrameOptions, ValueXFrameOptions)
+	h.Set(HeaderXContentTypeOptions, ValueXContentTypeOptions)
+	h.Set(HeaderReferrerPolicy, ValueReferrerPolicy)
+	h.Set(HeaderPermissionsPolicy, ValuePermissionsPolicy)
+	if hstsEnabled() {
+		h.Set(HeaderStrictTransportSecurity, ValueHSTSMaxAge)
+	}
 }
 
 // IsStaticHeader reports whether name is one of the five policy headers owned
