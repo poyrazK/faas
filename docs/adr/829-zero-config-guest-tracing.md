@@ -105,10 +105,22 @@ frame size, and resolves account, app and deployment from its live instance
 map and the app row. It refuses frames for apps whose manifest does not enable
 tracing. It never decompresses or decodes OTLP (ADR-819 broker rule: the root
 daemon only bounds and stamps identity). It forwards the raw body and the
-host-owned principal to apid's existing SpansWriter Unix socket via a new
-`IngestGuestSpans` RPC. v1 supports the single-box socket only; split-box
-compute nodes first need a vmmd client identity for apid's private mTLS
-listener, which is a follow-up.
+host-owned principal to apid's existing SpansWriter service via a new
+`IngestGuestSpans` RPC. Single-box hosts use the local Unix socket. Split-box
+compute nodes dial apid's private mTLS listener — the one gatewayd-internal
+already uses for spans and request telemetry — with vmmd's existing
+`vmmd/apid-client` leaf. That leaf carries the node identity
+(`pkg/pki.RoleUsesNodeIdentity`: CN = `compute_nodes.name`), so apid's node
+verifier admits it without new PKI. The `vmmd_service` role renders
+`99-faas-spans-writer.conf` from the manifest-derived
+`faas_gatewayd_app_errors_target`; vmmd refuses a remote target without
+client TLS rather than sending spans in plaintext.
+
+On that shared listener any active compute node can submit spans for any
+account, exactly as gatewayd-internal on the same node already can through
+`WriteSpansSummary`. Binding each export to an instance scheduled on the
+authenticated node (via `NodeIdentityResolver`) would tighten both producers
+together and is left to a follow-up.
 
 apid checks the account's plan (`DebugTelemetryEnabled`), takes from the
 existing per-account `DebugTelemetryRequestsPerMinute` bucket, bounds buffered

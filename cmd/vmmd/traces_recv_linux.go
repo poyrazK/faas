@@ -16,9 +16,7 @@ import (
 )
 
 // startTraceReceiver registers the ADR-829 guest trace channel when the
-// installation enables it. v1 forwards to the single-box SpansWriter Unix
-// socket; split-box compute nodes need a vmmd client identity for apid's
-// private mTLS listener first (ADR-829 follow-up).
+// installation enables it.
 func startTraceReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager, store state.Store, jailer *fcvm.JailerVMM) (func(), error) {
 	if os.Getenv("FAAS_GUEST_TRACING_ENABLED") != "1" {
 		return func() {}, nil
@@ -26,11 +24,11 @@ func startTraceReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager
 	if store == nil {
 		return nil, fmt.Errorf("trace receiver requires the state store")
 	}
-	target := os.Getenv("FAAS_APID_OTEL_SPANS_WRITER_SOCKET")
-	if target == "" {
-		target = "/run/faas/otel_spans_writer.sock"
+	target, tlsCfg, err := traceSpansWriterTarget(os.Getenv)
+	if err != nil {
+		return nil, err
 	}
-	client, err := apidgrpc.DialGuestSpans(ctx, target, nil)
+	client, err := apidgrpc.DialGuestSpans(ctx, target, tlsCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -41,6 +39,6 @@ func startTraceReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager
 		_ = client.Close()
 		return nil, fmt.Errorf("register trace receiver port %d: %w", api.TraceVsockPort, err)
 	}
-	log.Info("guest trace receiver registered", "vsock_host_port", api.TraceVsockPort, "target", target)
+	log.Info("guest trace receiver registered", "vsock_host_port", api.TraceVsockPort, "target", target, "mtls", tlsCfg != nil)
 	return func() { _ = client.Close() }, nil
 }

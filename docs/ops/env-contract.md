@@ -219,7 +219,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GRPC_DEFAULT_DEADLINE` | shared | `default` |  |  | `` | ADR-190; unary gRPC deadline applied when the caller set none (default 60s, 0 disables the bound but keeps the counter) |
 | `FAAS_GRYPE_BIN` | imaged | `default` |  |  | `` |  |
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |  | `` |  |
-| `FAAS_GUEST_TRACING_ENABLED` | apid, vmmd | `default` |  | 0 | `` | operator-only in-guest request tracing broker; apid refuses tracing.enabled until set (ADR-829) |
+| `FAAS_GUEST_TRACING_ENABLED` | apid, vmmd | `default` |  | 0 | `` | operator-only in-guest request tracing broker; set in /etc/faas/otel.env on apid and vmmd hosts; apid refuses tracing.enabled until set (ADR-829) |
 | `FAAS_HOST_AGE_IDENTITY_PATH` | apid, githubd, imaged, meterd, s3-gatewayd, schedd, shared | `unit` |  |  | `` |  |
 | `FAAS_HOST_AGE_KEY` | githubd | `default` |  |  | `` |  |
 | `FAAS_HOST_AGE_PUB` | githubd | `unit` |  |  | `` |  |
@@ -528,6 +528,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_UPSTREAM_PROBE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_UPSTREAM_PROBE_PARTITION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_VCPU_BUDGET` | vmmd | `default` |  |  | `` |  |
+| `FAAS_VMMD_APID_CLIENT_TLS_CA_PATH` | vmmd | `dropin` |  |  | `` | split-box guest trace exports (ADR-829); vmmd_service 99-faas-spans-writer.conf |
+| `FAAS_VMMD_APID_CLIENT_TLS_CERT_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/apid-client leaf (ADR-829) |
+| `FAAS_VMMD_APID_CLIENT_TLS_KEY_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/apid-client leaf (ADR-829) |
 | `FAAS_VMMD_CONFIG` | vmmd | `default` |  |  | `` |  |
 | `FAAS_VMMD_DBURL` | vmmd | `envfile` |  |  | `` |  |
 | `FAAS_VMMD_LISTEN_ADDR` | vmmd | `dropin` |  |  | `` |  |
@@ -536,6 +539,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_RAW_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
 | `FAAS_VMMD_ROLE` | vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_SCHEDD_TARGET` | vmmd | `dropin` |  |  | `` |  |
+| `FAAS_VMMD_SPANS_WRITER_TARGET` | vmmd | `dropin` |  |  | `` | split-box apid private mTLS listener for guest trace exports; empty uses the single-box socket (ADR-829) |
 | `FAAS_VMMD_STREAM_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
 | `FAAS_VMMD_TARGET_URL` | vmmd | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_TCP_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
