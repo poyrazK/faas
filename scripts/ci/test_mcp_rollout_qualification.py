@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -46,6 +47,70 @@ class QualificationTests(unittest.TestCase):
             self.assertEqual(evidence.stat().st_mode & 0o777, 0o600)
             with self.assertRaises(ValueError):
                 MODULE.qualify(args)
+
+    def test_binary_and_source_provenance_must_match_reviewed_commit(self):
+        commit = 'a' * 40
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / 'gregale'
+            binary.write_bytes(b'fixture')
+
+            def execute(command, _env):
+                if command[0] == 'git' and command[4] == 'HEAD':
+                    return SimpleNamespace(stdout=commit + '\n')
+                if command[0] == 'git':
+                    return SimpleNamespace(stdout='')
+                if command[:3] == ['go', 'version', '-m']:
+                    return SimpleNamespace(stdout=(
+                        'build\tvcs=git\n'
+                        f'build\tvcs.revision={commit}\n'
+                        'build\tvcs.time=2026-10-09T00:00:00Z\n'
+                        'build\tvcs.modified=false\n'
+                    ))
+                self.fail(f'unexpected provenance command: {command}')
+
+            with patch.object(MODULE, 'execute', side_effect=execute):
+                provenance = MODULE.verify_release_provenance(binary, commit, root)
+            self.assertEqual(provenance, {
+                'source_revision': commit,
+                'binary_revision': commit,
+                'binary_modified': False,
+            })
+
+            with patch.object(MODULE, 'execute', side_effect=execute):
+                with self.assertRaisesRegex(MODULE.Blocked, 'source checkout does not match'):
+                    MODULE.verify_release_provenance(binary, 'b' * 40, root)
+
+            def dirty_checkout(command, _env):
+                if command[0] == 'git' and command[4] == 'HEAD':
+                    return SimpleNamespace(stdout=commit + '\n')
+                if command[0] == 'git':
+                    return SimpleNamespace(stdout=' M cmd/gregale/main.go\n')
+                self.fail('binary inspection ran for a dirty checkout')
+
+            with patch.object(MODULE, 'execute', side_effect=dirty_checkout):
+                with self.assertRaisesRegex(MODULE.Blocked, 'clean source checkout'):
+                    MODULE.verify_release_provenance(binary, commit, root)
+
+            def wrong_binary_revision(command, env):
+                result = execute(command, env)
+                if command[:3] == ['go', 'version', '-m']:
+                    return SimpleNamespace(stdout=result.stdout.replace(commit, 'b' * 40))
+                return result
+
+            with patch.object(MODULE, 'execute', side_effect=wrong_binary_revision):
+                with self.assertRaisesRegex(MODULE.Blocked, 'binary VCS revision'):
+                    MODULE.verify_release_provenance(binary, commit, root)
+
+            def modified_binary(command, env):
+                result = execute(command, env)
+                if command[:3] == ['go', 'version', '-m']:
+                    return SimpleNamespace(stdout=result.stdout.replace('vcs.modified=false', 'vcs.modified=true'))
+                return result
+
+            with patch.object(MODULE, 'execute', side_effect=modified_binary):
+                with self.assertRaisesRegex(MODULE.Blocked, 'modified source'):
+                    MODULE.verify_release_provenance(binary, commit, root)
 
     def test_command_errors_do_not_expose_secrets(self):
         with self.assertRaisesRegex(RuntimeError, '^Qualification command failed$'):

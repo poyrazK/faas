@@ -114,10 +114,40 @@ def stop_group(process):
             process.wait(timeout=10)
 
 
+def verify_release_provenance(binary, reviewed_commit, source_root=None):
+    """Require a clean reviewed checkout and a Go binary built from that commit."""
+    source = source_root or HERE.parents[1]
+    env = dict(os.environ)
+    revision = execute(['git', '-C', str(source), 'rev-parse', 'HEAD'], env).stdout.strip()
+    if revision != reviewed_commit:
+        raise Blocked('Qualification source checkout does not match the reviewed commit')
+    modified = execute(['git', '-C', str(source), 'status', '--porcelain', '--untracked-files=normal'], env).stdout
+    if modified.strip():
+        raise Blocked('Qualification requires a clean source checkout at the reviewed commit')
+    if not binary.is_file():
+        raise Blocked('Qualification binary does not exist; build Gregale from the reviewed commit')
+    build_info = execute(['go', 'version', '-m', str(binary)], env).stdout
+    settings = {}
+    for line in build_info.splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) == 2 and fields[0] == 'build' and fields[1].startswith('vcs.'):
+            key, separator, value = fields[1].partition('=')
+            if separator:
+                settings[key] = value
+    binary_revision = settings.get('vcs.revision')
+    binary_modified = settings.get('vcs.modified')
+    if not binary_revision or binary_modified not in ('true', 'false'):
+        raise Blocked('Binary lacks Go VCS metadata; rebuild it from the clean reviewed checkout with build information enabled')
+    if binary_revision != reviewed_commit:
+        raise Blocked('Gregale binary VCS revision does not match the reviewed commit')
+    if binary_modified != 'false':
+        raise Blocked('Gregale binary was built from modified source; rebuild from the clean reviewed checkout')
+    return {'source_revision': revision, 'binary_revision': binary_revision, 'binary_modified': False}
+
+
 def qualify(args):
     report = {'version': 1, 'scope': 'native-mcp-hosting-rollout', 'reviewed_commit': args.commit,
               'scenario': args.scenario, 'status': 'blocked', 'native_observations': False, 'observations': {}}
-    args.evidence.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if args.evidence.exists():
         raise ValueError('Evidence file must not exist; retain previous observations')
     process = None
@@ -144,12 +174,14 @@ def qualify(args):
             raise Blocked('Plan must use the matching prepared candidate fixtures')
         if args.state.exists() or Path(str(args.state) + '.gate').exists():
             raise Blocked('Use a fresh release journal for each qualification scenario')
+        binary_path = args.binary.resolve()
+        report['provenance'] = verify_release_provenance(binary_path, args.commit)
         env = dict(os.environ, DATABASE_URL=os.environ['MCP_QUAL_RUNTIME_DATABASE_URL'])
-        binary = str(args.binary.resolve())
+        binary = str(binary_path)
         account = json_command([binary, '--json', 'whoami'], env)
         if account.get('id') != args.account:
             raise Blocked('Authenticated account differs from the dedicated qualification account')
-        report['binary_sha256'] = hashlib.sha256(args.binary.read_bytes()).hexdigest()
+        report['binary_sha256'] = hashlib.sha256(binary_path.read_bytes()).hexdigest()
         report['plan_sha256'] = hashlib.sha256(args.plan.read_bytes()).hexdigest()
         report['native_observations'] = True
         report['account_id'] = args.account
@@ -257,6 +289,7 @@ def qualify(args):
     finally:
         if process is not None:
             stop_group(process)
+        args.evidence.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         write_json(args.evidence, report)
     return report
 
