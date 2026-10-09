@@ -132,6 +132,22 @@ This mode requires terminal input and output and accepts only `--timeout`
 alongside `--interactive`. Scripts retain the existing explicit `--from`,
 `--to`, `--sync-config`, `--yes`, `--wait`, and `--progress` options.
 
+## Guided log filtering
+
+Run `gregale logs my-api --interactive` to choose runtime output or HTTP
+request events, a time window, and filters. Runtime queries offer log level,
+text matching, and optional following. HTTP queries offer an exact status code
+and route path and return up to 100 events.
+
+The flow prints an equivalent command for POSIX shells, then asks whether to
+run it. Declining leaves the command available to copy. App selection uses the
+explicit target, linked app, or the interactive app picker. `--app my-api` is
+also accepted.
+
+This mode requires terminal input and output and accepts only an app target
+alongside `--interactive`. Scripts and JSON output retain the existing source,
+time-window, and filter flags.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

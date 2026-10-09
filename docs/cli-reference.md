@@ -7642,10 +7642,11 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 Query runtime logs and HTTP request events (linked app or interactive picker)
 
-`gregale logs [<slug>] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
+`gregale logs [<slug>] [--interactive] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | choose source, time window, and filters and show the equivalent command |  |
 | `--follow` | stream logs until interrupted |  |
 | `--deployment <ID>` | deployment id or vN revision (default: latest) |  |
 | `--release <ID|vN>` | release id or revision (alias for --deployment) |  |
@@ -7667,6 +7668,7 @@ Query runtime logs and HTTP request events (linked app or interactive picker)
 Examples:
 
 ```sh
+gregale logs my-api --interactive
 gregale logs my-api --follow
 gregale logs my-api --since 1h --level error
 ```

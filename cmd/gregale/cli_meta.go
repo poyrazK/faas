@@ -3027,9 +3027,10 @@ var cliCommands = []cliCommand{
 		Name:        "logs",
 		DocSlug:     "logs",
 		Short:       "Query runtime logs and HTTP request events (linked app or interactive picker)",
-		Examples:    []string{"gregale logs my-api --follow", "gregale logs my-api --since 1h --level error"},
+		Examples:    []string{"gregale logs my-api --interactive", "gregale logs my-api --follow", "gregale logs my-api --since 1h --level error"},
 		Positionals: []string{"[<slug>]"},
 		Flags: []cliFlag{
+			{Name: "interactive", Short: "choose source, time window, and filters and show the equivalent command", Bool: true},
 			{Name: "follow", Short: "stream logs until interrupted"},
 			{Name: "deployment", Short: "deployment id or vN revision (default: latest)", Value: "ID"},
 			{Name: "release", Short: "release id or revision (alias for --deployment)", Value: "ID|vN"},

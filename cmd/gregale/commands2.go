@@ -6170,6 +6170,7 @@ func cmdLogs(args []string) int {
 		return cmdLogsTail(args[1:])
 	}
 	fs := newFlagSet("logs", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose log source, time window, and filters interactively")
 	follow := fs.Bool("follow", false, "follow new lines")
 	deployment := fs.String("deployment", "", "deployment id or vN revision (default: latest)")
 	fs.StringVar(deployment, "release", "", "release id or revision (alias for --deployment)")
@@ -6198,6 +6199,33 @@ func cmdLogs(args []string) int {
 	if err := parseAppLogFlags(fs, args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
 		return 1
+	}
+	if *interactive {
+		invalid := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "app" && f.Name != "interactive" {
+				invalid = true
+			}
+		})
+		if invalid || fs.NArg() > 1 {
+			return printErr("Invalid interactive log flags", errors.New("--interactive accepts only an app target; choose filters in the flow"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", errors.New("use explicit log filters for scripts or JSON"))
+		}
+		pos, err := mergeAppFlag(fs.Args(), *app, 1)
+		if err != nil {
+			return printErr("Invalid app target", err)
+		}
+		target := ""
+		if len(pos) == 1 {
+			target = pos[0]
+		}
+		slug, err := resolveReadAppTarget(target)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		return cmdLogsInteractive(slug)
 	}
 	if *explain && jsonOutput {
 		PrintUsage(osStderr, "--explain cannot be combined with --json (explanation is human-readable)", "logs")
