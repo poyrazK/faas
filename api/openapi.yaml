@@ -35983,6 +35983,7 @@ components:
           - outbound_integration
           - guest_transport
           - platform_internal
+          - app_dependency
         kind:
           type: string
           maxLength: 64
@@ -62547,8 +62548,9 @@ components:
         duration_nanos: { type: integer, format: int64, minimum: 0 }
         status: { type: string, maxLength: 256 }
         db_statement: { type: string, maxLength: 512, description: "SQL fingerprint with literals redacted." }
-        dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal], description: "Allowlisted platform-owned dependency classification." }
+        dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency], description: "Allowlisted platform-owned dependency classification." }
         dependency_kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$', description: "Allowlisted platform-owned dependency kind; raw span attributes are never returned." }
+        dependency_name: { type: string, maxLength: 96, description: "Grouping identity of an app_dependency span (ADR-829): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials." }
 
     DebugCriticalPathSpan:
       type: object
@@ -62559,8 +62561,9 @@ components:
         parent_span_id: { type: string, maxLength: 256 }
         name: { type: string, maxLength: 256 }
         kind: { type: string, maxLength: 256 }
-        dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal] }
+        dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         dependency_kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
+        dependency_name: { type: string, maxLength: 96 }
         status: { type: string, maxLength: 256 }
         start_time: { type: string, format: date-time }
         end_time: { type: string, format: date-time }
@@ -62589,7 +62592,7 @@ components:
       description: "Bounded historical dependency aggregate. Percentiles are weighted by collapsed request-row counts and derived from sampled redacted spans."
       required: [type, name, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, regression]
       properties:
-        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal] }
+        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
         name: { type: string, maxLength: 256 }
         calls: { type: integer, format: int64, minimum: 1 }
@@ -62683,13 +62686,32 @@ components:
           type: array
           maxItems: 100
           items: { $ref: '#/components/schemas/DebugDependencyImpactEdge' }
+        deployment_comparison: { $ref: '#/components/schemas/DebugDependencyDeploymentComparison' }
+
+    DebugDependencyDeploymentComparison:
+      type: object
+      description: "Dependency latency split by deployment (ADR-829): baseline_* fields describe the previous deployment, current_* the compared one. Regressions first, then by current p95."
+      required: [current_deployment_id, previous_deployment_id, dependencies, truncated]
+      properties:
+        current_deployment_id: { type: string }
+        current_deployment_tag: { type: string }
+        current_commit_sha: { type: string }
+        previous_deployment_id: { type: string }
+        previous_deployment_tag: { type: string }
+        previous_commit_sha: { type: string }
+        route: { type: string }
+        dependencies:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/DebugDependencyLatencyItem' }
+        truncated: { type: boolean }
 
     DebugCriticalPathSegment:
       type: object
       description: "One redacted span identity in a canonical historical critical-path signature."
       required: [type, name]
       properties:
-        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal] }
+        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
         name: { type: string, maxLength: 256 }
 
@@ -62770,7 +62792,7 @@ components:
       description: "Bounded latency aggregate for one retained dependency span group. Total duration may include overlapping child spans and is not a critical-path sum."
       required: [type, name, calls, total_duration_ms, max_duration_ms]
       properties:
-        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal] }
+        type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
         name: { type: string, maxLength: 256 }
         calls: { type: integer, minimum: 1, maximum: 100 }
@@ -62785,7 +62807,7 @@ components:
       properties:
         status: { type: string, enum: [regression_detected, unobserved, regression_unavailable] }
         headline: { type: string }
-        diagnosis: { type: string, enum: [request_failure, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
+        diagnosis: { type: string, enum: [request_failure, dependency_regression, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
         confidence: { type: string, enum: [high, medium, low] }
         primary_span:
           oneOf:
@@ -62897,6 +62919,7 @@ components:
           maxItems: 16
           items: { $ref: '#/components/schemas/DebugRequestDependencyLatency' }
         dependency_latency_truncated: { type: boolean, description: "True when more than 16 dependency groups were retained." }
+        dependency_comparison: { $ref: '#/components/schemas/DebugDependencyDeploymentComparison' }
         spans:
           type: array
           maxItems: 100

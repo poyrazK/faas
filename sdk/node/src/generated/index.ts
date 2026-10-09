@@ -336,6 +336,7 @@ export type { DebugCriticalPathHistoryItem } from './models/DebugCriticalPathHis
 export type { DebugCriticalPathHistoryResponse } from './models/DebugCriticalPathHistoryResponse.js';
 export type { DebugCriticalPathSegment } from './models/DebugCriticalPathSegment.js';
 export type { DebugCriticalPathSpan } from './models/DebugCriticalPathSpan.js';
+export type { DebugDependencyDeploymentComparison } from './models/DebugDependencyDeploymentComparison.js';
 export type { DebugDependencyImpactEdge } from './models/DebugDependencyImpactEdge.js';
 export type { DebugDependencyImpactExemplar } from './models/DebugDependencyImpactExemplar.js';
 export type { DebugDependencyLatencyItem } from './models/DebugDependencyLatencyItem.js';

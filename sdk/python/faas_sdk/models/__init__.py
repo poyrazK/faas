@@ -656,6 +656,7 @@ from .debug_critical_path_segment import DebugCriticalPathSegment
 from .debug_critical_path_segment_type import DebugCriticalPathSegmentType
 from .debug_critical_path_span import DebugCriticalPathSpan
 from .debug_critical_path_span_dependency_type import DebugCriticalPathSpanDependencyType
+from .debug_dependency_deployment_comparison import DebugDependencyDeploymentComparison
 from .debug_dependency_impact_edge import DebugDependencyImpactEdge
 from .debug_dependency_impact_exemplar import DebugDependencyImpactExemplar
 from .debug_dependency_impact_exemplar_window import DebugDependencyImpactExemplarWindow
@@ -3661,6 +3662,7 @@ __all__ = (
     "DebugCriticalPathSegmentType",
     "DebugCriticalPathSpan",
     "DebugCriticalPathSpanDependencyType",
+    "DebugDependencyDeploymentComparison",
     "DebugDependencyImpactEdge",
     "DebugDependencyImpactExemplar",
     "DebugDependencyImpactExemplarWindow",

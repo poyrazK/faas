@@ -99,6 +99,28 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 		addRecommendation("compare_deployments", "Compare this deployment with its previous healthy deployment before rolling back.")
 	}
 
+	// ADR-829 §5: a dependency whose p95 regressed between the previous
+	// deployment and this request's deployment is the most specific
+	// actionable signal the debugger can give.
+	var dependencyRegression *api.DebugDependencyLatencyItem
+	var dependencyComparison = evidence.DependencyComparison
+	if dependencyComparison != nil {
+		for i := range dependencyComparison.Dependencies {
+			if item := dependencyComparison.Dependencies[i]; item.Regression {
+				dependencyRegression = &item
+				break
+			}
+		}
+	}
+	if dependencyRegression != nil {
+		label := dependencyLabel(*dependencyRegression)
+		depRef := addRef("dependency_comparison", "Dependency comparison with the previous deployment", "dependency:"+label)
+		detail := fmt.Sprintf("%s p95 rose from %dms to %dms (%.1fx) compared with the previous deployment%s.",
+			label, dependencyRegression.BaselineP95MS, dependencyRegression.CurrentP95MS, dependencyRegression.RegressionFactor, deploymentSuffix(dependencyComparison.PreviousDeploymentTag))
+		addFinding("dependency_regression", "A dependency slowed down after the last deployment", detail, "high", depRef)
+		addRecommendation("inspect_dependency_change", "Review how this deployment changed its calls to "+label+" (new queries, missing indexes, extra round trips) before rolling back.")
+	}
+
 	if len(evidence.Spans) > 0 {
 		spanRef := addRef("span", "Slowest retained span", "span:0")
 		primary := evidence.Spans[0]
@@ -144,6 +166,9 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 	if evidence.Request.Guest != nil && evidence.Request.Guest.Outcome != "" && evidence.Request.Guest.Outcome != "ok" {
 		out.Diagnosis = "request_failure"
 		out.Confidence = "high"
+	} else if dependencyRegression != nil {
+		out.Diagnosis = "dependency_regression"
+		out.Confidence = "high"
 	} else if evidence.Regression != nil {
 		out.Diagnosis = "performance_regression"
 		out.Confidence = "high"
@@ -171,6 +196,9 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 		} else {
 			out.Headline = fmt.Sprintf("The request returned HTTP %d; retained evidence points to a request failure.", evidence.Request.Status)
 		}
+	case "dependency_regression":
+		out.Headline = fmt.Sprintf("%s slowed from %dms to %dms p95 since the previous deployment%s.",
+			dependencyLabel(*dependencyRegression), dependencyRegression.BaselineP95MS, dependencyRegression.CurrentP95MS, deploymentSuffix(dependencyComparison.PreviousDeploymentTag))
 	case "performance_regression":
 		out.Headline = "An active deployment regression is the strongest retained signal for this request."
 	case "cold_start":
@@ -191,6 +219,26 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 	out.Recommendations = recommendations
 	out.EvidenceRefs = refs
 	return out
+}
+
+// dependencyLabel renders a dependency identity for prose, for example
+// `postgresql "SELECT orders"` or `http "api.stripe.com"`.
+func dependencyLabel(item api.DebugDependencyLatencyItem) string {
+	kind := item.Kind
+	if kind == "" {
+		kind = item.Type
+	}
+	if kind == "" {
+		return fmt.Sprintf("%q", item.Name)
+	}
+	return fmt.Sprintf("%s %q", kind, item.Name)
+}
+
+func deploymentSuffix(tag string) string {
+	if tag == "" {
+		return ""
+	}
+	return " (" + tag + ")"
 }
 
 func titleStage(value string) string {

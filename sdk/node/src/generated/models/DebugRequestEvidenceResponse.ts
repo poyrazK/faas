@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DebugDependencyDeploymentComparison } from './DebugDependencyDeploymentComparison.js';
 import type { DebugEvidenceExplanation } from './DebugEvidenceExplanation.js';
 import type { DebugRegressionItem } from './DebugRegressionItem.js';
 import type { DebugRequestCorrelation } from './DebugRequestCorrelation.js';
@@ -24,6 +25,7 @@ export type DebugRequestEvidenceResponse = {
    * True when more than 16 dependency groups were retained.
    */
   dependency_latency_truncated: boolean;
+  dependency_comparison?: DebugDependencyDeploymentComparison;
   spans: Array<DebugTelemetrySpan>;
   spans_truncated: boolean;
   explanation: DebugEvidenceExplanation;

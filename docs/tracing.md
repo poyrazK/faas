@@ -23,6 +23,22 @@ The setting applies from the next deployment. Then open a request with
 spans from your app appear under the request, and the evidence summary uses
 them to point at the slow dependency.
 
+## What the debugger does with spans
+
+Database, cache, HTTP, RPC and messaging calls are recognised from standard
+OpenTelemetry attributes and grouped by what they call: `postgresql
+"SELECT orders"`, `redis "GET"`, `http "api.stripe.com"`. Grouping names
+never include query values, keys, URL paths or credentials.
+
+For each route the debugger compares these dependencies on the current
+deployment with the previous one. When one slows down, the request evidence
+says so directly, for example:
+
+> postgresql "SELECT orders" slowed from 82ms to 191ms p95 since the previous deployment (v80).
+
+The same comparison is available for the whole app under dependency latency
+(`deployment_comparison`).
+
 ## What is traced
 
 On the managed Node.js (22, 24) and Python (3.12, 3.13) runtimes, Gregale

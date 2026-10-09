@@ -10522,6 +10522,10 @@ type DebugTelemetrySpan struct {
 	// classifications. Raw span attributes never cross the debugger boundary.
 	DependencyType string `json:"dependency_type,omitempty"`
 	DependencyKind string `json:"dependency_kind,omitempty"`
+	// DependencyName is the bounded grouping identity of an app_dependency
+	// span (ADR-829): "SELECT orders", an HTTP host, an RPC method. It never
+	// carries literals, paths, query strings or credentials.
+	DependencyName string `json:"dependency_name,omitempty"`
 }
 
 // DebugRequestCriticalPath is the bounded causal path reconstructed from
@@ -10546,6 +10550,7 @@ type DebugCriticalPathSpan struct {
 	Kind           string `json:"kind"`
 	DependencyType string `json:"dependency_type,omitempty"`
 	DependencyKind string `json:"dependency_kind,omitempty"`
+	DependencyName string `json:"dependency_name,omitempty"`
 	Status         string `json:"status,omitempty"`
 	StartTime      string `json:"start_time"`
 	EndTime        string `json:"end_time"`
@@ -10659,6 +10664,27 @@ type DebugDependencyLatencyResponse struct {
 	SpanSamples         int64                        `json:"span_samples"`
 	Dependencies        []DebugDependencyLatencyItem `json:"dependencies"`
 	Edges               []DebugDependencyImpactEdge  `json:"edges"`
+	// DeploymentComparison compares the newest deployment observed in the
+	// window with the deployment before it. Absent when fewer than two
+	// deployments have retained spans.
+	DeploymentComparison *DebugDependencyDeploymentComparison `json:"deployment_comparison,omitempty"`
+}
+
+// DebugDependencyDeploymentComparison splits dependency latency by deployment
+// instead of by time (ADR-829 §5). In each item the Baseline* fields describe
+// the previous deployment and the Current* fields the compared deployment;
+// Regression uses the same thresholds as the time-split history. Items are
+// regressions first, then by current p95.
+type DebugDependencyDeploymentComparison struct {
+	CurrentDeploymentID   string                       `json:"current_deployment_id"`
+	CurrentDeploymentTag  string                       `json:"current_deployment_tag,omitempty"`
+	CurrentCommitSHA      string                       `json:"current_commit_sha,omitempty"`
+	PreviousDeploymentID  string                       `json:"previous_deployment_id"`
+	PreviousDeploymentTag string                       `json:"previous_deployment_tag,omitempty"`
+	PreviousCommitSHA     string                       `json:"previous_commit_sha,omitempty"`
+	Route                 string                       `json:"route,omitempty"`
+	Dependencies          []DebugDependencyLatencyItem `json:"dependencies"`
+	Truncated             bool                         `json:"truncated"`
 }
 
 // DebugCriticalPathSegment is one redacted span identity in a historical
@@ -10824,10 +10850,14 @@ type DebugRequestEvidenceResponse struct {
 	CriticalPath               *DebugRequestCriticalPath       `json:"critical_path,omitempty"`
 	DependencyLatency          []DebugRequestDependencyLatency `json:"dependency_latency"`
 	DependencyLatencyTruncated bool                            `json:"dependency_latency_truncated"`
-	Spans                      []DebugTelemetrySpan            `json:"spans"`
-	SpansTruncated             bool                            `json:"spans_truncated"`
-	Explanation                DebugEvidenceExplanation        `json:"explanation"`
-	GeneratedAt                string                          `json:"generated_at"`
+	// DependencyComparison compares this route's dependencies on the request's
+	// deployment with the previous deployment (ADR-829 §5); absent without a
+	// prior deployment that has retained spans.
+	DependencyComparison *DebugDependencyDeploymentComparison `json:"dependency_comparison,omitempty"`
+	Spans                []DebugTelemetrySpan                 `json:"spans"`
+	SpansTruncated       bool                                 `json:"spans_truncated"`
+	Explanation          DebugEvidenceExplanation             `json:"explanation"`
+	GeneratedAt          string                               `json:"generated_at"`
 }
 
 // RequestAnalyticsRoute is one aggregated route/method row returned by

@@ -131,6 +131,37 @@ SpansWriter listeners. Its flush loop writes back through the receiver's own
 outcome metrics; `UpdateSpansSummary` already merges by span identity across
 producers, pins `account_id`, and keeps the slowest Scale-tier maximum.
 
+### 5. Dependency attribution for app spans
+
+Spans an app emits use OpenTelemetry semantic conventions, not the
+platform-owned `gregale.dependency.type` attribute, so the debugger used to
+treat them as anonymous `application` spans grouped by raw span name (every
+HTTP client call is named `GET`). `pkg/debugger` now classifies them as
+`app_dependency` with a kind and a bounded grouping name:
+
+| Signal | Kind | Name |
+|---|---|---|
+| `db.system(.name)` | the database system (`postgresql`, `redis`, …) | operation and table/collection (`SELECT orders`); key-value stores report only the command |
+| client span with `http.request.method` | `http` | destination host only |
+| client span with `rpc.system` | the RPC system | `service/method` |
+| client/producer span with `messaging.system` | the messaging system | operation and destination |
+
+Names never carry literals, keys, paths, query strings, ports or userinfo;
+the name is derived from the redacted statement's leading keyword and table
+identifier. Platform-owned classifications keep precedence. The identity
+reaches the API as `dependency_name` and keys every dependency and
+critical-path rollup.
+
+The dependency history gains `deployment_comparison` (newest deployment
+versus the one before it) and each request's evidence gains
+`dependency_comparison` for its route (its deployment versus the previous
+one). Both reuse the history rollup with the previous deployment as baseline
+and the same regression thresholds (≥ 5 calls each side, ≥ 1.5× and
+≥ 25 ms p95). When a dependency regressed, the rules-based synthesis reports
+diagnosis `dependency_regression` with a headline such as
+`postgresql "SELECT orders" slowed from 82ms to 191ms p95 since the previous
+deployment (v80)`.
+
 ## Consequences
 
 - Opted-in managed-runtime apps get DB, cache and HTTP client spans on the

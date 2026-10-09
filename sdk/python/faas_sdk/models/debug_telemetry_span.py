@@ -37,6 +37,9 @@ class DebugTelemetrySpan:
     """Allowlisted platform-owned dependency classification."""
     dependency_kind: str | Unset = UNSET
     """Allowlisted platform-owned dependency kind; raw span attributes are never returned."""
+    dependency_name: str | Unset = UNSET
+    """Grouping identity of an app_dependency span (ADR-829): database operation and table, HTTP host, RPC method
+    or messaging destination. Never contains literals, paths, query strings or credentials."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -70,6 +73,8 @@ class DebugTelemetrySpan:
 
         dependency_kind = self.dependency_kind
 
+        dependency_name = self.dependency_name
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -95,6 +100,8 @@ class DebugTelemetrySpan:
             field_dict["dependency_type"] = dependency_type
         if dependency_kind is not UNSET:
             field_dict["dependency_kind"] = dependency_kind
+        if dependency_name is not UNSET:
+            field_dict["dependency_name"] = dependency_name
 
         return field_dict
 
@@ -140,6 +147,8 @@ class DebugTelemetrySpan:
 
         dependency_kind = d.pop("dependency_kind", UNSET)
 
+        dependency_name = d.pop("dependency_name", UNSET)
+
         debug_telemetry_span = cls(
             trace_id=trace_id,
             span_id=span_id,
@@ -153,6 +162,7 @@ class DebugTelemetrySpan:
             db_statement=db_statement,
             dependency_type=dependency_type,
             dependency_kind=dependency_kind,
+            dependency_name=dependency_name,
         )
 
         debug_telemetry_span.additional_properties = d
