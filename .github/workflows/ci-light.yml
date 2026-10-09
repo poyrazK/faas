@@ -6,8 +6,8 @@ name: ci-light
 # of on every push (it was ~25 jobs x 150-480 runs/day, saturating the hosted
 # runner pool and pushing PR feedback past 90 minutes):
 #
-#   ci-light.yml (this file)  changed-package lint/vet/build, race tests for
-#                             changed packages and their direct importers,
+#   ci-light.yml (this file)  changed-package lint, vet of changed packages
+#                             and direct importers, tests of changed packages,
 #                             generated-code drift, policy gates and migration
 #                             ID/apply/replay checks. Five jobs, no gate job,
 #                             so a run never ends waiting for a runner.
@@ -54,12 +54,14 @@ jobs:
   lint:
     name: "light: lint, vet, build"
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
           # PR-4a scans every commit subject; the diff base must be present.
+          # A blobless clone keeps full history without downloading old blobs.
           fetch-depth: 0
+          filter: blob:none
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       # The light tier owns the go-lint family (golangci-lint analysis cache
@@ -75,6 +77,7 @@ jobs:
           restore-keys: |
             go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-lint-${{ runner.os }}-
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -100,7 +103,7 @@ jobs:
           {
             echo "base=$base"
             echo "changed=$(python3 scripts/ci/affected_packages.py changed < "$RUNNER_TEMP/changed-paths.txt")"
-            echo "test=$(python3 scripts/ci/affected_packages.py test < "$RUNNER_TEMP/changed-paths.txt")"
+            echo "vet=$(python3 scripts/ci/affected_packages.py vet < "$RUNNER_TEMP/changed-paths.txt")"
             echo "go_files=$(grep -E '\.go$' "$RUNNER_TEMP/changed-paths.txt" | while read -r f; do [[ -f "$f" ]] && printf '%s ' "$f"; done)"
           } >> "$GITHUB_OUTPUT"
 
@@ -115,21 +118,16 @@ jobs:
           # shellcheck disable=SC2086 # space-separated path list
           unformatted="$(gofmt -l $GO_FILES)"
           test -z "$unformatted" || { echo "$unformatted"; exit 1; }
-      - name: build
-        env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
-          GOMEMLIMIT: 2GiB
-          GOGC: 10
-          GOMAXPROCS: 2
-        run: go build ./...
+      # vet type-checks every changed package and direct importer, test files
+      # included, so an API change that breaks a caller fails here. The mega
+      # tier builds every binary and runs the importers' tests.
       - name: vet (changed packages and direct importers)
-        if: steps.select.outputs.test != ''
+        if: steps.select.outputs.vet != ''
         env:
-          PKGS: ${{ steps.select.outputs.test }}
+          PKGS: ${{ steps.select.outputs.vet }}
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
-          GOMEMLIMIT: 2GiB
-          GOGC: 10
-          GOMAXPROCS: 2
+          GOMEMLIMIT: 10GiB
+          GOMAXPROCS: 4
         run: |
           # shellcheck disable=SC2086 # space-separated package list
           go vet $PKGS
@@ -179,7 +177,7 @@ jobs:
   checks:
     name: "light: codegen, policy, migrations"
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -202,19 +200,21 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          filter: blob:none
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-      # Restore-only: the mega tier's nightly `checks` job owns this family.
+      # Main pushes save this family; pull requests only restore it.
       - name: restore Go build + test cache
         uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
-            go-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
+            go-checks-${{ runner.os }}-
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -328,11 +328,19 @@ jobs:
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.migrations.outputs.versions }}
         run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+      - name: save Go build + test cache
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -362,18 +370,20 @@ jobs:
           fetch-depth: 2
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-      # Restore-only from the mega tier's nightly pg shard 1 cache: it
-      # race-builds cmd/apid with the same GOFLAGS used below.
+      # Main pushes save one family per shard; pull requests only restore.
+      # The non-race `checks` family is the cold-start fallback.
       - name: restore Go build + test cache
         uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          key: go-light-test-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
           restore-keys: |
-            go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
-            go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-test-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-${{ matrix.shard }}-${{ runner.os }}-
+            go-light-checks-${{ runner.os }}-
+            go-checks-${{ runner.os }}-
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -400,12 +410,14 @@ jobs:
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
-      - name: race tests (changed packages and direct importers)
+      # No -race here: the race detector multiplies compile and run time, and
+      # the mega tier runs every package under -race nightly and before every
+      # release.
+      - name: tests (changed packages)
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
-          GOMEMLIMIT: 2GiB
-          GOGC: 10
-          GOMAXPROCS: 2
+          GOMEMLIMIT: 10GiB
+          GOMAXPROCS: 4
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
@@ -419,7 +431,7 @@ jobs:
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            go test -race -count=1 -p 4 -timeout=40m $PKGS &
+            go test -count=1 -p 4 -timeout=12m $PKGS &
             pids+=("$!")
           fi
           # Packages too slow for one shard run a third of their tests here,
@@ -427,7 +439,7 @@ jobs:
           for pkg in $SPLIT; do
             run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
             echo "testing: $pkg (test shard $SHARD/3)"
-            go test -race -count=1 -timeout=40m -run "$run" "$pkg" &
+            go test -count=1 -timeout=12m -run "$run" "$pkg" &
             pids+=("$!")
           done
           status=0
@@ -435,3 +447,11 @@ jobs:
             wait "$pid" || status=1
           done
           exit "$status"
+      - name: save Go build + test cache
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-light-test-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}

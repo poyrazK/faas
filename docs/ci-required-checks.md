@@ -21,13 +21,14 @@ push:
 
 | Tier | Workflow | Runs on | Contents |
 |---|---|---|---|
-| Light | `ci-light.yml` | every pull request push, every merge to `main` | golangci-lint on changed packages, `go build ./...`, vet and `-race` tests for changed packages plus their direct importers (`scripts/ci/affected_packages.py`), generated-code drift, policy gates, migration ID hygiene plus apply/replay when migrations change |
+| Light | `ci-light.yml` | every pull request push, every merge to `main` | golangci-lint and tests (no `-race`) for changed packages, `go vet` of changed packages plus their direct importers (`scripts/ci/affected_packages.py`), generated-code drift, policy gates, migration ID hygiene plus apply/replay when migrations change; budget ~10 minutes |
 | Mega | `ci.yml` | nightly on `main`, `workflow_dispatch`, and from `release.yml` | the complete suite: every unit shard, e2e, migration history, container/UDP contracts, flags, load, SDK acceptance, ops/infra gates |
 
 `release.yml` calls `ci.yml` (`full-ci`) and every build/publish job depends
 on it, so no release tag publishes unless the full suite passed on the tagged
-commit. Transitive breakage beyond one import level that the light tier
-misses is caught by the nightly run or, at the latest, the release gate.
+commit. What the light tier deliberately skips (importers' tests, `-race`,
+e2e, migration history) is caught by the nightly run or, at the latest, the
+release gate.
 
 ## Currently required
 
@@ -42,9 +43,9 @@ gh api repos/poyrazK/faas/rulesets/19061133 \
 |---|---|---|
 | `light: lint, vet, build` | golangci-lint on changed packages (same rules and per-package invocation as the mega `Go lint` shards), gofmt, vet, repo-wide build, PR-4a fix-has-test | `ci-light.yml:lint` |
 | `light: codegen, policy, migrations` | sqlc/proto/spec/SDK/daemonunit drift, repo policy gates, migration ID hygiene, apply-and-walk and replay safety | `ci-light.yml:checks` |
-| `light: tests (shard 1)` | `-race` tests of affected packages | `ci-light.yml:tests` |
-| `light: tests (shard 2)` | `-race` tests of affected packages | `ci-light.yml:tests` |
-| `light: tests (shard 3)` | `-race` tests of affected packages | `ci-light.yml:tests` |
+| `light: tests (shard 1)` | tests of changed packages (no `-race`; `pkg/state` split by test name across shards) | `ci-light.yml:tests` |
+| `light: tests (shard 2)` | tests of changed packages (no `-race`; `pkg/state` split by test name across shards) | `ci-light.yml:tests` |
+| `light: tests (shard 3)` | tests of changed packages (no `-race`; `pkg/state` split by test name across shards) | `ci-light.yml:tests` |
 | `runtime-contract-gate` | Runtime image, source-artifact, adapter, and operator-doc contracts | `images.yml` |
 
 A light test shard with no affected packages succeeds immediately, so a

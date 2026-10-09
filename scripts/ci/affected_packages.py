@@ -6,13 +6,15 @@ package lists derived from `go list`:
 
   changed  packages whose directory (or a non-package subdirectory such as
            testdata/) contains a changed file
-  test     changed packages plus their direct importers (production, in-package
-           test and external test imports), optionally narrowed to one shard
+  vet      changed packages plus their direct importers (production, in-package
+           test and external test imports): compile-checked by `go vet`
+  test     changed packages, optionally narrowed to one shard: tested
+  split    selected packages too slow for one shard, tested by name per shard
 
 Global inputs (go.mod, go.sum, this selector and the light workflow) select
-every package. The mega tier (ci.yml) still runs the complete suite nightly
-and before every release, so transitive importers beyond one level are caught
-there rather than on every push.
+every package. The light tier keeps a pull request under ~10 minutes by
+compile-checking importers instead of testing them; the mega tier (ci.yml)
+runs every package's -race tests nightly and before every release.
 
 Usage:
   git diff --name-only BASE HEAD | scripts/ci/affected_packages.py changed
@@ -100,12 +102,13 @@ def select(paths, pkgs):
         if owner is not None:
             changed.add(owner)
     if everything:
-        test = set(pkgs)
+        vet = test = set(pkgs)
     else:
         changed_paths = {pkgs[d]["path"] for d in changed}
-        test = set(changed) | {d for d, info in pkgs.items() if info["imports"] & changed_paths}
+        vet = set(changed) | {d for d, info in pkgs.items() if info["imports"] & changed_paths}
+        test = set(changed)
     test = {d for d in test if not d.startswith(EXCLUDED_TEST_PREFIXES)}
-    return everything, sorted(changed), sorted(test)
+    return everything, sorted(changed), sorted(vet), sorted(test)
 
 
 def shard(dirs, index, count):
@@ -121,21 +124,24 @@ def shard(dirs, index, count):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("kind", choices=["changed", "test", "split", "summary"])
+    ap.add_argument("kind", choices=["changed", "vet", "test", "split", "summary"])
     ap.add_argument("--shard", type=int, default=1)
     ap.add_argument("--shards", type=int, default=1)
     args = ap.parse_args()
     if not 1 <= args.shard <= args.shards:
         ap.error("--shard must be within 1..--shards")
 
-    everything, changed, test = select(sys.stdin.read().splitlines(), go_packages())
+    everything, changed, vet, test = select(sys.stdin.read().splitlines(), go_packages())
     if args.kind == "summary":
         print(f"global inputs changed: {str(everything).lower()}")
         print(f"changed packages ({len(changed)}): {' '.join(changed) or '<none>'}")
+        print(f"vet packages ({len(vet)}): {' '.join(vet) or '<none>'}")
         print(f"test packages ({len(test)}): {' '.join(test) or '<none>'}")
         return
     if args.kind == "changed":
         dirs = changed
+    elif args.kind == "vet":
+        dirs = vet
     elif args.kind == "split":
         dirs = [d for d in test if d in SPLIT_PACKAGES]
     else:

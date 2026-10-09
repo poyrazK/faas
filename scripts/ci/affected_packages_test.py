@@ -23,34 +23,38 @@ PKGS = {
 
 class SelectTest(unittest.TestCase):
     def test_docs_only_selects_nothing(self):
-        everything, changed, test = ap.select(["docs/quickstart.md", "README.md"], PKGS)
+        everything, changed, vet, test = ap.select(["docs/quickstart.md", "README.md"], PKGS)
         self.assertFalse(everything)
         self.assertEqual(changed, [])
+        self.assertEqual(vet, [])
         self.assertEqual(test, [])
 
-    def test_changed_package_and_direct_importers_only(self):
-        _, changed, test = ap.select(["pkg/state/store.go"], PKGS)
+    def test_changed_packages_are_tested_and_direct_importers_vetted(self):
+        _, changed, vet, test = ap.select(["pkg/state/store.go"], PKGS)
         self.assertEqual(changed, ["pkg/state"])
         # pkg/api imports pkg/state directly; cmd/apid only transitively.
-        # cmd/e2e is excluded: the mega tier owns the e2e suite.
-        self.assertEqual(test, ["pkg/api", "pkg/state"])
+        self.assertEqual(vet, ["cmd/e2e", "pkg/api", "pkg/state"])
+        self.assertEqual(test, ["pkg/state"])
 
     def test_testdata_and_embedded_files_map_to_enclosing_package(self):
-        _, changed, _ = ap.select(["./pkg/api/testdata/fixture.json"], PKGS)
+        _, changed, _, _ = ap.select(["./pkg/api/testdata/fixture.json"], PKGS)
         self.assertEqual(changed, ["pkg/api"])
 
-    def test_migrations_select_importers_but_not_the_package_itself(self):
-        _, changed, test = ap.select(["migrations/20261009000000_x.sql"], PKGS)
+    def test_migrations_are_vetted_but_tested_by_their_own_gate(self):
+        _, changed, vet, test = ap.select(["migrations/20261009000000_x.sql"], PKGS)
         self.assertEqual(changed, ["migrations"])
-        self.assertEqual(test, ["pkg/db"])
+        self.assertEqual(vet, ["migrations", "pkg/db"])
+        # The migration gate in the checks job owns migrations' tests.
+        self.assertEqual(test, [])
 
     def test_global_inputs_select_everything_except_dedicated_suites(self):
-        everything, _, test = ap.select(["go.sum"], PKGS)
+        everything, _, vet, test = ap.select(["go.sum"], PKGS)
         self.assertTrue(everything)
+        self.assertEqual(vet, sorted(PKGS))
         self.assertEqual(test, ["cmd/apid", "pkg/api", "pkg/db", "pkg/state", "pkg/util"])
 
     def test_dotfile_paths_are_not_mangled(self):
-        everything, _, _ = ap.select([".github/workflows/ci-light.yml"], PKGS)
+        everything, _, _, _ = ap.select([".github/workflows/ci-light.yml"], PKGS)
         self.assertTrue(everything)
 
 

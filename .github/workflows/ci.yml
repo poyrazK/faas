@@ -1,9 +1,11 @@
 name: ci
 
 # Mega tier: the complete suite. Pull requests and merges to main run the
-# light tier (ci-light.yml) instead; see its header for the split. This
-# workflow runs:
-#   - nightly on main (and that run is the only writer of its Go caches),
+# light tier (ci-light.yml) instead; see its header for the split. The light
+# tier owns the 10 GB Actions cache budget; this tier only saves its lint
+# shard caches (cold lint exceeds its budget) and otherwise restores whatever
+# is warm. This workflow runs:
+#   - nightly on main,
 #   - on workflow_dispatch for any branch,
 #   - from release.yml, which refuses to publish a tag until this passes on
 #     the tagged commit.
@@ -684,16 +686,6 @@ jobs:
           # Coverage reporting is best-effort; an OIDC/Codecov outage must
           # not turn a passing unit-test shard red.
           fail_ci_if_error: false
-      - name: save Go build + test cache
-        # Saved even when a test step failed: the compile cache is
-        # content-addressed, so partial warmth is still warmth.
-        if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # The complete state test inventory runs on four independent PostgreSQL
   # runners. Fuzz seeds and runnable examples belong to exactly one shard;
@@ -769,17 +761,6 @@ jobs:
           flags: unittests
           use_oidc: true
           fail_ci_if_error: false
-      - name: save Go build + test cache
-        # One writer per shared key: a second shard's save would only fail to
-        # reserve it, and duplicate entries are what overflowed the 10 GB
-        # repository cache budget and evicted the other families.
-        if: always() && github.ref == 'refs/heads/main' && matrix.shard == 1
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-state-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # PostgreSQL parity/reconciliation and CLI/daemon packages have independent
   # services. The state package itself runs in unit-tests-state above.
@@ -968,16 +949,6 @@ jobs:
           flags: unittests
           use_oidc: true
           fail_ci_if_error: false
-      - name: save Go build + test cache
-        # Saved even when a test step failed: the compile cache is
-        # content-addressed, so partial warmth is still warmth.
-        if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-pg-2-${{ matrix.id }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Require all five compatible profiles. A partial suite or parity-only profile
   # cannot replace the full exact-package 70% gate.
@@ -1092,16 +1063,6 @@ jobs:
           flags: unittests
           use_oidc: true
           fail_ci_if_error: false
-      - name: save Go build + test cache
-        # Saved even when a test step failed: the compile cache is
-        # content-addressed, so partial warmth is still warmth.
-        if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Shard 4 (pure Go light): all remaining packages. No Postgres needed.
   unit-tests-pure-2:
@@ -1171,16 +1132,6 @@ jobs:
           flags: unittests
           use_oidc: true
           fail_ci_if_error: false
-      - name: save Go build + test cache
-        # Saved even when a test step failed: the compile cache is
-        # content-addressed, so partial warmth is still warmth.
-        if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-pure-2-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   container-contract:
     name: portable container contracts (strict)
@@ -1258,14 +1209,6 @@ jobs:
             container-contract.log
             udp-contract-*.log
           if-no-files-found: warn
-      - name: save container contract builds
-        if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-container-contract-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   checks:
     # Nine gates that each finished in well under two minutes used to run
@@ -1753,16 +1696,6 @@ jobs:
       # page / warn / FaasWatchdog reach the receivers the role promises.
       - name: Alertmanager config check
         run: make alertmanager-config-check
-      - name: save Go build + test cache
-        # Saved even when a test step failed: the compile cache is
-        # content-addressed, so partial warmth is still warmth.
-        if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # fakeapid fixture (issue #266, PR 4). The cross-language smoke
   # fixture for the public SDKs — a stdlib-only Go binary that
@@ -2119,16 +2052,6 @@ jobs:
           done
       - name: make test-load
         run: make test-load
-      - name: save Go build + test cache
-        # Saved even when a test step failed: the compile cache is
-        # content-addressed, so partial warmth is still warmth.
-        if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-load-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   migration-checks:
     # ADR-142 freezes the legacy 1..590 sequence and moves all new migrations
@@ -2321,16 +2244,6 @@ jobs:
           fi
           echo "needed=${needed}" >> "$GITHUB_OUTPUT"
 
-      - name: save Go build + test cache
-        # Saved even when a test step failed: the compile cache is
-        # content-addressed, so partial warmth is still warmth.
-        if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-migrations-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Every default-build migration test, fuzz seed and runnable example runs
   # exactly once. Each shard owns a separate PostgreSQL service and still
@@ -2417,15 +2330,6 @@ jobs:
               print(f"::error::{message}")
           PY
           exit 1
-      - name: save Go build + test cache
-        # One writer per shared key; see unit-tests-state.
-        if: always() && github.ref == 'refs/heads/main' && matrix.shard == 1
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-migrations-history-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   # Keep the exact branch-protection context. A failed/cancelled prerequisite
   # or shard must fail this gate; only the impact policy can skip the suite.
@@ -2588,16 +2492,6 @@ jobs:
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=1 -shards=4)
           go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
-      - name: save Go build + test cache
-        # Saved even when a test step failed: the compile cache is
-        # content-addressed, so partial warmth is still warmth.
-        if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   e2e-shard2:
     name: e2e (shard 2 — 15 tests)
