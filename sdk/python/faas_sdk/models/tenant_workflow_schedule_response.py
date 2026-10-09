@@ -6,10 +6,15 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.tenant_workflow_schedule_response_catch_up import (
+    TenantWorkflowScheduleResponseCatchUp,
+    check_tenant_workflow_schedule_response_catch_up,
+)
 from ..models.tenant_workflow_schedule_response_overlap import (
     TenantWorkflowScheduleResponseOverlap,
     check_tenant_workflow_schedule_response_overlap,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="TenantWorkflowScheduleResponse")
 
@@ -23,7 +28,7 @@ class TenantWorkflowScheduleResponse:
     schedule: str
     """Five-field cron expression."""
     timezone: str
-    """Effective IANA timezone."""
+    """Effective IANA timezone inherited from the published workflow."""
     overlap: TenantWorkflowScheduleResponseOverlap
     enabled: bool
     tenant_configurable: bool
@@ -31,6 +36,10 @@ class TenantWorkflowScheduleResponse:
     """Whether this tenant has saved an override."""
     version: int
     """Zero uses the published defaults; use this value as expected_version when updating."""
+    catch_up: TenantWorkflowScheduleResponseCatchUp | Unset = UNSET
+    """Inherited owner-controlled recovery policy."""
+    catch_up_window: str | Unset = UNSET
+    """Inherited recovery duration"""
 
     def to_dict(self) -> dict[str, Any]:
         workflow_name = self.workflow_name
@@ -51,6 +60,12 @@ class TenantWorkflowScheduleResponse:
 
         version = self.version
 
+        catch_up: str | Unset = UNSET
+        if not isinstance(self.catch_up, Unset):
+            catch_up = self.catch_up
+
+        catch_up_window = self.catch_up_window
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -66,6 +81,10 @@ class TenantWorkflowScheduleResponse:
                 "version": version,
             }
         )
+        if catch_up is not UNSET:
+            field_dict["catch_up"] = catch_up
+        if catch_up_window is not UNSET:
+            field_dict["catch_up_window"] = catch_up_window
 
         return field_dict
 
@@ -90,6 +109,15 @@ class TenantWorkflowScheduleResponse:
 
         version = d.pop("version")
 
+        _catch_up = d.pop("catch_up", UNSET)
+        catch_up: TenantWorkflowScheduleResponseCatchUp | Unset
+        if isinstance(_catch_up, Unset):
+            catch_up = UNSET
+        else:
+            catch_up = check_tenant_workflow_schedule_response_catch_up(_catch_up)
+
+        catch_up_window = d.pop("catch_up_window", UNSET)
+
         tenant_workflow_schedule_response = cls(
             workflow_name=workflow_name,
             deployment_id=deployment_id,
@@ -100,6 +128,8 @@ class TenantWorkflowScheduleResponse:
             tenant_configurable=tenant_configurable,
             customized=customized,
             version=version,
+            catch_up=catch_up,
+            catch_up_window=catch_up_window,
         )
 
         return tenant_workflow_schedule_response

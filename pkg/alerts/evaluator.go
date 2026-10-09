@@ -728,6 +728,31 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		return e.observeEventConsumer(ctx, rule)
 	}
 	switch rule.Metric {
+	case state.AlertMetricWorkflowFailures, state.AlertMetricWorkflowQuotaSkips, state.AlertMetricWorkflowPendingAge, state.AlertMetricWorkflowWaitingAge, state.AlertMetricWorkflowDueAge:
+		store, ok := e.store.(state.WorkflowAlertStore)
+		if !ok {
+			return 0, false, skipDegraded
+		}
+		now := e.now()
+		snapshot, err := store.WorkflowAlertSnapshot(ctx, rule.AccountID, rule.AppID, e.windowStart(rule.WindowSpec, now), now)
+		if err != nil {
+			e.log.Warn("alerts: read workflow signals", "rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		var value float64
+		switch rule.Metric {
+		case state.AlertMetricWorkflowFailures:
+			value = float64(snapshot.Failures)
+		case state.AlertMetricWorkflowQuotaSkips:
+			value = float64(snapshot.QuotaSkips)
+		case state.AlertMetricWorkflowPendingAge:
+			value = snapshot.PendingAgeSeconds
+		case state.AlertMetricWorkflowWaitingAge:
+			value = snapshot.WaitingAgeSeconds
+		case state.AlertMetricWorkflowDueAge:
+			value = snapshot.DueAgeSeconds
+		}
+		return value, compareFloat(value, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
 		// per-rule source filter expands "any" to every alertable

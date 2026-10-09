@@ -55,8 +55,8 @@ class CreateAlertRuleRequest:
     """Required when metric == failed_invocations; omit otherwise (xor_chk)."""
     cooldown_minutes: int | Unset = UNSET
     action: CreateAlertRuleRequestAction | Unset = "webhook"
-    """What to do when the rule fires. Omit to default to webhook. Pre-auth target and event consumer metrics
-    support webhook only."""
+    """What to do when the rule fires. Omit to default to webhook. Pre-auth target and event consumer and workflow
+    metrics support webhook only."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -122,7 +122,7 @@ func cmdAlertAdd(args []string) int {
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "rule name (required, 3..120 chars)")
 	eventSubscription := fs.String("event-subscription-id", "", "subscription UUID for event consumer health alerts")
-	metric := fs.String("metric", "", "metric (closed set; one of error_rate_pct|latency_p50_ms|latency_p95_ms|latency_p99_ms|cold_start_pct|request_count|failed_invocations)")
+	metric := fs.String("metric", "", "metric (closed set; includes workflow_due_age_seconds for automation backlog)")
 	comparison := fs.String("comparison", "", "comparison (gt|gte|lt|lte)")
 	threshold := fs.Float64("threshold", math.NaN(), "threshold value (must be finite)")
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")

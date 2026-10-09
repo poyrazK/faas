@@ -3198,6 +3198,11 @@ const (
 	AlertMetricNewErrorFingerprint                   AlertMetric = "new_error_fingerprint"
 	AlertMetricColdWakeRatePct                       AlertMetric = "cold_wake_rate_pct"
 	AlertMetricDailyCostCents                        AlertMetric = "daily_cost_cents"
+	AlertMetricWorkflowFailures                      AlertMetric = "workflow_failures"
+	AlertMetricWorkflowQuotaSkips                    AlertMetric = "workflow_schedule_quota_skips"
+	AlertMetricWorkflowPendingAge                    AlertMetric = "workflow_pending_age_seconds"
+	AlertMetricWorkflowWaitingAge                    AlertMetric = "workflow_waiting_age_seconds"
+	AlertMetricWorkflowDueAge                        AlertMetric = "workflow_due_age_seconds"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -4015,6 +4020,12 @@ const (
 // meter reads it via CountInstanceInvocationsInMinute to set
 // usage_minutes.requests.
 type Invocation struct {
+	// WorkflowRunID is set only after authenticated durable workflow admission.
+	// It authorizes private code routing and is never guest-authored or persisted.
+	WorkflowRunID string `json:"-"`
+	// ResponseRetryAfter is transient gateway response metadata, never persisted
+	// or accepted from the customer invocation envelope.
+	ResponseRetryAfter string `json:"-"`
 	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
 	// is never stored in the invocation ledger or exposed by the customer API.
 	ExclusiveClaim *exclusivework.Claim `json:"-"`

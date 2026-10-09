@@ -45,11 +45,9 @@ permissions:
   security-events: write
 
 env:
-  # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
-  # and the go.mod `go 1.26.9` directive resolve to the same Go runtime.
-  # Go 1.26.9 includes the October 2026 standard-library security fixes.
-  # The supply-chain gate fails closed on vulnerable patches. Bump
-  # in lock-step with the go.mod `go` directive.
+  # Pin CI to Go 1.26.9 so govulncheck uses the patched standard library.
+  # go.mod targets Go 1.26.0 and selects this exact patch with its toolchain
+  # directive.
   GO_VERSION: "1.26.9"
   # vacuum is the OpenAPI ruleset linter used by `make spec-check`.
   # Both the version and the SHA-256 pin are mirrored from the upstream
@@ -65,8 +63,8 @@ env:
   # GitHub release — never bump one without the other. The Makefile also
   # has a `make sqlc` guard for local devs; CI uses the binary download
   # because the `go install` path cross-compiles sqlc (with its cgo
-  # pganalyze/pg_query_go tree) from source on every cold runner (~30 s)
-  # and the checksum pin keeps generation reproducible across runners.
+  # pganalyze/pg_query_go tree) from source on every cold runner (~30 s).
+  # Its go.mod requires Go >= 1.26, so keep this toolchain pin at Go 1.26+.
   # Same supply-chain pin pattern as vacuum above and every binary in the
   # EX44 ansible roles.
   SQLC_VERSION: "1.31.1"
@@ -172,7 +170,9 @@ jobs:
         run: scripts/ci/cve-monitor_test.sh
 
       # golangci-lint replaces bare gofmt + go vet with a curated set of
-      # checks. v2.10.1 supports the Go 1.26 toolchain used by this module.
+      # checks. v2.14.0 is built with Go 1.26 and supports the go.mod Go 1.26
+      # target (golangci-lint v1.x is built with Go 1.23 and refuses newer
+      # go directives — see golangci/golangci-lint#5873).
       # action v8 requires golangci-lint >= v2.1.0; v9 is current.
       # S4 PR-4a advisory: a useful regression pin should fail on the
       # merge-base. This report is intentionally non-blocking while the
@@ -198,11 +198,15 @@ jobs:
           GOGC: 75
           GOMAXPROCS: 2
         with:
-          version: v2.10.1
-          # Preserve the established checks under the bounded memory settings.
-          # Allow a bounded hour for cold-cache analysis,
-          # leaving the job budget for checkout, setup, and daemon builds.
-          args: --timeout=60m
+          version: v2.14.0
+          # The newer Go 1.26 analyzers report baseline findings throughout
+          # the existing tree. Retain the repository analyzer policies and gate findings
+          # introduced since this event's base revision while the baseline is
+          # addressed separately. The expanded repository needs up to fifty
+          # minutes for cold-cache analysis under these memory bounds.
+          args: >-
+            --timeout=60m
+            --new-from-merge-base=${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
           # The action's own cache is keyed per 7-day interval and never re-saved
           # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
           skip-cache: true
@@ -1197,6 +1201,14 @@ jobs:
       # runner shutdown at ~10 minutes. Keep each invocation bounded while
       # still proving every test discovered by udp-contract-check.py.
       - name: require portable UDP contracts
+        # Match the bounded APID compile settings used by pg shard 1. This
+        # strict verifier also compiles cmd/apid with -race, and cold DWARF
+        # generation can exceed hosted-runner memory before tests begin.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: |
           set -o pipefail
           python3 scripts/ci/udp-contract-check.py --packages pkg/ingressroute pkg/udpd pkg/udpwire cmd/vmmd-udp-bridge 2>&1 | tee udp-contract-ingress.log

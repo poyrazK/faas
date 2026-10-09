@@ -138,49 +138,37 @@ func TestTouchedFileRangesOwnMapping(t *testing.T) {
 // adr: 224 — a prefetch must cover every recorded byte, not just the head of
 // each range: the kernel truncates one FADV_WILLNEED to the readahead window.
 func TestAdviseWillNeedCoversWholeRanges(t *testing.T) {
-	const size = 16 << 20
-	path := filepath.Join(t.TempDir(), "mem")
-	if err := os.WriteFile(path, bytes.Repeat([]byte{1}, size), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	evictFromPageCache(t, path)
 	ranges := []fileRange{{0, 4 << 20}, {8 << 20, 6 << 20}}
-	if err := adviseWillNeed(path, ranges); err != nil {
+	type adviceCall struct {
+		fd, advice int
+		off, size  int64
+	}
+	var calls []adviceCall
+	const fd = 17
+	if err := adviseRanges(fd, ranges, func(gotFD int, off, size int64, advice int) error {
+		calls = append(calls, adviceCall{fd: gotFD, advice: advice, off: off, size: size})
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
+
+	wantCount := 0
+	for _, r := range ranges {
+		wantCount += int((r.Len + int64(adviseChunk) - 1) / int64(adviseChunk))
 	}
-	defer func() { _ = f.Close() }()
-	b, err := unix.Mmap(int(f.Fd()), 0, size, unix.PROT_READ, unix.MAP_SHARED)
-	if err != nil {
-		t.Fatal(err)
+	if len(calls) != wantCount {
+		t.Fatalf("made %d advice calls, want %d", len(calls), wantCount)
 	}
-	defer func() { _ = unix.Munmap(b) }()
-	page := os.Getpagesize()
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		missing := 0
-		for _, r := range ranges {
-			vec := make([]byte, int(r.Len)/page)
-			region := b[r.Off : r.Off+r.Len]
-			if _, _, errno := unix.Syscall(unix.SYS_MINCORE, uintptr(unsafe.Pointer(&region[0])), uintptr(len(region)), uintptr(unsafe.Pointer(&vec[0]))); errno != 0 {
-				t.Fatal(errno)
+	callIndex := 0
+	for _, r := range ranges {
+		for off := r.Off; off < r.Off+r.Len; off += int64(adviseChunk) {
+			wantSize := min(int64(adviseChunk), r.Off+r.Len-off)
+			got := calls[callIndex]
+			if got.fd != fd || got.off != off || got.size != wantSize || got.advice != unix.FADV_WILLNEED {
+				t.Errorf("advice call %d = %+v, want fd=%d range=%d+%d advice=FADV_WILLNEED", callIndex, got, fd, off, wantSize)
 			}
-			for _, v := range vec {
-				if v&1 == 0 {
-					missing++
-				}
-			}
+			callIndex++
 		}
-		if missing == 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%d advised pages never reached the page cache", missing)
-		}
-		time.Sleep(20 * time.Millisecond)
 	}
 }
 

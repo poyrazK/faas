@@ -47,8 +47,8 @@ class UpdateAlertRuleRequest:
     """New plaintext HMAC secret. Omit to keep the existing secret."""
     cooldown_minutes: int | Unset = UNSET
     action: UpdateAlertRuleRequestAction | Unset = UNSET
-    """Replace the action. Omit to leave the existing action in place. Pre-auth target and event consumer metrics
-    support webhook only."""
+    """Replace the action. Omit to leave the existing action in place. Pre-auth target and event consumer and
+    workflow metrics support webhook only."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

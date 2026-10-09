@@ -661,6 +661,9 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 			return false, err
 		}
 	}
+	if err := m.pinWorkflowEventRecipientsLocked(recipients); err != nil {
+		return false, err
+	}
 	m.eventFanoutNextID = nextID
 	m.eventFanout[key] = &PublishedEventWork{ID: nextID, Payload: bytes.Clone(payload), StorageBytes: storageBytes, RecipientSnapshot: recipients,
 		SnapshotCaptured: true, RecipientProgress: make(map[string]PublishedEventRecipientProgress),

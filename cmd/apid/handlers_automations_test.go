@@ -222,8 +222,23 @@ func TestAutomationHealthSummaryIsBoundedAndOmitsRunData(t *testing.T) {
 	if health.WindowEnd.Sub(health.WindowStart) != api.WorkflowAutomationHealthDefaultRange {
 		t.Fatalf("default health window = %s", health.WindowEnd.Sub(health.WindowStart))
 	}
+	if health.Queue == nil || health.Queue.WaitingRunCount != 0 || health.Queue.AppRunningCount != 0 || len(health.Queue.ReasonCounts) != 7 {
+		t.Fatalf("empty current queue = %+v", health.Queue)
+	}
+	initialBody := response.Body.String()
+	queued := &state.WorkflowRun{AppID: app.ID, WorkflowName: "invoice", Input: json.RawMessage(`{"private_input":"health-secret"}`), DefinitionSnapshot: json.RawMessage(`{"name":"invoice","steps":[]}`)}
+	if err := e.store.CreateWorkflowRun(ctx, queued); err != nil {
+		t.Fatal(err)
+	}
+	after := url.QueryEscape(time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339Nano))
+	before := url.QueryEscape(time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano))
+	response = e.do(t, http.MethodGet, base+"/invoice/health?created_after="+after+"&created_before="+before, nil, nil)
+	health = api.AutomationHealthResponse{}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &health) != nil || health.RunCount != 0 || health.Queue == nil || health.Queue.WaitingRunCount != 1 || health.Queue.ReasonCounts[api.AutomationQueueReady] != 1 {
+		t.Fatalf("historical window hid current queue: %d %s", response.Code, response.Body.String())
+	}
 	for _, secret := range []string{"health-secret", "health-output-secret", "health-private-error"} {
-		if strings.Contains(response.Body.String(), secret) {
+		if strings.Contains(initialBody+response.Body.String(), secret) {
 			t.Fatalf("health endpoint leaked %q: %s", secret, response.Body.String())
 		}
 	}
@@ -236,6 +251,18 @@ func TestAutomationHealthSummaryIsBoundedAndOmitsRunData(t *testing.T) {
 	response = e.do(t, http.MethodGet, base+"/missing/health", nil, nil)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("unknown automation health: %d %s", response.Code, response.Body.String())
+	}
+	other, err := e.store.CreateAccount(ctx, "queue-owner@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := e.store.CreateApp(ctx, state.App{AccountID: other.ID, Slug: "foreign-queue", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = e.do(t, http.MethodGet, "/v1/apps/"+foreign.Slug+"/automations/invoice/health", nil, nil)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("foreign automation health exposed: %d %s", response.Code, response.Body.String())
 	}
 }
 

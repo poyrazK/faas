@@ -133,6 +133,12 @@ var AllowedAlertRuleMetrics = []string{
 	"queue_depth",
 	"pre_auth_target_threshold",
 	"pre_auth_target_signal_gap_pct",
+	"workflow_failures",
+	"workflow_schedule_quota_skips",
+	"workflow_pending_age_seconds",
+	"workflow_waiting_age_seconds",
+	"workflow_due_age_seconds",
+
 	"new_error_fingerprint",
 	"cold_wake_rate_pct",
 	"daily_cost_cents",
@@ -189,7 +195,9 @@ func AllowedAlertRuleAction(v string) bool {
 // Pre-auth target observations and signal health can be influenced by
 // external login traffic. Their alerts must never change a deployment.
 func AlertRuleActionAllowedForMetric(metric, action string) bool {
-	if IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || metric == "pre_auth_target_threshold" || metric == "pre_auth_target_signal_gap_pct" {
+	if IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || metric == "pre_auth_target_threshold" || metric == "pre_auth_target_signal_gap_pct" ||
+		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
+		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" {
 		return action == "" || action == "webhook"
 	}
 	return true
