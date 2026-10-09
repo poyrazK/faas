@@ -81,8 +81,8 @@ func cmdCustomerOperationAttentionMode(args []string, summary bool) int {
 			if err == nil && result.Totals.LongestOverdueSeconds != nil {
 				_, err = fmt.Fprintf(osStdout, "Oldest missed deadline: %s (%d seconds overdue)\n", result.Totals.EarliestOverdueDeadlineAt.Format(time.RFC3339Nano), *result.Totals.LongestOverdueSeconds)
 			}
-			if _, err = fmt.Fprintf(osStdout, "SLA totals: at-risk-workflows=%d breached-workflows=%d unknown-workflows=%d\n", result.Totals.SLAAtRiskWorkflowCount, result.Totals.SLABreachedWorkflowCount, result.Totals.SLAUnknownWorkflowCount); err != nil {
-				return 1
+			if err == nil {
+				_, err = fmt.Fprintf(osStdout, "SLA totals: at-risk-workflows=%d breached-workflows=%d unknown-workflows=%d\n", result.Totals.SLAAtRiskWorkflowCount, result.Totals.SLABreachedWorkflowCount, result.Totals.SLAUnknownWorkflowCount)
 			}
 			for _, g := range result.Groups {
 				if err != nil {
