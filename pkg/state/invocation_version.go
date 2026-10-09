@@ -109,6 +109,12 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if InvocationHasOperation(inv) {
 		return resolveOperationInvocationVersion(ctx, store, app, inv)
 	}
+	if inv.WorkflowRunID != "" {
+		pinned, version, handled, err := resolveWorkflowInvocationVersion(ctx, store, app, inv, revision, release)
+		if handled || err != nil {
+			return pinned, version, err
+		}
+	}
 	capturedScope := inv.DeploymentScope != ""
 	projectApp := app.ProjectID != "" && app.PreviewOfSlug == ""
 	scope, err := invocationDeploymentScope(app, inv.DeploymentScope)

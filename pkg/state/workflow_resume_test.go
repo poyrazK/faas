@@ -94,6 +94,10 @@ func TestWorkflowResumePreservesProgressAndFencesOldWorkers(t *testing.T) {
 			t.Fatal(err)
 		}
 		failResumeRun(t, store, run, "send")
+		preview, err := store.(WorkflowRunDiagnosticsStore).GetWorkflowRunDiagnostics(ctx, WorkflowDiagnosticsOptions{RunID: run.ID, AccountID: app.AccountID})
+		if err != nil || !preview.Resume.Eligible || strings.Join(preview.Resume.ReopenedSteps, ",") != "child,send" || strings.Join(preview.Resume.PreservedSteps, ",") != "done,off,off-child" {
+			t.Fatalf("preview changed guard-false or completed paths: %+v %v", preview, err)
+		}
 		resumable := store.(WorkflowResumeStore)
 		resumed, record, _, err := resumable.ResumeWorkflowRun(ctx, resumeOptions(run, app, 0))
 		if err != nil || resumed.ResumeCount != 1 || resumed.Status != WorkflowRunStatusPending || resumed.FinishedAt != nil || resumed.LastError != nil {
@@ -263,6 +267,13 @@ func TestWorkflowResumePreservesAndFencesPlatformTenantIdentity(t *testing.T) {
 		options.PlatformTenantID = uuid.NewString()
 		if _, _, _, err := store.(WorkflowResumeStore).ResumeWorkflowRun(ctx, options); !errors.Is(err, ErrWorkflowRunNotFound) {
 			t.Fatalf("foreign tenant resume error=%v, want not found", err)
+		}
+		consumer, err := store.CreateAPIConsumer(ctx, app.AccountID, app.ID, "resume-customer", "Resume customer")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tenants.LinkPlatformTenantConsumer(ctx, app.AccountID, tenant.ID, consumer.ID); err != nil {
+			t.Fatal(err)
 		}
 		options.PlatformTenantID = tenant.ID
 		resumed, _, _, err := store.(WorkflowResumeStore).ResumeWorkflowRun(ctx, options)

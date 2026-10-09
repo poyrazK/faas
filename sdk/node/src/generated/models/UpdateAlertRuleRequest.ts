@@ -26,7 +26,7 @@ export type UpdateAlertRuleRequest = {
   webhook_secret?: string;
   cooldown_minutes?: number;
   /**
-   * Replace the action. Omit to leave the existing action in place. Pre-auth target metrics support webhook only.
+   * Replace the action. Omit to leave the existing action in place. Pre-auth target and workflow metrics support webhook only.
    */
   action?: 'webhook' | 'rollback' | 'demote' | 'promote';
 };

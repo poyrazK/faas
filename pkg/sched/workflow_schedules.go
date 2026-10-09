@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const workflowScheduleBatch = 256
+const workflowScheduleBatch = api.WorkflowScheduleBatch
 
 // The keyed workflow worker serializes this scan within one process. Database
 // admission serializes it across scheduler replicas and manual run producers.
@@ -50,7 +51,7 @@ func (l *Loop) runApplicationWorkflowSchedulesTick(ctx context.Context) error {
 			if definition.Trigger == nil || definition.Trigger.Type != "schedule" {
 				continue
 			}
-			cursor, changed, err := store.AdmitScheduledWorkflow(ctx, candidate.AppID, candidate.DeploymentID, definition.Name, l.now())
+			cursor, changed, err := store.AdmitScheduledWorkflow(ctx, candidate.AppID, candidate.DeploymentID, definition.Name, now)
 			if err != nil {
 				failures = append(failures, fmt.Errorf("workflow schedules: admit %s/%s: %w", candidate.AppID, definition.Name, err))
 				continue
@@ -86,8 +87,15 @@ func (l *Loop) runTenantWorkflowSchedulesTick(ctx context.Context) error {
 	if l.tenantWorkflowScheduleComplete {
 		return nil
 	}
-	candidates, err := store.ListTenantWorkflowScheduleCandidates(ctx, l.engine.OwnerNodeID(),
-		l.tenantWorkflowScheduleAfterApp, l.tenantWorkflowScheduleAfterTenant, workflowScheduleBatch)
+	var candidates []state.WorkflowScheduleCandidate
+	var err error
+	fair, fairScan := store.(state.FairTenantWorkflowScheduleStore)
+	if fairScan {
+		candidates, err = fair.ListFairTenantWorkflowScheduleCandidates(ctx, l.engine.OwnerNodeID(), now.UTC().Truncate(time.Minute), workflowScheduleBatch)
+	} else {
+		candidates, err = store.ListTenantWorkflowScheduleCandidates(ctx, l.engine.OwnerNodeID(),
+			l.tenantWorkflowScheduleAfterApp, l.tenantWorkflowScheduleAfterTenant, workflowScheduleBatch)
+	}
 	if err != nil {
 		return err
 	}
@@ -103,7 +111,7 @@ func (l *Loop) runTenantWorkflowSchedulesTick(ctx context.Context) error {
 				continue
 			}
 			cursor, changed, err := store.AdmitTenantScheduledWorkflow(ctx, candidate.AppID, candidate.PlatformTenantID,
-				candidate.DeploymentID, definition.Name, l.now())
+				candidate.DeploymentID, definition.Name, now)
 			if err != nil {
 				failures = append(failures, fmt.Errorf("tenant workflow schedules: admit %s/%s/%s: %w",
 					candidate.AppID, candidate.PlatformTenantID, definition.Name, err))
@@ -125,7 +133,7 @@ func (l *Loop) runTenantWorkflowSchedulesTick(ctx context.Context) error {
 			l.tenantWorkflowScheduleAfterApp, l.tenantWorkflowScheduleAfterTenant = "", ""
 			l.tenantWorkflowScheduleFailed = false
 		}
-	} else {
+	} else if !fairScan {
 		last := candidates[len(candidates)-1]
 		l.tenantWorkflowScheduleAfterApp, l.tenantWorkflowScheduleAfterTenant = last.AppID, last.PlatformTenantID
 	}

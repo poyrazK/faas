@@ -20,9 +20,9 @@ func TestEvaluateWorkflowRetry(t *testing.T) {
 			maxAttempts: 3, retryable: true, shouldRetry: true, isDead: true,
 		},
 		{
-			name: "client error is terminal and failed",
+			name: "throttling retries within the attempt budget",
 			spec: WorkflowStepSpec{}, httpStatus: 429, attemptNumber: 1,
-			maxAttempts: 3,
+			maxAttempts: 3, retryable: true, shouldRetry: true,
 		},
 		{
 			name: "execution error retries and is dead",
@@ -73,5 +73,23 @@ func TestEvaluateWorkflowRetry(t *testing.T) {
 				t.Fatalf("EvaluateWorkflowRetry() = %+v, want max_attempts=%d retryable=%t should_retry=%t is_dead=%t", decision, test.maxAttempts, test.retryable, test.shouldRetry, test.isDead)
 			}
 		})
+	}
+}
+
+func TestWorkflowTransientHTTPStatusesPreserveRetryBudget(t *testing.T) {
+	for _, status := range []int{408, 425, 429} {
+		decision := EvaluateWorkflowRetry(WorkflowStepSpec{}, status, false, 1)
+		if !decision.ShouldRetry || decision.IsDead {
+			t.Fatalf("status=%d decision=%+v", status, decision)
+		}
+		exhausted := EvaluateWorkflowRetry(WorkflowStepSpec{}, status, false, 3)
+		if exhausted.ShouldRetry || exhausted.IsDead {
+			t.Fatalf("exhausted status=%d decision=%+v", status, exhausted)
+		}
+	}
+	for _, status := range []int{400, 401, 403, 404, 409, 422} {
+		if decision := EvaluateWorkflowRetry(WorkflowStepSpec{}, status, false, 1); decision.ShouldRetry {
+			t.Fatalf("permanent status=%d decision=%+v", status, decision)
+		}
 	}
 }

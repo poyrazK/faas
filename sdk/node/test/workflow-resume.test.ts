@@ -15,7 +15,7 @@ test('workflow continuation sends revision zero and preserves typed history and 
         for await (const chunk of req) chunks.push(Buffer.from(chunk));
         posted = JSON.parse(Buffer.concat(chunks).toString());
         key = String(req.headers['idempotency-key'] ?? '');
-        res.end(JSON.stringify({ id: 'run', app_id: 'app', workflow_name: 'batch', status: 'pending', resume_count: 1, scheduled_for: '2026-10-03T12:00:00Z', created_at: '2026-10-03T12:00:00Z', updated_at: '2026-10-03T12:00:00Z' }));
+        res.end(JSON.stringify({ id: 'run', app_id: 'app', deployment_id: 'deployment-started-with', workflow_name: 'batch', status: 'pending', resume_count: 1, scheduled_for: '2026-10-03T12:00:00Z', created_at: '2026-10-03T12:00:00Z', updated_at: '2026-10-03T12:00:00Z' }));
       } else if (req.url?.endsWith('/resumes')) {
         res.end(JSON.stringify({ resumes: [{ run_id: 'run', resume_number: 1, account_id: 'account', previous_status: 'dead', resumed_steps: ['send'], created_at: '2026-10-03T12:00:00Z' }] }));
       } else {
@@ -33,6 +33,7 @@ test('workflow continuation sends revision zero and preserves typed history and 
   assert.deepEqual(posted, { expected_resume_count: 0 });
   assert.ok(key);
   assert.equal(resumed.resume_count, 1);
+  assert.equal(resumed.deployment_id, 'deployment-started-with');
   const history = await WorkflowsService.listWorkflowResumes({ id: 'run' });
   assert.deepEqual(history.resumes[0]?.resumed_steps, ['send']);
   assert.equal(history.resumes[0]?.previous_status, 'dead');

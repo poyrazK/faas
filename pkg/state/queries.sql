@@ -152,6 +152,7 @@ SELECT EXISTS (
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
+           OR EXISTS (SELECT 1 FROM workflow_retained_deployment_refs w WHERE w.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
                       WHERE rm.deployment_id = d.id AND (rs.active OR rs.expires_at > clock_timestamp())))
       AND (d.rootfs_key = sqlc.arg(storage_key)::text
@@ -174,6 +175,7 @@ WITH retained_deployments AS (
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
+           OR EXISTS (SELECT 1 FROM workflow_retained_deployment_refs w WHERE w.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
                       WHERE rm.deployment_id = d.id AND (rs.active OR rs.expires_at > clock_timestamp())))
 )
@@ -13395,7 +13397,7 @@ UPDATE deployments d SET status = CASE WHEN
     EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
-    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
     THEN 'live' ELSE 'superseded' END, traffic_percent=0
 WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
 AND d.status='live' AND d.id<>sqlc.arg(deployment_id)::uuid;
@@ -13406,7 +13408,7 @@ UPDATE deployments d SET status = CASE WHEN sqlc.arg(traffic_percent)::integer>0
     OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
-    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
     THEN 'live' ELSE 'superseded' END, traffic_percent=sqlc.arg(traffic_percent)::integer
 WHERE d.id=sqlc.arg(deployment_id)::uuid;
 
@@ -13417,7 +13419,7 @@ DELETE FROM deployment_revision_pins WHERE deployment_id=sqlc.arg(deployment_id)
 
 -- name: LockExpiredRevisionPinApps :many
 SELECT a.id FROM apps a WHERE EXISTS(SELECT 1 FROM deployment_code_pin_deadlines p WHERE p.app_id=a.id AND p.expires_at<=now()
-        AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=p.deployment_id)
+        AND NOT EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=p.deployment_id)
         AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
             WHERE rm.deployment_id=p.deployment_id AND (rs.active OR rs.expires_at>now())))
 ORDER BY a.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE OF a;
@@ -13430,10 +13432,11 @@ ORDER BY a.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE OF a;
 WITH locked_deployments AS MATERIALIZED (
     SELECT d.id,
         EXISTS(SELECT 1 FROM deployment_revision_pins public_pin WHERE public_pin.deployment_id=d.id) AS has_public,
-        EXISTS(SELECT 1 FROM customer_operation_code_pins private_pin WHERE private_pin.deployment_id=d.id) AS has_private
+        EXISTS(SELECT 1 FROM customer_operation_code_pins private_pin WHERE private_pin.deployment_id=d.id) AS has_private,
+        EXISTS(SELECT 1 FROM workflow_code_pins workflow_pin WHERE workflow_pin.deployment_id=d.id) AS has_workflow
     FROM deployments d JOIN deployment_code_pin_deadlines p ON p.deployment_id=d.id AND p.app_id=d.app_id
     WHERE d.app_id=ANY(sqlc.arg(app_ids)::uuid[]) AND p.expires_at<=now()
-    AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    AND NOT EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
     AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
     ORDER BY d.app_id,d.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE OF d
@@ -13443,10 +13446,14 @@ WITH locked_deployments AS MATERIALIZED (
 ), expired_private AS (
     DELETE FROM customer_operation_code_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
     RETURNING p.deployment_id
+), expired_workflow AS (
+    DELETE FROM workflow_code_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
+    RETURNING p.deployment_id
 ), expired AS (
     SELECT d.id AS deployment_id FROM locked_deployments d
     WHERE (NOT d.has_public OR EXISTS(SELECT 1 FROM expired_public p WHERE p.deployment_id=d.id))
     AND (NOT d.has_private OR EXISTS(SELECT 1 FROM expired_private p WHERE p.deployment_id=d.id))
+    AND (NOT d.has_workflow OR EXISTS(SELECT 1 FROM expired_workflow p WHERE p.deployment_id=d.id))
 )
 UPDATE deployments d SET status='superseded',traffic_percent=0 FROM expired e
 WHERE d.id=e.deployment_id AND d.status='live' AND d.traffic_percent=0;
@@ -13497,7 +13504,7 @@ FOR UPDATE OF d;
 
 -- name: FinalizeRetainedServiceRolloutAbortTarget :one
 UPDATE deployments d SET status=CASE WHEN
-    EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
     THEN 'live' ELSE 'superseded' END,
     traffic_percent=0,rollout_state='aborted',rollout_completed_at=NULL,
     rollout_aborted_at=sqlc.arg(aborted_at)::timestamptz,
@@ -13539,7 +13546,7 @@ ORDER BY coalesce(d.serving_ended_at,d.created_at) DESC,d.created_at DESC,d.id D
 
 -- name: RetireAutoRollbackDeploymentSiblings :exec
 UPDATE deployments d SET status=CASE WHEN
-    EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
     THEN 'live' ELSE 'superseded' END,
     traffic_percent=0,rollout_state='aborted',rollout_completed_at=NULL,
     rollout_aborted_at=coalesce(rollout_aborted_at,now()),
@@ -13760,7 +13767,7 @@ WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant
 ORDER BY a.id LIMIT sqlc.arg(batch_limit);
 
 -- name: LockWorkflowScheduleTarget :one
-SELECT d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
+SELECT a.account_id, d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
 FROM apps a JOIN accounts ac ON ac.id = a.account_id
 JOIN deployments d ON d.app_id = a.id
 WHERE a.id = sqlc.arg(app_id) AND a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
@@ -13771,6 +13778,36 @@ WHERE a.id = sqlc.arg(app_id) AND a.status <> 'deleted' AND NOT a.maintenance_mo
       ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
   )
 FOR SHARE OF a, ac, d;
+
+-- Replay reads and locks one retained occurrence inside the app admission lock.
+-- The replay run identity is separate from the original skipped outcome.
+-- name: GetWorkflowScheduleOccurrenceForReplay :one
+SELECT * FROM workflow_schedule_occurrences
+WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid;
+
+-- name: LockWorkflowScheduleOccurrenceForReplay :one
+SELECT * FROM workflow_schedule_occurrences
+WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid
+FOR UPDATE;
+
+-- name: SetWorkflowScheduleOccurrenceReplay :execrows
+UPDATE workflow_schedule_occurrences
+SET replay_run_id = sqlc.arg(replay_run_id)::uuid, replayed_at = sqlc.arg(replayed_at)::timestamptz
+WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid
+  AND status IN ('skipped_overlap', 'skipped_quota') AND replay_run_id IS NULL;
+
+-- Replay admissions update fairness without rewriting the scheduler cursor's
+-- last outcome or nominal schedule time.
+-- name: UpdateWorkflowScheduleLastAdmittedAt :execrows
+UPDATE workflow_schedule_cursors
+SET last_admitted_at = sqlc.arg(last_admitted_at)::timestamptz, updated_at = now()
+WHERE app_id = sqlc.arg(app_id)::uuid AND workflow_name = sqlc.arg(workflow_name)::text;
+
+-- name: UpdateTenantWorkflowScheduleLastAdmittedAt :execrows
+UPDATE platform_tenant_workflow_schedule_cursors
+SET last_admitted_at = sqlc.arg(last_admitted_at)::timestamptz, updated_at = now()
+WHERE app_id = sqlc.arg(app_id)::uuid AND platform_tenant_id = sqlc.arg(tenant_id)::uuid
+  AND workflow_name = sqlc.arg(workflow_name)::text;
 
 -- name: LockWorkflowResumeTarget :one
 SELECT d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
@@ -13786,7 +13823,13 @@ WHERE a.id = sqlc.arg(app_id) AND a.status <> 'deleted' AND NOT a.maintenance_mo
 FOR SHARE OF a, ac, d;
 
 -- name: LockWorkflowRunAdmission :exec
-SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(app_key)::text, 0));
+-- Canonicalize UUID spelling. Take both historic forms in a fixed order so
+-- updated writers also coordinate with older callers during rolling updates.
+WITH compact_lock AS MATERIALIZED (
+ SELECT pg_advisory_xact_lock(hashtextextended(replace(sqlc.arg(app_key)::text::uuid::text, '-', ''), 0))
+)
+SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(app_key)::text::uuid::text, 0))
+FROM compact_lock;
 
 -- name: LockWorkflowActionAdmission :exec
 SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(workflow_key)::text, 1));
@@ -13803,8 +13846,8 @@ WHERE app_id = sqlc.arg(app_id) AND status IN ('pending', 'running', 'awaiting_e
   AND (sqlc.arg(workflow_name)::text = '' OR workflow_name = sqlc.arg(workflow_name));
 
 -- name: InsertScheduledWorkflowRun :one
-INSERT INTO workflow_runs (id, app_id, workflow_name, status, input, definition_snapshot, scheduled_for)
-VALUES (sqlc.arg(id), sqlc.arg(app_id), sqlc.arg(workflow_name), 'pending', sqlc.arg(input), sqlc.arg(definition_snapshot), sqlc.arg(scheduled_for))
+INSERT INTO workflow_runs (id, app_id, deployment_id, workflow_name, status, input, definition_snapshot, scheduled_for)
+VALUES (sqlc.arg(id), sqlc.arg(app_id), sqlc.arg(deployment_id), sqlc.arg(workflow_name), 'pending', sqlc.arg(input), sqlc.arg(definition_snapshot), sqlc.arg(scheduled_for))
 RETURNING created_at, updated_at;
 
 -- name: GetWorkflowScheduleCursor :one
@@ -13822,12 +13865,12 @@ AND NOT EXISTS (
 
 -- name: UpsertWorkflowScheduleCursor :one
 INSERT INTO workflow_schedule_cursors (app_id, workflow_name, deployment_id, trigger_snapshot,
-    last_evaluated_at, scheduled_for, status, last_run_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    last_evaluated_at, scheduled_for, status, last_run_id, last_admitted_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (app_id, workflow_name) DO UPDATE SET
     deployment_id = EXCLUDED.deployment_id, trigger_snapshot = EXCLUDED.trigger_snapshot,
     last_evaluated_at = EXCLUDED.last_evaluated_at, scheduled_for = EXCLUDED.scheduled_for,
-    status = EXCLUDED.status, last_run_id = EXCLUDED.last_run_id, updated_at = now()
+    status = EXCLUDED.status, last_run_id = EXCLUDED.last_run_id, last_admitted_at = EXCLUDED.last_admitted_at, updated_at = now()
 RETURNING *;
 
 -- Tenant schedule candidates are one row per active tenant/app binding. The
@@ -13889,8 +13932,8 @@ WHERE app_id = sqlc.arg(app_id)::uuid AND platform_tenant_id = sqlc.arg(tenant_i
   AND status IN ('pending', 'running', 'awaiting_event');
 
 -- name: InsertTenantScheduledWorkflowRun :one
-INSERT INTO workflow_runs (id, app_id, platform_tenant_id, workflow_name, status, input, definition_snapshot, scheduled_for)
-VALUES (sqlc.arg(id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(tenant_id)::uuid, sqlc.arg(workflow_name)::text,
+INSERT INTO workflow_runs (id, app_id, platform_tenant_id, deployment_id, workflow_name, status, input, definition_snapshot, scheduled_for)
+VALUES (sqlc.arg(id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(tenant_id)::uuid, sqlc.arg(deployment_id)::uuid, sqlc.arg(workflow_name)::text,
     'pending', sqlc.arg(input)::jsonb, sqlc.arg(definition_snapshot)::jsonb, sqlc.arg(scheduled_for)::timestamptz)
 RETURNING created_at, updated_at;
 
@@ -13899,16 +13942,21 @@ SELECT * FROM platform_tenant_workflow_schedule_cursors
 WHERE app_id = sqlc.arg(app_id)::uuid AND platform_tenant_id = sqlc.arg(tenant_id)::uuid
   AND workflow_name = sqlc.arg(workflow_name)::text;
 
+-- name: ListTenantWorkflowScheduleCursors :many
+SELECT * FROM platform_tenant_workflow_schedule_cursors
+WHERE app_id = sqlc.arg(app_id)::uuid AND platform_tenant_id = sqlc.arg(tenant_id)::uuid
+ORDER BY workflow_name;
+
 -- name: UpsertTenantWorkflowScheduleCursor :one
 INSERT INTO platform_tenant_workflow_schedule_cursors (app_id, platform_tenant_id, workflow_name,
-    deployment_id, trigger_snapshot, last_evaluated_at, scheduled_for, status, last_run_id)
+    deployment_id, trigger_snapshot, last_evaluated_at, scheduled_for, status, last_run_id, last_admitted_at)
 VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(tenant_id)::uuid, sqlc.arg(workflow_name)::text,
     sqlc.arg(deployment_id)::uuid, sqlc.arg(trigger_snapshot)::jsonb, sqlc.arg(last_evaluated_at)::timestamptz,
-    sqlc.narg(scheduled_for)::timestamptz, sqlc.arg(status)::text, sqlc.narg(last_run_id)::uuid)
+    sqlc.narg(scheduled_for)::timestamptz, sqlc.arg(status)::text, sqlc.narg(last_run_id)::uuid, sqlc.narg(last_admitted_at)::timestamptz)
 ON CONFLICT (app_id, platform_tenant_id, workflow_name) DO UPDATE SET
     deployment_id = EXCLUDED.deployment_id, trigger_snapshot = EXCLUDED.trigger_snapshot,
     last_evaluated_at = EXCLUDED.last_evaluated_at, scheduled_for = EXCLUDED.scheduled_for,
-    status = EXCLUDED.status, last_run_id = EXCLUDED.last_run_id, updated_at = now()
+    status = EXCLUDED.status, last_run_id = EXCLUDED.last_run_id, last_admitted_at = EXCLUDED.last_admitted_at, updated_at = now()
 RETURNING *;
 
 -- name: ListMatchingEventWorkflows :many
@@ -13933,8 +13981,8 @@ FROM apps a JOIN accounts ac ON ac.id = a.account_id
 WHERE a.id = sqlc.arg(app_id) FOR SHARE OF a, ac;
 
 -- name: InsertEventWorkflowRun :exec
-INSERT INTO workflow_runs(id, app_id, platform_tenant_id, workflow_name, status, input, definition_snapshot)
-VALUES($1, $2, nullif(sqlc.arg(platform_tenant_id)::text, '')::uuid, $3, 'pending', $4, $5);
+INSERT INTO workflow_runs(id, app_id, platform_tenant_id, deployment_id, workflow_name, status, input, definition_snapshot)
+VALUES(sqlc.arg(id)::uuid, sqlc.arg(app_id)::uuid, nullif(sqlc.arg(platform_tenant_id)::text, '')::uuid, sqlc.narg(deployment_id)::uuid, sqlc.arg(workflow_name)::text, 'pending', sqlc.arg(input)::jsonb, sqlc.arg(definition_snapshot)::jsonb);
 
 -- name: InsertEventWorkflowReceipt :exec
 INSERT INTO workflow_event_receipts(outbox_id, recipient_id, run_id) VALUES($1, $2, $3);
@@ -14029,6 +14077,13 @@ DELETE FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2;
 
 -- name: DeleteAutomationScheduleCursor :exec
 DELETE FROM workflow_schedule_cursors WHERE app_id=$1 AND workflow_name=$2;
+
+-- Preserve tenant cadence, version and admission priority, but invalidate the
+-- evaluated deployment so publish/pause/resume cannot replay the paused interval.
+-- name: RearmTenantAutomationSchedules :exec
+UPDATE platform_tenant_workflow_schedule_cursors
+SET deployment_id=NULL,scheduled_for=NULL,status='armed',last_run_id=NULL
+WHERE app_id=sqlc.arg(app_id)::uuid AND workflow_name=sqlc.arg(workflow_name)::text;
 
 -- name: AutomationManifest :one
 SELECT id,workflows FROM deployments WHERE app_id=$1 AND status='live' AND scope='default'
@@ -14238,7 +14293,7 @@ WHERE s.run_id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name) AND (
 
 -- name: LockWorkflowResumeRun :one
 SELECT id,app_id,workflow_name,status,current_step,input,output,definition_snapshot,
- scheduled_for,started_at,finished_at,last_error,created_at,updated_at,resume_count,cancelled_at,platform_tenant_id
+ scheduled_for,started_at,finished_at,last_error,created_at,updated_at,resume_count,cancelled_at,platform_tenant_id,deployment_id
 FROM workflow_runs WHERE id=sqlc.arg(run_id) AND app_id=sqlc.arg(app_id) FOR UPDATE;
 
 -- name: WorkflowResumeSteps :many
@@ -14826,6 +14881,7 @@ UPDATE deployments SET traffic_percent=100,rollout_state='complete',rollout_comp
 UPDATE deployments d SET traffic_percent=0,status=CASE WHEN EXISTS(SELECT 1 FROM deployment_revision_pins p
  WHERE p.deployment_id=d.id AND p.expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM project_release_members rm
  JOIN project_release_sets rs ON rs.id=rm.release_id WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>clock_timestamp()))
+ OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
  THEN 'live' ELSE 'superseded' END
  WHERE d.app_id=sqlc.arg(app_id) AND d.scope=sqlc.arg(scope) AND d.status='live' AND d.id<>sqlc.arg(target_id);
 
@@ -15337,6 +15393,243 @@ WHERE c.account_id=sqlc.arg(account_id)::uuid
             AND c.resource_id=('environment-clone-' || s.operation_id::text || '-' || s.source_database_id::text)
             AND c.backend_id=s.backend_id AND c.backend_fingerprint=s.backend_fingerprint
             AND c.source_resource_id=s.source_data_resource_id AND c.point_in_time=s.capture_point)));
+-- name: ListFairTenantWorkflowScheduleCandidates :many
+SELECT a.id AS app_id, t.id AS platform_tenant_id, d.id AS deployment_id,
+       jsonb_build_array(w.definition)::jsonb AS workflows
+FROM apps a
+JOIN accounts ac ON ac.id = a.account_id
+JOIN platform_tenants t ON t.account_id = a.account_id AND t.status = 'active'
+JOIN deployments d ON d.app_id = a.id
+CROSS JOIN LATERAL jsonb_array_elements(app_workflow_definitions(a.id, d.workflows)::jsonb) w(definition)
+LEFT JOIN platform_tenant_workflow_schedule_cursors c
+ ON c.app_id = a.id AND c.platform_tenant_id = t.id AND c.workflow_name = w.definition->>'name'
+WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND a.platform_tenant_required
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND ac.plan <> 'free'
+  AND d.id = (SELECT dep.id FROM deployments dep WHERE dep.app_id = a.id
+      AND dep.status = 'live' AND dep.scope = 'default'
+      ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1)
+  AND (sqlc.narg(owner_node_id)::uuid IS NULL OR a.node_id = sqlc.narg(owner_node_id)::uuid)
+  AND w.definition->'trigger'->>'type' = 'schedule'
+  AND coalesce((w.definition->'trigger'->>'enabled')::boolean, true)
+  AND (NOT coalesce((w.definition->'trigger'->>'tenant_configurable')::boolean, false)
+       OR coalesce((c.trigger_snapshot->'tenant_configuration'->'trigger'->>'enabled')::boolean, true))
+  AND (c.last_evaluated_at IS NULL OR c.last_evaluated_at < sqlc.arg(evaluation_minute)::timestamptz)
+  AND (EXISTS (SELECT 1 FROM api_consumers c WHERE c.account_id = a.account_id AND c.app_id = a.id
+       AND c.platform_tenant_id = t.id AND c.status = 'active' AND c.revoked_at IS NULL)
+       OR EXISTS (SELECT 1 FROM tenant_surfaces s WHERE s.account_id = a.account_id AND s.app_id = a.id
+       AND s.platform_tenant_id = t.id AND s.status = 'active'))
+ORDER BY c.last_admitted_at NULLS FIRST, a.id, t.id, w.definition->>'name' LIMIT sqlc.arg(batch_limit);
+
+
+-- name: InsertWorkflowScheduleOccurrence :exec
+INSERT INTO workflow_schedule_occurrences (id, app_id, platform_tenant_id, workflow_name,
+ deployment_id, scheduled_for, evaluated_at, status, run_id, definition_hash)
+VALUES (sqlc.arg(id)::uuid, sqlc.arg(app_id)::uuid, sqlc.narg(tenant_id)::uuid,
+ sqlc.arg(workflow_name)::text, sqlc.arg(deployment_id)::uuid, sqlc.arg(scheduled_for)::timestamptz,
+ sqlc.arg(evaluated_at)::timestamptz, sqlc.arg(status)::text, sqlc.narg(run_id)::uuid,
+ sqlc.arg(definition_hash)::text);
+
+-- name: ListWorkflowScheduleOccurrences :many
+SELECT o.* FROM workflow_schedule_occurrences o
+WHERE o.app_id = sqlc.arg(app_id)::uuid
+ AND (sqlc.narg(tenant_id)::uuid IS NULL OR o.platform_tenant_id = sqlc.narg(tenant_id)::uuid)
+ AND (sqlc.narg(before_id)::uuid IS NULL OR (o.scheduled_for, o.id) <
+  (SELECT b.scheduled_for, b.id FROM workflow_schedule_occurrences b
+   WHERE b.id = sqlc.narg(before_id)::uuid AND b.app_id = sqlc.arg(app_id)::uuid
+    AND (sqlc.narg(tenant_id)::uuid IS NULL OR b.platform_tenant_id = sqlc.narg(tenant_id)::uuid)))
+ORDER BY o.scheduled_for DESC, o.id DESC LIMIT sqlc.arg(page_limit);
+
+-- name: PruneWorkflowScheduleOccurrences :execrows
+DELETE FROM workflow_schedule_occurrences WHERE id IN
+ (SELECT id FROM workflow_schedule_occurrences WHERE evaluated_at < sqlc.arg(before_at)::timestamptz
+  ORDER BY evaluated_at, id LIMIT sqlc.arg(batch_limit));
+
+-- name: WorkflowAlertSnapshot :one
+WITH owned_apps AS (
+ SELECT id FROM apps WHERE account_id = sqlc.arg(account_id)::uuid
+ AND (sqlc.narg(app_id)::uuid IS NULL OR id = sqlc.narg(app_id)::uuid)
+), due_runs AS (
+ -- Same wake/lease eligibility as automation queue health (ADR-730/643).
+ SELECT r.created_at,CASE WHEN r.status='running'
+  THEN coalesce(r.lease_until,r.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))
+  ELSE r.scheduled_for END AS due_at
+ FROM workflow_runs r JOIN owned_apps a ON a.id=r.app_id
+ WHERE r.operation_id IS NULL AND r.status IN ('pending','awaiting_event','running')
+)
+SELECT
+ (SELECT count(*) FROM workflow_runs r JOIN owned_apps a ON a.id = r.app_id
+  WHERE r.status IN ('failed','dead') AND r.cancelled_at IS NULL AND r.finished_at >= sqlc.arg(since_at)::timestamptz) AS failures,
+ (SELECT count(*) FROM workflow_schedule_occurrences o JOIN owned_apps a ON a.id = o.app_id
+  WHERE o.status = 'skipped_quota' AND o.evaluated_at >= sqlc.arg(since_at)::timestamptz) AS quota_skips,
+ greatest(0, coalesce((SELECT extract(epoch FROM (sqlc.arg(now_at)::timestamptz - min(greatest(r.created_at, r.scheduled_for))))
+  FROM workflow_runs r JOIN owned_apps a ON a.id = r.app_id WHERE r.status = 'pending'
+   AND coalesce(r.scheduled_for, r.created_at) <= sqlc.arg(now_at)::timestamptz),0))::float8 AS pending_age_seconds,
+ greatest(0, coalesce((SELECT extract(epoch FROM (sqlc.arg(now_at)::timestamptz - min(s.started_at)))
+  FROM workflow_steps s JOIN workflow_runs r ON r.id = s.run_id JOIN owned_apps a ON a.id = r.app_id
+  WHERE s.status = 'awaiting_event' AND r.status IN ('pending','running','awaiting_event')),0))::float8 AS waiting_age_seconds,
+ greatest(0,coalesce((SELECT max(extract(epoch FROM(sqlc.arg(now_at)::timestamptz-greatest(created_at,due_at))))
+  FROM due_runs WHERE due_at<=sqlc.arg(now_at)::timestamptz),0))::float8 AS due_age_seconds;
+
+-- name: InsertWorkflowRun :one
+INSERT INTO workflow_runs(id,app_id,platform_tenant_id,deployment_id,workflow_name,status,input,definition_snapshot,scheduled_for)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(app_id)::uuid,sqlc.narg(platform_tenant_id)::uuid,sqlc.narg(deployment_id)::uuid,
+ sqlc.arg(workflow_name)::text,sqlc.arg(status)::text,sqlc.arg(input)::jsonb,sqlc.arg(definition_snapshot)::jsonb,sqlc.arg(scheduled_for)::timestamptz)
+RETURNING created_at,updated_at;
+
+-- ADR-649: serialize only the short claim transaction, never handler execution.
+-- name: LockWorkflowDispatchFairness :exec
+SELECT pg_advisory_xact_lock(hashtextextended('workflow-dispatch-fairness',0));
+
+-- Coordinate with the previous per-definition claimant during rolling upgrades.
+-- name: LockWorkflowRunConcurrency :exec
+SELECT pg_advisory_xact_lock(hashtextextended('workflow-run-concurrency:' || sqlc.arg(app_id)::uuid::text || ':' || sqlc.arg(workflow_name)::text,0));
+
+-- name: NextFairDueWorkflowRun :one
+SELECT candidate.id,candidate.status,candidate.app_id,candidate.platform_tenant_id,candidate.workflow_name
+FROM workflow_runs candidate
+LEFT JOIN workflow_dispatch_cursors app_cursor ON app_cursor.app_id=candidate.app_id AND app_cursor.scope_key='app'
+LEFT JOIN workflow_dispatch_cursors scope_cursor ON scope_cursor.app_id=candidate.app_id
+ AND scope_cursor.scope_key=coalesce(candidate.platform_tenant_id::text,'unscoped')
+WHERE candidate.operation_id IS NULL AND
+ ((candidate.status IN ('pending','awaiting_event') AND candidate.scheduled_for<=now())
+ OR (candidate.status='running' AND coalesce(candidate.lease_until,candidate.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))<=now()))
+AND (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+ AND active.id<>candidate.id AND active.operation_id IS NULL AND active.status='running' AND coalesce(active.lease_until,active.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))>now())<sqlc.arg(app_limit)::integer
+AND (candidate.platform_tenant_id IS NULL OR
+ (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+ AND active.platform_tenant_id=candidate.platform_tenant_id AND active.id<>candidate.id
+ AND active.operation_id IS NULL AND active.status='running' AND coalesce(active.lease_until,active.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))>now())<sqlc.arg(tenant_limit)::integer)
+AND (coalesce((candidate.definition_snapshot->>'max_concurrent_runs')::integer,0)<=0 OR
+ (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+ AND active.workflow_name=candidate.workflow_name AND active.id<>candidate.id
+ AND (active.status='awaiting_event' OR (active.status='pending' AND active.started_at IS NOT NULL)
+ OR (active.status='running' AND coalesce(active.lease_until,active.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))>now())))<coalesce((candidate.definition_snapshot->>'max_concurrent_runs')::integer,0))
+ORDER BY app_cursor.last_claimed_at ASC NULLS FIRST,scope_cursor.last_claimed_at ASC NULLS FIRST,
+ CASE WHEN candidate.status='running' THEN coalesce(candidate.lease_until,candidate.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond')) ELSE candidate.scheduled_for END,candidate.id
+FOR UPDATE OF candidate SKIP LOCKED LIMIT 1;
+
+-- Recheck after acquiring the legacy concurrency lock. Earlier workers can
+-- consume the last definition slot while a new claimant waits for that lock.
+-- name: WorkflowDispatchCapacityAvailable :one
+SELECT EXISTS(SELECT 1 FROM workflow_runs candidate WHERE candidate.id=sqlc.arg(id)::uuid
+ AND candidate.operation_id IS NULL AND
+ ((candidate.status IN ('pending','awaiting_event') AND candidate.scheduled_for<=now())
+ OR (candidate.status='running' AND coalesce(candidate.lease_until,candidate.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))<=now()))
+ AND (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+ AND active.id<>candidate.id AND active.operation_id IS NULL AND active.status='running' AND coalesce(active.lease_until,active.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))>now())<sqlc.arg(app_limit)::integer
+AND (candidate.platform_tenant_id IS NULL OR
+ (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+ AND active.platform_tenant_id=candidate.platform_tenant_id AND active.id<>candidate.id
+ AND active.operation_id IS NULL AND active.status='running' AND coalesce(active.lease_until,active.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))>now())<sqlc.arg(tenant_limit)::integer)
+AND (coalesce((candidate.definition_snapshot->>'max_concurrent_runs')::integer,0)<=0 OR
+ (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
+ AND active.workflow_name=candidate.workflow_name AND active.id<>candidate.id
+ AND (active.status='awaiting_event' OR (active.status='pending' AND active.started_at IS NOT NULL)
+ OR (active.status='running' AND coalesce(active.lease_until,active.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))>now())))<coalesce((candidate.definition_snapshot->>'max_concurrent_runs')::integer,0)))::boolean;
+
+-- name: RecordWorkflowDispatchClaim :exec
+WITH claimed_at AS MATERIALIZED (SELECT clock_timestamp() AS at)
+INSERT INTO workflow_dispatch_cursors(app_id,platform_tenant_id,scope_key,last_claimed_at)
+SELECT sqlc.arg(app_id)::uuid,NULL::uuid,'app',at FROM claimed_at
+UNION ALL SELECT sqlc.arg(app_id)::uuid,sqlc.narg(platform_tenant_id)::uuid,coalesce(sqlc.narg(platform_tenant_id)::uuid::text,'unscoped'),at FROM claimed_at
+ON CONFLICT(app_id,scope_key) DO UPDATE SET last_claimed_at=excluded.last_claimed_at;
+
+-- ADR-730: live diagnostics share the health transaction's observation time.
+-- Candidate capacity matches NextFairDueWorkflowRun, excluding native custody.
+-- name: GetWorkflowAutomationQueueHealth :one
+WITH clock AS MATERIALIZED (SELECT now() AS at),
+app_runs AS MATERIALIZED (
+ SELECT r.id,r.workflow_name,r.platform_tenant_id,r.operation_id,r.status,r.started_at,r.scheduled_for,r.created_at,
+ coalesce((r.definition_snapshot->>'max_concurrent_runs')::integer,0) AS run_limit,
+ (r.status='running' AND coalesce(r.lease_until,r.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))>clock.at) AS live,
+ coalesce(r.lease_until,r.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond')) AS recovery_at
+ FROM workflow_runs r CROSS JOIN clock
+ WHERE r.app_id=sqlc.arg(app_id)::uuid AND r.status IN ('pending','running','awaiting_event')
+),
+app_claims AS (
+ SELECT count(*)::bigint AS running FROM app_runs WHERE live AND operation_id IS NULL
+),
+tenant_claims AS (
+ SELECT platform_tenant_id,count(*)::bigint AS running FROM app_runs
+ WHERE live AND operation_id IS NULL GROUP BY platform_tenant_id
+),
+workflow_claims AS (
+ SELECT workflow_name,count(*)::bigint AS active FROM app_runs
+ WHERE live OR status='awaiting_event' OR (status='pending' AND started_at IS NOT NULL)
+ GROUP BY workflow_name
+),
+classified AS MATERIALIZED (
+ SELECT r.id,r.status,r.created_at,
+ CASE WHEN r.status='running' THEN r.recovery_at ELSE r.scheduled_for END AS due_at,
+ (r.status='running' OR r.scheduled_for<=clock.at) AS due,
+ CASE
+ WHEN r.status='awaiting_event' AND r.scheduled_for>clock.at THEN 'parked_wait'
+ WHEN r.status='pending' AND r.scheduled_for>clock.at THEN
+  CASE WHEN EXISTS(SELECT 1 FROM workflow_steps step WHERE step.run_id=r.id AND step.status='pending'
+   AND step.next_retry_at=r.scheduled_for) THEN 'retry_backoff' ELSE 'scheduled' END
+ WHEN app_claims.running>=sqlc.arg(app_limit)::integer THEN 'app_capacity'
+ WHEN r.platform_tenant_id IS NOT NULL AND coalesce(tenant_claims.running,0)>=sqlc.arg(tenant_limit)::integer THEN 'tenant_capacity'
+ WHEN r.run_limit>0 AND
+  coalesce(workflow_claims.active,0)-CASE WHEN r.status='awaiting_event' OR (r.status='pending' AND r.started_at IS NOT NULL) THEN 1 ELSE 0 END
+  >=r.run_limit THEN 'workflow_capacity'
+ ELSE 'ready' END::text AS reason
+ FROM app_runs r CROSS JOIN clock CROSS JOIN app_claims
+ LEFT JOIN tenant_claims ON tenant_claims.platform_tenant_id=r.platform_tenant_id
+ LEFT JOIN workflow_claims ON workflow_claims.workflow_name=r.workflow_name
+ WHERE r.workflow_name=sqlc.arg(workflow_name)::text AND r.operation_id IS NULL
+ AND (r.status IN ('pending','awaiting_event') OR (r.status='running' AND NOT r.live))
+)
+SELECT clock.at::timestamptz AS observed_at,app_claims.running AS app_running_count,
+ (SELECT count(*) FROM app_runs WHERE workflow_name=sqlc.arg(workflow_name)::text AND
+  (status IN ('running','awaiting_event') OR (status='pending' AND started_at IS NOT NULL)))::bigint AS active_run_count,
+ (SELECT count(*) FROM app_runs WHERE workflow_name=sqlc.arg(workflow_name)::text AND status='pending' AND started_at IS NULL)::bigint AS queued_run_count,
+ (SELECT count(*) FROM classified)::bigint AS waiting_run_count,
+ (SELECT count(*) FROM classified WHERE due)::bigint AS due_run_count,
+ (SELECT count(*) FROM classified WHERE status='running')::bigint AS stale_run_count,
+ greatest(0,coalesce((SELECT max(extract(epoch FROM(clock.at-greatest(created_at,due_at)))) FROM classified WHERE due),0))::float8 AS oldest_due_age_seconds,
+ (SELECT count(*) FROM classified WHERE reason='ready')::bigint AS ready,
+ (SELECT count(*) FROM classified WHERE reason='scheduled')::bigint AS scheduled,
+ (SELECT count(*) FROM classified WHERE reason='retry_backoff')::bigint AS retry_backoff,
+ (SELECT count(*) FROM classified WHERE reason='parked_wait')::bigint AS parked_wait,
+ (SELECT count(*) FROM classified WHERE reason='app_capacity')::bigint AS app_capacity,
+ (SELECT count(*) FROM classified WHERE reason='tenant_capacity')::bigint AS tenant_capacity,
+ (SELECT count(*) FROM classified WHERE reason='workflow_capacity')::bigint AS workflow_capacity
+FROM clock CROSS JOIN app_claims;
+
+-- ADR-652: no row/advisory locks or state transitions in diagnostic snapshots.
+-- name: GetOwnedWorkflowDiagnosticsRun :one
+SELECT r.* FROM workflow_runs r JOIN apps a ON a.id=r.app_id
+WHERE r.id=sqlc.arg(run_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
+ AND (sqlc.narg(tenant_id)::uuid IS NULL OR r.platform_tenant_id=sqlc.narg(tenant_id)::uuid)
+ AND r.operation_id IS NULL;
+
+-- name: GetWorkflowDiagnosticsSteps :many
+SELECT step_name,status,attempt,retry_base,skip_reason,foreach_parent,foreach_index,foreach_count,next_retry_at,next_check_at
+FROM workflow_steps WHERE run_id=sqlc.arg(run_id)::uuid ORDER BY step_name;
+
+-- name: GetWorkflowRecoveryTarget :one
+WITH current_run AS (SELECT * FROM workflow_runs WHERE id=sqlc.arg(run_id)::uuid),
+app_runs AS MATERIALIZED (
+ SELECT r.workflow_name,r.platform_tenant_id,r.operation_id,r.status,r.started_at,
+ (r.status='running' AND coalesce(r.lease_until,r.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))>now()) AS live
+ FROM workflow_runs r JOIN current_run selected ON selected.app_id=r.app_id
+ WHERE r.status IN ('pending','running','awaiting_event')
+)
+SELECT now()::timestamptz AS observed_at,ac.plan,
+ (ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL)::boolean AS account_active,
+ (a.status='deleted')::boolean AS app_deleted,a.maintenance_mode,a.platform_tenant_required,
+ EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.status='live' AND d.scope='default') AS live_deployment,
+ (selected.deployment_id IS NULL OR EXISTS(SELECT 1 FROM deployments d WHERE d.id=selected.deployment_id AND d.app_id=a.id AND d.status='live' AND d.deleted_at IS NULL))::boolean AS pinned_deployment,
+ (selected.platform_tenant_id IS NULL OR EXISTS(SELECT 1 FROM platform_tenants t
+  WHERE t.id=selected.platform_tenant_id AND t.account_id=a.account_id AND t.status='active' AND
+  (EXISTS(SELECT 1 FROM api_consumers c WHERE c.platform_tenant_id=t.id AND c.account_id=a.account_id AND c.app_id=a.id AND c.status='active' AND c.revoked_at IS NULL)
+  OR EXISTS(SELECT 1 FROM tenant_surfaces s WHERE s.platform_tenant_id=t.id AND s.account_id=a.account_id AND s.app_id=a.id AND s.status='active'))))::boolean AS tenant_active,
+ (SELECT count(*) FROM app_runs)::bigint AS active_runs,
+ (SELECT count(*) FROM app_runs WHERE live AND operation_id IS NULL)::bigint AS app_running,
+ (SELECT count(*) FROM app_runs WHERE live AND operation_id IS NULL AND platform_tenant_id=selected.platform_tenant_id)::bigint AS tenant_running,
+ (SELECT count(*) FROM app_runs WHERE workflow_name=selected.workflow_name AND
+  (live OR status='awaiting_event' OR (status='pending' AND started_at IS NOT NULL)))::bigint AS workflow_active
+FROM current_run selected JOIN apps a ON a.id=selected.app_id JOIN accounts ac ON ac.id=a.account_id;
 
 -- name: ClaimAppHealth :one
 WITH candidate AS (
