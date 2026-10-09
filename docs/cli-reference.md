@@ -3254,12 +3254,13 @@ List cron rules
 
 Schedule an HTTP request or deployment command
 
-`gregale crons add --app <slug> --schedule <EXPR> [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
+`gregale crons add [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
-| `--schedule <EXPR>` | five-field cron expression | required |
+| `--interactive` | choose an HTTP path, schedule, and timezone, preview run times, and confirm creation |  |
+| `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
+| `--schedule <EXPR>` | five-field cron expression (required unless interactive) |  |
 | `--path <PATH>` | HTTP request path (mutually exclusive with --command) |  |
 | `--command <EXEC>` | executable for a deployment command cron |  |
 | `--arg <ARG>` | append one command argument (repeatable) |  |
@@ -3272,6 +3273,12 @@ Schedule an HTTP request or deployment command
 | `--retry-backoff-seconds` | base retry delay; doubles per attempt |  |
 | `--schedule-policy <JSON>` | versioned schedule policy JSON |  |
 | `--failure-rules <JSON>` | versioned failure and outcome-code rules JSON |  |
+
+Examples:
+
+```sh
+gregale crons add --app my-api --interactive
+```
 
 ### crons info
 

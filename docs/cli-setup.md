@@ -279,6 +279,28 @@ for manual setup. Open a new shell session to activate completion, and keep
 The installer requires an interactive terminal. Manual setup remains available
 through `gregale completion bash`, `zsh`, `fish`, and `powershell`.
 
+## Create a scheduled HTTP task
+
+```sh
+gregale crons add --app my-api --interactive
+# Use the linked app, or choose one:
+gregale crons add --interactive
+```
+
+Choose an app-relative request path, an explicit IANA timezone (default UTC),
+and a schedule: every five minutes, hourly, daily at 09:00, weekdays at 09:00,
+or a custom five-field cron expression. The guide previews the next three
+scheduled times using Gregale's cron grammar and daylight-saving behavior,
+then shows the app, path, expression, timezone, and enabled state before
+asking to create the task. Actual execution may occur later than the scheduled
+time. An equivalent command is printed for reuse.
+
+Only `--app` can be supplied alongside `--interactive`; choose the other
+settings in the flow. The guide creates enabled HTTP tasks with default policy
+settings. Deployment command tasks and advanced policies continue to use the
+explicit `crons add` flags. Scripts can use, for example,
+`gregale crons add --app my-api --schedule '0 * * * *' --path /tasks/hourly --timezone UTC`.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

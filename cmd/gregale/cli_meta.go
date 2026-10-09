@@ -1316,9 +1316,10 @@ var cliCommands = []cliCommand{
 		Short:   "Manage scheduled HTTP requests and deployment commands",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}}},
-			{Name: "add", Short: "Schedule an HTTP request or deployment command", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
-				{Name: "schedule", Short: "five-field cron expression", Req: true, Value: "EXPR"},
+			{Name: "add", Short: "Schedule an HTTP request or deployment command", Examples: []string{"gregale crons add --app my-api --interactive"}, Flags: []cliFlag{
+				{Name: "interactive", Short: "choose an HTTP path, schedule, and timezone, preview run times, and confirm creation", Bool: true},
+				{Name: "app", Short: "app slug (interactive mode can use linked app or picker)", Value: "slug"},
+				{Name: "schedule", Short: "five-field cron expression (required unless interactive)", Value: "EXPR"},
 				{Name: "path", Short: "HTTP request path (mutually exclusive with --command)", Value: "PATH"},
 				{Name: "command", Short: "executable for a deployment command cron", Value: "EXEC"},
 				{Name: "arg", Short: "append one command argument (repeatable)", Value: "ARG"},

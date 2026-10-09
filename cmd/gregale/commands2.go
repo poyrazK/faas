@@ -5002,6 +5002,7 @@ func cmdCrons(args []string) int {
 		return 0
 	case subAdd:
 		fs := newFlagSet("crons-add", flag.ContinueOnError)
+		interactive := fs.Bool("interactive", false, "choose and review a scheduled HTTP task")
 		slug := fs.String("app", "", "app slug (required)")
 		schedule := fs.String("schedule", "", "cron expression (required)")
 		path := fs.String("path", "", "HTTP request path (HTTP cron only; default: /)")
@@ -5021,6 +5022,25 @@ func cmdCrons(args []string) int {
 		}
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
+		}
+		if *interactive {
+			invalid := false
+			fs.Visit(func(f *flag.Flag) {
+				if f.Name != "interactive" && f.Name != "app" {
+					invalid = true
+				}
+			})
+			if invalid {
+				return printErr("Invalid interactive cron flags", errors.New("--interactive accepts only --app; choose the HTTP path, schedule, and timezone in the flow"))
+			}
+			if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+				return printErr("Interactive terminal required", errors.New("use crons add --app APP --schedule EXPR --path PATH for scripts"))
+			}
+			selected, err := resolveReadAppTarget(*slug)
+			if err != nil {
+				return readAppTargetError(err)
+			}
+			return cmdCronsAddInteractive(selected)
 		}
 		if *slug == "" || *schedule == "" {
 			PrintUsage(os.Stderr, "usage: gregale crons add --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N]", "crons")
@@ -5091,22 +5111,7 @@ func cmdCrons(args []string) int {
 			req.RetryMax = *retryMax
 			req.RetryBackoffSeconds = *retryBackoff
 		}
-		c, err := client.CreateCron(context.Background(), *slug, req)
-		if err != nil {
-			return printErr("Create failed", err)
-		}
-		if jsonOutput {
-			return jsonOut(writeJSON(c))
-		}
-		target := c.Path
-		if c.Kind == "command" {
-			target = "command " + formatCronCommand(c)
-		}
-		PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
-		// The id is what every other crons verb takes; without it the
-		// next step was `crons list` to find it.
-		_, _ = fmt.Fprintf(osStdout, "  id: %s  (fire now: gregale crons run %s)\n", c.ID, c.ID)
-		return 0
+		return createCronAndRender(context.Background(), client, *slug, req)
 	case subUpdate:
 		return cmdCronsUpdate(args[1:])
 	case subInfo:
@@ -5159,6 +5164,23 @@ func cmdCrons(args []string) int {
 // (CronResponse.ID, the path segment of /v1/crons/{id}). Mirrors
 // deploymentIDPattern — same 32-hex convention across the platform.
 var cronIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+func createCronAndRender(ctx context.Context, client *Client, slug string, req api.CreateCronRequest) int {
+	c, err := client.CreateCron(ctx, slug, req)
+	if err != nil {
+		return printErr("Create failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(c))
+	}
+	target := c.Path
+	if c.Kind == "command" {
+		target = "command " + formatCronCommand(c)
+	}
+	PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
+	_, _ = fmt.Fprintf(osStdout, "  id: %s  (fire now: gregale crons run %s)\n", c.ID, c.ID)
+	return 0
+}
 
 // renderCronState writes the human multi-line state block for one
 // cron. Routes through io.Writer so tests can capture the body via
