@@ -5,6 +5,7 @@ package fcvm
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -135,9 +136,10 @@ func TestTouchedFileRangesOwnMapping(t *testing.T) {
 	}
 }
 
-// adr: 224 — a prefetch must cover every recorded byte, not just the head of
-// each range: the kernel truncates one FADV_WILLNEED to the readahead window.
-func TestAdviseWillNeedCoversWholeRanges(t *testing.T) {
+// adr: 225 — submit real Linux WILLNEED hints for a file. The deterministic
+// range-coverage test checks every requested byte separately: the syscall
+// makes no promise that all advised pages become or remain resident.
+func TestAdviseWillNeedKernelSyscall(t *testing.T) {
 	const size = 16 << 20
 	path := filepath.Join(t.TempDir(), "mem")
 	if err := os.WriteFile(path, bytes.Repeat([]byte{1}, size), 0o600); err != nil {
@@ -148,39 +150,8 @@ func TestAdviseWillNeedCoversWholeRanges(t *testing.T) {
 	if err := adviseWillNeed(path, ranges); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = f.Close() }()
-	b, err := unix.Mmap(int(f.Fd()), 0, size, unix.PROT_READ, unix.MAP_SHARED)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = unix.Munmap(b) }()
-	page := os.Getpagesize()
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		missing := 0
-		for _, r := range ranges {
-			vec := make([]byte, int(r.Len)/page)
-			region := b[r.Off : r.Off+r.Len]
-			if _, _, errno := unix.Syscall(unix.SYS_MINCORE, uintptr(unsafe.Pointer(&region[0])), uintptr(len(region)), uintptr(unsafe.Pointer(&vec[0]))); errno != 0 {
-				t.Fatal(errno)
-			}
-			for _, v := range vec {
-				if v&1 == 0 {
-					missing++
-				}
-			}
-		}
-		if missing == 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%d advised pages never reached the page cache", missing)
-		}
-		time.Sleep(20 * time.Millisecond)
+	if err := adviseWillNeed(path+".missing", ranges); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing snapshot error = %v, want os.ErrNotExist", err)
 	}
 }
 
