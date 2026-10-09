@@ -48,6 +48,25 @@ Deliveries include an event id, timestamp, alert state, and signature. Verify th
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.
 
+## Log alerts
+
+`log_error_lines` and `log_warn_lines` count the lines your app wrote at
+error or warning level during the window, across every instance and node:
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "error log burst" \
+  --metric log_error_lines --comparison gt --threshold 50 --window-spec 5m \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+A line's level comes from a structured `level` or `severity` field when the
+line is JSON, otherwise from common prefixes such as `[ERROR]`, `level=error`
+or `[warn]` in the first 512 bytes. This is the same classification as
+`gregale logs --level error`, so the command shows the lines an alert
+counted. A line that only mentions "error" in prose is not counted. Build
+logs are never counted. Log alerts support every alert action, including
+rollback, and every window.
+
 ## Event consumer routing alerts
 
 Consumer health rules require an app subscription UUID in the immutable

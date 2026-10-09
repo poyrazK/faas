@@ -138,6 +138,9 @@ var AllowedAlertRuleMetrics = []string{
 	"workflow_pending_age_seconds",
 	"workflow_waiting_age_seconds",
 	"workflow_due_age_seconds",
+	// ADR-746: guest log lines classified as error / warn by vmmd.
+	"log_error_lines",
+	"log_warn_lines",
 
 	"new_error_fingerprint",
 	"cold_wake_rate_pct",

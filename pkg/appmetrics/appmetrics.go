@@ -172,6 +172,12 @@ func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 			fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
 			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng)))
 		normalize = SafePercent
+	case "log_error_lines", "log_warn_lines":
+		// ADR-746: vmmd counts classified guest log lines per app on every
+		// node; sum folds the nodes and instances the app ran on.
+		level := strings.TrimSuffix(strings.TrimPrefix(metric, "log_"), "_lines")
+		query = fmt.Sprintf(`sum(increase(vmmd_app_log_lines_total{app_id=%q,level=%q}[%s])) or vector(0)`, appID, level, rng)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
 	case "queue_depth":
 		query = fmt.Sprintf(`sum(gateway_queue_depth{app=%q,account_id=~".+"}) or vector(0)`, appID)
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
