@@ -251,9 +251,12 @@ type restoreTimingBreakdown struct {
 	// (ADR-192). It was folded into StageSnapshotMs before, which made the
 	// two-syscall mem/vmstate bind look expensive.
 	StagePreBootFilesMs int64
-	StageSnapshotMs     int64
-	HelperMs            int64
-	StartJailerMs       int64
+	// PreBootJoinWaitMs is how long the restore waited for the concurrent
+	// pre-boot write after the rest of the jail was staged. Operator-only.
+	PreBootJoinWaitMs int64
+	StageSnapshotMs   int64
+	HelperMs          int64
+	StartJailerMs     int64
 	// NetworkWaitMs is how long the restore blocked on the overlapped wake
 	// network before startJailer (wake_network.go). Operator-only, like the
 	// TUN subphases: it is not on the customer wake.restore_breakdown event.
@@ -1845,13 +1848,43 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tStageDrives := time.Now()
+	// The pre-boot write loop-mounts drive1 (a clone already bound into the
+	// jail) on a private host mountpoint; nothing staged next — the snapshot
+	// binds, chroot ownership, vsock listeners, mount helper, TUN source —
+	// touches drive1, so the write runs alongside them. It is joined before
+	// startJailer: the jailer's mount namespace must never copy an in-flight
+	// loop mount. Native recovery journals every staging step in order, so it
+	// keeps the serial path.
 	var preBootTimings preBootStageTimings
-	preBootSkipped, err := v.stagePreBootFilesUnlessForOwner(ctx, stagingOwner, l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false, &preBootTimings)
-	if err != nil {
-		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
+	var preBootSkipped bool
+	var preBootErr error
+	var tPreBootFiles time.Time
+	preBootDone := make(chan struct{})
+	runPreBoot := func() {
+		defer close(preBootDone)
+		preBootSkipped, preBootErr = v.stagePreBootFilesUnlessForOwner(ctx, stagingOwner, l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false, &preBootTimings)
+		tPreBootFiles = time.Now()
 	}
-	tPreBootFiles := time.Now()
+	joinPreBoot := func() error {
+		<-preBootDone
+		if preBootErr != nil {
+			return fmt.Errorf("vmm: stage pre-boot workload state: %w", preBootErr)
+		}
+		return nil
+	}
+	if v.nativeRecovery == nil {
+		go runPreBoot()
+		// Every return below (including errors) waits for the write, so the
+		// deferred Kill never unmounts drive1 under an active loop session.
+		defer func() { <-preBootDone }()
+	} else {
+		runPreBoot()
+		if err = joinPreBoot(); err != nil {
+			return err
+		}
+	}
 
+	tSnapshotStart := time.Now()
 	// Snapshot files are read-only inputs shared across the N instances a single
 	// snapshot may restore (invariant §6.2-5): hardlink them in and widen for read
 	// rather than chown, which would rewrite the shared inode owner.
@@ -1883,6 +1916,12 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tHelper := time.Now()
+	if v.nativeRecovery == nil {
+		if err = joinPreBoot(); err != nil {
+			return err
+		}
+	}
+	tPreBootJoined := time.Now()
 
 	// Start firecracker with only the API socket, then load + resume.
 	// Move 4 (issue #254): register the per-instance ring BEFORE
@@ -1982,7 +2021,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		TunSetupJailWorkUs:   tunTimings.SetupJailWorkUs,
 		CgroupFenceMs:        tBindTun.Sub(tTunReady).Milliseconds(),
 		StagePreBootFilesMs:  tPreBootFiles.Sub(tStageDrives).Milliseconds(),
-		StageSnapshotMs:      tMemState.Sub(tPreBootFiles).Milliseconds(),
+		StageSnapshotMs:      tMemState.Sub(tSnapshotStart).Milliseconds(),
+		PreBootJoinWaitMs:    tPreBootJoined.Sub(tHelper).Milliseconds(),
 		HelperMs:             tHelper.Sub(tMemState).Milliseconds(),
 		StartJailerMs:        tStartJailer.Sub(tNetworkReady).Milliseconds(),
 		NetworkWaitMs:        networkWait.Milliseconds(),
@@ -2029,6 +2069,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"pre_boot_files_total", preBootTimings.FilesTotal,
 		"pre_boot_files_written", preBootTimings.FilesWritten,
 		"stage_snapshot_ms", breakdown.StageSnapshotMs,
+		"pre_boot_join_wait_ms", breakdown.PreBootJoinWaitMs,
 		"helper_ms", breakdown.HelperMs,
 		"start_jailer_ms", breakdown.StartJailerMs,
 		"network_wait_ms", breakdown.NetworkWaitMs,
