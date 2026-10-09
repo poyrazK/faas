@@ -233,12 +233,13 @@ linters:
       # client and server entry points in favour of net/http's Go 1.26 HTTP/2
       # API. Moving the gateway h2c ingress, the vmmd stream bridge and the
       # dev bridge onto net/http is a separate change that needs metal
-      # evidence; until then only those x/net/http2 notices are silenced, in
-      # those files. Every other SA1019 still fires.
-      - path: "(cmd/vmmd-stream-bridge/guest_transport_pool|pkg/devbridge/(local|relay)|pkg/gateway/ingress/(guard|transport)|pkg/vmmdgrpc/(forward|stream_bridge_manager))\\.go$"
+      # evidence; until then only notices that name http2 or point at net/http
+      # are silenced, in the packages that use x/net/http2. Every other SA1019
+      # still fires.
+      - path: "(cmd/(vmmd-stream-bridge|e2e|gatewayd-internal)|guest/runners/internal|pkg/(devbridge|gateway|vmmdgrpc))/"
         linters:
           - staticcheck
-        text: "SA1019: .* is deprecated: Use \\[http\\."
+        text: "SA1019: .*(http2\\.|is deprecated: Use \\[http\\.)"
       - path: "_test\\.go$"
         linters:
           - errcheck  # `defer x.Close()` is acceptable idiom in tests
