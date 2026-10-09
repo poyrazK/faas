@@ -177,7 +177,7 @@ func (m *MemStore) ResumeAutomationFailurePause(ctx context.Context, appID, name
 	}
 	key := appID + "/" + name
 	g := m.automationFailureGuards[key]
-	if !(g.PausedAt != nil && g.Generation == r.ExpectedGeneration) {
+	if g.PausedAt == nil || g.Generation != r.ExpectedGeneration {
 		return api.AutomationFailurePolicyResponse{}, ErrAutomationFailurePolicyConflict
 	}
 	previous := m.failurePolicyResponseLocked(appID, name, time.Now().UTC())

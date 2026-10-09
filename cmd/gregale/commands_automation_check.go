@@ -215,12 +215,16 @@ func printAutomationCheckReport(report automationCheckReport) int {
 	return 0
 }
 
-func loadAutomationScenarios(path string) ([]loadedAutomationScenario, error) {
+func loadAutomationScenarios(path string) (result []loadedAutomationScenario, err error) {
 	file, err := openCustomerFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close scenario suite: %w", closeErr)
+		}
+	}()
 	raw, err := io.ReadAll(io.LimitReader(file, api.AutomationSimulationRequestMaxBytes+1))
 	if err != nil {
 		return nil, err

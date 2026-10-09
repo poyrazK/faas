@@ -95,7 +95,7 @@ func evaluatePublicationChecks(ctx context.Context, store AutomationStore, outbo
 			return fail(ErrAutomationInvalid)
 		}
 		if err := automationchecks.ValidateExpectations(def, scenario.Expectations); err != nil {
-			return fail(fmt.Errorf("%w: %s", ErrAutomationInvalid, err))
+			return fail(fmt.Errorf("%w: %w", ErrAutomationInvalid, err))
 		}
 		simRaw, _ := json.Marshal(scenario.Simulation)
 		if int64(len(simRaw)) > api.AutomationSimulationRequestMaxBytes {

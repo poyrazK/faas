@@ -183,7 +183,7 @@ func TestAutomationItemExpectationsBlockCheckedPublish(t *testing.T) {
 		case r.Method == "GET":
 			_ = json.NewEncoder(w).Encode(api.AutomationResponse{Name: "batch", Version: 7, Draft: scenarios[0].request.Definition})
 		case strings.HasSuffix(r.URL.Path, ":simulate"):
-			response, err := state.SimulateAutomation(context.Background(), scenarios[0].request, api.PlanHobby)
+			response, err := state.SimulateAutomation(r.Context(), scenarios[0].request, api.PlanHobby)
 			if err != nil {
 				t.Error(err)
 			}
