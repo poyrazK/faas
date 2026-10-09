@@ -74,6 +74,8 @@ The rate and burst must be positive and no greater than the app plan's
 request rate and burst.
 If the app moves to a lower plan, the gateway clamps an existing setting to
 the new plan ceiling.
+To be notified when the guard blocks or would block a burst of requests,
+enable the webhook-only [`pre_auth_pressure` alert preset](alerts.md).
 
 Up to 16 exact public method/path overrides can add stricter limits for
 sensitive endpoints. For example, a login endpoint can allow fewer requests

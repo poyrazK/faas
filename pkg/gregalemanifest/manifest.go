@@ -399,6 +399,26 @@ type AsyncRoute struct {
 	MaxAgeSeconds int                `yaml:"max_age_seconds,omitempty"`
 }
 
+// TemplatedPathWarnings lists async routes whose match_path holds an OpenAPI
+// {param} placeholder. Edge-rule paths are globs, so such a route only matches
+// the literal braces and never receives traffic. These are warnings, not
+// errors, so an existing manifest keeps deploying; the edge-rules API already
+// rejects new templated paths.
+func (m *Manifest) TemplatedPathWarnings() []string {
+	if m == nil {
+		return nil
+	}
+	var out []string
+	for i, route := range m.AsyncRoutes {
+		if glob, templated := api.EdgeRuleTemplatedPath(route.MatchPath); templated {
+			out = append(out, fmt.Sprintf(
+				"async_routes[%d].match_path %q is an OpenAPI template, not a glob, so the route never matches a request; use %q",
+				i, route.MatchPath, glob))
+		}
+	}
+	return out
+}
+
 // Validate checks the manifest-only constraints for an async route. API-level
 // action validation is shared by constructing the same DTO used by edge rules.
 func (r AsyncRoute) Validate(index int) error {

@@ -221,8 +221,10 @@ func (s *server) dashboardTraceEdgeRules(w http.ResponseWriter, r *http.Request)
 		s.renderAppEdgeRules(w, r, s.log, acct, r.PathValue("slug"), &form, nil)
 		return
 	}
+	// A path typed with "?query" feeds validate-rule query schemas.
+	tracePath, traceQuery, _ := strings.Cut(form.Path, "?")
 	input, err := edgeruletrace.NormalizeInput(edgeruletrace.Input{
-		App: r.PathValue("slug"), Host: form.Host, Path: form.Path, Method: form.Method,
+		App: r.PathValue("slug"), Host: form.Host, Path: tracePath, Query: traceQuery, Method: form.Method,
 		ClientIP: form.ClientIP, Country: form.Country, Headers: headers,
 		Body: []byte(rawBody), BodyProvided: form.BodyProvided,
 		RequestBodyMaxBytes: acct.Plan.MaxRequestBodyBytes(),
@@ -233,6 +235,9 @@ func (s *server) dashboardTraceEdgeRules(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	form.Host, form.Path, form.Method = input.Host, input.Path, input.Method
+	if traceQuery != "" {
+		form.Path += "?" + traceQuery
+	}
 	form.ClientIP, form.Country = input.ClientIP, input.Country
 	s.renderAppEdgeRules(w, r, s.log, acct, r.PathValue("slug"), &form, &input)
 }

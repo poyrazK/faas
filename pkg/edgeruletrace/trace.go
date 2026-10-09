@@ -45,11 +45,14 @@ type Input struct {
 	App         string
 	Host        string
 	Path        string
-	Method      string
-	ClientIP    string
-	Country     string
-	Headers     http.Header
-	Body        []byte
+	// Query is the raw query string (without "?"). It is used only to
+	// evaluate validate-rule query schemas and is never echoed in results.
+	Query    string
+	Method   string
+	ClientIP string
+	Country  string
+	Headers  http.Header
+	Body     []byte
 	// CorsPresets supplies caller-resolved presets for preset-backed CORS
 	// rules. Missing or cross-account presets remain incomplete instead of
 	// being guessed.
@@ -2129,23 +2132,22 @@ func previewLimitRule(rule api.EdgeRuleResponse, input Input) (string, string, *
 	return "needs_streaming_context", fmt.Sprintf("request body is %d bytes; the buffered limit is %d bytes and streaming limit is %d bytes, so the outcome depends on unavailable gateway streaming context", bodyBytes, bufferedCap, streamingCap), preview
 }
 
-// previewValidateParameters simulates the path and header schemas of a
-// validate rule. The trace input carries no query string, so a rule with a
-// query schema stops as incomplete instead of guessing. done is false when
-// every parameter check passed (or failed in observe/warn mode) and the body
-// check should run next.
+// previewValidateParameters simulates the path, query, and header schemas of
+// a validate rule in gateway order. done is false when every parameter check
+// passed (or failed in observe/warn mode) and the body check should run next.
 func previewValidateParameters(rule api.EdgeRuleResponse, action api.EdgeRuleValidateAction, input Input, preview *ActionPreview) (string, string, bool) {
 	p := action.Parameters
 	if prob := p.Validate(rule.MatchPath); prob != nil {
 		return "unavailable", "validation parameters are invalid; gateway compilation would reject the rule", true
 	}
-	if len(p.Query) > 0 {
-		return "needs_query_parameters", "the rule validates query parameters, which this trace does not collect", true
+	query, err := url.ParseQuery(input.Query)
+	if err != nil {
+		return "unavailable", "the request query string could not be parsed", true
 	}
 	for _, loc := range []struct {
 		name   string
 		schema json.RawMessage
-	}{{"path", p.Path}, {"headers", p.Headers}} {
+	}{{"path", p.Path}, {"query", p.Query}, {"headers", p.Headers}} {
 		if len(loc.schema) == 0 {
 			continue
 		}
@@ -2154,15 +2156,23 @@ func previewValidateParameters(rule api.EdgeRuleResponse, action api.EdgeRuleVal
 			return "unavailable", "validation parameters are invalid; gateway compilation would reject the rule", true
 		}
 		values := map[string][]string{}
-		if loc.name == "path" {
+		switch loc.name {
+		case "path":
 			pathValues, ok := api.PathTemplateValues(p.PathTemplate, input.Path)
 			if !ok {
-				return validateModeOutcome(rule, action, preview, "request path does not fit the rule's path_template")
+				// Like the gateway, an observe/warn mismatch lets the
+				// remaining checks run.
+				if outcome, reason, done := validateModeOutcome(rule, action, preview, "request path does not fit the rule's path_template"); done {
+					return outcome, reason, true
+				}
+				continue
 			}
 			for name, v := range pathValues {
 				values[name] = []string{v}
 			}
-		} else {
+		case "query":
+			values = query
+		default:
 			for name := range kinds {
 				if raw := input.Headers.Values(name); len(raw) > 0 {
 					values[name] = raw

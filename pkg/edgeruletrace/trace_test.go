@@ -178,10 +178,18 @@ func TestSimulateValidateRuleParameters(t *testing.T) {
 		})
 	}
 	withQuery := *params
-	withQuery.Query = json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"}}}`)
-	result, err := edgeruletrace.Simulate(input("/users/7", "t1"), []api.EdgeRuleResponse{rule(&withQuery)})
-	if err != nil || result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_query_parameters" {
-		t.Fatalf("query schema simulation = %#v, err=%v", result.Simulation, err)
+	withQuery.Query = json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer","maximum":100}}}`)
+	for query, outcome := range map[string]string{"limit=10": "validated", "limit=500": "validation_failed", "limit=abc": "validation_failed", "": "validated"} {
+		in := input("/users/7", "t1")
+		in.Query = query
+		result, err := edgeruletrace.Simulate(in, []api.EdgeRuleResponse{rule(&withQuery)})
+		if err != nil || result.Simulation.Steps[0].Outcome != outcome {
+			t.Fatalf("query %q simulation = %#v, err=%v; want %s", query, result.Simulation, err, outcome)
+		}
+		encoded, _ := json.Marshal(result)
+		if query != "" && strings.Contains(string(encoded), query) {
+			t.Fatalf("trace result echoed the query string %q", query)
+		}
 	}
 }
 

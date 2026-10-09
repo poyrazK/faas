@@ -257,5 +257,7 @@ To stop new dead rules, `POST /v1/apps/{slug}/edge-rules` and
 `PATCH /v1/edge-rules/{id}` reject a `match_path` with a `{param}` placeholder
 and name the glob to use (`api.EdgeRuleTemplatedPath`). Manifest-owned async
 routes and environment policies are not rejected yet, so a redeploy of an
-existing manifest keeps working. `gregale edge-rules list` prints a warning
+existing manifest keeps working; `gregale deploy` instead prints a warning with
+the glob for each templated `async_routes` path
+(`Manifest.TemplatedPathWarnings`). `gregale edge-rules list` prints a warning
 and the fix command for each existing rule with a templated path.

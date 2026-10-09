@@ -44,6 +44,28 @@ attention. If every route has fewer than 20 failures, the rule is `unknown` and
 does not send a webhook. A Prometheus error sets it to `degraded`, also without
 firing. Neither state proves the integration is healthy.
 
+Two more opt-in, webhook-only security presets watch the edge for traffic that
+is being rejected or would be:
+
+- `pre_auth_pressure` fires when the [pre-auth source limit](security.md#optional-pre-auth-source-limit)
+  blocks, or in observe mode would block, more than 100 requests in 15 minutes.
+  The payload includes the same `observations_path` and `dashboard_path` as the
+  login-target presets. New apps observe the pre-auth limit by default, so this
+  alert can report pressure before you switch the guard to enforce.
+- `edge_validation_failures` fires when `kind=validate` edge rules record more
+  than 50 mismatched requests in 15 minutes, counting body, path, query, and
+  header mismatches in every validate mode. Use the
+  `gateway_validate_failures_total` metric or the `edge_rule.validate_failed`
+  audit events to find the failing rule and field.
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alerts preset enable pre_auth_pressure \
+  --app APP_ID --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+Because outside traffic drives both signals, these alerts can never run a
+deployment action such as rollback; the API and the database both reject one.
+
 Deliveries include an event id, timestamp, alert state, and signature. Verify the signature before processing, deduplicate by event id, and return a 2xx response quickly. Retryable failures are retried with backoff; a permanently failing endpoint is paused so it cannot amplify an incident.
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.

@@ -1884,7 +1884,15 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 			return fmt.Errorf("async_routes entry %d targets app %q, but this single-app deploy targets %q; fix the app name or use --project", i+1, route.App, slug)
 		}
 	}
+	printManifestWarnings(m)
 	return nil
+}
+
+// printManifestWarnings reports manifest problems that do not block a deploy.
+func printManifestWarnings(m *gregalemanifest.Manifest) {
+	for _, warning := range m.TemplatedPathWarnings() {
+		_, _ = fmt.Fprintf(osStderr, "warning: gregale.yaml %s\n", warning)
+	}
 }
 
 // validateProjectManifestConfig rejects app-only declarations that the
@@ -1910,6 +1918,7 @@ func validateProjectManifestConfig(cwd string) error {
 	if m.RetryPolicy != nil {
 		return errors.New("retry_policy is supported on single-app deploys; configure each workload separately after project apply")
 	}
+	printManifestWarnings(m)
 	return nil
 }
 

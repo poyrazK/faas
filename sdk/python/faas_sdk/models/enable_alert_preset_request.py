@@ -29,8 +29,9 @@ class EnableAlertPresetRequest:
     webhook_secret: str
     action: EnableAlertPresetRequestAction | Unset = "webhook"
     """Action to run when the instantiated alert fires. Omit to
-    use the default webhook-only behavior. The login_target_pressure
-    and login_target_signal_health presets support webhook only.
+    use the default webhook-only behavior. The login_target_pressure,
+    login_target_signal_health, pre_auth_pressure, and
+    edge_validation_failures presets support webhook only.
     """
     cooldown_minutes: int | Unset = UNSET
     """Override for the preset's default_cooldown_minutes.

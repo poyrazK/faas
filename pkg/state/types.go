@@ -3196,14 +3196,19 @@ const (
 	AlertMetricQueueDepth                            AlertMetric = "queue_depth"
 	AlertMetricPreAuthTargetThreshold                AlertMetric = "pre_auth_target_threshold"
 	AlertMetricPreAuthTargetSignalGapPct             AlertMetric = "pre_auth_target_signal_gap_pct"
-	AlertMetricNewErrorFingerprint                   AlertMetric = "new_error_fingerprint"
-	AlertMetricColdWakeRatePct                       AlertMetric = "cold_wake_rate_pct"
-	AlertMetricDailyCostCents                        AlertMetric = "daily_cost_cents"
-	AlertMetricWorkflowFailures                      AlertMetric = "workflow_failures"
-	AlertMetricWorkflowQuotaSkips                    AlertMetric = "workflow_schedule_quota_skips"
-	AlertMetricWorkflowPendingAge                    AlertMetric = "workflow_pending_age_seconds"
-	AlertMetricWorkflowWaitingAge                    AlertMetric = "workflow_waiting_age_seconds"
-	AlertMetricWorkflowDueAge                        AlertMetric = "workflow_due_age_seconds"
+	// AlertMetricPreAuthPressure counts pre-auth source-limit blocks and
+	// observe-mode would-blocks; AlertMetricEdgeValidationFailures counts
+	// kind=validate mismatches in any mode. Both are webhook-only.
+	AlertMetricPreAuthPressure        AlertMetric = "pre_auth_pressure"
+	AlertMetricEdgeValidationFailures AlertMetric = "edge_validation_failures"
+	AlertMetricNewErrorFingerprint    AlertMetric = "new_error_fingerprint"
+	AlertMetricColdWakeRatePct        AlertMetric = "cold_wake_rate_pct"
+	AlertMetricDailyCostCents         AlertMetric = "daily_cost_cents"
+	AlertMetricWorkflowFailures       AlertMetric = "workflow_failures"
+	AlertMetricWorkflowQuotaSkips     AlertMetric = "workflow_schedule_quota_skips"
+	AlertMetricWorkflowPendingAge     AlertMetric = "workflow_pending_age_seconds"
+	AlertMetricWorkflowWaitingAge     AlertMetric = "workflow_waiting_age_seconds"
+	AlertMetricWorkflowDueAge         AlertMetric = "workflow_due_age_seconds"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
