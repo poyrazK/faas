@@ -273,7 +273,7 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 	}
 }
 
-const devUsage = "usage: gregale dev [--path DIR] [--all] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION]"
+const devUsage = "usage: gregale dev [--path DIR] [--all] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION] [--debug [--debug-port N]]"
 
 // cmdDev provides the preview-like inner loop for local source: reserve one
 // stable remote environment, upload the dirty working tree, then redeploy when
@@ -316,6 +316,8 @@ func cmdDev(args []string) int {
 	ttl := fs.String("ttl", "", "keep the environment this long after the latest sync, e.g. 72h (default 24h; plan maximum applies)")
 	postgresSeed := fs.String("postgres-seed", "", "shell command run once in the developer app after its database is ready")
 	reseed := fs.Bool("reseed", false, "run the --postgres-seed command again even if this database was already seeded")
+	debug := fs.Bool("debug", false, "start the Node.js inspector and expose it on a local port (ADR-741)")
+	debugPort := fs.Int("debug-port", api.DevDebugNodePort, "local port for --debug")
 	all := fs.Bool("all", false, "run one developer loop per deployable workspace app below --path")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(osStderr, devUsage, "dev")
@@ -343,6 +345,12 @@ func cmdDev(args []string) int {
 	}
 	if *stop && (*postgresSeed != "" || *reseed) {
 		return printErr("Invalid flags", fmt.Errorf("--postgres-seed and --reseed cannot be combined with --stop"))
+	}
+	if *stop && (*debug || explicitFlags["debug-port"]) {
+		return printErr("Invalid flags", fmt.Errorf("--debug cannot be combined with --stop"))
+	}
+	if *debugPort < 1 || *debugPort > 65535 {
+		return printErr("Invalid --debug-port", fmt.Errorf("use a port between 1 and 65535"))
 	}
 
 	cwd, err := os.Getwd()
@@ -372,6 +380,12 @@ func cmdDev(args []string) int {
 	if !*stop {
 		applyDevManifestDefaults(manifest, explicitFlags, sourceDir, envFile, serviceOverrideFile, withPostgres, postgresRegion, ttl)
 		applyDevSeedManifestDefault(manifest, explicitFlags, postgresSeed)
+		applyDevDebugManifestDefault(manifest, explicitFlags, debug)
+	}
+	if *debug && *once {
+		// --once exits after one sync, which would close the local
+		// debugger port immediately.
+		return printErr("Invalid flags", fmt.Errorf("--debug needs the watcher; remove --once"))
 	}
 	if !*withPostgres && *postgresRegion != "" {
 		return printErr("Invalid flags", fmt.Errorf("--postgres-region requires --postgres"))
@@ -463,9 +477,15 @@ func cmdDev(args []string) int {
 		return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 	}
 
+	if *debug && !devDebugSupported(sourceDir, config) {
+		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only"))
+	}
 	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease))
 	if err != nil {
 		return printErr("Could not create developer environment", err)
+	}
+	if code := applyDevDebugSetting(client, session.App.Slug, *debug); code != 0 {
+		return code
 	}
 	if !jsonOutput {
 		PrintOK(osStdout, "Developer environment: %s", canonicalAppURL(session.App))
@@ -480,6 +500,7 @@ func cmdDev(args []string) int {
 	runtimeLogCtx, cancelRuntimeLogs := context.WithCancel(ctx)
 	defer cancelRuntimeLogs()
 	runtimeLogsStarted := false
+	debugProxyStarted := false
 	devBrowserOpened := false
 	var diagnosticReported atomic.Bool
 	var syncHistoryWarned atomic.Bool
@@ -640,6 +661,10 @@ func cmdDev(args []string) int {
 			return code
 		},
 		onLive: func() {
+			if *debug && !debugProxyStarted {
+				debugProxyStarted = true
+				startDevDebugSession(ctx, session.App.Slug, *debugPort)
+			}
 			if *once || *noLogs || jsonOutput || runtimeLogsStarted {
 				return
 			}

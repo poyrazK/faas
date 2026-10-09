@@ -259,6 +259,49 @@ start wins: running without `--ttl` returns the environment to 24 hours.
 Stopping the watcher with Ctrl-C leaves the environment available—use `--stop`
 from the same source directory when it should be removed immediately.
 
+## Debug the remote environment
+
+`gregale dev --debug` (or `debug: true` in the `dev:` block of
+`gregale.yaml`) starts the Node.js inspector inside the developer environment
+and exposes it on your machine
+([ADR-741](adr/741-developer-debugger-attach.md)):
+
+```sh
+gregale dev --debug                    # inspector on 127.0.0.1:9229
+gregale dev --debug --debug-port 9339  # pick another local port
+```
+
+After the first live sync the CLI prints
+`Debugger listening on 127.0.0.1:9229`. Attach any Node.js debugger to that
+address, for example a VS Code configuration:
+
+```json
+{
+  "type": "node",
+  "request": "attach",
+  "name": "Attach to gregale dev",
+  "address": "127.0.0.1",
+  "port": 9229,
+  "remoteRoot": "/app",
+  "localRoot": "${workspaceFolder}",
+  "restart": true
+}
+```
+
+or open `chrome://inspect` and add `127.0.0.1:9229`. Each debugger connection
+is its own tunnel through the API, authenticated with your CLI credentials;
+the inspector port is never published on the app's URL. Only `gregale dev`
+environments accept a debugger, and up to four connections per environment.
+
+While a debugger is attached the environment does not park, and a process
+paused at a breakpoint is not restarted for failing its liveness probe. A
+request held at a breakpoint is still subject to the edge request deadline,
+so resume within it. A live patch restarts the process and drops the
+debugger; with `"restart": true` VS Code reconnects on its own. Running
+`gregale dev` without `--debug` turns the inspector off again. Only Node.js
+workloads are supported so far; `--debug` cannot be combined with `--once`,
+`--stop`, or `--all`.
+
 ## Run every app in a workspace
 
 `gregale dev --all` starts one developer loop per deployable workspace or

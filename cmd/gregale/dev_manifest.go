@@ -10,6 +10,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
 
+// applyDevDebugManifestDefault applies `dev.debug` unless --debug was given.
+func applyDevDebugManifestDefault(manifest *gregalemanifest.Manifest, explicit map[string]bool, debug *bool) {
+	if manifest == nil || manifest.Dev == nil || manifest.Dev.Debug == nil || explicit["debug"] {
+		return
+	}
+	*debug = *manifest.Dev.Debug
+}
+
 func loadDevManifest(sourceDir string) (*gregalemanifest.Manifest, error) {
 	manifest, present, err := gregalemanifest.Load(sourceDir)
 	if err != nil {

@@ -92,3 +92,36 @@
 2. A gateway upgrade route to `ForwardTCPStream`, the idle-park and supervisor
    exemptions, and metal tests.
 3. The CLI `--debug` flag, VS Code `launch.json` examples, and docs.
+
+## Implementation (2026-10-09)
+
+Implemented for Node.js; metal tests remain to be run on the native hosts.
+It differs from the decision above in these places:
+
+- **No attachment table.** The tunnel is a compute-owned API path,
+  `GET /v1/apps/{slug}/debug` (WebSocket), served by gatewayd-internal beside
+  the log stream. It reuses the existing API-key middleware: deploy-write
+  scope, MFA gate, rate limit, and the IDOR-safe app lookup. A short-lived
+  attachment credential added no protection over the caller's own key, so
+  steps 1–2 collapse into this route. gatewayd-public routes the path to the
+  compute gateway like `/logs`.
+- **Developer apps only, enforced at the route.** The handler refuses any
+  app that is not a `gregale dev` environment (409), refuses browser
+  `Origin`s, and admits at most `DevDebugSessionsPerApp` concurrent sessions
+  (429 `dev_debug_session_limit`). Sessions use `DevDebugIdleTimeout` and a
+  `DevDebugMaxBytes` cap per direction (`pkg/api/limits.go`).
+- **Instance selection** goes through the service proxy's endpoint registry
+  and wake path (`ServiceProxy.WakeTarget`), so a parked developer app wakes
+  for a debugger like it does for an internal service call.
+- **Enabling the inspector** is a value on the developer app, not a builder
+  change: the CLI sets the `FAAS_DEV_DEBUG=node` secret (and removes it when
+  started without `--debug`). guest-init appends
+  `--inspect=0.0.0.0:9229` to `NODE_OPTIONS` for the main workload. A Python
+  profile (debugpy) is deferred because the image does not ship debugpy.
+- **Park and liveness.** An open `ForwardTCPStream` counts as in-flight work,
+  which the idle reaper and pressure parking already respect, so no new
+  park exemption was needed. While debugging, guest-init answers liveness
+  probes as healthy so a process paused at a breakpoint is not destroyed.
+- **The CLI** listens on `127.0.0.1:9229` (`--debug-port`) and opens one
+  tunnel per debugger connection, so a debugger that reconnects after a
+  live-patch restart (ADR-740) gets a fresh session.

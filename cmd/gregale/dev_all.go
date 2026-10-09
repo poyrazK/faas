@@ -415,7 +415,7 @@ func cmdDevAll(sourceDir string, opts devAllOptions) int {
 // directory). Per-app config belongs in each member's gregale.yaml dev block,
 // which every child loop reads for its own source root.
 func cmdDevAllFromFlags(cwd, sourcePath string, explicit map[string]bool, opts devAllOptions) int {
-	for _, flag := range []string{"name", "env-file", "service-override-file", "postgres-seed", "reseed"} {
+	for _, flag := range []string{"name", "env-file", "service-override-file", "postgres-seed", "reseed", "debug", "debug-port"} {
 		if explicit[flag] {
 			return printErr("Invalid flags", fmt.Errorf("--%s cannot be combined with --all; set per-app values in each app's gregale.yaml dev block", flag))
 		}

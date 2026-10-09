@@ -1484,6 +1484,9 @@ type DevConfig struct {
 	// PostgresSeed is a shell command run once inside the developer app,
 	// through the app task path, after its developer database is ready.
 	PostgresSeed string `yaml:"postgres_seed,omitempty"`
+	// Debug starts the Node.js inspector in the developer environment and
+	// exposes it on a local port (`gregale dev --debug`, ADR-741).
+	Debug *bool `yaml:"debug,omitempty"`
 }
 
 // ParseDevTTL parses a `gregale dev` lease from `--ttl` or `dev.ttl`. It

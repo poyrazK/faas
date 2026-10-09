@@ -4832,7 +4832,7 @@ Show durable TLS status for all domains
 
 Sync local changes to a developer environment
 
-`gregale dev [<subcommand>] [--path <DIR>] [--all] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open] [--postgres] [--postgres-region <REGION>] [--postgres-seed <CMD>] [--reseed] [--ttl <DURATION>]`
+`gregale dev [<subcommand>] [--path <DIR>] [--all] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open] [--postgres] [--postgres-region <REGION>] [--postgres-seed <CMD>] [--reseed] [--debug] [--debug-port <PORT>] [--ttl <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4849,6 +4849,8 @@ Sync local changes to a developer environment
 | `--postgres-region <REGION>` | choose managed database placement |  |
 | `--postgres-seed <CMD>` | shell command run once in the developer app after its database is ready |  |
 | `--reseed` | run the seed again even if this database was already seeded |  |
+| `--debug` | start the Node.js inspector and expose it on a local port |  |
+| `--debug-port <PORT>` | local port for --debug (default 9229) |  |
 | `--ttl <DURATION>` | environment lease after the latest sync (default 24h; plan maximum applies) |  |
 
 Examples:

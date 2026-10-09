@@ -1988,6 +1988,8 @@ var cliCommands = []cliCommand{
 			{Name: "postgres-region", Short: "choose managed database placement", Value: "REGION"},
 			{Name: "postgres-seed", Short: "shell command run once in the developer app after its database is ready", Value: "CMD"},
 			{Name: "reseed", Short: "run the seed again even if this database was already seeded"},
+			{Name: "debug", Short: "start the Node.js inspector and expose it on a local port"},
+			{Name: "debug-port", Short: "local port for --debug (default 9229)", Value: "PORT"},
 			{Name: "ttl", Short: "environment lease after the latest sync (default 24h; plan maximum applies)", Value: "DURATION"},
 		},
 		Subcommands: []cliSub{
