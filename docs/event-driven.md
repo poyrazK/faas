@@ -2736,3 +2736,66 @@ Partial observations can only trigger satisfied `gt`/`gte` lower bounds and cann
 clear alerts or send recovery notifications. Other partial comparisons degrade.
 Apply migration `20261009144740163_event_recovery_notification_health.sql` before
 API and evaluator rollout. See [ADR-837](adr/837-recovery-notification-health-alerts.md).
+
+### Selectively retry recovery notification deliveries
+
+Preview receiver eligibility without changing delivery state:
+
+```bash
+gregale events recovery-notification-retry-preview JOB_ID --json
+```
+
+The preview separates admission and execution receivers. It exposes delivery
+identity, current replay generation, eligibility, and a reason when ineligible.
+Only retained dead deliveries with an owned enabled receiver and an eligible
+plan can be queued. Missing selection evidence remains incomplete; a retained
+exact source-event association can still establish one receiver's eligibility.
+Preview does not reserve state or expand an explicit selection.
+
+Copy the receivers you intend to retry into a request file:
+
+```json
+{
+  "request_id": "0b9d4e92-3d3c-4db1-b2a2-51c1a65793d5",
+  "targets": [{
+    "kind": "admission",
+    "webhook_id": "6cce6212-845f-4caa-a346-2014017af756",
+    "delivery_id": "ecb80865-7057-49c5-9351-8c6f8e0f93ed",
+    "expected_replay_generation": 0
+  }]
+}
+```
+
+Use actual IDs and generations from the preview. Include one receiver or an
+explicit set of up to 100 distinct deliveries; there is no implicit retry-all.
+
+```bash
+gregale events recovery-notification-retry JOB_ID --request-file retry.json
+```
+
+Each result is `queued` or `skipped`. The action rechecks source event, receiver
+ownership and enablement, plan, dead state, and generation. Active or successful
+siblings stay unchanged. A skipped receiver records a reason such as
+`not_dead`, `generation_changed`, `receiver_disabled`, `receiver_unavailable`,
+`delivery_unavailable`, `delivery_changed`, or `plan_not_allowed`. All decisions
+and queued resets commit atomically. Storage errors roll back the whole request.
+Queued delivery retains its delivery and source-event IDs, resets attempts,
+and increments replay generation; it does not establish acknowledgement.
+
+Preserve the request file when the response is uncertain. Repeating its stable
+request ID returns the original decisions, even if a queued delivery fails again
+or a skipped receiver becomes eligible. Changed targets under that ID return
+409; target order does not matter. Use current evidence and a new request ID for
+a later retry. Up to 100 decisions are retained per job, including all-skipped
+requests; existing requests remain readable at that limit. Job pruning removes
+receipts and makes the endpoint return 404. Delivery remains at least once;
+receivers must deduplicate side effects.
+
+The endpoints are `GET /v1/event-recoveries/{jobID}/notifications/retry-preview`
+and `POST /v1/event-recoveries/{jobID}/notifications/retry`. Preview requires
+read scope or admin and MFA; retry requires deploy write scope or admin and MFA.
+Both reject query parameters. Go methods are
+`PreviewEventRecoveryNotificationRetry` and `RetryEventRecoveryNotifications`;
+Node and Python expose the generated equivalents. The request body limit is
+64 KiB. Apply migration `20261009152823630_event_recovery_notification_retries.sql`
+before API rollout. See [ADR-838](adr/838-selective-recovery-notification-retries.md).

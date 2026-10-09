@@ -413,3 +413,31 @@ WHERE j.account_id=sqlc.arg(account_id)::uuid AND j.app_id=sqlc.arg(app_id)::uui
   )
  )
 ORDER BY j.completed_at,j.id LIMIT sqlc.arg(job_limit)::integer;
+
+-- name: EventRecoveryNotificationRetryOwner :one
+SELECT app_id,notification_retry_receipts FROM event_recovery_jobs
+WHERE id=sqlc.arg(job_id)::uuid AND account_id=sqlc.arg(account_id)::uuid FOR UPDATE;
+
+-- name: EventRecoveryNotificationRetrySave :exec
+UPDATE event_recovery_jobs SET notification_retry_receipts=notification_retry_receipts || jsonb_build_object(sqlc.arg(request_id)::text,sqlc.arg(receipt)::jsonb)
+WHERE id=sqlc.arg(job_id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: EventRecoveryNotificationRetryPlan :one
+SELECT plan FROM accounts WHERE id=sqlc.arg(account_id)::uuid;
+
+-- name: EventRecoveryNotificationRetryPlanLock :one
+SELECT plan FROM accounts WHERE id=sqlc.arg(account_id)::uuid FOR SHARE;
+
+-- name: EventRecoveryNotificationRetryHooks :many
+SELECT id,enabled FROM app_webhooks WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope='app' AND id=ANY(sqlc.arg(webhook_ids)::uuid[]);
+
+-- name: EventRecoveryNotificationRetryHookLock :one
+SELECT enabled FROM app_webhooks WHERE id=sqlc.arg(webhook_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope='app' FOR SHARE;
+
+-- name: EventRecoveryNotificationRetryDeliveryLock :one
+SELECT status,replay_generation FROM app_webhook_deliveries
+WHERE id=sqlc.arg(delivery_id)::uuid AND webhook_id=sqlc.arg(webhook_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND event=sqlc.arg(event)::text AND source_event_id=sqlc.arg(event_id)::uuid FOR UPDATE;
+
+-- name: EventRecoveryNotificationRetryReset :execrows
+UPDATE app_webhook_deliveries SET status='pending',attempt=0,replay_generation=replay_generation+1,last_error='',last_response_code=0,next_attempt_at=sqlc.arg(now_at)::timestamptz,updated_at=sqlc.arg(now_at)::timestamptz
+WHERE id=sqlc.arg(delivery_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND webhook_id=sqlc.arg(webhook_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND event=sqlc.arg(event)::text AND source_event_id=sqlc.arg(event_id)::uuid AND status='dead' AND replay_generation=sqlc.arg(expected_generation)::integer;

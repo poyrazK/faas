@@ -15825,6 +15825,7 @@ CREATE TABLE public.event_recovery_jobs (
     execution_notification_next_at timestamp with time zone DEFAULT now() NOT NULL,
     request_id uuid,
     notification_receipts jsonb DEFAULT '{}'::jsonb NOT NULL,
+    notification_retry_receipts jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT event_recovery_capacity_wait_chk CHECK ((((capacity_scope = ''::text) AND (capacity_wait_started_at IS NULL) AND (capacity_wait_observed_at IS NULL)) OR ((wait_reason = 'capacity'::text) AND (capacity_scope <> ''::text) AND (capacity_wait_started_at IS NOT NULL) AND (capacity_wait_observed_at IS NOT NULL) AND (capacity_wait_observed_at >= capacity_wait_started_at)))),
     CONSTRAINT event_recovery_child_request_chk CHECK ((((request_id IS NULL) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) = ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = ''::text)) OR ((request_id IS NOT NULL) AND (COALESCE((selection ->> 'mode'::text), ''::text) = 'execution'::text) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) <> ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = (request_id)::text)))),
     CONSTRAINT event_recovery_execution_finished_chk CHECK (((execution_finished_at IS NULL) OR (execution_notification_captured AND (completed_at IS NOT NULL) AND (execution_finished_at >= completed_at)))),
@@ -15838,6 +15839,7 @@ CREATE TABLE public.event_recovery_jobs (
     CONSTRAINT event_recovery_jobs_selection_check CHECK ((jsonb_typeof(selection) = 'object'::text)),
     CONSTRAINT event_recovery_jobs_wait_reason_check CHECK ((wait_reason = ANY (ARRAY[''::text, 'capacity'::text, 'legacy_claim'::text]))),
     CONSTRAINT event_recovery_jobs_window_budget_chk CHECK (((window_count >= 0) AND (window_count <= 100))),
+    CONSTRAINT event_recovery_notification_retry_receipts_object_chk CHECK ((jsonb_typeof(notification_retry_receipts) = 'object'::text)),
     CONSTRAINT event_recovery_receipt_protection_chk CHECK (((NOT (selection ? 'protect_receipts'::text)) OR (jsonb_typeof((selection -> 'protect_receipts'::text)) = 'boolean'::text)))
 );
 

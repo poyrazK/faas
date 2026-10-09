@@ -27600,6 +27600,124 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /v1/event-recoveries/{jobID}/notifications/retry-preview:
+    get:
+      tags: [events]
+      operationId: previewEventRecoveryNotificationRetry
+      summary: Preview selective recovery notification retries.
+      description: Requires apps:read or admin and MFA. Read-only preview of admission and execution receivers. Only retained dead deliveries with an enabled owned receiver and an eligible current plan are eligible. Incomplete evidence remains explicit; preview reserves nothing and accepts no query parameters.
+      security: [{ bearerAuth: [] }]
+      parameters:
+      - name: jobID
+        in: path
+        required: true
+        description: Retained recovery job identifier for retry-preview.
+        schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Notification retry-preview decision for the selected job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryNotificationRetryPreview' }
+        '400':
+          description: Invalid notification retry-preview input or query parameters.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401':
+          description: Authentication required for notification retry-preview.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403':
+          description: Required scope or MFA missing for notification retry-preview.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: Retained job unavailable for notification retry-preview.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Notification retry-preview request rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '500':
+          description: Notification retry-preview storage failure.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Notification retry-preview request exceeded its time budget.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/event-recoveries/{jobID}/notifications/retry:
+    post:
+      tags: [events]
+      operationId: retryEventRecoveryNotifications
+      summary: Retry selected recovery notification deliveries.
+      description: Requires deploy:write or admin and MFA. Explicit targets require notification kind, webhook and delivery identity, and expected replay generation. Revalidates each receiver and records queued or skipped decisions atomically with resets. A stable request_id returns the saved decision regardless of later delivery state; reuse with different targets conflicts. At most 100 targets and 100 saved decisions per retained job. Decisions expire with job pruning. Delivery IDs and source event IDs remain stable; queued means pending delivery, not acknowledgement. No query parameters are accepted.
+      security: [{ bearerAuth: [] }]
+      parameters:
+      - name: jobID
+        in: path
+        required: true
+        description: Retained recovery job identifier for retry.
+        schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventRecoveryNotificationRetryRequest' }
+      responses:
+        '200':
+          description: Notification retry decision for the selected job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryNotificationRetryResponse' }
+        '400':
+          description: Invalid notification retry input or query parameters.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401':
+          description: Authentication required for notification retry.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403':
+          description: Required scope or MFA missing for notification retry.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: Retained job unavailable for notification retry.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Notification retry request rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '500':
+          description: Notification retry storage failure.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Notification retry request exceeded its time budget.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Notification retry request ID conflicts or saved decision limit reached.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/event-recoveries/{jobID}/history:
     get:
       tags: [events]
@@ -47539,6 +47657,76 @@ components:
           type: string
           enum: [capacity, legacy_claim]
           description: Most recently recorded admission wait; cleared on tracked progress.
+    EventRecoveryNotificationRetryTarget:
+      type: object
+      additionalProperties: false
+      description: Exact receiver selection and expected delivery generation copied from a recovery notification retry preview. Repeated delivery IDs are rejected.
+      required: [kind, webhook_id, delivery_id, expected_replay_generation]
+      properties:
+        kind: { type: string, enum: [admission, execution] }
+        webhook_id: { type: string, format: uuid }
+        delivery_id: { type: string, format: uuid }
+        expected_replay_generation: { type: integer, minimum: 0, maximum: 2147483646 }
+    EventRecoveryNotificationRetryRequest:
+      type: object
+      additionalProperties: false
+      description: Explicit retry intent with a canonical nonzero UUID request identity. Target order is ignored for idempotency; target fields are immutable under this identity.
+      required: [request_id, targets]
+      properties:
+        request_id: { type: string, format: uuid }
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventRecoveryNotificationRetryTarget' }
+    EventRecoveryNotificationRetryPreview:
+      type: object
+      description: Advisory current receiver eligibility for a retained recovery job. Admission and execution entries remain separate. Missing evidence cannot create a receiver or authorize replay.
+      required: [job_id, app_id, observed_at, counts_complete, receivers]
+      properties:
+        job_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        counts_complete: { type: boolean }
+        receivers:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventRecoveryNotificationRetryCandidate' }
+    EventRecoveryNotificationRetryCandidate:
+      type: object
+      description: One observed receiver with its current generation and eligibility. Missing delivery identity prevents selecting this receiver for retry.
+      required: [kind, webhook_id, replay_generation, status, eligible]
+      properties:
+        kind: { type: string, enum: [admission, execution] }
+        webhook_id: { type: string, format: uuid }
+        delivery_id: { type: string, format: uuid }
+        replay_generation: { type: integer, minimum: 0 }
+        status: { type: string }
+        eligible: { type: boolean }
+        reason: { type: string }
+    EventRecoveryNotificationRetryResult:
+      type: object
+      description: Frozen decision for an explicitly requested receiver. Queued starts a new delivery generation; skipped preserves delivery state and explains the reason.
+      required: [target, state]
+      properties:
+        target: { $ref: '#/components/schemas/EventRecoveryNotificationRetryTarget' }
+        state: { type: string, enum: [queued, skipped] }
+        reason: { type: string }
+        replay_generation: { type: integer, minimum: 0 }
+    EventRecoveryNotificationRetryResponse:
+      type: object
+      description: Durable metadata-only receiver decisions, sorted by delivery ID and retained with the owning recovery job. Retrying identical intent returns this original response, including skipped decisions and decision time.
+      required: [job_id, app_id, request_id, decided_at, results]
+      properties:
+        job_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid }
+        decided_at: { type: string, format: date-time }
+        results:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventRecoveryNotificationRetryResult' }
     EventRecoveryNotificationsHealth:
       type: object
       description: Bounded retained notification candidates, oldest admission completion first. Candidate-set completeness is separate from phase evidence completeness. Counts describe jobs and can overlap; reads do not capture or retry notifications.

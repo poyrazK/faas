@@ -21,7 +21,7 @@ const eventFanoutReplayBatchMax = 100
 // subscriptions and deliveries inspect declarations and delivery outcomes.
 func cmdEvents(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale events <subscription-circuit-status|subscription-circuit-set|subscription-circuit-disable|subscription-circuit-reset|subscription-pause|subscription-resume|subscription-status|recovery-preflight|recovery-health|recovery-notifications|recovery-history|recovery-list|recovery-preview|recovery-create|recovery-status|recovery-items|recovery-cancel|recovery-pause|recovery-resume|recovery-rate|preview|replay-preview|workflow-replay-preview|backfill|workflow-backfill|backfill-status|backfill-items|backfill-retry|publish|publish-batch|retention|backlog|inspect|recover|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
+		PrintUsage(os.Stderr, "usage: gregale events <subscription-circuit-status|subscription-circuit-set|subscription-circuit-disable|subscription-circuit-reset|subscription-pause|subscription-resume|subscription-status|recovery-preflight|recovery-health|recovery-notification-retry-preview|recovery-notification-retry|recovery-notifications|recovery-history|recovery-list|recovery-preview|recovery-create|recovery-status|recovery-items|recovery-cancel|recovery-pause|recovery-resume|recovery-rate|preview|replay-preview|workflow-replay-preview|backfill|workflow-backfill|backfill-status|backfill-items|backfill-retry|publish|publish-batch|retention|backlog|inspect|recover|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
 		return 1
 	}
 	switch args[0] {
@@ -59,6 +59,10 @@ func cmdEvents(args []string) int {
 		return cmdEventsSubscriptionControl(args[1:], "status")
 	case "recovery-preflight":
 		return cmdEventsRecoveryPreflight(args[1:])
+	case "recovery-notification-retry-preview":
+		return cmdEventsRecoveryNotificationRetryPreview(args[1:])
+	case "recovery-notification-retry":
+		return cmdEventsRecoveryNotificationRetry(args[1:])
 	case "recovery-notifications":
 		return cmdEventsRecoveryNotifications(args[1:])
 	case "recovery-health":

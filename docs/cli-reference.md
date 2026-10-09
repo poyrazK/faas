@@ -1939,6 +1939,22 @@ Inspect recovery notification capture and receiver acknowledgements
 
 `gregale events recovery-notifications <job-id>`
 
+### events recovery-notification-retry-preview
+
+Preview eligible recovery notification receivers
+
+`gregale events recovery-notification-retry-preview <job-id>`
+
+### events recovery-notification-retry
+
+Retry an explicit recovery notification receiver selection
+
+`gregale events recovery-notification-retry --request-file <PATH> <job-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-file <PATH>` | JSON request with stable request_id and explicit targets | required |
+
 ### events recovery-health
 
 Inspect active recovery progress and expiry risk

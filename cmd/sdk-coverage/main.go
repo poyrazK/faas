@@ -1151,6 +1151,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/event-recoveries/{jobID}":                                                  "GetEventRecovery",
 	"GET /v1/event-recoveries/{jobID}/items":                                            "ListEventRecoveryItems",
 	"GET /v1/event-recoveries/{jobID}/notifications":                                    "GetEventRecoveryNotifications",
+	"GET /v1/event-recoveries/{jobID}/notifications/retry-preview":                      "PreviewEventRecoveryNotificationRetry",
+	"POST /v1/event-recoveries/{jobID}/notifications/retry":                             "RetryEventRecoveryNotifications",
 	"GET /v1/event-recoveries/{jobID}/history":                                          "ListEventRecoveryHistory",
 	"GET /v1/event-recoveries/{jobID}/preflight":                                        "GetEventRecoveryPreflight",
 	"POST /v1/event-recoveries/{jobID}/cancel":                                          "CancelEventRecovery",

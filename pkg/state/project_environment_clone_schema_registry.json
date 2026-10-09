@@ -2925,6 +2925,7 @@
       "last_progress_at",
       "next_attempt_at",
       "notification_receipts",
+      "notification_retry_receipts",
       "paused_at",
       "rate_per_second",
       "request_id",

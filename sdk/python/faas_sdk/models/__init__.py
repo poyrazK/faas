@@ -1054,6 +1054,15 @@ from .event_recovery_notification_job_health_kind import EventRecoveryNotificati
 from .event_recovery_notification_kind import EventRecoveryNotificationKind
 from .event_recovery_notification_receiver import EventRecoveryNotificationReceiver
 from .event_recovery_notification_receiver_status import EventRecoveryNotificationReceiverStatus
+from .event_recovery_notification_retry_candidate import EventRecoveryNotificationRetryCandidate
+from .event_recovery_notification_retry_candidate_kind import EventRecoveryNotificationRetryCandidateKind
+from .event_recovery_notification_retry_preview import EventRecoveryNotificationRetryPreview
+from .event_recovery_notification_retry_request import EventRecoveryNotificationRetryRequest
+from .event_recovery_notification_retry_response import EventRecoveryNotificationRetryResponse
+from .event_recovery_notification_retry_result import EventRecoveryNotificationRetryResult
+from .event_recovery_notification_retry_result_state import EventRecoveryNotificationRetryResultState
+from .event_recovery_notification_retry_target import EventRecoveryNotificationRetryTarget
+from .event_recovery_notification_retry_target_kind import EventRecoveryNotificationRetryTargetKind
 from .event_recovery_notifications import EventRecoveryNotifications
 from .event_recovery_notifications_health import EventRecoveryNotificationsHealth
 from .event_recovery_notifications_health_coverage import EventRecoveryNotificationsHealthCoverage
@@ -4091,6 +4100,15 @@ __all__ = (
     "EventRecoveryNotificationKind",
     "EventRecoveryNotificationReceiver",
     "EventRecoveryNotificationReceiverStatus",
+    "EventRecoveryNotificationRetryCandidate",
+    "EventRecoveryNotificationRetryCandidateKind",
+    "EventRecoveryNotificationRetryPreview",
+    "EventRecoveryNotificationRetryRequest",
+    "EventRecoveryNotificationRetryResponse",
+    "EventRecoveryNotificationRetryResult",
+    "EventRecoveryNotificationRetryResultState",
+    "EventRecoveryNotificationRetryTarget",
+    "EventRecoveryNotificationRetryTargetKind",
     "EventRecoveryNotifications",
     "EventRecoveryNotificationsHealth",
     "EventRecoveryNotificationsHealthCoverage",

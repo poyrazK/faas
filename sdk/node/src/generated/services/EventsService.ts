@@ -18,6 +18,9 @@ import type { EventRecoveryHistory } from '../models/EventRecoveryHistory.js';
 import type { EventRecoveryItems } from '../models/EventRecoveryItems.js';
 import type { EventRecoveryJob } from '../models/EventRecoveryJob.js';
 import type { EventRecoveryJobs } from '../models/EventRecoveryJobs.js';
+import type { EventRecoveryNotificationRetryPreview } from '../models/EventRecoveryNotificationRetryPreview.js';
+import type { EventRecoveryNotificationRetryRequest } from '../models/EventRecoveryNotificationRetryRequest.js';
+import type { EventRecoveryNotificationRetryResponse } from '../models/EventRecoveryNotificationRetryResponse.js';
 import type { EventRecoveryNotifications } from '../models/EventRecoveryNotifications.js';
 import type { EventRecoveryPreflight } from '../models/EventRecoveryPreflight.js';
 import type { EventRecoveryPreview } from '../models/EventRecoveryPreview.js';
@@ -2082,6 +2085,73 @@ export class EventsService {
         404: `Recovery job not found or not owned.`,
         429: `Request rate limited.`,
         500: `Internal notification reporting failure or invalid capture metadata.`,
+      },
+    });
+  }
+  /**
+   * Preview selective recovery notification retries.
+   * Requires apps:read or admin and MFA. Read-only preview of admission and execution receivers. Only retained dead deliveries with an enabled owned receiver and an eligible current plan are eligible. Incomplete evidence remains explicit; preview reserves nothing and accepts no query parameters.
+   * @returns EventRecoveryNotificationRetryPreview Notification retry-preview decision for the selected job.
+   * @throws ApiError
+   */
+  public static previewEventRecoveryNotificationRetry({
+    jobId,
+  }: {
+    /**
+     * Retained recovery job identifier for retry-preview.
+     */
+    jobId: string,
+  }): CancelablePromise<EventRecoveryNotificationRetryPreview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/notifications/retry-preview',
+      path: {
+        'jobID': jobId,
+      },
+      errors: {
+        400: `Invalid notification retry-preview input or query parameters.`,
+        401: `Authentication required for notification retry-preview.`,
+        403: `Required scope or MFA missing for notification retry-preview.`,
+        404: `Retained job unavailable for notification retry-preview.`,
+        429: `Notification retry-preview request rate limited.`,
+        500: `Notification retry-preview storage failure.`,
+        504: `Notification retry-preview request exceeded its time budget.`,
+      },
+    });
+  }
+  /**
+   * Retry selected recovery notification deliveries.
+   * Requires deploy:write or admin and MFA. Explicit targets require notification kind, webhook and delivery identity, and expected replay generation. Revalidates each receiver and records queued or skipped decisions atomically with resets. A stable request_id returns the saved decision regardless of later delivery state; reuse with different targets conflicts. At most 100 targets and 100 saved decisions per retained job. Decisions expire with job pruning. Delivery IDs and source event IDs remain stable; queued means pending delivery, not acknowledgement. No query parameters are accepted.
+   * @returns EventRecoveryNotificationRetryResponse Notification retry decision for the selected job.
+   * @throws ApiError
+   */
+  public static retryEventRecoveryNotifications({
+    jobId,
+    requestBody,
+  }: {
+    /**
+     * Retained recovery job identifier for retry.
+     */
+    jobId: string,
+    requestBody: EventRecoveryNotificationRetryRequest,
+  }): CancelablePromise<EventRecoveryNotificationRetryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/event-recoveries/{jobID}/notifications/retry',
+      path: {
+        'jobID': jobId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid notification retry input or query parameters.`,
+        401: `Authentication required for notification retry.`,
+        403: `Required scope or MFA missing for notification retry.`,
+        404: `Retained job unavailable for notification retry.`,
+        409: `Notification retry request ID conflicts or saved decision limit reached.`,
+        429: `Notification retry request rate limited.`,
+        500: `Notification retry storage failure.`,
+        504: `Notification retry request exceeded its time budget.`,
       },
     });
   }

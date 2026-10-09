@@ -38,6 +38,8 @@ func (s *server) writeEventRecovery(w http.ResponseWriter, r *http.Request, stat
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Event recovery is no longer active", "completed, cancelled, and expired jobs cannot be paused, resumed, or rate-adjusted"))
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Event recovery not found", "the recovery target does not belong to this account"))
+	case errors.Is(err, state.ErrEventRecoveryNotificationRetryLimit):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Notification retry limit reached", fmt.Sprintf("at most %d retry decisions per retained job; see /docs/event-driven", api.EventRecoveryNotificationRetryReceiptsMax)))
 	case errors.Is(err, state.ErrEventRecoveryQuota):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Event recovery limit reached", fmt.Sprintf("at most %d active jobs per account; see /docs/event-driven", api.EventRecoveryActiveJobsMax)))
 	case errors.Is(err, state.ErrEventRecoverySelection):

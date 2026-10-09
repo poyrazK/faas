@@ -523,6 +523,12 @@ export type { EventRecoveryNotification } from './models/EventRecoveryNotificati
 export type { EventRecoveryNotificationHealthCounts } from './models/EventRecoveryNotificationHealthCounts.js';
 export type { EventRecoveryNotificationJobHealth } from './models/EventRecoveryNotificationJobHealth.js';
 export type { EventRecoveryNotificationReceiver } from './models/EventRecoveryNotificationReceiver.js';
+export type { EventRecoveryNotificationRetryCandidate } from './models/EventRecoveryNotificationRetryCandidate.js';
+export type { EventRecoveryNotificationRetryPreview } from './models/EventRecoveryNotificationRetryPreview.js';
+export type { EventRecoveryNotificationRetryRequest } from './models/EventRecoveryNotificationRetryRequest.js';
+export type { EventRecoveryNotificationRetryResponse } from './models/EventRecoveryNotificationRetryResponse.js';
+export type { EventRecoveryNotificationRetryResult } from './models/EventRecoveryNotificationRetryResult.js';
+export type { EventRecoveryNotificationRetryTarget } from './models/EventRecoveryNotificationRetryTarget.js';
 export type { EventRecoveryNotifications } from './models/EventRecoveryNotifications.js';
 export type { EventRecoveryNotificationsHealth } from './models/EventRecoveryNotificationsHealth.js';
 export type { EventRecoveryPreflight } from './models/EventRecoveryPreflight.js';

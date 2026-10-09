@@ -406,3 +406,13 @@ unacknowledged delivery evidence at least 15 minutes after capture. Phase
 `counts_complete` flags cover evidence uncertainty and the 50-job candidate bound;
 partial observations cannot clear alerts. Use the notification report for receiver
 details. New alert metrics are optional and require the notification health migration.
+
+### Selective recovery notification retries
+
+Use the job-scoped notification retry preview to choose receivers explicitly.
+Submit a stable UUID request ID and targets containing kind, webhook ID, delivery
+ID, and expected replay generation. The API revalidates each receiver and saves
+queued or skipped decisions atomically. Repeating identical intent returns the
+original decisions; use a new ID and current evidence for later failures.
+Decisions expire with the recovery job. See the events documentation for limits
+and migration rollout.

@@ -645,6 +645,14 @@ type Querier interface {
 	EventRecoveryNotificationJob(ctx context.Context, db DBTX, jobID pgtype.UUID) (pgtype.UUID, error)
 	EventRecoveryNotificationOutbox(ctx context.Context, db DBTX, arg EventRecoveryNotificationOutboxParams) ([]EventRecoveryNotificationOutboxRow, error)
 	EventRecoveryNotificationReceivers(ctx context.Context, db DBTX, arg EventRecoveryNotificationReceiversParams) ([]pgtype.UUID, error)
+	EventRecoveryNotificationRetryDeliveryLock(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryDeliveryLockParams) (EventRecoveryNotificationRetryDeliveryLockRow, error)
+	EventRecoveryNotificationRetryHookLock(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryHookLockParams) (bool, error)
+	EventRecoveryNotificationRetryHooks(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryHooksParams) ([]EventRecoveryNotificationRetryHooksRow, error)
+	EventRecoveryNotificationRetryOwner(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryOwnerParams) (EventRecoveryNotificationRetryOwnerRow, error)
+	EventRecoveryNotificationRetryPlan(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
+	EventRecoveryNotificationRetryPlanLock(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
+	EventRecoveryNotificationRetryReset(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryResetParams) (int64, error)
+	EventRecoveryNotificationRetrySave(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetrySaveParams) error
 	EventRecoveryPause(ctx context.Context, db DBTX, arg EventRecoveryPauseParams) error
 	EventRecoveryPreflight(ctx context.Context, db DBTX, arg EventRecoveryPreflightParams) ([]EventRecoveryPreflightRow, error)
 	EventRecoveryPreflightJob(ctx context.Context, db DBTX, arg EventRecoveryPreflightJobParams) (EventRecoveryJob, error)

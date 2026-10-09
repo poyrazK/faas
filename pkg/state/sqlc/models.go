@@ -2570,6 +2570,7 @@ type EventRecoveryJob struct {
 	ExecutionNotificationNextAt   pgtype.Timestamptz
 	RequestID                     pgtype.UUID
 	NotificationReceipts          []byte
+	NotificationRetryReceipts     []byte
 }
 
 type EventReplayJob struct {

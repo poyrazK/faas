@@ -9431,3 +9431,9 @@ const (
 	EventRecoveryNotificationHealthSampleMax = 3
 	EventRecoveryNotificationOverdueGrace    = 15 * time.Minute
 )
+
+const (
+	EventRecoveryNotificationRetryTargetsMax   = 100
+	EventRecoveryNotificationRetryReceiptsMax  = 100
+	EventRecoveryNotificationRetryBodyMaxBytes = 64 << 10
+)
