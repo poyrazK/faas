@@ -16,18 +16,32 @@ import (
 // can never become routable. Non-production scopes and the default-off flag
 // retain the existing advisory behavior.
 func (h *Handler) checkAPIContract(ctx context.Context, dep state.Deployment) error {
+	_, err := h.checkAPIContractContext(ctx, dep)
+	return err
+}
+func (h *Handler) checkAPIContractContext(ctx context.Context, dep state.Deployment) (context.Context, error) {
 	if !api.ApiContractDiffEnabled() || !strings.EqualFold(strings.TrimSpace(dep.Scope), "prod") {
-		return nil
+		return ctx, nil
 	}
-	check, err := openapidiff.CheckPromotion(ctx, h.store, dep.AppID, dep.ID, "prod")
+	check, err := openapidiff.CheckLiveContract(ctx, h.store, dep.AppID, dep.ID, "prod", false)
 	if err != nil {
 		if errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
-			return nil
+			return ctx, nil
 		}
-		return fmt.Errorf("api contract check: %w", err)
+		return ctx, fmt.Errorf("api contract check: %w", err)
 	}
-	if len(check.Diff.Breaks) == 0 {
-		return nil
+	if check.HasBaseline {
+		var fence *state.RouteRemovalFence
+		check, fence, err = openapidiff.ApplyRemovalException(ctx, h.store, check, dep.TrafficPercentExplicit && dep.TrafficPercent == 0)
+		if err != nil {
+			return ctx, err
+		}
+		if fence != nil {
+			ctx = state.WithRouteRemovalFence(ctx, *fence)
+		}
 	}
-	return &openapidiff.GateError{Diff: check.Diff}
+	if !check.Diff.Blocking() {
+		return ctx, nil
+	}
+	return ctx, &openapidiff.GateError{Diff: check.Diff}
 }

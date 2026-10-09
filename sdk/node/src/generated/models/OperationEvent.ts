@@ -8,7 +8,7 @@
 export type OperationEvent = {
   operation_id: string;
   sequence: number;
-  type: 'accepted' | 'running' | 'progress' | 'artifact_attached' | 'succeeded' | 'failed' | 'cancelled' | 'reconciliation_required' | 'recovery_requested' | 'cancellation_requested' | 'delivery_changed';
+  type: 'accepted' | 'running' | 'progress' | 'result_prepared' | 'artifact_prepared' | 'artifact_attached' | 'succeeded' | 'failed' | 'cancelled' | 'reconciliation_required' | 'recovery_requested' | 'cancellation_requested' | 'delivery_changed';
   execution_id?: string;
   attempt?: number;
   /**

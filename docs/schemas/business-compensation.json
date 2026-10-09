@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "compensation"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "gregale.business-compensation.v1"
+    },
+    "compensation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workflow",
+        "instance_id",
+        "state",
+        "operation",
+        "code",
+        "version",
+        "description",
+        "status",
+        "source_effect"
+      ],
+      "properties": {
+        "workflow": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "instance_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "operation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "required",
+            "pending",
+            "failed",
+            "confirmed"
+          ]
+        },
+        "reference": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "source_effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "operation_id",
+            "milestone_id"
+          ],
+          "properties": {
+            "operation_id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "description": "Canonical nonzero UUID of the retained confirmed effect."
+            },
+            "milestone_id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "description": "Canonical nonzero UUID of the retained confirmed effect."
+            }
+          }
+        }
+      },
+      "description": "Application-reported compensation workflow observation. Confirmed status requires a nonempty reference. Text bounds are UTF-8 bytes without control characters. Source must be a retained confirmed effect in the same account, app, customer, and environment."
+    }
+  }
+}

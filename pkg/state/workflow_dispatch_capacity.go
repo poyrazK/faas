@@ -21,8 +21,10 @@ func (m *MemStore) workflowDispatchOccupancyLocked(now time.Time) workflowDispat
 	for _, run := range m.workflowRuns {
 		live := run.Status == WorkflowRunStatusRunning && m.workflowDispatchDeadlineLocked(run).After(now)
 		if live {
-			counts.apps[run.AppID]++
-			counts.tenants[workflowDispatchScope{run.AppID, run.PlatformTenantID}]++
+			if _, operation := m.operationForWorkflowLocked(run.ID); !operation {
+				counts.apps[run.AppID]++
+				counts.tenants[workflowDispatchScope{run.AppID, run.PlatformTenantID}]++
+			}
 		}
 		if live || run.Status == WorkflowRunStatusAwaitingEvent || (run.Status == WorkflowRunStatusPending && run.StartedAt != nil) {
 			counts.definitions[workflowDefinitionScope{run.AppID, run.WorkflowName}]++
@@ -32,11 +34,20 @@ func (m *MemStore) workflowDispatchOccupancyLocked(now time.Time) workflowDispat
 }
 
 func (counts workflowDispatchOccupancy) capacityReason(run WorkflowRun) string {
-	if counts.apps[run.AppID] >= api.WorkflowDispatchMaxPerApp {
-		return api.AutomationQueueAppCapacity
-	}
-	if run.PlatformTenantID != "" && counts.tenants[workflowDispatchScope{run.AppID, run.PlatformTenantID}] >= api.WorkflowDispatchMaxPerTenant {
-		return api.AutomationQueueTenantCapacity
+	return counts.capacityReasonFor(run, false)
+}
+
+// Operation workflows share per-definition concurrency with native runs but
+// are admitted and dispatched under the Operations plan. They therefore do
+// not consume the legacy app and tenant dispatch slots.
+func (counts workflowDispatchOccupancy) capacityReasonFor(run WorkflowRun, operation bool) string {
+	if !operation {
+		if counts.apps[run.AppID] >= api.WorkflowDispatchMaxPerApp {
+			return api.AutomationQueueAppCapacity
+		}
+		if run.PlatformTenantID != "" && counts.tenants[workflowDispatchScope{run.AppID, run.PlatformTenantID}] >= api.WorkflowDispatchMaxPerTenant {
+			return api.AutomationQueueTenantCapacity
+		}
 	}
 	active := counts.definitions[workflowDefinitionScope{run.AppID, run.WorkflowName}]
 	if run.Status == WorkflowRunStatusAwaitingEvent || (run.Status == WorkflowRunStatusPending && run.StartedAt != nil) {

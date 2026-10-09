@@ -14,6 +14,7 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
@@ -581,5 +582,24 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return err
 	}
 	h.log.Info("imaged: build local OCI app layer", "app", app.Slug, "bytes", result.ContentBytes)
+	// production-us hunt #8: only registry-image deploys built companion
+	// layers (buildImageLayer). A source deploy with companions built its
+	// app layer here and then failed at snapshot prime with "sidecar
+	// \"heartbeat\" has no built layer". Build them here too, with the same
+	// fail-on-secret posture as the image path.
+	scFindings, err := h.buildSidecarLayers(ctx, app, dep, acct)
+	if err != nil {
+		return err
+	}
+	if len(scFindings) > 0 {
+		upsertDeploymentSecretFindings(ctx, h.store, dep.ID,
+			scFindings, layerSecretScanStatusCompleteWithRedactions,
+			dep.ImageDigest, time.Now().UTC(), h.log)
+		if markErr := h.markDeployFailed(ctx, dep.ID, errImageSecretDetected, "companion image secret detected"); markErr != nil {
+			h.log.Warn("imaged: mark deploy failed on companion layer secret",
+				"deployment", dep.ID, "app", app.Slug, "err", markErr)
+		}
+		return errImageSecretDetected
+	}
 	return nil
 }

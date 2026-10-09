@@ -5,17 +5,19 @@
 - **Decision:** An immutable HTTP Operation definition may opt into
   `http_transaction_version: 1`. A validated customer execution advertises
   `X-Gregale-Customer-Operation-Transaction-Version: 1` and the pinned result
-  byte limit. The Node SDK commits business writes and the complete JSON business
-  result together in an explicitly installed, application-owned PostgreSQL
-  receipt table. A later authorized execution returns those exact saved bytes.
+  byte limit. The Go, Node and Python SDKs commit business writes and the
+  complete JSON business result together in an explicitly installed,
+  application-owned PostgreSQL receipt table. A later authorized execution
+  returns those exact saved bytes.
 - **Why:** A handler can commit business writes and lose its response before
   Gregale records completion. Application retries need a durable result without
   repeating committed writes.
 - **Consequences:** Customer Operations use
   `public.gregale_customer_operation_inbox` and the
   `gregale.customer-operation-inbox.v1:` advisory lock namespace. They retain
-  their own identity; no managed exclusive operation is created. The Node
-  helper shares ADR-586's transaction engine, not its managed response envelope.
+  their own identity; no managed exclusive operation is created. The SDK
+  helpers share ADR-586's transaction engine while using this separate receipt
+  table and lock namespace.
   The full response remains the typed business result and passes the existing
   output schema and fenced completion checks. Version zero preserves ordinary
   HTTP behavior. Unsupported versions fail definition compilation.

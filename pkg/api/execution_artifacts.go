@@ -62,7 +62,7 @@ func CloneExecutionArtifacts(artifacts []ExecutionArtifact) []ExecutionArtifact 
 	}
 	cloned := append([]ExecutionArtifact{}, artifacts...)
 	for i := range cloned {
-		cloned[i].Content = append([]byte{}, artifacts[i].Content...)
+		cloned[i].Content = append([]byte{}, cloned[i].Content...)
 	}
 	return cloned
 }

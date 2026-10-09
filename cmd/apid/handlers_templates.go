@@ -64,6 +64,8 @@ func templateDescription(name string) string {
 		return "Postgres-backed REST API — bring your own connection string"
 	case "data-api":
 		return "Schema-generated Postgres REST API with JWT authentication and row-level security"
+	case "data-api-starter":
+		return "Versioned Data API migrations, a typed client, two-user RLS checks and application CI"
 	case "customer-platform":
 		return "Node.js customer platform with tenant authentication and Postgres data isolation"
 	case "mcp-node":
@@ -80,6 +82,12 @@ func templateDescription(name string) string {
 		return "OpenAI-compatible chat scaffold — bring your own key"
 	case "secret-reload-node":
 		return "Node.js/Postgres reference app — safely reload and ACK rotated secrets"
+	case "customer-operation-export":
+		return "Customer export app with HTTP Operations progress, delivery, and private artifact results"
+	case "customer-operation-job-export":
+		return "Customer export app backed by native Jobs and durable Operations"
+	case "customer-operation-workflow-export":
+		return "Customer export app backed by durable workflows and Operations recovery"
 	}
 	return ""
 }

@@ -1,0 +1,42 @@
+name: Data API staging canary
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: data-api-staging-canary
+  cancel-in-progress: false
+jobs:
+  canary:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, gregale-data-api-staging]
+    environment: data-api-staging
+    timeout-minutes: 120
+    env:
+      FAAS_TOKEN: ${{ secrets.GREGALE_DATA_API_STAGING_TOKEN }}
+      STAGING_CONFIG_JSON: ${{ vars.GREGALE_DATA_API_STAGING_CONFIG_JSON }}
+      FAAS_DATA_API_EVIDENCE: ${{ github.workspace }}/data-api-staging-evidence.json
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Write staging designation
+        run: |
+          set -euo pipefail
+          config_path="$RUNNER_TEMP/data-api-staging-config.json"
+          node --input-type=module -e 'import fs from "node:fs"; fs.writeFileSync(process.argv[1], process.env.STAGING_CONFIG_JSON, {mode: 0o600})' "$config_path"
+          echo "FAAS_DATA_API_STAGING_CONFIG=$config_path" >> "$GITHUB_ENV"
+      - name: Deploy fixtures and verify the customer workflow
+        run: make data-api-staging-canary
+      - name: Upload canary evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: data-api-staging-${{ github.sha }}
+          path: data-api-staging-evidence.json
+          if-no-files-found: warn
+          retention-days: 14

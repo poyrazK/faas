@@ -123,3 +123,19 @@ func TestCmdDeploymentAliasSetRejectsInvalidNameBeforeRequest(t *testing.T) {
 		t.Fatal("invalid alias name made an API request")
 	}
 }
+
+// hunt #8: an alias to a superseded deployment stops serving; the list says so.
+func TestDeploymentAliasRevisionLabelMarksNonServingTargets(t *testing.T) {
+	for _, tc := range []struct {
+		alias api.DeploymentAliasResponse
+		want  string
+	}{
+		{api.DeploymentAliasResponse{Revision: 5, DeploymentStatus: "live"}, "v5"},
+		{api.DeploymentAliasResponse{Revision: 2, DeploymentStatus: "superseded"}, "v2 (superseded, not serving)"},
+		{api.DeploymentAliasResponse{Revision: 3}, "v3"},
+	} {
+		if got := deploymentAliasRevisionLabel(tc.alias); got != tc.want {
+			t.Errorf("label(%+v) = %q, want %q", tc.alias, got, tc.want)
+		}
+	}
+}

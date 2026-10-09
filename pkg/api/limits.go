@@ -365,6 +365,11 @@ const NativeHostHelperCgroupEventsMaxBytes = 4096
 const TelemetryIngestDBConcurrency = 4
 
 const (
+	// Job Operations carry canonical input through the existing guest env protocol.
+	OperationJobDispatchGraceSeconds = 90
+	OperationJobInputMaxBytes        = 32 << 10
+	OperationJobEnvMaxEntries        = 240
+
 	EnvironmentGitSourcePollLeaseDuration = 2 * time.Minute
 	EnvironmentGitSourcePollReadTimeout   = 45 * time.Second
 	EnvironmentGitSourcePollCheckInterval = 5 * time.Minute
@@ -445,6 +450,10 @@ const (
 	OperationWorkflowStepsMaxPerOperation                = 32
 	OperationWorkflowStatesMax                           = 32
 	OperationWorkflowTransitionsMax                      = 128
+	OperationWorkflowContractVersionMax                  = 1_000_000
+	OperationWorkflowTransitionEvidenceMax               = 16
+	OperationWorkflowStateEvidenceMax                    = 16
+	OperationWorkflowStateBatchMaxBytes                  = 131072
 	OperationWorkflowStateMaxBytes                       = 64
 	OperationWorkflowStateReportsMaxPerTransaction       = 64
 	OperationWorkflowTitleMaxBytes                       = 128
@@ -486,6 +495,14 @@ const (
 	OperationPreviewCohortsMax                           = 10
 	OperationPreviewTenantsPerCohortMax                  = 10
 	OperationPreviewWindowMax                            = time.Hour
+	OperationControlPollIntervalMS                       = 1000
+	OperationControlPollMinIntervalMS                    = 100
+	WorkflowStepDefaultTimeout                           = 30 * time.Second
+	OperationSubmissionLookupMaxBytes                    = 4096
+	OperationBrowserReceiptMaxBytes                      = 8192
+	OperationBrowserReceiptReplaySeconds                 = 86400
+	OperationRecoveryReceiptMaxBytes                     = OperationSubmissionMaxBytes + 2*OperationRecoveryBodyOverheadBytes + 2*OperationPathMaxBytes
+	OperationArtifactUploadDefaultBytes                  = 8 << 20
 )
 
 // OperationPlanLimits bounds durable control-plane state independently from
@@ -519,6 +536,7 @@ const (
 )
 
 const (
+
 	// Development bridge transport safeguards. These are preview bounds, not
 	// a new billing allowance. Session creation also uses DeveloperApps.
 	DevBridgeSessionTTL            = time.Hour
@@ -590,6 +608,7 @@ const (
 // Private PostgreSQL copy bounds, independent from data/storage entitlements.
 // An oversized inventory or archive fails capture; it is never truncated.
 const (
+
 	// Dedicated APID copy-worker service bounds include the process and its
 	// subprocesses. Provider PostgreSQL compute is admitted separately.
 	PostgresCopyWorkerMemoryMaxBytes   int64 = 1 << 30
@@ -684,6 +703,7 @@ const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
 const ObjectVersionDeleteOperationTimeout = time.Minute
 
 const (
+
 	// Customer-configured admission budgets are safety bounds, not plan
 	// allowances. Zero disables a dimension; these caps keep counters and
 	// request validation bounded without prescribing a default quota.
@@ -4189,6 +4209,7 @@ var planLimits = map[Plan]Limits{
 // Global platform constants (spec §1, §13). These are the physics of the one
 // box; code enforces them, telemetry verifies them.
 const (
+
 	// ADR-431: diagnostic trace retention must fit the public gateway's 512 MiB
 	// cgroup. Byte accounting includes conservative Go object/map overhead;
 	// count and per-trace bounds also constrain tiny traces and merge work.
@@ -8263,6 +8284,7 @@ const (
 // Source of truth: pkg/reqbudget re-exports these as reqbudget.*
 // so call-sites can use one import.
 const (
+
 	// RequestUploadTimeoutBase is fixed setup headroom added to the time
 	// required to receive a plan's maximum request body. Upload admission is
 	// deliberately separate from the guest execution budget.
@@ -8475,6 +8497,7 @@ type NodeSizing struct {
 type NodeRoleShape int
 
 const (
+
 	// NodeShapeSingleBox is the spec §13 reference: one host running the
 	// whole platform, Postgres included. Reserve is ControlPlaneReserveMB.
 	NodeShapeSingleBox NodeRoleShape = iota
@@ -8568,6 +8591,7 @@ func DeriveNodeSizingForRole(memTotalMB, hostCPUs int, shape NodeRoleShape) Node
 }
 
 const (
+
 	// RAMAdmissionPercent is the headroom guard from spec §1: schedd admits
 	// only up to this share of the tenant budget.
 	RAMAdmissionPercent = 85
@@ -8760,6 +8784,7 @@ const WorkloadPortCapMax = 16
 
 // ADR-576: private TCP addressing between services.
 const (
+
 	// ServiceTCPProxyPort is the reserved tenant-bridge port of the node-local
 	// service TCP proxy. No netns rule admits it: guests reach it only through
 	// the host DNAT of a service address.
@@ -9099,6 +9124,10 @@ const (
 	MaxDurableEntityReceipts             = 1024 // Legacy inline receipts only; journal receipts do not expire.
 	MaxDurableEntityReceiptBytes         = 1 << 20
 	MaxDurableEntityJournalBytes         = 16 << 10
+	MaxDurableEntityOutboxPerTransition  = 16
+	MaxDurableEntityOutboxPending        = 128
+	MaxDurableEntityOutboxPayloadBytes   = 64 << 10
+	MaxDurableEntityOutboxBytes          = 256 << 10 // Encoded pending messages, included in snapshot/cap bytes.
 	DurableEntityCleanupPageSize         = 32
 	DurableEntityCleanupTimeout          = 20 * time.Second
 	DurableEntityInventoryPageSize       = 32
@@ -9312,6 +9341,18 @@ const (
 	DataAPIMaxRelations       = 1000
 	DataAPIMaxColumns         = 10000
 	DataAPIMaxTypes           = 20000
+)
+
+// A compatibility receipt is short-lived authorization for captured declarations.
+const RouteLifecycleApprovalTTL = time.Hour
+
+// Production review history exposes bounded metadata, never configuration bodies.
+const (
+	RouteLifecycleHistoryPageSize     = 10
+	RouteLifecycleHistoryMaxPage      = 20
+	RouteLifecycleHistoryMaxApprovals = 20
+	RouteLifecycleHistoryMaxCaptures  = 64
+	RouteLifecycleHistoryMaxGraphs    = 64
 )
 
 // Bulk recovery bounds failed routing selection and durable job work (ADR-797).

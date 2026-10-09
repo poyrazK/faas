@@ -42,10 +42,20 @@ func comparePreviewContractsWithRequests(before, after *openapidiff.Spec) ([]pre
 			row.Change = "removed"
 		}
 	}
-	for _, b := range openapidiff.Compare(before, after) {
+	comparison := openapidiff.CompareDetailed(before, after)
+	for _, b := range comparison.Breaks {
 		row := rows[previewReportRouteKey(b.Method, b.Path)]
 		row.Breaks = append(row.Breaks, previewReportBreak{Kind: string(b.Kind), Status: b.Status, PathInSchema: b.PathInSchema})
 		if row.Change != "removed" {
+			row.Change = "changed"
+		}
+	}
+	for _, unknown := range comparison.Unknowns {
+		row := rows[previewReportRouteKey(unknown.Method, unknown.Path)]
+		row.Unknowns = append(row.Unknowns, previewReportUnknown{
+			Code: string(unknown.Code), Status: unknown.Status, PathInSchema: unknown.PathInSchema,
+		})
+		if row.Change == "unchanged" {
 			row.Change = "changed"
 		}
 	}
@@ -286,6 +296,12 @@ func finishPreviewRouteReport(report *previewRouteReport) {
 		row := &report.Routes[i]
 		if row.Change == "unknown" {
 			row.NextActions = append(row.NextActions, "Capture this route's deployment contract; current declaration or observation does not establish revision compatibility.")
+			if report.Outcome == "no_findings" {
+				report.Outcome = "incomplete"
+			}
+		}
+		if len(row.Unknowns) > 0 {
+			row.NextActions = append(row.NextActions, "Review the unsupported response-schema comparison; compatibility could not be established.")
 			if report.Outcome == "no_findings" {
 				report.Outcome = "incomplete"
 			}

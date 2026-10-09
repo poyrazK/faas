@@ -5,7 +5,7 @@
 import type { OperationSubjectSpec } from './OperationSubjectSpec.js';
 import type { OperationWorkflowStep } from './OperationWorkflowStep.js';
 /**
- * Resolved immutable contract for one HTTP handler. Ownership comes from verified authentication, never input fields. Production admission stays disabled until the HTTP execution adapter is qualified.
+ * Resolved immutable contract for an HTTP handler or a named linear HTTP workflow from the same deployment. Workflow definitions require POST ingress, reconciliation recovery and stages matching the steps. Ownership comes from verified authentication. Production admission remains disabled pending qualification.
  */
 export type OperationDefinitionSpec = {
   /**
@@ -18,6 +18,18 @@ export type OperationDefinitionSpec = {
   workflow_steps?: Array<OperationWorkflowStep>;
   subject?: OperationSubjectSpec;
   name: string;
+  /**
+   * Optional account-owned active batch Job. POST ingress and reconciliation recovery only; one task per generation. Input, image, command, environment and execution policy are frozen at admission. Mutually exclusive with workflow and transaction_receipt.
+   */
+  job?: string;
+  /**
+   * Optional named workflow captured from this immutable deployment; path becomes its submission route.
+   */
+  workflow?: string;
+  /**
+   * Explicit HTTP/PostgreSQL receipt adapter; requires reconciliation recovery. Business writes and the saved result commit in the customer database. Approved recovery replays a committed result without calling business code. This does not certify external effects or platform completion.
+   */
+  transaction_receipt?: 'postgres_v1';
   method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: string;
   owner: 'platform_tenant';

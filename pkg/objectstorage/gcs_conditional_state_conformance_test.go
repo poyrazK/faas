@@ -253,7 +253,11 @@ func TestGCSEntityRestartAndLostPublicationAcknowledgement(t *testing.T) {
 	writesBefore := wire.manifestWrites
 	wire.loseNextManifestAck = true
 	wire.mu.Unlock()
-	if _, err := m.Execute(t.Context(), claim, gcsEntityRequest("first"), gcsEntityIncrement); !errors.Is(err, durableentity.ErrUncertain) {
+	if _, err := m.Execute(t.Context(), claim, gcsEntityRequest("first"), func(ctx context.Context, view durableentity.View) (durableentity.Transition, error) {
+		transition, err := gcsEntityIncrement(ctx, view)
+		transition.Outbox = []durableentity.OutboxIntent{{WebhookID: "6dd283da-3c14-40de-9d47-bb71fb35be9a", EventType: "reservation.confirmed", Payload: json.RawMessage(`{"reservation":"123"}`)}}
+		return transition, err
+	}); !errors.Is(err, durableentity.ErrUncertain) {
 		t.Fatal("lost publication ACK was not uncertain", err)
 	}
 	wire.mu.Lock()
@@ -283,6 +287,10 @@ func TestGCSEntityRestartAndLostPublicationAcknowledgement(t *testing.T) {
 	replay, err := restarted.Execute(t.Context(), next, gcsEntityRequest("first"), gcsEntityIncrement)
 	if err != nil || !replay.Replayed || replay.Version != first.Version || string(replay.Value) != string(first.Value) {
 		t.Fatal("restart lost the original receipt", replay, err)
+	}
+	pending, err := restarted.PendingOutbox(t.Context(), id)
+	if err != nil || pending.Version != 2 || len(pending.Messages) != 1 || pending.Messages[0].Version != 1 || string(pending.Messages[0].Intent.Payload) != `{"reservation":"123"}` {
+		t.Fatal("restart or lost-ACK replay changed the outbox", pending, err)
 	}
 	view, err := restarted.Read(t.Context(), id)
 	if err != nil || view.Version != 2 || string(view.Data) != `{"count":2}` {

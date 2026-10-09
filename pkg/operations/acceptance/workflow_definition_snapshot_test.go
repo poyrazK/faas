@@ -19,14 +19,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-const retainedWorkflowSnapshot = `{"name":"export-flow","steps":[{"name":"result","handler":"/exports"}]}`
+const retainedWorkflowSnapshot = `{"name":"export-flow","steps":[{"name":"generating","path":"/exports"}]}`
 
 func workflowDefinitionFixture(t *testing.T, def state.OperationDefinition, name string) sqlc.InsertCustomerOperationDefinitionParams {
 	t.Helper()
 	return sqlc.InsertCustomerOperationDefinitionParams{
 		ID: backendUUID(uuid.NewString()), AccountID: backendUUID(def.AccountID), AppID: backendUUID(def.AppID),
 		Scope: def.Scope, Name: name, Revision: strings.Repeat("a", 64), DeploymentID: backendUUID(def.DeploymentID),
-		Spec:             []byte(fmt.Sprintf(`{"name":%q,"workflow":{"name":"export-flow","result_step":"result","progress_stage":"generating"}}`, name)),
+		Spec:             []byte(fmt.Sprintf(`{"name":%q,"workflow":"export-flow","method":"POST","path":"/workflow-exports","owner":"platform_tenant"}`, name)),
 		WorkflowSnapshot: []byte(retainedWorkflowSnapshot),
 	}
 }
@@ -189,20 +189,16 @@ func TestPgOperationWorkflowDefinitionTargetConstraints(t *testing.T) {
 			p.WorkflowSnapshot = []byte(`{"name":"export-flow","steps":{}}`)
 		}},
 		{"missing-workflow-name", func(spec map[string]any, _ *sqlc.InsertCustomerOperationDefinitionParams) {
-			delete(spec["workflow"].(map[string]any), "name")
+			delete(spec, "workflow")
 		}},
-		{"empty-result-step", func(spec map[string]any, _ *sqlc.InsertCustomerOperationDefinitionParams) {
-			spec["workflow"].(map[string]any)["result_step"] = ""
+		{"empty-workflow-name", func(spec map[string]any, _ *sqlc.InsertCustomerOperationDefinitionParams) {
+			spec["workflow"] = ""
 		}},
-		{"missing-progress-stage", func(spec map[string]any, _ *sqlc.InsertCustomerOperationDefinitionParams) {
-			delete(spec["workflow"].(map[string]any), "progress_stage")
+		{"non-string-workflow-name", func(spec map[string]any, _ *sqlc.InsertCustomerOperationDefinitionParams) {
+			spec["workflow"] = map[string]any{"name": "export-flow"}
 		}},
-		{"mixed-http-method", func(spec map[string]any, _ *sqlc.InsertCustomerOperationDefinitionParams) { spec["method"] = "POST" }},
-		{"mixed-http-path", func(spec map[string]any, _ *sqlc.InsertCustomerOperationDefinitionParams) { spec["path"] = "/exports" }},
 		{"http-with-private-snapshot", func(spec map[string]any, _ *sqlc.InsertCustomerOperationDefinitionParams) {
 			delete(spec, "workflow")
-			spec["method"] = "POST"
-			spec["path"] = "/exports"
 		}},
 		{"null-workflow", func(spec map[string]any, _ *sqlc.InsertCustomerOperationDefinitionParams) { spec["workflow"] = nil }},
 	}

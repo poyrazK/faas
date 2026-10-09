@@ -1116,8 +1116,10 @@ func TestMemStoreAppWebhookDelivery_AttemptHistorySurvivesReplay(t *testing.T) {
 	if err != nil || len(foreign) != 0 {
 		t.Errorf("foreign history = %+v, err=%v", foreign, err)
 	}
-	if _, _, err := m.ListAppWebhookDeliveryAttempts(ctx, d.ID, wh.ID, acct.ID, 10, "invalid"); !errors.Is(err, ErrInvalidAppWebhookAttemptPageToken) {
-		t.Errorf("invalid cursor error = %v", err)
+	for _, token := range []string{"invalid", "2147483648:1", "0:2147483648"} {
+		if _, _, err := m.ListAppWebhookDeliveryAttempts(ctx, d.ID, wh.ID, acct.ID, 10, token); !errors.Is(err, ErrInvalidAppWebhookAttemptPageToken) {
+			t.Errorf("invalid cursor %q error = %v", token, err)
+		}
 	}
 }
 

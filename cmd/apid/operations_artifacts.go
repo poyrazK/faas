@@ -131,6 +131,12 @@ func (s *server) spoolOperationArtifact(op state.Operation, req api.OperationArt
 	if err := operations.ValidateArtifact(req, op.PlanLimits); err != nil {
 		return nil, state.ErrInvalidArgument
 	}
+	return s.spoolValidatedOperationArtifact(op, req, open)
+}
+
+// Declarations must already be validated against the operation's immutable
+// limits. Both managed-object copies and direct uploads share this budget.
+func (s *server) spoolValidatedOperationArtifact(op state.Operation, req api.OperationArtifactRequest, open func() (io.ReadCloser, error)) (*verifiedOperationArtifact, error) {
 	if err := s.operationArtifactBudget.reserveLimit(op.AccountID, req.SizeBytes); err != nil {
 		return nil, err
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -134,6 +135,68 @@ func (o *WorkflowOrchestrator) executeWorkflowHandlerWithRetryAfter(ctx context.
 }
 
 func (o *WorkflowOrchestrator) executeWorkflowHandler(ctx context.Context, run *state.WorkflowRun, path, method string, headers map[string]string, body []byte, timeout time.Duration, managedOperationID string, generation int64) (int, []byte, error) {
+	if adapter, ok := o.store.(state.WorkflowOperationStore); ok {
+		op, linked, err := adapter.OperationForWorkflowRun(ctx, run.ID)
+		if err != nil {
+			return 0, nil, err
+		}
+		if linked {
+			if op.Generation != run.ResumeCount+1 || op.CancellationRequested || op.State != api.OperationRunning {
+				return 0, nil, state.ErrOperationStaleAttempt
+			}
+			if op.ReleaseID != "" {
+				headers[api.ReleaseHeader] = op.ReleaseID
+			} else {
+				headers[api.RevisionHeader] = op.DeploymentID
+			}
+			attempt, err := strconv.Atoi(headers["X-Faas-Workflow-Attempt"])
+			if err != nil {
+				return 0, nil, err
+			}
+
+			proofStore, ok := o.store.(state.WorkflowOutboundStore)
+			if !ok {
+				return 0, nil, errors.New("workflow operation proof unavailable")
+			}
+			proof, err := proofStore.GetWorkflowOutboundAttempt(ctx, run.ID, headers["X-Faas-Workflow-Step"], attempt)
+			if err != nil {
+				return 0, nil, err
+			}
+			deadlineStore, ok := o.store.(state.WorkflowOperationDeadlineStore)
+			if !ok {
+				return 0, nil, errors.New("workflow operation deadline unavailable")
+			}
+			deadline, err := deadlineStore.WorkflowOperationAttemptDeadline(ctx, run.ID, headers["X-Faas-Workflow-Step"], attempt)
+			if err != nil {
+				return 0, nil, err
+			}
+			timeout = min(timeout, time.Until(deadline))
+			if timeout <= 0 {
+				return 0, nil, state.ErrOperationStaleAttempt
+			}
+			var stopDeadline context.CancelFunc
+			ctx, stopDeadline = context.WithDeadline(ctx, deadline)
+			defer stopDeadline()
+			headers[api.OperationIDHeader] = op.ID
+			headers[api.OperationExecutionKindHeader] = "workflow"
+			headers[api.OperationWorkflowRunHeader] = run.ID
+			headers[api.OperationWorkflowStepHeader] = headers["X-Faas-Workflow-Step"]
+			headers[api.OperationGenerationHeader] = strconv.Itoa(op.Generation)
+			headers[api.OperationAttemptHeader] = strconv.Itoa(attempt)
+			headers[api.OperationWorkflowCapabilityHeader] = proof.Token
+			var release func()
+			ctx, release = o.workflowItemContext(ctx, run.ID, headers["X-Faas-Workflow-Step"], attempt)
+			defer release()
+		}
+	}
+	status, result, err := o.dispatchWorkflowHandler(ctx, run, path, method, headers, body, timeout, managedOperationID, generation)
+	if ctx.Err() != nil {
+		return 0, nil, ctx.Err()
+	}
+	return status, result, err
+}
+
+func (o *WorkflowOrchestrator) dispatchWorkflowHandler(ctx context.Context, run *state.WorkflowRun, path, method string, headers map[string]string, body []byte, timeout time.Duration, managedOperationID string, generation int64) (int, []byte, error) {
 	if executor, ok := o.executor.(WorkflowIdentityExecutor); ok {
 		return executor.ExecuteWorkflowStep(ctx, run.AppID, WorkflowStepIdentity{RunID: run.ID, PlatformTenantID: run.PlatformTenantID, DeploymentID: run.DeploymentID}, path, method, headers, body, timeout, managedOperationID, generation)
 	}
@@ -1055,7 +1118,7 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 
 	timeout := spec.Timeout
 	if timeout <= 0 {
-		timeout = 30 * time.Second
+		timeout = api.WorkflowStepDefaultTimeout
 	}
 	if leaseStore, ok := o.store.(state.WorkflowRunLeaseStore); ok {
 		if err := leaseStore.ExtendWorkflowRunLease(ctx, run.ID, timeout); err != nil {

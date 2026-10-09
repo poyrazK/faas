@@ -61,7 +61,10 @@ func validSnapshot(value manifest, state snapshot) bool {
 		return false
 	}
 	if state.Schema == 1 {
-		return state.ReceiptRoot == nil && state.LegacyReceipts == nil && validReceipts(state.Receipts, state.Version)
+		return len(state.Outbox) == 0 && state.ReceiptRoot == nil && state.LegacyReceipts == nil && validReceipts(state.Receipts, state.Version)
 	}
-	return state.Schema == 2 && state.ReceiptRoot != nil && len(state.Receipts) == 0 && validJournalRef(state.ID, state.ReceiptRoot, value.Generation) && validLegacyRef(state.ID, state.LegacyReceipts, value.Generation)
+	if state.Schema == 2 && len(state.Outbox) != 0 || state.Schema == 3 && value.Schema < 5 {
+		return false
+	}
+	return (state.Schema == 2 || state.Schema == 3) && validOutbox(state) && state.ReceiptRoot != nil && len(state.Receipts) == 0 && validJournalRef(state.ID, state.ReceiptRoot, value.Generation) && validLegacyRef(state.ID, state.LegacyReceipts, value.Generation)
 }
