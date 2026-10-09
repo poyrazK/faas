@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { validateBundle, run } from '../cmd/gregale/templates/data-api-starter/tools/artifact-lib.mjs'
+import { pinnedGoToolchain } from './data-api-toolchain.mjs'
 
 const repo = await realpath(fileURLToPath(new URL('../', import.meta.url)))
 
@@ -39,7 +40,7 @@ async function main(args) {
   const commit = run('git', ['rev-parse', 'HEAD'], { cwd: repo }).trim()
   const epoch = Number(run('git', ['show', '-s', '--format=%ct', commit], { cwd: repo }).trim())
   const tools = { go: run('go', ['env', 'GOVERSION']).trim(), node: process.versions.node, npm: run('npm', ['--version']).trim() }
-  const pinnedGo = (await readFile(join(repo, 'go.mod'), 'utf8')).match(/^go (\d+\.\d+\.\d+)$/m)?.[1]
+  const pinnedGo = pinnedGoToolchain(await readFile(join(repo, 'go.mod'), 'utf8'))
   if (tools.go !== `go${pinnedGo}` || Number(tools.node.split('.')[0]) < 22) throw new Error('Use the repository-pinned Go toolchain and Node.js 22 or newer')
   await mkdir(dirname(output), { recursive: true })
   const work = await mkdtemp(join(tmpdir(), 'gregale-data-bundle-'))
@@ -71,7 +72,7 @@ async function main(args) {
         `-s -w -X ${wire}.Version=${version} -X ${wire}.GitSHA=${commit} -X ${wire}.BuildTime=${buildTime} -X main.githubActionDefaultSHA=${actionSHA}`,
         '-o', binary, './cmd/gregale'], {
         cwd: source, timeout: 15 * 60 * 1000, stdio: 'inherit',
-        env: { ...process.env, CGO_ENABLED: '0', GOOS: os, GOARCH: arch, GOAMD64: 'v1', GOARM64: 'v8.0', GOEXPERIMENT: '', GOTOOLCHAIN: 'local', GOWORK: 'off', GOFLAGS: '-mod=readonly' },
+        env: { ...process.env, CGO_ENABLED: '0', GOOS: os, GOARCH: arch, GOAMD64: 'v1', GOARM64: 'v8.0', GOEXPERIMENT: '', GOTOOLCHAIN: 'local', GOWORK: 'off', GOFLAGS: '-mod=readonly "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"' },
       })
       const file = `gregale_${version.slice(1)}_${os}_${arch}.tar.gz`
       run('bash', [join(source, 'scripts/archive-cli-binary.sh'), '--binary', binary, '--output', join(stage, file), '--mtime', `@${epoch}`], { stdio: 'inherit' })
