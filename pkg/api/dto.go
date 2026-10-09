@@ -544,6 +544,7 @@ type CreateAppRequest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
 	StartupDeadlineS int                   `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int                   `json:"max_retries,omitempty"`
 	StopGracePeriodS int                   `json:"stop_grace_period_s,omitempty"`
@@ -880,6 +881,7 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
 	StartupDeadlineS *int                  `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int                  `json:"max_retries,omitempty"`
 	StopGracePeriodS *int                  `json:"stop_grace_period_s,omitempty"`
@@ -3374,16 +3376,20 @@ type UpdateDeploymentTrafficRequest struct {
 // caller only supplies the step it observed, so a stale or concurrent worker
 // cannot choose an arbitrary traffic value.
 type AdvanceCanaryRequest struct {
-	ExpectedStep int `json:"expected_step"`
+	// Reserved for the lease-bound internal worker; public requests reject true.
+	ProfileGateRollback bool                 `json:"profile_gate_rollback,omitempty"`
+	ProfileGateOverride *ProfileGateOverride `json:"profile_gate_override,omitempty"`
+	ExpectedStep        int                  `json:"expected_step"`
 }
 
 // CanaryAdvanceResponse carries the atomically advanced deployment and the
 // deployment_audit row id written in the same transaction.
 type CanaryAdvanceResponse struct {
-	Deployment  DeploymentResponse   `json:"deployment"`
-	AuditID     string               `json:"audit_id"`
-	RouteGate   *RouteGateDecision   `json:"route_gate,omitempty"`
-	RouteHealth *RouteHealthDecision `json:"route_health,omitempty"`
+	ProfileGate *ProfileCanaryGateDecision `json:"profile_gate,omitempty"`
+	Deployment  DeploymentResponse         `json:"deployment"`
+	AuditID     string                     `json:"audit_id"`
+	RouteGate   *RouteGateDecision         `json:"route_gate,omitempty"`
+	RouteHealth *RouteHealthDecision       `json:"route_health,omitempty"`
 }
 
 // CreateMirrorRuleRequest is the body for

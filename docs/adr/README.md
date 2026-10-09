@@ -59,6 +59,16 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 731 | [Durable PostgreSQL lifecycle qualification](731-managed-postgres-durable-qualification.md) | accepted | Version-8 SQL restart, encrypted credential delivery, workload rotation and cleanup evidence |
 | 687 | [Object version listing and bound historical downloads](687-object-version-cli-and-bound-downloads.md) | accepted | Public immutable version identities, bounded listings and exact-version gateway read authority |
 | 688 | [Resumable CLI object uploads](688-resumable-cli-object-uploads.md) | accepted | Private fingerprint-bound multipart checkpoints and uncertain-completion recovery |
+| 792 | [Continuous CPU profiling across guest lifetimes](819-continuous-cpu-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 793 | [Route-associated CPU profiling](820-route-associated-cpu-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 794 | [Advisory route CPU regression checks](821-advisory-route-cpu-regression-checks.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 795 | [Route attribution quality reporting](822-route-attribution-quality.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 796 | [Per-route request labeling consistency](823-per-route-request-label-consistency.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 797 | [Native profiling restore qualification](824-native-profile-restore-qualification.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 798 | [Advisory route profiling notifications](825-advisory-profile-route-notifications.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 799 | [Periodic route profiling for running deployments](826-periodic-route-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 800 | [Route-specific profiling code evidence](827-route-specific-profile-code-evidence.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 801 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
@@ -640,8 +650,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 ## Customer operation decisions
 
 - [ADR-521: customer operations above execution ledgers](521-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery
-- [ADR-818: version customer workflow contracts and require transition evidence](818-versioned-customer-workflow-contracts.md) — pin workflow meaning and verify required milestones across app commit and platform publication
-- [ADR-819: business workflow observations and transactional evidence](819-business-workflow-observations-and-evidence.md) — scoped workflow assessments, typed business evidence, reconciliation, and compensation observations
+- [ADR-900: version customer workflow contracts and require transition evidence](900-versioned-customer-workflow-contracts.md) — pin workflow meaning and verify required milestones across app commit and platform publication
+- [ADR-901: business workflow observations and transactional evidence](901-business-workflow-observations-and-evidence.md) — scoped workflow assessments, typed business evidence, reconciliation, and compensation observations
 
 - [ADR-571: S3 write proof custody and owned cleanup](571-s3-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
 

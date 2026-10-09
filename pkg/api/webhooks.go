@@ -75,6 +75,7 @@ var AllowedAppWebhookDeliveryFormats = []string{"json", "cloudevents"}
 // The delivery ledger intentionally retains its wider historical enum so old
 // rows remain readable during upgrades.
 var AllowedAppWebhookEvents = []string{
+	"profile.route_regressed", "profile.route_recovered",
 	"operation.effect",
 	"app.parked", "app.woken",
 	"app.health.changed",

@@ -1,0 +1,15 @@
+{{define "profile_request_mix"}}
+<section aria-label="Stable and canary request mix"><h3>Request mix</h3>
+<p>{{.Message}}</p>{{if .CapturedAt}}<p>Captured: {{.CapturedAt}}. Completeness: {{.Completeness}}.</p><p>Captured stable requests: {{if .BaselineCaptured}}{{.BaselineTotal}}{{else}}Unavailable{{end}}; captured canary requests: {{if .CandidateCaptured}}{{.CandidateTotal}}{{else}}Unavailable{{end}}.</p>{{end}}{{range .Warnings}}<p class="notice">{{.}}</p>{{end}}
+{{if .Frozen}}<p>Recorded stable window: {{.BaselineWindow}}<br>Recorded canary window: {{.CandidateWindow}}</p>{{end}}
+{{if or .Routes .Statuses}}<p>Stable: {{.BaselineTotal}} retained requests; canary: {{.CandidateTotal}} retained requests.</p>
+<p>Mix difference is half the sum of absolute traffic-share differences: 0 means the observed distributions match; 100 means they do not overlap. {{with .RouteDifference}}Route mix: {{printf "%.1f" .}} percentage points.{{end}} {{with .StatusDifference}}Response-status mix: {{printf "%.1f" .}} percentage points.{{end}}</p>
+<h4>Routes</h4><table><thead><tr><th>Route label / method</th><th>Stable requests / share</th><th>Canary requests / share</th><th>Share change</th><th>Request telemetry</th></tr></thead><tbody>
+{{range .Routes}}<tr><td><code>{{.Label}}</code> ({{.Method}})</td><td>{{with .BaselineCount}}{{.}}{{else}}Unknown{{end}} / {{with .BaselineShare}}{{printf "%.1f" .}}%{{else}}Unknown{{end}}</td><td>{{with .CandidateCount}}{{.}}{{else}}Unknown{{end}} / {{with .CandidateShare}}{{printf "%.1f" .}}%{{else}}Unknown{{end}}</td><td>{{with .Difference}}{{printf "%+.1f" .}} pp{{else}}Unknown{{end}}</td><td>{{with .BaselineURL}}<a href="{{.}}">Stable requests</a>{{end}} {{with .CandidateURL}}<a href="{{.}}">Canary requests</a>{{end}}</td></tr>{{end}}
+</tbody></table>
+<h4>Response status classes</h4><table><thead><tr><th>Status class</th><th>Stable requests / share</th><th>Canary requests / share</th><th>Share change</th></tr></thead><tbody>
+{{range .Statuses}}<tr><td>{{.Label}}</td><td>{{with .BaselineCount}}{{.}}{{else}}Unknown{{end}} / {{with .BaselineShare}}{{printf "%.1f" .}}%{{else}}Unknown{{end}}</td><td>{{with .CandidateCount}}{{.}}{{else}}Unknown{{end}} / {{with .CandidateShare}}{{printf "%.1f" .}}%{{else}}Unknown{{end}}</td><td>{{with .Difference}}{{printf "%+.1f" .}} pp{{else}}Unknown{{end}}</td></tr>{{end}}
+</tbody></table>{{end}}
+<p class="muted">{{if .Frozen}}This is a frozen snapshot of observed weighted request counts. Raw requests follow their own retention.{{else}}This breakdown uses currently retained weighted telemetry counts for the recorded windows. No snapshot was recorded for this assessment.{{end}} Minute-bucket boundaries and missing telemetry can affect shares. Routes and statuses are compared separately, so their joint distribution may still differ. CPU samples have no route attribution; CPU adjusted to a common route mix is unavailable.</p>
+</section>
+{{end}}

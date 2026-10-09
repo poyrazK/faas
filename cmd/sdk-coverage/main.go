@@ -278,6 +278,22 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	// Profiling routes use domain-specific SDK names and hyphenated segments.
+	"GET /v1/apps/{slug}/profiles":                            "GetAppProfiles",
+	"POST /v1/apps/{slug}/profiles/compare":                   "CompareAppProfiles",
+	"GET /v1/apps/{slug}/profiles/investigations":             "ListProfileInvestigations",
+	"POST /v1/apps/{slug}/profiles/investigations":            "CreateProfileInvestigation",
+	"GET /v1/apps/{slug}/profiles/investigations/{id}":        "GetProfileInvestigation",
+	"PUT /v1/apps/{slug}/profiles/investigations/{id}":        "UpdateProfileInvestigation",
+	"DELETE /v1/apps/{slug}/profiles/investigations/{id}":     "DeleteProfileInvestigation",
+	"POST /v1/apps/{slug}/profiles/investigations/{id}/check": "CheckProfileRegression",
+	"GET /v1/apps/{slug}/profiles/deployment-policy":          "GetProfileDeploymentPolicy",
+	"PUT /v1/apps/{slug}/profiles/deployment-policy":          "SaveProfileDeploymentPolicy",
+	"GET /v1/apps/{slug}/profiles/deployment-checks":          "ListProfileDeploymentChecks",
+	"GET /v1/apps/{slug}/profiles/deployment-checks/{id}":     "GetProfileDeploymentCheck",
+	"GET /v1/apps/{slug}/profiles/canary-checks/{deployment}": "ListProfileCanaryChecks",
+	"GET /v1/apps/{slug}/profiles/periodic-monitors":          "ListProfilePeriodicMonitors",
+	"GET /v1/deployments/{id}/canary/profile-gate":            "GetProfileCanaryGate",
 	// ADR-566: financial preview routes use financial-domain client names.
 	"GET /v1/billing/costs":                                                    "GetFinancialCosts",
 	"GET /v1/billing/forecast":                                                 "GetFinancialForecast",
