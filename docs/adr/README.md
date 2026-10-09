@@ -56,6 +56,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 831 | [Edge WAF signatures, bot challenge, and client certificates](831-edge-waf-bot-challenge-mtls.md) | proposed | Sequenced plan: Coraza + OWASP CRS `kind=waf` first (observe-only preview, latency gate), then a proof-of-work `kind=challenge`, then custom-domain-only mTLS on demand |
+| 830 | [Platform security headers on customer app responses](830-customer-response-security-headers.md) | proposed | Customer responses keep app-set security headers; platform fills defaults only when absent, drops `includeSubDomains` on custom domains, and stops forcing `X-Frame-Options`/`Permissions-Policy` on customer apps |
 | 829 | [New apps observe the pre-auth source limit by default](829-default-pre-auth-observe.md) | accepted | New apps get an observe-only, plan-clamped per-source guard unless the create request sets `pre_auth_rate_limit`; existing apps unchanged; amendment 1 adds the advisory enforce suggestion and `gregale app --pre-auth` |
 | 731 | [Durable PostgreSQL lifecycle qualification](731-managed-postgres-durable-qualification.md) | accepted | Version-8 SQL restart, encrypted credential delivery, workload rotation and cleanup evidence |
 | 687 | [Object version listing and bound historical downloads](687-object-version-cli-and-bound-downloads.md) | accepted | Public immutable version identities, bounded listings and exact-version gateway read authority |
