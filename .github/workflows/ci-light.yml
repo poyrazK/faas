@@ -341,9 +341,9 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # Cold compilation and migrated-schema fixtures need time outside the
-    # bounded package and split-suite test deadlines.
+    timeout-minutes: 60
+    # Cold compilation, standard packages and the isolated PostgreSQL
+    # partitions have separate bounded deadlines within this job budget.
     strategy:
       fail-fast: false
       matrix:
@@ -438,26 +438,22 @@ jobs:
           # shellcheck disable=SC2086 # space-separated package lists
           GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS $SPLIT
           echo "::endgroup::"
-          pids=()
+          status=0
           if [[ -n "$PKGS" ]]; then
             echo "testing: $PKGS"
             # shellcheck disable=SC2086 # space-separated package list
-            go test -race -count=1 -p 4 -timeout=16m $PKGS &
-            pids+=("$!")
+            go test -race -count=1 -p 4 -timeout=16m $PKGS || status=1
           fi
-          # Packages too slow for one shard run a third of their tests here,
-          # concurrently with the package set above.
+          # Private databases share PostgreSQL's cluster-wide catalogues.
+          # Finish the standard packages before these partitions: API fixture
+          # create/drop activity invalidates the state clone catalogue pins.
+          # Every selected test still runs, including after an earlier failure.
           for pkg in $SPLIT; do
             run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
             echo "testing: $pkg (test shard $SHARD/3)"
             # Large PostgreSQL partitions use the mega tier's process
             # budget; standard package tests use main's 16-minute deadline.
-            go test -race -count=1 -timeout=20m -run "$run" "$pkg" &
-            pids+=("$!")
-          done
-          status=0
-          for pid in "${pids[@]}"; do
-            wait "$pid" || status=1
+            go test -race -count=1 -timeout=20m -run "$run" "$pkg" || status=1
           done
           exit "$status"
       - name: save Go build + test cache
