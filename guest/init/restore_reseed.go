@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-// Restore reseed (GHSA-24j2-p895-mwc9, ADR-680).
+// Restore reseed (GHSA-24j2-p895-mwc9, ADR-687).
 //
 // The resume hook reseeds the guest kernel, but a restored process also
 // resumes with every userspace generator it held at capture: OpenSSL's DRBG

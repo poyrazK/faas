@@ -581,6 +581,20 @@ func TestTierC_OrgsInvitationsListAll_HappyPath(t *testing.T) {
 	}
 }
 
+// hunt #8: an org with no pending invitations printed nothing at all.
+func TestTierC_OrgsInvitationsList_EmptySaysSo(t *testing.T) {
+	resetJSONOut(t)
+	authedFakeAPI(t, `{"invitations":[],"next_before":""}`, http.StatusOK)
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdOrgsInvitationsLs([]string{"--org", "acme"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(out.String(), "(no invitations)") {
+		t.Fatalf("empty list output = %q", out.String())
+	}
+}
+
 // --- webhooks info ---
 
 func TestTierC_WebhooksInfo_BadIDExitsOne(t *testing.T) {

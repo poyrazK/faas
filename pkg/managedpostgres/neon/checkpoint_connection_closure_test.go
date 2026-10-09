@@ -343,9 +343,22 @@ func TestCheckpointConnectionControllerNativePostcheckFailuresRetainOriginalClos
 					t.Fatal(err)
 				}
 			}
-			observed, err := f.p.checkpointConnectionClosure(t.Context(), f.definition, f.maintenance, f.request, false, f.connectPool(t))
-			if err != nil || !observed.Drained || observed.Validate(f.request) != nil {
-				t.Fatalf("lost reply could not recover same closed owner: %+v %v", observed, err)
+			// Session drain is observed, not guaranteed by closing admission.
+			// Backend teardown and transient autovacuum sessions may outlive the
+			// first recovery read; every read must still retain the closed owner.
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				observed, err := f.p.checkpointConnectionClosure(t.Context(), f.definition, f.maintenance, f.request, false, f.connectPool(t))
+				if err != nil || observed.Validate(f.request) != nil {
+					t.Fatalf("lost reply could not recover same closed owner: %+v %v", observed, err)
+				}
+				if observed.Drained {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("recovered closed owner did not observe session drain")
+				}
+				time.Sleep(10 * time.Millisecond)
 			}
 		})
 	}

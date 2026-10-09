@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; gap: 1rem; }
+    nav a { margin-right: 1rem; }
+    main { padding: 1rem 0; }
+    footer { font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    code { font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+    .muted { color: #6b7280; }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.85rem; }
+    .good { background: #d1fae5; color: #065f46; }
+    .bad { background: #fee2e2; color: #991b1b; }
+    .pending { background: #fef3c7; color: #92400e; }
+    .neutral { background: #f3f4f6; color: #374151; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+    .table-scroll { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; text-align: left; }
+    th, td { border-bottom: 1px solid #ddd; padding: 0.65rem; vertical-align: top; }
+    caption { text-align: left; padding-bottom: 0.75rem; }
+    dl { display: grid; grid-template-columns: minmax(10rem, 0.35fr) 1fr; gap: 0.55rem 1rem; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    form { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; }
+    label { display: flex; flex-direction: column; gap: 0.35rem; }
+    input, select, button { font: inherit; padding: 0.4rem; }
+    ol li { padding-bottom: 0.75rem; }
+    @media (max-width: 640px) { dl { grid-template-columns: 1fr; gap: 0.25rem; } dd { margin-bottom: 0.6rem; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Gregale</strong>
+    <nav aria-label="Dashboard"><a href="/dashboard/">Overview</a><a href="/dashboard/apps">Apps</a><a href="/dashboard/jobs">Jobs &amp; queues</a><a href="/dashboard/account">Account</a></nav>
+  </header>
+  <main>
+    <p><a href="/dashboard/apps/{{.Data.AppSlug}}">{{.Data.AppSlug}}</a> / <a href="{{.Data.ListURL}}">Customer operations</a></p>
+    <h1>Business workflow outcomes</h1>
+    <p>Latest retained completed workflows with explicit application outcomes. Evaluated at <time>{{.Data.EvaluatedAt}}</time>.</p>
+    <form method="get" action="{{.Data.QueueURL}}">
+      <label>Environment<input name="scope" value="{{.Data.Scope}}" required></label>
+      <label>Customer<input name="tenant_id" value="{{.Data.TenantID}}"></label>
+      <label>Workflow<input name="workflow" value="{{.Data.Workflow}}"></label>
+      <label>Outcome code<input name="code" value="{{.Data.Code}}"></label>
+      <label>Group by<select name="group_by"><option value="outcome" {{if eq .Data.GroupBy "outcome"}}selected{{end}}>Outcome</option><option value="workflow" {{if eq .Data.GroupBy "workflow"}}selected{{end}}>Workflow</option><option value="customer" {{if eq .Data.GroupBy "customer"}}selected{{end}}>Customer</option></select></label>
+      <label>Page size<input name="limit" type="number" min="1" max="100" value="{{.Data.Limit}}" required></label><button type="submit">Filter</button>
+    </form>
+    <section class="card"><h2>Outcome summary</h2><p>{{.Data.Summary.WorkflowCount}} completed workflows with reported outcomes across all matching retained instances.</p>
+      <table><thead><tr><th>Group</th><th>Workflows</th></tr></thead><tbody>{{range .Data.Groups}}<tr><td><a href="{{.URL}}"><code>{{.Group.Value}}</code></a></td><td>{{.Group.WorkflowCount}}</td></tr>{{else}}<tr><td colspan="2">No outcomes for these filters.</td></tr>{{end}}</tbody></table>
+      {{if .Data.SummaryNextURL}}<p><a href="{{.Data.SummaryNextURL}}">More groups →</a></p>{{end}}
+    </section>
+    {{range .Data.Items}}<section class="card"><h2><a href="{{.HistoryURL}}"><code>{{.Entry.State.Workflow}}</code> · <code>{{.Entry.State.InstanceID}}</code></a></h2>
+      <p><strong><code>{{.Entry.State.OutcomeCode}}</code></strong>: {{.Entry.State.OutcomeDescription}}</p>
+      <p>Terminal state <code>{{.Entry.State.State}}</code> · customer <code>{{.Entry.PlatformTenantID}}</code> · <code>{{.Entry.Subject.Type}}:{{.Entry.Subject.ID}}</code></p>
+      <p>Current report <code>{{.Entry.State.ReportID}}</code> · revision {{.Entry.State.Revision}}</p>
+      <p><a href="{{.HistoryURL}}">View outcome and state history →</a> · <a href="{{.OperationURL}}">View reporting Operation</a></p>
+    </section>{{else}}<p>No completed workflows with reported outcomes for these filters.</p>{{end}}
+    {{if .Data.NextURL}}<p><a href="{{.Data.NextURL}}">More workflows →</a></p>{{end}}
+    <p class="muted">Outcomes are explicit application observations. Terminal workflows without an outcome are omitted. Each latest completed instance counts once; reopened instances leave these totals. Earlier reports remain in retained history. Refresh the first page as reports and retention change.</p>
+  </main>
+  <footer>Gregale · customer operations</footer>
+</body>
+</html>

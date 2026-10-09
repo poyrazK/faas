@@ -232,7 +232,14 @@ func appTaskAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_APP_TASK_API_ENABLED")) == "1"
 }
 
-func githubDeploysAvailabilityProbe(getenv func(string) string) func(context.Context) bool {
+func githubDeploysAvailabilityProbe(getenv func(string) string, bridgeSock string) func(context.Context) bool {
+	// production-us hunt #8: push-to-deploy needs githubd to reach this
+	// apid's build-enqueue bridge. With no bridge socket configured githubd
+	// falls back to a stub that refuses every enqueue, yet the capability
+	// was advertised because githubd itself answered /readyz.
+	if strings.TrimSpace(bridgeSock) == "" {
+		return func(context.Context) bool { return false }
+	}
 	base := strings.TrimRight(strings.TrimSpace(getenv("FAAS_GITHUBD_LOOPBACK")), "/")
 	if base == "" {
 		base = "http://127.0.0.1:8083"
@@ -805,6 +812,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// surface can be dark-launched with the ginstal kill-switch
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
+		startProfileDeploymentChecks(ctx, srv, log)
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
 		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion
@@ -1434,7 +1442,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
-		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
+		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
+	if err := srv.configureProfiles(deps.getenv); err != nil {
+		return fmt.Errorf("apid profiling: %w", err)
+	}
 	if cfg.OutboundProbeGatewayURL != "" && !api.ValidOutboundProbeGateway(cfg.OutboundProbeGatewayURL) {
 		return fmt.Errorf("apid: outbound_probe_gateway_url must be an HTTPS origin")
 	}

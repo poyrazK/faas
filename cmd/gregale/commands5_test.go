@@ -2057,6 +2057,9 @@ func TestTemplates_NodeRuntimeFloor(t *testing.T) {
 			want := ">=22"
 			if name == "function-node24" {
 				want = ">=24"
+			} else if templates.CategoryFor(name) == "operations" {
+				// Match the installed SDK's Web Crypto/runtime compatibility floor.
+				want = ">=22.10.0"
 			}
 			if pkg.Engines.Node != want {
 				t.Fatalf("engines.node = %q, want %q", pkg.Engines.Node, want)

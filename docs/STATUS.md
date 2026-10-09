@@ -44,11 +44,19 @@ runtime qualification; the dedicated acceptance project is suspended.
   a gated operator preview. These landed after the older milestone prose below
   and should not be inferred from its historical PR list.
 
+Durable entity outbox update (2026-10-09): the private state engine can commit
+bounded outgoing webhook intents with state and request receipts through one
+manifest CAS. Pending work survives replay, restart, takeover and cleanup and
+counts toward snapshot/storage caps. Manifest schema 5 requires stopping older
+writers before upgrade. Guest protocol v1 continues to reject outgoing work;
+delivery/admission/retry remain a separate milestone. Native-host and live-bucket
+qualification remain pending ([ADR-903](adr/903-object-storage-entity-outbox-contract.md)).
+
 Durable entity alarm update (2026-10-08): the opt-in object-storage preview adds
 an advisory time-ordered alarm index with bounded repair scans, fenced retry
 reservations with backoff and exhaustion, and exact-scope private operator
-inspection. Manifest schema 4 requires stopping older entity writers before
-upgrade. Native-host and live-provider qualification remain pending; this does
+inspection. Its schema-4 upgrade is superseded by the schema-5 writer above.
+Native-host and live-provider qualification remain pending; this does
 not promote the preview to production availability
 ([ADR-712](adr/712-object-storage-durable-entities.md)).
 

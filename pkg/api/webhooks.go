@@ -84,6 +84,7 @@ var AllowedAppWebhookEvents = []string{
 
 	"realtime.message.read",
 	"realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required",
+	"profile.route_regressed", "profile.route_recovered",
 	"operation.effect",
 	"app.parked", "app.woken",
 	"app.health.changed",
@@ -99,6 +100,7 @@ var AllowedAppWebhookEvents = []string{
 	"routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered",
 	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
 	"workflow.finished",
+	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired",
 }
 
 // Account receivers intentionally cannot use the app-level all-events

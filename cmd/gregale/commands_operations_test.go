@@ -212,3 +212,16 @@ func TestReconcileExclusiveOperationsDoesNotWriteWhenASelectorIsMissing(t *testi
 		t.Fatalf("reconcile performed writes before selector validation: policies=%d bindings=%d", len(client.policies), len(client.bindings))
 	}
 }
+
+func TestOperationLastErrorLineLabelsRecoveredAttempts(t *testing.T) {
+	for _, tc := range []struct{ state, lastError, want string }{
+		{state: "completed", want: ""},
+		{state: "completed", lastError: "worker is temporarily unavailable", want: "Recovered after: worker is temporarily unavailable"},
+		{state: "failed", lastError: "boom", want: "Last error: boom"},
+		{state: "running", lastError: "worker is temporarily unavailable", want: "Last error: worker is temporarily unavailable"},
+	} {
+		if got := operationLastErrorLine(tc.state, tc.lastError); got != tc.want {
+			t.Fatalf("operationLastErrorLine(%q, %q) = %q, want %q", tc.state, tc.lastError, got, tc.want)
+		}
+	}
+}

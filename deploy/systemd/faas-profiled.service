@@ -1,0 +1,40 @@
+[Unit]
+Description=onebox-faas profiled — continuous CPU profile collector
+Documentation=https://gregale.dev/docs/profiling
+After=faas-cp.slice faas-vmmd.service
+Wants=faas-cp.slice faas-vmmd.service
+
+[Service]
+Type=simple
+User=faas
+Group=faas
+ExecStart=/opt/faas/current/bin/profiled
+Restart=on-failure
+RestartSec=2s
+Slice=faas-cp.slice
+MemoryMax=512M
+EnvironmentFile=-/etc/faas/profiling.env
+EnvironmentFile=-/etc/faas/otel.env
+Environment=FAAS_PROFILE_SOCKET=/run/faas/profiled.sock
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+ReadOnlyPaths=/etc/faas
+ReadWritePaths=/run/faas
+
+[Install]
+WantedBy=multi-user.target

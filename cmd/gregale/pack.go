@@ -328,24 +328,53 @@ func shouldExclude(relSlashPath string, isDir bool, patterns []gregaleignorePatt
 // outside the root are ignored because they cannot be packed by this walk.
 // The set is deliberately separate from .gregaleignore: these exclusions are
 // command-scoped and never mutate the customer's repository configuration.
+//
+// The comparison covers every symlink spelling of both sides. A secrets file
+// typed as /var/... while the working directory resolved to /private/var/...
+// (macOS), or reached through a symlinked project directory, or itself an
+// in-tree symlink, was otherwise uploaded inside the source archive
+// (production hunt #8).
 func packExtraExcludeSet(srcDir string, paths []string) map[string]bool {
 	set := make(map[string]bool, len(paths))
-	root, err := filepath.Abs(srcDir)
-	if err != nil {
-		return set
-	}
+	roots := packPathSpellings(srcDir)
 	for _, path := range paths {
-		abs, absErr := filepath.Abs(path)
-		if absErr != nil {
-			continue
+		for _, candidate := range packPathSpellings(path) {
+			for _, root := range roots {
+				rel, relErr := filepath.Rel(root, candidate)
+				if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					continue
+				}
+				set[filepath.ToSlash(filepath.Clean(rel))] = true
+			}
 		}
-		rel, relErr := filepath.Rel(root, abs)
-		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			continue
-		}
-		set[filepath.ToSlash(filepath.Clean(rel))] = true
 	}
 	return set
+}
+
+// packPathSpellings returns path as an absolute path, with its directory
+// resolved through symlinks, and fully resolved. Unresolvable forms are
+// skipped; the lexical absolute path is always present.
+func packPathSpellings(path string) []string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil
+	}
+	spellings := []string{abs}
+	add := func(candidate string) {
+		for _, existing := range spellings {
+			if existing == candidate {
+				return
+			}
+		}
+		spellings = append(spellings, candidate)
+	}
+	if dir, dirErr := filepath.EvalSymlinks(filepath.Dir(abs)); dirErr == nil {
+		add(filepath.Join(dir, filepath.Base(abs)))
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
+		add(resolved)
+	}
+	return spellings
 }
 
 // detectFramework delegates top-level marker detection to the shared package
@@ -775,6 +804,12 @@ func packDirToTarGzFlat(srcDir, destPath string, capMB int, envOverride map[stri
 // generated regular files keyed relative to srcDir. They are written only to
 // the archive and never materialized in the customer's source directory.
 func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[string][]byte, archiveRoot string, buildOnlyFiles map[string][]byte, extraExcludes ...string) (regularFileCount int, err error) {
+	// os.Getwd returns the shell's $PWD spelling, and WalkDir never descends
+	// into a symlinked root, so a project reached through a symlink packed
+	// as an empty archive. Callers already chose archiveRoot.
+	if resolved, resolveErr := filepath.EvalSymlinks(srcDir); resolveErr == nil {
+		srcDir = resolved
+	}
 
 	// Load .gregaleignore once (before the walk) so shouldExclude sees
 	// the same patterns for every entry. Missing file → nil → no

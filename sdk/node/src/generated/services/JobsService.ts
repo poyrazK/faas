@@ -58,7 +58,8 @@ export class JobsService {
         401: `code: unauthorized`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -101,7 +102,8 @@ export class JobsService {
         409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -130,7 +132,8 @@ export class JobsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -166,7 +169,8 @@ export class JobsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -202,7 +206,8 @@ export class JobsService {
         409: `Job has live instances.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -235,7 +240,8 @@ export class JobsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -275,7 +281,8 @@ export class JobsService {
         413: `code: plan_job_registry_credential_quota — per-job registry credential cap reached.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -317,7 +324,8 @@ export class JobsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -360,7 +368,8 @@ export class JobsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -415,7 +424,8 @@ export class JobsService {
         409: `Job is paused.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -459,7 +469,8 @@ export class JobsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -511,7 +522,8 @@ export class JobsService {
         409: `The policy rejected the request, the Job is paused, or the policy does not include this Job.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -550,7 +562,8 @@ export class JobsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -592,7 +605,8 @@ export class JobsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -675,7 +689,8 @@ export class JobsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -730,7 +745,8 @@ export class JobsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -890,7 +906,8 @@ export class JobsService {
         409: `The task is not retriable or its retry budget is exhausted.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });

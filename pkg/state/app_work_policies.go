@@ -74,6 +74,22 @@ func (s *PgStore) UpsertAppWorkPolicy(ctx context.Context, accountID, appID stri
 		}
 		return AppWorkPolicy{}, err
 	}
+	pending := policy.PendingUpdates
+	if pending == "" {
+		pending = workpolicy.PendingAll
+	}
+	if pending == workpolicy.PendingAll && policy.MaxRunningPerKey == 1 && policy.Debounce == 0 && policy.ExpiresAfter == 0 {
+		// This is the only policy shape compatible with an ordered subscription.
+	} else {
+		var ordered bool
+		if err := tx.QueryRow(ctx, `select exists(select 1 from event_subscription_work_bindings
+			where app_id=$1 and policy_name=$2 and ordered)`, appID, policy.Name).Scan(&ordered); err != nil {
+			return AppWorkPolicy{}, err
+		}
+		if ordered {
+			return AppWorkPolicy{}, fmt.Errorf("%w: ordered event delivery requires max_running_per_key=1, pending_updates=all, debounce=0, and expires_after=0", ErrInvalidArgument)
+		}
+	}
 	var count int
 	var exists bool
 	if err := tx.QueryRow(ctx, `select count(*), coalesce(bool_or(name = $2), false)
@@ -82,10 +98,6 @@ func (s *PgStore) UpsertAppWorkPolicy(ctx context.Context, accountID, appID stri
 	}
 	if !exists && count >= api.MaxWorkPoliciesPerApp {
 		return AppWorkPolicy{}, ErrQuotaExceeded
-	}
-	pending := policy.PendingUpdates
-	if pending == "" {
-		pending = workpolicy.PendingAll
 	}
 	record, err := scanAppWorkPolicy(tx.QueryRow(ctx, `
 		insert into app_work_policies as p
@@ -173,6 +185,9 @@ func (m *MemStore) UpsertAppWorkPolicy(_ context.Context, accountID, appID strin
 	if policy.Debounce%time.Millisecond != 0 || policy.ExpiresAfter%time.Millisecond != 0 {
 		return AppWorkPolicy{}, fmt.Errorf("state: policy durations must use whole milliseconds")
 	}
+	if policy.PendingUpdates == "" {
+		policy.PendingUpdates = workpolicy.PendingAll
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[appID]
@@ -181,6 +196,9 @@ func (m *MemStore) UpsertAppWorkPolicy(_ context.Context, accountID, appID strin
 	}
 	if !ok || !sameMemUUID(app.AccountID, accountID) || app.Status == AppDeleted {
 		return AppWorkPolicy{}, ErrNotFound
+	}
+	if err := validateOrderedPolicyChange(m.eventWorkBindings, appID, policy); err != nil {
+		return AppWorkPolicy{}, err
 	}
 	key := memWorkPolicyKey(appID, policy.Name)
 	record, exists := m.workPolicies[key]
@@ -195,9 +213,6 @@ func (m *MemStore) UpsertAppWorkPolicy(_ context.Context, accountID, appID strin
 			return AppWorkPolicy{}, ErrQuotaExceeded
 		}
 	}
-	if policy.PendingUpdates == "" {
-		policy.PendingUpdates = workpolicy.PendingAll
-	}
 	now := time.Now().UTC()
 	if !exists {
 		record = AppWorkPolicy{AccountID: canonicalMemUUID(accountID),
@@ -209,6 +224,18 @@ func (m *MemStore) UpsertAppWorkPolicy(_ context.Context, accountID, appID strin
 	record.Policy = policy
 	m.workPolicies[key] = record
 	return record, nil
+}
+
+func validateOrderedPolicyChange(bindings map[string]EventWorkBinding, appID string, policy workpolicy.Policy) error {
+	for _, binding := range bindings {
+		if binding.Ordered && sameMemUUID(binding.AppID, appID) && binding.PolicyName == policy.Name {
+			if err := validateOrderedEventWorkPolicy(policy); err != nil {
+				return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+			}
+			break
+		}
+	}
+	return nil
 }
 
 func (m *MemStore) AppWorkPolicyByName(_ context.Context, appID, name string) (AppWorkPolicy, error) {

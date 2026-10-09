@@ -71,6 +71,7 @@
   <main>
     {{template "email-verification-banner" .}}
     <p class="muted"><a href="/dashboard/apps/{{.Data.AppSlug}}">Apps / {{.Data.AppSlug}}</a></p>
+    {{if .Data.ProfilingAvailable}}<p><a href="/dashboard/apps/{{.Data.AppSlug}}/profiles">CPU profiles and deployment comparison →</a></p>{{end}}
     <h1>Production debugger: <code>{{.Data.AppSlug}}</code></h1>
     <p>Investigate slow or failed requests using bounded request telemetry and redacted OpenTelemetry evidence. Request bodies and credentials are never stored.</p>
 

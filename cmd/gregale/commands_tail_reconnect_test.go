@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Production: apid closed /v1/events five seconds after it opened, and
@@ -81,5 +83,34 @@ func TestGregaleTail_ReconnectsWhenStreamEnds(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("cmdTail did not exit on cancellation")
+	}
+}
+
+// TestConsumeTailStreamKeepsFramesBufferedBeforeEOF pins the CI flake behind
+// TestGregaleTail_ReconnectsWhenStreamEnds: when a stream ends right after its
+// last frame, the decoder has both the frame and the terminal EOF ready, and
+// select picked EOF about half the time, dropping the frame.
+func TestConsumeTailStreamKeepsFramesBufferedBeforeEOF(t *testing.T) {
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+	stdout, restore := captureStdout(t)
+	defer restore()
+	const frames = "event: invocation_done\ndata: {\"invocation_id\":\"i-1\",\"app_id\":\"a1\",\"state\":\"completed\"}\n\n" +
+		"event: invocation_done\ndata: {\"invocation_id\":\"i-2\",\"app_id\":\"a1\",\"state\":\"completed\"}\n\n"
+	for attempt := 0; attempt < 50; attempt++ {
+		dec := api.NewDecoder(strings.NewReader(frames))
+		// Let the decoder buffer both frames and publish EOF first.
+		for len(dec.Errors()) == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		if code := consumeTailStream(context.Background(), dec, tailFilter{slugs: map[string]string{}}); code != -1 {
+			t.Fatalf("consumeTailStream = %d, want -1 (reconnect)", code)
+		}
+	}
+	if got := strings.Count(stdout.String(), "i-1 a1 completed"); got != 50 {
+		t.Fatalf("frame i-1 printed %d times over 50 streams, want 50; stdout=%q", got, stdout.String())
+	}
+	if got := strings.Count(stdout.String(), "i-2 a1 completed"); got != 50 {
+		t.Fatalf("frame i-2 printed %d times over 50 streams, want 50", got)
 	}
 }

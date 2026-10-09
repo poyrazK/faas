@@ -15,6 +15,7 @@ import type { ListTenantWorkflowSchedulesResponse } from '../models/ListTenantWo
 import type { ListWorkflowCallbacksResponse } from '../models/ListWorkflowCallbacksResponse.js';
 import type { ListWorkflowResumesResponse } from '../models/ListWorkflowResumesResponse.js';
 import type { ListWorkflowRunsResponse } from '../models/ListWorkflowRunsResponse.js';
+import type { ListWorkflowScheduleOccurrencesResponse } from '../models/ListWorkflowScheduleOccurrencesResponse.js';
 import type { ListWorkflowSchedulesResponse } from '../models/ListWorkflowSchedulesResponse.js';
 import type { ListWorkflowStepAttemptsResponse } from '../models/ListWorkflowStepAttemptsResponse.js';
 import type { ListWorkflowStepsResponse } from '../models/ListWorkflowStepsResponse.js';
@@ -30,7 +31,13 @@ import type { UpdateTenantWorkflowScheduleRequest } from '../models/UpdateTenant
 import type { ValidateAutomationRequest } from '../models/ValidateAutomationRequest.js';
 import type { ValidateAutomationResponse } from '../models/ValidateAutomationResponse.js';
 import type { WorkflowCallbackWebhookBindingResponse } from '../models/WorkflowCallbackWebhookBindingResponse.js';
+import type { WorkflowQueuedRunCancelRequest } from '../models/WorkflowQueuedRunCancelRequest.js';
+import type { WorkflowQueuedRunCancelResponse } from '../models/WorkflowQueuedRunCancelResponse.js';
+import type { WorkflowRunDiagnosticsResponse } from '../models/WorkflowRunDiagnosticsResponse.js';
 import type { WorkflowRunResponse } from '../models/WorkflowRunResponse.js';
+import type { WorkflowSchedulePreviewResponse } from '../models/WorkflowSchedulePreviewResponse.js';
+import type { WorkflowScheduleReplayRequest } from '../models/WorkflowScheduleReplayRequest.js';
+import type { WorkflowScheduleReplayResponse } from '../models/WorkflowScheduleReplayResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -61,7 +68,68 @@ export class WorkflowsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Preview fire times and catch-up for this tenant's schedule.
+   * Read-only simulation using this tenant's effective schedule and durable cursor. Fire times follow Gregale daylight-saving rules. No run is admitted or cursor changed.
+   * @returns WorkflowSchedulePreviewResponse Read-only schedule simulation.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfWorkflowSchedulePreview({
+    slug,
+    name,
+    at,
+    since,
+    count = 5,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Tenant-configurable schedule workflow from the live deployment.
+     */
+    name: string,
+    /**
+     * Hypothetical evaluator time in RFC3339; defaults to now and is bounded to five years in either direction.
+     */
+    at?: string,
+    /**
+     * Simulated prior evaluation time, useful for reviewing missed-fire catch-up. Defaults to the durable tenant cursor.
+     */
+    since?: string,
+    /**
+     * Upcoming occurrences to return.
+     */
+    count?: number,
+  }): CancelablePromise<WorkflowSchedulePreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/apps/{slug}/workflows/schedules/{name}/preview',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      query: {
+        'at': at,
+        'since': since,
+        'count': count,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -116,7 +184,8 @@ export class WorkflowsService {
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -152,7 +221,8 @@ export class WorkflowsService {
         422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -207,7 +277,8 @@ export class WorkflowsService {
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -247,7 +318,8 @@ export class WorkflowsService {
         422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -289,7 +361,8 @@ export class WorkflowsService {
         422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -335,7 +408,8 @@ export class WorkflowsService {
         422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -391,7 +465,8 @@ export class WorkflowsService {
         422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -451,7 +526,8 @@ export class WorkflowsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -503,7 +579,8 @@ export class WorkflowsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -547,7 +624,8 @@ export class WorkflowsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -615,7 +693,8 @@ export class WorkflowsService {
         422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -672,7 +751,8 @@ export class WorkflowsService {
         422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -718,8 +798,121 @@ export class WorkflowsService {
         422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect scheduled workflow admission history
+   * Started and skipped due minutes retained for 30 days. Requires app read access. History includes all linked tenants; optionally filter by tenant. No missed-minute catch-up is inferred.
+   * @returns ListWorkflowScheduleOccurrencesResponse Newest nominal minutes first
+   * @throws ApiError
+   */
+  public static listWorkflowScheduleOccurrences({
+    slug,
+    platformTenantId,
+    cursor,
+    limit = 100,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Only occurrences for this platform tenant within the app.
+     */
+    platformTenantId?: string,
+    /**
+     * next_cursor from the previous page. An expired cursor returns an empty page.
+     */
+    cursor?: string,
+    /**
+     * Maximum occurrences returned per page.
+     */
+    limit?: number,
+  }): CancelablePromise<ListWorkflowScheduleOccurrencesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/schedules/occurrences',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'platform_tenant_id': platformTenantId,
+        'cursor': cursor,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Preview selected skipped schedule occurrence replays
+   * Read-only advisory check of up to 20 retained skipped occurrences against the current live deployment, workflow definition, tenant schedule settings, overlap state, and app quota. Replay rechecks every condition.
+   * @returns WorkflowScheduleReplayResponse Preview outcomes in chronological order.
+   * @throws ApiError
+   */
+  public static previewWorkflowScheduleReplays({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: WorkflowScheduleReplayRequest,
+  }): CancelablePromise<WorkflowScheduleReplayResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/schedules/occurrences:replay-preview',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Replay selected skipped schedule occurrences
+   * Starts at most 20 selected skipped occurrences in chronological order, using the same live deployment and matching workflow definition, and the ordinary app quota and overlap checks. Each occurrence can create at most one replay run; blocked items are returned with their outcome.
+   * @returns WorkflowScheduleReplayResponse Replay outcomes in chronological order.
+   * @throws ApiError
+   */
+  public static replayWorkflowScheduleOccurrences({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: WorkflowScheduleReplayRequest,
+  }): CancelablePromise<WorkflowScheduleReplayResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/schedules/occurrences:replay',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
     });
@@ -757,7 +950,69 @@ export class WorkflowsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Preview a deployed workflow schedule.
+   * Read-only simulation of upcoming local fire times and the next catch-up decision using the durable cursor. Fire times follow Gregale daylight-saving rules. No run is admitted or cursor changed.
+   * @returns WorkflowSchedulePreviewResponse Preview evaluated for this app's active deployment.
+   * @throws ApiError
+   */
+  public static getWorkflowSchedulePreview({
+    slug,
+    name,
+    at,
+    since,
+    count = 5,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Schedule workflow name from the effective live deployment.
+     */
+    name: string,
+    /**
+     * RFC3339 time for evaluating future fire times and catch-up; defaults to the current time and is limited to five years from now.
+     */
+    at?: string,
+    /**
+     * Simulated prior evaluation time, useful for reviewing missed-fire catch-up. Defaults to the durable cursor.
+     */
+    since?: string,
+    /**
+     * Maximum number of future local fire times to include.
+     */
+    count?: number,
+  }): CancelablePromise<WorkflowSchedulePreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/schedules/{name}/preview',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      query: {
+        'at': at,
+        'since': since,
+        'count': count,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -817,7 +1072,8 @@ export class WorkflowsService {
         409: `Tenant-required apps need a tenant-scoped run route, or the Idempotency-Key was already used with different workflow input.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -880,7 +1136,8 @@ export class WorkflowsService {
         409: `The app is not configured to accept tenant-scoped workflow runs.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -937,7 +1194,8 @@ export class WorkflowsService {
         409: `The app does not accept workflow runs for this authenticated tenant identity.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1013,7 +1271,8 @@ export class WorkflowsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1045,7 +1304,8 @@ export class WorkflowsService {
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1077,7 +1337,8 @@ export class WorkflowsService {
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1129,7 +1390,8 @@ export class WorkflowsService {
         410: `The configured callback wait timeout has elapsed.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1177,7 +1439,8 @@ export class WorkflowsService {
         409: `code: workflow_not_running — only active runs accept events.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1209,7 +1472,48 @@ export class WorkflowsService {
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect this tenant's workflow run and preview its safe continuation.
+   * Requires a tenant-bound token with platform_tenant:invocations:read.
+   * Foreign, unbound and missing runs return the same 404.
+   * Returns a consistent read-only snapshot with queue reason, step states,
+   * code identity and the existing resume planner. No actions, admission
+   * reservations or audit mutations occur. Capacity and resume generation
+   * are checked again by POST resume. Inputs, outputs, error text, tenant
+   * identities and credentials are omitted. Responses use Cache-Control: no-store.
+   *
+   * @returns WorkflowRunDiagnosticsResponse Diagnostics and continuation blockers for the authenticated tenant's run.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfWorkflowRunDiagnostics({
+    id,
+  }: {
+    /**
+     * Workflow-run identifier restricted to the authenticated tenant.
+     */
+    id: string,
+  }): CancelablePromise<WorkflowRunDiagnosticsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflows/runs/{id}/diagnostics',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1253,7 +1557,8 @@ export class WorkflowsService {
         413: `Resume requests are limited to 4096 bytes.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1322,7 +1627,95 @@ export class WorkflowsService {
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Preview cancellation eligibility for selected queued workflow runs.
+   * Classifies up to 20 selected runs without changing them. A run is
+   * eligible only while it is pending and has never started. This is an
+   * advisory snapshot; the cancellation action rechecks eligibility while
+   * holding the same run lock used by dispatch claims. Runs outside the app
+   * are reported as not_found.
+   *
+   * @returns WorkflowQueuedRunCancelResponse One preview classification per selected run, in request order.
+   * @throws ApiError
+   */
+  public static previewUnstartedWorkflowRunCancellations({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: WorkflowQueuedRunCancelRequest,
+  }): CancelablePromise<WorkflowQueuedRunCancelResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/runs:cancel-preview',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Cancel selected queued workflow runs that have never started.
+   * Atomically rechecks and cancels the selected runs that remain pending
+   * and have no started_at timestamp. A run claimed after preview is
+   * reported as already_started or not_queued and is left alone. Started
+   * runs and retries are never cancelled by this bulk action. Eligible
+   * runs transition to failed with cancelled_at set. The bounded batch is
+   * committed as one transaction.
+   *
+   * @returns WorkflowQueuedRunCancelResponse One final outcome per selected run, in request order.
+   * @throws ApiError
+   */
+  public static cancelUnstartedWorkflowRuns({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: WorkflowQueuedRunCancelRequest,
+  }): CancelablePromise<WorkflowQueuedRunCancelResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/runs:cancel-queued',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1352,7 +1745,8 @@ export class WorkflowsService {
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1382,7 +1776,8 @@ export class WorkflowsService {
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1418,7 +1813,8 @@ export class WorkflowsService {
         404: `The workflow run is absent or not owned by the caller, or code: workflow_step_not_found — the requested step is absent.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1465,7 +1861,8 @@ export class WorkflowsService {
         409: `The run or step is not in a state that can be safely retried.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1496,7 +1893,8 @@ export class WorkflowsService {
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1544,7 +1942,8 @@ export class WorkflowsService {
         410: `Callback wait has expired.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1592,7 +1991,8 @@ export class WorkflowsService {
         409: `The callback is closed, or the callback/provider event already has a different binding.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1628,7 +2028,8 @@ export class WorkflowsService {
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1665,7 +2066,8 @@ export class WorkflowsService {
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1701,7 +2103,47 @@ export class WorkflowsService {
         409: `code: workflow_not_running — only running or awaiting_event runs accept events.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect a workflow run and preview its safe continuation.
+   * Requires the normal account read scope and MFA.
+   * Returns a consistent read-only snapshot with queue reason, step states,
+   * code identity and the existing resume planner. No actions, admission
+   * reservations or audit mutations occur. Capacity and resume generation
+   * are checked again by POST resume. Inputs, outputs, error text, tenant
+   * identities and credentials are omitted. Responses use Cache-Control: no-store.
+   *
+   * @returns WorkflowRunDiagnosticsResponse Current diagnostics and an advisory resume preview, including blockers for ineligible runs.
+   * @throws ApiError
+   */
+  public static getWorkflowRunDiagnostics({
+    id,
+  }: {
+    /**
+     * Durable workflow-run identifier.
+     */
+    id: string,
+  }): CancelablePromise<WorkflowRunDiagnosticsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/workflows/runs/{id}/diagnostics',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1749,7 +2191,8 @@ export class WorkflowsService {
         413: `code: request_body_too_large — resume requests are limited to 4096 bytes.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1779,7 +2222,8 @@ export class WorkflowsService {
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
@@ -1813,7 +2257,8 @@ export class WorkflowsService {
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
       },

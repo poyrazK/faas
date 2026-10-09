@@ -14,7 +14,11 @@ export type WorkflowRunResponse = {
   id: string;
   app_id: string;
   /**
-   * Platform tenant authorized for this workflow run, when present.
+   * Immutable deployment used by this run's app handlers. Absent for legacy unpinned runs.
+   */
+  deployment_id?: string;
+  /**
+   * Platform tenant authorized for this workflow run
    */
   platform_tenant_id?: string | null;
   workflow_name: string;

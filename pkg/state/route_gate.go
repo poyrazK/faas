@@ -17,7 +17,7 @@ var ErrRouteGateRequirements = errors.New("save route requirements before enabli
 type RouteGateBlockedError struct{ Decision api.RouteGateDecision }
 
 func (e *RouteGateBlockedError) Error() string {
-	return "canary route gate blocked: " + strings.Join(e.Decision.Reasons, ", ")
+	return "route gate blocked: " + strings.Join(e.Decision.Reasons, ", ")
 }
 
 type CanaryRouteGateStore interface {

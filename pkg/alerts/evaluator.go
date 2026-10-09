@@ -372,7 +372,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateDegraded, now); err != nil {
 				e.log.Warn("alerts: set state degraded", "rule", rule.ID, "err", err)
 			}
-		case skipInsufficient:
+		case skipInsufficient, skipPaused:
 			stats.SkippedInsufficient++
 			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateUnknown, now); err != nil {
 				e.log.Warn("alerts: set state unknown", "rule", rule.ID, "err", err)
@@ -699,6 +699,7 @@ const (
 	skipDegraded     = "degraded"
 	skipInsufficient = "insufficient"
 	skipNoIdentity   = "no_identity"
+	skipPaused       = "consumer_paused"
 )
 
 // AlertOutcomeDelivered / AlertOutcomeFailed are the closed-vocab
@@ -720,7 +721,38 @@ const (
 // threshold verdict, skipReason is a fail-closed "we can't even
 // fetch" signal.
 func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	if api.IsEventRecoveryAlertMetric(string(rule.Metric)) {
+		return e.observeEventRecovery(ctx, rule)
+	}
+	if api.IsEventConsumerAlertMetric(string(rule.Metric)) {
+		return e.observeEventConsumer(ctx, rule)
+	}
 	switch rule.Metric {
+	case state.AlertMetricWorkflowFailures, state.AlertMetricWorkflowQuotaSkips, state.AlertMetricWorkflowPendingAge, state.AlertMetricWorkflowWaitingAge, state.AlertMetricWorkflowDueAge:
+		store, ok := e.store.(state.WorkflowAlertStore)
+		if !ok {
+			return 0, false, skipDegraded
+		}
+		now := e.now()
+		snapshot, err := store.WorkflowAlertSnapshot(ctx, rule.AccountID, rule.AppID, e.windowStart(rule.WindowSpec, now), now)
+		if err != nil {
+			e.log.Warn("alerts: read workflow signals", "rule", rule.ID, "err", err)
+			return 0, false, skipDegraded
+		}
+		var value float64
+		switch rule.Metric {
+		case state.AlertMetricWorkflowFailures:
+			value = float64(snapshot.Failures)
+		case state.AlertMetricWorkflowQuotaSkips:
+			value = float64(snapshot.QuotaSkips)
+		case state.AlertMetricWorkflowPendingAge:
+			value = snapshot.PendingAgeSeconds
+		case state.AlertMetricWorkflowWaitingAge:
+			value = snapshot.WaitingAgeSeconds
+		case state.AlertMetricWorkflowDueAge:
+			value = snapshot.DueAgeSeconds
+		}
+		return value, compareFloat(value, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
 		// per-rule source filter expands "any" to every alertable
@@ -1018,6 +1050,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths preAuthPaths) ([
 		"observed":   observed,
 		"window":     string(rule.WindowSpec),
 		"fired_at":   time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if rule.EventSubscriptionID != "" {
+		m["event_subscription_id"] = rule.EventSubscriptionID
 	}
 	if rule.FailureSource != "" {
 		m["failure_source"] = string(rule.FailureSource)

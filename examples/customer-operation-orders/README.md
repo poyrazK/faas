@@ -48,7 +48,15 @@ it locally for the selected app and plan:
 
 ```sh
 gregale customer-operations validate --app orders --plan pro --dir .
+npm run bindings:check
 ```
+
+`workflow-bindings.mjs` is generated from that validated manifest. The handler
+uses its transition helper with the state read under the order-row lock; the
+helper queues the required `order-fulfilled` payload and the declared edge.
+After changing contracts or schemas, run `npm run bindings:generate` and review
+the generated diff. `bindings:check` compares the module with the current
+contracts without writing, so it can run in CI before packaging.
 
 The internal SDK is not published. Package this example with the built SDK in
 a fresh temporary source directory; the bundle contains no database credentials
@@ -137,4 +145,4 @@ links the same reference to related work. A reference grants no access to the
 order; business authorization in this example still checks customer ownership.
 
 
-The example declares `order-fulfilled` and maps it to the `order-fulfillment` workflow in `gregale.yaml`, with `pending` and `fulfilled` as its allowed states, `fulfilled` as its terminal state, `pending` stale after 30 minutes, and `pending → fulfilled` as an allowed transition. Supply one stable workflow-run UUID across all Operations participating in that process; separate runs for the same order use different UUIDs. Its callback locks the order row, checks that it is pending, changes it to fulfilled, and calls `tx.workflowTransition` in the same PostgreSQL transaction as the milestone and result receipt. Gregale validates the edge against the pinned workflow before commit. State and milestone publication occur after commit. Authorized recovery publishes saved reports without repeating fulfillment. Inspect the order timeline with `gregale customer-operations milestones --app YOUR_APP --scope default --subject-type order --subject-id ORDER_UUID`; add `--workflow order-fulfillment --workflow-instance-id RUN_UUID` to read one run's ordered state changes, or `--stale-only` to show only stale current states. The CLI and dashboard label the reported current state as active or terminal, and the dashboard shows state history and retained workflow steps grouped under the run ID.
+The example declares workflow contract version `1`. Its `pending → fulfilled` transition is scoped to `fulfill-order` and requires the `order-fulfilled` milestone in the same committed application transaction. The workflow maps that milestone to the process, with `pending` and `fulfilled` as its states, `fulfilled` as terminal, and `pending` stale after 30 minutes. Supply one stable workflow-run UUID across all Operations participating in the process; separate runs for the same order use different UUIDs. The callback locks the order row, checks that it is pending, changes it to fulfilled, and records both the transition and milestone with the business write and result receipt. Gregale checks the transition contract and verifies the evidence references before the application transaction commits. State and milestone publication then use the durable outbox, and authorized recovery publishes the saved reports without repeating fulfillment. Inspect the order timeline with `gregale customer-operations milestones --app YOUR_APP --scope default --subject-type order --subject-id ORDER_UUID`; add `--workflow order-fulfillment --workflow-instance-id RUN_UUID` to read one run's ordered state changes, or `--stale-only` to show only stale current states. The CLI and dashboard label the reported current state as active or terminal, and the dashboard shows state history and retained workflow steps grouped under the run ID.

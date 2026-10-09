@@ -30,6 +30,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+
 jobs:
   acceptance:
     if: github.event.pull_request.draft != true

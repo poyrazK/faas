@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 
@@ -38,6 +39,10 @@ class EventReplayBackfillItemResponse:
     attempt_history_url: str | Unset = UNSET
     """Handler attempt history for this consumer; omitted when retained delivery provenance or current app
     ownership is unavailable."""
+    workflow_run_id: UUID | Unset = UNSET
+    """Retained workflow run admitted for this item"""
+    workflow_run_status: str | Unset = UNSET
+    """Current state of the retained workflow run"""
 
     def to_dict(self) -> dict[str, Any]:
         event_source = self.event_source
@@ -68,6 +73,12 @@ class EventReplayBackfillItemResponse:
 
         attempt_history_url = self.attempt_history_url
 
+        workflow_run_id: str | Unset = UNSET
+        if not isinstance(self.workflow_run_id, Unset):
+            workflow_run_id = str(self.workflow_run_id)
+
+        workflow_run_status = self.workflow_run_status
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -94,6 +105,10 @@ class EventReplayBackfillItemResponse:
             field_dict["receipt_url"] = receipt_url
         if attempt_history_url is not UNSET:
             field_dict["attempt_history_url"] = attempt_history_url
+        if workflow_run_id is not UNSET:
+            field_dict["workflow_run_id"] = workflow_run_id
+        if workflow_run_status is not UNSET:
+            field_dict["workflow_run_status"] = workflow_run_status
 
         return field_dict
 
@@ -128,6 +143,15 @@ class EventReplayBackfillItemResponse:
 
         attempt_history_url = d.pop("attempt_history_url", UNSET)
 
+        _workflow_run_id = d.pop("workflow_run_id", UNSET)
+        workflow_run_id: UUID | Unset
+        if isinstance(_workflow_run_id, Unset):
+            workflow_run_id = UNSET
+        else:
+            workflow_run_id = UUID(_workflow_run_id)
+
+        workflow_run_status = d.pop("workflow_run_status", UNSET)
+
         event_replay_backfill_item_response = cls(
             event_source=event_source,
             event_id=event_id,
@@ -143,6 +167,8 @@ class EventReplayBackfillItemResponse:
             details_truncated=details_truncated,
             receipt_url=receipt_url,
             attempt_history_url=attempt_history_url,
+            workflow_run_id=workflow_run_id,
+            workflow_run_status=workflow_run_status,
         )
 
         return event_replay_backfill_item_response

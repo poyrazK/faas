@@ -24,6 +24,10 @@ func (s *PgStore) ReserveOperationArtifact(ctx context.Context, id string, autho
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	// Serialize quota across HTTP and workflow result reservations.
+	if err := q.LockCustomerOperationArtifactQuota(ctx, tx, authority.AccountID); err != nil {
+		return OperationResultBlob{}, err
+	}
 	// Account first serializes storage quota reservations across all its apps.
 	// Remaining locks follow the existing invocation -> operation -> blob order.
 	plan, err := q.LockCustomerOperationAccount(ctx, tx, account)
@@ -133,7 +137,7 @@ func operationBlobTime(t time.Time) pgtype.Timestamptz {
 
 func operationPGBlob(row sqlc.CustomerOperationResultBlob) OperationResultBlob {
 	blob := OperationResultBlob{ID: uuid.UUID(row.ID.Bytes).String(), OperationID: uuid.UUID(row.OperationID.Bytes).String(), AccountID: uuid.UUID(row.AccountID.Bytes).String(),
-		ExecutionID: uuid.UUID(row.ExecutionID.Bytes).String(), Generation: int(row.Generation), Attempt: int(row.Attempt),
+		ExecutionID: pgUUIDString(row.ExecutionID), WorkflowRunID: pgUUIDString(row.WorkflowRunID), JobRunID: pgUUIDString(row.JobRunID), WorkflowStep: row.WorkflowStep.String, Generation: int(row.Generation), Attempt: int(row.Attempt),
 		ReportID: row.ReportID, Fingerprint: row.Fingerprint, StorageKey: row.StorageKey, SizeBytes: row.SizeBytes, State: row.State,
 		ExpiresAt: row.ExpiresAt.Time, NextAttemptAt: row.NextAttemptAt.Time, LeaseToken: row.LeaseToken}
 	if row.LeaseUntil.Valid {

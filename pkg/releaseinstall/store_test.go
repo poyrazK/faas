@@ -381,13 +381,14 @@ func sampleBundle(sha string) Bundle {
 		"9999999999999999999999999999999999999999999999999999999999999999",
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 	}
 	// We don't import manifest.SortedHostKeys here directly to keep
 	// the test self-contained — but to stay honest with the contract
-	// we list all 11. Order doesn't matter to a map.
+	// we list all 12. Order doesn't matter to a map.
 	keys := []string{
 		"apid", "builderd", "gatewayd_internal", "gatewayd_public",
-		"githubd", "imaged", "meterd", "outboundd", "realtimed", "schedd", "vmmd",
+		"githubd", "imaged", "meterd", "outboundd", "profiled", "realtimed", "schedd", "vmmd",
 	}
 	for i, k := range keys {
 		hashes[k] = "sha256:" + patterns[i]

@@ -47,7 +47,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
-	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -80,9 +79,20 @@ type authHandlers struct {
 
 // renderLoginForm renders the GET /login page.
 func (a *authHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request) {
-	page := dashboard.Page{
+	next := ""
+	if raw := r.URL.Query().Get("next"); raw != "" {
+		next = dashboardMFANext(raw)
+	}
+	a.renderLogin(w, r, http.StatusOK, "", false, next)
+}
+
+// renderLogin renders the sign-in form. next is carried through the POST so a
+// browser lands where sessionAuth sent it from (H8-28).
+func (a *authHandlers) renderLogin(w http.ResponseWriter, r *http.Request, status int, flash string, isError bool, next string) {
+	a.renderAuthPage(w, r, status, dashboard.Page{
 		Title: "Sign in",
 		Body:  "login",
+		Flash: flash,
 		// Issue #419 / ADR-046: gate the OAuth buttons on the
 		// boot-resolved provider state. With both vars unset the
 		// buttons render as nothing (no 500-bound links); the
@@ -92,11 +102,12 @@ func (a *authHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request) {
 			GoogleEnabled: a.srv.oauthConfig.Google.Enabled(),
 			GitHubEnabled: a.srv.oauthConfig.GitHub.Enabled(),
 		},
-	}
-	if err := dashboard.Render(w, a.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
-		a.log.Error("dashboard render login form", "err", err)
-		renderProblem(w, a.log, err)
-	}
+		Data: map[string]any{
+			"Error":     isError,
+			"Next":      next,
+			"SignupURL": strings.TrimRight(a.srv.cliAuthURLBase, "/") + signupPath,
+		},
+	})
 }
 
 // verify handles GET /auth/verify?token=…. On success, sets the

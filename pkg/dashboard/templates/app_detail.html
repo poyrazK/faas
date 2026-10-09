@@ -619,6 +619,7 @@
               <span class="badge dim" title="{{.Data.Metrics.Source}}">degraded</span>
             {{end}}
           </h2>
+          {{if $.Data.ProfilingAvailable}}<p><a href="/dashboard/apps/{{$.Data.App.Slug}}/profiles">Explore CPU intervals and application functions →</a></p>{{end}}
           {{if eq .Data.Metrics.RequestCount 0}}
             <p>No requests in the last {{.Data.Metrics.Range}}.</p>
           {{else}}

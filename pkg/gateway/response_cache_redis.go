@@ -31,16 +31,17 @@ type RedisResponseCache struct {
 }
 
 type redisResponseCacheRecord struct {
-	Version         int                        `json:"version"`
-	Key             CacheKey                   `json:"key"`
-	StatusCode      int                        `json:"status_code"`
-	Header          map[string][]string        `json:"header"`
-	Body            []byte                     `json:"body"`
-	Tags            []string                   `json:"tags,omitempty"`
-	FreshUntil      time.Time                  `json:"fresh_until"`
-	RevalidateUntil time.Time                  `json:"revalidate_until"`
-	ErrorUntil      time.Time                  `json:"error_until"`
-	RuleAction      *state.EdgeRuleCacheAction `json:"rule_action,omitempty"`
+	ServedDeploymentID string                     `json:"served_deployment_id,omitempty"`
+	Version            int                        `json:"version"`
+	Key                CacheKey                   `json:"key"`
+	StatusCode         int                        `json:"status_code"`
+	Header             map[string][]string        `json:"header"`
+	Body               []byte                     `json:"body"`
+	Tags               []string                   `json:"tags,omitempty"`
+	FreshUntil         time.Time                  `json:"fresh_until"`
+	RevalidateUntil    time.Time                  `json:"revalidate_until"`
+	ErrorUntil         time.Time                  `json:"error_until"`
+	RuleAction         *state.EdgeRuleCacheAction `json:"rule_action,omitempty"`
 }
 
 // NewRedisResponseCache connects to a redis:// or rediss:// endpoint and
@@ -99,16 +100,17 @@ func (c *RedisResponseCache) Put(entry *cacheEntry) error {
 		return nil
 	}
 	record := redisResponseCacheRecord{
-		Version:         redisResponseCacheVersion,
-		Key:             entry.key,
-		StatusCode:      entry.statusCode,
-		Header:          copyHeader(entry.header),
-		Body:            append([]byte(nil), entry.body...),
-		Tags:            append([]string(nil), entry.tags...),
-		FreshUntil:      entry.freshUntil,
-		RevalidateUntil: entry.revalidateUntil,
-		ErrorUntil:      entry.errorUntil,
-		RuleAction:      copyCacheRuleAction(entry.ruleAction),
+		Version:            redisResponseCacheVersion,
+		Key:                entry.key,
+		StatusCode:         entry.statusCode,
+		Header:             copyHeader(entry.header),
+		ServedDeploymentID: entry.servedDeploymentID,
+		Body:               append([]byte(nil), entry.body...),
+		Tags:               append([]string(nil), entry.tags...),
+		FreshUntil:         entry.freshUntil,
+		RevalidateUntil:    entry.revalidateUntil,
+		ErrorUntil:         entry.errorUntil,
+		RuleAction:         copyCacheRuleAction(entry.ruleAction),
 	}
 	raw, err := json.Marshal(record)
 	if err != nil {
@@ -250,16 +252,17 @@ func (r redisResponseCacheRecord) cacheEntry() *cacheEntry {
 		staleUntil = r.RevalidateUntil
 	}
 	return &cacheEntry{
-		key:             r.Key,
-		statusCode:      r.StatusCode,
-		header:          copyHeader(r.Header),
-		body:            append([]byte(nil), r.Body...),
-		tags:            append([]string(nil), r.Tags...),
-		freshUntil:      r.FreshUntil,
-		revalidateUntil: r.RevalidateUntil,
-		errorUntil:      r.ErrorUntil,
-		staleUntil:      staleUntil,
-		ruleAction:      copyCacheRuleAction(r.RuleAction),
+		key:                r.Key,
+		servedDeploymentID: r.ServedDeploymentID,
+		statusCode:         r.StatusCode,
+		header:             copyHeader(r.Header),
+		body:               append([]byte(nil), r.Body...),
+		tags:               append([]string(nil), r.Tags...),
+		freshUntil:         r.FreshUntil,
+		revalidateUntil:    r.RevalidateUntil,
+		errorUntil:         r.ErrorUntil,
+		staleUntil:         staleUntil,
+		ruleAction:         copyCacheRuleAction(r.RuleAction),
 	}
 }
 

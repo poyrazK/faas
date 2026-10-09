@@ -1,11 +1,14 @@
 from typing import Literal
 
-OpenAPIContractBreakKind = Literal["field_removed", "nullability_change", "required_added", "type_change"]
+OpenAPIContractBreakKind = Literal[
+    "field_removed", "nullability_change", "required_added", "required_removed", "type_change"
+]
 
 OPEN_API_CONTRACT_BREAK_KIND_VALUES: set[OpenAPIContractBreakKind] = {
     "field_removed",
     "nullability_change",
     "required_added",
+    "required_removed",
     "type_change",
 }
 

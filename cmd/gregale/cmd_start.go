@@ -47,7 +47,7 @@ func cmdStart(args []string) (code int) {
 	if !stdinIsTTY() {
 		return printErr("Interactive session required", errors.New("run gregale start in a terminal; use gregale deploy for scripts"))
 	}
-	scope, err := filepath.Abs(".")
+	scope, err := canonicalStartScope(".")
 	if err != nil {
 		return printErr("Could not resolve session directory", err)
 	}
@@ -82,7 +82,7 @@ func cmdStart(args []string) (code int) {
 	if found && saved.APIBase != apiBase() {
 		return printErr("Session belongs to another API", fmt.Errorf("restore the API configuration for %s before continuing", saved.APIBase))
 	}
-	if found && saved.ScopePath != scope {
+	if savedScope, scopeErr := canonicalStartScope(saved.ScopePath); found && (scopeErr != nil || savedScope != scope) {
 		return printErr("Session directory does not match", errors.New("the saved session belongs to another directory"))
 	}
 	if code := runner.authenticate(); code != 0 {

@@ -135,52 +135,51 @@ func TestTouchedFileRangesOwnMapping(t *testing.T) {
 	}
 }
 
-// adr: 224 — a prefetch must cover every recorded byte, not just the head of
-// each range: the kernel truncates one FADV_WILLNEED to the readahead window.
-func TestAdviseWillNeedCoversWholeRanges(t *testing.T) {
-	const size = 16 << 20
+// adr: 224 — a prefetch must request every recorded byte, not just the head
+// of each range. FADV_WILLNEED is advisory, so verify bounded syscall requests
+// instead of relying on host page-cache residency.
+func TestAdviseWillNeedChunksWholeRanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mem")
-	if err := os.WriteFile(path, bytes.Repeat([]byte{1}, size), 0o600); err != nil {
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	evictFromPageCache(t, path)
 	ranges := []fileRange{{0, 4 << 20}, {8 << 20, 6 << 20}}
-	if err := adviseWillNeed(path, ranges); err != nil {
+	type call struct {
+		fd          int
+		off, length int64
+		advice      int
+	}
+	var calls []call
+	if err := adviseWillNeedWith(path, ranges, func(fd int, off, length int64, advice int) error {
+		calls = append(calls, call{fd: fd, off: off, length: length, advice: advice})
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
+
+	wantCount := 0
+	for _, r := range ranges {
+		wantCount += int((r.Len + int64(adviseChunk) - 1) / int64(adviseChunk))
 	}
-	defer func() { _ = f.Close() }()
-	b, err := unix.Mmap(int(f.Fd()), 0, size, unix.PROT_READ, unix.MAP_SHARED)
-	if err != nil {
-		t.Fatal(err)
+	if len(calls) != wantCount {
+		t.Fatalf("made %d advice calls, want %d", len(calls), wantCount)
 	}
-	defer func() { _ = unix.Munmap(b) }()
-	page := os.Getpagesize()
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		missing := 0
-		for _, r := range ranges {
-			vec := make([]byte, int(r.Len)/page)
-			region := b[r.Off : r.Off+r.Len]
-			if _, _, errno := unix.Syscall(unix.SYS_MINCORE, uintptr(unsafe.Pointer(&region[0])), uintptr(len(region)), uintptr(unsafe.Pointer(&vec[0]))); errno != 0 {
-				t.Fatal(errno)
+	if len(calls) == 0 || calls[0].fd < 0 {
+		t.Fatalf("fadvise received invalid file descriptor in calls: %+v", calls)
+	}
+	fd := calls[0].fd
+	callIndex := 0
+	for _, r := range ranges {
+		for off := r.Off; off < r.Off+r.Len; off += int64(adviseChunk) {
+			want := call{fd: fd, off: off, length: min(int64(adviseChunk), r.Off+r.Len-off), advice: unix.FADV_WILLNEED}
+			if got := calls[callIndex]; got != want {
+				t.Errorf("advice call %d = %+v, want %+v", callIndex, got, want)
 			}
-			for _, v := range vec {
-				if v&1 == 0 {
-					missing++
-				}
-			}
+			callIndex++
 		}
-		if missing == 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%d advised pages never reached the page cache", missing)
-		}
-		time.Sleep(20 * time.Millisecond)
+	}
+	if callIndex != len(calls) {
+		t.Errorf("got %d advice calls, want %d", len(calls), callIndex)
 	}
 }
 

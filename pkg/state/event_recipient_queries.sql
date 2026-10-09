@@ -54,10 +54,10 @@ RETURNING (SELECT r->>'app_id' FROM jsonb_array_elements(o.recipient_snapshot) r
 
 -- name: EventRecipientInsert :exec
 INSERT INTO event_fanout_recipients
-    (outbox_id, subscription_id, app_id, recipient, state, attempts, total_attempts, capacity_deferrals, available_at)
+    (outbox_id, subscription_id, app_id, recipient, state, attempts, total_attempts, capacity_deferrals, available_at, delivery_deadline_at)
 VALUES (sqlc.arg(outbox_id)::bigint, sqlc.arg(subscription_id)::text, sqlc.arg(app_id)::uuid,
         sqlc.arg(recipient)::jsonb, sqlc.arg(state)::text, 0,
-        sqlc.arg(total_attempts)::integer, sqlc.arg(capacity_deferrals)::integer, sqlc.arg(available_at)::timestamptz)
+        sqlc.arg(total_attempts)::integer, sqlc.arg(capacity_deferrals)::integer, sqlc.arg(available_at)::timestamptz, (SELECT event_recipient_delivery_deadline(sqlc.arg(recipient)::jsonb,o.created_at,o.recipient_progress->sqlc.arg(subscription_id)::text) FROM event_fanout_outbox o WHERE o.id=sqlc.arg(outbox_id)::bigint))
 ON CONFLICT (outbox_id, subscription_id) DO NOTHING;
 
 -- name: EventRecipientClaim :one
@@ -67,13 +67,15 @@ WITH candidate AS (
     JOIN event_fanout_outbox o ON o.id=r.outbox_id
     LEFT JOIN event_routing_fairness fa ON fa.account_id=o.account_id AND fa.subscription_id=''
     LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r.subscription_id
-    WHERE ((r.state = 'pending' AND r.available_at <= sqlc.arg(now_at)::timestamptz)
+    WHERE ((r.state = 'pending' AND (r.available_at <= sqlc.arg(now_at)::timestamptz OR r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload)))
        OR (r.state = 'processing' AND r.lease_until <= sqlc.arg(now_at)::timestamptz))
       AND (sqlc.arg(include_workflows)::boolean OR NOT r.recipient ? 'workflow')
       AND (r.backfill_job_id IS NULL OR EXISTS (
           SELECT 1 FROM event_replay_jobs j JOIN event_replay_job_items i ON i.job_id=j.id
           WHERE j.id=r.backfill_job_id AND j.state='running' AND i.outbox_id=r.outbox_id
             AND i.state IN ('pending','processing')))
+      AND (r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload) OR event_subscription_delivery_waiting_reason(o.account_id,r.app_id,r.subscription_id,sqlc.arg(now_at)::timestamptz)='')
+      AND (r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload) OR NOT event_recipient_order_blocked(r.outbox_id, r.subscription_id, r.recipient, true))
     ORDER BY coalesce(fa.last_claimed_at,'epoch'::timestamptz),
       coalesce(fc.last_claimed_at,'epoch'::timestamptz), r.available_at, r.outbox_id, r.subscription_id
     FOR UPDATE OF r SKIP LOCKED LIMIT 1
@@ -101,7 +103,7 @@ WITH candidate AS (
 )
 SELECT c.outbox_id, c.recipient, c.claim_token, c.generation, c.attempts,
        c.capacity_deferrals,c.generation_capacity_deferrals,
-       c.total_attempts, c.available_at, c.lease_until, o.payload, c.backfill_job_id
+       c.total_attempts, c.available_at, c.lease_until, o.payload, o.created_at AS accepted_at, c.backfill_job_id, (o.recipient_progress->c.subscription_id)::jsonb AS previous_progress
 FROM claimed c JOIN event_fanout_outbox o ON o.id = c.outbox_id;
 
 -- name: EventRecipientLockReceipt :one
@@ -110,7 +112,9 @@ WHERE id = sqlc.arg(id)::bigint AND recipient_claims FOR UPDATE;
 
 -- name: EventRecipientFinish :execrows
 UPDATE event_fanout_recipients
-SET state = sqlc.arg(state)::text, available_at = sqlc.arg(available_at)::timestamptz,
+SET attempts=attempts-CASE WHEN sqlc.arg(control_deferred)::boolean THEN 1 ELSE 0 END,
+    total_attempts=total_attempts-CASE WHEN sqlc.arg(control_deferred)::boolean THEN 1 ELSE 0 END,
+    state = sqlc.arg(state)::text, available_at = sqlc.arg(available_at)::timestamptz,
     claim_token = NULL, lease_until = NULL,
     capacity_deferrals=capacity_deferrals+CASE WHEN sqlc.arg(capacity_deferred)::boolean THEN 1 ELSE 0 END,
     generation_capacity_deferrals=generation_capacity_deferrals+CASE WHEN sqlc.arg(capacity_deferred)::boolean THEN 1 ELSE 0 END
@@ -128,12 +132,12 @@ WHERE o.id = sqlc.arg(id)::bigint;
 
 -- name: EventRecipientAppendHistory :one
 INSERT INTO event_fanout_attempt_history
-    (outbox_id, app_id, subscription_id, action, state, attempts, failure_code, retryable, last_error, occurred_at,
+    (outbox_id, app_id, subscription_id, action, state, attempts, failure_code, retryable, last_error, occurred_at, retry_stop_reason, filter_reason,
      capacity_scope,capacity_deferrals,details_truncated)
 VALUES (sqlc.arg(outbox_id)::bigint, sqlc.arg(app_id)::uuid, sqlc.arg(subscription_id)::text,
         sqlc.arg(action)::text, sqlc.arg(state)::text, sqlc.arg(attempts)::integer,
         sqlc.arg(failure_code)::text, sqlc.arg(retryable)::boolean, sqlc.arg(last_error)::text,
-        sqlc.arg(occurred_at)::timestamptz,sqlc.arg(capacity_scope)::text,
+        sqlc.arg(occurred_at)::timestamptz, sqlc.arg(retry_stop_reason)::text,sqlc.arg(filter_reason)::text,sqlc.arg(capacity_scope)::text,
         sqlc.arg(capacity_deferrals)::bigint,sqlc.arg(details_truncated)::boolean)
 RETURNING id;
 
@@ -158,6 +162,7 @@ FOR UPDATE OF o;
 -- name: EventRecipientReplay :execrows
 UPDATE event_fanout_recipients
 SET state = 'pending', generation = generation + 1, attempts = 0, generation_capacity_deferrals=0,
+ delivery_deadline_at=CASE WHEN sqlc.arg(allow_expired)::boolean THEN NULL ELSE event_recipient_delivery_deadline(recipient,(SELECT o.created_at FROM event_fanout_outbox o WHERE o.id=outbox_id),'{}'::jsonb) END,
     available_at = sqlc.arg(now_at)::timestamptz, claim_token = NULL, lease_until = NULL
 WHERE outbox_id = sqlc.arg(outbox_id)::bigint AND subscription_id = sqlc.arg(subscription_id)::text
   AND state = 'failed';
@@ -172,6 +177,7 @@ WHERE o.account_id = sqlc.arg(account_id)::uuid AND r.recipient->>'app_id' = a.i
   AND (o.recipient_claims OR o.state IN ('delivered', 'pending'))
   AND (o.recipient_progress -> (r.recipient->>'id'))->>'state' = 'failed'
   AND coalesce(((o.recipient_progress -> (r.recipient->>'id'))->>'retryable')::boolean, false)
+ AND (event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb) IS NULL OR event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb)>clock_timestamp())
   AND ((sqlc.arg(event_source)::text = '' AND sqlc.arg(event_id)::text = '') OR
        (o.source = sqlc.arg(event_source)::text AND o.event_id = sqlc.arg(event_id)::text))
 ORDER BY coalesce((o.recipient_progress -> (r.recipient->>'id')->>'updated_at')::timestamptz, o.created_at), o.id, r.recipient->>'id'
@@ -191,6 +197,7 @@ SELECT EXISTS (
     WHERE o.account_id = sqlc.arg(account_id)::uuid AND r.recipient->>'app_id' = sqlc.arg(app_id)::text
       AND (o.recipient_progress -> (r.recipient->>'id'))->>'state' = 'failed'
       AND coalesce(((o.recipient_progress -> (r.recipient->>'id'))->>'retryable')::boolean, false)
+ AND (event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb) IS NULL OR event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb)>clock_timestamp())
       AND ((sqlc.arg(event_source)::text = '' AND sqlc.arg(event_id)::text = '') OR
            (o.source = sqlc.arg(event_source)::text AND o.event_id = sqlc.arg(event_id)::text))
 ) AS has_more;
@@ -235,6 +242,12 @@ WITH candidate AS (
  ) cf ON true
  WHERE NOT o.recipient_claims AND ((o.state='pending' AND o.available_at<=sqlc.arg(now_at)::timestamptz)
    OR (o.state='processing' AND o.lease_until<=sqlc.arg(now_at)::timestamptz))
+   AND (sqlc.arg(for_recipient_adoption)::boolean OR NOT EXISTS (
+     SELECT 1 FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) item(recipient)
+     WHERE coalesce(o.recipient_progress->(item.recipient->>'id')->>'state','pending')
+         NOT IN ('enqueued','filtered','failed')
+       AND event_recipient_order_blocked(o.id,item.recipient->>'id',item.recipient,false)
+   ))
  ORDER BY coalesce(fa.last_claimed_at,'epoch'::timestamptz),
    coalesce(cf.last_claimed_at,fa.last_claimed_at,'epoch'::timestamptz),o.id
  FOR UPDATE OF o SKIP LOCKED LIMIT 1

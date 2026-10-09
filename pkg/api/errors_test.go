@@ -347,8 +347,10 @@ func TestErrTenantSurfacesNotEnabled(t *testing.T) {
 	if strings.Contains(p.Detail, "upgrade to Hobby") {
 		t.Errorf("Detail = %q, must not suggest a plan downgrade", p.Detail)
 	}
-	if !strings.Contains(p.Detail, "FAAS_TENANT_SURFACES_ENABLED") {
-		t.Errorf("Detail = %q, want operator flag guidance", p.Detail)
+	// hunt #8: customer-facing text must not name operator environment
+	// variables; the stable code is what an operator matches on.
+	if strings.Contains(p.Detail, "FAAS_") || !strings.Contains(p.Detail, "contact support") {
+		t.Errorf("Detail = %q, want installation-availability guidance without operator config names", p.Detail)
 	}
 }
 
@@ -1082,5 +1084,28 @@ func TestOrgSlugPattern(t *testing.T) {
 				t.Errorf("OrgSlugPattern.MatchString(%q) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestDisabledFeatureErrorsStayCustomerFacing keeps operator environment
+// variable names out of every dark-launch detail a customer can receive.
+func TestDisabledFeatureErrorsStayCustomerFacing(t *testing.T) {
+	for name, p := range map[string]*Problem{
+		"api contract diff": ErrAPIContractDiffDisabled(),
+		"tenant surfaces":   ErrTenantSurfacesNotEnabled(),
+		"domain doctor":     ErrDoctorDisabled(),
+		"static egress ip":  ErrStaticEgressIPNotEnabled(),
+		"private network":   ErrPrivateNetworkNotEnabled(),
+	} {
+		if strings.Contains(p.Detail, "FAAS_") || !strings.Contains(p.Detail, "Gregale installation") {
+			t.Errorf("%s detail is operator-facing: %q", name, p.Detail)
+		}
+	}
+}
+
+func TestProfileGateProblemStatus(t *testing.T) {
+	// A reconstructed gate Problem must preserve the actionable 409 status.
+	if got := StatusForCode(CodeProfileGateBlocked); got != http.StatusConflict {
+		t.Fatalf("profiling gate status = %d, want %d", got, http.StatusConflict)
 	}
 }

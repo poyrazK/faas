@@ -33,6 +33,127 @@ const (
 )
 
 // Historical replay preview bounds retained-envelope reads (ADR-645).
+// CPU profiling transport and admission bounds (ADR-819). These limits are
+// independent of request telemetry and never change billing dimensions.
+const (
+	ProfileDefaultWindowSeconds                         = 10
+	ProfileMinWindowSeconds                             = 1
+	ProfileMaxWindowSeconds                             = 60
+	ProfileMaxCaptureDuration                           = time.Duration(ProfileMaxWindowSeconds)*time.Second + ProfileTransportTimeout
+	ProfileMaxCompressedBytes                           = 1 << 20
+	ProfileMaxExpandedBytes                             = 8 << 20
+	ProfileMaxFrameBytes                                = (ProfileMaxCompressedBytes * 2) + (32 << 10)
+	ProfileControlPollInterval                          = 100 * time.Millisecond
+	ProfileMaxStackDepth                                = 256
+	ProfileMaxProcesses                                 = 64
+	ProfileMaxDeploymentChoices                         = 64
+	ProfileAttributionMaxReasons                        = 6
+	ProfileAttributionMaxWarnings                       = 3
+	ProfileAttributionMaxChangePercentagePoints         = 20
+	ProfileRouteRegressionMaxRoutes                     = 10
+	ProfileRouteRequestTimestampTolerance               = time.Second
+	ProfileRouteRequestReportMaxBytes                   = 16 << 10
+	ProfileRouteRequestMetadataMaxBytes                 = 2500
+	ProfileRouteMaxLabeledRequests                      = int64(1000000000)
+	ProfileRouteMinimumLabelCoveragePercent             = 80.0
+	ProfileRouteLabelMaxChangePercentagePoints          = 20.0
+	ProfileRouteMaxLabels                               = 50
+	ProfileRouteMaxLabelBytes                           = 256
+	ProfileRequestMixMaxRoutes                          = 50
+	ProfileRequestMixSnapshotMaxRoutes                  = 20
+	ProfileRequestMixSnapshotMaxBytes                   = 16 << 10
+	ProfileRequestMixDifferencePercent                  = 20.0
+	ProfileInvestigationMaxPerApp                       = 50
+	ProfileInvestigationMaxBytes                        = 64 << 10
+	ProfileInvestigationMaxStoredBytes                  = 2 * ProfileInvestigationMaxBytes
+	ProfileInvestigationMaxFormBytes                    = 3*ProfileInvestigationMaxBytes + (8 << 10)
+	ProfileInvestigationMaxTitleBytes                   = 160
+	ProfileInvestigationMaxTextBytes                    = 8 << 10
+	ProfileInvestigationMaxPathBytes                    = 16 << 10
+	ProfileInvestigationMaxRevision               int64 = 9007199254740991
+	ProfileRegressionDefaultRelativePercent             = 20.0
+	ProfileRegressionDefaultAbsoluteCPU                 = 0.01
+	ProfileRegressionDefaultAbsoluteCPUPerRequest       = 0.0001
+	ProfileRegressionDefaultMinimumProfiles       int64 = 3
+	ProfileRegressionDefaultCoverageRatio               = 0.8
+	ProfileRegressionDefaultMinimumRequests       int64 = 20
+	ProfileRegressionMaxAbsoluteCPUPerRequest           = 3600.0
+	ProfileRegressionMaxMinimumRequests           int64 = 100000000
+	ProfileRegressionMaxRelativePercent                 = 10000.0
+	ProfileRegressionMaxAbsoluteCPU                     = 1e6
+	ProfileRegressionMinimumCoverageRatio               = 0.1
+	ProfileRegressionMaxEvidence                        = 10
+	ProfileRegressionMaxEvidenceBytes                   = 32 << 10
+	ProfileGateMaxConfirmations                         = 5
+	ProfileGateMaxTimeoutSeconds                        = 86400
+	ProfileGateDefaultTimeoutSeconds                    = 1800
+	ProfileGateDefaultConfirmations                     = 2
+	ProfileGateOverrideMaxReasonBytes                   = 1024
+	ProfileRouteCodeMaxEvidenceBytes                    = 8 << 10
+	ProfileRegressionMaxAssessmentBytes                 = 64 << 10
+	ProfileRegressionMaxStoredBytes                     = 2 * ProfileRegressionMaxAssessmentBytes
+	ProfilePeriodicMinIntervalSeconds                   = 60
+	ProfilePeriodicMaxIntervalSeconds                   = 86400
+	ProfilePeriodicDefaultIntervalSeconds               = 900
+	ProfilePeriodicMaxConfirmations                     = 5
+	ProfilePeriodicDefaultConfirmations                 = 2
+	ProfilePeriodicMaxHistory                           = 10
+	ProfilePeriodicMaxRows                              = 50
+	ProfilePeriodicMaxDataBytes                         = 262144
+
+	ProfileAutoDefaultWindowSeconds = 300
+	ProfileAutoDefaultWarmupSeconds = 120
+	ProfileAutoMinWindowSeconds     = 60
+	ProfileAutoMaxWindowSeconds     = 1800
+	ProfileAutoMaxWarmupSeconds     = 3600
+	ProfileAutoMaxAttempts          = 5
+	ProfileAutoBatchSize            = 10
+	ProfileAutoMaxResults           = 50
+	ProfileAlertMaxFrames           = 5
+	ProfileAlertMaxSymbolBytes      = 256
+	ProfileAutoTickInterval         = 30 * time.Second
+	ProfileAutoIngestionGrace       = 30 * time.Second
+	ProfileAutoRetryInterval        = time.Minute
+	ProfileAutoLeaseDuration        = 2 * time.Minute
+	ProfileAutoDiscoveryLookback    = 24 * time.Hour
+	ProfileAutoReceiptRetention     = 30 * 24 * time.Hour
+	ProfileCanaryHistoryPageSize    = 5
+	ProfileCanaryHistoryMaxPage     = 10
+	ProfileMaxGenerationBytes       = 128
+	ProfileMaxRuntimeBytes          = 64
+	ProfileRetryCacheTTL            = 2 * time.Minute
+	ProfileRPCOverheadBytes         = 1024
+	ProfileControlMaxBytes          = 4096
+	ProfileProcessStaleAfter        = 2 * time.Second
+	ProfileDrainTimeout             = 500 * time.Millisecond
+	ProfileNodeBootstrapPath        = "/opt/gregale/profiling/node.cjs"
+	ProfilePythonBootstrapDir       = "/opt/gregale/profiling/python"
+	ProfileMaxSymbolBytes           = 4096
+	ProfileMaxTotalFrames           = 200000
+	ProfileMaxNodes                 = 20000
+	ProfileMaxViewNodes             = 5000
+	ProfileMaxViewSymbolBytes       = 256 << 10
+	ProfileMaxCoverageEntries       = 5000
+	ProfileFailureRecordInterval    = time.Minute
+	ProfileMaxChartPoints           = 120
+	ProfileChartMinStep             = time.Minute
+	ProfileMaxConcurrentUploads     = 4
+	ProfileMaxConcurrentQueries     = 4
+	ProfileMaxTrackedAccounts       = 10000
+	ProfileTransportTimeout         = 2 * time.Second
+	ProfileQueryTimeout             = 15 * time.Second
+	ProfileVsockPort                = 1040
+	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
+	ProfileHealthListen             = "127.0.0.1:9160"
+	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+)
+
+type ProfilingLimits struct {
+	Enabled          bool
+	RetentionDays    int
+	UploadsPerMinute int
+}
+
 const (
 	EventReplayPreviewPageDefault    = 50
 	EventReplayPreviewPageMax        = 100
@@ -53,6 +174,26 @@ const (
 	EventReplayBackfillItemsPageMax        = 100
 	EventReplayBackfillItemsCursorMaxBytes = 4096
 	EventReplayBackfillRequestTimeout      = 5 * time.Second
+)
+
+// Workflow reliability bounds (ADR-725, ADR-726, ADR-649).
+const (
+	WorkflowDispatchSlots                = 4
+	WorkflowDispatchBatchPerSlot         = 8
+	WorkflowDispatchMaxPerApp            = 2
+	WorkflowDispatchMaxPerTenant         = 1
+	WorkflowDispatchClaimTimeout         = 5 * time.Second
+	WorkflowRetryAfterMaxDelay           = time.Hour
+	WorkflowScheduleBatch                = 256
+	WorkflowScheduleCatchUpWindowDefault = time.Hour
+	WorkflowScheduleCatchUpWindowMin     = time.Minute
+	WorkflowScheduleCatchUpWindowMax     = 24 * time.Hour
+	WorkflowScheduleHistoryRetention     = 30 * 24 * time.Hour
+	WorkflowScheduleHistoryPageDefault   = 100
+	WorkflowScheduleHistoryPageMax       = 200
+	WorkflowScheduleHistoryPruneBatch    = 1000
+	WorkflowScheduleReplayBatchMax       = 20
+	WorkflowQueuedRunCancelBatchMax      = 20
 )
 
 // Operational summaries bound each recovery kind independently and never
@@ -224,6 +365,11 @@ const NativeHostHelperCgroupEventsMaxBytes = 4096
 const TelemetryIngestDBConcurrency = 4
 
 const (
+	// Job Operations carry canonical input through the existing guest env protocol.
+	OperationJobDispatchGraceSeconds = 90
+	OperationJobInputMaxBytes        = 32 << 10
+	OperationJobEnvMaxEntries        = 240
+
 	EnvironmentGitSourcePollLeaseDuration = 2 * time.Minute
 	EnvironmentGitSourcePollReadTimeout   = 45 * time.Second
 	EnvironmentGitSourcePollCheckInterval = 5 * time.Minute
@@ -304,6 +450,10 @@ const (
 	OperationWorkflowStepsMaxPerOperation                = 32
 	OperationWorkflowStatesMax                           = 32
 	OperationWorkflowTransitionsMax                      = 128
+	OperationWorkflowContractVersionMax                  = 1_000_000
+	OperationWorkflowTransitionEvidenceMax               = 16
+	OperationWorkflowStateEvidenceMax                    = 16
+	OperationWorkflowStateBatchMaxBytes                  = 131072
 	OperationWorkflowStateMaxBytes                       = 64
 	OperationWorkflowStateReportsMaxPerTransaction       = 64
 	OperationWorkflowTitleMaxBytes                       = 128
@@ -345,6 +495,14 @@ const (
 	OperationPreviewCohortsMax                           = 10
 	OperationPreviewTenantsPerCohortMax                  = 10
 	OperationPreviewWindowMax                            = time.Hour
+	OperationControlPollIntervalMS                       = 1000
+	OperationControlPollMinIntervalMS                    = 100
+	WorkflowStepDefaultTimeout                           = 30 * time.Second
+	OperationSubmissionLookupMaxBytes                    = 4096
+	OperationBrowserReceiptMaxBytes                      = 8192
+	OperationBrowserReceiptReplaySeconds                 = 86400
+	OperationRecoveryReceiptMaxBytes                     = OperationSubmissionMaxBytes + 2*OperationRecoveryBodyOverheadBytes + 2*OperationPathMaxBytes
+	OperationArtifactUploadDefaultBytes                  = 8 << 20
 )
 
 // OperationPlanLimits bounds durable control-plane state independently from
@@ -378,6 +536,7 @@ const (
 )
 
 const (
+
 	// Development bridge transport safeguards. These are preview bounds, not
 	// a new billing allowance. Session creation also uses DeveloperApps.
 	DevBridgeSessionTTL            = time.Hour
@@ -449,6 +608,7 @@ const (
 // Private PostgreSQL copy bounds, independent from data/storage entitlements.
 // An oversized inventory or archive fails capture; it is never truncated.
 const (
+
 	// Dedicated APID copy-worker service bounds include the process and its
 	// subprocesses. Provider PostgreSQL compute is admitted separately.
 	PostgresCopyWorkerMemoryMaxBytes   int64 = 1 << 30
@@ -543,6 +703,7 @@ const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
 const ObjectVersionDeleteOperationTimeout = time.Minute
 
 const (
+
 	// Customer-configured admission budgets are safety bounds, not plan
 	// allowances. Zero disables a dimension; these caps keep counters and
 	// request validation bounded without prescribing a default quota.
@@ -958,6 +1119,7 @@ type EventStorageLimits struct {
 }
 
 type Limits struct {
+	Profiling       ProfilingLimits
 	EventStorage    EventStorageLimits
 	EventDeliveries EventDeliveryLimits
 	Operations      OperationPlanLimits
@@ -2830,6 +2992,7 @@ var planLimits = map[Plan]Limits{
 		// is touched; the 0/0/0/0 here is the fail-closed
 		// defence-in-depth value the store still reads.
 		DebugTelemetryEnabled:           false,
+		Profiling:                       ProfilingLimits{},
 		DebugTelemetryRetentionDays:     0,
 		DebugTelemetryRequestsPerMinute: 0,
 		DebugTelemetryDeploymentsPerApp: 0,
@@ -3242,6 +3405,7 @@ var planLimits = map[Plan]Limits{
 		// (spec §4.7).
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     3,
+		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60},
 		DebugTelemetryRequestsPerMinute: 1000,
 		DebugTelemetryDeploymentsPerApp: 10,
 		DebugTelemetrySpansPerTrace:     50,
@@ -3616,6 +3780,7 @@ var planLimits = map[Plan]Limits{
 		// for the Pro plan.
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     7,
+		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180},
 		DebugTelemetryRequestsPerMinute: 10000,
 		DebugTelemetryDeploymentsPerApp: 50,
 		DebugTelemetrySpansPerTrace:     200,
@@ -4023,6 +4188,7 @@ var planLimits = map[Plan]Limits{
 		// would blow up Prometheus cardinality).
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     14,
+		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600},
 		DebugTelemetryRequestsPerMinute: 50000,
 		DebugTelemetryDeploymentsPerApp: 200,
 		DebugTelemetrySpansPerTrace:     1000,
@@ -4043,6 +4209,7 @@ var planLimits = map[Plan]Limits{
 // Global platform constants (spec §1, §13). These are the physics of the one
 // box; code enforces them, telemetry verifies them.
 const (
+
 	// ADR-431: diagnostic trace retention must fit the public gateway's 512 MiB
 	// cgroup. Byte accounting includes conservative Go object/map overhead;
 	// count and per-trace bounds also constrain tiny traces and merge work.
@@ -5687,6 +5854,14 @@ const (
 	WorkflowAutomationHealthDefaultRange          = 7 * 24 * time.Hour
 	WorkflowAutomationHealthMaxRange              = 30 * 24 * time.Hour
 	WorkflowAutomationHealthMaxFailureSteps       = 10
+	WorkflowAutomationHealthReadTimeout           = 5 * time.Second
+	WorkflowRunDiagnosticsReadTimeout             = 5 * time.Second
+	WorkflowSchedulePreviewDefaultCount           = 5
+	WorkflowSchedulePreviewMaxCount               = 20
+	WorkflowSchedulePreviewReadTimeout            = 5 * time.Second
+	WorkflowBacklogAlertThresholdSeconds          = 300
+	WorkflowBacklogAlertCooldownMinutes           = 30
+	WorkflowAlertSnapshotReadTimeout              = 5 * time.Second
 	WorkflowOutboundBodyMaxBytes            int64 = 1 << 20
 	WorkflowOutboundStepNameMaxBytes              = 128
 	WorkflowResumeRequestMaxBytes           int64 = 4096
@@ -8109,6 +8284,7 @@ const (
 // Source of truth: pkg/reqbudget re-exports these as reqbudget.*
 // so call-sites can use one import.
 const (
+
 	// RequestUploadTimeoutBase is fixed setup headroom added to the time
 	// required to receive a plan's maximum request body. Upload admission is
 	// deliberately separate from the guest execution budget.
@@ -8321,6 +8497,7 @@ type NodeSizing struct {
 type NodeRoleShape int
 
 const (
+
 	// NodeShapeSingleBox is the spec §13 reference: one host running the
 	// whole platform, Postgres included. Reserve is ControlPlaneReserveMB.
 	NodeShapeSingleBox NodeRoleShape = iota
@@ -8414,6 +8591,7 @@ func DeriveNodeSizingForRole(memTotalMB, hostCPUs int, shape NodeRoleShape) Node
 }
 
 const (
+
 	// RAMAdmissionPercent is the headroom guard from spec §1: schedd admits
 	// only up to this share of the tenant budget.
 	RAMAdmissionPercent = 85
@@ -8606,6 +8784,7 @@ const WorkloadPortCapMax = 16
 
 // ADR-576: private TCP addressing between services.
 const (
+
 	// ServiceTCPProxyPort is the reserved tenant-bridge port of the node-local
 	// service TCP proxy. No netns rule admits it: guests reach it only through
 	// the host DNAT of a service address.
@@ -8945,6 +9124,10 @@ const (
 	MaxDurableEntityReceipts             = 1024 // Legacy inline receipts only; journal receipts do not expire.
 	MaxDurableEntityReceiptBytes         = 1 << 20
 	MaxDurableEntityJournalBytes         = 16 << 10
+	MaxDurableEntityOutboxPerTransition  = 16
+	MaxDurableEntityOutboxPending        = 128
+	MaxDurableEntityOutboxPayloadBytes   = 64 << 10
+	MaxDurableEntityOutboxBytes          = 256 << 10 // Encoded pending messages, included in snapshot/cap bytes.
 	DurableEntityCleanupPageSize         = 32
 	DurableEntityCleanupTimeout          = 20 * time.Second
 	DurableEntityInventoryPageSize       = 32
@@ -9158,4 +9341,99 @@ const (
 	DataAPIMaxRelations       = 1000
 	DataAPIMaxColumns         = 10000
 	DataAPIMaxTypes           = 20000
+)
+
+// A compatibility receipt is short-lived authorization for captured declarations.
+const RouteLifecycleApprovalTTL = time.Hour
+
+// Production review history exposes bounded metadata, never configuration bodies.
+const (
+	RouteLifecycleHistoryPageSize     = 10
+	RouteLifecycleHistoryMaxPage      = 20
+	RouteLifecycleHistoryMaxApprovals = 20
+	RouteLifecycleHistoryMaxCaptures  = 64
+	RouteLifecycleHistoryMaxGraphs    = 64
+)
+
+// Bulk recovery bounds failed routing selection and durable job work (ADR-797).
+const (
+	EventRecoveryRecipientsMax       = 10000
+	EventRecoveryPreviewLimit        = 100
+	EventRecoveryCapacityWaitWarning = 15 * time.Minute
+	EventRecoveryStallGrace          = 5 * time.Minute
+	EventRecoveryExpiryWarning       = time.Hour
+	EventRecoveryHistoryPageMax      = 100
+	EventRecoveryReasonMaxBytes      = 512
+	EventRecoveryJobsPageMax         = 50
+	EventRecoveryCursorMaxBytes      = 4096
+	EventRecoveryItemsPageMax        = 100
+	EventRecoveryRateDefault         = 10
+	EventRecoveryRateMax             = 100
+	EventRecoveryActiveJobsMax       = 3
+	EventRecoveryJobLifetime         = 24 * time.Hour
+	EventRecoveryJobRetention        = 30 * 24 * time.Hour
+	EventRecoveryRequestTimeout      = 5 * time.Second
+)
+
+// Subscription delivery controls pace routing admission (ADR-798).
+const (
+	EventSubscriptionDrainRateDefault  = 10
+	EventSubscriptionDrainRateMax      = 100
+	EventSubscriptionControlTimeout    = 5 * time.Second
+	EventSubscriptionControlRetryDelay = 5 * time.Second
+)
+
+const EventConsumerHealthMaxWindow = 24 * time.Hour
+const EventConsumerHealthMinFailureSamples = 20
+
+const (
+	EventRoutingRetryDefaultAttempts        = 12
+	EventRoutingRetryDefaultInitialMS int64 = 5000
+	EventRoutingRetryDefaultMaxMS     int64 = 300000
+	EventRoutingRetryMaxAttempts            = 100
+	EventRoutingRetryMaxBackoffMS     int64 = 3600000
+	EventRoutingRetryMaxDurationMS    int64 = 7 * 24 * 60 * 60 * 1000
+)
+
+const (
+	EventCircuitDefaultFailurePct            = 50
+	EventCircuitDefaultSamples         int64 = 20
+	EventCircuitDefaultWindowSeconds   int64 = 300
+	EventCircuitDefaultCooldownSeconds int64 = 60
+	EventCircuitDefaultProbeSuccesses        = 3
+	EventCircuitDefaultRecoveryRate          = 10
+	EventCircuitDefaultRecoverySeconds int64 = 60
+	EventCircuitMaxSamples             int64 = 10000
+	EventCircuitMaxSeconds             int64 = 3600
+	EventCircuitMaxProbeSuccesses            = 20
+	EventCircuitRampInterval                 = 10 * time.Second
+	EventCircuitNeutralProbeDelay            = time.Second
+)
+const EventCircuitEvaluationInterval = time.Second
+
+// Maximum wall-clock age before application event routing admission.
+const EventDeliveryAgeMaxMS int64 = 30 * 24 * 60 * 60 * 1000
+
+// Maximum explicit schema versions selected by one event subscription.
+const EventSubscriptionSchemaVersionsMax = 16
+
+// Event schema rollout previews are read-only and bound both input and observation.
+const (
+	EventSchemaRolloutIdentityMaxBytes   = 256
+	EventSchemaRolloutBodyMaxBytes       = 2 << 20
+	EventSchemaRolloutSchemaMaxBytes     = 64 << 10
+	EventSchemaRolloutSampleMaxBytes     = 64 << 10
+	EventSchemaRolloutSamplesMax         = 20
+	EventSchemaRolloutConsumersMax       = 1000
+	EventSchemaRolloutRetainedScanMax    = 1000
+	EventSchemaRolloutRetainedMax        = 100
+	EventSchemaRolloutRetainedBytesMax   = 4 << 20
+	EventSchemaRolloutDiagnosticMaxBytes = 256
+	EventSchemaRolloutTimeout            = 15 * time.Second
+)
+
+// Consumer execution health bounds retained delivery observations and lineage.
+const (
+	EventConsumerExecutionRootsMax       = 1000
+	EventConsumerExecutionInvocationsMax = 5000
 )

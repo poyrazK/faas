@@ -6,6 +6,7 @@ import type { AfterRestoreHook } from './AfterRestoreHook.js';
 import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
 import type { DeclaredRoute } from './DeclaredRoute.js';
 import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
+import type { ProfilingConfig } from './ProfilingConfig.js';
 import type { PublicAuthBlock } from './PublicAuthBlock.js';
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
@@ -18,6 +19,7 @@ import type { WorkerScaling } from './WorkerScaling.js';
  * Partial update — every field is optional; omitted fields are unchanged.
  */
 export type UpdateAppRequest = {
+  profiling?: ProfilingConfig;
   /**
    * Change the app's public edge exposure. Omit for no change; internal visibility is available on every plan.
    */
