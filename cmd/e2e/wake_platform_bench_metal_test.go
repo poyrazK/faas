@@ -157,6 +157,17 @@ func TestWakePlatformBenchMetal(t *testing.T) {
 	// The first-byte event is written asynchronously after the response.
 	time.Sleep(3 * time.Second)
 	reportWakePlatformBench(t, pool, wakeIDs, clientMs)
+	// Park before harness teardown: vmmd deliberately leaves VMs running
+	// across its own restart, so an instance still live when the daemons
+	// stop would survive as an orphaned Firecracker on the host.
+	if raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/hello/park", nil); status/100 != 2 {
+		t.Logf("final park: status=%d body=%s", status, raw)
+	}
+	pctx, pcancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer pcancel()
+	if _, err := e2etest.WaitForAppParked(pctx, t, pool, appID, 40*time.Second); err != nil {
+		t.Logf("final park did not complete: %v", err)
+	}
 }
 
 type wakeBenchRow map[string]float64
