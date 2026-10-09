@@ -8749,3 +8749,36 @@ tampering, extra revoked rows, late-expiry rollback/retry, revival rejection,
 absent journals, state fences and guarded migration round trips. Native object
 target retirement/cleanup and final stage publication remain further steps. Live
 R2/OVH qualification remains deferred at the user's request.
+
+### Private native object retirement proof contract
+
+The next compensation step now has a private immutable retirement plan and proof
+validator. The plan pins the original target creation journal, its request state,
+claim timestamp and observation digest, plus the original copy journal when one
+exists. The original physical source resource is included independently of the
+copy, so compensation before copying still binds source preservation. Request
+digests cover the placement, owner, manifest, checkpoint, pinned copy inventory
+and original write deadline; no new inventory, credential or worker token is
+introduced.
+
+A retirement receipt must name the exact retirement, creation and optional copy
+requests and their digests. It must attest permanent fencing of creation and
+copy, permanent closure of all writers, absence of the native target and native
+grants, and preservation of the original source. A currently absent target is
+insufficient evidence because a delayed creation or copy request could recreate
+it. Even planned requests require permanent fencing. Copy provenance requires a
+completed original creation and the same target/source/creation digest. Proofs
+require a UTC microsecond timestamp after the retirement claim, which cannot
+precede the original claims. Terminal replay requires the exact original proof
+digest. Expired source retention or an expired copy write deadline does not
+prevent cleanup.
+
+Focused tests cover planned, requested and completed original requests, unknown
+copy outcomes after deadline expiry, foreign owners/targets/sources, changed
+request digests, missing permanent fences, remaining grants, source mutation,
+invalid timestamps, inconsistent journal provenance and changed terminal proofs.
+This is a proof contract only: frozen-journal authentication, a durable once-only
+retirement journal, atomic bucket-state completion and the private compensation
+coordinator are still required before dispatching any native deletion. Local
+publication withdrawal is not native retirement proof. No provider adapter or
+public full-stage path is enabled; live R2/OVH qualification remains deferred.
