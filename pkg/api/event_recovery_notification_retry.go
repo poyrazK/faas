@@ -7,21 +7,9 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"time"
 
 	"github.com/google/uuid"
 )
-
-type EventRecoveryNotificationRetryTarget struct {
-	Kind                     string `json:"kind"`
-	WebhookID                string `json:"webhook_id"`
-	DeliveryID               string `json:"delivery_id"`
-	ExpectedReplayGeneration *int   `json:"expected_replay_generation"`
-}
-type EventRecoveryNotificationRetryRequest struct {
-	RequestID string                                 `json:"request_id"`
-	Targets   []EventRecoveryNotificationRetryTarget `json:"targets"`
-}
 
 func (r EventRecoveryNotificationRetryRequest) Validate() error {
 	validID := func(id string) bool {
@@ -52,36 +40,6 @@ func (r EventRecoveryNotificationRetryRequest) Canonical() EventRecoveryNotifica
 	}
 	sort.Slice(out.Targets, func(i, j int) bool { return out.Targets[i].DeliveryID < out.Targets[j].DeliveryID })
 	return out
-}
-
-type EventRecoveryNotificationRetryPreview struct {
-	JobID          string                                    `json:"job_id"`
-	AppID          string                                    `json:"app_id"`
-	ObservedAt     time.Time                                 `json:"observed_at"`
-	CountsComplete bool                                      `json:"counts_complete"`
-	Receivers      []EventRecoveryNotificationRetryCandidate `json:"receivers"`
-}
-type EventRecoveryNotificationRetryCandidate struct {
-	Kind             string `json:"kind"`
-	WebhookID        string `json:"webhook_id"`
-	DeliveryID       string `json:"delivery_id,omitempty"`
-	ReplayGeneration int    `json:"replay_generation"`
-	Status           string `json:"status"`
-	Eligible         bool   `json:"eligible"`
-	Reason           string `json:"reason,omitempty"`
-}
-type EventRecoveryNotificationRetryResult struct {
-	Target           EventRecoveryNotificationRetryTarget `json:"target"`
-	State            string                               `json:"state"`
-	Reason           string                               `json:"reason,omitempty"`
-	ReplayGeneration *int                                 `json:"replay_generation,omitempty"`
-}
-type EventRecoveryNotificationRetryResponse struct {
-	JobID     string                                 `json:"job_id"`
-	AppID     string                                 `json:"app_id"`
-	RequestID string                                 `json:"request_id"`
-	DecidedAt time.Time                              `json:"decided_at"`
-	Results   []EventRecoveryNotificationRetryResult `json:"results"`
 }
 
 func (c *Client) PreviewEventRecoveryNotificationRetry(ctx context.Context, id string) (EventRecoveryNotificationRetryPreview, error) {

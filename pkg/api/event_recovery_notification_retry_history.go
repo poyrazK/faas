@@ -7,51 +7,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-	"time"
 )
-
-type EventRecoveryNotificationRetryHistory struct {
-	JobID        string                                          `json:"job_id"`
-	AppID        string                                          `json:"app_id"`
-	ObservedAt   time.Time                                       `json:"observed_at"`
-	Decisions    []EventRecoveryNotificationRetryDecisionSummary `json:"decisions"`
-	MatchedCount int                                             `json:"matched_count"`
-	Totals       EventRecoveryNotificationRetryHistoryTotals     `json:"totals"`
-}
-type EventRecoveryNotificationRetryDecisionSummary struct {
-	RequestID        string     `json:"request_id"`
-	DecidedAt        time.Time  `json:"decided_at"`
-	TargetCount      int        `json:"target_count"`
-	QueuedCount      int        `json:"queued_count"`
-	SkippedCount     int        `json:"skipped_count"`
-	SucceededCount   int        `json:"succeeded_count"`
-	FailedCount      int        `json:"failed_count"`
-	PendingCount     int        `json:"pending_count"`
-	UnknownCount     int        `json:"unknown_count"`
-	Status           string     `json:"status"`
-	EvidenceComplete bool       `json:"evidence_complete"`
-	CompletedAt      *time.Time `json:"completed_at,omitempty"`
-}
-type EventRecoveryNotificationRetryDecision struct {
-	Target                  EventRecoveryNotificationRetryTarget `json:"target"`
-	State                   string                               `json:"state"`
-	Reason                  string                               `json:"reason,omitempty"`
-	ReplayGeneration        *int                                 `json:"replay_generation,omitempty"`
-	RetryOutcome            string                               `json:"retry_outcome"`
-	RetainedAttemptCount    int                                  `json:"retained_attempt_count"`
-	AttemptCountComplete    bool                                 `json:"attempt_count_complete"`
-	CompletedAt             *time.Time                           `json:"completed_at,omitempty"`
-	CurrentDeliveryStatus   string                               `json:"current_delivery_status"`
-	CurrentReplayGeneration *int                                 `json:"current_replay_generation,omitempty"`
-}
-type EventRecoveryNotificationRetryDecisionDetail struct {
-	JobID                   string                                   `json:"job_id"`
-	AppID                   string                                   `json:"app_id"`
-	RequestID               string                                   `json:"request_id"`
-	DecidedAt               time.Time                                `json:"decided_at"`
-	CurrentStatusObservedAt time.Time                                `json:"current_status_observed_at"`
-	Decisions               []EventRecoveryNotificationRetryDecision `json:"decisions"`
-}
 
 func (c *Client) ListEventRecoveryNotificationRetryHistory(ctx context.Context, id string, options ...EventRecoveryNotificationRetryHistoryQuery) (EventRecoveryNotificationRetryHistory, error) {
 	var out EventRecoveryNotificationRetryHistory
@@ -78,15 +34,6 @@ func (c *Client) GetEventRecoveryNotificationRetryDecision(ctx context.Context, 
 
 // Status is a comma-separated union of request statuses; empty omits the filter.
 type EventRecoveryNotificationRetryHistoryQuery struct{ Status string }
-
-type EventRecoveryNotificationRetryHistoryTotals struct {
-	RequestCount            int `json:"request_count"`
-	SucceededCount          int `json:"succeeded_count"`
-	FailedCount             int `json:"failed_count"`
-	PendingCount            int `json:"pending_count"`
-	InconclusiveCount       int `json:"inconclusive_count"`
-	IncompleteEvidenceCount int `json:"incomplete_evidence_count"`
-}
 
 func ParseEventRecoveryNotificationRetryHistoryStatus(value string) ([]string, error) {
 	statuses := strings.Split(value, ",")

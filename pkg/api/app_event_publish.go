@@ -6,17 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"time"
 )
 
 // AppPublishEventRequest uses a stable application-scoped producer key.
-type AppPublishEventRequest struct {
-	Key           string          `json:"key"`
-	Type          string          `json:"type"`
-	Data          json.RawMessage `json:"data"`
-	Time          *time.Time      `json:"time,omitempty"`
-	SchemaVersion string          `json:"schemaversion,omitempty"`
-}
 
 func ValidateAppEventProducerKey(key string) error {
 	if len(key) == 0 || len(key) > AppEventPublishKeyMaxBytes {
@@ -38,13 +30,6 @@ func (r AppPublishEventRequest) Validate() error {
 		return fmt.Errorf("data must be a JSON value")
 	}
 	return nil
-}
-
-type AppPublishEventResponse struct {
-	AppID     string               `json:"app_id"`
-	Source    string               `json:"source"`
-	Duplicate bool                 `json:"duplicate"`
-	Receipt   PublishEventResponse `json:"receipt"`
 }
 
 func (c *Client) PublishAppEvent(ctx context.Context, slug string, req AppPublishEventRequest) (AppPublishEventResponse, error) {

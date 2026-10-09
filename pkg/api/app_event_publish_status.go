@@ -32,20 +32,6 @@ func (q *AppEventPublishStatusQuery) Normalize() error {
 	return nil
 }
 
-type AppEventPublishStatusResponse struct {
-	Acceptance         string                `json:"acceptance,omitempty"`
-	ExpectedAcceptedAt *time.Time            `json:"expected_accepted_at,omitempty"`
-	AppID              string                `json:"app_id"`
-	Source             string                `json:"source"`
-	EventID            string                `json:"event_id"`
-	ObservedAt         time.Time             `json:"observed_at"`
-	Status             string                `json:"status"`
-	Reason             string                `json:"reason,omitempty"`
-	ReceiptURL         string                `json:"receipt_url"`
-	Receipt            *PublishEventResponse `json:"receipt,omitempty"`
-	Evidence           *EventReceiptResponse `json:"evidence,omitempty"`
-}
-
 func (c *Client) GetAppEventPublishStatus(ctx context.Context, slug string, query AppEventPublishStatusQuery) (AppEventPublishStatusResponse, error) {
 	var out AppEventPublishStatusResponse
 	if err := query.Normalize(); err != nil {

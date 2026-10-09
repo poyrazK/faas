@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type EventRecoveryNotificationRetryBacklogQuery struct {
@@ -32,24 +31,6 @@ func (q *EventRecoveryNotificationRetryBacklogQuery) Normalize() error {
 		return fmt.Errorf("invalid retry backlog page size or cursor")
 	}
 	return nil
-}
-
-type EventRecoveryNotificationRetryBacklogRequest struct {
-	JobID            string                                        `json:"job_id"`
-	JobCreatedAt     time.Time                                     `json:"job_created_at"`
-	Summary          EventRecoveryNotificationRetryDecisionSummary `json:"summary"`
-	DetailPath       string                                        `json:"detail_path"`
-	RetryPreviewPath string                                        `json:"retry_preview_path"`
-}
-type EventRecoveryNotificationRetryBacklog struct {
-	AppID        string                                         `json:"app_id"`
-	ObservedAt   time.Time                                      `json:"observed_at"`
-	JobsScanned  int                                            `json:"jobs_scanned"`
-	CountsScope  string                                         `json:"counts_scope"`
-	Totals       EventRecoveryNotificationRetryHistoryTotals    `json:"totals"`
-	MatchedCount int                                            `json:"matched_count"`
-	Requests     []EventRecoveryNotificationRetryBacklogRequest `json:"requests"`
-	NextCursor   string                                         `json:"next_cursor,omitempty"`
 }
 
 func (c *Client) ListEventRecoveryNotificationRetryBacklog(ctx context.Context, app string, query EventRecoveryNotificationRetryBacklogQuery) (EventRecoveryNotificationRetryBacklog, error) {

@@ -8,19 +8,6 @@ import (
 	"time"
 )
 
-type AppEventPublicationVerification struct {
-	Acceptance         string                `json:"acceptance,omitempty"`
-	ExpectedAcceptedAt *time.Time            `json:"expected_accepted_at,omitempty"`
-	AppID              string                `json:"app_id"`
-	Source             string                `json:"source"`
-	EventID            string                `json:"event_id"`
-	ObservedAt         time.Time             `json:"observed_at"`
-	Status             string                `json:"status"`
-	Reason             string                `json:"reason,omitempty"`
-	ReceiptURL         string                `json:"receipt_url"`
-	Receipt            *PublishEventResponse `json:"receipt,omitempty"`
-}
-
 // VerifyAppEventPublication compares retained content without publishing it.
 func (c *Client) VerifyAppEventPublication(ctx context.Context, slug string, req AppPublishEventRequest, options ...AppEventAcceptanceGuard) (AppEventPublicationVerification, error) {
 	var out AppEventPublicationVerification
