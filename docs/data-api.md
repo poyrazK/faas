@@ -14,6 +14,198 @@ remain ordinary, separately deployed apps.
 Use [CLI/SDK bundles](data-api-packaging.md) to package a matching pair,
 pin their checksums in the application, and restore the SDK in client CI.
 
+## Develop locally
+
+Initialize the starter and run a disposable API without a Gregale account:
+
+```sh
+gregale init --template data-api-starter --path notes
+cd notes
+gregale data-api dev
+```
+
+The starter also ships `data-api.requests.json` with `notes-crud`, `notes-rls`, and `notes-rpc` scenarios. Run them immediately after initialization:
+
+```sh
+gregale data-api dev --port 0 --once --replay data-api.requests.json
+```
+
+The scenarios exercise CRUD and managed note versions, Alice/Bob isolation, and the approved `create_note_with_tags` RPC. They capture generated IDs, delete the records they create, and verify cleanup, so repeated inspector replays work in the same local session. Select one with `--scenario notes-rls`, or open the inspector and use **Replay all scenarios**.
+
+The scaffolded `.github/workflows/data-api-client.yml` restores the verified CLI and SDK bundle, runs client checks, then executes this collection on GitHub's Ubuntu runner with Docker. Request and scenario failures appear by name in the job logs and return a failing exit status. CI requires a committed artifact pin with an HTTPS base URL, a `linux/amd64` CLI archive, and a CLI build supporting scenario replay; local replay works without that pin or any Gregale account credentials.
+
+
+The local dev server prints a private **Inspector** link. Open it to browse table columns, relationships and RPCs, switch Alice/Bob test identities, and send authenticated requests. The inspector shows compatibility changes and migration errors even while the API is paused; successful reloads refresh its schema. Keep the link private: it grants access to local test identities. Restarting development invalidates it.
+
+Use **Saved requests** to save the current method, path, JSON body, and Alice/Bob identity in `data-api.requests.json` at the project root. Set an expected HTTP status and optionally an exact JSON response (object key order is ignored). Load or delete individual requests, replay one, or replay all sequentially; each replay reports passing and failing assertions. Replay executes writes as saved, so POST, PATCH, DELETE and RPC calls can change local data. Session tokens and authentication headers are never saved. The collection survives dev restarts and can be committed for teammates; use test data in request bodies. Saved requests are excluded from newly initialized migration app deployments. Conflicting edits require reloading the collection before saving. Run the same scenarios from the CLI or CI with:
+
+```sh
+gregale data-api dev --port 0 --once --replay data-api.requests.json
+# Machine-readable JSON lines:
+gregale --json data-api dev --port 0 --once --replay data-api.requests.json
+```
+
+`--replay` requires `--once`; its path is relative to `--directory`. The command validates the collection before starting Docker services, verifies RLS, then executes every saved request in order against the disposable API using fresh Alice/Bob tokens. It prints each assertion result and a summary, exits nonzero if any request fails or replay is interrupted, and removes services on either outcome. JSON replay records use `event: "replay_result"` and `event: "replay_summary"`; they contain assertion metadata rather than response bodies or session tokens. An empty collection reports zero checks. Combine `--check` or `--check-breaking` with replay for client and schema checks; these run before replay. Request failures do not stop later scenarios, so use independent checks or account for earlier writes.
+
+Saved requests can capture scalar response values with JSON Pointers and use them in later steps:
+
+```json
+{
+  "version": 1,
+  "requests": [
+    {
+      "name": "Alice creates a note",
+      "method": "POST",
+      "path": "/rest/v1/notes",
+      "identity": "alice",
+      "body": { "subject": "alice", "body": "Workflow note" },
+      "expect": { "status": 201 },
+      "capture": { "note_id": "/0/id" }
+    },
+    {
+      "name": "Bob cannot read that note",
+      "method": "GET",
+      "path": "/rest/v1/notes?id=eq.{{note_id}}",
+      "identity": "bob",
+      "expect": { "status": 200, "json": [] }
+    }
+  ]
+}
+```
+
+Use the inspector's **Response captures** field to edit the same map. Selectors use JSON Pointer syntax: `/0/id` reads the first row's ID, `~1` escapes a slash in a key, `~0` escapes a tilde, and an empty pointer selects the whole response. Captures accept strings (up to 4096 characters), numbers, booleans, and null; objects and arrays are rejected. Names use letters, digits and underscores, starting with a letter (maximum 64 characters).
+
+`{{note_id}}` works in paths, JSON body values and expected JSON values. A whole JSON string placeholder preserves the captured scalar's type; embedded placeholders produce strings, and path replacements are URL encoded. Object keys, identity and HTTP status are not templated. Every replay starts with an empty variable set: use **Replay all** for dependent steps, or the CLI's ordered replay. A step publishes captures only after its status and JSON assertions pass and every selector resolves. Failed steps clear the names they declare; missing variables fail dependent steps before sending a request. Capture results show variable names, never captured values, and variables are neither saved nor shared across replays.
+
+Organize independent workflows as version 2 named scenarios:
+
+```json
+{
+  "version": 2,
+  "scenarios": [
+    {
+      "name": "notes-rls",
+      "requests": [
+        {
+          "name": "Bob sees no Alice notes",
+          "method": "GET",
+          "path": "/rest/v1/notes?subject=eq.alice",
+          "identity": "bob",
+          "expect": { "status": 200, "json": [] }
+        }
+      ]
+    },
+    { "name": "rpc", "requests": [] }
+  ]
+}
+```
+
+The inspector can create, select and delete scenarios, edit each scenario's requests, replay the selected scenario, or replay all scenarios. Creating a named scenario upgrades a version 1 collection while preserving its requests in `default`. Version 1 files still work unchanged as that implicit scenario. Keep at least one scenario; delete its requests to empty it.
+
+```sh
+gregale data-api dev --port 0 --once --replay data-api.requests.json --scenario notes-rls
+```
+
+Omit `--scenario` to run every scenario in file order. The flag requires `--replay`, and unknown names fail before Docker services start. Each scenario gets fresh variables; all scenarios share the same disposable database, so workflows should clean up their own rows or account for earlier writes. A failure in one scenario does not stop later scenarios. Scenario names are unique identifiers starting with a letter, followed by letters, digits, underscores or hyphens (maximum 64 characters). Request names must be unique within a scenario; there is an aggregate limit of 100 requests and a 64 KiB file limit.
+
+Version 2 JSON output adds `scenario` to each `replay_result` and emits `replay_scenario_summary` with the scenario name and total/passed/failed counts. The final `replay_summary` aggregates only the selected scenarios. Version 1 JSON output remains unchanged.
+
+
+
+Install Node.js 22 or newer, npm, and Docker with a running local daemon first.
+The command installs locked runtime dependencies into a temporary directory,
+starts PostgreSQL 16 and the production digest-pinned PostgREST 14.3, applies
+`migrations/sql`, validates RLS and RPC grants, and generates
+`client/src/database.types.ts` using the restricted API login. All published
+service ports and the JWT-verifying gateway bind to loopback. Select a local
+Docker context: the command uses your configured Docker daemon.
+
+The readiness message gives the API URL and a private session file under
+`.gregale/data-api-dev-*.json`. It contains locally signed Alice and Bob tokens,
+their subjects, and the schema fingerprint. Use its `url` and an identity's
+`token` with the normal SDK. Tokens expire after 24 hours and work only for that
+running instance. Before reporting readiness, the command verifies that missing
+tokens and cross-subject reads and writes are rejected. Browser CORS allows
+`http://localhost:5173` and `http://127.0.0.1:5173`.
+
+After installing the pinned SDK and starter client dependencies as described in
+the starter README, run:
+
+```sh
+gregale data-api dev --check
+gregale data-api dev --port 0 --check --once
+```
+
+`--check` runs client typecheck and tests; `--once` verifies and exits.
+`--port 0` selects an available gateway port. `--directory` selects the starter
+project; `--output` changes the types path relative to that project.
+
+Long-running sessions watch `migrations/sql` by default. Add a new numbered SQL
+migration and save it: the command applies it, validates RLS and RPC permissions,
+restarts PostgREST to refresh its schema cache, regenerates types, and reruns
+optional client checks. Reloads run one at a time and include changes saved during
+a reload. The API URL, test tokens, and existing database rows stay intact.
+Use `--watch=false` to disable watching. `--once` always performs a single run.
+
+The gateway returns HTTP 503 while schema and permission checks are pending.
+Successful reloads update the session file's fingerprint and readiness state.
+An invalid pending SQL migration rolls back; correct the file to retry.
+Editing or deleting an applied migration is refused: restore its original
+contents and add a new migration instead. If a migration commits but fails
+permission/RLS checks, the gateway stays paused; add a subsequent migration to
+repair the schema. The watcher reports each failed source version once and
+retries when files change. Client-check failures leave the validated API
+available and report that checks failed. With `--json`, stdout contains one JSON
+event per readiness/reload transition; events never include test tokens.
+
+Before regenerating types, startup and reload compare the new schema with the
+last accepted local contract using the same rules as `data-api diff`. Reports
+identify removed relations, columns and RPCs; changed field/argument/return types;
+new required fields or arguments; nullability, write-access, relationship and enum
+changes. A rename appears as a removal plus an addition. Normal development
+reports breaking changes and continues after schema/RLS validation.
+
+The last accepted contract is saved privately to `.gregale/data-api-contract.json`
+and survives shutdown. The first run initializes it. To reject breaking changes,
+use `--check-breaking`; it requires an existing contract so a verification run
+cannot silently initialize its own baseline. A rejected reload keeps the gateway
+paused and preserves both the accepted contract and generated types. SQL has
+already committed locally: add a new compatible migration to repair the schema,
+or explicitly revise your chosen baseline and restart development.
+
+For CI, save a baseline outside the ignored `.gregale` directory and select it
+explicitly. Selected baselines are read-only and remain fixed across reloads:
+
+```sh
+gregale data-api dev --once
+cp .gregale/data-api-contract.json schema.json
+gregale data-api dev --once --check-breaking --baseline schema.json
+```
+
+Commit `schema.json` alongside the application when using it as a CI baseline.
+`--baseline` paths are relative to the selected project. `--once --check-breaking`
+exits nonzero on breaking changes, removes disposable services, and preserves
+the baseline and types. Compatibility reports also appear as `compatibility`
+JSON events with fingerprints, change paths/reasons, and a breaking count.
+The session receipt includes the latest comparison. Offline comparisons use:
+
+```sh
+gregale data-api diff --baseline schema.json --current candidate.json --check
+```
+
+Both files use the versioned JSON format from `data-api types --snapshot` or the
+local saved contract. Offline diff validates contract shapes and fingerprints
+and requires no login, database connection, or running development services.
+
+Ctrl-C, SIGTERM, normal exit, and startup failure remove the session's containers,
+anonymous PostgreSQL volume, temporary runtime, and identity file. Generated
+types and the accepted local contract stay in the project. Each session starts
+with an empty database. If Docker becomes unavailable during cleanup, the command
+prints exact container removal commands.
+A force-killed process cannot clean up; remove its containers marked
+`gregale.data-api.dev=true` manually with their volumes. Local checks do not
+qualify a managed provider or staging deployment.
+
 ## Create an API
 
 Start with a ready managed database. Use your application's identity provider
