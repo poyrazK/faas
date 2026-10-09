@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": 1,
   "comment": "Tier 3 (issue #197 B3.5 + B3.6). The FROM line in each Dockerfile below this lock is digest-pinned; this lock is the source of truth. `make images-lock-update` resolves the current registry digest and updates BOTH the lock and the FROM line. CI runs `make images-lock-check` to fail any PR that drifts (either a Dockerfile with a non-digest-pinned FROM, or a Dockerfile whose FROM line doesn't match the lock's `pinned_in_dockerfile` field). The PLACEHOLDER digests below fail the check by design \u2014 the operator runs `make images-lock-update` once at PR-merge time, before this file is squashed into main. `scratch` is the canonical empty image and is exempt from the lock (audit_dockerfile_froms.py whitelists it).",
-  "generated_at": "2026-10-06T15:24:35Z",
+  "generated_at": "2026-10-09T05:32:54Z",
   "generated_by": "make images-lock-update",
   "pinned": [
     {
@@ -19,35 +19,35 @@
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "golang:1.26.6",
+      "alias": "golang:1.26.9",
       "resolved_repo": "docker.io/library/golang",
-      "resolved_tag": "1.26.6",
+      "resolved_tag": "1.26.9",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS guest-init-build"
+      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS guest-init-build"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "golang:1.26.6",
+      "alias": "golang:1.26.9",
       "resolved_repo": "docker.io/library/golang",
-      "resolved_tag": "1.26.6",
+      "resolved_tag": "1.26.9",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS buildkit-client-build"
+      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS buildkit-client-build"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "golang:1.26.6",
+      "alias": "golang:1.26.9",
       "resolved_repo": "docker.io/library/golang",
-      "resolved_tag": "1.26.6",
+      "resolved_tag": "1.26.9",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6",
-      "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS runc-build"
+      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
+      "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS runc-build"
     },
     {
       "dockerfile": "images/base-debian-parent.Dockerfile",
