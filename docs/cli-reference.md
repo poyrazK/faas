@@ -8921,20 +8921,27 @@ Plan a promotion
 
 #### projects environments promote
 
-Promote workloads
+Promote workloads or choose environments interactively
 
-`gregale projects environments promote --from <ENV> --to <ENV> [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout <SECONDS|DURATION>]`
+`gregale projects environments promote [--interactive] [--from <ENV>] [--to <ENV>] [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout <SECONDS|DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--from <ENV>` | source environment | required |
-| `--to <ENV>` | target environment | required |
+| `--interactive` | choose source and destination, review changes, confirm, and follow progress |  |
+| `--from <ENV>` | source environment (required unless interactive) |  |
+| `--to <ENV>` | target environment (required unless interactive) |  |
 | `--sync-config` | copy source non-secret environment configuration to the target |  |
 | `--yes` | confirm the promotion |  |
 | `--idempotency-key <KEY>` | stable key for retrying this promotion |  |
 | `--wait` | wait for the promotion to reach a terminal status |  |
 | `--progress` | print promotion transitions while waiting (human output only) |  |
 | `--timeout <SECONDS|DURATION>` | maximum wait for promotion completion (seconds, or a duration such as 10m) |  |
+
+Examples:
+
+```sh
+gregale projects environments promote my-project --interactive
+```
 
 #### projects environments status
 

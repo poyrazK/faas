@@ -110,6 +110,28 @@ the check reflects the saved endpoint and its own credential. Terminal input
 and output are required. Scripts can use `gregale profile use <name>` and
 `gregale profile check` separately.
 
+## Guided environment promotion
+
+Run `gregale projects environments promote my-project --interactive` to choose
+source and destination environments. Protected environments are marked in the
+list. Choose whether to copy non-secret source configuration; secrets remain
+scoped to the destination.
+
+The flow displays the existing promotion preview, including release graphs,
+workload changes, configuration changes, and blockers. Confirmation names the
+project and both environments and defaults to no. Promotion uses the exact
+reviewed preview token and the existing protected-environment approval flow.
+Stale previews are rejected by the server and require a fresh review.
+
+After submission, the flow waits and shows promotion progress. Use `--timeout`
+to set the wait deadline (seconds or a duration, up to 24 hours). Interruption
+or a wait timeout does not undo an accepted promotion. The existing promotion
+status command can continue observing its promotion ID.
+
+This mode requires terminal input and output and accepts only `--timeout`
+alongside `--interactive`. Scripts retain the existing explicit `--from`,
+`--to`, `--sync-config`, `--yes`, `--wait`, and `--progress` options.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

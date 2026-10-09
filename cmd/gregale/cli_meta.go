@@ -3594,9 +3594,10 @@ var cliCommands = []cliCommand{
 					{Name: "to", Short: "target environment", Value: "ENV", Req: true},
 					{Name: "sync-config", Short: "include non-secret source config in the promotion preview"},
 				}},
-				{Name: "promote", Short: "Promote workloads", Flags: []cliFlag{
-					{Name: "from", Short: "source environment", Value: "ENV", Req: true},
-					{Name: "to", Short: "target environment", Value: "ENV", Req: true},
+				{Name: "promote", Short: "Promote workloads or choose environments interactively", Examples: []string{"gregale projects environments promote my-project --interactive"}, Flags: []cliFlag{
+					{Name: "interactive", Short: "choose source and destination, review changes, confirm, and follow progress", Bool: true},
+					{Name: "from", Short: "source environment (required unless interactive)", Value: "ENV"},
+					{Name: "to", Short: "target environment (required unless interactive)", Value: "ENV"},
 					{Name: "sync-config", Short: "copy source non-secret environment configuration to the target"},
 					{Name: "yes", Short: "confirm the promotion"},
 					{Name: "idempotency-key", Short: "stable key for retrying this promotion", Value: "KEY"},
