@@ -745,7 +745,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedRealtimeDrainWorker(ctx)
 		go srv.runManagedExecutionWorkflowWorker(ctx)
 		go srv.runDurableEntityAlarms(ctx)
+		go srv.runDurableEntityOutbox(ctx)
 		go srv.runDurableEntityMaintenance(ctx)
+		go srv.runDurableEntityHealth(ctx)
+		go srv.runDurableEntityBackups(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
 		// missed notification is repaired by the next reconnect or boot.

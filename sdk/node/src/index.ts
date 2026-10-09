@@ -171,6 +171,16 @@ export { decodeExecutionArtifact } from './execution-artifacts.js';
 
 export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationSubject, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport, type OperationMilestoneReport, type OperationMilestone, type OperationWorkflowState, type OperationMilestones, type OperationMilestonePageOptions, type OperationBusinessMilestoneOptions } from './customer-operations.js';
 export { GregaleOperations, type GregaleOperationsOptions, type OperationExecutionContext } from './operations-runtime.js';
+export {
+  decodeDurableEntityHandlerRequest, durableEntityWebhookIntent, encodeDurableEntityTransition,
+  type DurableEntityIdentity, type DurableEntityHandlerLimits, type DurableEntityHandlerRequest,
+  type DurableEntityWebhookIntent, type DurableEntityTransition,
+} from './durable-entity-handler.js';
+export {
+  DURABLE_ENTITY_PROTOCOL_VERSION, DURABLE_ENTITY_OUTBOX_PROTOCOL_VERSION,
+  DURABLE_ENTITY_MAX_REQUEST_BYTES, DURABLE_ENTITY_MAX_TRANSITION_BYTES, DURABLE_ENTITY_HANDLER_PATH,
+  DURABLE_ENTITY_RESTORE_VALIDATION_PROTOCOL_VERSION, DURABLE_ENTITY_RESTORE_VALIDATION_PATH, DURABLE_ENTITY_RESTORE_VALIDATION_MAX_RESPONSE_BYTES,
+} from './durable-entity-contract.js';
 
 export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
 
@@ -193,3 +203,14 @@ export {
 
 export { OperationMilestonePublicationError, type CustomerOperationTransaction } from './customer-operation-milestones.js';
 export { OperationWorkflowStatePublicationError, type OperationWorkflowStateReport, type OperationWorkflowStateReceipt } from './customer-operation-workflow-states.js';
+
+export { inspectDurableEntity, type DurableEntityInspectOptions } from './durable-entities.js';
+export { retryDurableEntity, type DurableEntityRetryOptions } from './durable-entities.js';
+export { exportDurableEntity, restoreDurableEntity, type DurableEntityExportOptions, type DurableEntityRestoreOptions } from './durable-entities.js';
+export { listDurableEntityBackups, getDurableEntityBackup, previewDurableEntityRestore, type DurableEntityBackupListOptions, type DurableEntityBackupGetOptions, type DurableEntityRestorePreviewOptions } from './durable-entities.js';
+export { decodeDurableEntityRestoreValidationRequest, encodeDurableEntityRestoreValidation, type DurableEntityRestoreValidationRequest } from './durable-entity-restore-validation.js';
+export { validateDurableEntityRestore, type DurableEntityRestoreValidationOptions } from './durable-entities.js';
+
+export { durableEntityHandle, DurableEntityResultDecodeError, type DurableEntityHandleScope, type DurableEntityResult } from './durable-entity-handle.js';
+export { decodeDurableEntityCall, DurableEntityTransitionBuilder, type DurableEntityCall, type DurableEntityCallOptions } from './durable-entity-call.js';
+export { decodeDurableEntitySchemaCall, type DurableEntityStateSchema, type DurableEntitySchemaState, type DurableEntitySchemaCall } from './durable-entity-schema.js';

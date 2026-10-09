@@ -720,3 +720,25 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-836: Release graph lifecycle successor bindings](836-release-graph-lifecycle-successors.md)
 
 - [ADR-837: Production lifecycle review history](837-production-lifecycle-review-history.md)
+
+- [ADR-843: Durable entity outbox relay and transport acceptance](843-durable-entity-outbox-relay.md)
+
+- [ADR-844: Gated durable entity guest outbox protocol](844-durable-entity-guest-outbox-protocol.md)
+
+- [ADR-845: Account-scoped durable entity inspection](845-durable-entity-owner-inspection.md)
+
+- [ADR-846: Owner recovery for exhausted durable entity work](846-durable-entity-exhausted-work-recovery.md)
+
+- [ADR-847: Bounded durable entity operational health](847-durable-entity-operational-health.md)
+
+- [ADR-848: Typed durable entity SDK handles and guest transitions](848-typed-durable-entity-sdk.md)
+
+- [ADR-849: Durable entity application-state schema migrations](849-durable-entity-application-schema-migrations.md)
+
+- [ADR-850: Durable entity application-state export and restore](850-durable-entity-state-export-restore.md)
+
+- [ADR-851: Durable entity owner state recovery API](851-durable-entity-owner-state-recovery-api.md)
+
+- [ADR-852: Scheduled durable entity backups and restore preview](852-durable-entity-scheduled-backups-and-restore-preview.md)
+
+- [ADR-853: Application-validated durable entity restore](853-durable-entity-application-validated-restore.md)

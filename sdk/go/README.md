@@ -158,6 +158,39 @@ Install `OperationReceiptSchema` explicitly as the database owner and send
 recovery. See the [transactional handler guide](../../docs/operation-transactions.md)
 for scope checks, receipt retention, and `ErrOperationCommitUnknown` handling.
 
+## Durable entity guest handlers
+
+The separately gated guest protocol v2 accepts registered app-webhook intents
+with a pure state transition. Use `DecodeDurableEntityHandlerRequest` on a body
+bounded with `DurableEntityHandlerMaxRequestBytes`. Decode and validate your
+business input before constructing a response:
+
+```go
+intent, err := call.WebhookIntent(webhookID, "reservation.confirmed", map[string]any{
+    "reservation_key": call.Entity.Key, "quantity": 2,
+})
+if err != nil { return err }
+next := json.RawMessage(`{"status":"reserved","quantity":2}`)
+body, err := call.EncodeTransition(faas.DurableEntityTransition{
+    Data: next, Result: next, Outbox: []faas.DurableEntityWebhookIntent{intent},
+})
+if err != nil { return err }
+// Send body unchanged as application/json; Gregale performs the fenced commit.
+```
+
+The helper produces JSON only. Never send a notification or mutate an external
+system during handler computation. V1 parsing/pure responses remain supported,
+but outgoing work requires negotiated v2. Advertised batch limits come from
+Gregale's central table; complete queue/snapshot/storage bounds remain platform
+checks. Omit Outbox to append nothing; nil AlarmAt clears the alarm. Parsing an
+envelope does not authenticate a public endpoint.
+
+API retries retain the same entity `RequestID` and exact payload bytes; receivers
+deduplicate the platform's stable message ID. Commit, transport acceptance and
+receiver completion are separate outcomes. Both gates remain disabled pending
+testing-agent qualification. See the
+[reservation example](../../examples/durable-entity-reservations/README.md).
+
 ## Idempotency
 
 Every mutating call (POST/PATCH/DELETE) carries an `Idempotency-Key`
@@ -357,3 +390,196 @@ and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
 holds are supported. Event-hold changes and governance bypass are unsupported.
 See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
+
+## Inspect durable entity metadata
+
+The owner-only preview endpoint `GET /v1/apps/{slug}/entities/inspect` accepts
+required `namespace` and `key`, plus optional `environment` and
+`platform_tenant_id`. It returns the committed version, alarm status and pending
+outbox metadata without running the guest or exposing state/message payloads.
+It requires account `apps:read` or admin permission and preview app enablement.
+Missing delivery history is `unknown`; an empty queue does not prove delivery.
+
+```go
+inspection, err := client.InspectDurableEntity(ctx, "reservations", faas.DurableEntityInspectRequest{
+    Namespace: "reservations", Key: "reservation:123",
+})
+```
+
+## Re-arm exhausted entity work
+
+Use `POST /v1/apps/{slug}/entities/retry` after a fresh inspection reports the
+selected alarm or outbox head as exhausted. Copy its version, recovery revision
+and exact alarm deadline or head ID. Recovery requires account deploy-write or
+admin permission and existing execution admission; diagnostic read permission
+alone does not grant retry authority. Active owners block recovery.
+
+A successful response resets retry metadata only. Workers must be enabled to
+resume processing. Committed state and message identities stay intact; terminal
+receiver deliveries are not resent. After a conflict or uncertain response,
+inspect again before deciding whether to submit another recovery.
+
+```go
+if inspection.Outbox.Exhausted {
+    recovery, err := client.RetryDurableEntity(ctx, "reservations", faas.DurableEntityRetryRequest{
+        Namespace: "reservations", Key: "reservation:123", Target: "outbox",
+        ExpectedVersion: inspection.Version,
+        ExpectedRecoveryRevision: inspection.RecoveryRevision,
+        HeadID: inspection.Outbox.HeadID,
+    })
+    _ = recovery
+    _ = err
+}
+```
+
+For an alarm, use `Target: "alarm"` and `AlarmAt: inspection.Alarm.AlarmAt`,
+omitting `HeadID`. Preserve any environment/customer selectors used for inspection.
+
+## Typed entity handles and pure guest calls
+
+```go
+type CounterResult struct { Count int `json:"count"` }
+handle, err := faas.NewDurableEntityHandle[map[string]int, CounterResult](client, "counter", faas.DurableEntityInspectRequest{
+    Namespace: "counters", Key: "customer:456", Environment: "staging",
+})
+if err != nil { return err }
+result, err := handle.Invoke(ctx, "stable-operation-id", map[string]int{"delta": 1})
+```
+
+Handles retain their app/entity/environment/customer selectors. Invoke always
+requires an explicit request ID. After uncertain responses or result decoding
+errors, retain the same ID and exact payload; result decoding can fail after a
+successful commit. The returned typed result preserves acknowledged version and
+replay status when its value cannot be decoded. `handle.Inspect` and
+`handle.Retry` reuse the bound selectors; recovery never silently refreshes its
+comparison fence.
+
+Inside the existing trusted guest handler, use typed calls and a pure builder:
+
+```go
+type Counter struct { Count int `json:"count"` }
+type Input struct { Delta int `json:"delta"` }
+call, err := faas.DecodeDurableEntityCall[Counter, Input](body, Counter{})
+if err != nil { return nil, err }
+if call.Entity.Namespace != "counters" { return nil, errors.New("unexpected entity namespace") }
+if call.Event == "alarm" { return call.Transition(call.State, nil).ClearAlarm().Encode() }
+next := Counter{Count: call.State.Count + call.Payload.Delta}
+return call.Transition(next, next).Encode()
+```
+
+Validate application fields, integer overflow and persisted schema explicitly.
+Version-zero initialization is JSON-isolated; committed state is never reset on
+decode failure. Transition builders preserve the existing alarm by default.
+Use `ScheduleAlarm(deadline)` or `ClearAlarm()` explicitly, especially when
+consuming alarm events. `Webhook(registeredID, event, payload)` appends an intent
+and performs no send. A rejected intent poisons the builder even if its error is
+ignored; `Encode` also enforces negotiated byte/batch bounds.
+
+Guest computation must remain pure. Envelope decoding is not public endpoint
+authentication, and encoding is not commit acknowledgement. Outgoing intents
+require v2 opt-in. See [the typed example](../../examples/durable-entity-sdk/README.md)
+and [ADR-848](../../docs/adr/848-typed-durable-entity-sdk.md). These local additions
+have not been tested or built in this workspace.
+
+## Application state schema migrations
+
+`DecodeDurableEntitySchemaCall[State, Payload]` opts into stored
+`{"schema_version": n, "data": ...}` envelopes. Supply a positive current
+`DurableEntityStateSchema.Version`, pure `Initial`, `Validate`, and a complete
+`Migrations[n]` chain where each function transforms JSON data from n to n+1.
+Schema versions are uint32 values independent of the entity's commit version.
+
+```go
+schema := faas.DurableEntityStateSchema[Counter]{
+    Version: 2,
+    Initial: func() Counter { return Counter{} },
+    Validate: func(state Counter) error {
+        if state.Count < 0 { return errors.New("negative counter") }
+        return nil
+    },
+    Migrations: map[uint32]func(json.RawMessage) (json.RawMessage, error){
+        1: func(raw json.RawMessage) (json.RawMessage, error) {
+            var old struct { Total *int `json:"total"` }
+            if err := json.Unmarshal(raw, &old); err != nil { return nil, err }
+            if old.Total == nil { return nil, errors.New("missing old total") }
+            return json.Marshal(Counter{Count: *old.Total})
+        },
+    },
+}
+call, err := faas.DecodeDurableEntitySchemaCall[Counter, Input](body, schema)
+if err != nil { return nil, err }
+return call.Transition(call.State, call.State).Encode()
+```
+
+The final example performs a migration-only business transition; it still
+commits through the normal invocation path and increments the commit version.
+Production handlers should explicitly handle invocation/alarm input and consume
+or replace due alarms. Preparation does not write state. `StoredSchemaVersion`
+and `Migrated` describe the local upgrade; the schema call's `Transition` always
+stores the current envelope and validates new state at encoding.
+
+Missing steps, malformed/future envelopes and invalid outputs are rejected.
+Unwrapped committed data requires an explicit `LegacyVersion`; do not set one
+unless its decoder really matches existing data. Go struct decoding alone does
+not enforce required JSON fields; use pointer fields/custom decoding and your
+validator where necessary. All callbacks must be pure and deterministic.
+
+Deploy schema-aware writers at the existing schema before upgrading. Legacy
+application code that ignores the envelope is not fenced by this SDK contract.
+Once upgraded state commits, rollback code must still understand that schema.
+See [ADR-849](../../docs/adr/849-durable-entity-application-schema-migrations.md).
+Tests and builds remain unverified in this workspace.
+
+### Durable entity state export and restore
+
+Owner preview APIs export application data and restore it through an expected
+business version and stable request ID. Export needs read scope; restore needs
+deploy-write scope and the existing mutation gates. Preserve the complete export
+privately. Restore retains current alarms, receipts, outbox and delivery retries;
+it does not invoke guest code or rewind effects. Check application schema
+compatibility before restoring.
+
+After timeout or an uncertain response, retry the identical request ID and body,
+including the original expected version. Start a new operation only after resolving
+the previous outcome. A successful retry can return `replayed: true`. Checksum
+validation requires serialization fidelity; do not edit the exported data.
+
+This implementation is local and unqualified; tests/builds are pending. See
+[ADR-851](../../docs/adr/851-durable-entity-owner-state-recovery-api.md).
+
+Use `client.ExportDurableEntity(ctx, slug, selectors)` and `client.RestoreDurableEntity(ctx, slug, request)`.
+
+### Backups and restore preview
+
+Operator-enabled backups capture application data hourly with eventual seven-day
+retention. Owner read-scope clients can list backup metadata, read an exact backup
+and preview a restore. Preview reports observed versions, recognizable schema
+versions and preserved pending work. Compatibility remains `unverified`; validate
+application data separately. Preview does not reserve a version or promise storage
+capacity. Actual restore still requires deploy-write scope, expected version and
+stable request ID. See [the operator guide](../../docs/runbooks/FaasDurableEntityBackups.md).
+
+Use `ListDurableEntityBackups(ctx, slug, selectors, cursor)`, `GetDurableEntityBackup(ctx, slug, selectors, backupID)` and `PreviewDurableEntityRestore(ctx, slug, request)`.
+
+### Application-validated restore
+
+The default-off operator gate `FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED=1`
+makes every new owner restore require `validation_deployment_id`. First call the
+owner validation endpoint with the same selectors, exported data, expected version
+and stable request ID. It needs deploy-write scope and execution permissions; it
+runs application code and consumes normal invocation resources. A true verdict
+names the checked deployment. Put that ID in the restore request; restore validates
+again under its private claim. A false verdict commits no state. Receipt replay
+skips validation. Keep the identical request, including the pin, for uncertain
+restore retries.
+
+The distinct guest route is `/__gregale/entities/validate-restore`; validators must
+be synchronous and pure, returning only a versioned boolean verdict. No normal
+transition, alarm or outbox output is admitted. External application I/O is not
+independently disabled by the current runtime. Validators do not migrate data.
+The read-only metadata preview remains separate and does not execute the guest.
+Deployment selection is checked before/after validation, but deployment routing
+and bucket publication are not atomic; avoid deployment changes during recovery.
+See [ADR-853](../../docs/adr/853-durable-entity-application-validated-restore.md).
+
+Use `ValidateDurableEntityRestore(ctx, slug, request)` and set `request.ValidationDeploymentID` for restore. Guest helpers are `DecodeDurableEntityRestoreValidationRequest` and `EncodeDurableEntityRestoreValidation`; errors become rejection without exposing error text.

@@ -15,6 +15,10 @@ import (
 // one publication. A second process using the same claim can lose CAS and must
 // retry the SAME request. A replay never invokes the callback again.
 func (m *Manager) Execute(ctx context.Context, claim Claim, request Request, handler func(context.Context, View) (Transition, error)) (Result, error) {
+	return m.execute(ctx, claim, request, handler, false)
+}
+
+func (m *Manager) execute(ctx context.Context, claim Claim, request Request, handler func(context.Context, View) (Transition, error), preserveDelivery bool) (Result, error) {
 	if !claim.ID.valid() || !validIdentity(request.ID) || !json.Valid(request.Payload) || handler == nil {
 		return Result{}, ErrInvalid
 	}
@@ -59,10 +63,14 @@ func (m *Manager) Execute(ctx context.Context, claim Claim, request Request, han
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	return m.commit(ctx, claim, value, state, request.ID, fingerprint, transition)
+	return m.commitMode(ctx, claim, value, state, request.ID, fingerprint, transition, preserveDelivery)
 }
 
 func (m *Manager) commit(ctx context.Context, claim Claim, base manifest, state snapshot, requestID, fingerprint string, transition Transition) (Result, error) {
+	return m.commitMode(ctx, claim, base, state, requestID, fingerprint, transition, false)
+}
+
+func (m *Manager) commitMode(ctx context.Context, claim Claim, base manifest, state snapshot, requestID, fingerprint string, transition Transition, preserveDelivery bool) (Result, error) {
 	if !json.Valid(transition.Data) || !json.Valid(transition.Result) || !validAlarm(transition.AlarmAt) {
 		return Result{}, ErrInvalid
 	}
@@ -72,7 +80,7 @@ func (m *Manager) commit(ctx context.Context, claim Claim, base manifest, state 
 	state.Version++
 	state.Data = append(json.RawMessage(nil), transition.Data...)
 	state.AlarmAt = copyTime(transition.AlarmAt)
-	if err := appendOutbox(&state, transition.Outbox); err != nil {
+	if err := appendOutbox(&state, transition.Outbox, m.now()); err != nil {
 		return Result{}, err
 	}
 	saved := receipt{Fingerprint: fingerprint, Result: append(json.RawMessage(nil), transition.Result...), Version: state.Version}
@@ -115,13 +123,16 @@ func (m *Manager) commit(ctx context.Context, claim Claim, base manifest, state 
 	}
 	latest.Version, latest.SnapshotKey, latest.SnapshotHash = state.Version, key, digest(body)
 	latest.StorageUsage = usage
-	latest.AlarmDelivery = nil
+	if !preserveDelivery {
+		latest.AlarmDelivery = nil
+	}
 	if err := m.putManifest(ctx, latest, etag); err != nil {
 		return Result{}, err
 	}
 	// Index hints are repairable. Failure after the authoritative publication
 	// cannot turn an acknowledged transition into a failure.
 	m.publishAlarmHint(ctx, latest, state)
+	m.publishOutboxHint(ctx, latest, state)
 	// Return the encoded receipt representation so first delivery and replay
 	// agree even when a handler supplied whitespace in its JSON result.
 	encoded, err := json.Marshal(saved.Result)

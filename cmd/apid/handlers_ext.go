@@ -2428,6 +2428,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		return state.Deployment{}, problem
 	}
+	if problem := s.durableEntityValidatorReleaseProblem(ctx, app, target); problem != nil {
+		return state.Deployment{}, problem
+	}
 	var current state.Deployment
 	current, err = s.store.LiveDeploymentForScope(ctx, app.ID, target.Scope)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -5995,6 +5998,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 // on list surfaces while making GET /v1/deployments/{id} self-contained.
 func (s *server) deploymentResponseWithBuild(ctx context.Context, d state.Deployment, app state.App) api.DeploymentResponse {
 	resp := s.deploymentResponse(d, app)
+	resp.DurableEntityValidator = s.deploymentValidatorInfo(ctx, d, app)
 	if d.BuildID == "" {
 		return resp
 	}

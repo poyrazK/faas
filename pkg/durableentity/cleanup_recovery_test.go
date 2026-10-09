@@ -166,7 +166,7 @@ func TestMaintenanceManifestRejectsOldSchema(t *testing.T) {
 	if err := json.Unmarshal(body, &value); err != nil {
 		t.Fatal(err)
 	}
-	if value.Schema != 5 || value.Generation != 1 {
+	if value.Schema != 6 || value.Generation != 1 {
 		t.Fatal(value)
 	}
 	value.Schema = 1

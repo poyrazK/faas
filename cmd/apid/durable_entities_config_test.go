@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type entityConfigProvider struct {
@@ -57,7 +58,7 @@ func (p *entityConfigProvider) ListObjects(ctx context.Context, _, prefix, curso
 }
 
 func (p *entityConfigProvider) DeleteObject(ctx context.Context, _, key string) error {
-	if !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/maintenance/") && !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/alarms/") {
+	if !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/maintenance/") && !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/alarms/") && !strings.HasPrefix(key, "gregale/durable-entities/v1/probes/outbox/") {
 		return errors.New("configuration probe touched real state")
 	}
 	p.deletes++
@@ -68,7 +69,7 @@ func (p *entityConfigProvider) DeleteObject(ctx context.Context, _, key string) 
 }
 
 func TestDurableEntityBackgroundWorkersCheckDeleteOnlyWhenEnabled(t *testing.T) {
-	for _, feature := range []string{"MAINTENANCE", "ALARMS"} {
+	for _, feature := range []string{"MAINTENANCE", "ALARMS", "OUTBOX", "OUTBOX_HANDLERS", "BACKUPS"} {
 		for _, enabled := range []bool{false, true} {
 			for _, failure := range []string{"none", "delete", "write"} {
 				t.Run(strings.Join([]string{feature, boolLabel(enabled), failure}, "/"), func(t *testing.T) {
@@ -88,14 +89,17 @@ func TestDurableEntityBackgroundWorkersCheckDeleteOnlyWhenEnabled(t *testing.T) 
 					config := map[string]string{"FAAS_DURABLE_ENTITIES_ENABLED": "1", "FAAS_DURABLE_ENTITY_BACKEND": "private", "FAAS_DURABLE_ENTITY_BACKEND_FINGERPRINT": backend.Fingerprint, "FAAS_DURABLE_ENTITY_BUCKET": "private-entities", "FAAS_DURABLE_ENTITY_APPS": uuid.NewString()}
 					if enabled {
 						config["FAAS_DURABLE_ENTITY_"+feature+"_ENABLED"] = "1"
+						if feature == "OUTBOX_HANDLERS" {
+							config["FAAS_DURABLE_ENTITY_OUTBOX_ENABLED"] = "1"
+						}
 					}
-					s := &server{objectStorage: registry}
+					s := &server{objectStorage: registry, store: state.NewMemStore()}
 					err = s.configureDurableEntities(t.Context(), func(key string) string { return config[key] })
 					if enabled && provider.denyDelete || provider.denyWrite {
 						if err == nil || strings.Contains(err.Error(), "private-provider-secret") || s.durableEntities != nil {
 							t.Fatal("failed probe leaked details or enabled the engine", err)
 						}
-					} else if err != nil || s.durableEntities == nil || s.durableEntityMaintenanceEnabled != (enabled && feature == "MAINTENANCE") || s.durableEntityAlarmsEnabled != (enabled && feature == "ALARMS") {
+					} else if err != nil || s.durableEntities == nil || s.durableEntityMaintenanceEnabled != (enabled && feature == "MAINTENANCE") || s.durableEntityAlarmsEnabled != (enabled && feature == "ALARMS") || s.durableEntityOutboxEnabled != (enabled && (feature == "OUTBOX" || feature == "OUTBOX_HANDLERS")) || s.durableEntityOutboxHandlersEnabled != (enabled && feature == "OUTBOX_HANDLERS") || s.durableEntityBackupsEnabled != (enabled && feature == "BACKUPS") {
 						t.Fatal("configuration gates failed", err)
 					}
 					expectedDeletes := boolInt(enabled && !provider.denyWrite)
@@ -109,11 +113,37 @@ func TestDurableEntityBackgroundWorkersCheckDeleteOnlyWhenEnabled(t *testing.T) 
 
 }
 
+func TestDurableEntityOutboxHandlersRequireRelayBeforeProviderAccess(t *testing.T) {
+	for _, config := range []map[string]string{
+		{"FAAS_DURABLE_ENTITY_OUTBOX_HANDLERS_ENABLED": "1"},
+		{"FAAS_DURABLE_ENTITIES_ENABLED": "1", "FAAS_DURABLE_ENTITY_OUTBOX_HANDLERS_ENABLED": "1"},
+		{"FAAS_DURABLE_ENTITY_OUTBOX_ENABLED": "1", "FAAS_DURABLE_ENTITY_OUTBOX_HANDLERS_ENABLED": "1"},
+	} {
+		s := &server{}
+		err := s.configureDurableEntities(t.Context(), func(key string) string { return config[key] })
+		if err == nil || s.durableEntities != nil || s.durableEntityOutboxHandlersEnabled {
+			t.Fatal("unbacked guest messaging was enabled", err)
+		}
+	}
+}
+
 func boolLabel(value bool) string {
 	if value {
 		return "on"
 	}
 	return "off"
+}
+
+func TestRestoreValidationRequiresInvocationPreview(t *testing.T) {
+	s := &server{}
+	if err := s.configureDurableEntities(t.Context(), func(key string) string {
+		if key == "FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED" {
+			return "1"
+		}
+		return ""
+	}); err == nil || s.durableEntityRestoreValidationEnabled || s.durableEntities != nil {
+		t.Fatal("application validation enabled without invocation preview")
+	}
 }
 
 func boolInt(value bool) int {

@@ -6,6 +6,7 @@ import type { BuildPlan } from './BuildPlan.js';
 import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 import type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
+import type { DurableEntityValidatorDeploymentInfo } from './DurableEntityValidatorDeploymentInfo.js';
 import type { LogExcerpt } from './LogExcerpt.js';
 import type { RollbackOperation } from './RollbackOperation.js';
 import type { ScanResult } from './ScanResult.js';
@@ -17,6 +18,7 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design.
  */
 export type DeploymentResponse = {
+  durable_entity_validator?: DurableEntityValidatorDeploymentInfo;
   /**
    * Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code, retry_not_before and completed_at during unavailable candidate verification recovery (ADR-481, ADR-482). last_error_code distinguishes publication, gateway, transport and candidate-evidence failures; a transport failure does not attribute blame to the app or platform. retry_not_before is an eligibility floor, not a promised delivery time; completed_at means the attempt finished, while the hosting receipt records its verdict.
    */

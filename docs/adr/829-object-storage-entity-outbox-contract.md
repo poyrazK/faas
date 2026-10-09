@@ -80,3 +80,21 @@ fixtures exercise pending-message restoration/replay. Native microVM and real
 bucket crash/partition/latency/cost evidence remain with the dedicated testing
 agent; fixtures do not qualify those environments. The preview remains disabled
 by default.
+
+## Relay implementation addendum — 2026-10-09
+
+[ADR-843](843-durable-entity-outbox-relay.md) implements the internal FIFO relay,
+manifest reservations, current scope admission, retention-safe deduplicating
+webhook acceptance and fenced acknowledgement. Manifest writers now use schema
+6; the schema-5 writer described above is historical. Verification remains
+pending, the relay remains default-disabled, and guest protocol v1 still rejects
+outgoing work. Entity/pending/retry authority stays in object storage; SQL holds
+transport acceptance and delivery metadata.
+
+## Guest protocol follow-on — 2026-10-09
+
+[ADR-844](844-durable-entity-guest-outbox-protocol.md) adds a separate default-off
+v2 handler gate behind the relay, pre-commit destination/scope admission, pure
+Go/Node helpers and a reservation/confirmation example. Protocol v1 remains
+closed to outgoing work. Automated and native/live-provider qualification are
+still pending; this source draft does not enable customer delivery.

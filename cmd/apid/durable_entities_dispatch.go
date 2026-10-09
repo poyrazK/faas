@@ -22,30 +22,43 @@ func (s *server) dispatchDurableEntityHandler(ctx context.Context, acct state.Ac
 	if err != nil {
 		return durableentity.Transition{}, err
 	}
-	body, err := json.Marshal(durableentity.HandlerRequest{ProtocolVersion: api.DurableEntityProtocolVersion, Event: event, Entity: id, RequestID: request.RequestID, Payload: request.Payload, State: view, DeploymentID: version.DeploymentID})
+	envelope := durableentity.HandlerRequest{ProtocolVersion: api.DurableEntityProtocolVersion, Event: event, Entity: id, RequestID: request.RequestID, Payload: request.Payload, State: view, DeploymentID: version.DeploymentID}
+	if s.durableEntityOutboxEnabled && s.durableEntityOutboxHandlersEnabled {
+		envelope.ProtocolVersion, envelope.Limits = api.DurableEntityOutboxProtocolVersion, durableentity.OutboxHandlerLimits()
+	}
+	body, err := json.Marshal(envelope)
 	if err != nil {
 		return durableentity.Transition{}, durableentity.ErrLimit
 	}
 	if len(body) > api.MaxDurableEntityInvocationBytes {
 		return durableentity.Transition{}, &durableentity.LimitError{Budget: "invocation_bytes", Limit: api.MaxDurableEntityInvocationBytes, Observed: int64(len(body))}
 	}
+	final, err := s.enqueueDurableEntityGuest(ctx, acct, inv, body)
+	if err != nil {
+		return durableentity.Transition{}, err
+	}
+
+	return s.durableEntityHandlerTransition(ctx, id, final.Result, envelope.ProtocolVersion)
+}
+
+func (s *server) enqueueDurableEntityGuest(ctx context.Context, acct state.Account, inv state.Invocation, body []byte) (state.Invocation, error) {
 	inv.Payload = body
 	deadline, ok := ctx.Deadline()
 	if !ok {
-		return durableentity.Transition{}, context.DeadlineExceeded
+		return state.Invocation{}, context.DeadlineExceeded
 	}
 	inv.DeadlineAt, inv.DueAt = &deadline, time.Now().UTC()
 	inv.ResultRetentionUntil = retentionForRequest(nil, acct)
 	inv.RetryPolicyJSON, _ = json.Marshal(api.RetryPolicyDTO{MaxAttempts: 1})
 	queued, problem := s.enqueuePreparedInvocation(ctx, inv, "enqueue entity handler")
 	if problem != nil {
-		return durableentity.Transition{}, problem
+		return state.Invocation{}, problem
 	}
 	final, err := s.waitDurableEntityHandler(ctx, queued.ID)
 	if err != nil {
-		return durableentity.Transition{}, err
+		return state.Invocation{}, err
 	}
-	return durableentity.DecodeTransition(final.Result)
+	return final, nil
 }
 
 func (s *server) durableEntityInvocationVersion(ctx context.Context, app state.App, scope string, id durableentity.ID) (state.Invocation, state.InvocationVersion, error) {

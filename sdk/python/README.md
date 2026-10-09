@@ -334,3 +334,102 @@ and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
 holds are supported. Event-hold changes and governance bypass are unsupported.
 See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
+
+## Inspect durable entity metadata
+
+The owner-only preview endpoint `GET /v1/apps/{slug}/entities/inspect` accepts
+required `namespace` and `key`, plus optional `environment` and
+`platform_tenant_id`. It returns the committed version, alarm status and pending
+outbox metadata without running the guest or exposing state/message payloads.
+It requires account `apps:read` or admin permission and preview app enablement.
+Missing delivery history is `unknown`; an empty queue does not prove delivery.
+
+```python
+from faas_sdk.api.invocations import inspect_durable_entity
+inspection = inspect_durable_entity.sync(
+    "reservations", client=client, namespace="reservations", key="reservation:123",
+)
+```
+
+## Re-arm exhausted entity work
+
+Use `POST /v1/apps/{slug}/entities/retry` after a fresh inspection reports the
+selected alarm or outbox head as exhausted. Copy its version, recovery revision
+and exact alarm deadline or head ID. Recovery requires account deploy-write or
+admin permission and existing execution admission; diagnostic read permission
+alone does not grant retry authority. Active owners block recovery.
+
+A successful response resets retry metadata only. Workers must be enabled to
+resume processing. Committed state and message identities stay intact; terminal
+receiver deliveries are not resent. After a conflict or uncertain response,
+inspect again before deciding whether to submit another recovery.
+
+```python
+from faas_sdk.api.invocations import retry_durable_entity
+from faas_sdk.models.durable_entity_retry_request import DurableEntityRetryRequest
+if inspection.outbox.exhausted:
+    recovery = retry_durable_entity.sync("reservations", client=client, body=DurableEntityRetryRequest(
+        namespace="reservations", key="reservation:123",
+        target="outbox",
+        expected_version=inspection.version,
+        expected_recovery_revision=inspection.recovery_revision,
+        head_id=inspection.outbox.head_id,
+    ))
+```
+
+For an alarm, use the `"alarm"` target with `alarm_at=inspection.alarm.alarm_at`
+and omit `head_id`. Preserve environment/customer selectors from inspection.
+
+### Durable entity state export and restore
+
+Owner preview APIs export application data and restore it through an expected
+business version and stable request ID. Export needs read scope; restore needs
+deploy-write scope and the existing mutation gates. Preserve the complete export
+privately. Restore retains current alarms, receipts, outbox and delivery retries;
+it does not invoke guest code or rewind effects. Check application schema
+compatibility before restoring.
+
+After timeout or an uncertain response, retry the identical request ID and body,
+including the original expected version. Start a new operation only after resolving
+the previous outcome. A successful retry can return `replayed: true`. Checksum
+validation requires serialization fidelity; do not edit the exported data.
+
+This implementation is local and unqualified; tests/builds are pending. See
+[ADR-851](../../docs/adr/851-durable-entity-owner-state-recovery-api.md).
+
+Use generated `faas_sdk.api.invocations.export_durable_entity` and `restore_durable_entity` sync/async methods. Restore models use `export` for the JSON `export` property.
+
+### Backups and restore preview
+
+Operator-enabled backups capture application data hourly with eventual seven-day
+retention. Owner read-scope clients can list backup metadata, read an exact backup
+and preview a restore. Preview reports observed versions, recognizable schema
+versions and preserved pending work. Compatibility remains `unverified`; validate
+application data separately. Preview does not reserve a version or promise storage
+capacity. Actual restore still requires deploy-write scope, expected version and
+stable request ID. See [the operator guide](../../docs/runbooks/FaasDurableEntityBackups.md).
+
+Generated modules are `list_durable_entity_backups`, `get_durable_entity_backup` and `preview_durable_entity_restore` under `faas_sdk.api.invocations`. They provide sync/async methods.
+
+### Application-validated restore
+
+The default-off operator gate `FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED=1`
+makes every new owner restore require `validation_deployment_id`. First call the
+owner validation endpoint with the same selectors, exported data, expected version
+and stable request ID. It needs deploy-write scope and execution permissions; it
+runs application code and consumes normal invocation resources. A true verdict
+names the checked deployment. Put that ID in the restore request; restore validates
+again under its private claim. A false verdict commits no state. Receipt replay
+skips validation. Keep the identical request, including the pin, for uncertain
+restore retries.
+
+The distinct guest route is `/__gregale/entities/validate-restore`; validators must
+be synchronous and pure, returning only a versioned boolean verdict. No normal
+transition, alarm or outbox output is admitted. External application I/O is not
+independently disabled by the current runtime. Validators do not migrate data.
+The read-only metadata preview remains separate and does not execute the guest.
+Deployment selection is checked before/after validation, but deployment routing
+and bucket publication are not atomic; avoid deployment changes during recovery.
+See [ADR-853](../../docs/adr/853-durable-entity-application-validated-restore.md).
+
+Use generated `faas_sdk.api.invocations.validate_durable_entity_restore`. The returned `deployment_id` and request `validation_deployment_id` use UUID values. Python guest helpers are not included in this slice.

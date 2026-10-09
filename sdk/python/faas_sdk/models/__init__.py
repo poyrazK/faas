@@ -836,8 +836,33 @@ from .domain_doctor_report import DomainDoctorReport
 from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
 from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
+from .durable_entity_alarm_inspection import DurableEntityAlarmInspection
+from .durable_entity_backup import DurableEntityBackup
+from .durable_entity_backup_info import DurableEntityBackupInfo
+from .durable_entity_backup_page import DurableEntityBackupPage
+from .durable_entity_head_delivery import DurableEntityHeadDelivery
+from .durable_entity_head_delivery_status import DurableEntityHeadDeliveryStatus
+from .durable_entity_inspect_response import DurableEntityInspectResponse
 from .durable_entity_invoke_request import DurableEntityInvokeRequest
 from .durable_entity_invoke_response import DurableEntityInvokeResponse
+from .durable_entity_outbox_inspection import DurableEntityOutboxInspection
+from .durable_entity_restore_preview import DurableEntityRestorePreview
+from .durable_entity_restore_preview_compatibility import DurableEntityRestorePreviewCompatibility
+from .durable_entity_restore_preview_schema_relation import DurableEntityRestorePreviewSchemaRelation
+from .durable_entity_restore_request import DurableEntityRestoreRequest
+from .durable_entity_restore_response import DurableEntityRestoreResponse
+from .durable_entity_restore_validation_response import DurableEntityRestoreValidationResponse
+from .durable_entity_restore_validation_response_isolation import DurableEntityRestoreValidationResponseIsolation
+from .durable_entity_retry_request import DurableEntityRetryRequest
+from .durable_entity_retry_request_target import DurableEntityRetryRequestTarget
+from .durable_entity_retry_response import DurableEntityRetryResponse
+from .durable_entity_retry_response_target import DurableEntityRetryResponseTarget
+from .durable_entity_scope import DurableEntityScope
+from .durable_entity_state_export import DurableEntityStateExport
+from .durable_entity_state_export_format import DurableEntityStateExportFormat
+from .durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
+from .durable_entity_validator_deployment_info_source import DurableEntityValidatorDeploymentInfoSource
+from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
 from .edge_rule_async_action import EdgeRuleAsyncAction
 from .edge_rule_async_action_retry_policy import EdgeRuleAsyncActionRetryPolicy
 from .edge_rule_budget_action import EdgeRuleBudgetAction
@@ -3864,8 +3889,33 @@ __all__ = (
     "DryRunAppOpenAPIBody",
     "DryRunAppOpenAPIBodyInfo",
     "DryRunAppOpenAPIBodyPaths",
+    "DurableEntityAlarmInspection",
+    "DurableEntityBackup",
+    "DurableEntityBackupInfo",
+    "DurableEntityBackupPage",
+    "DurableEntityHeadDelivery",
+    "DurableEntityHeadDeliveryStatus",
+    "DurableEntityInspectResponse",
     "DurableEntityInvokeRequest",
     "DurableEntityInvokeResponse",
+    "DurableEntityOutboxInspection",
+    "DurableEntityRestorePreview",
+    "DurableEntityRestorePreviewCompatibility",
+    "DurableEntityRestorePreviewSchemaRelation",
+    "DurableEntityRestoreRequest",
+    "DurableEntityRestoreResponse",
+    "DurableEntityRestoreValidationResponse",
+    "DurableEntityRestoreValidationResponseIsolation",
+    "DurableEntityRetryRequest",
+    "DurableEntityRetryRequestTarget",
+    "DurableEntityRetryResponse",
+    "DurableEntityRetryResponseTarget",
+    "DurableEntityScope",
+    "DurableEntityStateExport",
+    "DurableEntityStateExportFormat",
+    "DurableEntityValidatorDeploymentInfo",
+    "DurableEntityValidatorDeploymentInfoSource",
+    "DurableEntityValidatorDeploymentInfoStatus",
     "EdgeRuleAsyncAction",
     "EdgeRuleAsyncActionRetryPolicy",
     "EdgeRuleBudgetAction",

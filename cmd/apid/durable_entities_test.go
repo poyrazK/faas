@@ -95,7 +95,7 @@ func (f *entityDispatchFixture) EnqueueInvocation(ctx context.Context, inv state
 		return queued, err
 	}
 	var envelope durableentity.HandlerRequest
-	if err := json.Unmarshal(delivered.Payload, &envelope); err != nil || envelope.DeploymentID != version.DeploymentID || envelope.Entity.TenantID != delivered.PlatformTenantID || delivered.Path != api.DurableEntityHandlerPath || delivered.DeadlineAt == nil {
+	if err := json.Unmarshal(delivered.Payload, &envelope); err != nil || envelope.DeploymentID != version.DeploymentID || envelope.Entity.TenantID != delivered.PlatformTenantID || (delivered.Path != api.DurableEntityHandlerPath && delivered.Path != api.DurableEntityRestoreValidationPath) || delivered.DeadlineAt == nil {
 		f.t.Errorf("guest envelope disagrees with authoritative invocation: %+v %v", delivered, err)
 	}
 	f.calls.Add(1)

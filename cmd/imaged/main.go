@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/manifest"
@@ -465,7 +466,12 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		log.Info("imaged: githubd mTLS client configured", "target", githubdTarget)
 	}
 
+	validatorArtifacts, artifactErr := validatorbundle.OpenArtifacts(getenv)
+	if artifactErr != nil {
+		return artifactErr
+	}
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
+		WithValidatorArtifactCheck(validatorArtifacts.Check).
 		WithNodeName(getenv("FAAS_NODE_NAME")).
 		WithStorage(storageBackend).
 		WithGitHubSourceRefVerifier(githubdClient).

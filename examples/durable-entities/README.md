@@ -202,7 +202,7 @@ branches and the legacy archive. It retains new-generation uploads, manifests,
 unknown paths and probes. A delayed orphan upload can be removed on a later
 sweep. A reader racing reclamation can receive a retryable conflict.
 
-Manifest writes upgrade to schema 5; older binaries fail closed. Stop old entity
+Manifest writes upgrade to schema 6; older binaries fail closed. Stop old entity
 callers/alarm/maintenance workers when upgrading. Downgrading needs an explicit
 storage migration. Keep bucket lifecycle deletion disabled. Versioned buckets may
 retain historical versions/delete markers; this command deletes current keys and
@@ -289,8 +289,8 @@ With a cap they return 503 `durable_entity_inventory_pending` for new work until
 the logical proof completes; reads and original receipt replays remain available.
 The separately enabled maintenance worker alternates cleanup and inventory pages
 and gives legacy accounting priority. For manual migration rerun `-inventory`.
-Stop all old entity callers, alarm and maintenance workers before this schema-5
-upgrade; binaries supporting only manifest schemas 1/2/3/4 reject new manifests.
+Stop all old entity callers, alarm and maintenance workers before this schema-6
+upgrade; binaries supporting only manifest schemas 1–5 reject new manifests.
 A downgrade requires storage migration. Guest protocol version 1 is unchanged.
 
 ## Internal outgoing-intent contract
@@ -303,10 +303,15 @@ Limits are 16 messages per transition, 128 pending, 64 KiB per payload and
 256 KiB of encoded pending messages; the 1 MiB snapshot ceiling also applies.
 Queue/cap rejection publishes neither new state nor outgoing messages.
 
-This is an engine contract, with no delivery worker, acknowledgement/removal or
-customer messaging API. Guest protocol v1 rejects an `outbox` field; handlers
-remain pure. Registered-webhook admission and deduplicated relay acceptance
-must precede guest enablement. See [ADR-829](../../docs/adr/829-object-storage-entity-outbox-contract.md).
+The default-disabled internal relay below adds admission, deduplicating delivery
+acceptance and fenced acknowledgement/removal. It remains unqualified and adds
+no customer messaging API. Guest protocol v1 rejects an `outbox` field; handlers
+remain pure. The separately gated v2/SDK follow-on is documented in the
+[reservation example](../durable-entity-reservations/README.md) and
+[ADR-844](../../docs/adr/844-durable-entity-guest-outbox-protocol.md).
+Relay qualification must precede guest enablement. See
+[ADR-829](../../docs/adr/829-object-storage-entity-outbox-contract.md) and
+[ADR-843](../../docs/adr/843-durable-entity-outbox-relay.md).
 
 ## Deploy the counter invocation preview
 
@@ -570,3 +575,81 @@ legacy migration, more than 1,024 receipts, bounded snapshots, replay after
 compaction, cleanup publication races and uncertain barriers/deletions.
 S3 and GCS wire tests use the production provider SDKs against local
 conditional HTTP fixtures; they do not qualify a live object-storage provider.
+
+## Internal outbox relay and operator recovery
+
+The private engine can record registered app-webhook intents atomically with a
+business transition. Guest protocol v1 still rejects outgoing work. The relay
+implementation is unverified and disabled by default; enabling it requires the
+testing agent's automated and native/live-provider qualification.
+
+After that qualification, stop all older entity callers/alarm/maintenance
+writers, upgrade to manifest schema 6, and apply
+`20261009150000001_entity_outbox_acceptance.sql` before separately opting in with
+`FAAS_DURABLE_ENTITY_OUTBOX_ENABLED=1`. It also requires the existing invocation
+preview, explicit app allowlist, private delimiter/flat listing and probe DELETE,
+and a store supporting deduplicating webhook acceptance. No flag is enabled by
+this source change.
+
+The worker reserves one FIFO head, rechecks current account/app/environment and
+selected tenant admission, accepts into the existing signed webhook ledger,
+and removes the head by fenced manifest CAS. State, pending messages and relay
+attempts remain in object storage. SQL holds delivery and stable-ID acceptance
+metadata. The latter outlives 90-day terminal delivery history; replay cannot
+recreate a previously accepted delivery after pruning. Receipt compaction is
+not implemented. The dispatcher owns receiver retries/inspection/dead-letter
+replay and uses the message ID as the delivery ID. External delivery remains at
+least once; recipients must deduplicate. Acceptance order does not imply
+receiver completion order.
+
+The event is the intent's event type. Its body wraps the original payload as
+`data`, alongside `entity`, `message_id`, `state_version` and `ordinal`. Only an
+enabled registered app webhook owned by the app/account can be newly accepted.
+Webhook credentials and arbitrary destination URLs never enter the entity.
+
+The relay reserves five attempts with 30-second exponential backoff capped at
+five minutes. A crash/lost reservation ACK can consume a committed attempt;
+owner expiry can delay recovery beyond backoff. Established admission holds
+preserve the budget. An exhausted head remains pending and blocks later work
+for that entity. Other entities continue.
+
+Inspect an exact runtime scope without displaying payloads or attempt tokens:
+
+```bash
+go run ./examples/durable-entities -outbox-status \
+  -account '<account UUID>' -app '<app UUID>' \
+  -environment-id '<immutable environment UUID>' \
+  -namespace '<namespace>' -entity '<key>'
+```
+
+Add `-tenant-id '<tenant UUID>'` for a tenant-scoped entity. After investigating
+and repairing the admission/destination problem, explicitly re-arm the exact
+exhausted head using its reported UUID:
+
+```bash
+go run ./examples/durable-entities -outbox-retry '<head UUID>' \
+  -account '<account UUID>' -app '<app UUID>' \
+  -environment-id '<immutable environment UUID>' \
+  -namespace '<namespace>' -entity '<key>'
+```
+
+Both commands use the shared private provider configuration above. These are
+trusted operator operations, not customer APIs. Retry requires current ownership
+and preserves message identity/payload; a prior successful transport acceptance
+will deduplicate. A crash after the final uncertain acceptance may require this
+operator retry. No discard or receiver-send bypass is exposed.
+
+Time-ordered outbox hints accelerate discovery; an independent eight-entity
+rotating reconciliation page repairs lost hints and finds older messages.
+Missing/corrupt committed state fails closed. Logs omit provider/SQL details and
+customer payloads. Metrics add `outbox` operation outcomes, `outbox_index` upload
+volume, and `apid_durable_entity_outbox_pending_messages`, a histogram of exact
+entity observation samples, not an authoritative total backlog. Inspect the
+existing webhook delivery history for receiver outcomes after entity handoff.
+
+Downgrade must preserve pending state/reservations and acceptance receipts while
+any delayed relay can repeat work. Do not drop the new table or remove bucket
+state to resolve uncertainty. Keep bucket lifecycle deletion disabled. See
+[ADR-843](../../docs/adr/843-durable-entity-outbox-relay.md) for the failure and
+upgrade contract. No local tests, live-bucket drills or deployment were run for
+this local implementation.
