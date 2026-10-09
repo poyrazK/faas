@@ -1144,7 +1144,8 @@ jobs:
   container-contract:
     name: portable container contracts (strict)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Leave room for bounded cold APID compilation after the container suite.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -1168,6 +1169,13 @@ jobs:
           set -o pipefail
           make test-container-contract 2>&1 | tee container-contract.log
       - name: require portable UDP contracts
+        # Match the APID memory policy used by the other contract jobs.
+        # Keep every UDP test and its strict missing/skip verdict enabled.
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: |
           set -o pipefail
           python3 scripts/ci/udp-contract-check.py 2>&1 | tee udp-contract.log
