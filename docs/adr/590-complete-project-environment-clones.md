@@ -8274,6 +8274,37 @@ Only then can whole-stage reconciliation authenticate this evidence alongside
 publication withdrawal and target cleanup. Public full-stage admission remains
 closed; live R2/OVH qualification remains deferred.
 
+### Durable pre-adoption capture retirement
+
+Capture retirement now has a bounded durable journal with an immutable original
+source-compensation plan, once-only dispatch claim, terminal native observation
+and digest. Reservation derives its authority from the authenticated saved source
+compensation rather than caller-provided evidence. Every read, claim and finish
+reauthenticates the complete original plan and operation-owned source-hold absence.
+Configuration-clock, project, operation and app locks follow source compensation's
+ordering, with lease authorization checked again before commit.
+
+The first store path supports unused capture intents, unknown capture outcomes
+and receipts recorded before local adoption. It refuses adopted snapshot or object
+manifest catalogues and any recorded restore, object-target, PostgreSQL copy-reader,
+copy-target or credential dependencies, including during reservation replay. A
+closed or deleted state flag does not bypass this gate. Consequently this path
+needs no local catalogue deletion and preserves all frozen evidence.
+
+Only the first committed planned-to-requested claim permits native dispatch.
+Lost claim replies and worker handoff recover the original requested identity
+without another dispatch. A failed terminal write retains the request; identical
+terminal proof replay succeeds, while changed source or retirement evidence fails
+closed. Downgrade refuses planned, requested and completed journals, and the
+source-compensation foreign key prevents deleting their original ownership record.
+
+Tests cover original capture phases, pending or missing source evidence, lease
+handoff, cancelled finish, partial catalogue adoption, terminal rollback and replay,
+changed ownership and migration round trips and downgrade refusal. Native worker
+coordination and authenticated retirement of adopted catalogues remain separate
+work before final whole-stage reconciliation. Public full-stage admission stays
+closed; live R2/OVH qualification remains deferred.
+
 Validation: the targeted PostgreSQL coordinator suite passes connection-value
 preparation, credential retirement/preparation, native restoration, SQL isolation,
 data verification and private runtime readiness. New cases cover original-password

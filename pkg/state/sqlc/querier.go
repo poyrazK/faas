@@ -150,6 +150,7 @@ type Querier interface {
 	CheckedRollbackForTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) ([]byte, error)
 	CheckedRollbackTargetFacts(ctx context.Context, db DBTX, arg CheckedRollbackTargetFactsParams) ([]byte, error)
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
+	ClaimCloneCheckpointCaptureRetirement(ctx context.Context, db DBTX, arg ClaimCloneCheckpointCaptureRetirementParams) (ProjectEnvironmentCloneCheckpointCaptureRetirement, error)
 	ClaimCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectCopyParams) (ProjectEnvironmentCloneCheckpointObjectCopy, error)
 	ClaimCloneCheckpointObjectRetirement(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectRetirementParams) (ProjectEnvironmentCloneCheckpointObjectRetirement, error)
 	ClaimCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error)
@@ -209,6 +210,7 @@ type Querier interface {
 	// required so an out-of-order cleanup call cannot hide the path of
 	// an open session that a concurrent PATCH still needs.
 	ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error
+	CloneCheckpointCaptureRetirementHasAdoption(ctx context.Context, db DBTX, operationID pgtype.UUID) (pgtype.Bool, error)
 	CloneCheckpointObjectCredentialIdentityExists(ctx context.Context, db DBTX, credentialID pgtype.UUID) (bool, error)
 	CloneCheckpointObjectTargetHasGrants(ctx context.Context, db DBTX, targetBucketID pgtype.UUID) (bool, error)
 	CloneCheckpointPgTargetCompensationBlocked(ctx context.Context, db DBTX, arg CloneCheckpointPgTargetCompensationBlockedParams) (pgtype.Bool, error)
@@ -694,6 +696,7 @@ type Querier interface {
 	// Two matches mean an invoice ID collides with another invoice's charge ID.
 	FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg FindInvoiceIDsByProviderKeyParams) ([]pgtype.UUID, error)
 	FindManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg FindManagedPostgresLifecycleDatabaseParams) (ManagedPostgresDatabase, error)
+	FinishCloneCheckpointCaptureRetirement(ctx context.Context, db DBTX, arg FinishCloneCheckpointCaptureRetirementParams) (int64, error)
 	FinishCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectCopyParams) (int64, error)
 	FinishCloneCheckpointObjectRetirement(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectRetirementParams) (int64, error)
 	FinishCloneCheckpointObjectRetirementBucket(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectRetirementBucketParams) (int64, error)
@@ -891,6 +894,7 @@ type Querier interface {
 	// call; the read path derives the joined total at query time.
 	InsertAppErrorRequest(ctx context.Context, db DBTX, arg InsertAppErrorRequestParams) error
 	InsertCheckedRollback(ctx context.Context, db DBTX, arg InsertCheckedRollbackParams) error
+	InsertCloneCheckpointCaptureRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointCaptureRetirementParams) (ProjectEnvironmentCloneCheckpointCaptureRetirement, error)
 	InsertCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectCopyParams) (ProjectEnvironmentCloneCheckpointObjectCopy, error)
 	InsertCloneCheckpointObjectCredentialReservation(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectCredentialReservationParams) (ProjectEnvironmentCloneCheckpointObjectCredentialID, error)
 	InsertCloneCheckpointObjectPublication(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectPublicationParams) (ProjectEnvironmentCloneCheckpointObjectPublication, error)
@@ -2238,6 +2242,8 @@ type Querier interface {
 	ReadCanaryRouteGate(ctx context.Context, db DBTX, arg ReadCanaryRouteGateParams) ([]byte, error)
 	ReadCanaryRouteGateOwner(ctx context.Context, db DBTX, deploymentID string) (ReadCanaryRouteGateOwnerRow, error)
 	ReadCheckedRollback(ctx context.Context, db DBTX, arg ReadCheckedRollbackParams) ([]byte, error)
+	// ADR-590: pre-adoption capture retirement, claimed once before native IO.
+	ReadCloneCheckpointCaptureRetirement(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointCaptureRetirement, error)
 	ReadCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectCopyParams) (ProjectEnvironmentCloneCheckpointObjectCopy, error)
 	ReadCloneCheckpointObjectCredentialReservation(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointObjectCredentialID, error)
 	ReadCloneCheckpointObjectPublication(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointObjectPublication, error)

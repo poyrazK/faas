@@ -2549,6 +2549,35 @@ func (q *Queries) ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg Cla
 	return claim, err
 }
 
+const claimCloneCheckpointCaptureRetirement = `-- name: ClaimCloneCheckpointCaptureRetirement :one
+UPDATE project_environment_clone_checkpoint_capture_retirements c SET state='requested',requested_at=clock_timestamp()
+WHERE c.operation_id=$1::uuid AND c.state='planned'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=$2::bigint AND o.lease_token=$3::uuid
+ AND o.lease_until>clock_timestamp()) RETURNING operation_id, plan, state, requested_at, observation, observation_sha256, retired_at
+`
+
+type ClaimCloneCheckpointCaptureRetirementParams struct {
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointCaptureRetirement(ctx context.Context, db DBTX, arg ClaimCloneCheckpointCaptureRetirementParams) (ProjectEnvironmentCloneCheckpointCaptureRetirement, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointCaptureRetirement, arg.OperationID, arg.ExpectedRevision, arg.WorkerToken)
+	var i ProjectEnvironmentCloneCheckpointCaptureRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
 const claimCloneCheckpointObjectCopy = `-- name: ClaimCloneCheckpointObjectCopy :one
 UPDATE project_environment_clone_checkpoint_object_copies i SET state='requested',requested_at=clock_timestamp()
 WHERE i.operation_id=$1::uuid AND i.source_bucket_id=$2::uuid AND i.state='planned'
@@ -4998,6 +5027,23 @@ UPDATE upload_sessions
 func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error {
 	_, err := db.Exec(ctx, clearUploadSessionPartPath, id)
 	return err
+}
+
+const cloneCheckpointCaptureRetirementHasAdoption = `-- name: CloneCheckpointCaptureRetirementHasAdoption :one
+SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_object_manifests r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials r WHERE r.operation_id=$1::uuid)
+`
+
+func (q *Queries) CloneCheckpointCaptureRetirementHasAdoption(ctx context.Context, db DBTX, operationID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointCaptureRetirementHasAdoption, operationID)
+	var column_1 pgtype.Bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const cloneCheckpointObjectCredentialIdentityExists = `-- name: CloneCheckpointObjectCredentialIdentityExists :one
@@ -13631,6 +13677,40 @@ func (q *Queries) FindManagedPostgresLifecycleDatabase(ctx context.Context, db D
 	return i, err
 }
 
+const finishCloneCheckpointCaptureRetirement = `-- name: FinishCloneCheckpointCaptureRetirement :execrows
+UPDATE project_environment_clone_checkpoint_capture_retirements c SET state='retired',observation=$1::jsonb,
+ observation_sha256=$2::text,retired_at=$3::timestamptz
+WHERE c.operation_id=$4::uuid AND c.state='requested' AND $3::timestamptz>=c.requested_at
+ AND $3::timestamptz<=clock_timestamp()
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=$5::bigint AND o.lease_token=$6::uuid
+ AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointCaptureRetirementParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	RetiredAt         pgtype.Timestamptz
+	OperationID       pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointCaptureRetirement(ctx context.Context, db DBTX, arg FinishCloneCheckpointCaptureRetirementParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointCaptureRetirement,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.RetiredAt,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishCloneCheckpointObjectCopy = `-- name: FinishCloneCheckpointObjectCopy :execrows
 UPDATE project_environment_clone_checkpoint_object_copies i SET state='copied',observation_sha256=$1::text,copied_at=clock_timestamp()
 WHERE i.operation_id=$2::uuid AND i.source_bucket_id=$3::uuid AND i.state='requested'
@@ -17560,6 +17640,41 @@ func (q *Queries) InsertCheckedRollback(ctx context.Context, db DBTX, arg Insert
 		arg.Receipt,
 	)
 	return err
+}
+
+const insertCloneCheckpointCaptureRetirement = `-- name: InsertCloneCheckpointCaptureRetirement :one
+INSERT INTO project_environment_clone_checkpoint_capture_retirements(operation_id,plan)
+SELECT o.id,$1::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$2::uuid AND o.status='compensating'
+ AND o.revision=$3::bigint AND o.lease_token=$4::uuid
+ AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, state, requested_at, observation, observation_sha256, retired_at
+`
+
+type InsertCloneCheckpointCaptureRetirementParams struct {
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointCaptureRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointCaptureRetirementParams) (ProjectEnvironmentCloneCheckpointCaptureRetirement, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointCaptureRetirement,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointCaptureRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
 }
 
 const insertCloneCheckpointObjectCopy = `-- name: InsertCloneCheckpointObjectCopy :one
@@ -48137,6 +48252,26 @@ func (q *Queries) ReadCheckedRollback(ctx context.Context, db DBTX, arg ReadChec
 	var receipt []byte
 	err := row.Scan(&receipt)
 	return receipt, err
+}
+
+const readCloneCheckpointCaptureRetirement = `-- name: ReadCloneCheckpointCaptureRetirement :one
+SELECT operation_id, plan, state, requested_at, observation, observation_sha256, retired_at FROM project_environment_clone_checkpoint_capture_retirements WHERE operation_id=$1 FOR UPDATE
+`
+
+// ADR-590: pre-adoption capture retirement, claimed once before native IO.
+func (q *Queries) ReadCloneCheckpointCaptureRetirement(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointCaptureRetirement, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointCaptureRetirement, operationID)
+	var i ProjectEnvironmentCloneCheckpointCaptureRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
 }
 
 const readCloneCheckpointObjectCopy = `-- name: ReadCloneCheckpointObjectCopy :one

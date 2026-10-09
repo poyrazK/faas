@@ -8830,5 +8830,9 @@ const ObjectCheckpointRetirementPlanMaxBytes = 17 << 20
 // Bounds for private source compensation plans and native observations.
 const CheckpointSourceCompensationMaxBytes = 16 << 20
 
+// CheckpointCaptureRetirementMaxBytes bounds the complete original capture and
+// source-compensation evidence retained for native artifact cleanup.
+const CheckpointCaptureRetirementMaxBytes = 16 << 20
+
 // Bounds for private PostgreSQL checkpoint target compensation evidence.
 const PostgresCheckpointTargetCompensationMaxBytes = 1 << 20

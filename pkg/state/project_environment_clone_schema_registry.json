@@ -7966,5 +7966,18 @@
       "state"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_capture_retirements",
+    "columns": [
+      "operation_id",
+      "plan",
+      "state",
+      "requested_at",
+      "observation",
+      "observation_sha256",
+      "retired_at"
+    ],
+    "kind": "operational"
   }
 ]

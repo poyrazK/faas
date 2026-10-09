@@ -15512,3 +15512,39 @@ WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.
 
 -- name: ReadCloneCheckpointPgTargetCredentials :many
 SELECT * FROM project_environment_clone_checkpoint_postgres_credentials WHERE operation_id=$1 AND source_database_id=$2 ORDER BY source_binding_id FOR UPDATE;
+
+-- ADR-590: pre-adoption capture retirement, claimed once before native IO.
+-- name: ReadCloneCheckpointCaptureRetirement :one
+SELECT * FROM project_environment_clone_checkpoint_capture_retirements WHERE operation_id=$1 FOR UPDATE;
+
+-- name: InsertCloneCheckpointCaptureRetirement :one
+INSERT INTO project_environment_clone_checkpoint_capture_retirements(operation_id,plan)
+SELECT o.id,sqlc.arg(plan)::jsonb FROM project_environment_clone_operations o
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='compensating'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid
+ AND o.lease_until>clock_timestamp() RETURNING *;
+
+-- name: ClaimCloneCheckpointCaptureRetirement :one
+UPDATE project_environment_clone_checkpoint_capture_retirements c SET state='requested',requested_at=clock_timestamp()
+WHERE c.operation_id=sqlc.arg(operation_id)::uuid AND c.state='planned'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid
+ AND o.lease_until>clock_timestamp()) RETURNING *;
+
+-- name: FinishCloneCheckpointCaptureRetirement :execrows
+UPDATE project_environment_clone_checkpoint_capture_retirements c SET state='retired',observation=sqlc.arg(observation)::jsonb,
+ observation_sha256=sqlc.arg(observation_sha256)::text,retired_at=sqlc.arg(retired_at)::timestamptz
+WHERE c.operation_id=sqlc.arg(operation_id)::uuid AND c.state='requested' AND sqlc.arg(retired_at)::timestamptz>=c.requested_at
+ AND sqlc.arg(retired_at)::timestamptz<=clock_timestamp()
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token=sqlc.arg(worker_token)::uuid
+ AND o.lease_until>clock_timestamp());
+
+-- name: CloneCheckpointCaptureRetirementHasAdoption :one
+SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_object_manifests r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets r WHERE r.operation_id=sqlc.arg(operation_id)::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials r WHERE r.operation_id=sqlc.arg(operation_id)::uuid);

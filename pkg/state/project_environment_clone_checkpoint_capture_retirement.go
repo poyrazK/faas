@@ -1,6 +1,16 @@
 package state
 
-import "time"
+import (
+	"context"
+	"time"
+)
+
+type ProjectEnvironmentCloneCheckpointCaptureRetirementStore interface {
+	ReserveProjectEnvironmentCloneCheckpointCaptureRetirement(context.Context, ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneCheckpointCaptureRetirement, error)
+	ProjectEnvironmentCloneCheckpointCaptureRetirementForLease(context.Context, ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneCheckpointCaptureRetirement, error)
+	ClaimProjectEnvironmentCloneCheckpointCaptureRetirement(context.Context, ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneCheckpointCaptureRetirement, bool, error)
+	FinishProjectEnvironmentCloneCheckpointCaptureRetirement(context.Context, ProjectEnvironmentCloneLease, ProjectEnvironmentCloneCheckpointCaptureRetirementObservation) error
+}
 
 // Capture retirement covers all retained native artifacts owned by the original
 // common capture, including artifacts whose creation never returned a receipt.
