@@ -40,22 +40,28 @@ type EventReceipt struct {
 }
 
 type EventReceiptRouting struct {
-	GenerationCapacityDeferrals *int       `json:"generation_capacity_deferrals,omitempty"`
-	CapacityDeferrals           int        `json:"capacity_deferrals"`
-	CapacityScope               string     `json:"capacity_scope,omitempty"`
-	PendingAgeSeconds           *float64   `json:"pending_age_seconds,omitempty"`
-	State                       string     `json:"state"`
-	Attempts                    int        `json:"attempts"`
-	Generation                  *int64     `json:"generation,omitempty"`
-	GenerationAttempts          *int       `json:"generation_attempts,omitempty"`
-	NextAttemptAt               *time.Time `json:"next_attempt_at,omitempty"`
-	LeaseUntil                  *time.Time `json:"lease_until,omitempty"`
-	UpdatedAt                   *time.Time `json:"updated_at,omitempty"`
-	LastError                   string     `json:"last_error,omitempty"`
-	FailureCode                 string     `json:"failure_code,omitempty"`
-	Retryable                   bool       `json:"retryable"`
-	ReplayCount                 int64      `json:"replay_count"`
-	LastReplayedAt              *time.Time `json:"last_replayed_at,omitempty"`
+	DeliveryDeadlineAt          *time.Time                   `json:"delivery_deadline_at,omitempty"`
+	DeliveryAgeOverride         bool                         `json:"delivery_age_override,omitempty"`
+	RoutingRetryPolicy          *api.EventRoutingRetryPolicy `json:"routing_retry_policy,omitempty"`
+	RetrySpentMS                int64                        `json:"retry_spent_ms,omitempty"`
+	FilterReason                string                       `json:"filter_reason,omitempty"`
+	RetryStopReason             string                       `json:"retry_stop_reason,omitempty"`
+	GenerationCapacityDeferrals *int                         `json:"generation_capacity_deferrals,omitempty"`
+	CapacityDeferrals           int                          `json:"capacity_deferrals"`
+	CapacityScope               string                       `json:"capacity_scope,omitempty"`
+	PendingAgeSeconds           *float64                     `json:"pending_age_seconds,omitempty"`
+	State                       string                       `json:"state"`
+	Attempts                    int                          `json:"attempts"`
+	Generation                  *int64                       `json:"generation,omitempty"`
+	GenerationAttempts          *int                         `json:"generation_attempts,omitempty"`
+	NextAttemptAt               *time.Time                   `json:"next_attempt_at,omitempty"`
+	LeaseUntil                  *time.Time                   `json:"lease_until,omitempty"`
+	UpdatedAt                   *time.Time                   `json:"updated_at,omitempty"`
+	LastError                   string                       `json:"last_error,omitempty"`
+	FailureCode                 string                       `json:"failure_code,omitempty"`
+	Retryable                   bool                         `json:"retryable"`
+	ReplayCount                 int64                        `json:"replay_count"`
+	LastReplayedAt              *time.Time                   `json:"last_replayed_at,omitempty"`
 }
 
 type EventReceiptExecution struct {
@@ -167,6 +173,12 @@ func (s *PgStore) EventReceipt(ctx context.Context, accountID, source, eventID s
 			WorkflowName: row.WorkflowName, WorkflowRunID: row.WorkflowRunID, WorkflowRunStatus: row.WorkflowRunStatus, TargetAvailable: row.TargetAvailable,
 			Routing:               receiptRouting(progress, row.RoutingState, int(row.RoutingAttempts)),
 			RoutingReplayEligible: row.TargetAvailable && row.RoutingReplayAvailable && row.RoutingState == PublishedEventRecipientFailed && (meta.RecipientClaims || meta.State == "delivered")}
+		policy := recipient.EffectiveRoutingRetryPolicy()
+		entry.Routing.RoutingRetryPolicy = &policy
+		entry.Routing.DeliveryAgeOverride = progress.DeliveryAgeOverride || recipient.DeliveryAgeOverride
+		if deadline := EventDeliveryDeadline(recipient, receipt.AcceptedAt, PublishedEventRecipientProgress{}); !deadline.IsZero() {
+			entry.Routing.DeliveryDeadlineAt = &deadline
+		}
 		setEventReceiptPendingAge(&entry.Routing, receipt.AcceptedAt)
 		entry.Routing.NextAttemptAt, entry.Routing.LeaseUntil = timestamptzToTimePtr(row.NextAttemptAt), timestamptzToTimePtr(row.LeaseUntil)
 		entry.Routing.ReplayCount, entry.Routing.LastReplayedAt = row.ReplayCount, timestamptzToTimePtr(row.LastReplayedAt)
@@ -189,7 +201,7 @@ func (s *PgStore) EventReceipt(ctx context.Context, accountID, source, eventID s
 }
 
 func receiptRouting(progress PublishedEventRecipientProgress, status string, attempts int) EventReceiptRouting {
-	routing := EventReceiptRouting{State: status, Attempts: attempts, CapacityDeferrals: progress.CapacityDeferrals, CapacityScope: progress.CapacityScope, NextAttemptAt: cloneEventReceiptTime(progress.NextAttemptAt), LastError: progress.LastError, FailureCode: progress.FailureCode, Retryable: progress.Retryable}
+	routing := EventReceiptRouting{FilterReason: progress.FilterReason, RetrySpentMS: progress.RetrySpentMS, RetryStopReason: progress.RetryStopReason, State: status, Attempts: attempts, CapacityDeferrals: progress.CapacityDeferrals, CapacityScope: progress.CapacityScope, NextAttemptAt: cloneEventReceiptTime(progress.NextAttemptAt), LastError: progress.LastError, FailureCode: progress.FailureCode, Retryable: progress.Retryable}
 	if !progress.UpdatedAt.IsZero() {
 		at := progress.UpdatedAt
 		routing.UpdatedAt = &at
@@ -356,6 +368,12 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 			if run, ok := m.workflowRuns[runID]; ok {
 				entry.WorkflowRunStatus = string(run.Status)
 			}
+		}
+		policy := recipient.EffectiveRoutingRetryPolicy()
+		entry.Routing.RoutingRetryPolicy = &policy
+		entry.Routing.DeliveryAgeOverride = progress.DeliveryAgeOverride || recipient.DeliveryAgeOverride
+		if deadline := EventDeliveryDeadline(recipient, receipt.AcceptedAt, PublishedEventRecipientProgress{}); !deadline.IsZero() {
+			entry.Routing.DeliveryDeadlineAt = &deadline
 		}
 		setEventReceiptPendingAge(&entry.Routing, receipt.AcceptedAt)
 		app, exists := m.eventSubscriptionAppLocked(recipient.AppID)

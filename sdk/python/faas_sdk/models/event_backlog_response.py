@@ -22,7 +22,7 @@ class EventBacklogResponse:
 
     Example:
         {'observed_at': '2026-10-05T12:00:00Z', 'window_at': '2026-10-05T12:00:00Z', 'coverage':
-            'captured_application_recipients', 'recipients': [], 'consumers': [], 'unattributed_receipts': 0}
+            'captured_and_backfill_recipients', 'recipients': [], 'consumers': [], 'unattributed_receipts': 0}
 
     """
 
@@ -30,7 +30,7 @@ class EventBacklogResponse:
     """Time of this live observation."""
     window_at: datetime.datetime
     """First-page time anchoring acceptance and minimum-age cutoff across pages."""
-    coverage: Literal["captured_application_recipients"]
+    coverage: Literal["captured_and_backfill_recipients"]
     recipients: list[EventBacklogRecipient]
     consumers: list[EventBacklogConsumer]
     unattributed_receipts: int
@@ -92,9 +92,9 @@ class EventBacklogResponse:
 
         window_at = datetime.datetime.fromisoformat(d.pop("window_at"))
 
-        coverage = cast(Literal["captured_application_recipients"], d.pop("coverage"))
-        if coverage != "captured_application_recipients":
-            raise ValueError(f"coverage must match const 'captured_application_recipients', got '{coverage}'")
+        coverage = cast(Literal["captured_and_backfill_recipients"], d.pop("coverage"))
+        if coverage != "captured_and_backfill_recipients":
+            raise ValueError(f"coverage must match const 'captured_and_backfill_recipients', got '{coverage}'")
 
         recipients = []
         _recipients = d.pop("recipients")

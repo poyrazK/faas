@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -28,6 +28,9 @@ class EventPreviewSubscription:
     reason: str
     """would_deliver, content_filter_mismatch, pattern_mismatch, tenant_mismatch, or an invalid_subscription
     explanation."""
+    schema_versions: list[str] | Unset = UNSET
+    """Exact case-sensitive schema versions. Empty or omitted accepts all versions; a nonempty selection excludes
+    unversioned events. Selection is captured at publication or backfill creation."""
     workflow_name: str | Unset = UNSET
     """Present for workflow recipients."""
     deployment_id: UUID | Unset = UNSET
@@ -45,6 +48,10 @@ class EventPreviewSubscription:
         filter_ = self.filter_.to_dict()
 
         reason = self.reason
+
+        schema_versions: list[str] | Unset = UNSET
+        if not isinstance(self.schema_versions, Unset):
+            schema_versions = self.schema_versions
 
         workflow_name = self.workflow_name
 
@@ -64,6 +71,8 @@ class EventPreviewSubscription:
                 "reason": reason,
             }
         )
+        if schema_versions is not UNSET:
+            field_dict["schema_versions"] = schema_versions
         if workflow_name is not UNSET:
             field_dict["workflow_name"] = workflow_name
         if deployment_id is not UNSET:
@@ -88,6 +97,8 @@ class EventPreviewSubscription:
 
         reason = d.pop("reason")
 
+        schema_versions = cast(list[str], d.pop("schema_versions", UNSET))
+
         workflow_name = d.pop("workflow_name", UNSET)
 
         _deployment_id = d.pop("deployment_id", UNSET)
@@ -104,6 +115,7 @@ class EventPreviewSubscription:
             type_=type_,
             filter_=filter_,
             reason=reason,
+            schema_versions=schema_versions,
             workflow_name=workflow_name,
             deployment_id=deployment_id,
         )

@@ -21,8 +21,7 @@ name: kafka e2e
 # surface.
 #
 # Hardening: pin setup-go to v7 (matches ci.yml), pin Go version
-# to 1.26.9 (matches ci.yml — gofmt differs between minor versions),
-# enable Go module/build cache, set timeout-minutes,
+# to 1.26.9 (matches ci.yml for consistent formatting), enable Go module/build cache, set timeout-minutes,
 # add a concurrency cancel-in-progress group.
 
 on:

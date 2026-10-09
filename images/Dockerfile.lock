@@ -19,35 +19,35 @@
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "golang:1.26.6",
+      "alias": "golang:1.26.9",
       "resolved_repo": "docker.io/library/golang",
-      "resolved_tag": "1.26.6",
+      "resolved_tag": "1.26.9",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS guest-init-build"
+      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS guest-init-build"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "golang:1.26.6",
+      "alias": "golang:1.26.9",
       "resolved_repo": "docker.io/library/golang",
-      "resolved_tag": "1.26.6",
+      "resolved_tag": "1.26.9",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS buildkit-client-build"
+      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS buildkit-client-build"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "golang:1.26.6",
+      "alias": "golang:1.26.9",
       "resolved_repo": "docker.io/library/golang",
-      "resolved_tag": "1.26.6",
+      "resolved_tag": "1.26.9",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6",
-      "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS runc-build"
+      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
+      "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS runc-build"
     },
     {
       "dockerfile": "images/base-debian-parent.Dockerfile",

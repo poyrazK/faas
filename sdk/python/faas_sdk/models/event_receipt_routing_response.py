@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
@@ -10,11 +10,23 @@ from ..models.event_receipt_routing_response_capacity_scope import (
     EventReceiptRoutingResponseCapacityScope,
     check_event_receipt_routing_response_capacity_scope,
 )
+from ..models.event_receipt_routing_response_filter_reason import (
+    EventReceiptRoutingResponseFilterReason,
+    check_event_receipt_routing_response_filter_reason,
+)
+from ..models.event_receipt_routing_response_retry_stop_reason import (
+    EventReceiptRoutingResponseRetryStopReason,
+    check_event_receipt_routing_response_retry_stop_reason,
+)
 from ..models.event_receipt_routing_response_state import (
     EventReceiptRoutingResponseState,
     check_event_receipt_routing_response_state,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.event_routing_retry_policy import EventRoutingRetryPolicy
+
 
 T = TypeVar("T", bound="EventReceiptRoutingResponse")
 
@@ -28,6 +40,22 @@ class EventReceiptRoutingResponse:
     """Lifetime routing attempts, including replay generations."""
     retryable: bool
     replay_count: int
+    delivery_deadline_at: datetime.datetime | Unset = UNSET
+    """Captured wall-clock routing deadline."""
+    delivery_age_override: bool | Unset = UNSET
+    """Explicit operator override recorded for the current replay generation or backfill."""
+    routing_retry_policy: EventRoutingRetryPolicy | Unset = UNSET
+    """Routing policy before invocation admission. Duration budgets include routing attempt time and scheduled
+    retry delays. Admission waits add no budget cost. API replacement accepts explicit settings; manifests and CLI
+    default configured policies to jitter enabled."""
+    filter_reason: EventReceiptRoutingResponseFilterReason | Unset = UNSET
+    """Filter reason in the event receipt routing response: why routing was filtered without consuming a routing
+    attempt."""
+    retry_stop_reason: EventReceiptRoutingResponseRetryStopReason | Unset = UNSET
+    """Retry stop reason in the event receipt routing response: why automatic routing retries stopped; failure_code
+    retains the underlying cause."""
+    retry_spent_ms: int | Unset = UNSET
+    """Current replay generation duration budget spent on routing attempts and scheduled delays."""
     generation_capacity_deferrals: int | Unset = UNSET
     """Capacity waits in this independent routing generation; subtract from generation_attempts for failure-budget
     use."""
@@ -59,6 +87,26 @@ class EventReceiptRoutingResponse:
         retryable = self.retryable
 
         replay_count = self.replay_count
+
+        delivery_deadline_at: str | Unset = UNSET
+        if not isinstance(self.delivery_deadline_at, Unset):
+            delivery_deadline_at = self.delivery_deadline_at.isoformat()
+
+        delivery_age_override = self.delivery_age_override
+
+        routing_retry_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.routing_retry_policy, Unset):
+            routing_retry_policy = self.routing_retry_policy.to_dict()
+
+        filter_reason: str | Unset = UNSET
+        if not isinstance(self.filter_reason, Unset):
+            filter_reason = self.filter_reason
+
+        retry_stop_reason: str | Unset = UNSET
+        if not isinstance(self.retry_stop_reason, Unset):
+            retry_stop_reason = self.retry_stop_reason
+
+        retry_spent_ms = self.retry_spent_ms
 
         generation_capacity_deferrals = self.generation_capacity_deferrals
 
@@ -104,6 +152,18 @@ class EventReceiptRoutingResponse:
                 "replay_count": replay_count,
             }
         )
+        if delivery_deadline_at is not UNSET:
+            field_dict["delivery_deadline_at"] = delivery_deadline_at
+        if delivery_age_override is not UNSET:
+            field_dict["delivery_age_override"] = delivery_age_override
+        if routing_retry_policy is not UNSET:
+            field_dict["routing_retry_policy"] = routing_retry_policy
+        if filter_reason is not UNSET:
+            field_dict["filter_reason"] = filter_reason
+        if retry_stop_reason is not UNSET:
+            field_dict["retry_stop_reason"] = retry_stop_reason
+        if retry_spent_ms is not UNSET:
+            field_dict["retry_spent_ms"] = retry_spent_ms
         if generation_capacity_deferrals is not UNSET:
             field_dict["generation_capacity_deferrals"] = generation_capacity_deferrals
         if capacity_deferrals is not UNSET:
@@ -133,6 +193,8 @@ class EventReceiptRoutingResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.event_routing_retry_policy import EventRoutingRetryPolicy
+
         d = dict(src_dict)
         state = check_event_receipt_routing_response_state(d.pop("state"))
 
@@ -141,6 +203,38 @@ class EventReceiptRoutingResponse:
         retryable = d.pop("retryable")
 
         replay_count = d.pop("replay_count")
+
+        _delivery_deadline_at = d.pop("delivery_deadline_at", UNSET)
+        delivery_deadline_at: datetime.datetime | Unset
+        if isinstance(_delivery_deadline_at, Unset):
+            delivery_deadline_at = UNSET
+        else:
+            delivery_deadline_at = datetime.datetime.fromisoformat(_delivery_deadline_at)
+
+        delivery_age_override = d.pop("delivery_age_override", UNSET)
+
+        _routing_retry_policy = d.pop("routing_retry_policy", UNSET)
+        routing_retry_policy: EventRoutingRetryPolicy | Unset
+        if isinstance(_routing_retry_policy, Unset):
+            routing_retry_policy = UNSET
+        else:
+            routing_retry_policy = EventRoutingRetryPolicy.from_dict(_routing_retry_policy)
+
+        _filter_reason = d.pop("filter_reason", UNSET)
+        filter_reason: EventReceiptRoutingResponseFilterReason | Unset
+        if isinstance(_filter_reason, Unset):
+            filter_reason = UNSET
+        else:
+            filter_reason = check_event_receipt_routing_response_filter_reason(_filter_reason)
+
+        _retry_stop_reason = d.pop("retry_stop_reason", UNSET)
+        retry_stop_reason: EventReceiptRoutingResponseRetryStopReason | Unset
+        if isinstance(_retry_stop_reason, Unset):
+            retry_stop_reason = UNSET
+        else:
+            retry_stop_reason = check_event_receipt_routing_response_retry_stop_reason(_retry_stop_reason)
+
+        retry_spent_ms = d.pop("retry_spent_ms", UNSET)
 
         generation_capacity_deferrals = d.pop("generation_capacity_deferrals", UNSET)
 
@@ -196,6 +290,12 @@ class EventReceiptRoutingResponse:
             attempts=attempts,
             retryable=retryable,
             replay_count=replay_count,
+            delivery_deadline_at=delivery_deadline_at,
+            delivery_age_override=delivery_age_override,
+            routing_retry_policy=routing_retry_policy,
+            filter_reason=filter_reason,
+            retry_stop_reason=retry_stop_reason,
+            retry_spent_ms=retry_spent_ms,
             generation_capacity_deferrals=generation_capacity_deferrals,
             capacity_deferrals=capacity_deferrals,
             capacity_scope=capacity_scope,

@@ -9,7 +9,12 @@ from ...models.event_backlog_response import EventBacklogResponse
 from ...models.get_event_backlog_capacity_scope import (
     GetEventBacklogCapacityScope,
 )
+from ...models.get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
+from ...models.get_event_backlog_origin import GetEventBacklogOrigin
 from ...models.get_event_backlog_state import GetEventBacklogState
+from ...models.get_event_backlog_waiting_reason import (
+    GetEventBacklogWaitingReason,
+)
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -18,7 +23,10 @@ def _get_kwargs(
     *,
     app: str | Unset = UNSET,
     subscription_id: str | Unset = UNSET,
+    consumer_kind: GetEventBacklogConsumerKind | Unset = UNSET,
+    origin: GetEventBacklogOrigin | Unset = UNSET,
     state: GetEventBacklogState | Unset = UNSET,
+    waiting_reason: GetEventBacklogWaitingReason | Unset = UNSET,
     capacity_scope: GetEventBacklogCapacityScope | Unset = UNSET,
     min_age_seconds: int | Unset = 0,
     after: str | Unset = UNSET,
@@ -33,11 +41,29 @@ def _get_kwargs(
 
     params["subscription_id"] = subscription_id
 
+    json_consumer_kind: str | Unset = UNSET
+    if not isinstance(consumer_kind, Unset):
+        json_consumer_kind = consumer_kind
+
+    params["consumer_kind"] = json_consumer_kind
+
+    json_origin: str | Unset = UNSET
+    if not isinstance(origin, Unset):
+        json_origin = origin
+
+    params["origin"] = json_origin
+
     json_state: str | Unset = UNSET
     if not isinstance(state, Unset):
         json_state = state
 
     params["state"] = json_state
+
+    json_waiting_reason: str | Unset = UNSET
+    if not isinstance(waiting_reason, Unset):
+        json_waiting_reason = waiting_reason
+
+    params["waiting_reason"] = json_waiting_reason
 
     json_capacity_scope: str | Unset = UNSET
     if not isinstance(capacity_scope, Unset):
@@ -121,7 +147,10 @@ def sync_detailed(
     client: AuthenticatedClient,
     app: str | Unset = UNSET,
     subscription_id: str | Unset = UNSET,
+    consumer_kind: GetEventBacklogConsumerKind | Unset = UNSET,
+    origin: GetEventBacklogOrigin | Unset = UNSET,
     state: GetEventBacklogState | Unset = UNSET,
+    waiting_reason: GetEventBacklogWaitingReason | Unset = UNSET,
     capacity_scope: GetEventBacklogCapacityScope | Unset = UNSET,
     min_age_seconds: int | Unset = 0,
     after: str | Unset = UNSET,
@@ -129,17 +158,18 @@ def sync_detailed(
     limit: int | Unset = 100,
     consumer_limit: int | Unset = 100,
 ) -> Response[EventBacklogResponse | Problem]:
-    """Discover waiting application event recipients and consumer counts.
+    """Discover waiting event consumers and recipient counts.
 
      Requires apps:read or admin. Reads only the authenticated account's
-    captured application recipients in pending or processing routing state,
-    in both whole-event and independent-recipient routing modes. Includes
-    capacity waits before an invocation exists; excludes settled routing and
-    handler execution queues. Returns metadata and receipt/history links,
+    captured application and workflow recipients plus added backfill
+    recipients in pending or processing routing state, in both whole-event
+    and independent-recipient routing modes. Includes capacity waits before
+    an invocation exists; excludes settled routing and handler execution
+    queues. Returns consumer kind, origin, wait metadata and receipt/history links,
     never envelope data. Consumers count all matching recipients, independently
     of either bounded page. Age is measured from durable event acceptance.
     Recipient pages are oldest accepted first, then receipt and subscription
-    identity; consumer pages use app and subscription identity. Pass each
+    identity; consumer pages use app, subscription and consumer kind. Pass each
     continuation cursor with the same filters; page sizes may change. Cursors
     anchor window_at and its age cutoff, while membership and counts remain
     live on every request. Recovered rows disappear, including cursor rows.
@@ -154,7 +184,10 @@ def sync_detailed(
     Args:
         app (str | Unset):
         subscription_id (str | Unset):
+        consumer_kind (GetEventBacklogConsumerKind | Unset):
+        origin (GetEventBacklogOrigin | Unset):
         state (GetEventBacklogState | Unset):
+        waiting_reason (GetEventBacklogWaitingReason | Unset):
         capacity_scope (GetEventBacklogCapacityScope | Unset):
         min_age_seconds (int | Unset):  Default: 0.
         after (str | Unset):
@@ -173,7 +206,10 @@ def sync_detailed(
     kwargs = _get_kwargs(
         app=app,
         subscription_id=subscription_id,
+        consumer_kind=consumer_kind,
+        origin=origin,
         state=state,
+        waiting_reason=waiting_reason,
         capacity_scope=capacity_scope,
         min_age_seconds=min_age_seconds,
         after=after,
@@ -194,7 +230,10 @@ def sync(
     client: AuthenticatedClient,
     app: str | Unset = UNSET,
     subscription_id: str | Unset = UNSET,
+    consumer_kind: GetEventBacklogConsumerKind | Unset = UNSET,
+    origin: GetEventBacklogOrigin | Unset = UNSET,
     state: GetEventBacklogState | Unset = UNSET,
+    waiting_reason: GetEventBacklogWaitingReason | Unset = UNSET,
     capacity_scope: GetEventBacklogCapacityScope | Unset = UNSET,
     min_age_seconds: int | Unset = 0,
     after: str | Unset = UNSET,
@@ -202,17 +241,18 @@ def sync(
     limit: int | Unset = 100,
     consumer_limit: int | Unset = 100,
 ) -> EventBacklogResponse | Problem | None:
-    """Discover waiting application event recipients and consumer counts.
+    """Discover waiting event consumers and recipient counts.
 
      Requires apps:read or admin. Reads only the authenticated account's
-    captured application recipients in pending or processing routing state,
-    in both whole-event and independent-recipient routing modes. Includes
-    capacity waits before an invocation exists; excludes settled routing and
-    handler execution queues. Returns metadata and receipt/history links,
+    captured application and workflow recipients plus added backfill
+    recipients in pending or processing routing state, in both whole-event
+    and independent-recipient routing modes. Includes capacity waits before
+    an invocation exists; excludes settled routing and handler execution
+    queues. Returns consumer kind, origin, wait metadata and receipt/history links,
     never envelope data. Consumers count all matching recipients, independently
     of either bounded page. Age is measured from durable event acceptance.
     Recipient pages are oldest accepted first, then receipt and subscription
-    identity; consumer pages use app and subscription identity. Pass each
+    identity; consumer pages use app, subscription and consumer kind. Pass each
     continuation cursor with the same filters; page sizes may change. Cursors
     anchor window_at and its age cutoff, while membership and counts remain
     live on every request. Recovered rows disappear, including cursor rows.
@@ -227,7 +267,10 @@ def sync(
     Args:
         app (str | Unset):
         subscription_id (str | Unset):
+        consumer_kind (GetEventBacklogConsumerKind | Unset):
+        origin (GetEventBacklogOrigin | Unset):
         state (GetEventBacklogState | Unset):
+        waiting_reason (GetEventBacklogWaitingReason | Unset):
         capacity_scope (GetEventBacklogCapacityScope | Unset):
         min_age_seconds (int | Unset):  Default: 0.
         after (str | Unset):
@@ -247,7 +290,10 @@ def sync(
         client=client,
         app=app,
         subscription_id=subscription_id,
+        consumer_kind=consumer_kind,
+        origin=origin,
         state=state,
+        waiting_reason=waiting_reason,
         capacity_scope=capacity_scope,
         min_age_seconds=min_age_seconds,
         after=after,
@@ -262,7 +308,10 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     app: str | Unset = UNSET,
     subscription_id: str | Unset = UNSET,
+    consumer_kind: GetEventBacklogConsumerKind | Unset = UNSET,
+    origin: GetEventBacklogOrigin | Unset = UNSET,
     state: GetEventBacklogState | Unset = UNSET,
+    waiting_reason: GetEventBacklogWaitingReason | Unset = UNSET,
     capacity_scope: GetEventBacklogCapacityScope | Unset = UNSET,
     min_age_seconds: int | Unset = 0,
     after: str | Unset = UNSET,
@@ -270,17 +319,18 @@ async def asyncio_detailed(
     limit: int | Unset = 100,
     consumer_limit: int | Unset = 100,
 ) -> Response[EventBacklogResponse | Problem]:
-    """Discover waiting application event recipients and consumer counts.
+    """Discover waiting event consumers and recipient counts.
 
      Requires apps:read or admin. Reads only the authenticated account's
-    captured application recipients in pending or processing routing state,
-    in both whole-event and independent-recipient routing modes. Includes
-    capacity waits before an invocation exists; excludes settled routing and
-    handler execution queues. Returns metadata and receipt/history links,
+    captured application and workflow recipients plus added backfill
+    recipients in pending or processing routing state, in both whole-event
+    and independent-recipient routing modes. Includes capacity waits before
+    an invocation exists; excludes settled routing and handler execution
+    queues. Returns consumer kind, origin, wait metadata and receipt/history links,
     never envelope data. Consumers count all matching recipients, independently
     of either bounded page. Age is measured from durable event acceptance.
     Recipient pages are oldest accepted first, then receipt and subscription
-    identity; consumer pages use app and subscription identity. Pass each
+    identity; consumer pages use app, subscription and consumer kind. Pass each
     continuation cursor with the same filters; page sizes may change. Cursors
     anchor window_at and its age cutoff, while membership and counts remain
     live on every request. Recovered rows disappear, including cursor rows.
@@ -295,7 +345,10 @@ async def asyncio_detailed(
     Args:
         app (str | Unset):
         subscription_id (str | Unset):
+        consumer_kind (GetEventBacklogConsumerKind | Unset):
+        origin (GetEventBacklogOrigin | Unset):
         state (GetEventBacklogState | Unset):
+        waiting_reason (GetEventBacklogWaitingReason | Unset):
         capacity_scope (GetEventBacklogCapacityScope | Unset):
         min_age_seconds (int | Unset):  Default: 0.
         after (str | Unset):
@@ -314,7 +367,10 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         app=app,
         subscription_id=subscription_id,
+        consumer_kind=consumer_kind,
+        origin=origin,
         state=state,
+        waiting_reason=waiting_reason,
         capacity_scope=capacity_scope,
         min_age_seconds=min_age_seconds,
         after=after,
@@ -333,7 +389,10 @@ async def asyncio(
     client: AuthenticatedClient,
     app: str | Unset = UNSET,
     subscription_id: str | Unset = UNSET,
+    consumer_kind: GetEventBacklogConsumerKind | Unset = UNSET,
+    origin: GetEventBacklogOrigin | Unset = UNSET,
     state: GetEventBacklogState | Unset = UNSET,
+    waiting_reason: GetEventBacklogWaitingReason | Unset = UNSET,
     capacity_scope: GetEventBacklogCapacityScope | Unset = UNSET,
     min_age_seconds: int | Unset = 0,
     after: str | Unset = UNSET,
@@ -341,17 +400,18 @@ async def asyncio(
     limit: int | Unset = 100,
     consumer_limit: int | Unset = 100,
 ) -> EventBacklogResponse | Problem | None:
-    """Discover waiting application event recipients and consumer counts.
+    """Discover waiting event consumers and recipient counts.
 
      Requires apps:read or admin. Reads only the authenticated account's
-    captured application recipients in pending or processing routing state,
-    in both whole-event and independent-recipient routing modes. Includes
-    capacity waits before an invocation exists; excludes settled routing and
-    handler execution queues. Returns metadata and receipt/history links,
+    captured application and workflow recipients plus added backfill
+    recipients in pending or processing routing state, in both whole-event
+    and independent-recipient routing modes. Includes capacity waits before
+    an invocation exists; excludes settled routing and handler execution
+    queues. Returns consumer kind, origin, wait metadata and receipt/history links,
     never envelope data. Consumers count all matching recipients, independently
     of either bounded page. Age is measured from durable event acceptance.
     Recipient pages are oldest accepted first, then receipt and subscription
-    identity; consumer pages use app and subscription identity. Pass each
+    identity; consumer pages use app, subscription and consumer kind. Pass each
     continuation cursor with the same filters; page sizes may change. Cursors
     anchor window_at and its age cutoff, while membership and counts remain
     live on every request. Recovered rows disappear, including cursor rows.
@@ -366,7 +426,10 @@ async def asyncio(
     Args:
         app (str | Unset):
         subscription_id (str | Unset):
+        consumer_kind (GetEventBacklogConsumerKind | Unset):
+        origin (GetEventBacklogOrigin | Unset):
         state (GetEventBacklogState | Unset):
+        waiting_reason (GetEventBacklogWaitingReason | Unset):
         capacity_scope (GetEventBacklogCapacityScope | Unset):
         min_age_seconds (int | Unset):  Default: 0.
         after (str | Unset):
@@ -387,7 +450,10 @@ async def asyncio(
             client=client,
             app=app,
             subscription_id=subscription_id,
+            consumer_kind=consumer_kind,
+            origin=origin,
             state=state,
+            waiting_reason=waiting_reason,
             capacity_scope=capacity_scope,
             min_age_seconds=min_age_seconds,
             after=after,

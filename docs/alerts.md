@@ -47,3 +47,25 @@ firing. Neither state proves the integration is healthy.
 Deliveries include an event id, timestamp, alert state, and signature. Verify the signature before processing, deduplicate by event id, and return a 2xx response quickly. Retryable failures are retried with backoff; a permanently failing endpoint is paused so it cannot amplify an incident.
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.
+
+## Event consumer routing alerts
+
+Consumer health rules require an app subscription UUID in the immutable
+`event_subscription_id` field (`--event-subscription-id` in the CLI), a window
+up to 24h, and webhook action. They observe backlog, retries scheduled, terminal
+routing failures, routing latency, continuous pause duration, and drain rate.
+Paused consumers suppress all of these except the pause-duration metric.
+Compacted history and insufficient terminal samples skip rate evaluation.
+Drain-rate rules skip idle consumers. See [consumer health](event-driven.md#consumer-routing-health-and-maintenance-alerts)
+for metric names, units, and sample thresholds.
+
+Consumer execution alerts use `--event-subscription-id` with
+`event_execution_dead_letters`, `event_execution_dead_letter_rate_per_second`,
+`event_handler_failure_pct`, or `event_completion_latency_p95_seconds`. These
+webhook-only rules observe retained admitted executions, including handler
+replays. Supported windows are `5m`, `15m`, `1h`, `6h`, and `24h`. Unlike routing
+alerts, they remain active during subscription pauses. Truncated observations,
+missing roots, unknown states, or insufficient samples produce `unknown`.
+Failure percentages require 20 retained success/failure attempts, and completion
+latency requires one success. See [consumer execution health](event-driven.md#consumer-execution-health)
+for retention coverage and the distinction between backlog and formation rate.
