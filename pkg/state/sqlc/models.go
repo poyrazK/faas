@@ -1496,6 +1496,8 @@ type CustomerOperation struct {
 	Record              []byte
 	ExpiresAt           pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
+	WorkflowRunID       pgtype.UUID
+	JobRunID            pgtype.UUID
 	CurrentExecutionID  pgtype.UUID
 	ExecutionKind       string
 	ExecutionGeneration int32
@@ -1561,6 +1563,14 @@ type CustomerOperationIdempotency struct {
 	ExpiresAt   pgtype.Timestamptz
 }
 
+type CustomerOperationJobExecution struct {
+	OperationID pgtype.UUID
+	Generation  int32
+	RunID       pgtype.UUID
+	Record      []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
 type CustomerOperationMilestone struct {
 	OperationID   pgtype.UUID
 	ID            pgtype.UUID
@@ -1578,6 +1588,7 @@ type CustomerOperationRecovery struct {
 	Fingerprint string
 	Request     []byte
 	CreatedAt   pgtype.Timestamptz
+	Decision    []byte
 }
 
 type CustomerOperationReport struct {
@@ -1604,6 +1615,9 @@ type CustomerOperationResultBlob struct {
 	NextAttemptAt pgtype.Timestamptz
 	LeaseToken    string
 	LeaseUntil    pgtype.Timestamptz
+	WorkflowRunID pgtype.UUID
+	WorkflowStep  pgtype.Text
+	JobRunID      pgtype.UUID
 }
 
 type CustomerOperationRetainedDeploymentRef struct {
@@ -1629,6 +1643,15 @@ type CustomerOperationWorkflowClaim struct {
 	Attempt          int32
 	CapabilityDigest string
 	LeaseUntil       pgtype.Timestamptz
+}
+
+type CustomerOperationWorkflowExecution struct {
+	OperationID pgtype.UUID
+	Generation  int32
+	RunID       pgtype.UUID
+	ResumeCount int32
+	Record      []byte
+	CreatedAt   pgtype.Timestamptz
 }
 
 type CustomerOperationWorkflowGuestClaim struct {

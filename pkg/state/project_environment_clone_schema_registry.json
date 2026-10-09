@@ -1755,6 +1755,17 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_job_executions",
+    "columns": [
+      "created_at",
+      "generation",
+      "operation_id",
+      "record",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_milestones",
     "columns": [
       "created_at",
@@ -1772,6 +1783,7 @@
     "table": "customer_operation_recoveries",
     "columns": [
       "created_at",
+      "decision",
       "fingerprint",
       "operation_id",
       "recovery_id",
@@ -1800,6 +1812,7 @@
       "fingerprint",
       "generation",
       "id",
+      "job_run_id",
       "lease_token",
       "lease_until",
       "next_attempt_at",
@@ -1807,7 +1820,9 @@
       "report_id",
       "size_bytes",
       "state",
-      "storage_key"
+      "storage_key",
+      "workflow_run_id",
+      "workflow_step"
     ],
     "kind": "operational"
   },
@@ -1833,6 +1848,18 @@
       "operation_id",
       "workflow_run_id"
     ]
+  },
+  {
+    "table": "customer_operation_workflow_executions",
+    "columns": [
+      "created_at",
+      "generation",
+      "operation_id",
+      "record",
+      "resume_count",
+      "run_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "customer_operation_workflow_guest_claims",
@@ -1912,9 +1939,11 @@
       "execution_kind",
       "expires_at",
       "id",
+      "job_run_id",
       "platform_tenant_id",
       "record",
-      "state"
+      "state",
+      "workflow_run_id"
     ],
     "kind": "operational"
   },

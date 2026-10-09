@@ -7600,13 +7600,82 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/recovery-inspection:
+    get:
+      tags: [operations]
+      operationId: inspectOperationRecovery
+      summary: Inspect recovery evidence without changing execution.
+      description: Account read scope and MFA are required. Returns the pinned execution, confirmed steps, uncertain attempts and private file metadata from a consistent durable snapshot. No payloads, raw errors, object locations or capabilities are returned. Inspection reads never renew leases, consume quotas or publish files. Available while new admission is closed.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      responses:
+        '200':
+          description: Recovery inspection with durable execution and retained file metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationRecoveryInspection'}
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/recovery-preview:
+    post:
+      tags: [operations]
+      operationId: previewOperationRecovery
+      summary: Preview an operation recovery decision.
+      description: Account read scope and MFA are required. Validates a proposed resolution without starting work, recording a receipt, consuming quotas or publishing files. Workflow retries use the native resume planner. Eligible means current platform checks pass; external effects still require operator evidence. Apply revalidates under writer locks. Expected generation rejects stale previews; the inspection revision can optionally fence the later apply request. Available while new admission is closed.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationRecoveryPreviewRequest'}
+      responses:
+        '200':
+          description: Read-only recovery proposal with current eligibility and planned reuse.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationRecoveryPreview'}
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/apps/{slug}/operations/{id}/recover:
     post:
       tags:
       - operations
       operationId: recoverOperation
       summary: Reconcile an uncertain outcome or authorize safe retry.
-      description: Requires deploy:write and evidence. Expected generation prevents stale recovery; recovery_id makes
+      description: Requires deploy:write and evidence. Expected generation prevents stale recovery; optional expected_inspection_revision also rejects changed execution evidence. Matching recovery receipts replay before revision validation. recovery_id makes
         the same recovery decision idempotent. succeeded validates result against the pinned output schema. safe_to_retry
         creates a new execution while retaining the logical operation identity and pinned contract. Ordinary invocation/DLQ
         replay cannot bypass this policy.
@@ -7626,6 +7695,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/recover-receipt:
+    post:
+      tags:
+      - operations
+      operationId: recoverOperationWithReceipt
+      summary: Record or replay an immutable recovery decision acknowledgement.
+      description: >-
+        Account-only; requires deploy:write and MFA when enabled. Uses the same evidence,
+        generation, optional inspection revision, output, quota and pinned execution fences as recover.
+        The decision is committed atomically with recovery. Matching recovery_id and canonical request
+        replay the original decision even after work advances; changed intent returns 409.
+        The acknowledgement describes state at acceptance, not current status or completed work.
+        expires_at is the retention deadline before this decision; later recovery cannot extend it.
+        Old accepted recoveries without retained decision acknowledgements return 409
+        operation_recovery_receipt_unavailable and are never repeated. Expired receipts return 410.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationRecoveryRequest'
+      responses:
+        '200':
+          description: Immutable original decision acknowledgement; read current operation status separately.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationRecoveryDecision'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -7733,6 +7851,44 @@ paths:
           $ref: '#/components/responses/OperationConflict'
         '410':
           $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/runtime/operations/{id}/control:
+    get:
+      tags:
+      - operations
+      operationId: getOperationExecutionControl
+      summary: Observe cancellation and time bounds for the current HTTP attempt.
+      description: Requires a fresh platform-issued workload JWT with audience gregale:operations and matching
+        account, app and instance, plus current dispatch proof. Returns one fenced observation of cancellation intent,
+        the admitted deadline and current lease. The read does not renew the lease, settle work, consume progress reports
+        or authorize external effects. Expired deadlines, stale attempts and customer credentials are denied.
+        Remains available when new operation admission is closed. Handlers cooperate with cancellation;
+        stopping after dispatch does not prove that an external effect did not happen.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXFaasInvocationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      responses:
+        '200':
+          description: Read-only live claim observation. Cache-Control is no-store.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationExecutionControlResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '429':
@@ -8503,6 +8659,528 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+
+  /v1/runtime/job-operations/{id}/control:
+    get:
+      tags: [operations]
+      operationId: getJobOperationExecutionControl
+      summary: Observe the current single-task Job Operation lease.
+      description: Observe cancellation, the current lease and the fixed deadline using the scheduler-injected native task proof. Reads grant no renewal, result publication or retry authority. Account credentials and other runtime proof kinds cannot substitute. Admission remains closed pending native qualification.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobRunId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobInstanceId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationGeneration'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      security:
+      - jobOperationCapability: []
+      responses:
+        '200':
+          description: Current task control observation, with no-store caching.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationJobControlResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/runtime/job-operations/{id}/progress:
+    post:
+      tags: [operations]
+      operationId: reportJobOperationProgress
+      summary: Report progress for the current single-task Job Operation lease.
+      description: Report bounded stage progress for the current native task. Stable report IDs are immutable within this generation and share the result and file namespace. The scheduler capability, run, instance, generation and attempt must match an active claim. Reporting never completes or retries a task.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobRunId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobInstanceId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationGeneration'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      security:
+      - jobOperationCapability: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationJobReportRequest'}
+      responses:
+        '200':
+          description: Operation snapshot after a durable progress report.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/runtime/job-operations/{id}/result:
+    post:
+      tags: [operations]
+      operationId: prepareJobOperationResult
+      summary: Report result for the current single-task Job Operation lease.
+      description: Prepare schema-validated typed output for the current leased Job task. A stable result report is immutable and grants no business success until host-confirmed task exit. Uncertain exit requires reconciliation. Progress and private file reports share its ID namespace.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobRunId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobInstanceId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationGeneration'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      security:
+      - jobOperationCapability: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationJobReportRequest'}
+      responses:
+        '200':
+          description: Operation snapshot with its typed result privately prepared.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/runtime/job-operations/{id}/artifacts:
+    post:
+      tags: [operations]
+      operationId: prepareJobOperationArtifact
+      summary: Verify and retain a private file for the current Job Operation task.
+      description: Requires the scheduler-injected task capability and matching run, instance, generation, attempt, unexpired lease and active owner. Stable report IDs share the progress/result namespace. Changed declarations conflict. Preparation verifies source ownership, private scope, size and SHA-256 and retains a private platform copy. Same-generation replay does not reread the source. Files remain private until host-confirmed success with a typed result or explicit account success recovery. Safe retry clears file receipts. Admission remains closed pending native qualification.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobRunId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobInstanceId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationGeneration'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      security:
+      - jobOperationCapability: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationArtifactRequest'}
+      responses:
+        '200':
+          description: Verified private managed-source file preparation receipt.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationJobArtifactResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/runtime/job-operations/{id}/artifact-receipts:
+    post:
+      tags: [operations]
+      operationId: reuseJobOperationArtifact
+      summary: Look up a verified file receipt for the current Job Operation task.
+      description: Look up an existing verified managed-source file receipt with the live native task proof. Matching metadata returns the retained copy without reading or modifying the source. Changed declarations conflict. This lookup grants neither publication nor business retry authority.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobRunId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobInstanceId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationGeneration'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      security:
+      - jobOperationCapability: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationArtifactRequest'}
+      responses:
+        '200':
+          description: Existing managed-source receipt availability and metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationJobArtifactResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/runtime/operations/{id}/artifact-uploads:
+    post:
+      tags: [operations]
+      operationId: uploadOperationArtifact
+      summary: Upload direct private file bytes with current HTTP invocation authority.
+      description: Stable report ID, name, exact size and SHA-256 bind a private upload receipt to the current HTTP invocation attempt. Requires a workload JWT for gregale:operations plus current invocation, attempt and capability. No bucket, source URI, provider credential or storage key is accepted. Bytes are verified under existing artifact quotas and transfer budgets. Each copy reserves fresh staging storage; concurrent copies converge and losing objects are cleaned up. Receipt lookup and committed replay do not repeat business code. New attachments are fenced by cancellation and live dispatch authority. Files download only after confirmed HTTP success or existing explicit success recovery; retaining bytes never settles the invocation.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXFaasInvocationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationCapability'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - name: report_id
+        description: Stable immutable report identity within the current HTTP invocation attempt.
+        in: query
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: name
+        description: Filename for the private HTTP result, without path separators.
+        in: query
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: size_bytes
+        description: Declared HTTP result byte count within captured file quotas.
+        in: query
+        required: true
+        schema: {type: integer, format: int64, minimum: 0}
+      - name: sha256
+        description: "HTTP file checksum as lowercase hexadecimal with a sha256: prefix."
+        in: query
+        required: true
+        schema: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary}
+      responses:
+        '200':
+          description: Verified HTTP file receipt; the invocation remains unsettled.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationArtifactUploadResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/operations/{id}/artifact-upload-receipts:
+    post:
+      tags: [operations]
+      operationId: reuseOperationUpload
+      summary: Look up a private HTTP file receipt without sending bytes.
+      description: Requires a current HTTP workload assertion and matching invocation proof. Checks the immutable declaration and live invocation attempt without reserving storage or reading bytes. Available false is returned only after authorization with no matching verified receipt. Matching committed receipts can be replayed after cancellation while the claim remains live; new files cannot be attached.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXFaasInvocationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationCapability'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationArtifactUploadRequest'}
+      responses:
+        '200':
+          description: HTTP receipt availability and private metadata without a byte transfer.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationArtifactUploadResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/job-operations/{id}/artifact-uploads:
+    post:
+      tags: [operations]
+      operationId: uploadJobOperationArtifact
+      summary: Upload direct private file bytes with current native Job authority.
+      description: Stable report ID, name, exact size and SHA-256 bind a private upload receipt. Requires the current scheduler task proof and active owner. No source URI, bucket, provider credential or storage key is accepted. Exact bytes are verified under existing artifact quotas and bounded transfer budgets. A fresh staging object is reserved for each copy; concurrent copies converge and losing objects are cleaned up. Committed replay can return without reading the body. Files publish only with confirmed task success and typed output or explicit account success recovery. Production admission remains closed pending native qualification.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobRunId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobInstanceId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationGeneration'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - name: report_id
+        description: Stable immutable report identity within the native generation.
+        in: query
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: name
+        description: Customer-visible filename without path separators.
+        in: query
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: size_bytes
+        description: Exact number of uploaded bytes under captured operation limits.
+        in: query
+        required: true
+        schema: {type: integer, format: int64, minimum: 0}
+      - name: sha256
+        description: "Lowercase SHA-256 digest prefixed with sha256: for byte verification."
+        in: query
+        required: true
+        schema: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+      security:
+      - jobOperationCapability: []
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary}
+      responses:
+        '200':
+          description: Direct upload receipt for verified private bytes; preparation is not business success.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationJobArtifactResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/job-operations/{id}/artifact-upload-receipts:
+    post:
+      tags: [operations]
+      operationId: reuseJobOperationUpload
+      summary: Look up a direct private file upload receipt without sending bytes.
+      description: Requires the current native Job proof. Checks the immutable declaration and current task authority, including generation and ownership. Available false is returned only after successful authorization with no matching retained copy. Committed replay never reads a source object or repeats a business handler.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobRunId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationJobInstanceId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationGeneration'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      security:
+      - jobOperationCapability: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationArtifactUploadRequest'}
+      responses:
+        '200':
+          description: Direct upload receipt lookup without receiving or writing bytes.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationJobArtifactResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/workflow-operations/{id}/artifact-uploads:
+    post:
+      tags: [operations]
+      operationId: uploadWorkflowOperationArtifact
+      summary: Upload direct private result bytes with current final workflow action authority.
+      description: Requires a current Operations workload assertion and native final-action proof for the pinned workflow run, step, generation and attempt. The descriptor declares immutable report ID, filename, byte count and SHA-256 without a source URI or storage credential. Each copy reserves unique staging storage and verifies exact bytes under existing quotas and transfer budgets. Current native owner, cancellation, lease and deadline are rechecked before private I/O and commit. Receipt identity remains stable across approved resumes; copies stay private until confirmed final-step success or explicit success recovery. Retention never settles a step or retries business effects.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationExecutionKind'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowRunId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowStep'
+      - $ref: '#/components/parameters/OperationXGregaleOperationGeneration'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowCapability'
+      - name: report_id
+        description: Immutable final-action file report identity across approved workflow resumes.
+        in: query
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: name
+        description: Workflow result filename containing no path separators.
+        in: query
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: size_bytes
+        description: Exact final-action upload size subject to retained workflow file quotas.
+        in: query
+        required: true
+        schema: {type: integer, format: int64, minimum: 0}
+      - name: sha256
+        description: "Workflow upload digest encoded as sha256: and lowercase hexadecimal."
+        in: query
+        required: true
+        schema: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary}
+      responses:
+        '200':
+          description: Retained private workflow upload receipt awaiting final-action confirmation.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowArtifactResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/workflow-operations/{id}/artifact-upload-receipts:
+    post:
+      tags: [operations]
+      operationId: reuseWorkflowOperationUpload
+      summary: Reuse a direct workflow file receipt without transferring bytes.
+      description: Checks a direct file declaration under current native final-step authority. Matching retained receipts are rebound to an approved resumed attempt without reserving storage, consuming reports or transferring bytes. A missing receipt returns available false only after authorization and quota validation. Conflicts, cancellation and stale proofs fail closed. Lookup does not confirm the workflow action or grant recovery authority.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationExecutionKind'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowRunId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowStep'
+      - $ref: '#/components/parameters/OperationXGregaleOperationGeneration'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationArtifactUploadRequest'}
+      responses:
+        '200':
+          description: Direct workflow receipt availability with any current-attempt rebind applied.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationWorkflowArtifactResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/runtime/workflow-operations/{id}/control:
+    get:
+      tags: [operations]
+      operationId: getWorkflowOperationExecutionControl
+      summary: Observe cancellation and time bounds for a native workflow attempt.
+      description: Requires a fresh Operations workload assertion and current native run, step, recovery generation, attempt and capability proof on the pinned deployment. Available to every linear HTTP action of a workflow Operation. The fixed deadline is current attempt started_at plus the captured step timeout (30 seconds when omitted). The usable budget ends at the earlier native lease or deadline. Reads never renew leases, consume reports or authorize retries. Cancellation atomically interrupts native authority; a denied control read also stops the cooperating handler. Existing verified copies remain retained under normal recovery policy. Available while new admission is closed.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationExecutionKind'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowRunId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowStep'
+      - $ref: '#/components/parameters/OperationXGregaleOperationGeneration'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      responses:
+        '200':
+          description: Read-only current native attempt observation. Cache-Control is no-store.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationWorkflowControlResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/OperationConflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/runtime/workflow-operations/{id}/artifact-receipts:
+    post:
+      tags: [operations]
+      operationId: reuseWorkflowOperationArtifact
+      summary: Check or reuse a verified workflow result copy.
+      description: Requires workload identity and a current final-step proof. An explicit available=false authorizes a new upload. A matching durable receipt is rebound to the current attempt without rereading or rewriting the source. Invalid or expired proofs fail; they never return available=false.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationExecutionKind'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowRunId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowStep'
+      - $ref: '#/components/parameters/OperationXGregaleOperationGeneration'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationArtifactRequest'
+      responses:
+        '200':
+          description: Current verified-copy availability for this declaration and attempt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowArtifactResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/runtime/workflow-operations/{id}/artifacts:
+    post:
+      tags: [operations]
+      operationId: prepareWorkflowOperationArtifact
+      summary: Prepare a private workflow result copy.
+      description: Verifies an owned private managed object and retains its exact bytes under a platform key. The durable receipt survives a lost response and an approved operation resume. Files are published only after confirmed final-step success, or explicit operator success reconciliation; preparing a file does not complete the operation.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationExecutionKind'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowRunId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowStep'
+      - $ref: '#/components/parameters/OperationXGregaleOperationGeneration'
+      - $ref: '#/components/parameters/OperationXGregaleOperationWorkflowCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationArtifactRequest'
+      responses:
+        '200':
+          description: Prepared verified-copy receipt, pending final-step confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationWorkflowArtifactResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/platform-tenant-self/invocations/{id}:
     get:
@@ -33387,6 +34065,38 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/customer-operations/submissions/lookup:
+    post:
+      tags: [operations]
+      operationId: lookupPlatformTenantSelfOperationSubmission
+      summary: Resolve a customer's retained submission without admitting work.
+      description: >-
+        Requires platform_tenant:operations:read. Reads the idempotency ledger scoped to the authenticated
+        account/customer, app, environment, operation name and key. Available while admission is closed,
+        independently of current code or definition availability. accepted includes the original acceptance
+        time and receipt; fetch status for current business state. expired means a known identity no longer
+        has a retained usable acceptance. unresolved is not proof of rejection: admission may be in flight
+        or a receipt pruned. No work is submitted and Cache-Control is no-store. expected_identity is an
+        optional principal fence, never an ownership grant. Selectors belong in the bounded JSON body,
+        not query parameters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperationSubmissionLookupRequest'}
+      responses:
+        '200':
+          description: Retained acceptance observation.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationSubmissionLookupResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/OperationConflict'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/platform-tenant-self/customer-operations/identity:
     get:
       tags: [operations]
@@ -33533,6 +34243,11 @@ paths:
 components:
 
   securitySchemes:
+    jobOperationCapability:
+      type: apiKey
+      in: header
+      name: X-Gregale-Operation-Job-Capability
+      description: Private capability derived from the current host task lease; injected into the single Job task by schedd.
     operationsWorkloadIdentity:
       type: http
       scheme: bearer
@@ -33599,6 +34314,57 @@ components:
       schema:
         type: string
         format: uuid
+    OperationXGregaleOperationExecutionKind:
+      name: X-Gregale-Operation-Execution-Kind
+      in: header
+      required: true
+      description: Explicit native execution family; must be workflow.
+      schema:
+        type: string
+        enum: [workflow]
+    OperationXGregaleOperationJobRunId:
+      description: Native Job run UUID retained by the accepted operation generation.
+      name: X-Gregale-Operation-Job-Run-Id
+      in: header
+      required: true
+      schema: {type: string, format: uuid}
+    OperationXGregaleOperationJobInstanceId:
+      description: Current single-task instance UUID whose host claim grants runtime authority.
+      name: X-Gregale-Operation-Job-Instance-Id
+      in: header
+      required: true
+      schema: {type: string, format: uuid}
+    OperationXGregaleOperationWorkflowRunId:
+      name: X-Gregale-Operation-Workflow-Run-Id
+      in: header
+      required: true
+      description: Current operation workflow run UUID.
+      schema:
+        type: string
+        pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    OperationXGregaleOperationWorkflowStep:
+      name: X-Gregale-Operation-Workflow-Step
+      in: header
+      required: true
+      description: Final workflow action name.
+      schema:
+        type: string
+    OperationXGregaleOperationGeneration:
+      name: X-Gregale-Operation-Generation
+      in: header
+      required: true
+      description: Current operation recovery generation.
+      schema:
+        type: integer
+        minimum: 1
+    OperationXGregaleOperationWorkflowCapability:
+      name: X-Gregale-Operation-Workflow-Capability
+      in: header
+      required: true
+      description: Private current step nonce; never log or retain in application state.
+      schema:
+        type: string
+        pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
     OperationXFaasInvocationId:
       name: X-Faas-Invocation-Id
       in: header
@@ -33938,6 +34704,142 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    OperationExecutionControlResponse:
+      description: Current HTTP attempt observation. Contains no input, result, owner or capability; grants no renewal.
+      type: object
+      required:
+      - operation_id
+      - invocation_id
+      - attempt
+      - cancellation_requested
+      - deadline_at
+      - lease_expires_at
+      - observed_at
+      - poll_after_ms
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        invocation_id:
+          type: string
+          format: uuid
+        attempt:
+          type: integer
+          minimum: 1
+        cancellation_requested:
+          type: boolean
+        deadline_at:
+          type: string
+          format: date-time
+        lease_expires_at:
+          description: Current claim expiry, capped by deadline_at. Only the scheduler can renew it.
+          type: string
+          format: date-time
+        observed_at:
+          description: Server observation time. Derive a conservative local duration and subtract request latency.
+          type: string
+          format: date-time
+        poll_after_ms:
+          description: Recommended polling interval; clients also stop at the earlier lease or deadline bound.
+          type: integer
+          minimum: 100
+          maximum: 1000
+    OperationArtifactUploadResponse:
+      description: Availability and metadata of one verified private HTTP invocation file receipt.
+      type: object
+      required: [available]
+      properties:
+        available:
+          type: boolean
+          description: True only for a verified private copy bound to this invocation attempt. Does not confirm business success.
+        artifact:
+          $ref: '#/components/schemas/OperationResultArtifact'
+    OperationJobArtifactResponse:
+      description: Availability and metadata of one verified private native Job file receipt.
+      type: object
+      required: [available]
+      properties:
+        available:
+          type: boolean
+          description: True only for a verified private copy bound to this generation. Does not confirm business success.
+        artifact:
+          $ref: '#/components/schemas/OperationResultArtifact'
+    OperationJobReportRequest:
+      description: Stable native task report carrying progress or typed private output.
+      type: object
+      additionalProperties: false
+      required: [report_id]
+      properties:
+        report_id: {type: string, minLength: 1, maxLength: 128}
+        progress: {$ref: '#/components/schemas/OperationReportRequest'}
+        result: {description: JSON result matching the immutable output schema.}
+    OperationJobControlResponse:
+      description: Scoped observation of customer ownership, cancellation and current native task timing.
+      type: object
+      additionalProperties: false
+      required: [account_id, app_id, platform_tenant_id, scope, operation_id, job_run_id, generation, attempt, cancellation_requested, deadline_at, lease_expires_at, observed_at, poll_after_ms]
+      properties:
+        account_id: {type: string, format: uuid}
+        app_id: {type: string, format: uuid}
+        platform_tenant_id: {type: string, format: uuid}
+        scope: {type: string}
+        operation_id: {type: string, format: uuid}
+        job_run_id: {type: string, format: uuid}
+        generation: {type: integer, minimum: 1}
+        attempt: {type: integer, minimum: 1, maximum: 1}
+        cancellation_requested: {type: boolean}
+        deadline_at: {type: string, format: date-time}
+        lease_expires_at: {type: string, format: date-time}
+        observed_at: {type: string, format: date-time}
+        poll_after_ms: {type: integer, minimum: 100, maximum: 1000}
+    OperationWorkflowControlResponse:
+      description: Current native workflow attempt observation. Contains no input, result, owner or capability; grants no renewal.
+      type: object
+      required:
+      - operation_id
+      - workflow_run_id
+      - workflow_step
+      - generation
+      - attempt
+      - cancellation_requested
+      - deadline_at
+      - lease_expires_at
+      - observed_at
+      - poll_after_ms
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        workflow_run_id:
+          type: string
+          format: uuid
+        workflow_step:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,128}$'
+        generation:
+          type: integer
+          minimum: 1
+        attempt:
+          type: integer
+          minimum: 1
+        cancellation_requested:
+          type: boolean
+        deadline_at:
+          type: string
+          format: date-time
+        lease_expires_at:
+          description: Native run lease expiry, bounded by this attempt's fixed deadline. Only native scheduler ownership can extend the lease.
+          type: string
+          format: date-time
+        observed_at:
+          description: Native authority observation time; use relative durations and subtract the time spent fetching this observation.
+          type: string
+          format: date-time
+        poll_after_ms:
+          description: Suggested delay before observing this native attempt again. The local time budget expires independently.
+          type: integer
+          minimum: 100
+          maximum: 1000
     OperationReportRequest:
       description: Idempotent fenced progress report.
       type: object
@@ -33959,6 +34861,16 @@ components:
         total:
           type: integer
           minimum: 0
+    OperationArtifactUploadRequest:
+      description: Direct private file declaration. Gregale derives its opaque operation reference and storage key.
+      type: object
+      additionalProperties: false
+      required: [report_id, name, size_bytes, sha256]
+      properties:
+        report_id: {type: string, minLength: 1, maxLength: 128}
+        name: {type: string, minLength: 1, maxLength: 128}
+        size_bytes: {type: integer, format: int64, minimum: 0}
+        sha256: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
     OperationArtifactRequest:
       description: Idempotent attachment of an existing managed object; bytes are checked before commit.
       type: object
@@ -33987,6 +34899,140 @@ components:
           type: string
           minLength: 1
           maxLength: 128
+    OperationWorkflowArtifactResponse:
+      description: A private verified workflow copy receipt; publication follows confirmed execution success.
+      type: object
+      additionalProperties: false
+      required: [available]
+      properties:
+        available:
+          type: boolean
+          description: False only after successful authorization with no matching verified copy.
+        artifact:
+          $ref: '#/components/schemas/OperationResultArtifact'
+
+    OperationRecoveryInspection:
+      description: Account-only durable recovery evidence with execution secrets and payloads omitted.
+      type: object
+      additionalProperties: false
+      required: [operation_id, generation, state, cancellation_requested, execution_kind, execution_state, attempt, deployment_id, steps, artifacts, retry_blockers, inspection_revision, observed_at]
+      properties:
+        operation_id: {type: string, format: uuid}
+        generation: {type: integer, minimum: 1}
+        state: {type: string, enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation]}
+        failure_code: {type: string}
+        cancellation_requested: {type: boolean}
+        execution_kind: {type: string, enum: [http, workflow, job]}
+        execution_state: {type: string}
+        invocation_id: {type: string, format: uuid}
+        job_run_id: {type: string, format: uuid}
+        workflow_run_id: {type: string, format: uuid}
+        attempt: {type: integer, minimum: 0}
+        deployment_id: {type: string, format: uuid}
+        release_id: {type: string, format: uuid}
+        steps:
+          type: array
+          items: {$ref: '#/components/schemas/OperationRecoveryStep'}
+        artifacts:
+          type: array
+          items: {$ref: '#/components/schemas/OperationRecoveryArtifact'}
+        retry_blockers:
+          type: array
+          items: {type: string}
+        inspection_revision:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+          description: Digest of durable execution evidence and file bindings; excludes observation time and independent notification state.
+        observed_at: {type: string, format: date-time}
+    OperationRecoveryStep:
+      description: Ordered native step summary from the captured workflow contract and durable step state.
+      type: object
+      additionalProperties: false
+      required: [name, state, attempt, confirmed, outcome_unknown]
+      properties:
+        name: {type: string}
+        state: {type: string}
+        attempt: {type: integer, minimum: 0}
+        confirmed: {type: boolean}
+        outcome_unknown:
+          type: boolean
+          description: A dispatched action lacks confirmed success; operator reconciliation must establish its external effects.
+    OperationRecoveryArtifact:
+      description: Metadata for a prepared private copy or attached result reference, without download authority.
+      type: object
+      additionalProperties: false
+      required: [id, name, generation, attempt, state, retained, size_bytes, sha256, expires_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        workflow_step: {type: string}
+        generation: {type: integer, minimum: 1}
+        attempt: {type: integer, minimum: 0}
+        state: {type: string, enum: [prepared, attached]}
+        retained:
+          type: boolean
+          description: An owned retained storage receipt matches this reference at observation time; bytes are not fetched by inspection.
+        size_bytes: {type: integer, format: int64, minimum: 0}
+        sha256: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        expires_at: {type: string, format: date-time}
+    OperationRecoveryPreviewRequest:
+      description: Proposed recovery resolution without a durable decision identity or reconciliation evidence.
+      type: object
+      additionalProperties: false
+      required: [expected_generation, resolution]
+      properties:
+        expected_generation: {type: integer, minimum: 1}
+        resolution: {type: string, enum: [succeeded, failed, cancelled, safe_to_retry]}
+        result:
+          description: Proposed pinned-schema output required only for a succeeded preview.
+    OperationRecoveryPreview:
+      description: Structural platform eligibility and planned reuse; no evidence that external effects can safely repeat.
+      type: object
+      additionalProperties: false
+      required: [inspection, resolution, eligible, evidence_required, blockers, reused_steps, reopened_steps, reusable_artifact_ids, publish_artifact_ids, starts_new_execution, clears_artifact_references]
+      properties:
+        inspection: {$ref: '#/components/schemas/OperationRecoveryInspection'}
+        resolution: {type: string, enum: [succeeded, failed, cancelled, safe_to_retry]}
+        eligible: {type: boolean}
+        evidence_required: {type: boolean, const: true}
+        blockers:
+          type: array
+          items: {type: string}
+        reused_steps:
+          type: array
+          items: {type: string}
+        reopened_steps:
+          type: array
+          items: {type: string}
+        reusable_artifact_ids:
+          type: array
+          items: {type: string, format: uuid}
+        publish_artifact_ids:
+          type: array
+          items: {type: string, format: uuid}
+        starts_new_execution: {type: boolean}
+        clears_artifact_references: {type: boolean}
+
+    OperationRecoveryDecision:
+      description: Immutable historical recovery acknowledgement; excludes raw evidence, result and credentials.
+      type: object
+      additionalProperties: false
+      required: [operation_id, recovery_id, request_fingerprint, expected_generation, generation, resolution, state, recorded_at, expires_at]
+      properties:
+        operation_id: {type: string, format: uuid}
+        recovery_id: {type: string, minLength: 1, maxLength: 128}
+        request_fingerprint: {type: string, pattern: '^[0-9a-f]{64}$'}
+        expected_generation: {type: integer, minimum: 1}
+        generation: {type: integer, minimum: 1}
+        expected_inspection_revision: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        resolution: {type: string, enum: [succeeded, failed, cancelled, safe_to_retry]}
+        state: {type: string, enum: [accepted, succeeded, failed, cancelled]}
+        invocation_id: {type: string, format: uuid}
+        job_run_id: {type: string, format: uuid}
+        workflow_run_id: {type: string, format: uuid}
+        recorded_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+
     OperationRecoveryRequest:
       description: Explicit recovery decision with retained evidence and idempotent recovery identity.
       type: object
@@ -33995,7 +35041,12 @@ components:
       - expected_generation
       - resolution
       - evidence
+      additionalProperties: false
       properties:
+        expected_inspection_revision:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+          description: Optional durable recovery inspection fence, rechecked before a new decision and ignored for an identical accepted receipt replay.
         recovery_id:
           type: string
           minLength: 1
@@ -35292,8 +36343,9 @@ components:
           description: Opaque application identifier, compared exactly. Maximum 256 UTF-8 bytes; ASCII controls are rejected. Use a public stable ID appropriate for customer-visible history.
     OperationDefinitionSpec:
       description: >-
-        Resolved immutable contract for one HTTP handler. Ownership comes from verified authentication,
-        never input fields. Production admission stays disabled until the HTTP execution adapter is qualified.
+        Resolved immutable contract for an HTTP handler or a named linear HTTP workflow from the same deployment.
+        Workflow definitions require POST ingress, reconciliation recovery and stages matching the steps.
+        Ownership comes from verified authentication. Production admission remains disabled pending qualification.
       type: object
       additionalProperties: false
       required:
@@ -35320,6 +36372,21 @@ components:
         name:
           type: string
           maxLength: 64
+        job:
+          type: string
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9-]*$'
+          description: Optional account-owned active batch Job. POST ingress and reconciliation recovery only; one task per generation. Input, image, command, environment and execution policy are frozen at admission. Mutually exclusive with workflow and transaction_receipt.
+        workflow:
+          description: Optional named workflow captured from this immutable deployment; path becomes its submission route.
+          type: string
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9-]*$'
+        transaction_receipt:
+          description: Explicit HTTP/PostgreSQL receipt adapter; requires reconciliation recovery. Business writes and the saved result commit in the customer database. Approved recovery replays a committed result without calling business code. This does not certify external effects or platform completion.
+          type: string
+          enum:
+          - postgres_v1
         method:
           type: string
           enum:
@@ -35444,6 +36511,21 @@ components:
         name:
           type: string
           maxLength: 64
+        job:
+          type: string
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9-]*$'
+          description: Discovered account-owned single-task batch Job; accepted work retains its execution snapshot.
+        workflow:
+          description: Workflow execution selected by this discoverable Operations definition.
+          type: string
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9-]*$'
+        transaction_receipt:
+          description: Discovered customer transaction receipt contract for atomic HTTP completion.
+          type: string
+          enum:
+          - postgres_v1
         method:
           type: string
           enum:
@@ -35586,6 +36668,10 @@ components:
         name: { type: string }
         revision: { type: string }
         release_id: { type: string, format: uuid }
+        execution_kind:
+          type: string
+          enum: [http, workflow, job]
+          description: Immutable execution family for a definition-specific preview admission observation. Omitted for common prerequisites or an ambiguous contract.
         limit: { type: integer, format: int64, minimum: 0 }
         observed: { type: integer, format: int64, minimum: 0 }
     OperationDefinitionsResponse:
@@ -35599,8 +36685,9 @@ components:
           items:
             $ref: '#/components/schemas/OperationDefinitionSummary'
     OperationTenantIdentity:
-      description: Tenant credential identity used to bind a private local submission receipt.
+      description: Tenant credential identity used to bind a private local submission receipt; optional submission fence returns 409 operation_identity_conflict if the principal changes.
       type: object
+      additionalProperties: false
       required: [account_id, platform_tenant_id]
       properties:
         account_id:
@@ -35634,7 +36721,7 @@ components:
           type: string
           format: date-time
     OperationResultArtifact:
-      description: Verified result reference in a private customer-managed object bucket.
+      description: Verified private result reference, from a managed object or direct Job upload.
       type: object
       required:
       - id
@@ -35652,7 +36739,7 @@ components:
         uri:
           type: string
           maxLength: 2048
-          description: obj://<app UUID>/<bucket UUID>/<opaque object key>; never a signed URL.
+          description: Managed obj:// source or opaque operation://<operation UUID>/artifacts/<artifact UUID> direct-upload reference; never a signed URL or physical storage key.
         size_bytes:
           type: integer
           minimum: 0
@@ -35829,12 +36916,14 @@ components:
           items: {$ref: '#/components/schemas/OperationSummary'}
         next_cursor: {type: string, maxLength: 512}
     OperationExecution:
-      description: Retained execution generation and ledger attempt count without private invocation data.
+      description: Retained execution generation. Exactly one invocation_id or workflow_run_id is present. Workflow attempts counts retained HTTP step attempts at that generation.
       type: object
-      required: [generation, invocation_id, state, attempts, created_at]
+      required: [generation, state, attempts, created_at]
       properties:
         generation: {type: integer, minimum: 1}
         invocation_id: {type: string, format: uuid}
+        job_run_id: {type: string, format: uuid}
+        workflow_run_id: {type: string, format: uuid}
         state: {type: string}
         attempts: {type: integer, minimum: 0}
         created_at: {type: string, format: date-time}
@@ -35886,6 +36975,8 @@ components:
           - accepted
           - running
           - progress
+          - result_prepared
+          - artifact_prepared
           - artifact_attached
           - succeeded
           - failed
@@ -35923,6 +37014,35 @@ components:
           minimum: 0
         resync_required:
           type: boolean
+    OperationSubmissionScope:
+      description: Optional immutable-definition fence for a browser feature.
+      type: object
+      additionalProperties: false
+      required: [app_id, scope, name]
+      properties:
+        app_id: {type: string, format: uuid}
+        scope: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
+        name: {type: string, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+    OperationSubmissionLookupRequest:
+      description: Selectors for an authenticated customer's retained idempotency identity; bounded to 4096 bytes.
+      type: object
+      additionalProperties: false
+      required: [app_id, scope, name, idempotency_key]
+      properties:
+        app_id: {type: string, format: uuid}
+        scope: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
+        name: {type: string, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+        idempotency_key: {type: string, minLength: 1, maxLength: 128}
+        expected_identity: {$ref: '#/components/schemas/OperationTenantIdentity'}
+    OperationSubmissionLookupResponse:
+      description: Read-only observation; accepted includes receipt and accepted_at. unresolved never proves rejection.
+      type: object
+      required: [state]
+      properties:
+        state: {type: string, enum: [accepted, unresolved, expired]}
+        receipt: {$ref: '#/components/schemas/OperationAcceptedResponse'}
+        accepted_at: {type: string, format: date-time}
+        idempotency_expires_at: {type: string, format: date-time}
     OperationStartRequest:
       description: Submission owned by the authenticated platform tenant.
       type: object
@@ -35936,6 +37056,10 @@ components:
           format: uuid
         input:
           description: JSON input matching the pinned definition.
+        expected_identity:
+          $ref: '#/components/schemas/OperationTenantIdentity'
+        expected_scope:
+          $ref: '#/components/schemas/OperationSubmissionScope'
     OperationCancellationRequest:
       description: Compare-and-set cancellation intent for this generation.
       type: object

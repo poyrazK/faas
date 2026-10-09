@@ -90,6 +90,29 @@ func TestOperationContractCannotLoadExternalResources(t *testing.T) {
 	}
 }
 
+func TestOperationTransactionReceiptContract(t *testing.T) {
+	limits := api.MustLimitsFor(api.PlanPro).Operations
+	spec := testSpec()
+	spec.TransactionReceipt = api.OperationTransactionPostgres
+	contract, err := Compile(spec, limits)
+	if err != nil || contract.Spec.Recovery != api.OperationRecoveryReconcile {
+		t.Fatalf("receipt contract: %+v %v", contract, err)
+	}
+	ordinary, err := Compile(testSpec(), limits)
+	if err != nil || ordinary.Revision == contract.Revision {
+		t.Fatal("receipt opt-in did not enter immutable revision")
+	}
+	for _, test := range []struct{ receipt, recovery, workflow string }{
+		{"unknown", "", ""}, {api.OperationTransactionPostgres, api.OperationRecoverySafeRetry, ""}, {api.OperationTransactionPostgres, "", "export"},
+	} {
+		bad := spec
+		bad.TransactionReceipt, bad.Recovery, bad.Workflow = test.receipt, test.recovery, test.workflow
+		if _, err := Compile(bad, limits); err == nil {
+			t.Fatalf("accepted incompatible receipt contract: %+v", test)
+		}
+	}
+}
+
 // adr: 638
 func TestOperationHTTPTransactionVersionIsExplicitAndImmutable(t *testing.T) {
 	limits := api.MustLimitsFor(api.PlanPro).Operations

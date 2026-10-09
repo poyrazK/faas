@@ -22,7 +22,7 @@ def _get_kwargs(
     x_gregale_operation_capability: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["X-Faas-Invocation-Id"] = x_faas_invocation_id
+    headers["X-Faas-Invocation-Id"] = str(x_faas_invocation_id)
 
     headers["X-Gregale-Operation-Attempt"] = str(x_gregale_operation_attempt)
 

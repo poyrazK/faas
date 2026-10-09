@@ -44,6 +44,11 @@ func TestPlatformTenantInvocationPathsAllowed(t *testing.T) {
 		{"GET", "/v1/platform-tenant-self/operations/id/cancel", false},
 		// ADR-521: only the staged HTTP customer namespace is reachable.
 		{"POST", "/v1/platform-tenant-self/customer-operations", true},
+		{"POST", "/v1/platform-tenant-self/customer-operations/submissions/lookup", true},
+		{"GET", "/v1/platform-tenant-self/customer-operations/submissions/lookup", false},
+		{"DELETE", "/v1/platform-tenant-self/customer-operations/submissions/lookup", false},
+		{"POST", "/v1/platform-tenant-self/customer-operations/submissions/lookup/extra", false},
+		{"POST", "/v1/platform-tenant-self/customer-operations/submissions/other", false},
 		{"GET", "/v1/platform-tenant-self/customer-operations", true},
 		{"GET", "/v1/platform-tenant-self/customer-operations/id", true},
 		{"GET", "/v1/platform-tenant-self/customer-operations/id/events", true},

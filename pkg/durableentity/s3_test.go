@@ -166,7 +166,7 @@ func TestS3WireRestoreAndRetryAcrossEngineRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.Execute(t.Context(), claim, request("one"), increment); err != nil {
+	if _, err := first.Execute(t.Context(), claim, request("one"), withOutbox(outboxIntent())); err != nil {
 		t.Fatal(err)
 	}
 	if err := first.Release(t.Context(), claim); err != nil {
@@ -185,6 +185,7 @@ func TestS3WireRestoreAndRetryAcrossEngineRestart(t *testing.T) {
 		t.Fatal(result, err)
 	}
 	assertCount(t, t.Context(), second, id, 1, 1)
+	pendingOutbox(t, second, id, 1, 1)
 }
 
 func TestS3WireAutomaticMaintenanceResumesAndPreservesReplay(t *testing.T) {

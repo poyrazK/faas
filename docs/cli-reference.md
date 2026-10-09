@@ -4525,7 +4525,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `data-api` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
 | `--handler <HANDLER>` | function handler |  |
@@ -6622,7 +6622,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `data-api` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -7145,6 +7145,21 @@ Validate source contracts and optional sample input without credentials
 | `--name <NAME>` | selected operation; required for a sample |  |
 | `--input-file <PATH>` | sample JSON input |  |
 
+### customer-operations types
+
+Generate or check TypeScript input and output types
+
+`gregale customer-operations types --app <SLUG> --plan <PLAN> [--dir <PATH>] [--name <NAME>] [--output <PATH>] [--check]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | selected manifest app | required |
+| `--plan <PLAN>` | explicit target plan | required; one of `free` · `hobby` · `pro` · `scale` |
+| `--dir <PATH>` | source directory, default current directory |  |
+| `--name <NAME>` | selected operation; defaults to all |  |
+| `--output <PATH>` | generated declaration path (default customer-operations.generated.d.ts) |  |
+| `--check` | verify generated declarations are current without writing |  |
+
 ### customer-operations start
 
 Submit tenant-owned work with an immutable retry receipt
@@ -7188,6 +7203,17 @@ Read business result and independent delivery status
 | `--app <SLUG>` | required in account mode; omit with --self |  |
 | `--timeout <D>` | local request/wait deadline; work continues |  |
 | `--self` | use authenticated tenant routes; omit --app |  |
+
+### customer-operations inspect
+
+Inspect confirmed steps, uncertain attempts, retained files and retry blockers
+
+`gregale customer-operations inspect [--app <SLUG>] [--timeout <D>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
 
 ### customer-operations events
 
@@ -7257,18 +7283,21 @@ Request cancellation at an observed generation
 
 ### customer-operations recover
 
-Record an evidenced reconciliation decision
+Preview or record an evidenced reconciliation decision
 
-`gregale customer-operations recover [--app <SLUG>] [--timeout <D>] --expected-generation <N> --recovery-id <ID> --resolution <RESOLUTION> --evidence-file <PATH> [--result-file <PATH>] <id>`
+`gregale customer-operations recover [--app <SLUG>] [--timeout <D>] [--expected-generation <N>] [--receipt-file <PATH>] [--preview] [--inspection-revision <REVISION>] [--recovery-id <ID>] [--resolution <RESOLUTION>] [--evidence-file <PATH>] [--result-file <PATH>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | required in account mode; omit with --self |  |
 | `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--expected-generation <N>` | observed generation; stale decisions are rejected | required |
-| `--recovery-id <ID>` | stable decision ID for duplicate requests | required |
-| `--resolution <RESOLUTION>` | explicit reconciliation result | required; one of `succeeded` · `failed` · `cancelled` · `safe_to_retry` |
-| `--evidence-file <PATH>` | nonempty reconciliation evidence | required |
+| `--expected-generation <N>` | observed generation for a new decision or preview; omit to resume |  |
+| `--receipt-file <PATH>` | private immutable decision request; omit selectors to resume |  |
+| `--preview` | read-only plan; exit 4 when blocked; omit decision ID and evidence |  |
+| `--inspection-revision <REVISION>` | optional inspection revision checked when applying |  |
+| `--recovery-id <ID>` | stable decision ID required when applying |  |
+| `--resolution <RESOLUTION>` | explicit resolution for a new decision or preview; omit to resume | one of `succeeded` · `failed` · `cancelled` · `safe_to_retry` |
+| `--evidence-file <PATH>` | nonempty reconciliation evidence required when applying |  |
 | `--result-file <PATH>` | JSON result required for succeeded |  |
 
 ### customer-operations delivery

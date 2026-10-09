@@ -47,6 +47,11 @@ export interface Operation<T = unknown> {
   cancellation_requested: boolean; failure_code?: string; latest_sequence: number;
   created_at: string; updated_at: string; expires_at: string;
 }
+export interface OperationTenantIdentity { account_id: string; platform_tenant_id: string }
+export interface OperationSubmissionScope { app_id: string; scope: string; name: string }
+export interface OperationSubmissionFence { identity: OperationTenantIdentity; scope: OperationSubmissionScope }
+export interface OperationSubmissionLookupOptions extends OperationSubmissionScope { idempotency_key: string; expected_identity?: OperationTenantIdentity }
+export interface OperationSubmissionLookup { state: 'accepted' | 'unresolved' | 'expired'; receipt?: OperationReceipt; accepted_at?: string; idempotency_expires_at?: string }
 export interface OperationReceipt { id: string; status_url: string; events_url: string }
 export type OperationSummary = Omit<Operation, 'result' | 'artifacts' | 'failure_code' | 'completion_delivery'> & { completion_delivery: Pick<OperationDelivery, 'state' | 'attempts' | 'next_attempt_at'> };
 export interface OperationList { operations: OperationSummary[]; next_cursor?: string }
@@ -94,6 +99,19 @@ function operationPath(id: string): string {
   return `/v1/platform-tenant-self/customer-operations/${id}`;
 }
 
+function validSubmissionKey(key: string): boolean {
+  return typeof key === 'string' && key.length > 0 && new TextEncoder().encode(key).length <= 128 && !/[\r\n\0]/.test(key);
+}
+/** @internal Shared submission preflight; invalid keys must not become a
+ * feature controller's retained uncertain-submission identity. */
+export function operationSubmissionIdentity(definition: string, key: string): void {
+  if (!UUID.test(definition) || !validSubmissionKey(key) || !/^[\x20-\x7e]+$/.test(key)) throw new Error('Definition and bounded ASCII idempotency key required');
+  // The saved key must be exactly what Fetch sends, before publishing a
+  // durable receipt. Headers otherwise trim whitespace or reject Unicode.
+  try {
+    if (new Headers({ 'Idempotency-Key': key }).get('Idempotency-Key') !== key) throw new Error();
+  } catch { throw new Error('An exact supported HTTP idempotency key is required'); }
+}
 function milestonePageQuery(options: OperationMilestonePageOptions): URLSearchParams {
   if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 100)) throw new Error('Invalid milestone page size');
   if (options.cursor !== undefined && (!options.cursor || options.cursor.length > 512)) throw new Error('Invalid milestone cursor');
@@ -116,9 +134,16 @@ export class GregaleOperationClient {
     const response = await this.fetchImpl(new URL(path, this.base), { method, headers: h, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal, redirect: 'error', cache: 'no-store' });
     return operationResponse<T>(response);
   }
-  start(definition: string, input: unknown, idempotencyKey: string, signal?: AbortSignal): Promise<OperationReceipt> {
-    if (!UUID.test(definition) || !idempotencyKey || new TextEncoder().encode(idempotencyKey).length > 128 || /[\r\n\0]/.test(idempotencyKey)) throw new Error('Definition and bounded idempotency key required');
-    return this.request('/v1/platform-tenant-self/customer-operations', 'POST', { definition_id: definition, input }, { 'Idempotency-Key': idempotencyKey }, signal);
+  get apiURL(): string { return this.base.origin; }
+  identity(signal?: AbortSignal): Promise<OperationTenantIdentity> { return this.request('/v1/platform-tenant-self/customer-operations/identity', 'GET', undefined, undefined, signal); }
+  lookupSubmission(options: OperationSubmissionLookupOptions, signal?: AbortSignal): Promise<OperationSubmissionLookup> {
+    if (!UUID.test(options.app_id) || !validSubmissionKey(options.idempotency_key)) throw new Error('Explicit app and bounded idempotency key required');
+    if (!/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope) || !/^[a-z][a-z0-9-]{0,63}$/.test(options.name)) throw new Error('Explicit submission app, environment and name required');
+    return this.request('/v1/platform-tenant-self/customer-operations/submissions/lookup', 'POST', options, undefined, signal);
+  }
+  start(definition: string, input: unknown, idempotencyKey: string, signal?: AbortSignal, fence?: OperationSubmissionFence): Promise<OperationReceipt> {
+    operationSubmissionIdentity(definition, idempotencyKey);
+    return this.request('/v1/platform-tenant-self/customer-operations', 'POST', { definition_id: definition, input, ...(fence ? { expected_identity: fence.identity, expected_scope: fence.scope } : {}) }, { 'Idempotency-Key': idempotencyKey }, signal);
   }
   get<T = unknown>(id: string, signal?: AbortSignal): Promise<Operation<T>> { return this.request(operationPath(id), 'GET', undefined, undefined, signal); }
   list(options: OperationListOptions, signal?: AbortSignal): Promise<OperationList> {
@@ -238,7 +263,7 @@ export class GregaleOperationClient {
     if (!response.ok) await operationResponse(response);
     return response;
   }
-  cancel(id: string, generation: number, signal?: AbortSignal): Promise<Operation> {
+  cancel<T = unknown>(id: string, generation: number, signal?: AbortSignal): Promise<Operation<T>> {
     if (!Number.isSafeInteger(generation) || generation < 1) throw new Error('Current operation generation required');
     return this.request(operationPath(id) + '/cancel', 'POST', { expected_generation: generation }, undefined, signal);
   }

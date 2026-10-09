@@ -128,6 +128,8 @@ linters:
     #
     # Keep the forbidigo policy explicit here so local and CI runs use
     # the same repository-specific rules across linter releases.
+    # CI's pinned v2.14.0 is authoritative if a locally installed release
+    # adds defaults beyond the repository-specific rules below.
     forbidigo:
       # Don't analyze godoc — stdlib only, no test fixtures in docs.
       exclude-godoc-examples: false

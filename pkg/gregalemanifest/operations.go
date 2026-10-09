@@ -16,10 +16,13 @@ import (
 // Operation schemas are JSON files relative to the selected source manifest.
 // Deploy bundles their contents; serving never reads source files or URLs.
 type Operation struct {
-	Milestones             map[string]string         `yaml:"milestones,omitempty" toml:"milestones"`
-	Subject                *api.OperationSubjectSpec `yaml:"subject,omitempty" toml:"subject"`
+	Job                    string                    `yaml:"job,omitempty" json:"job,omitempty"`
 	App                    string                    `yaml:"app,omitempty" toml:"app"`
 	Name                   string                    `yaml:"name" toml:"name"`
+	Workflow               string                    `yaml:"workflow,omitempty" toml:"workflow"`
+	TransactionReceipt     string                    `yaml:"transaction_receipt,omitempty" toml:"transaction_receipt"`
+	Milestones             map[string]string         `yaml:"milestones,omitempty" toml:"milestones"`
+	Subject                *api.OperationSubjectSpec `yaml:"subject,omitempty" toml:"subject"`
 	Method                 string                    `yaml:"method" toml:"method"`
 	Path                   string                    `yaml:"path" toml:"path"`
 	Owner                  string                    `yaml:"owner" toml:"owner"`
@@ -29,6 +32,11 @@ type Operation struct {
 	CompletionWebhookID    string                    `yaml:"completion_webhook_id,omitempty" toml:"completion_webhook_id"`
 	Recovery               string                    `yaml:"recovery,omitempty" toml:"recovery"`
 	HTTPTransactionVersion int                       `yaml:"http_transaction_version,omitempty" toml:"http_transaction_version"`
+}
+
+func (o Operation) specification() api.OperationDefinitionSpec {
+	return api.OperationDefinitionSpec{Name: o.Name, Job: o.Job, Workflow: o.Workflow, TransactionReceipt: o.TransactionReceipt, Subject: o.Subject, Method: o.Method, Path: o.Path, Owner: o.Owner,
+		Milestones: make(map[string]json.RawMessage, len(o.Milestones)), ProgressStages: append([]string(nil), o.ProgressStages...), CompletionWebhookID: o.CompletionWebhookID, Recovery: o.Recovery, HTTPTransactionVersion: o.HTTPTransactionVersion}
 }
 
 // OperationWorkflow declares a read-only business process assembled from
@@ -66,11 +74,6 @@ type OperationWorkflowStepSource struct {
 	Position       int    `yaml:"position" toml:"position"`
 }
 
-func (o Operation) specification() api.OperationDefinitionSpec {
-	return api.OperationDefinitionSpec{Subject: o.Subject, Name: o.Name, Method: o.Method, Path: o.Path, Owner: o.Owner,
-		ProgressStages: append([]string(nil), o.ProgressStages...), CompletionWebhookID: o.CompletionWebhookID, Recovery: o.Recovery, HTTPTransactionVersion: o.HTTPTransactionVersion}
-}
-
 func (m *Manifest) validateOperations(plan api.Plan) error {
 	limits := api.MustLimitsFor(plan).Operations
 	if len(m.Operations) == 0 {
@@ -103,6 +106,20 @@ func (m *Manifest) validateOperations(plan api.Plan) error {
 		contract, err := operations.Compile(spec, limits)
 		if err != nil {
 			return fmt.Errorf("operations[%d]: %w", i, err)
+		}
+		if o.Workflow != "" {
+			found := false
+			for _, workflow := range m.Workflows {
+				if workflow.Name == o.Workflow {
+					if err := operations.ValidateWorkflow(contract.Spec, workflow, plan); err != nil {
+						return fmt.Errorf("operations[%d]: %w", i, err)
+					}
+					found = true
+				}
+			}
+			if !found {
+				return fmt.Errorf("operations[%d]: named workflow is missing from the manifest", i)
+			}
 		}
 		name, route := o.App+"/"+o.Name, o.App+"/"+contract.Spec.Method+"/"+contract.Spec.Path
 		if names[name] || routes[route] {

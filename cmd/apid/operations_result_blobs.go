@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -50,6 +51,11 @@ func (s *server) retainOperationArtifact(ctx context.Context, op state.Operation
 }
 
 func (s *server) readRetainedOperationArtifact(ctx context.Context, op state.Operation, artifact api.OperationResultArtifact, req api.OperationArtifactRequest) (*verifiedOperationArtifact, error) {
+	// A published artifact's physical key comes only from the scoped store
+	// binding. Its opaque reference is not a source object locator.
+	if err := operations.ValidateArtifactUpload(api.OperationArtifactUploadRequest{ReportID: req.ReportID, Name: req.Name, SizeBytes: req.SizeBytes, SHA256: req.SHA256}, op.PlanLimits); err != nil {
+		return nil, state.ErrInvalidArgument
+	}
 	key := op.ArtifactStorageKeys[artifact.ID]
 	if key == "" {
 		return nil, storage.ErrNotFound
@@ -57,7 +63,7 @@ func (s *server) readRetainedOperationArtifact(ctx context.Context, op state.Ope
 	if s.operationArtifactStorage == nil {
 		return nil, objectstorage.ErrUnavailable
 	}
-	return s.spoolOperationArtifact(op, req, func() (io.ReadCloser, error) { return s.operationArtifactStorage.Get(ctx, key) })
+	return s.spoolValidatedOperationArtifact(op, req, func() (io.ReadCloser, error) { return s.operationArtifactStorage.Get(ctx, key) })
 }
 
 func (s *server) runOperationArtifactCleanup(ctx context.Context) {

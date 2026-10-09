@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/outbound/routepolicy"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"math"
 	"time"
 )
 
@@ -24,6 +25,9 @@ type WorkflowOutboundStore interface {
 }
 
 func (s *PgStore) GetWorkflowOutboundAttempt(ctx context.Context, runID, step string, attempt int) (WorkflowOutboundAttempt, error) {
+	if attempt < 1 || attempt > math.MaxInt32 {
+		return WorkflowOutboundAttempt{}, ErrInvalidArgument
+	}
 	row, err := sqlc.New().WorkflowOutboundAttempt(ctx, s.pool, sqlc.WorkflowOutboundAttemptParams{RunID: mustPgUUID(runID), StepName: step, Attempt: int32(attempt)})
 	if err != nil {
 		return WorkflowOutboundAttempt{}, err
@@ -150,6 +154,11 @@ func workflowOutboundSpec(snapshot json.RawMessage, name string) *api.WorkflowOu
 func recoverWorkflowStepsTx(ctx context.Context, tx sqlc.DBTX, runID string) error {
 	q := sqlc.New()
 	id := mustPgUUID(runID)
+	if _, err := q.GetCustomerOperationForWorkflow(ctx, tx, id); err == nil {
+		return interruptOperationWorkflowTx(ctx, tx, runID)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
 	if err := q.MarkWorkflowOutboundUnknown(ctx, tx, id); err != nil {
 		return err
 	}

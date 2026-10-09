@@ -24,6 +24,7 @@ from .customer_operations import (
     customer_operation_request_from_headers,
 )
 from .models.operation_artifact_request import OperationArtifactRequest
+from .models.operation_execution_control_response import OperationExecutionControlResponse
 from .models.operation_milestone import OperationMilestone
 from .models.operation_milestone_request import OperationMilestoneRequest
 from .models.operation_milestone_validation_request import OperationMilestoneValidationRequest
@@ -113,7 +114,9 @@ class GregaleOperations:
             capability = normalized.get("x-gregale-operation-capability", "")
             if (
                 not _UUID.fullmatch(operation_id)
+                or operation_id == "00000000-0000-0000-0000-000000000000"
                 or not _UUID.fullmatch(invocation)
+                or invocation == "00000000-0000-0000-0000-000000000000"
                 or not re.fullmatch(r"[1-9][0-9]{0,9}", attempt)
                 or int(attempt) > 2_147_483_647
                 or not re.fullmatch(r"[0-9a-f]{64}", capability)
@@ -147,10 +150,10 @@ class GregaleOperations:
         return execution.context if execution else None
 
     async def progress(self, report: OperationReportRequest) -> OperationResponse:
-        return await self._report("progress", report.to_dict())
+        return OperationResponse.from_dict(await self._report_json("progress", report.to_dict()))
 
     async def artifact(self, report: OperationArtifactRequest) -> OperationResponse:
-        return await self._report("artifacts", report.to_dict())
+        return OperationResponse.from_dict(await self._report_json("artifacts", report.to_dict()))
 
     async def milestone(self, report: OperationMilestoneRequest) -> OperationMilestone:
         """Publish an already committed fact using its saved ID and occurrence time."""
@@ -167,13 +170,6 @@ class GregaleOperations:
         """Publish a workflow state report that is already committed by the application."""
         return OperationWorkflowStateReportResponse.from_dict(
             await self._report_json("workflow-states", report.to_dict())
-        )
-
-    async def validate_workflow_states(
-        self, batch: OperationWorkflowStateValidationRequest
-    ) -> OperationWorkflowStateValidationResponse:
-        return OperationWorkflowStateValidationResponse.from_dict(
-            await self._report_json("workflow-states/validate", batch.to_dict())
         )
 
     async def transaction(
@@ -229,7 +225,37 @@ class GregaleOperations:
     async def _report(self, suffix: str, body: dict) -> OperationResponse:
         return OperationResponse.from_dict(await self._report_json(suffix, body))
 
-    async def _report_json(self, suffix: str, body: dict) -> dict:
+    async def validate_workflow_states(self, batch: OperationWorkflowStateValidationRequest) -> OperationWorkflowStateValidationResponse:
+        return OperationWorkflowStateValidationResponse.from_dict(await self._report_json("workflow-states/validate", batch.to_dict()))
+
+    async def control(self) -> OperationExecutionControlResponse:
+        """Observe cancellation and time bounds without renewing or settling work.
+
+        The application cooperates with intent and bounds its own I/O. This read
+        does not certify that external effects can be repeated safely.
+        """
+        result = await self._request("control")
+        execution = self._execution.get()
+        if execution is None:
+            raise ValueError("Control requires an operation execution")
+        control = OperationExecutionControlResponse.from_dict(result)
+        context = execution.context
+        if (
+            str(control.operation_id) != context.id
+            or str(control.invocation_id) != context.invocation_id
+            or type(control.attempt) is not int
+            or control.attempt != context.attempt
+            or type(control.cancellation_requested) is not bool
+            or type(control.poll_after_ms) is not int
+            or not 100 <= control.poll_after_ms <= 1000
+            or any(value.utcoffset() is None for value in (control.observed_at, control.deadline_at, control.lease_expires_at))
+            or control.lease_expires_at > control.deadline_at
+        ):
+            raise ValueError("Invalid operation control observation")
+        control.additional_properties.clear()
+        return control
+
+    async def _report_json(self, suffix: str, body: dict | None = None) -> dict:
         execution = self._execution.get()
         if execution is None:
             raise ValueError("Reporting requires an operation execution")
@@ -239,10 +265,9 @@ class GregaleOperations:
         if not isinstance(bearer, str) or not bearer or len(bearer) > 8192 or re.search(r"\s", bearer):
             raise ValueError("Invalid operation workload identity")
         context = execution.context
-        result = await self._json(
-            "POST",
+        return await self._json(
+            "GET" if body is None else "POST",
             f"{self._api}/v1/runtime/operations/{context.id}/{suffix}",
-            json=body,
             headers={
                 "Authorization": f"Bearer {bearer}",
                 "Cache-Control": "no-store",
@@ -250,8 +275,11 @@ class GregaleOperations:
                 "X-Gregale-Operation-Attempt": str(context.attempt),
                 "X-Gregale-Operation-Capability": execution.capability,
             },
+            **({"json": body} if body is not None else {}),
         )
-        return result
+
+    async def _request(self, suffix: str, body: dict | None = None) -> dict:
+        return await self._report_json(suffix, body)
 
     async def _json(self, method: str, url: str, **kwargs) -> dict:
         async with self._client.stream(

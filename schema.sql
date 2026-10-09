@@ -8578,6 +8578,7 @@ $$;
 
 
 --
+
 -- Name: project_event_routing_backlog_recipient(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9887,6 +9888,7 @@ $$;
 
 
 --
+
 -- Name: record_telemetry_coverage(text, uuid, bigint, boolean, integer, bigint, integer, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14195,7 +14197,7 @@ CREATE TABLE public.customer_operation_definitions (
     spec jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     workflow_snapshot jsonb,
-    CONSTRAINT customer_operation_definition_target CHECK (((((NOT (spec ? 'workflow'::text)) AND (workflow_snapshot IS NULL)) OR ((jsonb_typeof((spec -> 'workflow'::text)) = 'object'::text) AND (NOT ((spec ? 'method'::text) OR (spec ? 'path'::text))) AND (jsonb_typeof(((spec -> 'workflow'::text) -> 'name'::text)) = 'string'::text) AND (((spec -> 'workflow'::text) ->> 'name'::text) <> ''::text) AND (jsonb_typeof(((spec -> 'workflow'::text) -> 'result_step'::text)) = 'string'::text) AND (((spec -> 'workflow'::text) ->> 'result_step'::text) <> ''::text) AND (jsonb_typeof(((spec -> 'workflow'::text) -> 'progress_stage'::text)) = 'string'::text) AND (((spec -> 'workflow'::text) ->> 'progress_stage'::text) <> ''::text) AND (jsonb_typeof(workflow_snapshot) = 'object'::text) AND ((workflow_snapshot ->> 'name'::text) = ((spec -> 'workflow'::text) ->> 'name'::text)) AND (jsonb_typeof((workflow_snapshot -> 'steps'::text)) = 'array'::text))) IS TRUE)),
+    CONSTRAINT customer_operation_definition_target CHECK (((((NOT (spec ? 'workflow'::text)) AND (workflow_snapshot IS NULL)) OR ((jsonb_typeof((spec -> 'workflow'::text)) = 'string'::text) AND ((spec ->> 'workflow'::text) <> ''::text) AND (jsonb_typeof(workflow_snapshot) = 'object'::text) AND ((workflow_snapshot ->> 'name'::text) = (spec ->> 'workflow'::text)) AND (jsonb_typeof((workflow_snapshot -> 'steps'::text)) = 'array'::text))) IS TRUE)),
     CONSTRAINT customer_operation_definitions_check CHECK (((spec ->> 'name'::text) = name)),
     CONSTRAINT customer_operation_definitions_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
     CONSTRAINT customer_operation_definitions_revision_check CHECK ((revision ~ '^[0-9a-f]{64}$'::text)),
@@ -14237,7 +14239,7 @@ CREATE TABLE public.customer_operation_events (
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT customer_operation_events_attempt_check CHECK ((attempt >= 0)),
     CONSTRAINT customer_operation_events_data_check CHECK ((jsonb_typeof(data) = 'object'::text)),
-    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'workflow_progress'::text, 'artifact_attached'::text, 'milestone'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
+    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'workflow_progress'::text, 'result_prepared'::text, 'artifact_prepared'::text, 'artifact_attached'::text, 'milestone'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
     CONSTRAINT customer_operation_events_sequence_check CHECK ((sequence > 0))
 );
 
@@ -14282,6 +14284,23 @@ CREATE TABLE public.customer_operation_idempotency (
 
 
 --
+-- Name: customer_operation_job_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_job_executions (
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    run_id uuid NOT NULL,
+    record jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT customer_operation_job_executions_check CHECK ((NOT ((record ->> 'job_run_id'::text) IS DISTINCT FROM (run_id)::text))),
+    CONSTRAINT customer_operation_job_executions_check1 CHECK ((NOT ((record ->> 'generation'::text) IS DISTINCT FROM (generation)::text))),
+    CONSTRAINT customer_operation_job_executions_generation_check CHECK ((generation > 0)),
+    CONSTRAINT customer_operation_job_executions_record_check CHECK ((jsonb_typeof(record) = 'object'::text))
+);
+
+
+--
 -- Name: customer_operation_milestones; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14313,6 +14332,8 @@ CREATE TABLE public.customer_operation_recoveries (
     fingerprint text NOT NULL,
     request jsonb NOT NULL,
     created_at timestamp with time zone NOT NULL,
+    decision jsonb,
+    CONSTRAINT customer_operation_recoveries_decision_check CHECK (((decision IS NULL) OR (jsonb_typeof(decision) = 'object'::text))),
     CONSTRAINT customer_operation_recoveries_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT customer_operation_recoveries_recovery_id_check CHECK (((octet_length(recovery_id) >= 1) AND (octet_length(recovery_id) <= 128))),
     CONSTRAINT customer_operation_recoveries_request_check CHECK ((jsonb_typeof(request) = 'object'::text))
@@ -14344,7 +14365,7 @@ CREATE TABLE public.customer_operation_result_blobs (
     operation_id uuid NOT NULL,
     account_id uuid NOT NULL,
     generation integer NOT NULL,
-    execution_id uuid NOT NULL,
+    execution_id uuid,
     attempt integer NOT NULL,
     report_id text NOT NULL,
     fingerprint text NOT NULL,
@@ -14355,13 +14376,17 @@ CREATE TABLE public.customer_operation_result_blobs (
     next_attempt_at timestamp with time zone NOT NULL,
     lease_token text DEFAULT ''::text NOT NULL,
     lease_until timestamp with time zone,
+    workflow_run_id uuid,
+    workflow_step text,
+    job_run_id uuid,
     CONSTRAINT customer_operation_result_blobs_attempt_check CHECK ((attempt > 0)),
     CONSTRAINT customer_operation_result_blobs_check CHECK ((storage_key = ((((('operation-results/'::text || (account_id)::text) || '/'::text) || (operation_id)::text) || '/'::text) || (id)::text))),
     CONSTRAINT customer_operation_result_blobs_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT customer_operation_result_blobs_generation_check CHECK ((generation > 0)),
     CONSTRAINT customer_operation_result_blobs_report_id_check CHECK (((octet_length(report_id) >= 1) AND (octet_length(report_id) <= 128))),
     CONSTRAINT customer_operation_result_blobs_size_bytes_check CHECK ((size_bytes >= 0)),
-    CONSTRAINT customer_operation_result_blobs_state_check CHECK ((state = ANY (ARRAY['staging'::text, 'retained'::text, 'deleting'::text])))
+    CONSTRAINT customer_operation_result_blobs_state_check CHECK ((state = ANY (ARRAY['staging'::text, 'retained'::text, 'deleting'::text]))),
+    CONSTRAINT operation_blob_execution_family CHECK ((((execution_id IS NOT NULL) AND (workflow_run_id IS NULL) AND (workflow_step IS NULL) AND (job_run_id IS NULL)) OR ((execution_id IS NULL) AND (workflow_run_id IS NOT NULL) AND (workflow_step IS NOT NULL) AND (job_run_id IS NULL) AND ((octet_length(workflow_step) >= 1) AND (octet_length(workflow_step) <= 128))) OR ((execution_id IS NULL) AND (workflow_run_id IS NULL) AND (workflow_step IS NULL) AND (job_run_id IS NOT NULL))))
 );
 
 
@@ -14380,7 +14405,9 @@ CREATE TABLE public.customer_operations (
     record jsonb NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    current_execution_id uuid GENERATED ALWAYS AS (COALESCE(((record ->> 'current_execution_id'::text))::uuid, current_invocation_id)) STORED NOT NULL,
+    workflow_run_id uuid,
+    job_run_id uuid,
+current_execution_id uuid GENERATED ALWAYS AS (COALESCE(((record ->> 'current_execution_id'::text))::uuid, current_invocation_id)) STORED NOT NULL,
     execution_kind text GENERATED ALWAYS AS (COALESCE((record ->> 'execution_kind'::text), 'http'::text)) STORED NOT NULL,
     execution_generation integer GENERATED ALWAYS AS (((record ->> 'generation'::text))::integer) STORED NOT NULL,
     CONSTRAINT customer_operation_milestone_count_valid CHECK (((NOT (record ? 'milestone_count'::text)) OR COALESCE(((jsonb_typeof((record -> 'milestone_count'::text)) = 'number'::text) AND ((((record ->> 'milestone_count'::text))::integer >= 0) AND (((record ->> 'milestone_count'::text))::integer <= 64))), false))),
@@ -14393,8 +14420,11 @@ CREATE TABLE public.customer_operations (
     CONSTRAINT customer_operations_check4 CHECK (((record ->> 'platform_tenant_id'::text) = (platform_tenant_id)::text)),
     CONSTRAINT customer_operations_check5 CHECK (((record ->> 'definition_id'::text) = (definition_id)::text)),
     CONSTRAINT customer_operations_check6 CHECK (((record ->> 'current_invocation_id'::text) = (current_invocation_id)::text)),
+    CONSTRAINT customer_operations_execution_family_check CHECK ((num_nonnulls(current_invocation_id, workflow_run_id, job_run_id) = 1)),
+    CONSTRAINT customer_operations_job_record_check CHECK (((job_run_id IS NULL) OR (NOT ((record ->> 'job_run_id'::text) IS DISTINCT FROM (job_run_id)::text)))),
     CONSTRAINT customer_operations_record_check CHECK ((jsonb_typeof(record) = 'object'::text)),
-    CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text])))
+    CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text]))),
+    CONSTRAINT customer_operations_workflow_record_check CHECK (((workflow_run_id IS NULL) OR (NOT ((record ->> 'workflow_run_id'::text) IS DISTINCT FROM (workflow_run_id)::text))))
 );
 
 
@@ -14475,6 +14505,23 @@ CREATE TABLE public.customer_operation_stream_leases (
 
 
 --
+-- Name: customer_operation_workflow_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_workflow_executions (
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    run_id uuid NOT NULL,
+    resume_count integer NOT NULL,
+    record jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT customer_operation_workflow_executions_check CHECK (((resume_count >= 0) AND (generation = (resume_count + 1)))),
+    CONSTRAINT customer_operation_workflow_executions_check1 CHECK ((NOT ((record ->> 'workflow_run_id'::text) IS DISTINCT FROM (run_id)::text))),
+    CONSTRAINT customer_operation_workflow_executions_check2 CHECK ((NOT ((record ->> 'generation'::text) IS DISTINCT FROM (generation)::text))),
+    CONSTRAINT customer_operation_workflow_executions_generation_check CHECK ((generation > 0)),
+    CONSTRAINT customer_operation_workflow_executions_record_check CHECK ((jsonb_typeof(record) = 'object'::text))
+);
+
 -- Name: customer_operation_workflow_claims; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -24845,6 +24892,7 @@ CREATE TABLE public.workflow_run_resumes (
 
 
 --
+
 -- Name: workflow_schedule_cursors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -26170,6 +26218,19 @@ ALTER TABLE ONLY public.customer_operation_idempotency
 
 
 --
+-- Name: customer_operation_job_executions customer_operation_job_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_job_executions
+    ADD CONSTRAINT customer_operation_job_executions_pkey PRIMARY KEY (operation_id, generation);
+
+
+--
+-- Name: customer_operation_job_executions customer_operation_job_executions_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_job_executions
+    ADD CONSTRAINT customer_operation_job_executions_run_id_key UNIQUE (run_id);
 -- Name: customer_operation_milestones customer_operation_milestones_operation_id_event_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26226,6 +26287,28 @@ ALTER TABLE ONLY public.customer_operation_stream_leases
 
 
 --
+-- Name: customer_operation_workflow_executions customer_operation_workflow_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_executions
+    ADD CONSTRAINT customer_operation_workflow_executions_pkey PRIMARY KEY (operation_id, generation);
+
+
+--
+-- Name: customer_operation_workflow_executions customer_operation_workflow_executions_run_id_resume_count_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_executions
+    ADD CONSTRAINT customer_operation_workflow_executions_run_id_resume_count_key UNIQUE (run_id, resume_count);
+
+
+--
+-- Name: customer_operations customer_operations_job_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_job_run_id_key UNIQUE (job_run_id);
+
 -- Name: customer_operation_workflow_claims customer_operation_workflow_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26263,6 +26346,14 @@ ALTER TABLE ONLY public.customer_operation_workflow_states
 
 ALTER TABLE ONLY public.customer_operations
     ADD CONSTRAINT customer_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_operations customer_operations_workflow_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_workflow_run_id_key UNIQUE (workflow_run_id);
 
 
 --
@@ -42053,6 +42144,19 @@ ALTER TABLE ONLY public.customer_operation_idempotency
 
 
 --
+-- Name: customer_operation_job_executions customer_operation_job_executions_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_job_executions
+    ADD CONSTRAINT customer_operation_job_executions_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_job_executions customer_operation_job_executions_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_job_executions
+    ADD CONSTRAINT customer_operation_job_executions_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.job_runs(id) ON DELETE RESTRICT;
 -- Name: customer_operation_milestones customer_operation_milestones_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -42101,6 +42205,25 @@ ALTER TABLE ONLY public.customer_operation_stream_leases
 
 
 --
+-- Name: customer_operation_workflow_executions customer_operation_workflow_executions_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_executions
+    ADD CONSTRAINT customer_operation_workflow_executions_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_executions customer_operation_workflow_executions_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_executions
+    ADD CONSTRAINT customer_operation_workflow_executions_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE RESTRICT;
+
+
+--
+
+--
+
 -- Name: customer_operation_workflow_claims customer_operation_workflow_claims_execution_identity_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -42213,11 +42336,27 @@ ALTER TABLE ONLY public.customer_operations
 
 
 --
+-- Name: customer_operations customer_operations_job_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_job_run_id_fkey FOREIGN KEY (job_run_id) REFERENCES public.job_runs(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: customer_operations customer_operations_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_operations
     ADD CONSTRAINT customer_operations_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operations customer_operations_workflow_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE RESTRICT;
 
 
 --

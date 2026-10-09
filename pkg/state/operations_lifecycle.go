@@ -50,6 +50,14 @@ func operationExecutionHeaders(inv Invocation, op Operation, def OperationDefini
 	headers[api.OperationIDHeader] = op.ID
 	headers[api.OperationAttemptHeader] = strconv.Itoa(inv.Attempts)
 	headers[api.OperationCapabilityHeader] = capability
+	if def.Spec.TransactionReceipt == api.OperationTransactionPostgres {
+		headers[api.OperationReceiptVersionHeader] = "1"
+		// Bind the customer-owned receipt to immutable platform scope and pins.
+		// Generation, invocation and claim capability deliberately do not enter it.
+		binding, _ := json.Marshal([]string{op.AccountID, op.AppID, op.PlatformTenantID, op.Scope, op.DefinitionRevision, op.DeploymentID, op.ReleaseID})
+		digest := sha256.Sum256(binding)
+		headers[api.OperationReceiptBindingHeader] = hex.EncodeToString(digest[:])
+	}
 	if def.Spec.HTTPTransactionVersion == api.OperationHTTPTransactionVersion {
 		headers[api.OperationTransactionVersionHeader] = strconv.Itoa(api.OperationHTTPTransactionVersion)
 		headers[api.OperationResultMaxBytesHeader] = strconv.Itoa(op.ValueMaxBytes)
@@ -78,7 +86,7 @@ func ValidateOperationExecutionAuthority(op Operation, inv Invocation, authority
 	if authority.AccountID != op.AccountID || authority.AppID != op.AppID || authority.InstanceID == "" || authority.InstanceID != inv.InstanceID {
 		return ErrNotFound
 	}
-	if op.CurrentInvocationID != inv.ID || authority.InvocationID != inv.ID || authority.Attempt <= 0 || authority.Attempt != inv.Attempts || op.ExecutionAttempt != authority.Attempt || op.State != api.OperationRunning || inv.State != InvocationDispatching || inv.LeaseExpiresAt == nil || !inv.LeaseExpiresAt.After(now) {
+	if op.CurrentInvocationID != inv.ID || authority.InvocationID != inv.ID || authority.Attempt <= 0 || authority.Attempt != inv.Attempts || op.ExecutionAttempt != authority.Attempt || op.State != api.OperationRunning || inv.State != InvocationDispatching || inv.LeaseExpiresAt == nil || !inv.LeaseExpiresAt.After(now) || inv.DeadlineAt == nil || !inv.DeadlineAt.After(now) {
 		return ErrOperationStaleAttempt
 	}
 	digest := operationCapabilityDigest(authority.Capability)

@@ -154,8 +154,10 @@ WRAPPER_MODULES = (
     "flags.py",
     "commit.py",
     "operations_runtime.py",
+    "job_operations_runtime.py",
     "operations.py",
     "_operation_contract.py",
+    "customer_operation_schema.sql",
     "operation_schema.sql",
     "customer_operations.py",
     "customer_operation_publication.py",
@@ -595,6 +597,20 @@ def _patch_generator_bugs(sdk_root: Path) -> None:
         original = text
         # Fix 5: downloads must preserve bytes, including invalid UTF-8 in ZIPs.
         text = text.replace("BytesIO(response.text)", "BytesIO(response.content)")
+        # Runtime UUID headers are UUID objects in the typed signatures;
+        # HTTPX requires their textual wire representation.
+        for header, argument in (
+            ("X-Faas-Invocation-Id", "x_faas_invocation_id"),
+            ("X-Gregale-Operation-Workflow-Run-Id", "x_gregale_operation_workflow_run_id"),
+            ("X-Gregale-Operation-Workflow-Capability", "x_gregale_operation_workflow_capability"),
+            ("X-Gregale-Operation-Job-Run-Id", "x_gregale_operation_job_run_id"),
+            ("X-Gregale-Operation-Job-Instance-Id", "x_gregale_operation_job_instance_id"),
+        ):
+            text = text.replace(f'headers["{header}"] = {argument}\n', f'headers["{header}"] = str({argument})\n')
+        if path.parent.name == "operations" and 'headers["X-Gregale-Operation-Job-Run-Id"]' in text:
+            # Native capabilities travel through the tokenless client's
+            # headers; the bearer-client annotation is a generator limitation.
+            text = text.replace("client: AuthenticatedClient,", "client: Client,")
         # Fix 1: add `Unset` to the types import when referenced in
         # the file but not yet imported. The check matches the
         # import line ONLY (single-line `from ... import ...`); we
@@ -736,6 +752,12 @@ from .idempotency import (
 )
 from .issues import IssueReporter
 from .operations import (
+    CustomerOperationRequest,
+    customer_operation_request_from_headers,
+    customer_operation_request_digest,
+    customer_operation_receipt_schema,
+    with_customer_operation_transaction,
+    awith_customer_operation_transaction,
     OperationCommitUnknownError,
     OperationConflictError,
     OperationEffect,
@@ -842,6 +864,12 @@ __all__ = (
     "with_dev_bridge_context",
     "insert_commit_event",
     "CommitEventRouting",
+    "CustomerOperationRequest",
+    "customer_operation_request_from_headers",
+    "customer_operation_request_digest",
+    "customer_operation_receipt_schema",
+    "with_customer_operation_transaction",
+    "awith_customer_operation_transaction",
     "OperationCommitUnknownError",
     "OperationConflictError",
     "OperationEffect",
