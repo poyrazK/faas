@@ -158,11 +158,6 @@ func decidePlanAdmission(counter planAdmissionCounter, policy APIConsumerPlanPol
 	return counter, APIConsumerPlanDecision{Allowed: true}
 }
 
-func clonePlanPolicy(policy APIConsumerPlanPolicy) APIConsumerPlanPolicy {
-	policy.RouteWeights = maps.Clone(policy.RouteWeights)
-	return policy
-}
-
 // --- MemStore ---
 
 func (m *MemStore) CreateAPIConsumerPlan(_ context.Context, plan APIConsumerPlan) (APIConsumerPlan, error) {
