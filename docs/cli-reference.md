@@ -3851,7 +3851,17 @@ Replay unsuccessful tasks in a linked run
 
 Verify a managed result and get a signed URL
 
-`gregale jobs artifact-url <name> <run-id> <task-index> <artifact-name>`
+`gregale jobs artifact-url [--interactive] [<name>] [<run-id>] [<task-index>] [<artifact-name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--interactive` | choose a task and managed output artifact |  |
+
+Examples:
+
+```sh
+gregale jobs artifact-url --interactive
+```
 
 ### jobs logs
 

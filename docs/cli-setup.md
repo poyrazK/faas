@@ -696,6 +696,24 @@ For scripts, use `jobs attempts NAME RUN_ID TASK_INDEX --json`.
 Retained history and output depend on server retention; ongoing attempts may
 not yet have a terminal record.
 
+## Choose a Job artifact interactively
+
+```sh
+gregale jobs artifact-url --interactive
+```
+
+Choose a Job, run, and task through paginated pickers, then select a managed
+artifact from its validated output manifest. The picker shows artifact names,
+byte counts, and SHA-256 digests. External-storage artifacts are counted but
+require access through their storage provider.
+
+The CLI rereads the selected task and stops if its attempt or selected artifact
+changed. It requests the signed link using the existing server verification
+endpoint and checks returned name, size, and digest against the selection.
+The printed command requests a fresh link later using the active profile.
+This flow does not download bytes locally. For scripts, use
+`jobs artifact-url NAME RUN_ID TASK_INDEX ARTIFACT_NAME --json`.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

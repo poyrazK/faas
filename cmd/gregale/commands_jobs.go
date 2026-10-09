@@ -782,6 +782,9 @@ func cmdJobsReplayFailed(args []string) int {
 // cmdJobsArtifactURL verifies a managed result and returns its short-lived
 // signed GET URL together with the expected size and SHA-256.
 func cmdJobsArtifactURL(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" {
+		return cmdJobsArtifactURLInteractive()
+	}
 	if len(args) != 4 || !jobRunIDPattern.MatchString(args[1]) || args[3] == "" {
 		PrintUsage(os.Stderr, "usage: gregale jobs artifact-url <name> <run-id> <task-index> <artifact-name>", "jobs")
 		return 1

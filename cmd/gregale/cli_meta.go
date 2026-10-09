@@ -1542,7 +1542,7 @@ var cliCommands = []cliCommand{
 			{Name: "attempts", Short: "List retained attempts for one task", Positionals: []string{"[<name>]", "[<run-id>]", "[<task-index>]"}, Flags: []cliFlag{{Name: "interactive", Bool: true, Short: "choose a task and inspect retained attempts and output"}}, Examples: []string{"gregale jobs attempts --interactive"}},
 			{Name: "retry", Short: "Retry one failed task", Positionals: []string{"[<name>]", "[<run-id>]", "[<task-index>]"}, Flags: []cliFlag{{Name: "interactive", Bool: true, Short: "choose a failed task, review eligibility, and confirm one retry"}}, Examples: []string{"gregale jobs retry --interactive"}},
 			{Name: "replay-failed", Short: "Replay unsuccessful tasks in a linked run", Positionals: []string{"<name>", "<run-id>"}},
-			{Name: "artifact-url", Short: "Verify a managed result and get a signed URL", Positionals: []string{"<name>", "<run-id>", "<task-index>", "<artifact-name>"}},
+			{Name: "artifact-url", Short: "Verify a managed result and get a signed URL", Positionals: []string{"[<name>]", "[<run-id>]", "[<task-index>]", "[<artifact-name>]"}, Flags: []cliFlag{{Name: "interactive", Bool: true, Short: "choose a task and managed output artifact"}}, Examples: []string{"gregale jobs artifact-url --interactive"}},
 			{Name: "logs", Short: "Tail logs for one task", Positionals: []string{"[<name>]", "[<run-id>]", "[<task-index>]"}, Examples: []string{"gregale jobs logs --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Bool: true, Short: "choose a Job, run, and task to inspect"},
 				{Name: "max-bytes", Short: "maximum log payload size (1..1048576)", Value: "N"},
