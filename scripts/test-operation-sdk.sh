@@ -13,15 +13,15 @@ trap 'rm "$task_results"' EXIT HUP INT TERM
 cd "$task_root"
 "$task_python" scripts/gen-operation-inbox-schema.py --check
 cd "$task_root/sdk/commit-tests/go"
-if ! "${GO:-go}" test -p 1 -json -count=1 -run '^TestOperationSQLTransactionBoundary$' . > "$task_results"; then
+if ! "${GO:-go}" test -p 1 -json -count=1 -run '^Test(Customer)?OperationSQLTransactionBoundary$' . > "$task_results"; then
   cat "$task_results"
   exit 1
 fi
 "$task_python" - "$task_results" <<'PY'
 import json
 import sys
-if not any(event.get('Action') == 'pass' and event.get('Test') == 'TestOperationSQLTransactionBoundary'
-           for event in map(json.loads, open(sys.argv[1]))):
+passed = {event.get('Test') for event in map(json.loads, open(sys.argv[1])) if event.get('Action') == 'pass'}
+if not {'TestOperationSQLTransactionBoundary', 'TestCustomerOperationSQLTransactionBoundary'} <= passed:
     raise SystemExit('Go operation acceptance did not pass; skipping is not qualification.')
 PY
 cd "$task_root/sdk/node"

@@ -3000,6 +3000,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// need to know the convention; for app templates we leave them
 	// unset so imaged auto-detects.
 	if *templateName != "" {
+		if templates.CategoryFor(*templateName) == "operations" && !*createOnly {
+			return printErr("Prepare the Operations starter first", fmt.Errorf("use gregale init --template %s --path %s, install the local SDK bundle and follow README.md, then deploy that source directory", *templateName, *templateName))
+		}
 		f, err := os.CreateTemp("", "gregale-template-*.tar.gz")
 		if err != nil {
 			return printErr("Could not create temp file", err)
@@ -4253,7 +4256,7 @@ func cmdRollback(args []string) int {
 	timeout, interval := 10*time.Minute, 2*time.Second
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
-		a := rest[i]
+		a := rest[i] //nolint:gosec // G602: i starts at zero and the loop condition bounds it by len(rest).
 		switch {
 		case a == "--to":
 			i++
@@ -4270,16 +4273,17 @@ func cmdRollback(args []string) int {
 			if i >= len(rest) {
 				return printErr("Missing value", fmt.Errorf("%s requires a value", a))
 			}
+			value := rest[i] //nolint:gosec // G602: i is non-negative and bounds checked immediately above.
 			switch a {
 			case "--expected-current":
 				checked = true
-				current = rest[i] // #nosec G602 -- i was incremented from a nonnegative loop index and checked against len(rest).
+				current = value
 			case "--reason":
-				reason = rest[i] // #nosec G602 -- i was incremented from a nonnegative loop index and checked against len(rest).
+				reason = value
 			case "--timeout":
-				timeout, err = time.ParseDuration(rest[i]) // #nosec G602 -- i was incremented from a nonnegative loop index and checked against len(rest).
+				timeout, err = time.ParseDuration(value)
 			case "--poll-interval":
-				interval, err = time.ParseDuration(rest[i]) // #nosec G602 -- i was incremented from a nonnegative loop index and checked against len(rest).
+				interval, err = time.ParseDuration(value)
 			}
 			if err != nil {
 				return printErr("Invalid duration", err)
@@ -7047,8 +7051,7 @@ streamLoop:
 					streamErr = <-streamErrors
 				}
 				if waitCtx.Err() == nil && streamErr != nil && !errors.Is(streamErr, io.EOF) {
-					warnWaitStopped("stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
-					return 3
+					warnDeployStreamInterrupted(opts.quiet)
 				}
 				break streamLoop
 			}
@@ -7128,8 +7131,8 @@ streamLoop:
 				}
 				break streamLoop
 			case streamEventError:
-				warnWaitStopped("stream closed; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
-				return 3
+				warnDeployStreamInterrupted(opts.quiet)
+				break streamLoop
 			default:
 				// Unknown frame shape — print raw so the customer can see it.
 				if e.Data != "" {
@@ -7669,4 +7672,16 @@ func renderSecretScanWarnings(findings []secretscan.Finding, w io.Writer) {
 	}
 	PrintWarn(w, "%d secret line(s) skipped from the upload. Move to: gregale secrets set",
 		len(findings))
+}
+
+// warnDeployStreamInterrupted reports a build-log stream that dropped before
+// the deployment finished. production-us hunt #8: a 287 s Go image build sent
+// no log lines for minutes, the stream was cut, and the CLI exited 3 ("stream
+// closed; follow manually") although the deployment went live. The caller now
+// falls through to the build/deployment status poll, so the exit code is the
+// deployment's own outcome.
+func warnDeployStreamInterrupted(quiet bool) {
+	if !quiet {
+		PrintWarn(os.Stderr, "build log stream interrupted; following deployment status…")
+	}
 }

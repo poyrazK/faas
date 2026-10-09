@@ -3,10 +3,8 @@
 # codebase (errcheck fired for us before; staticcheck catches shadowing,
 # type-mismatch flags, etc.).
 #
-# Schema v2 — required by golangci-lint >= v2.0. CI pins v2.14.0, built
-# with Go 1.26 to support the repository's 'go 1.26.9' directive (v1.x was
-# built with Go 1.23 and rejected newer go directives — see
-# golangci/golangci-lint#5873).
+# Schema v2 — required by golangci-lint >= v2.0. Action v9 pins v2.14.0
+# which is built with Go 1.26 and supports our patched Go 1.26 toolchain.
 version: "2"
 
 # Disable default linters — explicit allow-list below.
@@ -126,8 +124,9 @@ linters:
     #     helper or carry a //nolint:forbidigo comment with a
     #     documented reason reviewed in the PR
     #
-    # Keep the forbidigo policy explicit here so local and CI runs use
-    # the same repository-specific rules across linter releases.
+    # Local `make lint` and CI pin the same linter version and use these
+    # explicit patterns, so unrelated installation defaults cannot change
+    # the CLI's allowed printing or filesystem boundary checks.
     forbidigo:
       # Don't analyze godoc — stdlib only, no test fixtures in docs.
       exclude-godoc-examples: false
@@ -200,9 +199,52 @@ linters:
     # that DO matter here (hardcoded secrets, SQL injection, weak crypto, TLS
     # config, bind-all, etc.) stay active.
     #
-    # Keep exclusions aligned with the gosec ruleset bundled in the pinned
-    # golangci-lint release. Review new taint rules before adding exclusions.
+    # Preserve the complete gosec v2.22.7 rule inventory enforced before the
+    # compiler upgrade (golangci-lint v2.4.0 on main). Upgrading the lint tool
+    # does not implicitly roll out additional security rules. A CI guard keeps
+    # every previously enabled rule active; new rules need separate qualification.
     gosec:
+      includes:
+        - G101
+        - G102
+        - G103
+        - G104
+        - G106
+        - G107
+        - G108
+        - G109
+        - G110
+        - G111
+        - G112
+        - G114
+        - G115
+        - G201
+        - G202
+        - G203
+        - G204
+        - G301
+        - G302
+        - G303
+        - G304
+        - G305
+        - G306
+        - G307
+        - G401
+        - G402
+        - G403
+        - G404
+        - G405
+        - G406
+        - G407
+        - G501
+        - G502
+        - G503
+        - G504
+        - G505
+        - G506
+        - G507
+        - G601
+        - G602
       excludes:
         # New in gosec 2.23. Its exported-field-name heuristic also flags
         # intentional authenticated password/token wire DTOs and TOML configs.
@@ -240,20 +282,14 @@ linters:
       - ".*\\.pb\\.go$"          # generated protobufs
       - ".*_grpc\\.pb\\.go$"     # generated gRPC stubs
     rules:
-      # Retain established forwarding-header behavior during this release.
-      # Director-to-Rewrite migration requires its own proxy contract review.
-      - path: '^(cmd/bridged/main\.go|cmd/gregale/scenario_runner\.go|pkg/devbridge/local\.go|cmd/gatewayd-internal/(dev_bridge|realtimed_proxy)\.go|pkg/gateway/handler\.go)$'
+      # x/net v0.60.0 is required by the security advisories. Its HTTP/2
+      # connection-pool APIs are deprecated in favor of standard-library APIs
+      # with different dialing and connection ownership. Preserve the qualified
+      # transport during the compiler patch; migration needs protocol/pool tests.
+      - path: "(cmd/vmmd-stream-bridge/(guest_transport_pool|h2c_terminator)|pkg/devbridge/(local|relay)|pkg/gateway/(internal_proxy|ingress/(guard|transport))|pkg/vmmdgrpc/(forward|stream_bridge_manager))\\.go$"
         linters:
           - staticcheck
-        text: 'SA1019:.*Director.*deprecated'
-      # These adapters require x/net's raw-connection HTTP/2 APIs and Ping;
-      # Go 1.26's http.ClientConn lacks Ping and Server lacks ServeConn.
-      # Preserve those protocol contracts with the security-patched x/net.
-      # This exception covers only these deprecated symbols in their adapters.
-      - path: '^(cmd/vmmd-stream-bridge/(guest_transport_pool|h2c_terminator)\.go|pkg/devbridge/(local|relay)\.go|pkg/gateway/(ingress/(guard|transport)|internal_proxy)\.go|pkg/vmmdgrpc/(forward|stream_bridge_manager)\.go)$'
-        linters:
-          - staticcheck
-        text: 'SA1019:.*(http2\.(Transport|ClientConn|Server)|RoundTrip|NewClientConn|CloseIdleConnections|ServeConn|AllowHTTP|MaxHeaderListSize).*deprecated'
+        text: "SA1019: .*golang\\.org/x/net/http2\\."
       - path: "_test\\.go$"
         linters:
           - errcheck  # `defer x.Close()` is acceptable idiom in tests

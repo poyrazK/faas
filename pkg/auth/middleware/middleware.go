@@ -765,6 +765,9 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == path {
 		return false
 	}
+	if suffix == "customer-operations/submissions/lookup" {
+		return method == http.MethodPost
+	}
 	if suffix == "customer-operations" {
 		return method == http.MethodPost || method == http.MethodGet
 	}

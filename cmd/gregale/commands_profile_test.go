@@ -16,6 +16,7 @@ import (
 
 func setupConnectionProfiles(t *testing.T) {
 	t.Helper()
+	// Isolate HOME, config, tokens and cache paths for native profile checks.
 	dir := setupHermeticTokensEnv(t)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
 	t.Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))

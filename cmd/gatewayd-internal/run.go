@@ -871,7 +871,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 		if err := json.Unmarshal(inv.Headers, &proof); err != nil {
 			return inv, 0, nil, err
 		}
-		for _, name := range []string{api.OperationIDHeader, api.OperationAttemptHeader, api.OperationCapabilityHeader, api.OperationTransactionVersionHeader, api.OperationResultMaxBytesHeader, api.OperationMilestoneVersionHeader} {
+		for _, name := range []string{api.OperationIDHeader, api.OperationAttemptHeader, api.OperationCapabilityHeader, api.OperationReceiptVersionHeader, api.OperationReceiptBindingHeader, api.OperationTransactionVersionHeader, api.OperationResultMaxBytesHeader, api.OperationMilestoneVersionHeader} {
 			if value := proof[name]; value != "" {
 				req.Header.Set(name, value)
 			}

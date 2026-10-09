@@ -23,12 +23,19 @@ const (
 // adviseWillNeed queues readahead for ranges of path. FADV_WILLNEED submits
 // the reads and returns without waiting for them.
 func adviseWillNeed(path string, ranges []fileRange) error {
+	return adviseWillNeedWith(path, ranges, unix.Fadvise)
+}
+
+// adviseWillNeedWith splits ranges into bounded FADV_WILLNEED calls. The
+// injected syscall lets tests verify the requested coverage without assuming
+// the kernel will finish advisory readahead under memory pressure.
+func adviseWillNeedWith(path string, ranges []fileRange, fadvise func(int, int64, int64, int) error) error {
 	f, err := os.Open(path) //nolint:gosec // vmmd-resolved snapshot cache path, never customer-supplied
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	return adviseRanges(int(f.Fd()), ranges, unix.Fadvise)
+	return adviseRanges(int(f.Fd()), ranges, fadvise)
 }
 
 // adviseRanges submits each range in bounded chunks. FADV_WILLNEED is

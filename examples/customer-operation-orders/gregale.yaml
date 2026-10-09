@@ -16,11 +16,12 @@ operations:
 operation_workflows:
   - name: order-fulfillment
     title: Order fulfillment
+    version: 1
     states: [pending, fulfilled]
     terminal_states: [fulfilled]
     state_stale_after:
       pending: 30m
     transitions:
-      - {from: pending, to: fulfilled}
+      - {from: pending, to: fulfilled, operation: fulfill-order, requires_milestones: [order-fulfilled]}
     steps:
       - {name: fulfilled, label: Order fulfilled, operation: fulfill-order, milestone: order-fulfilled, instance_id_from: /workflow_run_id, position: 1}

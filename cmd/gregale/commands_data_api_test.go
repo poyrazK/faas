@@ -40,6 +40,21 @@ func TestDataAPITypesAtomicWriteAndCheck(t *testing.T) {
 }
 
 func TestDataAPICreateDeploysRuntimeAfterScopedConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode string
+		resume     bool
+	}{
+		{name: "create"},
+		{name: "resume-bearer", resume: true, mode: "bearer"},
+		{name: "resume-ip-allowlist", resume: true, mode: "ip_allowlist"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testDataAPICreateDeploysRuntime(t, tc.resume, tc.mode)
+		})
+	}
+}
+
+func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string) {
 	resetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -56,13 +71,40 @@ func TestDataAPICreateDeploysRuntimeAfterScopedConfiguration(t *testing.T) {
 		case r.Method == "GET" && r.URL.Path == "/v1/postgres/databases":
 			writeJSONTest(w, api.ManagedPostgresDatabaseList{Items: []api.ManagedPostgresDatabase{{ID: database, State: "ready"}}})
 		case r.Method == "POST" && r.URL.Path == "/v1/apps":
+			var body api.CreateAppRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if body.RequireAuthn == nil || *body.RequireAuthn {
+				t.Error("application JWTs would be blocked by the paid-plan owner-key default")
+			}
 			created++
 			writeJSONTest(w, api.AppResponse{ID: "app", Slug: "notes-data", Type: "app"})
 		case r.Method == "GET" && r.URL.Path == "/v1/apps/notes-data":
-			writeJSONTest(w, api.AppResponse{ID: "app", Slug: "notes-data", Type: "app"})
+			writeJSONTest(w, map[string]any{"id": "app", "slug": "notes-data", "type": "app", "require_authn": true, "public_auth": map[string]string{"mode": mode}})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/bindings"):
 			writeJSONTest(w, api.ManagedPostgresBinding{ID: "binding", State: "ready"})
 		case r.Method == "PATCH" || r.Method == "PUT":
+			if r.Method == "PATCH" && r.URL.Path == "/v1/apps/notes-data" {
+				var body api.UpdateAppRequest
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if body.RequireAuthn == nil || *body.RequireAuthn {
+					t.Error("application JWTs would be blocked by inherited edge authentication")
+				}
+				if mode == "ip_allowlist" {
+					if body.PublicAuth != nil {
+						t.Error("resume removed an explicit ingress restriction")
+					}
+				} else if body.PublicAuth == nil || body.PublicAuth.Mode != "open" {
+					t.Error("application JWTs would be blocked by owner-key public authentication")
+				}
+			}
 			settings++
 			writeJSONTest(w, map[string]any{})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/deployments"):
@@ -76,10 +118,18 @@ func TestDataAPICreateDeploysRuntimeAfterScopedConfiguration(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	if code := cmdDataAPI([]string{"create", "notes-data", "--database", database, "--issuer", "https://issuer.example", "--jwks-url", "https://issuer.example/jwks", "--audience", "notes"}); code != 0 {
+	args := []string{"create", "notes-data", "--database", database, "--issuer", "https://issuer.example", "--jwks-url", "https://issuer.example/jwks", "--audience", "notes"}
+	if resume {
+		args = append(args, "--resume")
+	}
+	if code := cmdDataAPI(args); code != 0 {
 		t.Fatal("create failed", code)
 	}
-	if created != 1 || atomic.LoadInt32(&dockerfile) != 1 || atomic.LoadInt32(&source) != 1 {
+	wantCreated := 1
+	if resume {
+		wantCreated = 0
+	}
+	if created != wantCreated || atomic.LoadInt32(&dockerfile) != 1 || atomic.LoadInt32(&source) != 1 {
 		t.Fatalf("incomplete create: created=%d dockerfile=%d source=%d", created, dockerfile, source)
 	}
 }
@@ -156,6 +206,9 @@ func TestDataAPIConfiguresBindingEgressAndScopedSecrets(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if body.EgressPorts == nil || len(*body.EgressPorts) != 1 || (*body.EgressPorts)[0] != 5432 {
 				t.Error("missing plan-gated egress")
+			}
+			if body.RequireAuthn == nil || *body.RequireAuthn || body.PublicAuth == nil || body.PublicAuth.Mode != "open" {
+				t.Error("application JWT authentication was not configured")
 			}
 			writeJSONTest(w, api.AppResponse{ID: "app", Slug: "notes"})
 		case r.Method == "PUT":

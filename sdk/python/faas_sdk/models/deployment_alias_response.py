@@ -26,6 +26,9 @@ class DeploymentAliasResponse:
     """Per-app revision number; rendered in CLI output as vN."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    deployment_status: str | Unset = UNSET
+    """Lifecycle status of the target deployment. An alias whose deployment is not live (superseded by a rollback
+    or redeploy, or failed) no longer serves traffic and answers 409."""
     host: str | Unset = UNSET
     """Stable one-label hostname for this alias. It is keyed by an immutable app identifier and remains stable if
     the app slug is renamed."""
@@ -44,6 +47,8 @@ class DeploymentAliasResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        deployment_status = self.deployment_status
+
         host = self.host
 
         url = self.url
@@ -59,6 +64,8 @@ class DeploymentAliasResponse:
                 "updated_at": updated_at,
             }
         )
+        if deployment_status is not UNSET:
+            field_dict["deployment_status"] = deployment_status
         if host is not UNSET:
             field_dict["host"] = host
         if url is not UNSET:
@@ -79,6 +86,8 @@ class DeploymentAliasResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        deployment_status = d.pop("deployment_status", UNSET)
+
         host = d.pop("host", UNSET)
 
         url = d.pop("url", UNSET)
@@ -89,6 +98,7 @@ class DeploymentAliasResponse:
             revision=revision,
             created_at=created_at,
             updated_at=updated_at,
+            deployment_status=deployment_status,
             host=host,
             url=url,
         )
