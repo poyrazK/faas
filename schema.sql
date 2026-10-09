@@ -43017,3 +43017,17 @@ CREATE TABLE project_environment_clone_checkpoint_capture_retirements (
  OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND retired_at IS NULL)
  OR (state='retired' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND retired_at IS NOT NULL AND retired_at>=requested_at))
 );
+
+-- ADR-590: retained catalogue retirement keeps original ownership evidence.
+ALTER TABLE project_environment_clone_checkpoint_capture_retirements ADD CONSTRAINT clone_checkpoint_capture_retirement_proof_key UNIQUE(operation_id,observation_sha256);
+CREATE TABLE project_environment_clone_checkpoint_capture_catalogues (
+ operation_id uuid NOT NULL,
+ source_kind text NOT NULL CHECK(source_kind IN ('managed_postgres','object_storage')),
+ source_id uuid NOT NULL,
+ capture_identity text NOT NULL CHECK(capture_identity<>''),
+ source_resource_id text NOT NULL CHECK(source_resource_id<>''),
+ observation_sha256 text NOT NULL CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ retired_at timestamptz NOT NULL,
+ PRIMARY KEY(operation_id,source_kind,source_id),
+ FOREIGN KEY(operation_id,observation_sha256) REFERENCES project_environment_clone_checkpoint_capture_retirements(operation_id,observation_sha256) ON DELETE RESTRICT
+);

@@ -215,6 +215,33 @@ func TestPGCloneCheckpointCaptureRetirementRejectsAdoptedCaptures(t *testing.T) 
 	}
 }
 
+func TestPGCloneCheckpointCaptureRetirementUnusedAdoptedCatalogue(t *testing.T) {
+	f, store, d := checkpointCaptureRetirementFixture(t, "adopted")
+	source, err := store.ProjectEnvironmentCloneCheckpointSourceCompensationForLease(t.Context(), f.lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, original := range source.Plan.Capture.Sources {
+		if original.Kind == "object_storage" {
+			if err = store.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, original.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	f.lease, err = f.srv.retireCheckpointCapture(t.Context(), f.lease, d)
+	if err != nil || d.calls != 1 || d.reads != 1 {
+		t.Fatal("unused adopted capture retirement", d.calls, d.reads, err)
+	}
+	d.proof = state.ProjectEnvironmentCloneCheckpointCaptureRetirementObservation{}
+	f.lease, err = f.srv.retireCheckpointCapture(t.Context(), f.lease, d)
+	if err != nil || d.calls != 1 || d.reads != 1 {
+		t.Fatal("adopted terminal replay performed native IO", d.calls, d.reads, err)
+	}
+	if f.lease.Operation.Status != state.CloneOperationCompensating {
+		t.Fatal("whole stage falsely completed")
+	}
+}
+
 func TestPGCloneCheckpointCaptureRetirementAdmissionAndIncompleteProof(t *testing.T) {
 	for _, fault := range []string{"admission", "pending-source", "native-proof", "stale-after-observe", "cancelled-after-observe"} {
 		t.Run(fault, func(t *testing.T) {

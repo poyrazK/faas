@@ -5057,6 +5057,16 @@ type ProjectEnvironmentCleanupJob struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneCheckpointCaptureCatalogue struct {
+	OperationID       pgtype.UUID
+	SourceKind        string
+	SourceID          pgtype.UUID
+	CaptureIdentity   string
+	SourceResourceID  string
+	ObservationSha256 string
+	RetiredAt         pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneCheckpointCaptureRetirement struct {
 	OperationID       pgtype.UUID
 	Plan              []byte

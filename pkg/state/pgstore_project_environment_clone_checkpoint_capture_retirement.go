@@ -14,21 +14,15 @@ import (
 
 var _ ProjectEnvironmentCloneCheckpointCaptureRetirementStore = (*PgStore)(nil)
 
-// This first store path accepts only pre-adoption captures. An adopted capture
-// needs authenticated borrower and target retirement plus atomic local catalogue
-// retirement; absence or state flags alone cannot supply that authority.
+// Adopted captures without native borrowers require original unused-reservation
+// completion evidence. Any native target or borrower intent remains closed until
+// its complete retirement provenance can be authenticated here.
 func checkpointCaptureRetirementPlanTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation) (ProjectEnvironmentCloneCheckpointCaptureRetirementPlan, error) {
 	var p ProjectEnvironmentCloneCheckpointCaptureRetirementPlan
-	if len(op.Resources) < 1 || len(op.Resources) > 2 || op.Resources[0].Kind != "data_checkpoint" {
+	if len(op.Resources) < 1 || op.Resources[0].Kind != "data_checkpoint" {
 		return p, ErrConflict
 	}
-	adopted, err := sqlc.New().CloneCheckpointCaptureRetirementHasAdoption(ctx, tx, mustPgUUID(op.ID))
-	if err != nil {
-		return p, mapErr(err)
-	}
-	if !adopted.Valid || adopted.Bool {
-		return p, ErrConflict
-	}
+	var err error
 	p.SourceCompensation, err = readCheckpointSourceCompensationTx(ctx, tx, op)
 	if errors.Is(err, ErrNotFound) {
 		return p, ErrConflict
@@ -36,7 +30,20 @@ func checkpointCaptureRetirementPlanTx(ctx context.Context, tx pgx.Tx, op Projec
 	if err != nil {
 		return p, err
 	}
-	return p, validateCheckpointCaptureRetirementPlan(p)
+	if err = validateCheckpointCaptureRetirementPlan(p); err != nil {
+		return p, err
+	}
+	if len(op.Resources) <= 2 {
+		adopted, err := sqlc.New().CloneCheckpointCaptureRetirementHasAdoption(ctx, tx, mustPgUUID(op.ID))
+		if err != nil {
+			return p, mapErr(err)
+		}
+		if !adopted.Valid || adopted.Bool {
+			return p, ErrConflict
+		}
+		return p, nil
+	}
+	return p, checkpointUnusedAdoptedCaptureReadyTx(ctx, tx, op, p)
 }
 
 func checkpointCaptureRetirementFromSQL(r sqlc.ProjectEnvironmentCloneCheckpointCaptureRetirement) (ProjectEnvironmentCloneCheckpointCaptureRetirement, error) {
@@ -159,6 +166,24 @@ func (s *PgStore) FinishProjectEnvironmentCloneCheckpointCaptureRetirement(ctx c
 		if len(raw) > api.CheckpointCaptureRetirementMaxBytes {
 			return ErrQuotaExceeded
 		}
-		return cloneCheckpointReleaseWriteResult(sqlc.New().FinishCloneCheckpointCaptureRetirement(ctx, tx, sqlc.FinishCloneCheckpointCaptureRetirementParams{OperationID: mustPgUUID(op.ID), ExpectedRevision: op.Revision, WorkerToken: mustPgUUID(l.Token), Observation: raw, ObservationSha256: cloneCheckpointSHA(o), RetiredAt: pgtype.Timestamptz{Time: o.RetiredAt, Valid: true}}))
+		q := sqlc.New()
+		digest := cloneCheckpointSHA(o)
+		if err = cloneCheckpointReleaseWriteResult(q.FinishCloneCheckpointCaptureRetirement(ctx, tx, sqlc.FinishCloneCheckpointCaptureRetirementParams{OperationID: mustPgUUID(op.ID), ExpectedRevision: op.Revision, WorkerToken: mustPgUUID(l.Token), Observation: raw, ObservationSha256: digest, RetiredAt: pgtype.Timestamptz{Time: o.RetiredAt, Valid: true}})); err != nil {
+			return err
+		}
+		if len(op.Resources) > 2 {
+			for _, source := range o.Sources {
+				if err = cloneCheckpointReleaseWriteResult(q.InsertCloneCheckpointCaptureCatalogueRetirement(ctx, tx, sqlc.InsertCloneCheckpointCaptureCatalogueRetirementParams{OperationID: mustPgUUID(op.ID), SourceKind: source.Kind, SourceID: mustPgUUID(source.ID), CaptureIdentity: source.CaptureIdentity, SourceResourceID: source.SourceResourceID, ObservationSha256: digest, ExpectedRevision: op.Revision, WorkerToken: mustPgUUID(l.Token)})); err != nil {
+					return err
+				}
+				if source.Kind == "managed_postgres" {
+					if err = cloneCheckpointReleaseWriteResult(q.RetireCloneCheckpointCaptureSnapshot(ctx, tx, sqlc.RetireCloneCheckpointCaptureSnapshotParams{OperationID: mustPgUUID(op.ID), SourceDatabaseID: mustPgUUID(source.ID), ObservationSha256: digest, ExpectedRevision: op.Revision, WorkerToken: mustPgUUID(l.Token)})); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		_, err = readCheckpointCaptureRetirementTx(ctx, tx, op)
+		return err
 	})
 }

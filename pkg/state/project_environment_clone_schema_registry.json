@@ -7979,5 +7979,18 @@
       "retired_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_capture_catalogues",
+    "columns": [
+      "operation_id",
+      "source_kind",
+      "source_id",
+      "capture_identity",
+      "source_resource_id",
+      "observation_sha256",
+      "retired_at"
+    ],
+    "kind": "operational"
   }
 ]

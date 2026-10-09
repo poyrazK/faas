@@ -8232,6 +8232,25 @@ publication. Activation, atomic binding/secret publication, retained-secret eras
 and live native provider qualification remain separate requirements. Live R2/OVH
 qualification remains deferred at the user's request.
 
+### Retiring unused adopted checkpoint captures
+
+Capture retirement now accepts adopted snapshots and object manifests when the
+operation never acquired native target or borrower intents. Each unused object
+reservation must first have its authenticated release record. Deleted catalogue
+labels alone do not authorize capture cleanup.
+
+The terminal native capture proof and per-source catalogue retirement records
+commit in one transaction. PostgreSQL snapshots become deleted with the original
+identity and proof timestamp; frozen snapshot metadata, object manifests and
+entries remain available to authenticate the original adoption. Completed replay
+checks that evidence without provider calls. A failed catalogue write rolls back
+the terminal proof, and downgrade refuses while retirement authority or proof
+remains owned.
+
+Captures used by native restores, copies, readers or credential preparations remain
+blocked. Connecting their authenticated retirement proofs and whole-stage terminal
+reconciliation remains outstanding. Public full-stage admission remains gated.
+
 ### Checkpoint terminal compensation gate
 
 The generic operation transition now refuses `compensating` to `compensated`

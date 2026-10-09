@@ -38,6 +38,9 @@ func pgCaptureRetirementFixture(t *testing.T, phase string) (*state.PgStore, *pg
 	if err := s.PutManagedPostgresSecret(ctx, secret); err != nil {
 		t.Fatal(err)
 	}
+	if phase == "adopted-mixed" {
+		cloneBindingBucket(t, s, a, app, "retained-assets", "production", true)
+	}
 	// The binding helper's legacy operation has no capture or native authority.
 	// Finish it before creating a full configuration capture for this protocol.
 	var err error
@@ -79,15 +82,33 @@ func pgCaptureRetirementFixture(t *testing.T, phase string) (*state.PgStore, *pg
 	}
 	op = l.Operation
 	c := state.ProjectEnvironmentCloneCheckpointPlan{OperationID: op.ID, AccountID: op.AccountID, ProjectID: op.ProjectID, SourceEnvironment: op.SourceEnvironment, SourceRevisionHash: op.SourceRevisionHash, SourceReleaseSetID: op.SourceReleaseSetID, ConfigurationGeneration: guard.Generation, ConfigurationHeldAt: guard.HeldAt.UTC(), Sources: []state.ProjectEnvironmentCloneCheckpointSource{{Kind: "managed_postgres", ID: db.DatabaseID, BackendID: db.BackendID, BackendFingerprint: db.BackendFingerprint, ProviderResourceID: db.ProviderResourceID, DataResourceID: db.DataResourceID, DefinitionSHA256: hash}}}
+	for _, bucket := range views[0].Buckets {
+		if _, err = s.AcquireProjectEnvironmentCloneObjectWriteFence(ctx, l, bucket.ID); err != nil {
+			t.Fatal(err)
+		}
+		c.Sources = append(c.Sources, state.ProjectEnvironmentCloneCheckpointSource{Kind: "object_storage", ID: bucket.ID, AppID: views[0].AppID, Scope: views[0].SourceScope, BackendID: bucket.BackendID, BackendFingerprint: bucket.BackendFingerprint, ProviderResourceID: bucket.PhysicalName, DefinitionSHA256: captureRetirementDigest(t, bucket)})
+	}
 	i := state.ProjectEnvironmentCloneResource{Kind: "data_checkpoint", Name: op.SourceEnvironment, SourceID: op.ID, SourceVersion: captureRetirementDigest(t, c), Status: "capturing"}
 	if phase == "planned" {
 		i.Status = "planned"
 	}
 	p := state.ProjectEnvironmentCloneCheckpointSourceCompensationPlan{Capture: c, Intent: i}
 	resources := []state.ProjectEnvironmentCloneResource{i}
-	if phase == "captured" {
+	var adoption state.ProjectEnvironmentCloneCheckpointAdoption
+	if phase == "captured" || strings.HasPrefix(phase, "adopted") {
 		at := time.Now().UTC().Truncate(time.Microsecond)
 		p.Receipt = &state.ProjectEnvironmentCloneCheckpointReceipt{RequestID: op.ID, PlanSHA256: i.SourceVersion, CheckpointID: "original-checkpoint", CapturedAt: at, CompleteWriterCoverage: true, Sources: []state.ProjectEnvironmentCloneCheckpointSourceReceipt{{Kind: "managed_postgres", ID: id, CaptureIdentity: "original-snapshot"}}}
+		for _, bucket := range views[0].Buckets {
+			items := []state.ProjectEnvironmentCloneObjectVersion{{Key: "asset.txt", VersionID: "original-version", Size: 12, LastModified: at}}
+			manifestHash, err := state.ProjectEnvironmentCloneObjectManifestHash(items)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.Receipt.Sources = append(p.Receipt.Sources, state.ProjectEnvironmentCloneCheckpointSourceReceipt{Kind: "object_storage", ID: bucket.ID, CaptureIdentity: manifestHash})
+			adoption.Manifests = append(adoption.Manifests, state.ProjectEnvironmentCloneCheckpointManifest{SourceBucketID: bucket.ID, Hash: manifestHash, CapturedAt: at, Objects: items, RetainedUntil: at.Add(time.Hour)})
+		}
+		adoption.Receipt = *p.Receipt
+		adoption.Snapshots = []state.ProjectEnvironmentCloneCheckpointSnapshot{{SourceDatabaseID: id, RequestStartedAt: at, Observation: state.ProjectEnvironmentClonePostgresSnapshotObservation{ProviderSnapshotID: "original-snapshot", SourceDataResourceID: db.DataResourceID, CapturePoint: at, CreatedAt: at}}}
 		i.Status, i.TargetID, i.CapturePoint = "captured", p.Receipt.CheckpointID, at.Format(time.RFC3339Nano)
 		p.Intent = i
 		resources = []state.ProjectEnvironmentCloneResource{i, {Kind: "data_checkpoint_receipt", Name: i.Name, SourceID: i.TargetID, SourceVersion: captureRetirementDigest(t, p.Receipt), CapturePoint: i.CapturePoint, Status: "captured"}}
@@ -95,6 +116,13 @@ func pgCaptureRetirementFixture(t *testing.T, phase string) (*state.PgStore, *pg
 	l.Operation, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCapturing, op.Revision, resources, "")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.HasPrefix(phase, "adopted") {
+		l.Operation, err = s.AdoptProjectEnvironmentCloneCheckpoint(ctx, l, adoption, 10)
+		if err != nil {
+			t.Fatal("adopt original capture", err)
+		}
+		resources = l.Operation.Resources
 	}
 	op = l.Operation
 	l.Operation, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, resources, "")
@@ -114,12 +142,18 @@ func pgCaptureRetirementFixture(t *testing.T, phase string) (*state.PgStore, *pg
 	if _, err = s.ReserveProjectEnvironmentCloneCheckpointCaptureRetirement(ctx, l); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("pending source compensation accepted", err)
 	}
-	identity := ""
-	if p.Receipt != nil {
-		identity = p.Receipt.Sources[0].CaptureIdentity
-	}
 	at := time.Now().UTC().Truncate(time.Microsecond)
-	proof := state.ProjectEnvironmentCloneCheckpointSourceCompensationObservation{RequestID: state.ProjectEnvironmentCloneCheckpointSourceCompensationRequestID(op.ID), PlanSHA256: captureRetirementDigest(t, source.Plan), OwnerToken: op.ID, CaptureRequestID: op.ID, CapturePlanSHA256: captureRetirementDigest(t, c), CapturePermanentlyFenced: true, CompensatedAt: at, Sources: []state.ProjectEnvironmentCloneCheckpointCompensatedSource{{Kind: "managed_postgres", ID: id, SourceResourceID: db.DataResourceID, CaptureIdentity: identity, OwnerToken: op.ID, TerminalState: "abandoned", NoNativeHolds: true, SourceAccessRestored: true, SourceUnchanged: true, ReleasedAt: at}}}
+	proof := state.ProjectEnvironmentCloneCheckpointSourceCompensationObservation{RequestID: state.ProjectEnvironmentCloneCheckpointSourceCompensationRequestID(op.ID), PlanSHA256: captureRetirementDigest(t, source.Plan), OwnerToken: op.ID, CaptureRequestID: op.ID, CapturePlanSHA256: captureRetirementDigest(t, c), CapturePermanentlyFenced: true, CompensatedAt: at}
+	for n, original := range c.Sources {
+		physical, identity := original.ProviderResourceID, ""
+		if original.Kind == "managed_postgres" {
+			physical = original.DataResourceID
+		}
+		if p.Receipt != nil {
+			identity = p.Receipt.Sources[n].CaptureIdentity
+		}
+		proof.Sources = append(proof.Sources, state.ProjectEnvironmentCloneCheckpointCompensatedSource{Kind: original.Kind, ID: original.ID, SourceResourceID: physical, CaptureIdentity: identity, OwnerToken: op.ID, TerminalState: "abandoned", NoNativeHolds: true, SourceAccessRestored: true, SourceUnchanged: true, ReleasedAt: at})
+	}
 	if err = s.FinishProjectEnvironmentCloneCheckpointSourceCompensation(ctx, l, proof); err != nil {
 		t.Fatal("source finish", err)
 	}
@@ -138,7 +172,7 @@ func pgCaptureRetirementProof(t *testing.T, in state.ProjectEnvironmentCloneChec
 }
 
 func TestPgCheckpointCaptureRetirementRecoveryAndTerminalReplay(t *testing.T) {
-	for _, phase := range []string{"planned", "unknown", "captured"} {
+	for _, phase := range []string{"planned", "unknown", "captured", "adopted"} {
 		t.Run(phase, func(t *testing.T) {
 			s, pool, l := pgCaptureRetirementFixture(t, phase)
 			ctx := t.Context()
@@ -214,6 +248,13 @@ func TestPgCheckpointCaptureRetirementMigrationAndChangedOwnership(t *testing.T)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	newer, err := migrations.FS.ReadFile("20261009204527613_clone_checkpoint_capture_catalogue_retirements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, strings.SplitN(string(newer), "-- +goose Down", 2)[1]); err != nil {
+		t.Fatal("empty newer catalogue downgrade", err)
 	}
 	for _, sql := range []string{parts[1], parts[0], parts[1], parts[0]} {
 		if _, err = tx.Exec(ctx, sql); err != nil {

@@ -388,6 +388,13 @@ func TestPGCloneCheckpointSourceCompensationAtomicFinishAndMigration(t *testing.
 	}
 	// A real downgrade first removes the newer capture-retirement journal.
 	// Its FK deliberately protects the original source-compensation evidence.
+	catalogueRaw, err := migrations.FS.ReadFile("20261009204527613_clone_checkpoint_capture_catalogue_retirements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(t.Context(), strings.SplitN(string(catalogueRaw), "-- +goose Down", 2)[1]); err != nil {
+		t.Fatal("empty newer catalogue downgrade", err)
+	}
 	retirementRaw, err := migrations.FS.ReadFile("20261009195949878_clone_checkpoint_capture_retirements.sql")
 	if err != nil {
 		t.Fatal(err)

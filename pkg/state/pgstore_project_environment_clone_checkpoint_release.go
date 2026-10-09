@@ -108,6 +108,15 @@ func validateCloneCheckpointAdoptionJournalsTx(ctx context.Context, tx pgx.Tx, o
 			if err != nil {
 				return ErrConflict
 			}
+			if allowRetired && snapshot.State == "deleted" {
+				proof, err := checkpointCaptureCatalogueProofTx(ctx, tx, op, in.Plan, in.Receipt, source.Kind, source.ID)
+				if err != nil || snapshot.ProviderSnapshotID != proof.CaptureIdentity || !snapshot.CleanupObservedAt.Equal(proof.RetiredAt.Time) {
+					return ErrConflict
+				}
+				// Only original immutable metadata is reconstructed below. This
+				// normalization cannot authorize new native IO or source holds.
+				snapshot.State = "retained"
+			}
 			if snapshot.State != "retained" || snapshot.SourceVersion != source.DefinitionSHA256 || snapshot.BackendID != source.BackendID ||
 				snapshot.BackendFingerprint != source.BackendFingerprint || snapshot.SourceProviderResourceID != source.ProviderResourceID || snapshot.SourceDataResourceID != source.DataResourceID {
 				return ErrConflict
