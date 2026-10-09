@@ -65,7 +65,7 @@ func compileRetryRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRetryReso
 		}
 		out = append(out, gateway.EdgeRuleRetryResolved{
 			ID:                 r.ID,
-			EdgeRuleCondition:  compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition:  compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:          r.AccountID,
 			AppID:              r.AppID,
 			Priority:           r.Priority,
@@ -126,7 +126,7 @@ func compileCircuitBreakerRules(storeRules []state.EdgeRule) ([]gateway.EdgeRule
 		}
 		out = append(out, gateway.EdgeRuleCircuitBreakerResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,

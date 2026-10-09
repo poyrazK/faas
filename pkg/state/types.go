@@ -7940,6 +7940,9 @@ type EdgeRule struct {
 	// Match (ADR-832) is the optional structured condition ANDed with the
 	// fixed selectors; nil applies the rule to every selected request.
 	Match *api.EdgeRuleMatchExpr
+	// MatchLists holds the account lists Match references (ADR-833),
+	// resolved by gatewayd when it loads a host. Never persisted.
+	MatchLists api.EdgeRuleLists
 	// Mode (ADR-830) is EdgeRuleModeEnforce or EdgeRuleModeLog; a log-mode
 	// rule is matched and counted but never acts.
 	Mode      string

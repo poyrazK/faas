@@ -276,6 +276,10 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	if err != nil {
 		return nil, err
 	}
+	storeRules, err = g.resolveEdgeRuleLists(ctx, storeRules)
+	if err != nil {
+		return nil, err
+	}
 	storeRules, notAfter := activeEdgeRules(storeRules, g.now())
 	route, routeErrs := compileRouteRules(storeRules)
 	rewrite, rewriteErrs := compileRewriteRules(storeRules)
@@ -996,7 +1000,7 @@ func compileRouteRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleResolved,
 		}
 		out = append(out, gateway.EdgeRuleResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1037,7 +1041,7 @@ func compileRewriteRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRewrite
 		}
 		out = append(out, gateway.EdgeRuleRewriteResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1083,7 +1087,7 @@ func compileRedirectRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRedire
 		}
 		out = append(out, gateway.EdgeRuleRedirectResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1126,7 +1130,7 @@ func compileHeadersRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleHeaders
 		}
 		out = append(out, gateway.EdgeRuleHeadersResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1243,7 +1247,7 @@ func (g *gatewaydEdgeRules) compileCORSRules(ctx context.Context, storeRules []s
 		}
 		out = append(out, gateway.EdgeRuleCORSResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1321,7 +1325,7 @@ func compileJWTRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleJWTResolved
 		}
 		out = append(out, gateway.EdgeRuleJWTResolved{
 			ID:                             r.ID,
-			EdgeRuleCondition:              compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition:              compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:                      r.AccountID,
 			AppID:                          r.AppID,
 			Priority:                       r.Priority,
@@ -1379,7 +1383,7 @@ func compileIPRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleIPResolved, 
 		}
 		out = append(out, gateway.EdgeRuleIPResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1434,7 +1438,7 @@ func compileGeoRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleGeoResolved
 		deny := compileGeoSet(action.Deny)
 		out = append(out, gateway.EdgeRuleGeoResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1566,7 +1570,7 @@ func compileLimitRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleLimitReso
 		}
 		out = append(out, gateway.EdgeRuleLimitResolved{
 			ID:                    r.ID,
-			EdgeRuleCondition:     compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition:     compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:             r.AccountID,
 			AppID:                 r.AppID,
 			Priority:              r.Priority,
@@ -1639,7 +1643,7 @@ func compileMaintenanceRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleMai
 		}
 		out = append(out, gateway.EdgeRuleMaintenanceResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1681,7 +1685,7 @@ func compileRespondRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRespond
 		}
 		out = append(out, gateway.EdgeRuleRespondResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1719,7 +1723,7 @@ func compileAsyncRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleAsyncReso
 		}
 		out = append(out, gateway.EdgeRuleAsyncResolved{
 			ID: rule.ID, AccountID: rule.AccountID, AppID: rule.AppID,
-			EdgeRuleCondition: compileEdgeRuleCondition(rule.ID, rule.AppID, rule.Mode, rule.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(rule.ID, rule.AppID, rule.Mode, rule.Match, rule.MatchLists),
 			OnSuccessWebhook:  rule.Action.Async.OnSuccess,
 			OnFailureWebhook:  rule.Action.Async.OnFailure,
 			RetryPolicy:       rule.Action.Async.RetryPolicy,
@@ -1824,7 +1828,7 @@ func compileThrottleRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleThrott
 		}
 		out = append(out, gateway.EdgeRuleThrottleResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1897,7 +1901,7 @@ func compileBudgetRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleBudgetRe
 		}
 		out = append(out, gateway.EdgeRuleBudgetResolved{
 			ID:                  r.ID,
-			EdgeRuleCondition:   compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition:   compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:           r.AccountID,
 			AppID:               r.AppID,
 			Priority:            r.Priority,
@@ -1985,7 +1989,7 @@ func compileCacheRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleCacheReso
 		}
 		out = append(out, gateway.EdgeRuleCacheResolved{
 			ID:                          r.ID,
-			EdgeRuleCondition:           compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition:           compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:                   r.AccountID,
 			AppID:                       r.AppID,
 			Priority:                    r.Priority,
@@ -2113,7 +2117,7 @@ func (g *gatewaydEdgeRules) compileValidateRules(storeRules []state.EdgeRule) ([
 		}
 		out = append(out, gateway.EdgeRuleValidateResolved{
 			ID:                  r.ID,
-			EdgeRuleCondition:   compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
+			EdgeRuleCondition:   compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:           r.AccountID,
 			AppID:               r.AppID,
 			Priority:            r.Priority,

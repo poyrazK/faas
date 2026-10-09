@@ -9755,6 +9755,44 @@ type EdgeRuleStatsResponse struct {
 	Rules  []EdgeRuleHitStatsResponse `json:"rules"`
 }
 
+// EdgeRuleListResponse (ADR-833) is one account-level list. Items is
+// returned only when a single list is fetched; ReferencedBy names the rules
+// whose match conditions use the list.
+type EdgeRuleListResponse struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Kind         string    `json:"kind"`
+	Description  string    `json:"description,omitempty"`
+	ItemCount    int       `json:"item_count"`
+	Items        []string  `json:"items,omitempty"`
+	ReferencedBy []string  `json:"referenced_by"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// ListEdgeRuleListsResponse is GET /v1/edge-rule-lists.
+type ListEdgeRuleListsResponse struct {
+	Lists []EdgeRuleListResponse `json:"lists"`
+}
+
+// CreateEdgeRuleListRequest is POST /v1/edge-rule-lists.
+type CreateEdgeRuleListRequest struct {
+	Name        string   `json:"name"`
+	Kind        string   `json:"kind"`
+	Description string   `json:"description,omitempty"`
+	Items       []string `json:"items"`
+}
+
+// UpdateEdgeRuleListRequest is PATCH /v1/edge-rule-lists/{name}. Items
+// replaces the whole list and cannot be combined with Add / Remove, which
+// edit it in place (Remove applies after Add).
+type UpdateEdgeRuleListRequest struct {
+	Description *string   `json:"description,omitempty"`
+	Items       *[]string `json:"items,omitempty"`
+	Add         []string  `json:"add,omitempty"`
+	Remove      []string  `json:"remove,omitempty"`
+}
+
 // EdgeRuleSetVersionResponse (ADR-831) describes one recorded state of an
 // app's whole edge-rule set. Rules is populated only when a single version
 // is fetched. Current marks the app's latest version.

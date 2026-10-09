@@ -642,7 +642,13 @@ const (
 	CodeConflict                       = "conflict"
 	// ADR-831: an edge-rule mutation's If-Match named a rule-set version
 	// that is no longer the app's latest.
-	CodeEdgeRulesVersionMismatch        = "edge_rules_version_mismatch"
+	CodeEdgeRulesVersionMismatch = "edge_rules_version_mismatch"
+	// ADR-833 reusable edge-rule lists.
+	CodeEdgeRuleListNotFound            = "edge_rule_list_not_found"
+	CodeEdgeRuleListExists              = "edge_rule_list_exists"
+	CodeEdgeRuleListInUse               = "edge_rule_list_in_use"
+	CodePlanLimitEdgeRuleLists          = "plan_limit_edge_rule_lists"
+	CodePlanLimitEdgeRuleListItems      = "plan_limit_edge_rule_list_items"
 	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
 	// ADR-568: the original private VM attempt cannot yet acknowledge its
 	// ownership or complete physical retirement. Keep its reservation charged.
@@ -1879,6 +1885,12 @@ func StatusForCode(code string) int {
 		return http.StatusUnprocessableEntity
 	case CodeEdgeRulesVersionMismatch:
 		return http.StatusPreconditionFailed
+	case CodeEdgeRuleListNotFound:
+		return http.StatusNotFound
+	case CodeEdgeRuleListExists, CodeEdgeRuleListInUse:
+		return http.StatusConflict
+	case CodePlanLimitEdgeRuleLists, CodePlanLimitEdgeRuleListItems:
+		return http.StatusForbidden
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
@@ -5737,6 +5749,44 @@ func ErrEdgeRulesVersionMismatch(expected string, current int) *Problem {
 	return NewProblem(http.StatusPreconditionFailed, CodeEdgeRulesVersionMismatch,
 		"Edge rules changed",
 		fmt.Sprintf("If-Match %s does not match the current edge-rule set version %q; re-read the rules and retry", expected, EdgeRuleSetETag(current)))
+}
+
+// ErrEdgeRuleListNotFound is the 404 for an unknown list name in the
+// caller's account (ADR-833).
+func ErrEdgeRuleListNotFound(name string) *Problem {
+	return NewProblem(http.StatusNotFound, CodeEdgeRuleListNotFound,
+		"Edge rule list not found", fmt.Sprintf("no edge rule list named %q in this account", name))
+}
+
+// ErrEdgeRuleListExists is the 409 for a create that reuses a name.
+func ErrEdgeRuleListExists(name string) *Problem {
+	return NewProblem(http.StatusConflict, CodeEdgeRuleListExists,
+		"Edge rule list exists", fmt.Sprintf("an edge rule list named %q already exists in this account", name))
+}
+
+// ErrEdgeRuleListInUse is the 409 for deleting a list that rules reference.
+func ErrEdgeRuleListInUse(name string, ruleIDs []string) *Problem {
+	return NewProblem(http.StatusConflict, CodeEdgeRuleListInUse,
+		"Edge rule list in use",
+		fmt.Sprintf("edge rule list %q is referenced by %d rule(s) (%s); remove the references first", name, len(ruleIDs), strings.Join(ruleIDs, ", ")))
+}
+
+// ErrPlanLimitEdgeRuleLists is the 403 for an account at its list cap.
+func ErrPlanLimitEdgeRuleLists(plan Plan, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitEdgeRuleLists,
+		"Edge rule list limit reached",
+		fmt.Sprintf("%s plan caps edge rule lists at %d per account; you have %d.", plan, limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#edge-rules")
+}
+
+// ErrPlanLimitEdgeRuleListItems is the 403 for a list over its item cap.
+func ErrPlanLimitEdgeRuleListItems(plan Plan, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitEdgeRuleListItems,
+		"Edge rule list too large",
+		fmt.Sprintf("%s plan caps an edge rule list at %d items; this list would have %d.", plan, limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#edge-rules")
 }
 
 // EdgeRuleSetETag renders an app's edge-rule set version as an ETag value.

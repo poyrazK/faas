@@ -33,6 +33,8 @@ type EdgeRuleMatchExpr struct {
 	Op     string              `json:"op,omitempty"`
 	Value  string              `json:"value,omitempty"`
 	Values []string            `json:"values,omitempty"`
+	// List names an account list for the in_list op (ADR-833).
+	List string `json:"list,omitempty"`
 }
 
 // EdgeRuleMatchInput is the request snapshot a condition is evaluated
@@ -77,16 +79,32 @@ type matchNode struct {
 	foldCase bool
 	re       *regexp.Regexp
 	nets     []*net.IPNet
+	list     *EdgeRuleList
+}
+
+// matchCompiler carries the node budget and the account's lists through
+// one compilation.
+type matchCompiler struct {
+	nodes int
+	lists EdgeRuleLists
 }
 
 // CompileEdgeRuleMatch validates expr and compiles it. A nil expr compiles
-// to a nil program, which always matches.
+// to a nil program, which always matches. An in_list leaf fails to compile;
+// use CompileEdgeRuleMatchWithLists for conditions that reference lists.
 func CompileEdgeRuleMatch(expr *EdgeRuleMatchExpr) (*EdgeRuleMatchProgram, error) {
+	return CompileEdgeRuleMatchWithLists(expr, nil)
+}
+
+// CompileEdgeRuleMatchWithLists compiles expr, resolving in_list references
+// against lists (ADR-833). An unknown list, or one whose kind does not fit
+// the field, is a compile error.
+func CompileEdgeRuleMatchWithLists(expr *EdgeRuleMatchExpr, lists EdgeRuleLists) (*EdgeRuleMatchProgram, error) {
 	if expr == nil {
 		return nil, nil
 	}
-	nodes := 0
-	root, err := compileMatchNode(*expr, 1, &nodes, "match")
+	c := &matchCompiler{lists: lists}
+	root, err := c.node(*expr, 1, "match")
 	if err != nil {
 		return nil, err
 	}
@@ -102,21 +120,27 @@ func NeverMatchingEdgeRuleProgram() *EdgeRuleMatchProgram {
 // ValidateEdgeRuleMatch reports a validation Problem for an invalid
 // condition (nil is valid).
 func ValidateEdgeRuleMatch(expr *EdgeRuleMatchExpr) *Problem {
-	if _, err := CompileEdgeRuleMatch(expr); err != nil {
+	return ValidateEdgeRuleMatchWithLists(expr, nil)
+}
+
+// ValidateEdgeRuleMatchWithLists is ValidateEdgeRuleMatch with in_list
+// references resolved against lists.
+func ValidateEdgeRuleMatchWithLists(expr *EdgeRuleMatchExpr, lists EdgeRuleLists) *Problem {
+	if _, err := CompileEdgeRuleMatchWithLists(expr, lists); err != nil {
 		return ErrValidation(err.Error())
 	}
 	return nil
 }
 
-func compileMatchNode(e EdgeRuleMatchExpr, depth int, nodes *int, at string) (matchNode, error) {
-	*nodes++
-	if *nodes > EdgeRuleMatchMaxNodes {
+func (c *matchCompiler) node(e EdgeRuleMatchExpr, depth int, at string) (matchNode, error) {
+	c.nodes++
+	if c.nodes > EdgeRuleMatchMaxNodes {
 		return matchNode{}, fmt.Errorf("match: more than %d nodes", EdgeRuleMatchMaxNodes)
 	}
 	if depth > EdgeRuleMatchMaxDepth {
 		return matchNode{}, fmt.Errorf("%s: nested deeper than %d levels", at, EdgeRuleMatchMaxDepth)
 	}
-	isLeaf := e.Field != "" || e.Op != "" || e.Value != "" || len(e.Values) > 0
+	isLeaf := e.Field != "" || e.Op != "" || e.Value != "" || len(e.Values) > 0 || e.List != ""
 	shapes := 0
 	for _, set := range []bool{len(e.All) > 0, len(e.Any) > 0, e.Not != nil, isLeaf} {
 		if set {
@@ -134,7 +158,7 @@ func compileMatchNode(e EdgeRuleMatchExpr, depth int, nodes *int, at string) (ma
 		}
 		out := make([]matchNode, 0, len(children))
 		for i, child := range children {
-			n, err := compileMatchNode(child, depth+1, nodes, fmt.Sprintf("%s.%s[%d]", at, key, i))
+			n, err := c.node(child, depth+1, fmt.Sprintf("%s.%s[%d]", at, key, i))
 			if err != nil {
 				return matchNode{}, err
 			}
@@ -145,22 +169,25 @@ func compileMatchNode(e EdgeRuleMatchExpr, depth int, nodes *int, at string) (ma
 		}
 		return matchNode{any: out}, nil
 	case e.Not != nil:
-		n, err := compileMatchNode(*e.Not, depth+1, nodes, at+".not")
+		n, err := c.node(*e.Not, depth+1, at+".not")
 		if err != nil {
 			return matchNode{}, err
 		}
 		return matchNode{not: &n}, nil
 	}
-	return compileMatchLeaf(e, at)
+	return c.leaf(e, at)
 }
 
-func compileMatchLeaf(e EdgeRuleMatchExpr, at string) (matchNode, error) {
+func (c *matchCompiler) leaf(e EdgeRuleMatchExpr, at string) (matchNode, error) {
 	kind, name, err := parseMatchField(e.Field)
 	if err != nil {
 		return matchNode{}, fmt.Errorf("%s: %w", at, err)
 	}
 	n := matchNode{op: e.Op, field: kind, name: name}
 	n.foldCase = kind == fieldMethod || kind == fieldHost || kind == fieldCountry
+	if e.Op == "in_list" || e.List != "" {
+		return c.listLeaf(n, e, at)
+	}
 	values := e.Values
 	if e.Value != "" {
 		if len(e.Values) > 0 {
@@ -245,6 +272,25 @@ func compileMatchLeaf(e EdgeRuleMatchExpr, at string) (matchNode, error) {
 	return n, nil
 }
 
+// listLeaf compiles an ADR-833 in_list leaf.
+func (c *matchCompiler) listLeaf(n matchNode, e EdgeRuleMatchExpr, at string) (matchNode, error) {
+	if e.Op != "in_list" {
+		return matchNode{}, fmt.Errorf("%s: list applies only to op in_list", at)
+	}
+	if e.List == "" || e.Value != "" || len(e.Values) > 0 {
+		return matchNode{}, fmt.Errorf("%s: op in_list takes a list name and no value", at)
+	}
+	list, ok := c.lists[e.List]
+	if !ok || list == nil {
+		return matchNode{}, fmt.Errorf("%s: unknown list %q", at, e.List)
+	}
+	if !edgeRuleListFits(list.Kind, n.field) {
+		return matchNode{}, fmt.Errorf("%s: a %s list cannot match field %q (ip: client_ip, country: country, host: host, string: path, header:, cookie:, query:)", at, list.Kind, e.Field)
+	}
+	n.list = list
+	return n, nil
+}
+
 func parseMatchField(field string) (matchFieldKind, string, error) {
 	switch field {
 	case "method":
@@ -317,6 +363,9 @@ func (n *matchNode) evalLeaf(in EdgeRuleMatchInput) bool {
 	if !present {
 		return false
 	}
+	if n.op == "in_list" && n.field == fieldClientIP {
+		return n.list.containsIP(in.ClientIP)
+	}
 	if n.op == "cidr" {
 		for _, ipnet := range n.nets {
 			if ipnet.Contains(in.ClientIP) {
@@ -359,6 +408,8 @@ func (n *matchNode) compare(got string) bool {
 		return anyMatchValue(n.values, func(v string) bool { return strings.Contains(got, v) })
 	case "regex":
 		return n.re.MatchString(got)
+	case "in_list":
+		return n.list.contains(got)
 	}
 	return false
 }

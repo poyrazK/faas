@@ -508,6 +508,7 @@ type MemStore struct {
 	// mirrored by the per-app lookup in the quota-check branch.
 	edgeRules                 map[string]EdgeRule
 	edgeRuleSetVersions       map[string][]EdgeRuleSetVersion // app id -> versions, oldest first (ADR-831)
+	edgeRuleLists             map[string]EdgeRuleList         // list id -> list (ADR-833)
 	edgeRuleHitCounts         map[edgeRuleHitKey]int64        // ADR-830 hourly hit buckets
 	routePolicyReceipts       map[string]routePolicyStoredReceipt
 	savedRouteRequirements    map[string]api.SavedRouteRequirements
