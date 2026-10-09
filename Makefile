@@ -990,8 +990,8 @@ clean: ## Remove build artifacts
 # (see .github/workflows/ci.yml `install sqlc` step); the same path is
 # the local-dev convention so make sqlc-check works without a `go
 # install` round-trip — which is necessary on Go < 1.26 because
-# sqlc v1.31.1's go.mod requires go >= 1.26.0 and the ubuntu-latest
-# runner is on Go 1.25.12 with GOTOOLCHAIN=local.
+# sqlc v1.31.1's go.mod requires go >= 1.26.0. The downloaded binary
+# keeps generation independent of a local compiler's version.
 SQLC         ?= $(HOME)/.local/sqlc/bin/sqlc
 # Bumped from v1.27.0 (IAM-3) — v1.27.0's pg_query_go cgo clashes with
 # the macOS SDK strchrnul declaration and `go install` fails on this

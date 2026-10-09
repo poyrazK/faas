@@ -187,10 +187,14 @@ jobs:
         run: make regression-pin-check
       - name: regression-pin checker tests
         run: make regression-pin-check-test
-      - name: lint (golangci-lint v8)
+      - name: lint (golangci-lint v9)
         uses: golangci/golangci-lint-action@v9
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          # The loader compiles the full API/state test variants for type
+          # information. Serialize those large exports and omit executable
+          # optimization/debug data here; analyzers still see every source.
+          # Normal build and unit-test steps retain their own compiler flags.
+          GOFLAGS: '-p=1 "-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1 -N -l" "-gcflags=github.com/onebox-faas/faas/pkg/state=-dwarf=false -c=1 -N -l"'
           # Bound analysis memory after repeated hosted-runner shutdowns.
           GOMEMLIMIT: 3GiB
           GOGC: 75
@@ -212,7 +216,11 @@ jobs:
         run: test -z "$(gofmt -l $(find . -name '*.go'))" || (gofmt -l $(find . -name '*.go'); exit 1)
       - name: vet
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          # The loader compiles the full API/state test variants for type
+          # information. Serialize those large exports and omit executable
+          # optimization/debug data here; analyzers still see every source.
+          # Normal build and unit-test steps retain their own compiler flags.
+          GOFLAGS: '-p=1 "-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1 -N -l" "-gcflags=github.com/onebox-faas/faas/pkg/state=-dwarf=false -c=1 -N -l"'
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
