@@ -1437,6 +1437,7 @@ export type { RouteMonitorIncident } from './models/RouteMonitorIncident.js';
 export type { RouteMonitorIncidentEscalation } from './models/RouteMonitorIncidentEscalation.js';
 export type { RouteMonitorIncidentEscalationSignal } from './models/RouteMonitorIncidentEscalationSignal.js';
 export type { RouteMonitorIncidentPage } from './models/RouteMonitorIncidentPage.js';
+export type { RouteMonitorIncidentRollback } from './models/RouteMonitorIncidentRollback.js';
 export type { RouteMonitorIncidentTimelineEntry } from './models/RouteMonitorIncidentTimelineEntry.js';
 export type { RouteMonitorIncidentTimelineRoute } from './models/RouteMonitorIncidentTimelineRoute.js';
 export type { RouteMonitorPreview } from './models/RouteMonitorPreview.js';

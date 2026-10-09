@@ -32,6 +32,14 @@ export type RouteHealthFinding = {
    */
   latency_status?: 'healthy' | 'regressed' | 'unknown';
   latency_reason?: string;
+  /**
+   * Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846). Thresholds are unchanged.
+   */
+  evidence_window?: 'pooled';
   windows: Array<RouteHealthWindowEvidence>;
+  /**
+   * Two consecutive halves of up to the newest 30 minutes of the stage, read only for routes whose one-minute windows were sparse.
+   */
+  pooled_windows?: Array<RouteHealthWindowEvidence>;
 };
 

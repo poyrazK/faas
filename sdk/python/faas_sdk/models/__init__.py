@@ -2576,6 +2576,7 @@ from .route_health_evaluation_policy import RouteHealthEvaluationPolicy
 from .route_health_evaluation_policy_version import RouteHealthEvaluationPolicyVersion
 from .route_health_finding import RouteHealthFinding
 from .route_health_finding_error_status import RouteHealthFindingErrorStatus
+from .route_health_finding_evidence_window import RouteHealthFindingEvidenceWindow
 from .route_health_finding_latency_status import RouteHealthFindingLatencyStatus
 from .route_health_finding_status import RouteHealthFindingStatus
 from .route_health_finding_watch_statuses_item import RouteHealthFindingWatchStatusesItem
@@ -2634,6 +2635,7 @@ from .route_lifecycle_mapping_method import RouteLifecycleMappingMethod
 from .route_lifecycle_mapping_successor_method import RouteLifecycleMappingSuccessorMethod
 from .route_monitor_config import RouteMonitorConfig
 from .route_monitor_config_customer_group_by import RouteMonitorConfigCustomerGroupBy
+from .route_monitor_config_on_violation import RouteMonitorConfigOnViolation
 from .route_monitor_customer_cohort import RouteMonitorCustomerCohort
 from .route_monitor_customer_cohort_error_status import RouteMonitorCustomerCohortErrorStatus
 from .route_monitor_customer_cohort_latency_status import RouteMonitorCustomerCohortLatencyStatus
@@ -2656,6 +2658,7 @@ from .route_monitor_evidence_signal import RouteMonitorEvidenceSignal
 from .route_monitor_evidence_window import RouteMonitorEvidenceWindow
 from .route_monitor_finding import RouteMonitorFinding
 from .route_monitor_finding_error_status import RouteMonitorFindingErrorStatus
+from .route_monitor_finding_evidence_window import RouteMonitorFindingEvidenceWindow
 from .route_monitor_finding_latency_status import RouteMonitorFindingLatencyStatus
 from .route_monitor_finding_status import RouteMonitorFindingStatus
 from .route_monitor_incident import RouteMonitorIncident
@@ -2663,6 +2666,9 @@ from .route_monitor_incident_escalation import RouteMonitorIncidentEscalation
 from .route_monitor_incident_escalation_signal import RouteMonitorIncidentEscalationSignal
 from .route_monitor_incident_escalation_signal_signal import RouteMonitorIncidentEscalationSignalSignal
 from .route_monitor_incident_page import RouteMonitorIncidentPage
+from .route_monitor_incident_rollback import RouteMonitorIncidentRollback
+from .route_monitor_incident_rollback_reason import RouteMonitorIncidentRollbackReason
+from .route_monitor_incident_rollback_status import RouteMonitorIncidentRollbackStatus
 from .route_monitor_incident_status import RouteMonitorIncidentStatus
 from .route_monitor_incident_timeline_entry import RouteMonitorIncidentTimelineEntry
 from .route_monitor_incident_timeline_entry_coverage import RouteMonitorIncidentTimelineEntryCoverage
@@ -2853,6 +2859,7 @@ from .set_route_health_gate_request_mode import SetRouteHealthGateRequestMode
 from .set_route_health_gate_request_on_regression import SetRouteHealthGateRequestOnRegression
 from .set_route_monitor_request import SetRouteMonitorRequest
 from .set_route_monitor_request_customer_group_by import SetRouteMonitorRequestCustomerGroupBy
+from .set_route_monitor_request_on_violation import SetRouteMonitorRequestOnViolation
 from .set_route_removal_policy_request import SetRouteRemovalPolicyRequest
 from .set_route_removal_policy_request_mode import SetRouteRemovalPolicyRequestMode
 from .severity_counts import SeverityCounts
@@ -5683,6 +5690,7 @@ __all__ = (
     "RouteHealthEvaluationPolicyVersion",
     "RouteHealthFinding",
     "RouteHealthFindingErrorStatus",
+    "RouteHealthFindingEvidenceWindow",
     "RouteHealthFindingLatencyStatus",
     "RouteHealthFindingStatus",
     "RouteHealthFindingWatchStatusesItem",
@@ -5741,6 +5749,7 @@ __all__ = (
     "RouteLifecycleMappingSuccessorMethod",
     "RouteMonitorConfig",
     "RouteMonitorConfigCustomerGroupBy",
+    "RouteMonitorConfigOnViolation",
     "RouteMonitorCustomerCohort",
     "RouteMonitorCustomerCohortErrorStatus",
     "RouteMonitorCustomerCohortLatencyStatus",
@@ -5763,6 +5772,7 @@ __all__ = (
     "RouteMonitorEvidenceWindow",
     "RouteMonitorFinding",
     "RouteMonitorFindingErrorStatus",
+    "RouteMonitorFindingEvidenceWindow",
     "RouteMonitorFindingLatencyStatus",
     "RouteMonitorFindingStatus",
     "RouteMonitorIncident",
@@ -5770,6 +5780,9 @@ __all__ = (
     "RouteMonitorIncidentEscalationSignal",
     "RouteMonitorIncidentEscalationSignalSignal",
     "RouteMonitorIncidentPage",
+    "RouteMonitorIncidentRollback",
+    "RouteMonitorIncidentRollbackReason",
+    "RouteMonitorIncidentRollbackStatus",
     "RouteMonitorIncidentStatus",
     "RouteMonitorIncidentTimelineEntry",
     "RouteMonitorIncidentTimelineEntryCoverage",
@@ -5954,6 +5967,7 @@ __all__ = (
     "SetRouteHealthGateRequestOnRegression",
     "SetRouteMonitorRequest",
     "SetRouteMonitorRequestCustomerGroupBy",
+    "SetRouteMonitorRequestOnViolation",
     "SetRouteRemovalPolicyRequest",
     "SetRouteRemovalPolicyRequestMode",
     "SeverityCounts",
