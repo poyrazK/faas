@@ -2130,6 +2130,7 @@ type EdgeRule struct {
 	Description  pgtype.Text
 	ExpiresAt    pgtype.Timestamptz
 	MatchExpr    []byte
+	Mode         string
 }
 
 type EdgeRuleChangeLog struct {
@@ -2139,6 +2140,14 @@ type EdgeRuleChangeLog struct {
 	Operation  string
 	MatchHosts []string
 	CreatedAt  pgtype.Timestamptz
+}
+
+type EdgeRuleHitCount struct {
+	RuleID      pgtype.UUID
+	AppID       pgtype.UUID
+	BucketStart pgtype.Timestamptz
+	Outcome     string
+	Hits        int64
 }
 
 type EdgeRuleSetVersion struct {

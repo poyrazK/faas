@@ -19,12 +19,27 @@ import (
 // applies the rule to every request its selectors pick.
 type EdgeRuleCondition struct {
 	Match *api.EdgeRuleMatchProgram
+	// RuleID / AppID identify the rule for ADR-830 hit counts; LogOnly marks
+	// a log-mode rule, which is matched and counted but never acts.
+	RuleID  string
+	AppID   string
+	LogOnly bool
 }
 
 func (c EdgeRuleCondition) edgeRuleMatch() *api.EdgeRuleMatchProgram { return c.Match }
+func (c EdgeRuleCondition) edgeRuleLogOnly() bool                    { return c.LogOnly }
+func (c EdgeRuleCondition) edgeRuleIdentity() (string, string)       { return c.RuleID, c.AppID }
 
 type edgeRuleConditional interface {
 	edgeRuleMatch() *api.EdgeRuleMatchProgram
+	edgeRuleLogOnly() bool
+	edgeRuleIdentity() (string, string)
+}
+
+// EdgeRuleHitRecorder counts rule matches (ADR-830). Implementations must be
+// cheap and non-blocking: they run on the request path.
+type EdgeRuleHitRecorder interface {
+	RecordEdgeRuleHit(ruleID, appID string, logged bool)
 }
 
 type edgeRuleMatchContextKey struct{}
@@ -40,16 +55,57 @@ type EdgeRuleMatchContext struct {
 	countryOnce sync.Once
 	lookup      func(net.IP) string
 	country     string
+
+	// ADR-830: hit recording, deduplicated per request (a kind can be looked
+	// up more than once while serving one request).
+	hits     EdgeRuleHitRecorder
+	seenMu   sync.Mutex
+	seenHits map[string]struct{}
 }
 
 // NewEdgeRuleMatchContext builds the request snapshot. lookup resolves a
 // country for the trusted client IP; nil means no GeoIP database, so
-// conditions on country see it as absent.
-func NewEdgeRuleMatchContext(r *http.Request, clientIP net.IP, lookup func(net.IP) string) *EdgeRuleMatchContext {
+// conditions on country see it as absent. hits may be nil (no counting).
+func NewEdgeRuleMatchContext(r *http.Request, clientIP net.IP, lookup func(net.IP) string, hits EdgeRuleHitRecorder) *EdgeRuleMatchContext {
 	return &EdgeRuleMatchContext{
 		Host: hostname(r.Host), Headers: r.Header, Query: r.URL.Query(),
-		ClientIP: clientIP, lookup: lookup,
+		ClientIP: clientIP, lookup: lookup, hits: hits,
 	}
+}
+
+func (m *EdgeRuleMatchContext) recordHit(ruleID, appID string, logged bool) {
+	if m == nil || m.hits == nil || ruleID == "" {
+		return
+	}
+	m.seenMu.Lock()
+	if m.seenHits == nil {
+		m.seenHits = map[string]struct{}{}
+	}
+	_, seen := m.seenHits[ruleID]
+	m.seenHits[ruleID] = struct{}{}
+	m.seenMu.Unlock()
+	if !seen {
+		m.hits.RecordEdgeRuleHit(ruleID, appID, logged)
+	}
+}
+
+// ObserveEdgeRuleMatch counts the enforced rule a kind lookup selected and
+// the first log-mode rule of that kind that matched, then returns the
+// enforced one. Log-mode rules never act (ADR-830).
+func ObserveEdgeRuleMatch[T any](ctx context.Context, enforced, logged *T) *T {
+	m := edgeRuleMatchContextFrom(ctx)
+	if m == nil || m.hits == nil {
+		return enforced
+	}
+	if c, ok := any(enforced).(edgeRuleConditional); ok && enforced != nil {
+		id, app := c.edgeRuleIdentity()
+		m.recordHit(id, app, false)
+	}
+	if c, ok := any(logged).(edgeRuleConditional); ok && logged != nil {
+		id, app := c.edgeRuleIdentity()
+		m.recordHit(id, app, true)
+	}
+	return enforced
 }
 
 func (m *EdgeRuleMatchContext) resolvedCountry() string {
@@ -93,28 +149,61 @@ func edgeRuleMatchContextFrom(ctx context.Context) *EdgeRuleMatchContext {
 // match context attached (callers outside the request path), conditions see
 // only the path and method, and every other field is absent.
 func ApplicableEdgeRules[T any](ctx context.Context, rules []T, account func(*T) string, requestPath, method string) []T {
+	return filterEdgeRules(ctx, rules, account, requestPath, method, false)
+}
+
+// LoggedEdgeRules is ApplicableEdgeRules for log-mode rules only (ADR-830):
+// the owner's log-mode rules whose condition holds. It returns nil at once
+// when the slice has no log-mode rule.
+func LoggedEdgeRules[T any](ctx context.Context, rules []T, account func(*T) string, requestPath, method string) []T {
+	for i := range rules {
+		if c, ok := any(&rules[i]).(edgeRuleConditional); ok && c.edgeRuleLogOnly() {
+			return filterEdgeRules(ctx, rules, account, requestPath, method, true)
+		}
+	}
+	return nil
+}
+
+func filterEdgeRules[T any](ctx context.Context, rules []T, account func(*T) string, requestPath, method string, logOnly bool) []T {
 	owned := OwnedEdgeRules(ctx, rules, account)
-	conditional := false
+	needsFilter := false
 	for i := range owned {
-		if c, ok := any(&owned[i]).(edgeRuleConditional); ok && c.edgeRuleMatch() != nil {
-			conditional = true
+		c, ok := any(&owned[i]).(edgeRuleConditional)
+		if ok && (c.edgeRuleMatch() != nil || c.edgeRuleLogOnly() != logOnly) {
+			needsFilter = true
 			break
 		}
 	}
-	if !conditional {
+	if !needsFilter && !logOnly {
 		return owned
 	}
+	var input api.EdgeRuleMatchInput
+	inputReady := false
+	out := make([]T, 0, len(owned))
+	for i := range owned {
+		c, ok := any(&owned[i]).(edgeRuleConditional)
+		if ok && c.edgeRuleLogOnly() != logOnly {
+			continue
+		}
+		if ok && c.edgeRuleMatch() != nil {
+			if !inputReady {
+				input = edgeRuleMatchInputFor(ctx, requestPath, method)
+				inputReady = true
+			}
+			if !c.edgeRuleMatch().Matches(input) {
+				continue
+			}
+		}
+		out = append(out, owned[i])
+	}
+	return out
+}
+
+func edgeRuleMatchInputFor(ctx context.Context, requestPath, method string) api.EdgeRuleMatchInput {
 	input := api.EdgeRuleMatchInput{Path: requestPath, Method: method}
 	if m := edgeRuleMatchContextFrom(ctx); m != nil {
 		input.Host, input.Headers, input.Query, input.ClientIP = m.Host, m.Headers, m.Query, m.ClientIP
 		input.Country = m.resolvedCountry()
 	}
-	out := make([]T, 0, len(owned))
-	for i := range owned {
-		if c, ok := any(&owned[i]).(edgeRuleConditional); ok && !c.edgeRuleMatch().Matches(input) {
-			continue
-		}
-		out = append(out, owned[i])
-	}
-	return out
+	return input
 }

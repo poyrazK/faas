@@ -1698,7 +1698,7 @@ CREATE FUNCTION public.edge_rule_set_snapshot(target uuid) RETURNS jsonb
         SELECT id, account_id, app_id, match_host, match_path, match_methods,
                match_headers, priority, enabled, kind, action, validate_mode,
                cors_preset_id, manifest_key, name, description, expires_at,
-               created_at, match_expr
+               created_at, match_expr, mode
         FROM edge_rules
         WHERE app_id = target
     ) r;
@@ -14881,6 +14881,21 @@ CREATE SEQUENCE public.edge_rule_generation_seq
 
 
 --
+-- Name: edge_rule_hit_counts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_rule_hit_counts (
+    rule_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    bucket_start timestamp with time zone NOT NULL,
+    outcome text NOT NULL,
+    hits bigint NOT NULL,
+    CONSTRAINT edge_rule_hit_counts_hits_check CHECK ((hits >= 0)),
+    CONSTRAINT edge_rule_hit_counts_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text])))
+);
+
+
+--
 -- Name: edge_rule_set_versions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14938,10 +14953,12 @@ CREATE TABLE public.edge_rules (
     description text,
     expires_at timestamp with time zone,
     match_expr jsonb,
+    mode text DEFAULT 'enforce'::text NOT NULL,
     CONSTRAINT edge_rules_description_chk CHECK (((description IS NULL) OR (length(description) <= 1000))),
     CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text, 'async'::text]))),
     CONSTRAINT edge_rules_match_expr_shape_chk CHECK (((match_expr IS NULL) OR ((jsonb_typeof(match_expr) = 'object'::text) AND (octet_length((match_expr)::text) <= 65536)))),
     CONSTRAINT edge_rules_match_headers_shape_chk CHECK (((jsonb_typeof(match_headers) = 'object'::text) AND (jsonb_array_length(jsonb_path_query_array(match_headers, '$.keyvalue()'::jsonpath)) <= 10))),
+    CONSTRAINT edge_rules_mode_chk CHECK ((mode = ANY (ARRAY['enforce'::text, 'log'::text]))),
     CONSTRAINT edge_rules_name_chk CHECK (((name IS NULL) OR ((length(btrim(name)) >= 1) AND (length(btrim(name)) <= 100)))),
     CONSTRAINT edge_rules_priority_check CHECK (((priority >= 0) AND (priority <= 10000))),
     CONSTRAINT edge_rules_validate_mode_check CHECK ((validate_mode = ANY (ARRAY['observe'::text, 'warn'::text, 'block'::text])))
@@ -25806,6 +25823,14 @@ ALTER TABLE ONLY public.edge_rule_change_log
 
 
 --
+-- Name: edge_rule_hit_counts edge_rule_hit_counts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_hit_counts
+    ADD CONSTRAINT edge_rule_hit_counts_pkey PRIMARY KEY (rule_id, bucket_start, outcome);
+
+
+--
 -- Name: edge_rule_set_versions edge_rule_set_versions_app_version_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31900,6 +31925,13 @@ CREATE INDEX domain_doctor_observations_stale_idx ON public.domain_doctor_observ
 --
 
 CREATE INDEX edge_rule_change_log_created_idx ON public.edge_rule_change_log USING btree (created_at, id);
+
+
+--
+-- Name: edge_rule_hit_counts_app_bucket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rule_hit_counts_app_bucket_idx ON public.edge_rule_hit_counts USING btree (app_id, bucket_start);
 
 
 --

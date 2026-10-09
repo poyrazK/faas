@@ -84,6 +84,7 @@ type edgeRuleSnapshotRow struct {
 	ExpiresAt    *time.Time             `json:"expires_at"`
 	CreatedAt    time.Time              `json:"created_at"`
 	MatchExpr    *api.EdgeRuleMatchExpr `json:"match_expr"`
+	Mode         string                 `json:"mode"`
 }
 
 func (r edgeRuleSnapshotRow) rule() EdgeRule {
@@ -93,7 +94,10 @@ func (r edgeRuleSnapshotRow) rule() EdgeRule {
 		MatchHeaders: r.MatchHeaders, Priority: r.Priority, Enabled: r.Enabled,
 		Kind: EdgeRuleKind(r.Kind), Action: r.Action, ValidateMode: r.ValidateMode,
 		CorsPresetID: r.CorsPresetID, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
-		Match: r.MatchExpr,
+		Match: r.MatchExpr, Mode: r.Mode,
+	}
+	if out.Mode == "" {
+		out.Mode = EdgeRuleModeEnforce // versions recorded before ADR-830
 	}
 	if r.ManifestKey != nil {
 		out.ManifestKey = *r.ManifestKey
@@ -248,12 +252,12 @@ func (s *PgStore) RestoreEdgeRuleSetVersion(ctx context.Context, appID string, v
 			id, account_id, app_id, match_host, match_path, match_methods,
 			match_headers, priority, enabled, kind, action, validate_mode,
 			cors_preset_id, manifest_key, name, description, expires_at, created_at,
-			match_expr
+			match_expr, mode
 		)
 		select id, account_id, app_id, match_host, match_path, match_methods,
 		       match_headers, priority, enabled, kind, action, validate_mode,
 		       cors_preset_id, manifest_key, name, description, expires_at, created_at,
-		       match_expr
+		       match_expr, coalesce(mode, 'enforce')
 		from jsonb_populate_recordset(null::edge_rules,
 			(select rules from edge_rule_set_versions where app_id = $1 and version = $2))`,
 		appID, version,

@@ -504,7 +504,9 @@ func (g *gatewaydEdgeRules) MatchRoute(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Route
 	}
-	return gateway.PickFirstRouteMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstRouteMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstRouteMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchRewrite returns the highest-priority `kind=rewrite` rule
@@ -527,7 +529,9 @@ func (g *gatewaydEdgeRules) MatchRewrite(ctx context.Context, host, requestPath,
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Rewrite
 	}
-	return gateway.PickFirstRewriteMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRewriteResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstRewriteMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRewriteResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstRewriteMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRewriteResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchRedirect returns the highest-priority `kind=redirect` rule
@@ -548,7 +552,9 @@ func (g *gatewaydEdgeRules) MatchRedirect(ctx context.Context, host, requestPath
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Redirect
 	}
-	return gateway.PickFirstRedirectMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRedirectResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstRedirectMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRedirectResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstRedirectMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRedirectResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchHeaders returns the highest-priority `kind=headers` rule
@@ -569,7 +575,9 @@ func (g *gatewaydEdgeRules) MatchHeaders(ctx context.Context, host, requestPath,
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Headers
 	}
-	return gateway.PickFirstHeadersMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleHeadersResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstHeadersMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleHeadersResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstHeadersMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleHeadersResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchCORS returns the highest-priority `kind=cors` rule whose
@@ -592,7 +600,9 @@ func (g *gatewaydEdgeRules) MatchCORS(ctx context.Context, host, requestPath, me
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.CORS
 	}
-	return gateway.PickFirstCORSMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCORSResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstCORSMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCORSResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstCORSMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCORSResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchJWT returns the highest-priority `kind=jwt` rule whose
@@ -617,7 +627,9 @@ func (g *gatewaydEdgeRules) MatchJWT(ctx context.Context, host, requestPath, met
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.JWT
 	}
-	return gateway.PickFirstJWTMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleJWTResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstJWTMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleJWTResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstJWTMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleJWTResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchIP returns the highest-priority `kind=ip` rule whose host,
@@ -641,7 +653,9 @@ func (g *gatewaydEdgeRules) MatchIP(ctx context.Context, host, requestPath, meth
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.IP
 	}
-	return gateway.PickFirstIPMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleIPResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstIPMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleIPResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstIPMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleIPResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchValidate returns the highest-priority `kind=validate` rule
@@ -667,7 +681,9 @@ func (g *gatewaydEdgeRules) MatchValidate(ctx context.Context, host, requestPath
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Validate
 	}
-	return gateway.PickFirstValidateMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleValidateResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstValidateMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleValidateResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstValidateMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleValidateResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchLimit returns the highest-priority `kind=limit` rule whose
@@ -694,7 +710,9 @@ func (g *gatewaydEdgeRules) MatchLimit(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Limit
 	}
-	return gateway.PickFirstLimitMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleLimitResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstLimitMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleLimitResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstLimitMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleLimitResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchMaintenance returns the highest-priority `kind=maintenance`
@@ -722,7 +740,9 @@ func (g *gatewaydEdgeRules) MatchMaintenance(ctx context.Context, host, requestP
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Maintenance
 	}
-	return gateway.PickFirstMaintenanceMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleMaintenanceResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstMaintenanceMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleMaintenanceResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstMaintenanceMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleMaintenanceResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchGeo returns the highest-priority `kind=geo` rule whose
@@ -749,7 +769,9 @@ func (g *gatewaydEdgeRules) MatchGeo(ctx context.Context, host, requestPath, met
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Geo
 	}
-	return gateway.PickFirstGeoMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleGeoResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstGeoMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleGeoResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstGeoMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleGeoResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchThrottle returns the highest-priority `kind=throttle` rule
@@ -778,7 +800,9 @@ func (g *gatewaydEdgeRules) MatchThrottle(ctx context.Context, host, requestPath
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Throttle
 	}
-	return gateway.PickFirstThrottleMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleThrottleResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstThrottleMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleThrottleResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstThrottleMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleThrottleResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchBudget is the ADR-093 matcher for the kind=budget subset.
@@ -807,7 +831,9 @@ func (g *gatewaydEdgeRules) MatchBudget(ctx context.Context, host, requestPath, 
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Budget
 	}
-	return gateway.PickFirstBudgetMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleBudgetResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstBudgetMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleBudgetResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstBudgetMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleBudgetResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchCache is the ADR-122 matcher for the kind=cache subset.
@@ -844,7 +870,9 @@ func (g *gatewaydEdgeRules) MatchCache(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Cache
 	}
-	return gateway.PickFirstCacheMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCacheResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstCacheMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCacheResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstCacheMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCacheResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchRespond returns the highest-priority preview-response rule matching the
@@ -865,7 +893,9 @@ func (g *gatewaydEdgeRules) MatchRespond(ctx context.Context, host, requestPath,
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Respond
 	}
-	return gateway.PickFirstRespondMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRespondResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstRespondMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRespondResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstRespondMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRespondResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // MatchAsync returns the highest-priority durable async-route rule matching
@@ -887,7 +917,9 @@ func (g *gatewaydEdgeRules) MatchAsync(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Async
 	}
-	return gateway.PickFirstAsyncMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleAsyncResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	enforced := gateway.PickFirstAsyncMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleAsyncResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	logged := gateway.PickFirstAsyncMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleAsyncResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
 }
 
 // Reset drops every cached entry. Called by the pg_notify loop in
@@ -964,7 +996,7 @@ func compileRouteRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleResolved,
 		}
 		out = append(out, gateway.EdgeRuleResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1005,7 +1037,7 @@ func compileRewriteRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRewrite
 		}
 		out = append(out, gateway.EdgeRuleRewriteResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1051,7 +1083,7 @@ func compileRedirectRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRedire
 		}
 		out = append(out, gateway.EdgeRuleRedirectResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1094,7 +1126,7 @@ func compileHeadersRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleHeaders
 		}
 		out = append(out, gateway.EdgeRuleHeadersResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1211,7 +1243,7 @@ func (g *gatewaydEdgeRules) compileCORSRules(ctx context.Context, storeRules []s
 		}
 		out = append(out, gateway.EdgeRuleCORSResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1289,7 +1321,7 @@ func compileJWTRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleJWTResolved
 		}
 		out = append(out, gateway.EdgeRuleJWTResolved{
 			ID:                             r.ID,
-			EdgeRuleCondition:              compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition:              compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:                      r.AccountID,
 			AppID:                          r.AppID,
 			Priority:                       r.Priority,
@@ -1347,7 +1379,7 @@ func compileIPRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleIPResolved, 
 		}
 		out = append(out, gateway.EdgeRuleIPResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1402,7 +1434,7 @@ func compileGeoRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleGeoResolved
 		deny := compileGeoSet(action.Deny)
 		out = append(out, gateway.EdgeRuleGeoResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1534,7 +1566,7 @@ func compileLimitRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleLimitReso
 		}
 		out = append(out, gateway.EdgeRuleLimitResolved{
 			ID:                    r.ID,
-			EdgeRuleCondition:     compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition:     compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:             r.AccountID,
 			AppID:                 r.AppID,
 			Priority:              r.Priority,
@@ -1607,7 +1639,7 @@ func compileMaintenanceRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleMai
 		}
 		out = append(out, gateway.EdgeRuleMaintenanceResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1649,7 +1681,7 @@ func compileRespondRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRespond
 		}
 		out = append(out, gateway.EdgeRuleRespondResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1687,7 +1719,7 @@ func compileAsyncRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleAsyncReso
 		}
 		out = append(out, gateway.EdgeRuleAsyncResolved{
 			ID: rule.ID, AccountID: rule.AccountID, AppID: rule.AppID,
-			EdgeRuleCondition: compileEdgeRuleCondition(rule.ID, rule.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(rule.ID, rule.AppID, rule.Mode, rule.Match),
 			OnSuccessWebhook:  rule.Action.Async.OnSuccess,
 			OnFailureWebhook:  rule.Action.Async.OnFailure,
 			RetryPolicy:       rule.Action.Async.RetryPolicy,
@@ -1792,7 +1824,7 @@ func compileThrottleRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleThrott
 		}
 		out = append(out, gateway.EdgeRuleThrottleResolved{
 			ID:                r.ID,
-			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition: compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:         r.AccountID,
 			AppID:             r.AppID,
 			Priority:          r.Priority,
@@ -1865,7 +1897,7 @@ func compileBudgetRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleBudgetRe
 		}
 		out = append(out, gateway.EdgeRuleBudgetResolved{
 			ID:                  r.ID,
-			EdgeRuleCondition:   compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition:   compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:           r.AccountID,
 			AppID:               r.AppID,
 			Priority:            r.Priority,
@@ -1953,7 +1985,7 @@ func compileCacheRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleCacheReso
 		}
 		out = append(out, gateway.EdgeRuleCacheResolved{
 			ID:                          r.ID,
-			EdgeRuleCondition:           compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition:           compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:                   r.AccountID,
 			AppID:                       r.AppID,
 			Priority:                    r.Priority,
@@ -2081,7 +2113,7 @@ func (g *gatewaydEdgeRules) compileValidateRules(storeRules []state.EdgeRule) ([
 		}
 		out = append(out, gateway.EdgeRuleValidateResolved{
 			ID:                  r.ID,
-			EdgeRuleCondition:   compileEdgeRuleCondition(r.ID, r.Match),
+			EdgeRuleCondition:   compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match),
 			AccountID:           r.AccountID,
 			AppID:               r.AppID,
 			Priority:            r.Priority,

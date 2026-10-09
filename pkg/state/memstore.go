@@ -508,6 +508,7 @@ type MemStore struct {
 	// mirrored by the per-app lookup in the quota-check branch.
 	edgeRules                 map[string]EdgeRule
 	edgeRuleSetVersions       map[string][]EdgeRuleSetVersion // app id -> versions, oldest first (ADR-831)
+	edgeRuleHitCounts         map[edgeRuleHitKey]int64        // ADR-830 hourly hit buckets
 	routePolicyReceipts       map[string]routePolicyStoredReceipt
 	savedRouteRequirements    map[string]api.SavedRouteRequirements
 	profileInvestigations     map[string]api.ProfileInvestigation
@@ -22270,6 +22271,7 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 		Description:  in.Description,
 		ExpiresAt:    in.ExpiresAt,
 		Match:        in.Match,
+		Mode:         edgeRuleModeOrEnforce(in.Mode),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -22396,6 +22398,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 		Description:  in.Description,
 		ExpiresAt:    in.ExpiresAt,
 		Match:        in.Match,
+		Mode:         edgeRuleModeOrEnforce(in.Mode),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -22974,6 +22977,9 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 		r.Match = nil
 	case p.Match != nil:
 		r.Match = p.Match
+	}
+	if p.Mode != nil && *p.Mode != "" {
+		r.Mode = *p.Mode
 	}
 	r.UpdatedAt = time.Now()
 	stored := r

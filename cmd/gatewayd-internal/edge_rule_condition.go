@@ -5,6 +5,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // compileEdgeRuleCondition compiles a rule's ADR-832 match condition once,
@@ -12,11 +13,14 @@ import (
 // that no longer compiles (a direct-database edit, or a bound tightened
 // since) makes the rule never match — the same posture as an unparseable
 // match_path, which drops the rule — and is logged for the operator.
-func compileEdgeRuleCondition(ruleID string, expr *api.EdgeRuleMatchExpr) gateway.EdgeRuleCondition {
+func compileEdgeRuleCondition(ruleID, appID, mode string, expr *api.EdgeRuleMatchExpr) gateway.EdgeRuleCondition {
+	cond := gateway.EdgeRuleCondition{RuleID: ruleID, AppID: appID, LogOnly: mode == state.EdgeRuleModeLog}
 	program, err := api.CompileEdgeRuleMatch(expr)
 	if err != nil {
 		slog.Warn("edge rule match condition does not compile; rule disabled", "rule", ruleID, "err", err)
-		return gateway.EdgeRuleCondition{Match: api.NeverMatchingEdgeRuleProgram()}
+		cond.Match = api.NeverMatchingEdgeRuleProgram()
+		return cond
 	}
-	return gateway.EdgeRuleCondition{Match: program}
+	cond.Match = program
+	return cond
 }

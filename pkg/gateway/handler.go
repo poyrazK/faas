@@ -1255,6 +1255,8 @@ type Handler struct {
 	// A matched policy fails closed when the reader is unavailable;
 	// the daemon itself can still boot without a DB-IP file.
 	geoReader CountryReader
+	// edgeRuleHits counts per-rule matches (ADR-830); nil disables counting.
+	edgeRuleHits EdgeRuleHitRecorder
 	// resolveTargetApp is the closure the matcher uses to
 	// swap the gateway.App when a `kind=route` rule fires.
 	// It returns (App{}, false) when the slug is not found
@@ -1901,6 +1903,12 @@ type CountryReader interface {
 // allowed at boot, but any matched policy that needs it fails closed with 503.
 func (h *Handler) WithGeoReader(r CountryReader) *Handler {
 	h.geoReader = r
+	return h
+}
+
+// WithEdgeRuleHitRecorder arms per-rule hit counting (ADR-830). nil disables it.
+func (h *Handler) WithEdgeRuleHitRecorder(r EdgeRuleHitRecorder) *Handler {
+	h.edgeRuleHits = r
 	return h
 }
 
@@ -5687,7 +5695,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ADR-832: the snapshot rule conditions read. The client IP is only the
 	// single trusted forwarded hop; country is looked up lazily.
 	trustedIP, _ := clientIPFromTrustedXFF(r)
-	requestCtx = WithEdgeRuleMatchContext(requestCtx, NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup()))
+	requestCtx = WithEdgeRuleMatchContext(requestCtx, NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits))
 	r = r.WithContext(requestCtx)
 	defer func() {
 		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))

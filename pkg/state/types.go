@@ -7939,10 +7939,19 @@ type EdgeRule struct {
 	ExpiresAt *time.Time
 	// Match (ADR-832) is the optional structured condition ANDed with the
 	// fixed selectors; nil applies the rule to every selected request.
-	Match     *api.EdgeRuleMatchExpr
+	Match *api.EdgeRuleMatchExpr
+	// Mode (ADR-830) is EdgeRuleModeEnforce or EdgeRuleModeLog; a log-mode
+	// rule is matched and counted but never acts.
+	Mode      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// Edge-rule modes (ADR-830).
+const (
+	EdgeRuleModeEnforce = "enforce"
+	EdgeRuleModeLog     = "log"
+)
 
 // EdgeRuleExpired reports whether the rule's expiry has passed at now.
 func (r EdgeRule) EdgeRuleExpired(now time.Time) bool {
@@ -8091,6 +8100,7 @@ type CreateEdgeRuleParams struct {
 	Description  string
 	ExpiresAt    *time.Time
 	Match        *api.EdgeRuleMatchExpr
+	Mode         string // "" = enforce
 }
 
 // UpdateEdgeRuleParams carries the optional fields of
@@ -8122,6 +8132,7 @@ type UpdateEdgeRuleParams struct {
 	// Match: non-nil replaces the condition; ClearMatch removes it.
 	Match      *api.EdgeRuleMatchExpr
 	ClearMatch bool
+	Mode       *string
 }
 
 // EdgeRuleQuotaError is returned by CreateEdgeRuleIfUnderQuota when

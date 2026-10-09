@@ -42,7 +42,7 @@ func TestApplicableEdgeRulesFiltersByCondition(t *testing.T) {
 			req.Header.Set("Cookie", cookie)
 		}
 		ctx := WithEdgeRuleOwner(context.Background(), "acct")
-		ctx = WithEdgeRuleMatchContext(ctx, NewEdgeRuleMatchContext(req, nil, nil))
+		ctx = WithEdgeRuleMatchContext(ctx, NewEdgeRuleMatchContext(req, nil, nil, nil))
 		var ids []string
 		for _, r := range ApplicableEdgeRules(ctx, rules, account, "/v1", http.MethodGet) {
 			ids = append(ids, r.ID)
@@ -69,7 +69,7 @@ func TestEdgeRuleMatchContextCountryLookupIsLazyAndOnce(t *testing.T) {
 	}
 	account := func(r *EdgeRuleResolved) string { return r.AccountID }
 
-	m := NewEdgeRuleMatchContext(req, net.ParseIP("203.0.113.9"), lookup)
+	m := NewEdgeRuleMatchContext(req, net.ParseIP("203.0.113.9"), lookup, nil)
 	ctx := WithEdgeRuleMatchContext(context.Background(), m)
 	if got := ApplicableEdgeRules(ctx, rules, account, "/", http.MethodGet); len(got) != 2 {
 		t.Fatalf("trusted DE request matched %d rules, want 2", len(got))
@@ -79,7 +79,7 @@ func TestEdgeRuleMatchContextCountryLookupIsLazyAndOnce(t *testing.T) {
 		t.Fatalf("country lookups = %d, want 1 per request", calls)
 	}
 
-	untrusted := WithEdgeRuleMatchContext(context.Background(), NewEdgeRuleMatchContext(req, nil, lookup))
+	untrusted := WithEdgeRuleMatchContext(context.Background(), NewEdgeRuleMatchContext(req, nil, lookup, nil))
 	if got := ApplicableEdgeRules(untrusted, rules, account, "/", http.MethodGet); len(got) != 0 {
 		t.Fatalf("untrusted client matched country rules: %v", got)
 	}

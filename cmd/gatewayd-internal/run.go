@@ -2788,6 +2788,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.geoReader != nil {
 		handler.WithGeoReader(deps.geoReader)
 	}
+	// ADR-830 — per-rule hit counts, flushed to Postgres once a minute. Only
+	// a store with the hit-count capability gets a recorder, so test and
+	// legacy wiring keep counting disabled.
+	if hitStore, ok := any(deps.pgStore).(state.EdgeRuleHitStore); ok && deps.pgStore != nil {
+		hitCounter := newEdgeRuleHitCounter()
+		handler.WithEdgeRuleHitRecorder(hitCounter)
+		go hitCounter.run(ctx, hitStore, log)
+	}
 	// PR-B — arm the per-rule JSON-Schema validator that
 	// applyEdgeRuleValidate consults. nil-safe:
 	// deps.edgeValidateAdapter nil falls through
