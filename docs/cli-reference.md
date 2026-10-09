@@ -743,6 +743,29 @@ Provision or attach object storage and inject sealed S3 settings
 | `--prefix <PREFIX>` | injected storage secret prefix |  |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
 
+### add datadog
+
+Send the app&#39;s logs and deployment events to Datadog (ADR-742)
+
+`gregale add datadog --app <APP> [--site <SITE>] [--api-key-env <NAME>] [--api-key-stdin] [--dry-run] [--remove]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | app slug | required |
+| `--site <SITE>` | Datadog site (default us1) | one of `ap1` · `eu1` · `us1` · `us3` · `us5` |
+| `--api-key-env <NAME>` | environment variable holding the API key (default DD_API_KEY) |  |
+| `--api-key-stdin` | read the API key from stdin |  |
+| `--dry-run` | show the plan without changing anything |  |
+| `--remove` | remove the app&#39;s Datadog log drain and webhook |  |
+
+Examples:
+
+```sh
+DD_API_KEY=... gregale add datadog --app my-api --site eu1
+gregale add datadog --app my-api --dry-run
+gregale add datadog --app my-api --remove
+```
+
 
 ## bucket
 

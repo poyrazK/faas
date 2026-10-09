@@ -2,8 +2,8 @@
 
 - **Status:** proposed
 - **Date:** 2026-10-09
-- **Decision:** Add `gregale add datadog --app <slug> --site <site>
-  --api-key-secret <NAME>`, which configures two agentless paths from an app
+- **Decision:** Add `gregale add datadog --app <slug> --site <site>`, which
+  configures two agentless paths from an app
   to the customer's Datadog organization, using building blocks that already
   exist:
   1. **Logs:** a new log-drain kind `datadog` that posts the app's runtime log
@@ -30,14 +30,20 @@
     from the site, never accepted as free-form URLs, so the integration cannot
     be pointed at an arbitrary host. US1-FED is excluded until a customer needs
     it.
-  - **Key handling:** the customer stores the Datadog API key as an app secret
-    and passes its name. Gregale copies the value into existing sealed
-    columns, so no migration is needed: `app_log_drains.auth_header_sealed`
+  - **Key handling:** the CLI reads the Datadog API key from an environment
+    variable (`--api-key-env`, default `DD_API_KEY`) or stdin
+    (`--api-key-stdin`), never from a flag value, so it stays out of shell
+    history. An earlier draft copied the key from an app secret by name; app
+    secrets are write-only by design, so that would have needed a new
+    server-side copy path for no security gain over TLS to apid. The key is
+    stored in existing sealed columns, so no new column is needed:
+    `app_log_drains.auth_header_sealed`
     as `DD-API-KEY: <key>`, and `app_webhooks.secret_sealed`, which for the
     `datadog` delivery format is sent as the `DD-API-KEY` header instead of
     being used as an HMAC signing secret (Datadog does not verify Gregale
-    signatures). It is never returned, logged, or shown unmasked. Rotating the
-    secret and re-running the command updates both.
+    signatures). It is never returned, logged, or shown unmasked. Re-running
+    the command with a new key rotates both in place. The only schema change
+    is widening the two kind/format CHECK constraints.
   - **Log shape:** the `datadog` encoding maps the existing `logdrain.Record`
     to Datadog's attributes: `message` = line, `ddsource` = `gregale`,
     `service`, `hostname` = instance ID, `ddtags` = `env:…,version:…,deployment_id:…`,

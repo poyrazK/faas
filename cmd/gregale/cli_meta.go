@@ -546,6 +546,18 @@ var cliCommands = []cliCommand{
 				{Name: "prefix", Short: "injected storage secret prefix", Value: "PREFIX"},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
+			{Name: "datadog", Short: "Send the app's logs and deployment events to Datadog (ADR-742)", Examples: []string{
+				"DD_API_KEY=... gregale add datadog --app my-api --site eu1",
+				"gregale add datadog --app my-api --dry-run",
+				"gregale add datadog --app my-api --remove",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "site", Short: "Datadog site (default us1)", Value: "SITE", ClosedSet: []string{"ap1", "eu1", "us1", "us3", "us5"}},
+				{Name: "api-key-env", Short: "environment variable holding the API key (default DD_API_KEY)", Value: "NAME"},
+				{Name: "api-key-stdin", Short: "read the API key from stdin"},
+				{Name: "dry-run", Short: "show the plan without changing anything"},
+				{Name: "remove", Short: "remove the app's Datadog log drain and webhook"},
+			}},
 		},
 	},
 	{
