@@ -679,6 +679,23 @@ be positive. Exit codes are 0 for ready, 1 for failure/read errors/changed targe
 contains the last observed Job, exit code, resume command, and any error.
 Interrupting or timing out leaves image preparation running independently.
 
+## Inspect retained Job attempts interactively
+
+```sh
+gregale jobs attempts --interactive
+```
+
+Choose a Job, run, task, and retained attempt through paginated pickers.
+The detail view shows status, exit code, start/finish times, outcome code,
+retry decision, and error information. Optionally display the output retained
+for that attempt, with empty-output and truncation indicators. The view reads
+terminal attempt records and never retries a task or starts a run.
+
+A profile-aware command is printed to list the selected task's history again.
+For scripts, use `jobs attempts NAME RUN_ID TASK_INDEX --json`.
+Retained history and output depend on server retention; ongoing attempts may
+not yet have a terminal record.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

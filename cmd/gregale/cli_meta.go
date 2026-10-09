@@ -1539,7 +1539,7 @@ var cliCommands = []cliCommand{
 			}, Examples: []string{"gregale jobs wait --interactive", "gregale jobs wait my-job RUN_ID --timeout 10m --json"}},
 			{Name: "cancel", Short: "Cancel a run", Positionals: []string{"[<name>]", "[<run-id>]"}, Flags: []cliFlag{{Name: "interactive", Bool: true, Short: "choose an unfinished run, review progress, and confirm cancellation"}}, Examples: []string{"gregale jobs cancel --interactive"}},
 			{Name: "tasks", Short: "List tasks for one run", Positionals: []string{"<name>", "<run-id>"}},
-			{Name: "attempts", Short: "List retained attempts for one task", Positionals: []string{"<name>", "<run-id>", "<task-index>"}},
+			{Name: "attempts", Short: "List retained attempts for one task", Positionals: []string{"[<name>]", "[<run-id>]", "[<task-index>]"}, Flags: []cliFlag{{Name: "interactive", Bool: true, Short: "choose a task and inspect retained attempts and output"}}, Examples: []string{"gregale jobs attempts --interactive"}},
 			{Name: "retry", Short: "Retry one failed task", Positionals: []string{"[<name>]", "[<run-id>]", "[<task-index>]"}, Flags: []cliFlag{{Name: "interactive", Bool: true, Short: "choose a failed task, review eligibility, and confirm one retry"}}, Examples: []string{"gregale jobs retry --interactive"}},
 			{Name: "replay-failed", Short: "Replay unsuccessful tasks in a linked run", Positionals: []string{"<name>", "<run-id>"}},
 			{Name: "artifact-url", Short: "Verify a managed result and get a signed URL", Positionals: []string{"<name>", "<run-id>", "<task-index>", "<artifact-name>"}},

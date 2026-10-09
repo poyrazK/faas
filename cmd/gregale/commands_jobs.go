@@ -723,6 +723,9 @@ func cmdJobsTasks(args []string) int {
 // cmdJobsAttempts returns retained terminal outcomes, including earlier
 // attempts whose task projection was subsequently retried.
 func cmdJobsAttempts(args []string) int {
+	if len(args) == 1 && args[0] == "--interactive" {
+		return cmdJobsAttemptsInteractive()
+	}
 	if len(args) != 3 || !jobRunIDPattern.MatchString(args[1]) {
 		PrintUsage(os.Stderr, "usage: gregale jobs attempts <name> <run-id> <task-index>", "jobs")
 		return 1

@@ -3813,7 +3813,17 @@ List tasks for one run
 
 List retained attempts for one task
 
-`gregale jobs attempts <name> <run-id> <task-index>`
+`gregale jobs attempts [--interactive] [<name>] [<run-id>] [<task-index>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--interactive` | choose a task and inspect retained attempts and output |  |
+
+Examples:
+
+```sh
+gregale jobs attempts --interactive
+```
 
 ### jobs retry
 
