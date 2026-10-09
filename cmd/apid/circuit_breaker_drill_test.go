@@ -49,6 +49,9 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 		wantAction     canary.CircuitBreakerAction
 		wantEvent      string
 		wantReason     string
+		// stepAge is how long ago the current stage started; zero means an
+		// hour, well past every stage dwell and the ADR-911 low-traffic bound.
+		stepAge time.Duration
 	}{
 		{
 			name:       "5xx regression aborts exact candidate",
@@ -101,9 +104,27 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 			wantReason: "workload OOM kill detected",
 		},
 		{
-			name: "low traffic holds candidate",
+			name: "low traffic holds candidate inside the bound",
 			mutate: func(o *canary.CircuitBreakerObservation) {
 				o.Candidate.Requests = canary.CircuitBreakerMinRequests - 1
+			},
+			wantAction: canary.CircuitBreakerHold,
+			wantEvent:  "hold_insufficient_samples",
+			stepAge:    2*time.Minute + api.CanaryLowTrafficMaxHold - time.Second,
+		},
+		{
+			name: "clean low traffic advances past the bound",
+			mutate: func(o *canary.CircuitBreakerObservation) {
+				o.Candidate.Requests = canary.CircuitBreakerMinRequests - 1
+			},
+			wantAction: canary.CircuitBreakerAdvance,
+			wantEvent:  "advance_low_traffic",
+		},
+		{
+			name: "low traffic with a candidate 5xx keeps holding past the bound",
+			mutate: func(o *canary.CircuitBreakerObservation) {
+				o.Candidate.Requests = canary.CircuitBreakerMinRequests - 1
+				o.Candidate.ServerErrors = 1
 			},
 			wantAction: canary.CircuitBreakerHold,
 			wantEvent:  "hold_insufficient_samples",
@@ -178,7 +199,11 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 			}
 
 			now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
-			if err := e.store.SetDeploymentCanaryState(ctx, candidate.ID, "balanced", 0, 4, now.Add(-time.Hour), "rolling_out"); err != nil {
+			stepAge := tc.stepAge
+			if stepAge == 0 {
+				stepAge = time.Hour
+			}
+			if err := e.store.SetDeploymentCanaryState(ctx, candidate.ID, "balanced", 0, 4, now.Add(-stepAge), "rolling_out"); err != nil {
 				t.Fatal(err)
 			}
 			observation := canary.CircuitBreakerObservation{
@@ -212,7 +237,7 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 					CanaryPreset:      candidate.CanaryPreset,
 					CanaryStep:        candidate.CanaryStep,
 					CanaryTotalSteps:  candidate.CanaryTotalSteps,
-					CanaryStepStarted: now.Add(-time.Hour),
+					CanaryStepStarted: now.Add(-stepAge),
 					RolloutStarted:    now.Add(-time.Hour),
 					RolloutState:      "rolling_out",
 				},
