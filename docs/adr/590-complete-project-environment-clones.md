@@ -8984,3 +8984,37 @@ cleanup dispatch once, observe unknown outcomes without redispatch, and atomical
 retire owned catalogue rows only after credential retirement and this proof. It
 must also block the legacy deletion-only cleanup path for common checkpoints.
 Public full-stage admission remains gated; provider qualification is outstanding.
+
+### Durable PostgreSQL checkpoint target compensation
+
+The private compensation store now reserves an immutable plan from the original
+frozen binding catalogue, released common checkpoint, retained snapshot, restore
+owner and optional SQL isolation journal. It supports unused restore reservations,
+unknown requests, partial restores, and isolation planned or requested before
+catalogue adoption. Source recapture, current source health, replacement targets
+and retention renewal supply no cleanup authority.
+
+Only the first committed planned-to-requested claim permits native dispatch.
+Lost claim replies, worker handoff and unknown native outcomes recover by observing
+the original request; they do not dispatch compensation again. Qualified native
+adapters must permanently fence the original restore and recorded isolation keys,
+prove the entire owned target absent, and preserve the source and snapshot.
+Dependent native copy targets/readers must already be retired. Every recorded
+credential preparation requires its authenticated terminal retirement proof, and
+published target bindings and secrets must be withdrawn before dispatch.
+
+Terminal proof, exact owned catalogue retirement and restore quota release commit
+atomically. A foreign placement, stale worker, unretired borrower or late write
+failure leaves the original journal and quota owned. The restore records a foreign
+key to the exact terminal proof digest, allowing unknown creation outcomes to
+settle without fabricated target identities or deletion-operation IDs. Completed
+replay authenticates the original journals and saved proof without fresh native
+IO, including after later snapshot cleanup. Legacy deletion-only restore cleanup
+is blocked for common checkpoints in both the store and SQLC mutation predicates.
+The new migration refuses downgrade while any compensation authority or proof
+remains recorded.
+
+This remains an internal protocol with no built-in qualified native adapter.
+Whole-stage final publication and terminal compensation reconciliation remain
+outstanding, and public full-stage admission remains gated. Live R2/OVH
+qualification remains deferred at the user's request.

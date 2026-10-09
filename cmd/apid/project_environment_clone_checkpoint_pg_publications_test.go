@@ -228,7 +228,7 @@ create trigger reject_pg_publication before insert on project_environment_clone_
 	}
 }
 func TestPGCloneCheckpointPgPublicationWithdrawalAndRetirement(t *testing.T) {
-	f, s, d, id := checkpointPgPublicationFixture(t)
+	f, s, d, _ := checkpointPgPublicationFixture(t)
 	var err error
 	f.lease, err = f.srv.publishCheckpointPgBindings(t.Context(), f.lease, d)
 	if err != nil {
@@ -251,17 +251,10 @@ func TestPGCloneCheckpointPgPublicationWithdrawalAndRetirement(t *testing.T) {
 	if err != nil || retirement.retires != len(before.Plan.Secrets) {
 		t.Fatal("keyless withdrawal recovery", err)
 	}
-	fork, err := s.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id)
+	cleanup := &checkpointPgTargetCompensationTestDriver{t: t, f: f}
+	f.lease, err = f.srv.compensateCheckpointPostgresTargets(t.Context(), f.lease, cleanup)
 	if err != nil {
-		t.Fatal("withdrawn publication blocked retired fork", err)
-	}
-	proof := state.ProjectEnvironmentClonePostgresSnapshotRestoreDeletion{TargetProviderResourceID: fork.TargetProviderResourceID, OperationIDs: []string{"withdrawn-publication-fork"}}
-	if _, err = s.RecordProjectEnvironmentClonePostgresSnapshotRestoreDeletionOperations(t.Context(), f.lease, id, proof); err != nil {
-		t.Fatal(err)
-	}
-	proof.Done = true
-	if _, err = s.FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id, proof); err != nil {
-		t.Fatal(err)
+		t.Fatal("native target compensation", err)
 	}
 	if err = s.WithdrawProjectEnvironmentCloneCheckpointPgBindings(t.Context(), f.lease); err != nil {
 		t.Fatal("withdrawal replay after fork deletion", err)

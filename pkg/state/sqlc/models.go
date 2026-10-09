@@ -5163,6 +5163,17 @@ type ProjectEnvironmentCloneCheckpointPgPublication struct {
 	WithdrawnAt pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneCheckpointPgTargetCompensation struct {
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	Plan              []byte
+	State             string
+	RequestedAt       pgtype.Timestamptz
+	Observation       []byte
+	ObservationSha256 pgtype.Text
+	CompensatedAt     pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneCheckpointPostgresCredential struct {
 	OperationID       pgtype.UUID
 	SourceBindingID   pgtype.UUID
@@ -5585,25 +5596,26 @@ type ProjectEnvironmentClonePostgresSnapshot struct {
 }
 
 type ProjectEnvironmentClonePostgresSnapshotRestore struct {
-	OperationID              pgtype.UUID
-	SourceDatabaseID         pgtype.UUID
-	AccountID                pgtype.UUID
-	TargetOwnerID            pgtype.UUID
-	BackendID                string
-	BackendFingerprint       string
-	State                    string
-	TargetProviderResourceID pgtype.Text
-	TargetCreatedAt          pgtype.Timestamptz
-	RequestStartedAt         pgtype.Timestamptz
-	ObservedAt               pgtype.Timestamptz
-	RestoredAt               pgtype.Timestamptz
-	CreatedAt                pgtype.Timestamptz
-	UpdatedAt                pgtype.Timestamptz
-	DeletionStartedAt        pgtype.Timestamptz
-	DeletedAt                pgtype.Timestamptz
-	DeleteOperationIds       []byte
-	AdoptedDatabaseID        pgtype.UUID
-	AdoptedAt                pgtype.Timestamptz
+	OperationID                             pgtype.UUID
+	SourceDatabaseID                        pgtype.UUID
+	AccountID                               pgtype.UUID
+	TargetOwnerID                           pgtype.UUID
+	BackendID                               string
+	BackendFingerprint                      string
+	State                                   string
+	TargetProviderResourceID                pgtype.Text
+	TargetCreatedAt                         pgtype.Timestamptz
+	RequestStartedAt                        pgtype.Timestamptz
+	ObservedAt                              pgtype.Timestamptz
+	RestoredAt                              pgtype.Timestamptz
+	CreatedAt                               pgtype.Timestamptz
+	UpdatedAt                               pgtype.Timestamptz
+	DeletionStartedAt                       pgtype.Timestamptz
+	DeletedAt                               pgtype.Timestamptz
+	DeleteOperationIds                      []byte
+	AdoptedDatabaseID                       pgtype.UUID
+	AdoptedAt                               pgtype.Timestamptz
+	CheckpointCompensationObservationSha256 pgtype.Text
 }
 
 type ProjectEnvironmentClonePostgresTargetSqlPin struct {

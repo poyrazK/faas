@@ -6291,6 +6291,7 @@
       "adopted_database_id",
       "backend_fingerprint",
       "backend_id",
+      "checkpoint_compensation_observation_sha256",
       "created_at",
       "delete_operation_ids",
       "deleted_at",
@@ -7948,6 +7949,20 @@
       "operation_id",
       "plan",
       "requested_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_pg_target_compensations",
+    "columns": [
+      "compensated_at",
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "source_database_id",
       "state"
     ],
     "kind": "operational"

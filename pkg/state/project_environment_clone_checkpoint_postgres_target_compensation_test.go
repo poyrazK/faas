@@ -17,7 +17,7 @@ func postgresTargetCompensationFixture(state, isolation string) (ProjectEnvironm
 		r.TargetProviderResourceID = "target-data"
 		r.TargetCreatedAt = at.Add(2 * time.Minute)
 	}
-	if state == "adopted" || isolation != "" {
+	if state == "adopted" {
 		r.AdoptedDatabaseID = r.TargetOwnerID
 		r.AdoptedAt = at.Add(3 * time.Minute)
 	}
@@ -42,7 +42,7 @@ func postgresTargetCompensationFixture(state, isolation string) (ProjectEnvironm
 }
 
 func TestCheckpointPostgresTargetCompensationOriginalStates(t *testing.T) {
-	for _, state := range []string{"reserved", "requested", "restored", "adopted", "deleting", "deleted"} {
+	for _, state := range []string{"reserved", "requested", "restoring", "restored", "adopted", "deleting", "deleted"} {
 		t.Run(state, func(t *testing.T) {
 			in, o := postgresTargetCompensationFixture(state, "")
 			if err := validateCheckpointPostgresTargetCompensationObservation(in, o); err != nil {
@@ -60,7 +60,11 @@ func TestCheckpointPostgresTargetCompensationOriginalStates(t *testing.T) {
 	}
 	for _, isolation := range []string{"planned", "requested", "adopted"} {
 		t.Run("isolation-"+isolation, func(t *testing.T) {
-			in, o := postgresTargetCompensationFixture("adopted", isolation)
+			state := "restored"
+			if isolation == "adopted" {
+				state = "adopted"
+			}
+			in, o := postgresTargetCompensationFixture(state, isolation)
 			if err := validateCheckpointPostgresTargetCompensationObservation(in, o); err != nil {
 				t.Fatal(err)
 			}
@@ -69,6 +73,18 @@ func TestCheckpointPostgresTargetCompensationOriginalStates(t *testing.T) {
 				t.Fatal("accepted delayed isolation authority")
 			}
 		})
+	}
+}
+
+func TestCheckpointPostgresTargetCompensationBeforeAdoption(t *testing.T) {
+	for _, isolation := range []string{"planned", "requested"} {
+		in, o := postgresTargetCompensationFixture("restored", isolation)
+		in.Plan.Restore.AdoptedDatabaseID = ""
+		in.Plan.Restore.AdoptedAt = time.Time{}
+		o.PlanSHA256 = cloneCheckpointSHA(in.Plan)
+		if err := validateCheckpointPostgresTargetCompensationObservation(in, o); err != nil {
+			t.Fatal(isolation, err)
+		}
 	}
 }
 
@@ -152,7 +168,7 @@ func TestCheckpointPostgresTargetCompensationRejectsUnsafeProof(t *testing.T) {
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
-			in, o := postgresTargetCompensationFixture("adopted", "requested")
+			in, o := postgresTargetCompensationFixture("adopted", "adopted")
 			mutate(&in, &o)
 			if validateCheckpointPostgresTargetCompensationObservation(in, o) == nil {
 				t.Fatal("accepted unsafe cleanup proof")

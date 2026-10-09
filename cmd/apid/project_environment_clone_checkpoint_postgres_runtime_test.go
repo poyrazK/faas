@@ -397,20 +397,17 @@ func TestPGCloneCheckpointPostgresRuntimeReadyCompensation(t *testing.T) {
 	}
 	// Transitioning operation status does not transfer worker authority.
 	reclaimCommonCheckpointWorker(t, f)
-	fork, err := s.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id)
+	cleanup := &checkpointPgTargetCompensationTestDriver{t: t, f: f}
+	f.lease, err = f.srv.compensateCheckpointPostgresTargets(t.Context(), f.lease, cleanup)
 	if err != nil {
-		t.Fatal(err)
-	}
-	proof := state.ProjectEnvironmentClonePostgresSnapshotRestoreDeletion{TargetProviderResourceID: fork.TargetProviderResourceID, OperationIDs: []string{"delete-original-ready-fork"}}
-	if _, err = s.RecordProjectEnvironmentClonePostgresSnapshotRestoreDeletionOperations(t.Context(), f.lease, id, proof); err != nil {
-		t.Fatal(err)
-	}
-	proof.Done = true
-	fork, err = s.FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id, proof)
-	if err != nil || fork.State != "deleted" {
 		t.Fatal("ready fork compensation failed", err)
 	}
-	if _, err = s.FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id, proof); err != nil {
+	fork, err := s.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, id)
+	if err != nil || fork.State != "deleted" {
+		t.Fatal("ready fork not retired", err)
+	}
+	f.lease, err = f.srv.compensateCheckpointPostgresTargets(t.Context(), f.lease, cleanup)
+	if err != nil || cleanup.calls != 1 {
 		t.Fatal("ready fork retirement replay", err)
 	}
 	var status string

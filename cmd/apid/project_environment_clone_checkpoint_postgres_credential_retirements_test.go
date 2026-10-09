@@ -288,16 +288,9 @@ func TestPGCloneCheckpointPostgresCredentialRetirementAllPreparationStates(t *te
 			if err = f.pool.QueryRow(t.Context(), "select state,ciphertext from project_environment_clone_checkpoint_postgres_credentials where operation_id=$1 and source_binding_id=$2", f.lease.Operation.ID, bindingID).Scan(&status, &cipher); err != nil || status != kind || !reflect.DeepEqual(cipher, original.Ciphertext) {
 				t.Fatal("retirement rewrote original credential")
 			}
-			fork, err := store.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id)
+			cleanup := &checkpointPgTargetCompensationTestDriver{t: t, f: f}
+			f.lease, err = f.srv.compensateCheckpointPostgresTargets(t.Context(), f.lease, cleanup)
 			if err != nil {
-				t.Fatal("retired credentials still block fork", err)
-			}
-			proof := state.ProjectEnvironmentClonePostgresSnapshotRestoreDeletion{TargetProviderResourceID: fork.TargetProviderResourceID, OperationIDs: []string{"delete-retired-credential-fork"}}
-			if _, err = store.RecordProjectEnvironmentClonePostgresSnapshotRestoreDeletionOperations(t.Context(), f.lease, id, proof); err != nil {
-				t.Fatal(err)
-			}
-			proof.Done = true
-			if _, err = store.FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id, proof); err != nil {
 				t.Fatal("fork catalogue retirement", err)
 			}
 			before := d.retires

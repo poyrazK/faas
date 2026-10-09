@@ -402,17 +402,10 @@ func TestPGCloneCheckpointPgActivationRetirementFencesDelayedActivation(t *testi
 			if err != nil || retire.retires != d.bindingCount {
 				t.Fatal("retirement fence recovery", err)
 			}
-			fork, err := s.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id)
+			cleanup := &checkpointPgTargetCompensationTestDriver{t: t, f: f}
+			f.lease, err = f.srv.compensateCheckpointPostgresTargets(t.Context(), f.lease, cleanup)
 			if err != nil {
-				t.Fatal(err)
-			}
-			proof := state.ProjectEnvironmentClonePostgresSnapshotRestoreDeletion{TargetProviderResourceID: fork.TargetProviderResourceID, OperationIDs: []string{"delete-activation-fenced-fork"}}
-			if _, err = s.RecordProjectEnvironmentClonePostgresSnapshotRestoreDeletionOperations(t.Context(), f.lease, id, proof); err != nil {
-				t.Fatal(err)
-			}
-			proof.Done = true
-			if _, err = s.FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id, proof); err != nil {
-				t.Fatal(err)
+				t.Fatal("native target compensation", err)
 			}
 			before := retire.retires
 			f.lease, err = f.srv.retireCheckpointPostgresCredentials(t.Context(), f.lease, retire)

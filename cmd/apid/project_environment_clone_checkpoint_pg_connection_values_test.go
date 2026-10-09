@@ -397,7 +397,7 @@ func TestPGCloneCheckpointPgConnectionLateFailureAndMigration(t *testing.T) {
 }
 
 func TestPGCloneCheckpointPgConnectionRetirementAllowsForkCleanup(t *testing.T) {
-	f, s, d, _, id := checkpointPgConnectionFixture(t)
+	f, s, d, _, _ := checkpointPgConnectionFixture(t)
 	var err error
 	f.lease, err = f.srv.prepareCheckpointPgConnectionValues(t.Context(), f.lease, d)
 	if err != nil {
@@ -411,7 +411,9 @@ func TestPGCloneCheckpointPgConnectionRetirementAllowsForkCleanup(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id); err != nil {
+	cleanup := &checkpointPgTargetCompensationTestDriver{t: t, f: f}
+	f.lease, err = f.srv.compensateCheckpointPostgresTargets(t.Context(), f.lease, cleanup)
+	if err != nil {
 		t.Fatal("sealed values blocked retired credential cleanup", err)
 	}
 	if _, err = f.srv.prepareCheckpointPgConnectionValues(t.Context(), f.lease, d); !errors.Is(err, state.ErrConflict) {

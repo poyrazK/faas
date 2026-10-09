@@ -1,6 +1,9 @@
 package state
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // This private proof contract grants no deletion or catalogue mutation authority.
 // A durable coordinator must authenticate the original journals before saving a
@@ -16,6 +19,7 @@ type ProjectEnvironmentCloneCheckpointPostgresTargetCompensation struct {
 	Plan                     ProjectEnvironmentCloneCheckpointPostgresTargetCompensationPlan
 	State, ObservationSHA256 string
 	RequestedAt              time.Time
+	Observation              ProjectEnvironmentCloneCheckpointPostgresTargetCompensationObservation
 }
 
 type ProjectEnvironmentCloneCheckpointPostgresTargetCompensationObservation struct {
@@ -42,15 +46,15 @@ func validateCheckpointPostgresTargetCompensationPlan(p ProjectEnvironmentCloneC
 		return ErrConflict
 	}
 	switch r.State {
-	case "reserved", "requested", "restored", "adopted", "deleting", "deleted":
+	case "reserved", "requested", "restoring", "restored", "adopted", "deleting", "deleted":
 	default:
 		return ErrConflict
 	}
-	if r.State == "reserved" && (!r.RequestStartedAt.IsZero() || r.TargetProviderResourceID != "") || !r.RequestStartedAt.IsZero() && (!checkpointObjectRetirementTime(r.RequestStartedAt) || r.RequestStartedAt.Before(s.SnapshotCreatedAt) || r.RequestStartedAt.After(time.Now())) || (r.State == "requested" || r.State == "restored" || r.State == "adopted") && r.RequestStartedAt.IsZero() {
+	if r.State == "reserved" && (!r.RequestStartedAt.IsZero() || r.TargetProviderResourceID != "") || !r.RequestStartedAt.IsZero() && (!checkpointObjectRetirementTime(r.RequestStartedAt) || r.RequestStartedAt.Before(s.SnapshotCreatedAt) || r.RequestStartedAt.After(time.Now())) || (r.State == "requested" || r.State == "restoring" || r.State == "restored" || r.State == "adopted") && r.RequestStartedAt.IsZero() {
 		return ErrConflict
 	}
 	if r.TargetProviderResourceID == "" {
-		if !r.TargetCreatedAt.IsZero() || r.AdoptedDatabaseID != "" || p.Isolation != nil || r.State == "restored" || r.State == "adopted" {
+		if !r.TargetCreatedAt.IsZero() || r.AdoptedDatabaseID != "" || p.Isolation != nil || r.State == "restoring" || r.State == "restored" || r.State == "adopted" {
 			return ErrConflict
 		}
 	} else if r.RequestStartedAt.IsZero() || !validCloneSnapshotID(r.TargetProviderResourceID) || r.TargetProviderResourceID == s.SourceDataResourceID || r.TargetProviderResourceID == s.SourceProviderResourceID || !checkpointObjectRetirementTime(r.TargetCreatedAt) || r.TargetCreatedAt.Before(s.SnapshotCreatedAt) || r.TargetCreatedAt.After(time.Now()) {
@@ -61,7 +65,7 @@ func validateCheckpointPostgresTargetCompensationPlan(p ProjectEnvironmentCloneC
 	}
 	if p.Isolation != nil {
 		i, ip := p.Isolation, p.Isolation.Plan
-		if r.AdoptedDatabaseID == "" || ip.OperationID != r.OperationID || ip.AccountID != r.AccountID || ip.SourceDatabaseID != r.SourceDatabaseID || ip.OwnerID != r.TargetOwnerID || ip.NativeResourceID != r.TargetProviderResourceID || ip.BackendID != s.BackendID || ip.BackendFingerprint != s.BackendFingerprint || ip.CheckpointID == "" || ip.ProviderSnapshotID != s.ProviderSnapshotID || ip.SourceDataResourceID != s.SourceDataResourceID || !ip.CapturePoint.Equal(s.CapturePoint) || !ip.SnapshotCreatedAt.Equal(s.SnapshotCreatedAt) || !ip.TargetCreatedAt.Equal(r.TargetCreatedAt) || !checkpointObjectRetirementJournalShape(i.State, "adopted", i.RequestedAt, i.ObservationSHA256) || i.State != "planned" && i.RequestedAt.Before(r.AdoptedAt) {
+		if (i.State == "adopted") != (r.AdoptedDatabaseID != "") || ip.OperationID != r.OperationID || ip.AccountID != r.AccountID || ip.SourceDatabaseID != r.SourceDatabaseID || ip.OwnerID != r.TargetOwnerID || ip.NativeResourceID != r.TargetProviderResourceID || ip.BackendID != s.BackendID || ip.BackendFingerprint != s.BackendFingerprint || ip.CheckpointID == "" || ip.ProviderSnapshotID != s.ProviderSnapshotID || ip.SourceDataResourceID != s.SourceDataResourceID || !ip.CapturePoint.Equal(s.CapturePoint) || !ip.SnapshotCreatedAt.Equal(s.SnapshotCreatedAt) || !ip.TargetCreatedAt.Equal(r.TargetCreatedAt) || !checkpointObjectRetirementJournalShape(i.State, "adopted", i.RequestedAt, i.ObservationSHA256) || i.State != "planned" && i.RequestedAt.Before(r.TargetCreatedAt) {
 			return ErrConflict
 		}
 	}
@@ -92,4 +96,13 @@ func validateCheckpointPostgresTargetCompensationObservation(in ProjectEnvironme
 		return ErrConflict
 	}
 	return nil
+}
+
+// Reservation derives the original plan from authenticated frozen journals;
+// recovery reads it without source recapture, target discovery or new ownership.
+type ProjectEnvironmentCloneCheckpointPostgresTargetCompensationStore interface {
+	ReserveProjectEnvironmentCloneCheckpointPostgresTargetCompensation(context.Context, ProjectEnvironmentCloneLease, string) (ProjectEnvironmentCloneCheckpointPostgresTargetCompensation, error)
+	ProjectEnvironmentCloneCheckpointPostgresTargetCompensationForLease(context.Context, ProjectEnvironmentCloneLease, string) (ProjectEnvironmentCloneCheckpointPostgresTargetCompensation, error)
+	ClaimProjectEnvironmentCloneCheckpointPostgresTargetCompensation(context.Context, ProjectEnvironmentCloneLease, string) (ProjectEnvironmentCloneCheckpointPostgresTargetCompensation, bool, error)
+	FinishProjectEnvironmentCloneCheckpointPostgresTargetCompensation(context.Context, ProjectEnvironmentCloneLease, string, ProjectEnvironmentCloneCheckpointPostgresTargetCompensationObservation) error
 }
