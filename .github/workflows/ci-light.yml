@@ -440,12 +440,23 @@ jobs:
             go test -race -count=1 -p 4 -timeout=12m $PKGS &
             pids+=("$!")
           fi
-          # Packages too slow for one shard run a third of their tests here,
-          # concurrently with the package set above.
+          # Preserve each job's third of the tests as two sequential sixths.
+          # Thousands of state tests can exceed one 12m aggregate timer even
+          # while individual tests keep completing. Each batch retains that
+          # timer, and the registered inventory must match before execution.
           for pkg in $SPLIT; do
-            run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=3 -shard="$SHARD")"
-            echo "testing: $pkg (test shard $SHARD/3)"
-            go test -race -count=1 -timeout=12m -run "$run" "$pkg" &
+            (
+              inventory="$(mktemp "$RUNNER_TEMP/light-test-inventory-${SHARD}.XXXXXX")"
+              go test -race -list . "$pkg" > "$inventory"
+              go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=6 -check -list-file="$inventory"
+              split_status=0
+              for test_shard in "$SHARD" "$((SHARD + 3))"; do
+                run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards=6 -shard="$test_shard")"
+                echo "testing: $pkg (test batch $test_shard/6)"
+                go test -race -count=1 -timeout=12m -run "$run" "$pkg" || split_status=1
+              done
+              exit "$split_status"
+            ) &
             pids+=("$!")
           done
           status=0

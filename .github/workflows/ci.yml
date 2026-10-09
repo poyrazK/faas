@@ -1316,10 +1316,13 @@ jobs:
       - name: generate Gregale workflow lint fixtures
         run: bash scripts/ci/generate-github-workflow-lint-fixtures.sh
       - name: actionlint
-        uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
-        with:
-          version: v1.7.12
-          args: -shellcheck ''
+        # The Docker action builds from Docker Hub's golang:latest before
+        # checkout and can exhaust anonymous pulls. Run the same pinned CLI
+        # with its Python checker directly; keep the existing lint arguments.
+        run: |
+          python3 -m pip install --quiet 'pyflakes==4.0.3'
+          GOBIN="$RUNNER_TEMP/actionlint-bin" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$RUNNER_TEMP/actionlint-bin/actionlint" -shellcheck=''
       - name: remove Gregale workflow lint fixtures
         if: always()
         run: rm -f .github/workflows/gregale-generated-check-"$GITHUB_RUN_ID"-*.yml
