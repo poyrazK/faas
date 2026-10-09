@@ -641,7 +641,7 @@ atomic server lock. Pausing prevents future dispatches without canceling running
 tasks. For images, commands, environment variables, schedules, or scripts,
 use `jobs update NAME` with explicit flags.
 
-## Create a batch Job interactively
+## Create a Job interactively
 
 ```sh
 gregale jobs add --interactive
@@ -653,12 +653,20 @@ Arguments are literal values, without shell splitting or comma parsing; the
 review shows the argument array. This flow accepts nonempty arguments.
 
 Keep server resource defaults, or choose RAM, timeout, parallelism, and retries.
-Review the settings and confirm before creating one batch Job. The server
-validates the image and account plan limits. Creation prepares the image without
-starting a run. The result shows effective resources, image preparation status,
+Choose batch or recurring execution. For a recurring Job, choose an explicit
+IANA timezone and a schedule preset (every 5 minutes, hourly, daily at 09:00,
+or weekdays at 09:00), or enter a custom five-field cron expression. The shared
+Gregale cron grammar validates the expression and previews three nominal times
+with timezone offsets before confirmation. Actual runs may be delayed or skipped
+under the default scheduling policy.
+
+Review the settings and confirm before creating one Job. The server validates
+the image and account plan limits. Batch creation prepares the image without
+starting a run. Recurring creation enables scheduling, so runs can start
+automatically once the image is ready. The result shows effective resources, image preparation status,
 and a profile-aware inspection command. Once ready, use `jobs run --interactive`.
 
-For recurring schedules, environment variables, empty command arguments,
+For environment variables, empty command arguments,
 custom policies, or scripts, use the explicit CLI or API as appropriate.
 
 ## Wait for a Job image to become ready

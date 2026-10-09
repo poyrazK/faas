@@ -1472,7 +1472,7 @@ var cliCommands = []cliCommand{
 				{Name: "all", Short: "walk every page using --limit and --offset"},
 			}},
 			{Name: "add", Short: "Create a new job", Positionals: []string{"[<name>]"}, Examples: []string{"gregale jobs add --interactive"}, Flags: []cliFlag{
-				{Name: "interactive", Bool: true, Short: "choose a name, image, command, and resources, then confirm creation"},
+				{Name: "interactive", Bool: true, Short: "choose a name, image, command, resources, and optional recurring schedule"},
 				{Name: "image", Value: "REF", Short: "OCI image (required unless interactive)"},
 				{Name: "command", Value: "ARGV", Short: "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi)"},
 				{Name: "ram", Value: "MB", Short: "billable memory in MB (0 = plan default)"},

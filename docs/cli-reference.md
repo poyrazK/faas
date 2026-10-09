@@ -3644,7 +3644,7 @@ Create a new job
 
 | Flag | Meaning | |
 |---|---|---|
-| `--interactive` | choose a name, image, command, and resources, then confirm creation |  |
+| `--interactive` | choose a name, image, command, resources, and optional recurring schedule |  |
 | `--image <REF>` | OCI image (required unless interactive) |  |
 | `--command <ARGV>` | comma-separated entrypoint (e.g. /bin/sh,-c,echo hi) |  |
 | `--ram <MB>` | billable memory in MB (0 = plan default) |  |

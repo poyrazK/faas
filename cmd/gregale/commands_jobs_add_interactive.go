@@ -79,6 +79,17 @@ func cmdJobsAddInteractive() int {
 			}
 		}
 	}
+	kind, inputErr := prompt.choose(ctx, "Job execution", []string{"Batch (run manually)", "Recurring (run on a schedule)"}, 0)
+	if inputErr != nil {
+		return startInputExit(inputErr)
+	}
+	if kind == 1 {
+		req.Kind = "recurring"
+		req.Schedule, req.Timezone, err = promptJobSchedule(ctx, prompt)
+		if err != nil {
+			return startInputExit(err)
+		}
+	}
 	resourceMode, err := prompt.choose(ctx, "Resource settings", []string{"Use server defaults", "Choose custom settings"}, 0)
 	if err != nil {
 		return startInputExit(err)
@@ -110,7 +121,7 @@ func cmdJobsAddInteractive() int {
 			return startInputExit(err)
 		}
 	}
-	PrintProgress(osStdout, "Create batch Job: %s\nImage: %s", req.Name, oneLine(req.ImageRef))
+	PrintProgress(osStdout, "Create %s Job: %s\nImage: %s", req.Kind, req.Name, oneLine(req.ImageRef))
 	if len(req.Command) == 0 {
 		PrintProgress(osStdout, "Command: image entrypoint")
 	} else {
@@ -122,7 +133,15 @@ func cmdJobsAddInteractive() int {
 	} else {
 		PrintProgress(osStdout, "Resources: RAM %d MB, timeout %d seconds, parallelism %d, retry maximum %d", req.RAMMB, req.TaskTimeoutSec, req.MaxParallelism, req.RetryMax)
 	}
-	PrintProgress(osStdout, "Account plan limits are checked by the server. Creation prepares the image; it does not start a run.")
+	if req.Kind == "recurring" {
+		if err := previewJobSchedule(req.Schedule, req.Timezone); err != nil {
+			return printErr("Could not preview schedule", err)
+		}
+		PrintProgress(osStdout, "This creates an active recurring Job. Scheduled runs can start automatically once its image is ready. Default scheduling policy applies; execution may be delayed or skipped.")
+	} else {
+		PrintProgress(osStdout, "Creation prepares the image; it does not start a run.")
+	}
+	PrintProgress(osStdout, "Account plan limits are checked by the server.")
 	confirmed, err := prompt.confirm(ctx, "Create this Job?")
 	if err != nil {
 		return startInputExit(err)
