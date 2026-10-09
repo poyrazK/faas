@@ -35,6 +35,7 @@ class OperationBusinessCompensation:
     description: str
     status: OperationBusinessCompensationStatus
     source_effect: OperationBusinessEffectReference
+    """Pair of retained Operation and milestone identifiers identifying a confirmed business effect."""
     reference: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

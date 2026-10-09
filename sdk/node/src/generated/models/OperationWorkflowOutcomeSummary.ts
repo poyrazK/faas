@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowOutcomeGroup } from './OperationWorkflowOutcomeGroup.js';
+/**
+ * Total matching terminal instances and a bounded page of outcome aggregation groups.
+ */
 export type OperationWorkflowOutcomeSummary = {
   group_by: 'outcome' | 'workflow' | 'customer';
   evaluated_at: string;

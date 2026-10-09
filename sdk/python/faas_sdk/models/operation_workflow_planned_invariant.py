@@ -14,6 +14,8 @@ T = TypeVar("T", bound="OperationWorkflowPlannedInvariant")
 
 @_attrs_define
 class OperationWorkflowPlannedInvariant:
+    """Proposed application invariant result and the milestone that will carry it."""
+
     milestone: str
     invariant: OperationBusinessInvariant
     """Application-evaluated business condition. String limits are UTF-8 bytes; instance, version, and description

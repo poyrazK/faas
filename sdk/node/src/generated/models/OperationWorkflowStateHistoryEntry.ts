@@ -11,37 +11,37 @@ import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvid
  */
 export type OperationWorkflowStateHistoryEntry = {
   /**
-   * Full replacement snapshot of direct prerequisite references.
+   * At this retained historical revision, full replacement snapshot of direct prerequisite references.
    */
   depends_on?: Array<OperationWorkflowDependency>;
   /**
-   * Same-state metadata update mutually exclusive with other metadata-only flags.
+   * At this retained historical revision, same-state metadata update mutually exclusive with other metadata-only flags.
    */
   dependencies_only?: boolean;
   /**
-   * Explicit application-defined business result for a declared terminal state.
+   * At this retained historical revision, explicit application-defined business result for a declared terminal state.
    */
   outcome_code?: string;
   /**
-   * Public UTF-8 description limited to 512 bytes without control characters. Required when outcome_code is supplied.
+   * At this retained historical revision, public UTF-8 description limited to 512 bytes without control characters. Required when outcome_code is supplied.
    */
   outcome_description?: string;
   /**
-   * Same-state terminal outcome report. Requires from_state equal to state and no milestone evidence. Mutually exclusive with deadline_only and blockers_only. SDKs preserve current blockers and deadline.
+   * At this retained historical revision, same-state terminal outcome report. Requires from_state equal to state and no milestone evidence. Mutually exclusive with deadline_only and blockers_only. SDKs preserve current blockers and deadline.
    */
   outcome_only?: boolean;
   /**
-   * Optional application-reported due time. Omitted or empty in a report clears the deadline. Transactional SDKs inherit it from their counter unless explicitly updated.
+   * At this retained historical revision, optional application-reported due time. Omitted or empty in a report clears the deadline. Transactional SDKs inherit it from their counter unless explicitly updated.
    */
   deadline_at?: string;
   /**
-   * Same-state deadline snapshot update. Requires from_state equal to state and no milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers.
+   * At this retained historical revision, same-state deadline snapshot update. Requires from_state equal to state and no milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers.
    */
   deadline_only?: boolean;
   blocker_resolutions?: Array<OperationWorkflowBlockerResolution>;
   blockers?: Array<OperationWorkflowBlocker>;
   /**
-   * Same-state blocker replacement. Requires from_state equal to state and no milestone evidence; not a business transition.
+   * At this retained historical revision, same-state blocker replacement. Requires from_state equal to state and no milestone evidence; not a business transition.
    */
   blockers_only?: boolean;
   id: string;

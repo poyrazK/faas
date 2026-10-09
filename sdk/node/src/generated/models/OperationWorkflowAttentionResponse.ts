@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowAttentionEntry } from './OperationWorkflowAttentionEntry.js';
+/**
+ * Bounded attention queue with a stable evaluation time and filter-bound continuation.
+ */
 export type OperationWorkflowAttentionResponse = {
   items: Array<OperationWorkflowAttentionEntry>;
   /**

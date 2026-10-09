@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Aggregate counts and age measurements for workflows, blockers, deadlines, and unresolved dependencies.
+ */
 export type OperationWorkflowAttentionStats = {
   dependency_workflow_count: number;
   dependency_count: number;

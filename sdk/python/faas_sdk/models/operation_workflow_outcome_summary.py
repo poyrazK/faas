@@ -21,6 +21,8 @@ T = TypeVar("T", bound="OperationWorkflowOutcomeSummary")
 
 @_attrs_define
 class OperationWorkflowOutcomeSummary:
+    """Total matching terminal instances and a bounded page of outcome aggregation groups."""
+
     group_by: OperationWorkflowOutcomeSummaryGroupBy
     evaluated_at: datetime.datetime
     workflow_count: int

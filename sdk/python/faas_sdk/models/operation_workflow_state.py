@@ -39,25 +39,26 @@ class OperationWorkflowState:
     contract_version: int
     updated_at: datetime.datetime
     depends_on: list[OperationWorkflowDependency] | Unset = UNSET
-    """Full replacement snapshot of direct prerequisite references."""
+    """In the latest retained state, full replacement snapshot of direct prerequisite references."""
     dependencies_only: bool | Unset = UNSET
-    """Same-state metadata update mutually exclusive with other metadata-only flags."""
+    """In the latest retained state, same-state metadata update mutually exclusive with other metadata-only flags."""
     outcome_code: str | Unset = UNSET
-    """Explicit application-defined business result for a declared terminal state."""
+    """In the latest retained state, explicit application-defined business result for a declared terminal state."""
     outcome_description: str | Unset = UNSET
-    """Public UTF-8 description limited to 512 bytes without control characters. Required when outcome_code is
-    supplied."""
+    """In the latest retained state, public UTF-8 description limited to 512 bytes without control characters.
+    Required when outcome_code is supplied."""
     outcome_only: bool | Unset = UNSET
-    """Same-state terminal outcome report. Requires from_state equal to state and no milestone evidence. Mutually
-    exclusive with deadline_only and blockers_only. SDKs preserve current blockers and deadline."""
+    """In the latest retained state, same-state terminal outcome report. Requires from_state equal to state and no
+    milestone evidence. Mutually exclusive with deadline_only and blockers_only. SDKs preserve current blockers and
+    deadline."""
     overdue_seconds: int | Unset = UNSET
     """Whole elapsed seconds since the missed due time."""
     deadline_at: datetime.datetime | Unset = UNSET
-    """Optional application-reported due time. Omitted or empty in a report clears the deadline. Transactional SDKs
-    inherit it from their counter unless explicitly updated."""
+    """In the latest retained state, optional application-reported due time. Omitted or empty in a report clears
+    the deadline. Transactional SDKs inherit it from their counter unless explicitly updated."""
     deadline_only: bool | Unset = UNSET
-    """Same-state deadline snapshot update. Requires from_state equal to state and no milestone evidence. Mutually
-    exclusive with blockers_only. SDKs preserve current blockers."""
+    """In the latest retained state, same-state deadline snapshot update. Requires from_state equal to state and no
+    milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers."""
     blocker_resolutions: list[OperationWorkflowBlockerResolution] | Unset = UNSET
     report_id: UUID | Unset = UNSET
     """Identity of the latest reported snapshot."""
@@ -65,8 +66,8 @@ class OperationWorkflowState:
     """Operation that published the latest snapshot."""
     blockers: list[OperationWorkflowBlocker] | Unset = UNSET
     blockers_only: bool | Unset = UNSET
-    """Same-state blocker replacement. Requires from_state equal to state and no milestone evidence; not a business
-    transition."""
+    """In the latest retained state, same-state blocker replacement. Requires from_state equal to state and no
+    milestone evidence; not a business transition."""
     stale_after_seconds: int | Unset = UNSET
     """App-declared age threshold for the current state when one is configured."""
     evidence_milestones: list[OperationWorkflowEvidenceMilestone] | Unset = UNSET

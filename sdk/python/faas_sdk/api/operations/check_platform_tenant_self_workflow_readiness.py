@@ -80,7 +80,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CheckPlatformTenantSelfWorkflowReadinessBody,
 ) -> Response[OperationWorkflowReadinessResponse | Problem]:
-    """Check reported requirements for a proposed workflow transition.
+    """Customer transition readiness — Check reported requirements for a proposed workflow transition.
 
      Requires platform-tenant operations read scope. app_id is mandatory and tenant_id must be omitted;
     ownership comes from the authenticated customer. Evaluates a proposed declared edge against retained
@@ -116,7 +116,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CheckPlatformTenantSelfWorkflowReadinessBody,
 ) -> OperationWorkflowReadinessResponse | Problem | None:
-    """Check reported requirements for a proposed workflow transition.
+    """Customer transition readiness — Check reported requirements for a proposed workflow transition.
 
      Requires platform-tenant operations read scope. app_id is mandatory and tenant_id must be omitted;
     ownership comes from the authenticated customer. Evaluates a proposed declared edge against retained
@@ -147,7 +147,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CheckPlatformTenantSelfWorkflowReadinessBody,
 ) -> Response[OperationWorkflowReadinessResponse | Problem]:
-    """Check reported requirements for a proposed workflow transition.
+    """Customer transition readiness — Check reported requirements for a proposed workflow transition.
 
      Requires platform-tenant operations read scope. app_id is mandatory and tenant_id must be omitted;
     ownership comes from the authenticated customer. Evaluates a proposed declared edge against retained
@@ -181,7 +181,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CheckPlatformTenantSelfWorkflowReadinessBody,
 ) -> OperationWorkflowReadinessResponse | Problem | None:
-    """Check reported requirements for a proposed workflow transition.
+    """Customer transition readiness — Check reported requirements for a proposed workflow transition.
 
      Requires platform-tenant operations read scope. app_id is mandatory and tenant_id must be omitted;
     ownership comes from the authenticated customer. Evaluates a proposed declared edge against retained

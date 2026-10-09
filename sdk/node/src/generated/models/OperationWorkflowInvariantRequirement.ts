@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Exact invariant code and version that must pass in a milestone committed with the transition.
+ */
 export type OperationWorkflowInvariantRequirement = {
   milestone: string;
   code: string;

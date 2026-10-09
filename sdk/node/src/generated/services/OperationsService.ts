@@ -464,7 +464,13 @@ export class OperationsService {
      * Explicit environment containing the related business Operations.
      */
     scope: string,
+    /**
+     * For the account outcome queue, restrict results to this declared workflow name.
+     */
     workflow?: string,
+    /**
+     * For the account outcome queue, restrict terminal results to this explicit business outcome code.
+     */
     code?: string,
     /**
      * Optional account-owned customer selector on an operator milestone timeline.
@@ -507,7 +513,7 @@ export class OperationsService {
   }
   /**
    * Summarize completed workflows with explicit business outcomes.
-   * Requires account read scope and MFA. Optional tenant selection remains within account ownership. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
+   * Account outcome summary — Requires account read scope and MFA. Optional tenant selection remains within account ownership. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
    * @returns OperationWorkflowOutcomeSummary All matching workflow count and a bounded group page ordered by value ascending.
    * @throws ApiError
    */
@@ -529,12 +535,21 @@ export class OperationsService {
      * Explicit environment containing the related business Operations.
      */
     scope: string,
+    /**
+     * For the account outcome summary, restrict results to this declared workflow name.
+     */
     workflow?: string,
+    /**
+     * For the account outcome summary, restrict terminal results to this explicit business outcome code.
+     */
     code?: string,
     /**
      * Optional account-owned customer selector on an operator milestone timeline.
      */
     tenantId?: string,
+    /**
+     * For the account outcome summary, dimension used to aggregate matching workflow instances.
+     */
     groupBy?: 'outcome' | 'workflow' | 'customer',
     /**
      * Maximum retained public facts in a milestone page.
@@ -573,9 +588,9 @@ export class OperationsService {
     });
   }
   /**
-   * List completed workflows with explicit business outcomes.
+   * Customer outcome queue — List completed workflows with explicit business outcomes.
    * Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
-   * @returns OperationWorkflowOutcomesResponse A bounded page ordered by latest report publication time descending.
+   * @returns OperationWorkflowOutcomesResponse Customer outcome queue — A bounded page ordered by latest report publication time descending.
    * @throws ApiError
    */
   public static listPlatformTenantSelfWorkflowOutcomes({
@@ -594,7 +609,13 @@ export class OperationsService {
      * Explicit environment containing the related business Operations.
      */
     scope: string,
+    /**
+     * For the customer outcome queue, restrict results to this declared workflow name.
+     */
     workflow?: string,
+    /**
+     * For the customer outcome queue, restrict terminal results to this explicit business outcome code.
+     */
     code?: string,
     /**
      * Maximum retained public facts in a milestone page.
@@ -629,9 +650,9 @@ export class OperationsService {
     });
   }
   /**
-   * Summarize completed workflows with explicit business outcomes.
-   * Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
-   * @returns OperationWorkflowOutcomeSummary All matching workflow count and a bounded group page ordered by value ascending.
+   * Customer outcome summary — Summarize completed workflows with explicit business outcomes.
+   * Customer outcome summary — Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
+   * @returns OperationWorkflowOutcomeSummary Customer outcome summary — All matching workflow count and a bounded group page ordered by value ascending.
    * @throws ApiError
    */
   public static summarizePlatformTenantSelfWorkflowOutcomes({
@@ -651,8 +672,17 @@ export class OperationsService {
      * Explicit environment containing the related business Operations.
      */
     scope: string,
+    /**
+     * For the customer outcome summary, restrict results to this declared workflow name.
+     */
     workflow?: string,
+    /**
+     * For the customer outcome summary, restrict terminal results to this explicit business outcome code.
+     */
     code?: string,
+    /**
+     * For the customer outcome summary, dimension used to aggregate matching workflow instances.
+     */
     groupBy?: 'outcome' | 'workflow',
     /**
      * Maximum retained public facts in a milestone page.
@@ -720,9 +750,9 @@ export class OperationsService {
     });
   }
   /**
-   * Preview business workflow actions
-   * Read-only candidates from the retained current state, evaluated with an empty evidence plan. Does not execute, authorize, reserve, or mutate an action. At most 100 actions; optional operation filter. Application must recheck locked rows and readiness before writing.
-   * @returns OperationWorkflowActionPreviewResponse Observed transition readiness including reasons and advisories.
+   * Customer action preview — Preview business workflow actions
+   * Customer action preview — Read-only candidates from the retained current state, evaluated with an empty evidence plan. Does not execute, authorize, reserve, or mutate an action. At most 100 actions; optional operation filter. Application must recheck locked rows and readiness before writing.
+   * @returns OperationWorkflowActionPreviewResponse Customer action preview — Observed transition readiness including reasons and advisories.
    * @throws ApiError
    */
   public static previewPlatformTenantSelfWorkflowActions({
@@ -746,7 +776,7 @@ export class OperationsService {
   /**
    * Check reported requirements for a proposed workflow transition.
    * Requires account read scope and MFA. tenant_id is mandatory and app_id must be omitted; the path selects the owned application. Evaluates a proposed declared edge against retained state, target-specific blockers, direct prerequisites and planned milestone names. Ready is observational and grants no execution authority. Planned names are not committed evidence; transaction-time business checks and report validation still apply. A denied readiness result is a successful HTTP 200 response.
-   * @returns OperationWorkflowReadinessResponse Observed transition readiness including reasons and advisories.
+   * @returns OperationWorkflowReadinessResponse Account transition readiness — Observed transition readiness including reasons and advisories.
    * @throws ApiError
    */
   public static checkAccountWorkflowReadiness({
@@ -776,9 +806,9 @@ export class OperationsService {
     });
   }
   /**
-   * Check reported requirements for a proposed workflow transition.
+   * Customer transition readiness — Check reported requirements for a proposed workflow transition.
    * Requires platform-tenant operations read scope. app_id is mandatory and tenant_id must be omitted; ownership comes from the authenticated customer. Evaluates a proposed declared edge against retained state, target-specific blockers, direct prerequisites and planned milestone names. Ready is observational and grants no execution authority. Planned names are not committed evidence; transaction-time business checks and report validation still apply. A denied readiness result is a successful HTTP 200 response.
-   * @returns OperationWorkflowReadinessResponse Observed transition readiness including reasons and advisories.
+   * @returns OperationWorkflowReadinessResponse Customer transition readiness — Observed transition readiness including reasons and advisories.
    * @throws ApiError
    */
   public static checkPlatformTenantSelfWorkflowReadiness({
@@ -826,14 +856,29 @@ export class OperationsService {
      * Explicit environment containing the related business Operations.
      */
     scope: string,
+    /**
+     * For the account attention queue, restrict results to this declared workflow name.
+     */
     workflow?: string,
+    /**
+     * For the account attention queue, restrict attention to blockers targeting this Operation name.
+     */
     targetOperation?: string,
     /**
      * Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
      */
     dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch',
+    /**
+     * For the account attention queue, restrict unresolved prerequisites to this required business outcome code.
+     */
     requiredOutcomeCode?: string,
+    /**
+     * For the account attention queue, restrict attention to this application-reported blocker code.
+     */
     blockerCode?: string,
+    /**
+     * For the account attention queue, select the attention reason to include in the queue.
+     */
     reason?: 'blocked' | 'stale' | 'overdue' | 'dependency',
     /**
      * Optional account-owned customer selector on an operator milestone timeline.
@@ -906,15 +951,33 @@ export class OperationsService {
      * Explicit environment containing the related business Operations.
      */
     scope: string,
+    /**
+     * For the account attention summary, dimension used to aggregate matching workflow instances.
+     */
     groupBy?: 'workflow' | 'blocker_code' | 'target_operation' | 'customer' | 'dependency_status' | 'required_outcome_code',
+    /**
+     * For the account attention summary, restrict results to this declared workflow name.
+     */
     workflow?: string,
+    /**
+     * For the account attention summary, restrict attention to blockers targeting this Operation name.
+     */
     targetOperation?: string,
     /**
-     * Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
+     * Account attention summary — Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
      */
     dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch',
+    /**
+     * For the account attention summary, restrict unresolved prerequisites to this required business outcome code.
+     */
     requiredOutcomeCode?: string,
+    /**
+     * For the account attention summary, restrict attention to this application-reported blocker code.
+     */
     blockerCode?: string,
+    /**
+     * For the account attention summary, select the attention reason to include in the queue.
+     */
     reason?: 'blocked' | 'stale' | 'overdue' | 'dependency',
     /**
      * Optional account-owned customer selector on an operator milestone timeline.
@@ -961,9 +1024,9 @@ export class OperationsService {
     });
   }
   /**
-   * List retained blocked, stale, overdue, or dependency-waiting business workflow instances.
+   * Customer attention queue — List retained blocked, stale, overdue, or dependency-waiting business workflow instances.
    * Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue deadlines are evaluated at the first page time carried by the cursor; current reports and retention can change during browsing. Unknown/unreported state is not enumerated. Target Operations match reported blockers or applicable selected-contract edges on stale or overdue workflows. The queue grants no execution authority.
-   * @returns OperationWorkflowAttentionResponse One bounded page ordered by latest report publication time descending.
+   * @returns OperationWorkflowAttentionResponse Customer attention queue — One bounded page ordered by latest report publication time descending.
    * @throws ApiError
    */
   public static listPlatformTenantSelfWorkflowAttention({
@@ -986,14 +1049,29 @@ export class OperationsService {
      * Explicit environment containing the related business Operations.
      */
     scope: string,
+    /**
+     * For the customer attention queue, restrict results to this declared workflow name.
+     */
     workflow?: string,
+    /**
+     * For the customer attention queue, restrict attention to blockers targeting this Operation name.
+     */
     targetOperation?: string,
     /**
-     * Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
+     * Customer attention queue — Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
      */
     dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch',
+    /**
+     * For the customer attention queue, restrict unresolved prerequisites to this required business outcome code.
+     */
     requiredOutcomeCode?: string,
+    /**
+     * For the customer attention queue, restrict attention to this application-reported blocker code.
+     */
     blockerCode?: string,
+    /**
+     * For the customer attention queue, select the attention reason to include in the queue.
+     */
     reason?: 'blocked' | 'stale' | 'overdue' | 'dependency',
     /**
      * Maximum retained public facts in a milestone page.
@@ -1032,9 +1110,9 @@ export class OperationsService {
     });
   }
   /**
-   * Summarize all matching retained workflow attention.
+   * Customer attention summary — Summarize all matching retained workflow attention.
    * Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue deadlines are evaluated at the first page time carried by the cursor; current reports and retention can change during browsing. Unknown/unreported state is not enumerated. Target Operations match reported blockers or applicable selected-contract edges on stale or overdue workflows. Totals cover all matching retained snapshots regardless of group pagination. Groups may overlap and should not be added together. Blocker statistics within code and target groups cover that code or target only. Ages derive from application-reported first_observed_at; missing ages are counted separately. Group cursors are separate from queue cursors. The summary grants no execution authority.
-   * @returns OperationWorkflowAttentionSummary Totals over all matching workflows and one bounded page of groups ordered by value ascending.
+   * @returns OperationWorkflowAttentionSummary Customer attention summary — Totals over all matching workflows and one bounded page of groups ordered by value ascending.
    * @throws ApiError
    */
   public static summarizePlatformTenantSelfWorkflowAttention({
@@ -1058,15 +1136,33 @@ export class OperationsService {
      * Explicit environment containing the related business Operations.
      */
     scope: string,
+    /**
+     * For the customer attention summary, dimension used to aggregate matching workflow instances.
+     */
     groupBy?: 'workflow' | 'blocker_code' | 'target_operation' | 'dependency_status' | 'required_outcome_code',
+    /**
+     * For the customer attention summary, restrict results to this declared workflow name.
+     */
     workflow?: string,
+    /**
+     * For the customer attention summary, restrict attention to blockers targeting this Operation name.
+     */
     targetOperation?: string,
     /**
-     * Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
+     * Customer attention summary — Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
      */
     dependencyStatus?: 'waiting' | 'unknown' | 'outcome_mismatch',
+    /**
+     * For the customer attention summary, restrict unresolved prerequisites to this required business outcome code.
+     */
     requiredOutcomeCode?: string,
+    /**
+     * For the customer attention summary, restrict attention to this application-reported blocker code.
+     */
     blockerCode?: string,
+    /**
+     * For the customer attention summary, select the attention reason to include in the queue.
+     */
     reason?: 'blocked' | 'stale' | 'overdue' | 'dependency',
     /**
      * Maximum retained public facts in a milestone page.

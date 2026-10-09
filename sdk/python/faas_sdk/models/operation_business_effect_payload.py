@@ -19,6 +19,8 @@ T = TypeVar("T", bound="OperationBusinessEffectPayload")
 
 @_attrs_define
 class OperationBusinessEffectPayload:
+    """Typed milestone envelope recording an application-reported business effect."""
+
     kind: OperationBusinessEffectPayloadKind
     effect: OperationBusinessEffect
     """Application-reported effect. Text bounds are UTF-8 bytes; confirmed status requires a nonempty reference.

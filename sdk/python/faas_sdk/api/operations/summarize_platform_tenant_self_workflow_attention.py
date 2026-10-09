@@ -148,7 +148,7 @@ def sync_detailed(
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> Response[OperationWorkflowAttentionSummary | Problem]:
-    """Summarize all matching retained workflow attention.
+    """Customer attention summary — Summarize all matching retained workflow attention.
 
      Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant
     overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue
@@ -218,7 +218,7 @@ def sync(
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> OperationWorkflowAttentionSummary | Problem | None:
-    """Summarize all matching retained workflow attention.
+    """Customer attention summary — Summarize all matching retained workflow attention.
 
      Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant
     overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue
@@ -283,7 +283,7 @@ async def asyncio_detailed(
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> Response[OperationWorkflowAttentionSummary | Problem]:
-    """Summarize all matching retained workflow attention.
+    """Customer attention summary — Summarize all matching retained workflow attention.
 
      Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant
     overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue
@@ -351,7 +351,7 @@ async def asyncio(
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> OperationWorkflowAttentionSummary | Problem | None:
-    """Summarize all matching retained workflow attention.
+    """Customer attention summary — Summarize all matching retained workflow attention.
 
      Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant
     overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue

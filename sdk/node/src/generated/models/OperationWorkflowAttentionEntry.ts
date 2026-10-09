@@ -5,6 +5,9 @@
 import type { OperationSubject } from './OperationSubject.js';
 import type { OperationWorkflowRelatedInstance } from './OperationWorkflowRelatedInstance.js';
 import type { OperationWorkflowState } from './OperationWorkflowState.js';
+/**
+ * One active workflow instance requiring attention, including its reasons and unresolved prerequisites.
+ */
 export type OperationWorkflowAttentionEntry = {
   /**
    * Unresolved direct references on an active source. These entries carry dependency and status; target state is available in the workflow instance detail.
@@ -13,12 +16,12 @@ export type OperationWorkflowAttentionEntry = {
   app_id: string;
   scope: string;
   /**
-   * Present only in account-operator responses.
+   * For this attention entry, present only in account-operator responses.
    */
   platform_tenant_id?: string;
   subject: OperationSubject;
   /**
-   * Operation that published the current state report.
+   * For this attention entry, operation that published the current state report.
    */
   operation_id: string;
   state: OperationWorkflowState;

@@ -16,6 +16,8 @@ T = TypeVar("T", bound="OperationWorkflowReadinessResponse")
 
 @_attrs_define
 class OperationWorkflowReadinessResponse:
+    """Readiness evaluation for the selected business subject and workflow instance at the reported time."""
+
     subject: OperationSubject
     """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
     redeploy. Never an ownership or authorization claim."""

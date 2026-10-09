@@ -23,13 +23,15 @@ T = TypeVar("T", bound="OperationWorkflowAttentionEntry")
 
 @_attrs_define
 class OperationWorkflowAttentionEntry:
+    """One active workflow instance requiring attention, including its reasons and unresolved prerequisites."""
+
     app_id: UUID
     scope: str
     subject: OperationSubject
     """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
     redeploy. Never an ownership or authorization claim."""
     operation_id: UUID
-    """Operation that published the current state report."""
+    """For this attention entry, operation that published the current state report."""
     state: OperationWorkflowState
     """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
     reasons: list[OperationWorkflowAttentionEntryReasonsItem]
@@ -37,7 +39,7 @@ class OperationWorkflowAttentionEntry:
     """Unresolved direct references on an active source. These entries carry dependency and status; target state is
     available in the workflow instance detail."""
     platform_tenant_id: UUID | Unset = UNSET
-    """Present only in account-operator responses."""
+    """For this attention entry, present only in account-operator responses."""
 
     def to_dict(self) -> dict[str, Any]:
         app_id = str(self.app_id)

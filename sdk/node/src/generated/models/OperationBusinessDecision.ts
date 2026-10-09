@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Application-reported business decision with a public explanation and optional exact policy rule identity.
+ */
 export type OperationBusinessDecision = {
   workflow: string;
   /**
@@ -10,12 +13,12 @@ export type OperationBusinessDecision = {
   instance_id: string;
   code: string;
   /**
-   * UTF-8 byte limit; nonempty text without control characters.
+   * Public decision explanation; UTF-8 byte limit; nonempty text without control characters.
    */
   description: string;
   rule_id: string;
   /**
-   * UTF-8 byte limit; nonempty text without control characters.
+   * Exact policy rule version; UTF-8 byte limit; nonempty text without control characters.
    */
   rule_version: string;
 };

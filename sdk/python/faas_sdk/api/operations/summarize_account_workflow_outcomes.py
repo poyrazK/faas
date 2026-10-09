@@ -127,12 +127,12 @@ def sync_detailed(
 ) -> Response[OperationWorkflowOutcomeSummary | Problem]:
     """Summarize completed workflows with explicit business outcomes.
 
-     Requires account read scope and MFA. Optional tenant selection remains within account ownership.
-    Explicit app and environment are required. Only latest retained terminal snapshots with reported
-    outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier
-    outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals
-    cover all matching instances independently of group pagination; cursors are separate from the
-    attention queue. Reports and retention may change during browsing.
+     Account outcome summary — Requires account read scope and MFA. Optional tenant selection remains
+    within account ownership. Explicit app and environment are required. Only latest retained terminal
+    snapshots with reported outcomes are included; each instance counts once. Reopened instances leave
+    these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not
+    imply an outcome. Totals cover all matching instances independently of group pagination; cursors are
+    separate from the attention queue. Reports and retention may change during browsing.
 
     Args:
         slug (str):
@@ -184,12 +184,12 @@ def sync(
 ) -> OperationWorkflowOutcomeSummary | Problem | None:
     """Summarize completed workflows with explicit business outcomes.
 
-     Requires account read scope and MFA. Optional tenant selection remains within account ownership.
-    Explicit app and environment are required. Only latest retained terminal snapshots with reported
-    outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier
-    outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals
-    cover all matching instances independently of group pagination; cursors are separate from the
-    attention queue. Reports and retention may change during browsing.
+     Account outcome summary — Requires account read scope and MFA. Optional tenant selection remains
+    within account ownership. Explicit app and environment are required. Only latest retained terminal
+    snapshots with reported outcomes are included; each instance counts once. Reopened instances leave
+    these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not
+    imply an outcome. Totals cover all matching instances independently of group pagination; cursors are
+    separate from the attention queue. Reports and retention may change during browsing.
 
     Args:
         slug (str):
@@ -236,12 +236,12 @@ async def asyncio_detailed(
 ) -> Response[OperationWorkflowOutcomeSummary | Problem]:
     """Summarize completed workflows with explicit business outcomes.
 
-     Requires account read scope and MFA. Optional tenant selection remains within account ownership.
-    Explicit app and environment are required. Only latest retained terminal snapshots with reported
-    outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier
-    outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals
-    cover all matching instances independently of group pagination; cursors are separate from the
-    attention queue. Reports and retention may change during browsing.
+     Account outcome summary — Requires account read scope and MFA. Optional tenant selection remains
+    within account ownership. Explicit app and environment are required. Only latest retained terminal
+    snapshots with reported outcomes are included; each instance counts once. Reopened instances leave
+    these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not
+    imply an outcome. Totals cover all matching instances independently of group pagination; cursors are
+    separate from the attention queue. Reports and retention may change during browsing.
 
     Args:
         slug (str):
@@ -291,12 +291,12 @@ async def asyncio(
 ) -> OperationWorkflowOutcomeSummary | Problem | None:
     """Summarize completed workflows with explicit business outcomes.
 
-     Requires account read scope and MFA. Optional tenant selection remains within account ownership.
-    Explicit app and environment are required. Only latest retained terminal snapshots with reported
-    outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier
-    outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals
-    cover all matching instances independently of group pagination; cursors are separate from the
-    attention queue. Reports and retention may change during browsing.
+     Account outcome summary — Requires account read scope and MFA. Optional tenant selection remains
+    within account ownership. Explicit app and environment are required. Only latest retained terminal
+    snapshots with reported outcomes are included; each instance counts once. Reopened instances leave
+    these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not
+    imply an outcome. Totals cover all matching instances independently of group pagination; cursors are
+    separate from the attention queue. Reports and retention may change during browsing.
 
     Args:
         slug (str):

@@ -10,6 +10,8 @@ T = TypeVar("T", bound="OperationWorkflowOutcomeGroup")
 
 @_attrs_define
 class OperationWorkflowOutcomeGroup:
+    """Count of terminal workflow instances matching one outcome aggregation value."""
+
     value: str
     workflow_count: int
 

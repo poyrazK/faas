@@ -17,6 +17,8 @@ T = TypeVar("T", bound="OperationWorkflowOutcomesResponse")
 
 @_attrs_define
 class OperationWorkflowOutcomesResponse:
+    """Paginated collection of matching terminal workflow outcomes evaluated at a shared time."""
+
     items: list[OperationWorkflowOutcomeEntry]
     evaluated_at: datetime.datetime
     next_cursor: str | Unset = UNSET

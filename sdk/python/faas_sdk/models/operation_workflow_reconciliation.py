@@ -16,6 +16,8 @@ T = TypeVar("T", bound="OperationWorkflowReconciliation")
 
 @_attrs_define
 class OperationWorkflowReconciliation:
+    """Application comparison of authoritative business state and revision against the retained workflow projection."""
+
     workflow: str
     instance_id: str
     authoritative_state: str

@@ -13,6 +13,8 @@ T = TypeVar("T", bound="OperationWorkflowAttentionStats")
 
 @_attrs_define
 class OperationWorkflowAttentionStats:
+    """Aggregate counts and age measurements for workflows, blockers, deadlines, and unresolved dependencies."""
+
     dependency_workflow_count: int
     dependency_count: int
     overdue_workflow_count: int

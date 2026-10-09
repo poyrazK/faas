@@ -5,6 +5,9 @@
 import type { OperationSubject } from './OperationSubject.js';
 import type { OperationWorkflowState } from './OperationWorkflowState.js';
 import type { OperationWorkflowTransitionReadiness } from './OperationWorkflowTransitionReadiness.js';
+/**
+ * Observed current-state action candidates and their readiness without planned transaction evidence.
+ */
 export type OperationWorkflowActionPreviewResponse = {
   subject: OperationSubject;
   workflow: string;

@@ -107,7 +107,7 @@ def sync_detailed(
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> Response[OperationWorkflowOutcomesResponse | Problem]:
-    """List completed workflows with explicit business outcomes.
+    """Customer outcome queue — List completed workflows with explicit business outcomes.
 
      Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides
     are rejected. Explicit app and environment are required. Only latest retained terminal snapshots
@@ -158,7 +158,7 @@ def sync(
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> OperationWorkflowOutcomesResponse | Problem | None:
-    """List completed workflows with explicit business outcomes.
+    """Customer outcome queue — List completed workflows with explicit business outcomes.
 
      Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides
     are rejected. Explicit app and environment are required. Only latest retained terminal snapshots
@@ -204,7 +204,7 @@ async def asyncio_detailed(
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> Response[OperationWorkflowOutcomesResponse | Problem]:
-    """List completed workflows with explicit business outcomes.
+    """Customer outcome queue — List completed workflows with explicit business outcomes.
 
      Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides
     are rejected. Explicit app and environment are required. Only latest retained terminal snapshots
@@ -253,7 +253,7 @@ async def asyncio(
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> OperationWorkflowOutcomesResponse | Problem | None:
-    """List completed workflows with explicit business outcomes.
+    """Customer outcome queue — List completed workflows with explicit business outcomes.
 
      Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides
     are rejected. Explicit app and environment are required. Only latest retained terminal snapshots

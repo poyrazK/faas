@@ -12,7 +12,7 @@ export type OperationWorkflowInstanceTransition = {
   required_effects?: Array<OperationWorkflowEffectRequirement>;
   required_invariants?: Array<OperationWorkflowInvariantRequirement>;
   /**
-   * Omitted means all reported dependencies; an empty array means none. Named workflows require at least one reported link and every matching link must meet its outcome requirement.
+   * For this selected contract edge, omitted means all reported dependencies; an empty array means none. Named workflows require at least one reported link and every matching link must meet its outcome requirement.
    */
   required_dependency_workflows?: Array<string>;
   required_policies?: Array<OperationWorkflowPolicyRequirement>;
@@ -23,7 +23,7 @@ export type OperationWorkflowInstanceTransition = {
    */
   operation: string;
   /**
-   * Milestone names that must be committed in the same application transaction as this transition.
+   * For this selected contract edge, milestone names that must be committed in the same application transaction as this transition.
    */
   required_milestones?: Array<string>;
 };

@@ -19,6 +19,8 @@ T = TypeVar("T", bound="OperationBusinessInvariantPayload")
 
 @_attrs_define
 class OperationBusinessInvariantPayload:
+    """Typed milestone envelope containing an application check of a business invariant."""
+
     kind: OperationBusinessInvariantPayloadKind
     invariant: OperationBusinessInvariant
     """Application-evaluated business condition. String limits are UTF-8 bytes; instance, version, and description

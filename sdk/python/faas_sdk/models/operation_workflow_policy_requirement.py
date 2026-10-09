@@ -10,6 +10,8 @@ T = TypeVar("T", bound="OperationWorkflowPolicyRequirement")
 
 @_attrs_define
 class OperationWorkflowPolicyRequirement:
+    """Exact policy rule identity, version, and decision code required as fresh transition evidence."""
+
     milestone: str
     rule_id: str
     rule_version: str

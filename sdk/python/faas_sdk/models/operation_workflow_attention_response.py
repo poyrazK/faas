@@ -17,6 +17,8 @@ T = TypeVar("T", bound="OperationWorkflowAttentionResponse")
 
 @_attrs_define
 class OperationWorkflowAttentionResponse:
+    """Bounded attention queue with a stable evaluation time and filter-bound continuation."""
+
     items: list[OperationWorkflowAttentionEntry]
     evaluated_at: datetime.datetime
     """Staleness evaluation time retained across cursor pages."""

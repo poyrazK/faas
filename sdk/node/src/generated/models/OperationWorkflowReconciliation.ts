@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Application comparison of authoritative business state and revision against the retained workflow projection.
+ */
 export type OperationWorkflowReconciliation = {
   workflow: string;
   instance_id: string;

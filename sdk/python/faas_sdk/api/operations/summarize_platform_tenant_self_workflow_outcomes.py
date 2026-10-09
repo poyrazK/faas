@@ -118,14 +118,15 @@ def sync_detailed(
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> Response[OperationWorkflowOutcomeSummary | Problem]:
-    """Summarize completed workflows with explicit business outcomes.
+    """Customer outcome summary — Summarize completed workflows with explicit business outcomes.
 
-     Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides
-    are rejected. Explicit app and environment are required. Only latest retained terminal snapshots
-    with reported outcomes are included; each instance counts once. Reopened instances leave these
-    totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an
-    outcome. Totals cover all matching instances independently of group pagination; cursors are separate
-    from the attention queue. Reports and retention may change during browsing.
+     Customer outcome summary — Requires platform_tenant:operations:read. Customer identity comes from
+    credentials; tenant overrides are rejected. Explicit app and environment are required. Only latest
+    retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened
+    instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state
+    alone does not imply an outcome. Totals cover all matching instances independently of group
+    pagination; cursors are separate from the attention queue. Reports and retention may change during
+    browsing.
 
     Args:
         app_id (UUID):
@@ -173,14 +174,15 @@ def sync(
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> OperationWorkflowOutcomeSummary | Problem | None:
-    """Summarize completed workflows with explicit business outcomes.
+    """Customer outcome summary — Summarize completed workflows with explicit business outcomes.
 
-     Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides
-    are rejected. Explicit app and environment are required. Only latest retained terminal snapshots
-    with reported outcomes are included; each instance counts once. Reopened instances leave these
-    totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an
-    outcome. Totals cover all matching instances independently of group pagination; cursors are separate
-    from the attention queue. Reports and retention may change during browsing.
+     Customer outcome summary — Requires platform_tenant:operations:read. Customer identity comes from
+    credentials; tenant overrides are rejected. Explicit app and environment are required. Only latest
+    retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened
+    instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state
+    alone does not imply an outcome. Totals cover all matching instances independently of group
+    pagination; cursors are separate from the attention queue. Reports and retention may change during
+    browsing.
 
     Args:
         app_id (UUID):
@@ -223,14 +225,15 @@ async def asyncio_detailed(
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> Response[OperationWorkflowOutcomeSummary | Problem]:
-    """Summarize completed workflows with explicit business outcomes.
+    """Customer outcome summary — Summarize completed workflows with explicit business outcomes.
 
-     Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides
-    are rejected. Explicit app and environment are required. Only latest retained terminal snapshots
-    with reported outcomes are included; each instance counts once. Reopened instances leave these
-    totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an
-    outcome. Totals cover all matching instances independently of group pagination; cursors are separate
-    from the attention queue. Reports and retention may change during browsing.
+     Customer outcome summary — Requires platform_tenant:operations:read. Customer identity comes from
+    credentials; tenant overrides are rejected. Explicit app and environment are required. Only latest
+    retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened
+    instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state
+    alone does not imply an outcome. Totals cover all matching instances independently of group
+    pagination; cursors are separate from the attention queue. Reports and retention may change during
+    browsing.
 
     Args:
         app_id (UUID):
@@ -276,14 +279,15 @@ async def asyncio(
     limit: int | Unset = 20,
     cursor: str | Unset = UNSET,
 ) -> OperationWorkflowOutcomeSummary | Problem | None:
-    """Summarize completed workflows with explicit business outcomes.
+    """Customer outcome summary — Summarize completed workflows with explicit business outcomes.
 
-     Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides
-    are rejected. Explicit app and environment are required. Only latest retained terminal snapshots
-    with reported outcomes are included; each instance counts once. Reopened instances leave these
-    totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an
-    outcome. Totals cover all matching instances independently of group pagination; cursors are separate
-    from the attention queue. Reports and retention may change during browsing.
+     Customer outcome summary — Requires platform_tenant:operations:read. Customer identity comes from
+    credentials; tenant overrides are rejected. Explicit app and environment are required. Only latest
+    retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened
+    instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state
+    alone does not imply an outcome. Totals cover all matching instances independently of group
+    pagination; cursors are separate from the attention queue. Reports and retention may change during
+    browsing.
 
     Args:
         app_id (UUID):

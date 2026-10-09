@@ -18,6 +18,8 @@ T = TypeVar("T", bound="OperationWorkflowOutcomeEntry")
 
 @_attrs_define
 class OperationWorkflowOutcomeEntry:
+    """One retained terminal workflow instance with its explicitly reported business result and ownership context."""
+
     app_id: UUID
     scope: str
     subject: OperationSubject

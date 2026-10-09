@@ -10,6 +10,8 @@ T = TypeVar("T", bound="OperationWorkflowEffectRequirement")
 
 @_attrs_define
 class OperationWorkflowEffectRequirement:
+    """Exact effect code and version that must be confirmed by fresh transition evidence."""
+
     milestone: str
     code: str
     version: str

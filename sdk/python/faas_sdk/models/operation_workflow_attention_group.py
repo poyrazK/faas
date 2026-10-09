@@ -14,8 +14,11 @@ T = TypeVar("T", bound="OperationWorkflowAttentionGroup")
 
 @_attrs_define
 class OperationWorkflowAttentionGroup:
+    """Attention statistics for one value of the selected grouping dimension."""
+
     value: str
     stats: OperationWorkflowAttentionStats
+    """Aggregate counts and age measurements for workflows, blockers, deadlines, and unresolved dependencies."""
 
     def to_dict(self) -> dict[str, Any]:
         value = self.value

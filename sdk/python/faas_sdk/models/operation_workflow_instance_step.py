@@ -38,7 +38,9 @@ class OperationWorkflowInstanceStep:
     operation: str | Unset = UNSET
     operation_id: UUID | Unset = UNSET
     latest_milestone: OperationWorkflowInstanceMilestoneRef | Unset = UNSET
+    """Identity and occurrence and publication times of a milestone observed for a declared workflow step."""
     latest_retained_milestone: OperationWorkflowInstanceMilestoneRef | Unset = UNSET
+    """Identity and occurrence and publication times of a milestone observed for a declared workflow step."""
 
     def to_dict(self) -> dict[str, Any]:
         step = self.step

@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
 import type { OperationWorkflowTransitionReadiness } from './OperationWorkflowTransitionReadiness.js';
+/**
+ * Readiness evaluation for the selected business subject and workflow instance at the reported time.
+ */
 export type OperationWorkflowReadinessResponse = {
   subject: OperationSubject;
   workflow: string;

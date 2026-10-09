@@ -22,9 +22,12 @@ T = TypeVar("T", bound="OperationWorkflowAttentionSummary")
 
 @_attrs_define
 class OperationWorkflowAttentionSummary:
+    """Attention totals across all matches and a paginated collection of grouped statistics."""
+
     group_by: OperationWorkflowAttentionSummaryGroupBy
     evaluated_at: datetime.datetime
     totals: OperationWorkflowAttentionStats
+    """Aggregate counts and age measurements for workflows, blockers, deadlines, and unresolved dependencies."""
     groups: list[OperationWorkflowAttentionGroup]
     next_cursor: str | Unset = UNSET
 

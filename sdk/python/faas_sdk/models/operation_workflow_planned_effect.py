@@ -14,6 +14,8 @@ T = TypeVar("T", bound="OperationWorkflowPlannedEffect")
 
 @_attrs_define
 class OperationWorkflowPlannedEffect:
+    """Proposed business effect confirmation associated with a milestone in the evidence plan."""
+
     milestone: str
     effect: OperationBusinessEffect
     """Application-reported effect. Text bounds are UTF-8 bytes; confirmed status requires a nonempty reference.

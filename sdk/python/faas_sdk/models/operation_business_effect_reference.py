@@ -11,10 +11,12 @@ T = TypeVar("T", bound="OperationBusinessEffectReference")
 
 @_attrs_define
 class OperationBusinessEffectReference:
+    """Pair of retained Operation and milestone identifiers identifying a confirmed business effect."""
+
     operation_id: UUID
     """Canonical nonzero UUID of the retained confirmed effect."""
     milestone_id: UUID
-    """Canonical nonzero UUID of the retained confirmed effect."""
+    """Canonical nonzero UUID of the milestone that recorded the retained confirmed effect."""
 
     def to_dict(self) -> dict[str, Any]:
         operation_id = str(self.operation_id)

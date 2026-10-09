@@ -11,37 +11,37 @@ import type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvid
  */
 export type OperationWorkflowStateReportResponse = {
   /**
-   * Full replacement snapshot of direct prerequisite references.
+   * In the accepted report acknowledgement, full replacement snapshot of direct prerequisite references.
    */
   depends_on?: Array<OperationWorkflowDependency>;
   /**
-   * Same-state metadata update mutually exclusive with other metadata-only flags.
+   * In the accepted report acknowledgement, same-state metadata update mutually exclusive with other metadata-only flags.
    */
   dependencies_only?: boolean;
   /**
-   * Explicit application-defined business result for a declared terminal state.
+   * In the accepted report acknowledgement, explicit application-defined business result for a declared terminal state.
    */
   outcome_code?: string;
   /**
-   * Public UTF-8 description limited to 512 bytes without control characters. Required when outcome_code is supplied.
+   * In the accepted report acknowledgement, public UTF-8 description limited to 512 bytes without control characters. Required when outcome_code is supplied.
    */
   outcome_description?: string;
   /**
-   * Same-state terminal outcome report. Requires from_state equal to state and no milestone evidence. Mutually exclusive with deadline_only and blockers_only. SDKs preserve current blockers and deadline.
+   * In the accepted report acknowledgement, same-state terminal outcome report. Requires from_state equal to state and no milestone evidence. Mutually exclusive with deadline_only and blockers_only. SDKs preserve current blockers and deadline.
    */
   outcome_only?: boolean;
   /**
-   * Optional application-reported due time. Omitted or empty in a report clears the deadline. Transactional SDKs inherit it from their counter unless explicitly updated.
+   * In the accepted report acknowledgement, optional application-reported due time. Omitted or empty in a report clears the deadline. Transactional SDKs inherit it from their counter unless explicitly updated.
    */
   deadline_at?: string;
   /**
-   * Same-state deadline snapshot update. Requires from_state equal to state and no milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers.
+   * In the accepted report acknowledgement, same-state deadline snapshot update. Requires from_state equal to state and no milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers.
    */
   deadline_only?: boolean;
   blocker_resolutions?: Array<OperationWorkflowBlockerResolution>;
   blockers?: Array<OperationWorkflowBlocker>;
   /**
-   * Same-state blocker replacement. Requires from_state equal to state and no milestone evidence; not a business transition.
+   * In the accepted report acknowledgement, same-state blocker replacement. Requires from_state equal to state and no milestone evidence; not a business transition.
    */
   blockers_only?: boolean;
   id: string;

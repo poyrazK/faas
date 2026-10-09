@@ -23,6 +23,8 @@ T = TypeVar("T", bound="OperationWorkflowActionPreviewResponse")
 
 @_attrs_define
 class OperationWorkflowActionPreviewResponse:
+    """Observed current-state action candidates and their readiness without planned transaction evidence."""
+
     subject: OperationSubject
     """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
     redeploy. Never an ownership or authorization claim."""

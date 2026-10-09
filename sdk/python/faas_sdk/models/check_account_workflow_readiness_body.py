@@ -31,19 +31,19 @@ class CheckAccountWorkflowReadinessBody:
     from_state: str
     to_state: str
     tenant_id: UUID
-    """Required in account mode only."""
+    """For this proposed transition, required in account mode only."""
     effects: list[OperationWorkflowPlannedEffect] | Unset = UNSET
     invariants: list[OperationWorkflowPlannedInvariant] | Unset = UNSET
     decisions: list[OperationWorkflowPlannedDecision] | Unset = UNSET
     app_id: UUID | Unset = UNSET
-    """Required in customer-self mode only."""
+    """For this proposed transition, required in customer-self mode only."""
     milestones: list[str] | Unset = UNSET
     """Planned milestone names for this transition; retained historical facts are not evidence for the new
     transaction."""
     state_revision: int | Unset = UNSET
-    """Optional expected retained source revision."""
+    """For this proposed transition, optional expected retained source revision."""
     contract_version: int | Unset = UNSET
-    """Optional expected selected contract version."""
+    """For this proposed transition, optional expected selected contract version."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

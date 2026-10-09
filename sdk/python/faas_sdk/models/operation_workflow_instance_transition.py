@@ -31,11 +31,12 @@ class OperationWorkflowInstanceTransition:
     required_effects: list[OperationWorkflowEffectRequirement] | Unset = UNSET
     required_invariants: list[OperationWorkflowInvariantRequirement] | Unset = UNSET
     required_dependency_workflows: list[str] | Unset = UNSET
-    """Omitted means all reported dependencies; an empty array means none. Named workflows require at least one
-    reported link and every matching link must meet its outcome requirement."""
+    """For this selected contract edge, omitted means all reported dependencies; an empty array means none. Named
+    workflows require at least one reported link and every matching link must meet its outcome requirement."""
     required_policies: list[OperationWorkflowPolicyRequirement] | Unset = UNSET
     required_milestones: list[str] | Unset = UNSET
-    """Milestone names that must be committed in the same application transaction as this transition."""
+    """For this selected contract edge, milestone names that must be committed in the same application transaction
+    as this transition."""
 
     def to_dict(self) -> dict[str, Any]:
         from_ = self.from_

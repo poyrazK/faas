@@ -12,6 +12,8 @@ T = TypeVar("T", bound="OperationWorkflowInstanceMilestoneRef")
 
 @_attrs_define
 class OperationWorkflowInstanceMilestoneRef:
+    """Identity and occurrence and publication times of a milestone observed for a declared workflow step."""
+
     id: UUID
     operation_id: UUID
     occurred_at: datetime.datetime

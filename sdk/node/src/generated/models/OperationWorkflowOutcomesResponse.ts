@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowOutcomeEntry } from './OperationWorkflowOutcomeEntry.js';
+/**
+ * Paginated collection of matching terminal workflow outcomes evaluated at a shared time.
+ */
 export type OperationWorkflowOutcomesResponse = {
   items: Array<OperationWorkflowOutcomeEntry>;
   evaluated_at: string;

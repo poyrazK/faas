@@ -6,16 +6,19 @@ import type { OperationSubject } from './OperationSubject.js';
 import type { OperationWorkflowPlannedDecision } from './OperationWorkflowPlannedDecision.js';
 import type { OperationWorkflowPlannedEffect } from './OperationWorkflowPlannedEffect.js';
 import type { OperationWorkflowPlannedInvariant } from './OperationWorkflowPlannedInvariant.js';
+/**
+ * Proposed workflow edge and evidence plan to evaluate against retained reports without executing it.
+ */
 export type OperationWorkflowReadinessRequest = {
   effects?: Array<OperationWorkflowPlannedEffect>;
   invariants?: Array<OperationWorkflowPlannedInvariant>;
   decisions?: Array<OperationWorkflowPlannedDecision>;
   /**
-   * Required in customer-self mode only.
+   * For this proposed transition, required in customer-self mode only.
    */
   app_id?: string;
   /**
-   * Required in account mode only.
+   * For this proposed transition, required in account mode only.
    */
   tenant_id?: string;
   scope: string;
@@ -30,11 +33,11 @@ export type OperationWorkflowReadinessRequest = {
    */
   milestones?: Array<string>;
   /**
-   * Optional expected retained source revision.
+   * For this proposed transition, optional expected retained source revision.
    */
   state_revision?: number;
   /**
-   * Optional expected selected contract version.
+   * For this proposed transition, optional expected selected contract version.
    */
   contract_version?: number;
 };

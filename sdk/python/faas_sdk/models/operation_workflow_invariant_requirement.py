@@ -10,6 +10,8 @@ T = TypeVar("T", bound="OperationWorkflowInvariantRequirement")
 
 @_attrs_define
 class OperationWorkflowInvariantRequirement:
+    """Exact invariant code and version that must pass in a milestone committed with the transition."""
+
     milestone: str
     code: str
     version: str

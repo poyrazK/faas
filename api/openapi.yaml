@@ -7703,9 +7703,11 @@ paths:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/OperationMilestoneScope'
       - name: workflow
+        description: "For the account outcome queue, restrict results to this declared workflow name."
         in: query
         schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
       - name: code
+        description: "For the account outcome queue, restrict terminal results to this explicit business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - $ref: '#/components/parameters/OperationMilestoneTenantID'
@@ -7727,18 +7729,21 @@ paths:
       tags: [operations]
       operationId: summarizeAccountWorkflowOutcomes
       summary: Summarize completed workflows with explicit business outcomes.
-      description: Requires account read scope and MFA. Optional tenant selection remains within account ownership. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
+      description: Account outcome summary — Requires account read scope and MFA. Optional tenant selection remains within account ownership. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
       parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/OperationMilestoneScope'
       - name: workflow
+        description: "For the account outcome summary, restrict results to this declared workflow name."
         in: query
         schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
       - name: code
+        description: "For the account outcome summary, restrict terminal results to this explicit business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - $ref: '#/components/parameters/OperationMilestoneTenantID'
       - name: group_by
+        description: "For the account outcome summary, dimension used to aggregate matching workflow instances."
         in: query
         schema: {type: string, default: outcome, enum: [outcome, workflow, customer]}
       - $ref: '#/components/parameters/OperationMilestoneLimit'
@@ -7758,22 +7763,24 @@ paths:
     get:
       tags: [operations]
       operationId: listPlatformTenantSelfWorkflowOutcomes
-      summary: List completed workflows with explicit business outcomes.
+      summary: Customer outcome queue — List completed workflows with explicit business outcomes.
       description: Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
       parameters:
       - $ref: '#/components/parameters/OperationMilestoneAppID'
       - $ref: '#/components/parameters/OperationMilestoneScope'
       - name: workflow
+        description: "For the customer outcome queue, restrict results to this declared workflow name."
         in: query
         schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
       - name: code
+        description: "For the customer outcome queue, restrict terminal results to this explicit business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - $ref: '#/components/parameters/OperationMilestoneLimit'
       - $ref: '#/components/parameters/OperationMilestoneCursor'
       responses:
         '200':
-          description: A bounded page ordered by latest report publication time descending.
+          description: Customer outcome queue — A bounded page ordered by latest report publication time descending.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/OperationWorkflowOutcomesResponse'}
@@ -7786,25 +7793,28 @@ paths:
     get:
       tags: [operations]
       operationId: summarizePlatformTenantSelfWorkflowOutcomes
-      summary: Summarize completed workflows with explicit business outcomes.
-      description: Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
+      summary: Customer outcome summary — Summarize completed workflows with explicit business outcomes.
+      description: Customer outcome summary — Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
       parameters:
       - $ref: '#/components/parameters/OperationMilestoneAppID'
       - $ref: '#/components/parameters/OperationMilestoneScope'
       - name: workflow
+        description: "For the customer outcome summary, restrict results to this declared workflow name."
         in: query
         schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
       - name: code
+        description: "For the customer outcome summary, restrict terminal results to this explicit business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - name: group_by
+        description: "For the customer outcome summary, dimension used to aggregate matching workflow instances."
         in: query
         schema: {type: string, default: outcome, enum: [outcome, workflow]}
       - $ref: '#/components/parameters/OperationMilestoneLimit'
       - $ref: '#/components/parameters/OperationMilestoneCursor'
       responses:
         '200':
-          description: All matching workflow count and a bounded group page ordered by value ascending.
+          description: Customer outcome summary — All matching workflow count and a bounded group page ordered by value ascending.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/OperationWorkflowOutcomeSummary'}
@@ -7854,8 +7864,8 @@ paths:
       tags:
       - operations
       operationId: previewPlatformTenantSelfWorkflowActions
-      summary: Preview business workflow actions
-      description: Read-only candidates from the retained current state, evaluated with
+      summary: Customer action preview — Preview business workflow actions
+      description: Customer action preview — Read-only candidates from the retained current state, evaluated with
         an empty evidence plan. Does not execute, authorize, reserve, or mutate an action.
         At most 100 actions; optional operation filter. Application must recheck locked
         rows and readiness before writing.
@@ -7870,7 +7880,7 @@ paths:
                 - app_id
       responses:
         '200':
-          description: Observed transition readiness including reasons and advisories.
+          description: Customer action preview — Observed transition readiness including reasons and advisories.
           content:
             application/json:
               schema:
@@ -7901,7 +7911,7 @@ paths:
               - required: [tenant_id]
       responses:
         '200':
-          description: Observed transition readiness including reasons and advisories.
+          description: Account transition readiness — Observed transition readiness including reasons and advisories.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/OperationWorkflowReadinessResponse'}
@@ -7913,7 +7923,7 @@ paths:
     post:
       tags: [operations]
       operationId: checkPlatformTenantSelfWorkflowReadiness
-      summary: Check reported requirements for a proposed workflow transition.
+      summary: Customer transition readiness — Check reported requirements for a proposed workflow transition.
       description: Requires platform-tenant operations read scope. app_id is mandatory and tenant_id must be omitted; ownership comes from the authenticated customer. Evaluates a proposed declared edge against retained state, target-specific blockers, direct prerequisites and planned milestone names. Ready is observational and grants no execution authority. Planned names are not committed evidence; transaction-time business checks and report validation still apply. A denied readiness result is a successful HTTP 200 response.
       requestBody:
         required: true
@@ -7925,7 +7935,7 @@ paths:
               - required: [app_id]
       responses:
         '200':
-          description: Observed transition readiness including reasons and advisories.
+          description: Customer transition readiness — Observed transition readiness including reasons and advisories.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/OperationWorkflowReadinessResponse'}
@@ -7943,9 +7953,11 @@ paths:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/OperationMilestoneScope'
       - name: workflow
+        description: "For the account attention queue, restrict results to this declared workflow name."
         in: query
         schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
       - name: target_operation
+        description: "For the account attention queue, restrict attention to blockers targeting this Operation name."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - name: dependency_status
@@ -7953,12 +7965,15 @@ paths:
         description: Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
         schema: {type: string, enum: [waiting, unknown, outcome_mismatch]}
       - name: required_outcome_code
+        description: "For the account attention queue, restrict unresolved prerequisites to this required business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - name: blocker_code
+        description: "For the account attention queue, restrict attention to this application-reported blocker code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - name: reason
+        description: "For the account attention queue, select the attention reason to include in the queue."
         in: query
         schema: {type: string, enum: [blocked, stale, overdue, dependency]}
       - $ref: '#/components/parameters/OperationMilestoneTenantID'
@@ -7985,25 +8000,31 @@ paths:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/OperationMilestoneScope'
       - name: group_by
+        description: "For the account attention summary, dimension used to aggregate matching workflow instances."
         in: query
         schema: {type: string, default: workflow, enum: [workflow, blocker_code, target_operation, customer, dependency_status, required_outcome_code]}
       - name: workflow
+        description: "For the account attention summary, restrict results to this declared workflow name."
         in: query
         schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
       - name: target_operation
+        description: "For the account attention summary, restrict attention to blockers targeting this Operation name."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - name: dependency_status
         in: query
-        description: Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
+        description: Account attention summary — Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
         schema: {type: string, enum: [waiting, unknown, outcome_mismatch]}
       - name: required_outcome_code
+        description: "For the account attention summary, restrict unresolved prerequisites to this required business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - name: blocker_code
+        description: "For the account attention summary, restrict attention to this application-reported blocker code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - name: reason
+        description: "For the account attention summary, select the attention reason to include in the queue."
         in: query
         schema: {type: string, enum: [blocked, stale, overdue, dependency]}
       - $ref: '#/components/parameters/OperationMilestoneTenantID'
@@ -8024,35 +8045,40 @@ paths:
     get:
       tags: [operations]
       operationId: listPlatformTenantSelfWorkflowAttention
-      summary: List retained blocked, stale, overdue, or dependency-waiting business workflow instances.
+      summary: Customer attention queue — List retained blocked, stale, overdue, or dependency-waiting business workflow instances.
       description: Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue deadlines are evaluated at the first page time carried by the cursor; current reports and retention can change during browsing. Unknown/unreported state is not enumerated. Target Operations match reported blockers or applicable selected-contract edges on stale or overdue workflows. The queue grants no execution authority.
       parameters:
       - $ref: '#/components/parameters/OperationMilestoneAppID'
       - $ref: '#/components/parameters/OperationMilestoneScope'
       - name: workflow
+        description: "For the customer attention queue, restrict results to this declared workflow name."
         in: query
         schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
       - name: target_operation
+        description: "For the customer attention queue, restrict attention to blockers targeting this Operation name."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - name: dependency_status
         in: query
-        description: Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
+        description: Customer attention queue — Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
         schema: {type: string, enum: [waiting, unknown, outcome_mismatch]}
       - name: required_outcome_code
+        description: "For the customer attention queue, restrict unresolved prerequisites to this required business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - name: blocker_code
+        description: "For the customer attention queue, restrict attention to this application-reported blocker code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - name: reason
+        description: "For the customer attention queue, select the attention reason to include in the queue."
         in: query
         schema: {type: string, enum: [blocked, stale, overdue, dependency]}
       - $ref: '#/components/parameters/OperationMilestoneLimit'
       - $ref: '#/components/parameters/OperationMilestoneCursor'
       responses:
         '200':
-          description: One bounded page ordered by latest report publication time descending.
+          description: Customer attention queue — One bounded page ordered by latest report publication time descending.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/OperationWorkflowAttentionResponse'}
@@ -8065,38 +8091,44 @@ paths:
     get:
       tags: [operations]
       operationId: summarizePlatformTenantSelfWorkflowAttention
-      summary: Summarize all matching retained workflow attention.
+      summary: Customer attention summary — Summarize all matching retained workflow attention.
       description: Requires platform_tenant:operations:read. Customer identity comes only from credentials; tenant overrides are rejected. Explicit app and environment selectors are required. Staleness and overdue deadlines are evaluated at the first page time carried by the cursor; current reports and retention can change during browsing. Unknown/unreported state is not enumerated. Target Operations match reported blockers or applicable selected-contract edges on stale or overdue workflows. Totals cover all matching retained snapshots regardless of group pagination. Groups may overlap and should not be added together. Blocker statistics within code and target groups cover that code or target only. Ages derive from application-reported first_observed_at; missing ages are counted separately. Group cursors are separate from queue cursors. The summary grants no execution authority.
       parameters:
       - $ref: '#/components/parameters/OperationMilestoneAppID'
       - $ref: '#/components/parameters/OperationMilestoneScope'
       - name: group_by
+        description: "For the customer attention summary, dimension used to aggregate matching workflow instances."
         in: query
         schema: {type: string, default: workflow, enum: [workflow, blocker_code, target_operation, dependency_status, required_outcome_code]}
       - name: workflow
+        description: "For the customer attention summary, restrict results to this declared workflow name."
         in: query
         schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
       - name: target_operation
+        description: "For the customer attention summary, restrict attention to blockers targeting this Operation name."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - name: dependency_status
         in: query
-        description: Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
+        description: Customer attention summary — Filter unresolved direct prerequisites by status. Both dependency filters must match the same reference.
         schema: {type: string, enum: [waiting, unknown, outcome_mismatch]}
       - name: required_outcome_code
+        description: "For the customer attention summary, restrict unresolved prerequisites to this required business outcome code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - name: blocker_code
+        description: "For the customer attention summary, restrict attention to this application-reported blocker code."
         in: query
         schema: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
       - name: reason
+        description: "For the customer attention summary, select the attention reason to include in the queue."
         in: query
         schema: {type: string, enum: [blocked, stale, overdue, dependency]}
       - $ref: '#/components/parameters/OperationMilestoneLimit'
       - $ref: '#/components/parameters/OperationMilestoneCursor'
       responses:
         '200':
-          description: Totals over all matching workflows and one bounded page of groups ordered by value ascending.
+          description: Customer attention summary — Totals over all matching workflows and one bounded page of groups ordered by value ascending.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/OperationWorkflowAttentionSummary'}
@@ -31933,6 +31965,7 @@ components:
           description: Required typed output for succeeded.
 
     OperationWorkflowPolicyRequirement:
+      description: "Exact policy rule identity, version, and decision code required as fresh transition evidence."
       type: object
       additionalProperties: false
       required:
@@ -31961,6 +31994,7 @@ components:
           maxLength: 64
           pattern: ^[a-z][a-z0-9-]{0,63}$
     OperationWorkflowPlannedDecision:
+      description: "Proposed typed policy decision attached to a milestone in the current evidence plan."
       type: object
       additionalProperties: false
       required:
@@ -31971,6 +32005,7 @@ components:
         decision:
           $ref: '#/components/schemas/OperationBusinessDecision'
     OperationWorkflowReconciliation:
+      description: "Application comparison of authoritative business state and revision against the retained workflow projection."
       type: object
       additionalProperties: false
       required:
@@ -32048,6 +32083,7 @@ components:
       description: Application-reported discrepancy recorded as a declared milestone using
         the existing transaction, ownership, and retention boundaries.
     OperationWorkflowInvariantRequirement:
+      description: "Exact invariant code and version that must pass in a milestone committed with the transition."
       type: object
       additionalProperties: false
       required:
@@ -32070,6 +32106,7 @@ components:
           minLength: 1
           maxLength: 64
     OperationWorkflowPlannedInvariant:
+      description: "Proposed application invariant result and the milestone that will carry it."
       type: object
       additionalProperties: false
       required:
@@ -32080,6 +32117,7 @@ components:
         invariant:
           $ref: '#/components/schemas/OperationBusinessInvariant'
     OperationWorkflowUnmetInvariant:
+      description: "An invariant requirement that the proposed evidence cannot satisfy, with its failure reason."
       type: object
       additionalProperties: false
       required:
@@ -32096,6 +32134,7 @@ components:
           - failed
           - unknown
     OperationBusinessEffectReference:
+      description: "Pair of retained Operation and milestone identifiers identifying a confirmed business effect."
       type: object
       additionalProperties: false
       required:
@@ -32111,7 +32150,7 @@ components:
           type: string
           format: uuid
           pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
-          description: Canonical nonzero UUID of the retained confirmed effect.
+          description: Canonical nonzero UUID of the milestone that recorded the retained confirmed effect.
     OperationBusinessCompensation:
       type: object
       additionalProperties: false
@@ -32175,6 +32214,7 @@ components:
         Source must be a retained confirmed effect in the same account, app, customer,
         and environment.
     OperationBusinessCompensationPayload:
+      description: "Typed milestone envelope for an application-reported compensation linked to its original effect."
       type: object
       additionalProperties: false
       required:
@@ -32252,6 +32292,7 @@ components:
         status requires a nonempty reference. Amount/currency are supplied together in
         minor units.
     OperationBusinessEffectPayload:
+      description: "Typed milestone envelope recording an application-reported business effect."
       type: object
       additionalProperties: false
       required:
@@ -32265,6 +32306,7 @@ components:
         effect:
           $ref: '#/components/schemas/OperationBusinessEffect'
     OperationWorkflowEffectRequirement:
+      description: "Exact effect code and version that must be confirmed by fresh transition evidence."
       type: object
       additionalProperties: false
       required:
@@ -32287,6 +32329,7 @@ components:
           minLength: 1
           maxLength: 64
     OperationWorkflowPlannedEffect:
+      description: "Proposed business effect confirmation associated with a milestone in the evidence plan."
       type: object
       additionalProperties: false
       required:
@@ -32300,6 +32343,7 @@ components:
         effect:
           $ref: '#/components/schemas/OperationBusinessEffect'
     OperationWorkflowUnmetEffect:
+      description: "A required effect confirmation that is absent or incompatible with the planned evidence."
       type: object
       additionalProperties: false
       required:
@@ -32374,6 +32418,7 @@ components:
       description: Application-evaluated business condition. String limits are UTF-8 bytes;
         instance, version, and description must be nonempty without control characters.
     OperationBusinessInvariantPayload:
+      description: "Typed milestone envelope containing an application check of a business invariant."
       type: object
       additionalProperties: false
       required:
@@ -32387,6 +32432,7 @@ components:
         invariant:
           $ref: '#/components/schemas/OperationBusinessInvariant'
     OperationBusinessDecision:
+      description: "Application-reported business decision with a public explanation and optional exact policy rule identity."
       type: object
       additionalProperties: false
       required:
@@ -32416,7 +32462,7 @@ components:
           type: string
           minLength: 1
           maxLength: 1024
-          description: UTF-8 byte limit; nonempty text without control characters.
+          description: Public decision explanation; UTF-8 byte limit; nonempty text without control characters.
         rule_id:
           type: string
           minLength: 1
@@ -32426,7 +32472,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          description: UTF-8 byte limit; nonempty text without control characters.
+          description: Exact policy rule version; UTF-8 byte limit; nonempty text without control characters.
     OperationBusinessDecisionPayload:
       type: object
       additionalProperties: false
@@ -32578,6 +32624,7 @@ components:
         next_cursor: {type: string, description: Opaque continuation bound to the same account, customer, app, environment, reference or Operation, and feed role.}
         next_workflow_state_cursor: {type: string, description: 'Independent continuation for workflow_state_history, bound to the same run and ownership filters.'}
     OperationWorkflowOutcomeEntry:
+      description: "One retained terminal workflow instance with its explicitly reported business result and ownership context."
       type: object
       additionalProperties: false
       required: [app_id, scope, subject, operation_id, state ]
@@ -32589,6 +32636,7 @@ components:
         operation_id: {type: string, format: uuid, description: Operation that published the current state report.}
         state: {$ref: '#/components/schemas/OperationWorkflowState'}
     OperationWorkflowOutcomesResponse:
+      description: "Paginated collection of matching terminal workflow outcomes evaluated at a shared time."
       type: object
       additionalProperties: false
       required: [items, evaluated_at]
@@ -32597,6 +32645,7 @@ components:
         evaluated_at: {type: string, format: date-time}
         next_cursor: {type: string, maxLength: 512}
     OperationWorkflowOutcomeGroup:
+      description: "Count of terminal workflow instances matching one outcome aggregation value."
       type: object
       additionalProperties: false
       required: [value, workflow_count]
@@ -32604,6 +32653,7 @@ components:
         value: {type: string}
         workflow_count: {type: integer, format: int64, minimum: 0}
     OperationWorkflowOutcomeSummary:
+      description: "Total matching terminal instances and a bounded page of outcome aggregation groups."
       type: object
       additionalProperties: false
       required: [group_by, evaluated_at, workflow_count, groups]
@@ -32614,6 +32664,7 @@ components:
         groups: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationWorkflowOutcomeGroup'}}
         next_cursor: {type: string, maxLength: 512}
     OperationWorkflowAttentionEntry:
+      description: "One active workflow instance requiring attention, including its reasons and unresolved prerequisites."
       type: object
       additionalProperties: false
       required: [app_id, scope, subject, operation_id, state, reasons]
@@ -32621,12 +32672,13 @@ components:
         dependency_attention: {type: array, maxItems: 16, description: Unresolved direct references on an active source. These entries carry dependency and status; target state is available in the workflow instance detail., items: {$ref: '#/components/schemas/OperationWorkflowRelatedInstance'}}
         app_id: {type: string, format: uuid}
         scope: {type: string}
-        platform_tenant_id: {type: string, format: uuid, description: Present only in account-operator responses.}
+        platform_tenant_id: {type: string, format: uuid, description: "For this attention entry, present only in account-operator responses."}
         subject: {$ref: '#/components/schemas/OperationSubject'}
-        operation_id: {type: string, format: uuid, description: Operation that published the current state report.}
+        operation_id: {type: string, format: uuid, description: "For this attention entry, operation that published the current state report."}
         state: {$ref: '#/components/schemas/OperationWorkflowState'}
         reasons: {type: array, minItems: 1, maxItems: 4, uniqueItems: true, items: {type: string, enum: [blocked, stale, overdue, dependency]}}
     OperationWorkflowAttentionStats:
+      description: "Aggregate counts and age measurements for workflows, blockers, deadlines, and unresolved dependencies."
       type: object
       additionalProperties: false
       required: [dependency_workflow_count, dependency_count, overdue_workflow_count, workflow_count, blocked_workflow_count, stale_workflow_count, blocker_count, unknown_age_blockers]
@@ -32644,6 +32696,7 @@ components:
         oldest_blocker_at: {type: string, format: date-time}
         oldest_blocker_age_seconds: {type: integer, format: int64, minimum: 0}
     OperationWorkflowAttentionGroup:
+      description: "Attention statistics for one value of the selected grouping dimension."
       type: object
       additionalProperties: false
       required: [value, stats]
@@ -32651,6 +32704,7 @@ components:
         value: {type: string}
         stats: {$ref: '#/components/schemas/OperationWorkflowAttentionStats'}
     OperationWorkflowAttentionSummary:
+      description: "Attention totals across all matches and a paginated collection of grouped statistics."
       type: object
       additionalProperties: false
       required: [group_by, evaluated_at, totals, groups]
@@ -32661,6 +32715,7 @@ components:
         groups: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/OperationWorkflowAttentionGroup'}}
         next_cursor: {type: string, maxLength: 512}
     OperationWorkflowAttentionResponse:
+      description: "Bounded attention queue with a stable evaluation time and filter-bound continuation."
       type: object
       additionalProperties: false
       required: [items, evaluated_at]
@@ -32822,6 +32877,7 @@ components:
         tenant_id; account requires tenant_id and omits app_id. Operation optionally filters
         candidate edges. Revision/version expectations are evaluated per candidate.
     OperationWorkflowActionPreviewResponse:
+      description: "Observed current-state action candidates and their readiness without planned transaction evidence."
       type: object
       additionalProperties: false
       required:
@@ -32876,6 +32932,7 @@ components:
           description: The 100-action cap was reached. Filter by operation to narrow the
             preview; this endpoint has no cursor.
     OperationWorkflowReadinessRequest:
+      description: "Proposed workflow edge and evidence plan to evaluate against retained reports without executing it."
       type: object
       additionalProperties: false
       required: [scope, subject, workflow, instance_id, operation, from_state, to_state]
@@ -32883,8 +32940,8 @@ components:
         effects: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowPlannedEffect'}}
         invariants: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowPlannedInvariant'}}
         decisions: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowPlannedDecision'}}
-        app_id: {type: string, format: uuid, description: Required in customer-self mode only.}
-        tenant_id: {type: string, format: uuid, description: Required in account mode only.}
+        app_id: {type: string, format: uuid, description: "For this proposed transition, required in customer-self mode only."}
+        tenant_id: {type: string, format: uuid, description: "For this proposed transition, required in account mode only."}
         scope: {type: string, minLength: 1, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
         subject: {$ref: '#/components/schemas/OperationSubject'}
         workflow: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]*$'}
@@ -32893,8 +32950,8 @@ components:
         from_state: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
         to_state: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
         milestones: {type: array, maxItems: 16, uniqueItems: true, description: Planned milestone names for this transition; retained historical facts are not evidence for the new transaction., items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}}
-        state_revision: {type: integer, format: int64, minimum: 1, maximum: 9007199254740991, description: Optional expected retained source revision.}
-        contract_version: {type: integer, minimum: 1, maximum: 1000000, description: Optional expected selected contract version.}
+        state_revision: {type: integer, format: int64, minimum: 1, maximum: 9007199254740991, description: "For this proposed transition, optional expected retained source revision."}
+        contract_version: {type: integer, minimum: 1, maximum: 1000000, description: "For this proposed transition, optional expected selected contract version."}
     OperationWorkflowTransitionReadiness:
       type: object
       additionalProperties: false
@@ -32917,6 +32974,7 @@ components:
         unmet_dependencies: {type: array, maxItems: 16, description: Unmet reference/status pairs; inspect full related states through the workflow detail., items: {$ref: '#/components/schemas/OperationWorkflowRelatedInstance'}}
         missing_milestones: {type: array, maxItems: 16, uniqueItems: true, items: {type: string}}
     OperationWorkflowReadinessResponse:
+      description: "Readiness evaluation for the selected business subject and workflow instance at the reported time."
       type: object
       additionalProperties: false
       required: [subject, workflow, instance_id, evaluated_at, readiness]
@@ -32964,7 +33022,7 @@ components:
       properties:
         required_effects: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowEffectRequirement'}}
         required_invariants: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowInvariantRequirement'}}
-        required_dependency_workflows: {type: array, maxItems: 16, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]{0,62}$'}, description: 'Omitted means all reported dependencies; an empty array means none. Named workflows require at least one reported link and every matching link must meet its outcome requirement.'}
+        required_dependency_workflows: {type: array, maxItems: 16, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z][a-z0-9-]{0,62}$'}, description: 'For this selected contract edge, omitted means all reported dependencies; an empty array means none. Named workflows require at least one reported link and every matching link must meet its outcome requirement.'}
         required_policies: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowPolicyRequirement'}}
         from: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
         to: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
@@ -32974,7 +33032,7 @@ components:
           maxItems: 16
           uniqueItems: true
           items: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$'}
-          description: Milestone names that must be committed in the same application transaction as this transition.
+          description: For this selected contract edge, milestone names that must be committed in the same application transaction as this transition.
     OperationWorkflowInstanceStep:
       description: One declared step with both current-page facts and a retention-wide summary for the selected contract version. Retention fields include all matching facts still retained under the normal Operation retention rules.
       type: object
@@ -32994,6 +33052,7 @@ components:
         milestones_in_retention: {type: integer, format: int64, minimum: 0, description: Number of matching facts for the selected contract version that remain under normal Operation retention.}
         latest_retained_milestone: {$ref: '#/components/schemas/OperationWorkflowInstanceMilestoneRef', description: Latest matching fact for the selected contract version by platform publication time across all currently retained facts.}
     OperationWorkflowInstanceMilestoneRef:
+      description: "Identity and occurrence and publication times of a milestone observed for a declared workflow step."
       type: object
       additionalProperties: false
       required: [id, operation_id, occurred_at, published_at]
@@ -33056,16 +33115,16 @@ components:
       additionalProperties: false
       required: [id, operation_id, workflow, instance_id, state, revision, contract_version]
       properties:
-        depends_on: {type: array, maxItems: 16, description: Full replacement snapshot of direct prerequisite references., items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
-        dependencies_only: {type: boolean, description: Same-state metadata update mutually exclusive with other metadata-only flags.}
-        outcome_code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: Explicit application-defined business result for a declared terminal state.}
-        outcome_description: {type: string, minLength: 1, maxLength: 512, description: Public UTF-8 description limited to 512 bytes without control characters. Required when outcome_code is supplied.}
-        outcome_only: {type: boolean, description: "Same-state terminal outcome report. Requires from_state equal to state and no milestone evidence. Mutually exclusive with deadline_only and blockers_only. SDKs preserve current blockers and deadline."}
-        deadline_at: {type: string, format: date-time, description: "Optional application-reported due time. Omitted or empty in a report clears the deadline. Transactional SDKs inherit it from their counter unless explicitly updated."}
-        deadline_only: {type: boolean, description: "Same-state deadline snapshot update. Requires from_state equal to state and no milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers."}
+        depends_on: {type: array, maxItems: 16, description: "In the accepted report acknowledgement, full replacement snapshot of direct prerequisite references.", items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
+        dependencies_only: {type: boolean, description: "In the accepted report acknowledgement, same-state metadata update mutually exclusive with other metadata-only flags."}
+        outcome_code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: "In the accepted report acknowledgement, explicit application-defined business result for a declared terminal state."}
+        outcome_description: {type: string, minLength: 1, maxLength: 512, description: "In the accepted report acknowledgement, public UTF-8 description limited to 512 bytes without control characters. Required when outcome_code is supplied."}
+        outcome_only: {type: boolean, description: "In the accepted report acknowledgement, same-state terminal outcome report. Requires from_state equal to state and no milestone evidence. Mutually exclusive with deadline_only and blockers_only. SDKs preserve current blockers and deadline."}
+        deadline_at: {type: string, format: date-time, description: "In the accepted report acknowledgement, optional application-reported due time. Omitted or empty in a report clears the deadline. Transactional SDKs inherit it from their counter unless explicitly updated."}
+        deadline_only: {type: boolean, description: "In the accepted report acknowledgement, same-state deadline snapshot update. Requires from_state equal to state and no milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers."}
         blocker_resolutions: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowBlockerResolution'}}
         blockers: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowBlocker'}}
-        blockers_only: {type: boolean, description: Same-state blocker replacement. Requires from_state equal to state and no milestone evidence; not a business transition.}
+        blockers_only: {type: boolean, description: "In the accepted report acknowledgement, same-state blocker replacement. Requires from_state equal to state and no milestone evidence; not a business transition."}
         id: {type: string, format: uuid}
         operation_id: {type: string, format: uuid}
         workflow: {type: string}
@@ -33084,20 +33143,20 @@ components:
       additionalProperties: false
       required: [workflow, instance_id, state, terminal, stale, overdue, occurred_at, revision, contract_version, updated_at]
       properties:
-        depends_on: {type: array, maxItems: 16, description: Full replacement snapshot of direct prerequisite references., items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
-        dependencies_only: {type: boolean, description: Same-state metadata update mutually exclusive with other metadata-only flags.}
-        outcome_code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: Explicit application-defined business result for a declared terminal state.}
-        outcome_description: {type: string, minLength: 1, maxLength: 512, description: Public UTF-8 description limited to 512 bytes without control characters. Required when outcome_code is supplied.}
-        outcome_only: {type: boolean, description: "Same-state terminal outcome report. Requires from_state equal to state and no milestone evidence. Mutually exclusive with deadline_only and blockers_only. SDKs preserve current blockers and deadline."}
+        depends_on: {type: array, maxItems: 16, description: "In the latest retained state, full replacement snapshot of direct prerequisite references.", items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
+        dependencies_only: {type: boolean, description: "In the latest retained state, same-state metadata update mutually exclusive with other metadata-only flags."}
+        outcome_code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: "In the latest retained state, explicit application-defined business result for a declared terminal state."}
+        outcome_description: {type: string, minLength: 1, maxLength: 512, description: "In the latest retained state, public UTF-8 description limited to 512 bytes without control characters. Required when outcome_code is supplied."}
+        outcome_only: {type: boolean, description: "In the latest retained state, same-state terminal outcome report. Requires from_state equal to state and no milestone evidence. Mutually exclusive with deadline_only and blockers_only. SDKs preserve current blockers and deadline."}
         overdue: {type: boolean, description: True for an active workflow at or after its application-reported deadline.}
         overdue_seconds: {type: integer, format: int64, minimum: 0, description: Whole elapsed seconds since the missed due time.}
-        deadline_at: {type: string, format: date-time, description: "Optional application-reported due time. Omitted or empty in a report clears the deadline. Transactional SDKs inherit it from their counter unless explicitly updated."}
-        deadline_only: {type: boolean, description: "Same-state deadline snapshot update. Requires from_state equal to state and no milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers."}
+        deadline_at: {type: string, format: date-time, description: "In the latest retained state, optional application-reported due time. Omitted or empty in a report clears the deadline. Transactional SDKs inherit it from their counter unless explicitly updated."}
+        deadline_only: {type: boolean, description: "In the latest retained state, same-state deadline snapshot update. Requires from_state equal to state and no milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers."}
         blocker_resolutions: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowBlockerResolution'}}
         report_id: {type: string, format: uuid, description: Identity of the latest reported snapshot.}
         operation_id: {type: string, format: uuid, description: Operation that published the latest snapshot.}
         blockers: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowBlocker'}}
-        blockers_only: {type: boolean, description: Same-state blocker replacement. Requires from_state equal to state and no milestone evidence; not a business transition.}
+        blockers_only: {type: boolean, description: "In the latest retained state, same-state blocker replacement. Requires from_state equal to state and no milestone evidence; not a business transition."}
         workflow: {type: string}
         instance_id: {type: string}
         state: {type: string}
@@ -33119,16 +33178,16 @@ components:
       required: [id, operation_id, workflow, instance_id, state, revision, contract_version, occurred_at, published_at]
       description: One retained app-reported state update. Pages are ordered by revision, then stable publication and report identifiers.
       properties:
-        depends_on: {type: array, maxItems: 16, description: Full replacement snapshot of direct prerequisite references., items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
-        dependencies_only: {type: boolean, description: Same-state metadata update mutually exclusive with other metadata-only flags.}
-        outcome_code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: Explicit application-defined business result for a declared terminal state.}
-        outcome_description: {type: string, minLength: 1, maxLength: 512, description: Public UTF-8 description limited to 512 bytes without control characters. Required when outcome_code is supplied.}
-        outcome_only: {type: boolean, description: "Same-state terminal outcome report. Requires from_state equal to state and no milestone evidence. Mutually exclusive with deadline_only and blockers_only. SDKs preserve current blockers and deadline."}
-        deadline_at: {type: string, format: date-time, description: "Optional application-reported due time. Omitted or empty in a report clears the deadline. Transactional SDKs inherit it from their counter unless explicitly updated."}
-        deadline_only: {type: boolean, description: "Same-state deadline snapshot update. Requires from_state equal to state and no milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers."}
+        depends_on: {type: array, maxItems: 16, description: "At this retained historical revision, full replacement snapshot of direct prerequisite references.", items: {$ref: '#/components/schemas/OperationWorkflowDependency'}}
+        dependencies_only: {type: boolean, description: "At this retained historical revision, same-state metadata update mutually exclusive with other metadata-only flags."}
+        outcome_code: {type: string, minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9-]*$', description: "At this retained historical revision, explicit application-defined business result for a declared terminal state."}
+        outcome_description: {type: string, minLength: 1, maxLength: 512, description: "At this retained historical revision, public UTF-8 description limited to 512 bytes without control characters. Required when outcome_code is supplied."}
+        outcome_only: {type: boolean, description: "At this retained historical revision, same-state terminal outcome report. Requires from_state equal to state and no milestone evidence. Mutually exclusive with deadline_only and blockers_only. SDKs preserve current blockers and deadline."}
+        deadline_at: {type: string, format: date-time, description: "At this retained historical revision, optional application-reported due time. Omitted or empty in a report clears the deadline. Transactional SDKs inherit it from their counter unless explicitly updated."}
+        deadline_only: {type: boolean, description: "At this retained historical revision, same-state deadline snapshot update. Requires from_state equal to state and no milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers."}
         blocker_resolutions: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowBlockerResolution'}}
         blockers: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/OperationWorkflowBlocker'}}
-        blockers_only: {type: boolean, description: Same-state blocker replacement. Requires from_state equal to state and no milestone evidence; not a business transition.}
+        blockers_only: {type: boolean, description: "At this retained historical revision, same-state blocker replacement. Requires from_state equal to state and no milestone evidence; not a business transition."}
         id: {type: string, format: uuid}
         operation_id: {type: string, format: uuid}
         workflow: {type: string}

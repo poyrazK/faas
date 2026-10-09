@@ -19,6 +19,8 @@ T = TypeVar("T", bound="OperationBusinessCompensationPayload")
 
 @_attrs_define
 class OperationBusinessCompensationPayload:
+    """Typed milestone envelope for an application-reported compensation linked to its original effect."""
+
     kind: OperationBusinessCompensationPayloadKind
     compensation: OperationBusinessCompensation
     """Application-reported compensation workflow observation. Confirmed status requires a nonempty reference. Text

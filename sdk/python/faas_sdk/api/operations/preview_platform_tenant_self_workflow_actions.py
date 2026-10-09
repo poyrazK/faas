@@ -80,11 +80,11 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: PreviewPlatformTenantSelfWorkflowActionsBody,
 ) -> Response[OperationWorkflowActionPreviewResponse | Problem]:
-    """Preview business workflow actions
+    """Customer action preview — Preview business workflow actions
 
-     Read-only candidates from the retained current state, evaluated with an empty evidence plan. Does
-    not execute, authorize, reserve, or mutate an action. At most 100 actions; optional operation
-    filter. Application must recheck locked rows and readiness before writing.
+     Customer action preview — Read-only candidates from the retained current state, evaluated with an
+    empty evidence plan. Does not execute, authorize, reserve, or mutate an action. At most 100 actions;
+    optional operation filter. Application must recheck locked rows and readiness before writing.
 
     Args:
         body (PreviewPlatformTenantSelfWorkflowActionsBody):
@@ -113,11 +113,11 @@ def sync(
     client: AuthenticatedClient | Client,
     body: PreviewPlatformTenantSelfWorkflowActionsBody,
 ) -> OperationWorkflowActionPreviewResponse | Problem | None:
-    """Preview business workflow actions
+    """Customer action preview — Preview business workflow actions
 
-     Read-only candidates from the retained current state, evaluated with an empty evidence plan. Does
-    not execute, authorize, reserve, or mutate an action. At most 100 actions; optional operation
-    filter. Application must recheck locked rows and readiness before writing.
+     Customer action preview — Read-only candidates from the retained current state, evaluated with an
+    empty evidence plan. Does not execute, authorize, reserve, or mutate an action. At most 100 actions;
+    optional operation filter. Application must recheck locked rows and readiness before writing.
 
     Args:
         body (PreviewPlatformTenantSelfWorkflowActionsBody):
@@ -141,11 +141,11 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: PreviewPlatformTenantSelfWorkflowActionsBody,
 ) -> Response[OperationWorkflowActionPreviewResponse | Problem]:
-    """Preview business workflow actions
+    """Customer action preview — Preview business workflow actions
 
-     Read-only candidates from the retained current state, evaluated with an empty evidence plan. Does
-    not execute, authorize, reserve, or mutate an action. At most 100 actions; optional operation
-    filter. Application must recheck locked rows and readiness before writing.
+     Customer action preview — Read-only candidates from the retained current state, evaluated with an
+    empty evidence plan. Does not execute, authorize, reserve, or mutate an action. At most 100 actions;
+    optional operation filter. Application must recheck locked rows and readiness before writing.
 
     Args:
         body (PreviewPlatformTenantSelfWorkflowActionsBody):
@@ -172,11 +172,11 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: PreviewPlatformTenantSelfWorkflowActionsBody,
 ) -> OperationWorkflowActionPreviewResponse | Problem | None:
-    """Preview business workflow actions
+    """Customer action preview — Preview business workflow actions
 
-     Read-only candidates from the retained current state, evaluated with an empty evidence plan. Does
-    not execute, authorize, reserve, or mutate an action. At most 100 actions; optional operation
-    filter. Application must recheck locked rows and readiness before writing.
+     Customer action preview — Read-only candidates from the retained current state, evaluated with an
+    empty evidence plan. Does not execute, authorize, reserve, or mutate an action. At most 100 actions;
+    optional operation filter. Application must recheck locked rows and readiness before writing.
 
     Args:
         body (PreviewPlatformTenantSelfWorkflowActionsBody):

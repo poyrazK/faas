@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
 import type { OperationWorkflowState } from './OperationWorkflowState.js';
+/**
+ * One retained terminal workflow instance with its explicitly reported business result and ownership context.
+ */
 export type OperationWorkflowOutcomeEntry = {
   app_id: string;
   scope: string;

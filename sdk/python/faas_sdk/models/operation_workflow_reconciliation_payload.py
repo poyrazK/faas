@@ -26,6 +26,8 @@ class OperationWorkflowReconciliationPayload:
 
     kind: OperationWorkflowReconciliationPayloadKind
     reconciliation: OperationWorkflowReconciliation
+    """Application comparison of authoritative business state and revision against the retained workflow
+    projection."""
 
     def to_dict(self) -> dict[str, Any]:
         kind: str = self.kind

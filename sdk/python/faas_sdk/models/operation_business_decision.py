@@ -10,15 +10,17 @@ T = TypeVar("T", bound="OperationBusinessDecision")
 
 @_attrs_define
 class OperationBusinessDecision:
+    """Application-reported business decision with a public explanation and optional exact policy rule identity."""
+
     workflow: str
     instance_id: str
     """UTF-8 byte limit; nonempty text without control characters."""
     code: str
     description: str
-    """UTF-8 byte limit; nonempty text without control characters."""
+    """Public decision explanation; UTF-8 byte limit; nonempty text without control characters."""
     rule_id: str
     rule_version: str
-    """UTF-8 byte limit; nonempty text without control characters."""
+    """Exact policy rule version; UTF-8 byte limit; nonempty text without control characters."""
 
     def to_dict(self) -> dict[str, Any]:
         workflow = self.workflow
