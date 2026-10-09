@@ -4056,8 +4056,9 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "completion",
 		DocSlug: "completion",
-		Short:   "Print a shell completion script (bash|zsh|fish|powershell)",
+		Short:   "Generate shell completion scripts or install them interactively",
 		Subcommands: []cliSub{
+			{Name: "install", Short: "Choose a shell, review files, and confirm completion setup", Examples: []string{"gregale completion install --interactive"}, Flags: []cliFlag{{Name: "interactive", Short: "guide shell completion installation", Bool: true, Req: true}}},
 			{Name: "bash", Short: "Print the bash completion script"},
 			{Name: "zsh", Short: "Print the zsh completion script"},
 			{Name: "fish", Short: "Print the fish completion script"},

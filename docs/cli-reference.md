@@ -109,7 +109,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`upload-cache`](#upload-cache) | Inspect or clean resumable source-upload recovery state |
 | [`webhooks`](#webhooks) | Manage app and account release webhooks (webhooks account &lt;verb&gt;) |
 | [`whoami`](#whoami) | Show the authenticated account |
-| [`completion`](#completion) | Print a shell completion script (bash\|zsh\|fish\|powershell) |
+| [`completion`](#completion) | Generate shell completion scripts or install them interactively |
 | [`man`](#man) | Print the gregale(1) man page (or gregale-&lt;command&gt;(1) with one arg) |
 
 ## mcp
@@ -9897,9 +9897,25 @@ Show the authenticated account
 
 ## completion
 
-Print a shell completion script (bash|zsh|fish|powershell)
+Generate shell completion scripts or install them interactively
 
 `gregale completion [<subcommand>]`
+
+### completion install
+
+Choose a shell, review files, and confirm completion setup
+
+`gregale completion install --interactive`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--interactive` | guide shell completion installation | required |
+
+Examples:
+
+```sh
+gregale completion install --interactive
+```
 
 ### completion bash
 

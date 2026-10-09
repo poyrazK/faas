@@ -255,6 +255,30 @@ The guide requires an interactive terminal. For scripts or JSON output, use
 `gregale deployment summary ID --app APP --json`. The history picker reads
 release data and does not submit a rollback.
 
+## Install shell completion
+
+```sh
+gregale completion install --interactive
+```
+
+Choose Bash, Zsh, Fish, or PowerShell. The default choice is inferred from
+`SHELL` or the platform; you can select a different shell. Review the completion
+script and startup file paths, then confirm installation. Bash defaults to
+`.bashrc` (`.bash_profile` on macOS); Zsh respects `ZDOTDIR`; Fish uses its
+user completion directory under `XDG_CONFIG_HOME` or `~/.config`. For PowerShell,
+run `$PROFILE` in the host you use and enter that absolute path when prompted.
+You can choose a different startup file for Bash and Zsh too.
+
+The installer writes a generated completion script and a managed startup block
+for shells that require it. Existing startup content is preserved and backed up
+before changes. Reinstalling replaces the managed block without adding another
+copy. Existing completion scripts without Gregale's installer marker are left
+for manual setup. Open a new shell session to activate completion, and keep
+`gregale` on `PATH`. Rerun installation after upgrading to refresh the script.
+
+The installer requires an interactive terminal. Manual setup remains available
+through `gregale completion bash`, `zsh`, `fish`, and `powershell`.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
