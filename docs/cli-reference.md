@@ -1939,6 +1939,27 @@ Inspect recovery notification capture and receiver acknowledgements
 
 `gregale events recovery-notifications <job-id>`
 
+### events notification-retry-plan
+
+Preview explicit notification retries across up to ten app jobs and save a plan
+
+`gregale events notification-retry-plan [--file <PATH>] [--output <NEW_PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | Selection JSON with app_id and stable per-job requests |  |
+| `--output <NEW_PATH>` | Create a new private plan file; never overwrite |  |
+
+### events notification-retry-apply
+
+Apply a prepared plan and emit a JSON decision receipt
+
+`gregale events notification-retry-apply [--file <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | Prepared plan; preserve request IDs when resuming |  |
+
 ### events notification-retry-backlog
 
 Inspect notification retry requests across retained app recovery jobs

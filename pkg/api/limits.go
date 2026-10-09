@@ -9449,3 +9449,9 @@ const (
 	EventRecoveryNotificationRetryBacklogJobsDefault = 5
 	EventRecoveryNotificationRetryBacklogJobsMax     = 10
 )
+
+// CLI selected notification retry workflow bounds.
+const (
+	EventRecoveryNotificationRetryBatchJobsMax      = 10
+	EventRecoveryNotificationRetryBatchBodyMaxBytes = 1 << 20
+)

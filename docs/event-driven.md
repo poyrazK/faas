@@ -2898,3 +2898,39 @@ To inspect or prepare a retry after finding a request:
 gregale events recovery-notification-retry-history JOB_ID --request-id REQUEST_ID --json
 gregale events recovery-notification-retry-preview JOB_ID --json
 ```
+
+### Selected notification retries across recovery jobs
+
+Use the app retry backlog to identify requests, then inspect each job's retry preview to select exact receivers. Create a selection file with canonical nonzero UUIDs and stable request IDs:
+
+```json
+{
+  "version": 1,
+  "app_id": "11111111-1111-4111-8111-111111111111",
+  "jobs": [{
+    "job_id": "22222222-2222-4222-8222-222222222222",
+    "request": {
+      "request_id": "33333333-3333-4333-8333-333333333333",
+      "targets": [{
+        "kind": "execution",
+        "webhook_id": "44444444-4444-4444-8444-444444444444",
+        "delivery_id": "55555555-5555-4555-8555-555555555555",
+        "expected_replay_generation": 0
+      }]
+    }
+  }]
+}
+```
+
+```sh
+gregale events notification-retry-plan --file selection.json --output plan.json
+gregale events notification-retry-apply --file plan.json > receipt.json
+```
+
+Preview writes a new private plan file (never overwrites) and prints JSON containing exact selections, eligibility reasons and observed evidence. Up to ten distinct jobs and 100 explicit receivers per job are supported; selection/plan files are limited to 1 MiB. Every job must belong to the supplied app. No receiver is selected automatically.
+
+Review the plan before applying it. Preview is advisory: eligibility can change, and the server decides each target using its original generation guard. Application preflights all job/app identities before submitting requests sequentially. Each job commits separately; the batch is not atomic. Application always prints a JSON receipt, including without `--json`. `decided` contains original queued/skipped server decisions; queued does not mean delivered.
+
+Exit 2 means a response needs reconciliation; interruption returns 130. The receipt distinguishes `needs_reconciliation` from subsequent `not_attempted` jobs and includes a history command. Any POST error is treated conservatively as uncertain. Preserve the plan even if receipt output fails. Read saved request history or reapply the **same plan** to obtain the original decisions through idempotency; do not change request IDs or generation guards to resolve uncertainty. Pruned receipts cannot prove a request never executed. Use the existing per-request history wait command to observe delivery outcomes after queuing.
+
+These commands compose existing SDK preview, retry and history methods; no additional server or SDK API is required.
