@@ -46,8 +46,17 @@ func (e *Engine) CaptureCrash(ctx context.Context, capture state.CrashCapture) (
 	now := time.Now().UTC()
 	return state.CompleteCrashCaptureParams{
 		ID: capture.ID, StorageKey: memKey, VMStateStorageKey: vmstateKey, FCVersion: e.fcVer,
-		MemBytes: bytes.MemBytes, CapturedAt: now, ExpiresAt: now.Add(api.CrashCaptureRetention),
+		MemBytes: bytes.MemBytes, CapturedAt: now, ExpiresAt: now.Add(crashCaptureRetention(capture.Trigger)),
 	}, nil
+}
+
+// crashCaptureRetention keeps a live fork's capture only as long as a fork
+// can live, and a crash snapshot for its full retention.
+func crashCaptureRetention(trigger string) time.Duration {
+	if trigger == state.CrashTriggerLiveFork {
+		return api.LiveForkCaptureRetention
+	}
+	return api.CrashCaptureRetention
 }
 
 // CrashCaptureRuntime is the engine surface the crash capture coordinator

@@ -41,7 +41,13 @@ func (m *MemStore) CreateAppFork(_ context.Context, params CreateAppForkParams) 
 	if !ok || app.AccountID != p.AccountID || app.Status == AppDeleted {
 		return AppFork{}, ErrAppForkDeploymentUnavailable
 	}
-	if p.CrashCaptureID != "" {
+	if p.Live {
+		capture, ok := m.requestLiveForkCaptureLocked(app, p.LiveCaptureCooldown, p.CreatedAt)
+		if !ok {
+			return AppFork{}, ErrAppForkLiveCaptureRefused
+		}
+		p.DeploymentID, p.CrashCaptureID = capture.DeploymentID, capture.ID
+	} else if p.CrashCaptureID != "" {
 		deploymentID, ok := m.forkTargetForCaptureLocked(p)
 		if !ok {
 			return AppFork{}, ErrAppForkDeploymentUnavailable

@@ -25,6 +25,10 @@ export type AppForkResponse = {
    * The live deployment pinned when the fork was requested.
    */
   deployment_id: string;
+  /**
+   * The capture the fork restores, for a crash snapshot fork or a live fork.
+   */
+  crash_capture_id?: string;
   status: 'queued' | 'restoring' | 'running' | 'expired' | 'cancelled' | 'failed';
   ttl_seconds: number;
   /**

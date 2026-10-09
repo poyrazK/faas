@@ -1,7 +1,8 @@
 # Production forks
 
 A fork is a private copy of your running app, restored from its newest
-snapshot, that you can send requests to while you debug. It holds the same
+snapshot (or, for a [live fork](#live-forks), from a capture of a running
+instance taken when you ask), that you can send requests to while you debug. It holds the same
 in-memory state the snapshot captured, but it never serves your production
 traffic, cannot reach the network, and is destroyed when its time is up.
 
@@ -33,6 +34,30 @@ The fork starts `queued`, moves to `restoring`, then `running`. It ends as
 | `account_inactive` | The account is suspended. |
 | `deployment_unavailable` | The deployment the fork pinned is gone. |
 | `scheduler_lost` | The scheduler restoring the fork stopped before it finished. |
+
+## Live forks {#live-forks}
+
+A normal fork restores the deployment's last snapshot, which can be older
+than the state you want to look at. A live fork captures your app's newest
+running instance when you create it and restores that:
+
+```sh
+curl -X POST -H "Authorization: Bearer $GREGALE_TOKEN" \
+  "https://api.gregale.dev/v1/apps/my-api/forks" \
+  -d '{"live": true}'
+```
+
+- The capture pauses that instance briefly (typically under a second per
+  512 MB of RAM); it then keeps serving.
+- The fork stays `queued` until the capture is taken, usually a few
+  seconds. Its `crash_capture_id` names the capture, which also shows up in
+  the app's crash snapshots with trigger `live_fork`.
+- It is refused with `409 live_fork_refused` when no instance is running, a
+  capture is already in progress, or one was taken in the last minute.
+- The capture is encrypted at rest like a crash snapshot and deleted about
+  four hours later, after any fork of it has ended.
+- Live forks need the platform's crash snapshot captures; where those are
+  off, the request answers `501 live_forks_not_enabled`.
 
 ## Send requests to a fork {#access}
 

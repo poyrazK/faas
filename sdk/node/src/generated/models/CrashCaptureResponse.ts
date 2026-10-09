@@ -15,10 +15,11 @@ export type CrashCaptureResponse = {
   /**
    * `http_5xx` after a 5xx response, `manual` from this API, `sdk` from the
    * app itself through the guest metadata endpoint
-   * (`POST http://169.254.169.254/v1/crash-snapshots:capture`).
+   * (`POST http://169.254.169.254/v1/crash-snapshots:capture`), `live_fork`
+   * for the capture a live fork took (kept only as long as a fork can live).
    *
    */
-  trigger: 'http_5xx' | 'manual' | 'sdk';
+  trigger: 'http_5xx' | 'manual' | 'sdk' | 'live_fork';
   status_code?: number;
   /**
    * Request path of the failing request (http_5xx

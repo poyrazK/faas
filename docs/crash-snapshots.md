@@ -87,7 +87,8 @@ curl -H "Authorization: Bearer $GREGALE_TOKEN" \
 ```
 
 Each entry shows the trigger (`http_5xx` with the status code and path,
-`sdk` with your `reason` and `route`, or `manual`), its status (`requested`, `capturing`, `ready`, `failed`,
+`sdk` with your `reason` and `route`, `manual`, or `live_fork` for the
+capture a [live fork](forks.md#live-forks) took), its status (`requested`, `capturing`, `ready`, `failed`,
 `expired`), and when it expires. Open a `ready` one as a fork:
 
 ```sh

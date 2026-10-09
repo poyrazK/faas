@@ -421,14 +421,50 @@ func (m *MemStore) FinishCrashCaptureStage(_ context.Context, id string, now tim
 		func(c *CrashCapture) { c.PlaintextState = CrashPlaintextStaged })
 }
 
-// crashCaptureClaimableLocked mirrors ClaimNextAppFork's ADR-733 gate: a
-// fork pinned to a ready capture waits until its plaintext is readable.
+// crashCaptureClaimableLocked mirrors ClaimNextAppFork's gate: a fork
+// pinned to a capture waits until it is taken (live forks) and its
+// plaintext is readable; a failed or expired capture is claimable so the
+// restore fails fast.
 func (m *MemStore) crashCaptureClaimableLocked(f AppFork) bool {
 	if f.CrashCaptureID == nil {
 		return true
 	}
 	c, ok := m.crashCaptures[*f.CrashCaptureID]
-	return ok && (c.Status != CrashCaptureReady || c.PlaintextReadable())
+	if !ok {
+		return false
+	}
+	switch c.Status {
+	case CrashCaptureFailed, CrashCaptureExpired:
+		return true
+	case CrashCaptureReady:
+		return c.PlaintextReadable()
+	default:
+		return false
+	}
+}
+
+// requestLiveForkCaptureLocked mirrors RequestLiveForkCapture: the app's
+// newest running non-fork instance, with the in-flight and cooldown rules
+// but no crash snapshot opt-in.
+func (m *MemStore) requestLiveForkCaptureLocked(app App, cooldown time.Duration, now time.Time) (CrashCapture, bool) {
+	m.ensureCrashLocked()
+	if m.crashCaptureBlockedLocked(app.ID, cooldown, now) {
+		return CrashCapture{}, false
+	}
+	var newest Instance
+	found := false
+	for _, ins := range m.instances {
+		if ins.AppID != app.ID || ins.State != string(StateRunning) || IsFork(ins.Mode) {
+			continue
+		}
+		if !found || ins.StartedAt.After(newest.StartedAt) {
+			newest, found = ins, true
+		}
+	}
+	if !found {
+		return CrashCapture{}, false
+	}
+	return m.insertCrashCaptureLocked(app, newest, CrashTriggerLiveFork, nil, "", now), true
 }
 
 func (m *MemStore) LiveCrashCaptureDeploymentIDs(_ context.Context) ([]string, error) {
