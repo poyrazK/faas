@@ -3022,6 +3022,19 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 
 	usesSnapshots := instanceModeUsesSnapshots(mode)
 
+	// The backoff gate is a pure read keyed by deployment; overlap it with the
+	// runtime-values load. Its result is ignored when secrets disable snapshots.
+	type backoffRead struct {
+		dep    state.Deployment
+		active bool
+		err    error
+	}
+	backoffCh := make(chan backoffRead, 1)
+	go func() {
+		d, active, err := e.store.DeploymentSnapshotBackoffActive(ctx, dep.ID)
+		backoffCh <- backoffRead{d, active, err}
+	}()
+
 	// The snapshot policy and boot payload use the same owned value snapshot.
 	// A separate secret-policy read could allow restore and subsequently load
 	// an ephemeral secret into an older persistent capture.
@@ -3049,8 +3062,9 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	var backoff state.Deployment
 	var backoffActive bool
 	if !secretPolicyBlocksSnapshots {
-		var backoffErr error
-		backoff, backoffActive, backoffErr = e.store.DeploymentSnapshotBackoffActive(ctx, dep.ID)
+		got := <-backoffCh
+		backoff, backoffActive = got.dep, got.active
+		backoffErr := got.err
 		if backoffErr != nil {
 			e.log.Warn("wake: snapshot backoff gate lookup failed; proceeding without gate", "deployment_id", dep.ID, "err", backoffErr)
 		} else if backoffActive && !bypassGates && usesSnapshots {
@@ -4588,9 +4602,17 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 	// One pass over the fleet — use fresh vmmd capacity where available, and
 	// resolve all misses through one bulk store aggregate (Tier A1). The
 	// ledger's per-node UsedVCPU remains an independent local reservation view.
+	// The RAM and CPU aggregates are independent reads; overlap their round
+	// trips on the wake path.
+	var usedCPUMillicores map[string]int64
+	cpuDone := make(chan struct{})
+	go func() {
+		defer close(cpuDone)
+		usedCPUMillicores = e.nodeCPUUsageForNodes(ctx, nodes)
+	}()
 	usedMB := e.nodeUsageForNodes(ctx, nodes)
+	<-cpuDone
 	usedVCPU := make(map[string]int64, len(nodes))
-	usedCPUMillicores := e.nodeCPUUsageForNodes(ctx, nodes)
 	for _, n := range nodes {
 		// Tier A2: per-node vCPU is ledger-authoritative. The chooser
 		// uses this to enforce compute_nodes.vcpu_budget per node;
