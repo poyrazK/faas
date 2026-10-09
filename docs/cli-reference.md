@@ -1939,6 +1939,24 @@ Inspect recovery notification capture and receiver acknowledgements
 
 `gregale events recovery-notifications <job-id>`
 
+### events notification-retry-reconcile
+
+Read saved plan decisions and original-generation delivery outcomes
+
+`gregale events notification-retry-reconcile [--file <PATH>] [--wait] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | Prepared retry plan JSON |  |
+| `--wait` | Wait while all unresolved outcomes are pending |  |
+| `--timeout <DURATION>` | Overall wait deadline (default 5m); requires --wait |  |
+
+Examples:
+
+```sh
+gregale events notification-retry-reconcile --file plan.json --wait --timeout 5m
+```
+
 ### events notification-retry-plan
 
 Preview explicit notification retries across up to ten app jobs and save a plan

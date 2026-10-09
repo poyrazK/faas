@@ -2934,3 +2934,18 @@ Review the plan before applying it. Preview is advisory: eligibility can change,
 Exit 2 means a response needs reconciliation; interruption returns 130. The receipt distinguishes `needs_reconciliation` from subsequent `not_attempted` jobs and includes a history command. Any POST error is treated conservatively as uncertain. Preserve the plan even if receipt output fails. Read saved request history or reapply the **same plan** to obtain the original decisions through idempotency; do not change request IDs or generation guards to resolve uncertainty. Pruned receipts cannot prove a request never executed. Use the existing per-request history wait command to observe delivery outcomes after queuing.
 
 These commands compose existing SDK preview, retry and history methods; no additional server or SDK API is required.
+
+### Reconcile a saved notification retry plan
+
+```sh
+gregale events notification-retry-reconcile --file plan.json > reconciliation.json
+gregale events notification-retry-reconcile --file plan.json --wait --timeout 5m > reconciliation.json
+```
+
+Reconciliation reads each plan request's saved decision and original-generation delivery outcomes. It never submits retries or changes the plan. The command validates the full selected intent and pins each accepted decision while polling. A later retry generation's delivery status cannot establish success for the original generation.
+
+The final JSON receipt contains every job's decision state, outcome status, counts and last valid observation. `missing` means a 404: the decision is not retained or unavailable, so execution remains unknown. Other read errors and changed identity/intent are reported separately. Last observations survive subsequent errors; `observation_current` identifies evidence accepted in the latest round. Aggregate counts include only current validated observations, excluding unobserved requests. Reads are sequential live observations, not an atomic batch snapshot.
+
+Without `--wait`, read once. With `--wait`, poll every five seconds while the aggregate is pending, within an overall deadline (default five minutes) and five-second per-read deadlines. Stop on read errors, known failure, missing or unknown evidence, or all-skipped inconclusive requests. Every job remains visible even if another job determines the aggregate status. Queued decisions alone do not mean delivery succeeded.
+
+Exit codes: 0 for succeeded, 1 for failed/error, 2 for pending/inconclusive, 3 for timeout, and 130 for interruption. The receipt is always JSON, including without `--json`. Retained evidence is not extended; a missing request must not trigger an automatic replacement retry.
