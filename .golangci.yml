@@ -243,7 +243,7 @@ linters:
     rules:
       # Retain established forwarding-header behavior during this release.
       # Director-to-Rewrite migration requires its own proxy contract review.
-      - path: '^(cmd/bridged/main\.go|cmd/gatewayd-internal/(dev_bridge|realtimed_proxy)\.go|pkg/gateway/handler\.go)$'
+      - path: '^(cmd/bridged/main\.go|cmd/gregale/scenario_runner\.go|pkg/devbridge/local\.go|cmd/gatewayd-internal/(dev_bridge|realtimed_proxy)\.go|pkg/gateway/handler\.go)$'
         linters:
           - staticcheck
         text: 'SA1019:.*Director.*deprecated'
@@ -251,10 +251,10 @@ linters:
       # Go 1.26's http.ClientConn lacks Ping and Server lacks ServeConn.
       # Preserve those protocol contracts with the security-patched x/net.
       # This exception covers only these deprecated symbols in their adapters.
-      - path: '^(cmd/vmmd-stream-bridge/(guest_transport_pool|h2c_terminator)\.go|pkg/devbridge/(local|relay)\.go|pkg/gateway/ingress/(guard|transport)\.go|pkg/vmmdgrpc/(forward|stream_bridge_manager)\.go)$'
+      - path: '^(cmd/vmmd-stream-bridge/(guest_transport_pool|h2c_terminator)\.go|pkg/devbridge/(local|relay)\.go|pkg/gateway/(ingress/(guard|transport)|internal_proxy)\.go|pkg/vmmdgrpc/(forward|stream_bridge_manager)\.go)$'
         linters:
           - staticcheck
-        text: 'SA1019:.*(http2\.(Transport|ClientConn)|NewClientConn|CloseIdleConnections|ServeConn|AllowHTTP|MaxHeaderListSize).*deprecated'
+        text: 'SA1019:.*(http2\.(Transport|ClientConn|Server)|RoundTrip|NewClientConn|CloseIdleConnections|ServeConn|AllowHTTP|MaxHeaderListSize).*deprecated'
       - path: "_test\\.go$"
         linters:
           - errcheck  # `defer x.Close()` is acceptable idiom in tests
