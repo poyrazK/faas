@@ -18,6 +18,7 @@ import type { EventRecoveryHistory } from '../models/EventRecoveryHistory.js';
 import type { EventRecoveryItems } from '../models/EventRecoveryItems.js';
 import type { EventRecoveryJob } from '../models/EventRecoveryJob.js';
 import type { EventRecoveryJobs } from '../models/EventRecoveryJobs.js';
+import type { EventRecoveryNotificationRetryBacklog } from '../models/EventRecoveryNotificationRetryBacklog.js';
 import type { EventRecoveryNotificationRetryDecisionDetail } from '../models/EventRecoveryNotificationRetryDecisionDetail.js';
 import type { EventRecoveryNotificationRetryHistory } from '../models/EventRecoveryNotificationRetryHistory.js';
 import type { EventRecoveryNotificationRetryPreview } from '../models/EventRecoveryNotificationRetryPreview.js';
@@ -1676,6 +1677,57 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         504: `Resume one event consumer with controlled draining: subscription control request timed out.`,
+      },
+    });
+  }
+  /**
+   * Inspect app-wide recovery notification retry backlog.
+   * Requires apps:read or admin and MFA. Reads original-generation retry outcomes across a bounded page of owned retained recovery jobs containing saved retry requests. Defaults to failed, pending, and inconclusive requests. Totals cover every request in scanned jobs before status filtering and are explicitly job-page scoped. Empty filtered pages may still have a next cursor. Each page is a fresh read-only snapshot; refresh from the beginning to see newer jobs or updated previously scanned jobs.
+   * @returns EventRecoveryNotificationRetryBacklog Original-generation retry requests and explicitly page-scoped counts.
+   * @throws ApiError
+   */
+  public static listEventRecoveryNotificationRetryBacklog({
+    slug,
+    status = 'failed,pending,inconclusive',
+    pageSize = 5,
+    cursor,
+  }: {
+    /**
+     * Owned app slug whose retained recovery retry requests are inspected.
+     */
+    slug: string,
+    /**
+     * Distinct comma-separated request statuses selected as a union. Omission selects failed, pending, and inconclusive. Include succeeded explicitly to inspect successful requests.
+     */
+    status?: string,
+    /**
+     * Number of retained recovery jobs with saved retry requests inspected per page; this limits jobs rather than request rows.
+     */
+    pageSize?: number,
+    /**
+     * Opaque continuation bound to account, app, and canonical status selection. Continue even when a filtered page has no request rows.
+     */
+    cursor?: string,
+  }): CancelablePromise<EventRecoveryNotificationRetryBacklog> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-recoveries/notification-retry-backlog',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'status': status,
+        'page_size': pageSize,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `Invalid retry backlog query or cursor.`,
+        401: `Authentication required for the app retry backlog.`,
+        403: `Read scope or MFA required for the app retry backlog.`,
+        404: `App retry backlog not found or not owned.`,
+        429: `App retry backlog request rate exceeded.`,
+        500: `App retry backlog could not be read.`,
+        504: `App retry backlog evidence deadline expired.`,
       },
     });
   }

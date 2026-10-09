@@ -645,6 +645,7 @@ type Querier interface {
 	EventRecoveryNotificationJob(ctx context.Context, db DBTX, jobID pgtype.UUID) (pgtype.UUID, error)
 	EventRecoveryNotificationOutbox(ctx context.Context, db DBTX, arg EventRecoveryNotificationOutboxParams) ([]EventRecoveryNotificationOutboxRow, error)
 	EventRecoveryNotificationReceivers(ctx context.Context, db DBTX, arg EventRecoveryNotificationReceiversParams) ([]pgtype.UUID, error)
+	EventRecoveryNotificationRetryBacklogJobs(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryBacklogJobsParams) ([]EventRecoveryNotificationRetryBacklogJobsRow, error)
 	EventRecoveryNotificationRetryDeliveryLock(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryDeliveryLockParams) (EventRecoveryNotificationRetryDeliveryLockRow, error)
 	EventRecoveryNotificationRetryGenerationOutcome(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryGenerationOutcomeParams) (EventRecoveryNotificationRetryGenerationOutcomeRow, error)
 	EventRecoveryNotificationRetryHistoryOutcomes(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryHistoryOutcomesParams) ([]EventRecoveryNotificationRetryHistoryOutcomesRow, error)

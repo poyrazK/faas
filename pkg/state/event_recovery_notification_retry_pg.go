@@ -168,7 +168,15 @@ func (s *PgStore) GetEventRecoveryNotificationRetryHistory(ctx context.Context, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	owner, err := q.EventRecoveryNotificationRetryHistoryOwner(ctx, tx, sqlc.EventRecoveryNotificationRetryHistoryOwnerParams{JobID: mustPgUUID(id), AccountID: mustPgUUID(account)})
+	out, err = getEventRecoveryNotificationRetryHistory(ctx, q, tx, account, id, now)
+	if err != nil {
+		return out, err
+	}
+	return out, tx.Commit(ctx)
+}
+func getEventRecoveryNotificationRetryHistory(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, account, id string, now time.Time) (api.EventRecoveryNotificationRetryHistory, error) {
+	var out api.EventRecoveryNotificationRetryHistory
+	owner, err := q.EventRecoveryNotificationRetryHistoryOwner(ctx, db, sqlc.EventRecoveryNotificationRetryHistoryOwnerParams{JobID: mustPgUUID(id), AccountID: mustPgUUID(account)})
 	if err != nil {
 		return out, mapErr(err)
 	}
@@ -181,7 +189,7 @@ func (s *PgStore) GetEventRecoveryNotificationRetryHistory(ctx context.Context, 
 		return out, err
 	}
 	if len(out.Decisions) > 0 {
-		report, err := getEventRecoveryNotifications(ctx, q, tx, account, id, now)
+		report, err := getEventRecoveryNotifications(ctx, q, db, account, id, now)
 		if err != nil {
 			return out, err
 		}
@@ -189,7 +197,7 @@ func (s *PgStore) GetEventRecoveryNotificationRetryHistory(ctx context.Context, 
 		if err != nil {
 			return out, err
 		}
-		if err := recoveryNotificationRetryHistoryOutcomes(ctx, q, tx, account, report, details); err != nil {
+		if err := recoveryNotificationRetryHistoryOutcomes(ctx, q, db, account, report, details); err != nil {
 			return out, err
 		}
 		for i := range details {
@@ -197,7 +205,7 @@ func (s *PgStore) GetEventRecoveryNotificationRetryHistory(ctx context.Context, 
 		}
 	}
 	out.ApplyStatusFilter(nil)
-	return out, tx.Commit(ctx)
+	return out, nil
 }
 func (s *PgStore) GetEventRecoveryNotificationRetryDecision(ctx context.Context, account, id, requestID string, now time.Time) (api.EventRecoveryNotificationRetryDecisionDetail, error) {
 	ctx, cancel := context.WithTimeout(ctx, api.EventRecoveryRequestTimeout)

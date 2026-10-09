@@ -1939,6 +1939,24 @@ Inspect recovery notification capture and receiver acknowledgements
 
 `gregale events recovery-notifications <job-id>`
 
+### events notification-retry-backlog
+
+Inspect notification retry requests across retained app recovery jobs
+
+`gregale events notification-retry-backlog [--status <STATUS,...>] [--page-size <N>] [--cursor <CURSOR>] <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--status <STATUS,...>` | Request statuses (default failed,pending,inconclusive) |  |
+| `--page-size <N>` | Jobs inspected per page (1..10; default 5) |  |
+| `--cursor <CURSOR>` | Continue to the next job page |  |
+
+Examples:
+
+```sh
+gregale events notification-retry-backlog my-app --status failed,pending,inconclusive --json
+```
+
 ### events recovery-notification-retry-history
 
 Inspect saved retry decisions and current delivery status

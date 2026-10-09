@@ -141,11 +141,14 @@ func (m *MemStore) GetEventRecoveryNotificationRetryHistory(ctx context.Context,
 	if err != nil {
 		return out, err
 	}
+	return m.getEventRecoveryNotificationRetryHistoryLocked(ctx, account, entry, now)
+}
+func (m *MemStore) getEventRecoveryNotificationRetryHistoryLocked(ctx context.Context, account string, entry *memEventRecoveryJob, now time.Time) (api.EventRecoveryNotificationRetryHistory, error) {
 	receipts := map[string]json.RawMessage{}
 	for key, raw := range entry.NotificationRetryReceipts {
 		receipts[key] = json.RawMessage(raw)
 	}
-	out, err = recoveryNotificationRetryHistory(entry.Job.ID, entry.Job.AppID, now, receipts)
+	out, err := recoveryNotificationRetryHistory(entry.Job.ID, entry.Job.AppID, now, receipts)
 	if err != nil {
 		return out, err
 	}

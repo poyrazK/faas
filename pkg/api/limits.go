@@ -9443,3 +9443,9 @@ const (
 	EventRecoveryNotificationRetryWaitTimeout      = 5 * time.Minute
 	EventRecoveryNotificationRetryWaitPollInterval = 5 * time.Second
 )
+
+// Bounded job pages for app-wide notification retry evidence (ADR-844).
+const (
+	EventRecoveryNotificationRetryBacklogJobsDefault = 5
+	EventRecoveryNotificationRetryBacklogJobsMax     = 10
+)

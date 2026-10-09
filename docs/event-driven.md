@@ -2876,3 +2876,25 @@ The history list accepts an optional `status` query parameter with distinct comm
 `matched_count` is the number of returned rows. `totals` always covers the full retained history before filtering and contains `request_count`, request counts by status, and `incomplete_evidence_count`. Status counts sum to `request_count`; incomplete evidence can overlap failed, pending, or inconclusive statuses. A no-match response contains an empty `decisions` array while retaining full totals. Counts and statuses share `observed_at`, use originally queued generations, and do not change stored decisions or retention.
 
 Go callers can pass `api.EventRecoveryNotificationRetryHistoryQuery{Status: "failed,inconclusive"}` as the optional third argument to `ListEventRecoveryNotificationRetryHistory`. Existing two-argument calls remain valid; an empty options status omits filtering. Node/Python SDK list methods expose the optional status parameter.
+
+### App-wide notification retry backlog
+
+```bash
+gregale events notification-retry-backlog my-app \
+  --status failed,pending,inconclusive --page-size 5 --json
+```
+
+GET `/v1/apps/{slug}/event-recoveries/notification-retry-backlog` discovers saved retry requests across retained recovery jobs for the owned app. Statuses default to `failed,pending,inconclusive`; an explicit distinct union can also include `succeeded`. Go uses `ListEventRecoveryNotificationRetryBacklog(ctx, app, query)`; Node/Python expose the equivalent generated method.
+
+`page_size` (CLI `--page-size`) limits inspected **jobs**, default five and maximum ten. Jobs without saved retry requests are excluded. Ordering is newest job creation time first, then job ID descending; request summaries within each job retain decision-time ordering. A page can contain up to 1,000 request summaries. Each row includes `job_id`, `job_created_at`, `summary`, `detail_path`, and `retry_preview_path`.
+
+`counts_scope` is always `job_page`. `totals` counts all requests in the scanned jobs before filtering; `matched_count` counts returned rows and `jobs_scanned` counts inspected jobs. These are page counts, not whole-app totals. Empty filtered pages may still have `next_cursor`: pass it as `cursor` (CLI `--cursor`) to continue. The cursor is bound to the account, app, endpoint, and canonical status selection; retain the same filter when continuing.
+
+Every page is a fresh read-only snapshot with its own `observed_at`. Restart without a cursor to discover newer jobs or updated outcomes in previously scanned jobs. Concurrent writes and retention pruning mean summing page totals does not establish a frozen app-wide total. Original queued generations and missing-evidence behavior match job history; reads never retry deliveries.
+
+To inspect or prepare a retry after finding a request:
+
+```bash
+gregale events recovery-notification-retry-history JOB_ID --request-id REQUEST_ID --json
+gregale events recovery-notification-retry-preview JOB_ID --json
+```

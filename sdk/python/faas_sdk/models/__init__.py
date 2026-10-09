@@ -1054,6 +1054,10 @@ from .event_recovery_notification_job_health_kind import EventRecoveryNotificati
 from .event_recovery_notification_kind import EventRecoveryNotificationKind
 from .event_recovery_notification_receiver import EventRecoveryNotificationReceiver
 from .event_recovery_notification_receiver_status import EventRecoveryNotificationReceiverStatus
+from .event_recovery_notification_retry_backlog import EventRecoveryNotificationRetryBacklog
+from .event_recovery_notification_retry_backlog_counts_scope import EventRecoveryNotificationRetryBacklogCountsScope
+from .event_recovery_notification_retry_backlog_request import EventRecoveryNotificationRetryBacklogRequest
+from .event_recovery_notification_retry_backlog_totals import EventRecoveryNotificationRetryBacklogTotals
 from .event_recovery_notification_retry_candidate import EventRecoveryNotificationRetryCandidate
 from .event_recovery_notification_retry_candidate_kind import EventRecoveryNotificationRetryCandidateKind
 from .event_recovery_notification_retry_decision import EventRecoveryNotificationRetryDecision
@@ -4110,6 +4114,10 @@ __all__ = (
     "EventRecoveryNotificationKind",
     "EventRecoveryNotificationReceiver",
     "EventRecoveryNotificationReceiverStatus",
+    "EventRecoveryNotificationRetryBacklog",
+    "EventRecoveryNotificationRetryBacklogCountsScope",
+    "EventRecoveryNotificationRetryBacklogRequest",
+    "EventRecoveryNotificationRetryBacklogTotals",
     "EventRecoveryNotificationRetryCandidate",
     "EventRecoveryNotificationRetryCandidateKind",
     "EventRecoveryNotificationRetryDecision",

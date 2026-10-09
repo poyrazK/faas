@@ -1291,6 +1291,55 @@ func (q *Queries) EventRecoveryNotificationReceivers(ctx context.Context, db DBT
 	return items, nil
 }
 
+const eventRecoveryNotificationRetryBacklogJobs = `-- name: EventRecoveryNotificationRetryBacklogJobs :many
+SELECT id,created_at FROM event_recovery_jobs
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND notification_retry_receipts <> '{}'::jsonb
+ AND (NOT $3::boolean OR (created_at,id)<($4::timestamptz,$5::uuid))
+ORDER BY created_at DESC,id DESC LIMIT $6::integer
+`
+
+type EventRecoveryNotificationRetryBacklogJobsParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	HasCursor     bool
+	CursorCreated pgtype.Timestamptz
+	CursorID      pgtype.UUID
+	PageLimit     int32
+}
+
+type EventRecoveryNotificationRetryBacklogJobsRow struct {
+	ID        pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) EventRecoveryNotificationRetryBacklogJobs(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryBacklogJobsParams) ([]EventRecoveryNotificationRetryBacklogJobsRow, error) {
+	rows, err := db.Query(ctx, eventRecoveryNotificationRetryBacklogJobs,
+		arg.AccountID,
+		arg.AppID,
+		arg.HasCursor,
+		arg.CursorCreated,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventRecoveryNotificationRetryBacklogJobsRow{}
+	for rows.Next() {
+		var i EventRecoveryNotificationRetryBacklogJobsRow
+		if err := rows.Scan(&i.ID, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const eventRecoveryNotificationRetryDeliveryLock = `-- name: EventRecoveryNotificationRetryDeliveryLock :one
 SELECT status,replay_generation FROM app_webhook_deliveries
 WHERE id=$1::uuid AND webhook_id=$2::uuid AND account_id=$3::uuid AND app_id=$4::uuid AND event=$5::text AND source_event_id=$6::uuid FOR UPDATE

@@ -27124,6 +27124,78 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-recoveries/notification-retry-backlog:
+    get:
+      tags: [events]
+      operationId: listEventRecoveryNotificationRetryBacklog
+      summary: Inspect app-wide recovery notification retry backlog.
+      description: Requires apps:read or admin and MFA. Reads original-generation retry outcomes across a bounded page of owned retained recovery jobs containing saved retry requests. Defaults to failed, pending, and inconclusive requests. Totals cover every request in scanned jobs before status filtering and are explicitly job-page scoped. Empty filtered pages may still have a next cursor. Each page is a fresh read-only snapshot; refresh from the beginning to see newer jobs or updated previously scanned jobs.
+      security: [{ bearerAuth: [] }]
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Owned app slug whose retained recovery retry requests are inspected.
+        schema: { type: string }
+      - name: status
+        in: query
+        required: false
+        description: Distinct comma-separated request statuses selected as a union. Omission selects failed, pending, and inconclusive. Include succeeded explicitly to inspect successful requests.
+        schema:
+          type: string
+          default: failed,pending,inconclusive
+          pattern: '^(succeeded|failed|pending|inconclusive)(,(succeeded|failed|pending|inconclusive))*$'
+      - name: page_size
+        in: query
+        required: false
+        description: Number of retained recovery jobs with saved retry requests inspected per page; this limits jobs rather than request rows.
+        schema: { type: integer, minimum: 1, maximum: 10, default: 5 }
+      - name: cursor
+        in: query
+        required: false
+        description: Opaque continuation bound to account, app, and canonical status selection. Continue even when a filtered page has no request rows.
+        schema: { type: string, maxLength: 4096 }
+      responses:
+        '200':
+          description: Original-generation retry requests and explicitly page-scoped counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecoveryNotificationRetryBacklog' }
+        '400':
+          description: Invalid retry backlog query or cursor.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401':
+          description: Authentication required for the app retry backlog.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403':
+          description: Read scope or MFA required for the app retry backlog.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: App retry backlog not found or not owned.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: App retry backlog request rate exceeded.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '500':
+          description: App retry backlog could not be read.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: App retry backlog evidence deadline expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/event-recoveries/health:
     get:
       tags: [events]
@@ -47795,6 +47867,43 @@ components:
           format: date-time
           description: Latest terminal attempt finish time, present only when every queued target has a retained terminal outcome and at least one target was queued.
 
+    EventRecoveryNotificationRetryBacklog:
+      type: object
+      description: App-wide notification retry evidence from a bounded job page. Counts cover scanned jobs before filtering and never imply whole-app totals across unseen pages.
+      required: [app_id, observed_at, jobs_scanned, counts_scope, totals, matched_count, requests]
+      properties:
+        app_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        jobs_scanned: { type: integer, minimum: 0, maximum: 10 }
+        counts_scope: { type: string, enum: [job_page] }
+        totals: { $ref: '#/components/schemas/EventRecoveryNotificationRetryBacklogTotals' }
+        matched_count: { type: integer, minimum: 0, maximum: 1000 }
+        next_cursor: { type: string }
+        requests:
+          type: array
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/EventRecoveryNotificationRetryBacklogRequest' }
+    EventRecoveryNotificationRetryBacklogTotals:
+      type: object
+      description: Counts of every saved retry request in the inspected app job page before filtering. Request statuses partition request_count and incomplete evidence overlaps those statuses.
+      required: [request_count, succeeded_count, failed_count, pending_count, inconclusive_count, incomplete_evidence_count]
+      properties:
+        request_count: { type: integer, minimum: 0, maximum: 1000 }
+        succeeded_count: { type: integer, minimum: 0, maximum: 1000 }
+        failed_count: { type: integer, minimum: 0, maximum: 1000 }
+        pending_count: { type: integer, minimum: 0, maximum: 1000 }
+        inconclusive_count: { type: integer, minimum: 0, maximum: 1000 }
+        incomplete_evidence_count: { type: integer, minimum: 0, maximum: 1000 }
+    EventRecoveryNotificationRetryBacklogRequest:
+      type: object
+      description: One saved retry request found in an owned retained app recovery job, with original-generation outcome summary and metadata-only inspection paths.
+      required: [job_id, job_created_at, summary, detail_path, retry_preview_path]
+      properties:
+        job_id: { type: string, format: uuid }
+        job_created_at: { type: string, format: date-time }
+        summary: { $ref: '#/components/schemas/EventRecoveryNotificationRetryDecisionSummary' }
+        detail_path: { type: string }
+        retry_preview_path: { type: string }
     EventRecoveryNotificationRetryHistoryTotals:
       type: object
       description: Counts of all retained retry requests in the owned job before status filtering, observed at the enclosing history timestamp. Request status counts sum to request_count; evidence gaps are counted separately.

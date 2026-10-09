@@ -847,3 +847,14 @@ pending, and inconclusive. The response includes `matched_count` and `totals`;
 totals count all retained requests before filtering, including a separate count
 of requests with incomplete evidence. No matches returns an empty list and
 preserves full totals. Request detail and waiting do not accept this filter.
+
+### App-wide recovery notification retry backlog
+
+Use the notification retry backlog list method to discover original-generation
+retry outcomes across retained recovery jobs for an app. Default statuses are
+failed, pending, and inconclusive; an explicit status union can include succeeded.
+`page_size` counts inspected jobs (default 5, maximum 10), not request rows.
+Totals have `counts_scope: job_page` and cover scanned jobs before filtering.
+Continue with `next_cursor` even when `requests` is empty, retaining the same
+status selection. Each page is a fresh read-only snapshot. Returned detail and
+retry-preview paths use existing recovery inspection endpoints.

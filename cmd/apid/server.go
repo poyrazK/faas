@@ -2344,6 +2344,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventConsumerExecutionHealth))))
 	mux.HandleFunc("POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pause", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.pauseEventSubscription))))
 	mux.HandleFunc("POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.resumeEventSubscription))))
+	mux.HandleFunc("GET /v1/apps/{slug}/event-recoveries/notification-retry-backlog", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventRecoveryNotificationRetryBacklog))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-recoveries/health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventRecoveryHealth))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-recoveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventRecoveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/event-recoveries/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewEventRecovery))))

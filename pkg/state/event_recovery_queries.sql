@@ -478,3 +478,10 @@ JOIN app_webhook_deliveries d ON d.id=t.delivery_id AND d.webhook_id=t.webhook_i
  AND d.account_id=sqlc.arg(account_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
 LEFT JOIN app_webhook_delivery_attempts a ON a.delivery_id=d.id AND a.replay_generation=t.generation
 GROUP BY t.delivery_id,t.generation;
+
+-- name: EventRecoveryNotificationRetryBacklogJobs :many
+SELECT id,created_at FROM event_recovery_jobs
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND notification_retry_receipts <> '{}'::jsonb
+ AND (NOT sqlc.arg(has_cursor)::boolean OR (created_at,id)<(sqlc.arg(cursor_created)::timestamptz,sqlc.arg(cursor_id)::uuid))
+ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(page_limit)::integer;
