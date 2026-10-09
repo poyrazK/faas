@@ -1,4 +1,4 @@
-# ADR-830: Event retention health and expiry warnings
+# ADR-912: Event retention health and expiry warnings
 
 Date: 2026-10-09
 Status: Accepted

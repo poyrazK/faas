@@ -1,4 +1,4 @@
-# ADR-849: Read-only application publication content verification
+# ADR-931: Read-only application publication content verification
 
 Date: 2026-10-09
 Status: Accepted

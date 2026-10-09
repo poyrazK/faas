@@ -1,4 +1,4 @@
-# ADR-837: Recovery notification delivery health and alerts
+# ADR-919: Recovery notification delivery health and alerts
 
 Date: 2026-10-09
 Status: Accepted
@@ -21,4 +21,4 @@ Add eight app-scoped webhook alert metrics under `event_recovery_notification_{a
 
 The CLI and generated SDKs expose the same evidence and completeness flags. Operators can open the existing notification report for receiver details and independently retry dead deliveries. Missing or pruned delivery evidence can block recovery evaluation until a complete observation is available. No rule is created automatically.
 
-Apply migration `20261009144740163_event_recovery_notification_health.sql` before deploying API or alert-evaluator binaries. It expands alert constraints and adds a terminal-job lookup index. Before downgrade, roll back binaries and remove all eight new metric rules; the down migration refuses to silently discard them.
+Apply migration `20261009225025229_event_recovery_notification_health.sql` before deploying API or alert-evaluator binaries. It expands alert constraints and adds a terminal-job lookup index. Before downgrade, roll back binaries and remove all eight new metric rules; the down migration refuses to silently discard them.

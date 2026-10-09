@@ -1,4 +1,4 @@
-# ADR-845: Selected notification retry plans
+# ADR-927: Selected notification retry plans
 
 Date: 2026-10-09
 Status: Accepted

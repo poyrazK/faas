@@ -1,4 +1,4 @@
-# ADR-841: Wait for recovery notification retries
+# ADR-923: Wait for recovery notification retries
 
 Date: 2026-10-09
 Status: Accepted

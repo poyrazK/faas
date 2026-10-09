@@ -9438,14 +9438,14 @@ const (
 	EventConsumerExecutionInvocationsMax = 5000
 )
 
-// Event publication batches bound synchronous acceptance work (ADR-829).
+// Event publication batches bound synchronous acceptance work (ADR-911).
 const (
 	EventPublishBatchMaxEvents          = 100
 	EventPublishBatchBodyMaxBytes int64 = 1 << 20
 	EventPublishBatchTimeout            = 30 * time.Second
 )
 
-// Retention observations are bounded read-only snapshots (ADR-830).
+// Retention observations are bounded read-only snapshots (ADR-912).
 const (
 	EventRetentionDefaultWindow  = 24 * time.Hour
 	EventRetentionMaxWindow      = 30 * 24 * time.Hour
@@ -9479,13 +9479,13 @@ const (
 	EventRecoveryNotificationRetryBodyMaxBytes = 64 << 10
 )
 
-// CLI polling for the immutable requested notification retry generations (ADR-841).
+// CLI polling for the immutable requested notification retry generations (ADR-923).
 const (
 	EventRecoveryNotificationRetryWaitTimeout      = 5 * time.Minute
 	EventRecoveryNotificationRetryWaitPollInterval = 5 * time.Second
 )
 
-// Bounded job pages for app-wide notification retry evidence (ADR-844).
+// Bounded job pages for app-wide notification retry evidence (ADR-926).
 const (
 	EventRecoveryNotificationRetryBacklogJobsDefault = 5
 	EventRecoveryNotificationRetryBacklogJobsMax     = 10

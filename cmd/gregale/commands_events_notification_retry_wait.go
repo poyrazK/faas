@@ -105,27 +105,29 @@ func notificationRetryWaitState(detail api.EventRecoveryNotificationRetryDecisio
 	return counts, "succeeded", ""
 }
 
-func notificationRetryWaitStopped(ctx context.Context, receipt *notificationRetryWaitReceipt) {
-	if ctx.Err() == context.DeadlineExceeded {
+func notificationRetryWaitStopped(ctx context.Context, receipt *notificationRetryWaitReceipt) bool {
+	switch ctx.Err() {
+	case nil:
+		return false
+	case context.DeadlineExceeded:
 		receipt.Status, receipt.Reason = "timed_out", "wait_deadline_exceeded"
-	} else {
+	default:
 		receipt.Status, receipt.Reason = "cancelled", "interrupted"
 	}
+	return true
 }
 
 func waitRecoveryNotificationRetry(ctx context.Context, client notificationRetryDecisionClient, job, request string) (notificationRetryWaitReceipt, error) {
 	receipt := notificationRetryWaitReceipt{JobID: job, RequestID: request}
 	var pin *api.EventRecoveryNotificationRetryDecisionDetail
 	for {
-		if ctx.Err() != nil {
-			notificationRetryWaitStopped(ctx, &receipt)
+		if notificationRetryWaitStopped(ctx, &receipt) {
 			return receipt, nil
 		}
 		readCtx, cancel := context.WithTimeout(ctx, api.EventRecoveryRequestTimeout)
 		got, err := client.GetEventRecoveryNotificationRetryDecision(readCtx, job, request)
 		cancel()
-		if ctx.Err() != nil {
-			notificationRetryWaitStopped(ctx, &receipt)
+		if notificationRetryWaitStopped(ctx, &receipt) {
 			return receipt, nil
 		}
 		if err != nil {
@@ -159,7 +161,7 @@ func waitRecoveryNotificationRetry(ctx context.Context, client notificationRetry
 	}
 }
 
-func cmdWaitRecoveryNotificationRetry(client notificationRetryDecisionClient, job, request string, timeout time.Duration) int {
+func cmdEventsRecoveryNotificationRetryWait(client notificationRetryDecisionClient, job, request string, timeout time.Duration) int {
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	ctx, cancel := context.WithTimeout(signalCtx, timeout)

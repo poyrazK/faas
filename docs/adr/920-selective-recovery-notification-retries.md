@@ -1,4 +1,4 @@
-# ADR-838: Selective recovery notification retries
+# ADR-920: Selective recovery notification retries
 
 Date: 2026-10-09
 Status: Accepted
@@ -21,4 +21,4 @@ Store at most 100 request receipts in a checked JSON object on the job. Receipts
 
 The CLI accepts an explicit JSON request file so a lost response can be recovered using the same file. Go, Node, and Python expose typed preview and retry methods. Queued means delivery pending, not receiver acknowledgement. Existing at-least-once and consumer deduplication requirements apply; stable delivery and source-event IDs are preserved.
 
-Apply migration `20261009152823630_event_recovery_notification_retries.sql` before deploying API binaries. Operational clone metadata classifies the new column with the recovery job. Downgrade refuses to remove retained receipts; roll back binaries and wait for retained jobs with receipts to be pruned before downgrade.
+Apply migration `20261009225025256_event_recovery_notification_retries.sql` before deploying API binaries. Operational clone metadata classifies the new column with the recovery job. Downgrade refuses to remove retained receipts; roll back binaries and wait for retained jobs with receipts to be pruned before downgrade.

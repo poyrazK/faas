@@ -927,7 +927,7 @@ holds can still cause receipts to be pruned before recovery.
 
 Apply the retention-health migration before upgrading binaries. Remove the new
 alert rules and downgrade binaries before rolling it back. See
-[ADR-830](adr/830-event-retention-health.md).
+[ADR-912](adr/912-event-retention-health.md).
 
 ### Batch event publishing
 
@@ -982,7 +982,7 @@ Newly accepted items follow input acceptance order. Duplicates keep their
 original position, rejections have none, and concurrent requests may interleave.
 Execution ordering still requires opted-in keyed delivery; there is no global
 ordering guarantee. Delivery remains at least once. See
-[ADR-829](adr/829-batch-event-publication.md).
+[ADR-911](adr/911-batch-event-publication.md).
 
 Gregale identifies an event by account, source, and id. Repeating that
 identity with the same type, schema version, and JSON data is safe. Changing
@@ -2222,7 +2222,7 @@ Reads remain
 read-only repeatable-read snapshots; no polling worker or new endpoint is added.
 Downgrade binaries before migration rollback; rollback deletes saved results and
 can return observations to `unknown` when underlying history has expired. See
-[ADR-832](adr/832-durable-recovery-terminal-results.md).
+[ADR-914](adr/914-durable-recovery-terminal-results.md).
 
 ### Protect receipts during bulk recovery
 
@@ -2271,7 +2271,7 @@ this option in API binaries. Pruning now acquires the account range lock before
 taking the deletion statement's snapshot; a hold committed before pruning is
 visible to that statement. Downgrade binaries and complete or cancel protected
 active jobs before rolling back the migration. See
-[ADR-831](adr/831-recovery-receipt-retention-holds.md).
+[ADR-913](adr/913-recovery-receipt-retention-holds.md).
 
 ### Pause, resume, or slow a recovery job
 
@@ -2422,7 +2422,7 @@ cadence for these snapshot gauges. Partial counts can fire satisfied `gt`/`gte`
 thresholds, but cannot clear an alert; other partial comparisons degrade. Older
 servers lacking the section and failed reads also degrade. Configure rules using
 the existing alert tools; none are created automatically. See
-[ADR-835](adr/835-execution-recovery-health-alerts.md) for rollout and downgrade.
+[ADR-917](adr/917-execution-recovery-health-alerts.md) for rollout and downgrade.
 
 The API is `GET /v1/apps/{slug}/event-recoveries/health`, requiring apps-read/admin
 scope and MFA. SDK clients expose Go `GetEventRecoveryHealth`, Node
@@ -2599,7 +2599,7 @@ Apply the migration before API and scheduler upgrades. Update SDK consumers
 that strictly validate webhook event names to accept
 `event_recovery.execution_finished` first. Go exposes
 `EventRecoveryExecutionFinishedWebhookPayload`; Node and Python generate the
-same model. See [ADR-833](adr/833-recovery-execution-completion-notifications.md).
+same model. See [ADR-915](adr/915-recovery-execution-completion-notifications.md).
 
 ### Retry failures from one recovery job
 
@@ -2657,7 +2657,7 @@ restore ordering after newer deliveries have advanced.
 
 Apply the child-request migration before upgrading the API and scheduler. Go,
 Node and Python use their existing recovery preview/create methods with the new
-fields. See [ADR-834](adr/834-parent-scoped-execution-recovery-retries.md).
+fields. See [ADR-916](adr/916-parent-scoped-execution-recovery-retries.md).
 
 ### Inspect recovery notification delivery
 
@@ -2705,8 +2705,8 @@ The endpoint is `GET /v1/event-recoveries/{jobID}/notifications`, requiring
 apps-read/admin scope and MFA. SDKs expose Go `GetEventRecoveryNotifications`,
 Node `EventsService.getEventRecoveryNotifications`, and Python
 `faas_sdk.api.events.get_event_recovery_notifications`. Apply migration
-`20261009140935781` before API/scheduler upgrades. See
-[ADR-836](adr/836-recovery-notification-delivery-report.md) for historical evidence
+`20261009225025213` before API/scheduler upgrades. See
+[ADR-918](adr/918-recovery-notification-delivery-report.md) for historical evidence
 and downgrade limits.
 
 ### Recovery notification delivery health
@@ -2734,8 +2734,8 @@ Create rules explicitly, including no-receiver rules when receivers are expected
 These are current retained counts; rule windows do not accumulate notifications.
 Partial observations can only trigger satisfied `gt`/`gte` lower bounds and cannot
 clear alerts or send recovery notifications. Other partial comparisons degrade.
-Apply migration `20261009144740163_event_recovery_notification_health.sql` before
-API and evaluator rollout. See [ADR-837](adr/837-recovery-notification-health-alerts.md).
+Apply migration `20261009225025229_event_recovery_notification_health.sql` before
+API and evaluator rollout. See [ADR-919](adr/919-recovery-notification-health-alerts.md).
 
 ### Selectively retry recovery notification deliveries
 
@@ -2797,8 +2797,8 @@ read scope or admin and MFA; retry requires deploy write scope or admin and MFA.
 Both reject query parameters. Go methods are
 `PreviewEventRecoveryNotificationRetry` and `RetryEventRecoveryNotifications`;
 Node and Python expose the generated equivalents. The request body limit is
-64 KiB. Apply migration `20261009152823630_event_recovery_notification_retries.sql`
-before API rollout. See [ADR-838](adr/838-selective-recovery-notification-retries.md).
+64 KiB. Apply migration `20261009225025256_event_recovery_notification_retries.sql`
+before API rollout. See [ADR-920](adr/920-selective-recovery-notification-retries.md).
 
 ### Inspect saved notification retry decisions
 
@@ -2827,7 +2827,7 @@ Both require read scope or admin and MFA, reject query parameters, and return
 only metadata. History is bounded at the existing 100 decisions per retained
 job and disappears when job retention prunes that job. No migration is required.
 Go, Node, and Python expose list and detail methods. See
-[ADR-839](adr/839-recovery-notification-retry-history.md).
+[ADR-921](adr/921-recovery-notification-retry-history.md).
 
 ### Notification retry generation outcomes
 
@@ -2970,7 +2970,7 @@ After a lost response or retryable server error, preserve the application, key a
 
 Deduplication lasts while the receipt remains retained. Settled receipts become eligible for pruning after 30 days; unsettled work and retention holds can extend that period. Repeated publication does not refresh retention. After actual pruning, the same key can create a new acceptance and fanout. Renaming the producer app preserves identity, while deleting and recreating an app creates a new UUID namespace. Legacy account/source/id publication of the derived identity addresses the same event; the namespace is not an isolation boundary between authorized producers in the same account.
 
-The CLI always prints JSON. Go exposes `PublishAppEvent`; Node and Python expose the generated `publishAppEvent` / `publish_app_event` methods. No new storage migration is needed. See [ADR-847](adr/847-application-scoped-producer-key-publication.md).
+The CLI always prints JSON. Go exposes `PublishAppEvent`; Node and Python expose the generated `publishAppEvent` / `publish_app_event` methods. No new storage migration is needed. See [ADR-929](adr/929-application-scoped-producer-key-publication.md).
 
 ### Reconcile an application producer key without republishing
 
@@ -2994,7 +2994,7 @@ Neither processing nor accepted proves successful handler execution. Inspect eac
 
 Recipient pages default to 100 rows and allow up to 200. Follow `evidence.next_after` using `after`. Global routing summaries cover retained consumers beyond the returned page; execution rows cover only that page. Pages are live snapshots and cursors bind the original acceptance identity. If pruning/republication makes a cursor stale, restart observation without inferring continuity of the prior acceptance. Each request has a five-second deadline and no-store response.
 
-The CLI always prints JSON and exits 2 for unavailable, 0 for retained acceptance, and nonzero for read/validation errors. Exit 0 is not a delivery-success assertion. Go uses `GetAppEventPublishStatus`, Node `getAppEventPublishStatus`, and Python `get_app_event_publish_status`. The standalone Go SDK preserves recipient rows as `json.RawMessage`; the root Go SDK and generated SDKs use existing typed receipt models. See [ADR-848](adr/848-application-producer-key-publication-status.md).
+The CLI always prints JSON and exits 2 for unavailable, 0 for retained acceptance, and nonzero for read/validation errors. Exit 0 is not a delivery-success assertion. Go uses `GetAppEventPublishStatus`, Node `getAppEventPublishStatus`, and Python `get_app_event_publish_status`. The standalone Go SDK preserves recipient rows as `json.RawMessage`; the root Go SDK and generated SDKs use existing typed receipt models. See [ADR-930](adr/930-application-producer-key-publication-status.md).
 
 ### Verify original publication content without publishing
 
@@ -3014,7 +3014,7 @@ Verification compares normalized type, schema version and semantic JSON data usi
 
 Match and conflict both include the original retained acceptance receipt, read in the same comparison snapshot. No supplied or stored event data is returned. Other read failures remain errors, not unavailable. None of these results automatically submits an event or refreshes retention. A match does not prove handler execution or side effects; use publish-app-status and its consumer evidence separately. A reaccepted key after pruning can describe a newer acceptance, so compare known acceptance timestamps when assessing continuity.
 
-Go exposes `VerifyAppEventPublication`; Node and Python expose `verifyAppEventPublication` / `verify_app_event_publication`. The CLI always emits JSON. No migration is required. See [ADR-849](adr/849-app-publication-content-verification.md).
+Go exposes `VerifyAppEventPublication`; Node and Python expose `verifyAppEventPublication` / `verify_app_event_publication`. The CLI always emits JSON. No migration is required. See [ADR-931](adr/931-app-publication-content-verification.md).
 
 ### Pin reconciliation to a saved acceptance
 
@@ -3035,4 +3035,4 @@ When guarded, responses include the normalized expected timestamp and an indepen
 
 Content/routing `status` remains separate. A response can contain `status=match` and `acceptance=replacement_acceptance`: the content matches a newer acceptance. Returned receipt and consumer evidence describe that current acceptance and must not be used as proof of the original's outcome. Replacement returns CLI exit 3; unavailable returns 2; otherwise the existing command exits apply. Unguarded responses omit both new fields and preserve earlier behavior.
 
-Go status queries accept `ExpectedAcceptedAt`; verification methods accept one optional `AppEventAcceptanceGuard`. Node/Python methods expose `expectedAcceptedAt` / `expected_accepted_at`. The guard remains read-only, does not refresh retention, and requires a saved timestamp. It is a timestamp comparison rather than a permanent unique identity token; identical timestamp collisions cannot be distinguished. A stale recipient cursor still fails validation; restart with the saved acceptance guard to inspect the current retained record. See [ADR-850](adr/850-app-publication-acceptance-guards.md).
+Go status queries accept `ExpectedAcceptedAt`; verification methods accept one optional `AppEventAcceptanceGuard`. Node/Python methods expose `expectedAcceptedAt` / `expected_accepted_at`. The guard remains read-only, does not refresh retention, and requires a saved timestamp. It is a timestamp comparison rather than a permanent unique identity token; identical timestamp collisions cannot be distinguished. A stale recipient cursor still fails validation; restart with the saved acceptance guard to inspect the current retained record. See [ADR-932](adr/932-app-publication-acceptance-guards.md).

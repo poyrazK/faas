@@ -1,4 +1,4 @@
-# ADR-840: Recovery notification retry generation outcomes
+# ADR-922: Recovery notification retry generation outcomes
 
 Date: 2026-10-09
 Status: Accepted

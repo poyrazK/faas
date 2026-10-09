@@ -490,7 +490,7 @@ refers only to queued executions. Recovery job `execution_finished_at` is captur
 time, not webhook acknowledgement. Unknown evidence blocks capture. Only newly
 created execution jobs with queued deliveries qualify. Update strict webhook
 event-enum consumers before API rollout; existing webhook delivery retries and
-dead-letter tools apply. See [ADR-833](../../docs/adr/833-recovery-execution-completion-notifications.md).
+dead-letter tools apply. See [ADR-915](../../docs/adr/915-recovery-execution-completion-notifications.md).
 
 Existing recovery preview/create methods accept `parent_job_id` with
 `mode=execution` to select only saved failed/dead-lettered deliveries from a

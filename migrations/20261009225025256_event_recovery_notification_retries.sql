@@ -1,4 +1,4 @@
--- filename: 20261009152823630_event_recovery_notification_retries.sql
+-- filename: 20261009225025256_event_recovery_notification_retries.sql
 -- +goose Up
 ALTER TABLE event_recovery_jobs ADD COLUMN notification_retry_receipts jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE event_recovery_jobs ADD CONSTRAINT event_recovery_notification_retry_receipts_object_chk CHECK (jsonb_typeof(notification_retry_receipts)='object');

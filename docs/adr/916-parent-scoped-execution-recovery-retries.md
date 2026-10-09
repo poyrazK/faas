@@ -1,4 +1,4 @@
-# ADR-834: Parent-scoped execution recovery retries
+# ADR-916: Parent-scoped execution recovery retries
 
 Date: 2026-10-09
 Status: Accepted

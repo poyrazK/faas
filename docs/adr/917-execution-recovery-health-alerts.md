@@ -1,4 +1,4 @@
-# ADR-835: Execution recovery health and alerts
+# ADR-917: Execution recovery health and alerts
 
 Date: 2026-10-09
 Status: Accepted
@@ -51,7 +51,7 @@ No alert rule is created automatically.
 
 ## Rollout and downgrade
 
-Apply migration `20261009132756510` before API/evaluator binaries. It widens metric
+Apply migration `20261009225025192` before API/evaluator binaries. It widens metric
 and scope constraints and adds the partial index. OpenAPI, embedded schema and
 Node/Python SDK models expose the additive section; old clients can ignore it,
 and new clients support older servers omitting it. Remove new-metric alert rules

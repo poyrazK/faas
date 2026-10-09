@@ -1,4 +1,4 @@
-# ADR-843: Recovery notification retry history status filters
+# ADR-925: Recovery notification retry history status filters
 
 Date: 2026-10-09
 Status: Accepted

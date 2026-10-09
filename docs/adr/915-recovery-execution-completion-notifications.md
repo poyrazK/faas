@@ -1,4 +1,4 @@
-# ADR-833: Recovery execution completion notifications
+# ADR-915: Recovery execution completion notifications
 
 Date: 2026-10-09
 Status: Accepted
@@ -6,7 +6,7 @@ Status: Accepted
 ## Context
 
 `event_recovery.completed` reports admission completion, while queued handlers
-can remain running or fail. ADR-832 saves confirmed terminal execution results
+can remain running or fail. ADR-914 saves confirmed terminal execution results
 with their recovery items. Operators need a distinct notification when those
 results cover every queued item, without polling or treating unknown evidence
 as success.

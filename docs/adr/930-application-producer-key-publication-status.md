@@ -1,4 +1,4 @@
-# ADR-848: Application producer-key publication reconciliation
+# ADR-930: Application producer-key publication reconciliation
 
 Date: 2026-10-09
 Status: Accepted

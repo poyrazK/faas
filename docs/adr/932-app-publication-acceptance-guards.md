@@ -1,4 +1,4 @@
-# ADR-850: Acceptance guards for application publication reconciliation
+# ADR-932: Acceptance guards for application publication reconciliation
 
 Date: 2026-10-10
 Status: Accepted

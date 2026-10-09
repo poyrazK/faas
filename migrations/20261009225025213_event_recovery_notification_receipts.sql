@@ -1,4 +1,4 @@
--- filename: 20261009140935781_event_recovery_notification_receipts.sql
+-- filename: 20261009225025213_event_recovery_notification_receipts.sql
 
 -- +goose Up
 ALTER TABLE event_recovery_jobs ADD COLUMN notification_receipts jsonb NOT NULL DEFAULT '{}'::jsonb;

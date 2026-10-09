@@ -1,4 +1,4 @@
-# ADR-844: App-wide recovery notification retry backlog
+# ADR-926: App-wide recovery notification retry backlog
 
 Date: 2026-10-09
 Status: Accepted

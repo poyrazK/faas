@@ -46,7 +46,7 @@ func cmdEventsRecoveryNotificationRetryPreview(args []string) int {
 }
 func readRecoveryNotificationRetryRequest(path string) (api.EventRecoveryNotificationRetryRequest, error) {
 	var req api.EventRecoveryNotificationRetryRequest
-	f, err := os.Open(path)
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return req, err
 	}
@@ -150,7 +150,7 @@ func cmdEventsRecoveryNotificationRetryHistory(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if *wait {
-		return cmdWaitRecoveryNotificationRetry(client, positional[0], *requestID, *timeout)
+		return cmdEventsRecoveryNotificationRetryWait(client, positional[0], *requestID, *timeout)
 	}
 	if jsonOutput {
 		if *requestID != "" {

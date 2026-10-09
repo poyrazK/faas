@@ -1082,7 +1082,7 @@ refers only to queued executions. Recovery job `execution_finished_at` is captur
 time, not webhook acknowledgement. Unknown evidence blocks capture. Only newly
 created execution jobs with queued deliveries qualify. Update strict webhook
 event-enum consumers before API rollout; existing webhook delivery retries and
-dead-letter tools apply. See [ADR-833](../../docs/adr/833-recovery-execution-completion-notifications.md).
+dead-letter tools apply. See [ADR-915](../../docs/adr/915-recovery-execution-completion-notifications.md).
 
 Existing recovery preview/create methods accept `parent_job_id` with
 `mode=execution` to select only saved failed/dead-lettered deliveries from a
@@ -1096,13 +1096,13 @@ See [parent-scoped retries](../../docs/event-driven.md#retry-failures-from-one-r
 `EventsService.getEventRecoveryHealth` includes optional execution health for the
 oldest retained unresolved terminal-admission jobs. `counts_complete=false`
 marks lower-bound counts; prolonged waits measure time since admission completion.
-See [execution recovery health](../../docs/adr/835-execution-recovery-health-alerts.md).
+See [execution recovery health](../../docs/adr/917-execution-recovery-health-alerts.md).
 
 Use `EventsService.getEventRecoveryNotifications(jobID)` for a read-only report
 of admission/execution capture and each selected receiver's current delivery.
 Missing selection or pruned delivery evidence remains unknown; capture alone
 does not prove acknowledgement. Retained dead deliveries link to independent
-retry. See [notification delivery reports](../../docs/adr/836-recovery-notification-delivery-report.md).
+retry. See [notification delivery reports](../../docs/adr/918-recovery-notification-delivery-report.md).
 
 ### Recovery notification health
 

@@ -1,4 +1,4 @@
-# ADR-839: Recovery notification retry decision history
+# ADR-921: Recovery notification retry decision history
 
 Date: 2026-10-09
 Status: Accepted

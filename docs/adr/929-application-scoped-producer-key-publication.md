@@ -1,4 +1,4 @@
-# ADR-847: Application-scoped producer-key event publication
+# ADR-929: Application-scoped producer-key event publication
 
 Date: 2026-10-09
 Status: Accepted

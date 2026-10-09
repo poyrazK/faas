@@ -55,7 +55,7 @@ func cmdEventsPublishBatch(args []string) int {
 func readEventPublishBatch(path string) (api.PublishEventBatchRequest, error) {
 	var input io.Reader = os.Stdin
 	if path != "-" {
-		file, err := os.Open(path)
+		file, err := openCustomerFile(path)
 		if err != nil {
 			return api.PublishEventBatchRequest{}, err
 		}

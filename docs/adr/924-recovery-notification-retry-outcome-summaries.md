@@ -1,4 +1,4 @@
-# ADR-842: Recovery notification retry outcome summaries
+# ADR-924: Recovery notification retry outcome summaries
 
 Date: 2026-10-09
 Status: Accepted

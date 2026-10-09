@@ -48,7 +48,7 @@ type notificationRetryBatchResult struct {
 
 func readNotificationRetryPlan(path string, prepared bool) (notificationRetryPlan, error) {
 	var plan notificationRetryPlan
-	f, err := os.Open(path)
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return plan, err
 	}

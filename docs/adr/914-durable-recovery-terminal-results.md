@@ -1,4 +1,4 @@
-# ADR-832: Durable terminal recovery results
+# ADR-914: Durable terminal recovery results
 
 Date: 2026-10-09
 Status: Accepted
@@ -7,7 +7,7 @@ Status: Accepted
 
 ADR-807 attributes handler observations to each admitted replay's exact identity.
 Its reads rely on invocation rows or retained attempt history, so known outcomes
-can disappear after those records are pruned. ADR-831 protects receipts during
+can disappear after those records are pruned. ADR-913 protects receipts during
 pending recovery but deliberately does not preserve execution evidence.
 
 ## Decision

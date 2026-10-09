@@ -1,4 +1,4 @@
-# ADR-846: Notification retry plan reconciliation
+# ADR-928: Notification retry plan reconciliation
 
 Date: 2026-10-09
 Status: Accepted

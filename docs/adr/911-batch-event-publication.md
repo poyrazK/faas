@@ -1,4 +1,4 @@
-# ADR-829: Bounded batch event publication
+# ADR-911: Bounded batch event publication
 
 Date: 2026-10-09
 Status: Accepted

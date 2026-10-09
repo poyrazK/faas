@@ -110,26 +110,27 @@ func (m *MemStore) ProcessNextEventRecoveryExecutionNotification(ctx context.Con
 		}
 		return jobs[i].NextExecutionNotificationAt.Before(jobs[j].NextExecutionNotificationAt)
 	})
-	for _, job := range jobs {
-		if err := ctx.Err(); err != nil {
-			return false, err
-		}
-		response := m.eventRecoveryObservedResponseLocked(job, now)
-		if response.QueuedCount == 0 {
-			job.ExecutionNotificationCaptured = true
-			return true, nil
-		}
-		payload, err := recoveryExecutionNotificationPayload(response, *response.Execution, now)
-		if err != nil {
-			job.NextExecutionNotificationAt = now.Add(api.EventRecoveryExecutionNotificationPollInterval)
-			return true, nil
-		}
+	if len(jobs) == 0 {
+		return false, nil
+	}
+	job := jobs[0]
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	response := m.eventRecoveryObservedResponseLocked(job, now)
+	if response.QueuedCount == 0 {
 		job.ExecutionNotificationCaptured = true
-		job.Job.ExecutionFinishedAt = cloneEventReceiptTime(&now)
-		m.enqueueRecoveryExecutionNotificationLocked(job, payload)
 		return true, nil
 	}
-	return false, nil
+	payload, err := recoveryExecutionNotificationPayload(response, *response.Execution, now)
+	if err != nil {
+		job.NextExecutionNotificationAt = now.Add(api.EventRecoveryExecutionNotificationPollInterval)
+		return true, nil
+	}
+	job.ExecutionNotificationCaptured = true
+	job.Job.ExecutionFinishedAt = cloneEventReceiptTime(&now)
+	m.enqueueRecoveryExecutionNotificationLocked(job, payload)
+	return true, nil
 }
 
 func (m *MemStore) enqueueRecoveryExecutionNotificationLocked(job *memEventRecoveryJob, payload api.EventRecoveryExecutionFinishedWebhookPayload) {

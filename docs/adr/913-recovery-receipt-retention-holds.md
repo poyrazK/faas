@@ -1,11 +1,11 @@
-# ADR-831: Bounded receipt retention holds for bulk recovery
+# ADR-913: Bounded receipt retention holds for bulk recovery
 
 Date: 2026-10-09
 Status: Accepted
 
 ## Context
 
-ADR-830 exposes receipts approaching their pruning boundary and warns recovery
+ADR-912 exposes receipts approaching their pruning boundary and warns recovery
 operators. Bulk recovery previously did not hold selected receipts, so a paced
 or paused job could lose receipts before admission. Existing backfill holds do
 not guarantee protection for a different recovery job.

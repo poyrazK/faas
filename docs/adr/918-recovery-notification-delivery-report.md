@@ -1,4 +1,4 @@
-# ADR-836: Recovery notification delivery reports
+# ADR-918: Recovery notification delivery reports
 
 Date: 2026-10-09
 Status: Accepted
@@ -69,7 +69,7 @@ write-scope/MFA requirements still apply.
 
 ## Rollout and downgrade
 
-Apply migration `20261009140935781` before API and scheduler upgrades. No historical
+Apply migration `20261009225025213` before API and scheduler upgrades. No historical
 snapshot is fabricated; old captures may remain unknown even with some retained
 successful deliveries. Roll back binaries before Down. Dropping the receipt
 column discards selection evidence; reapplying it starts empty and cannot recover

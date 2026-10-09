@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -41,7 +40,7 @@ func cmdEventsPublishApp(args []string) int {
 
 func readAppPublishEventRequest(path string) (api.AppPublishEventRequest, error) {
 	var req api.AppPublishEventRequest
-	f, err := os.Open(path)
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return req, err
 	}
