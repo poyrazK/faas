@@ -66,53 +66,65 @@ func TestNeedsPooledEvidenceOnlyForSparseRoutes(t *testing.T) {
 }
 
 // adr: 846
-func TestApplyPooledUsesVerdictsAndKeepsUnknown(t *testing.T) {
+func TestEvaluateAdoptsPooledVerdictsAndKeepsMinuteWindows(t *testing.T) {
 	now := time.Date(2026, 10, 9, 12, 20, 45, 0, time.UTC)
 	anchor := now.Add(-12 * time.Minute)
-	windows, ok := PooledWindows(&anchor, now)
+	pooled, ok := PooledWindows(&anchor, now)
 	if !ok {
 		t.Fatal("expected pooled windows")
 	}
-	pooled := func(path string, candidate, candidateErrors, stable int64) api.RouteHealthFinding {
-		f := api.RouteHealthFinding{Method: "POST", Path: path, Windows: append([]api.RouteHealthWindowEvidence(nil), windows...)}
+	finding := func(path string, minuteCandidate, pooledCandidate, pooledErrors int64) api.RouteHealthFinding {
+		f := api.RouteHealthFinding{Method: "POST", Path: path, Windows: Windows(now), PooledWindows: append([]api.RouteHealthWindowEvidence(nil), pooled...)}
 		for i := range f.Windows {
-			f.Windows[i].Candidate = api.RouteHealthCounts{Requests: candidate, ServerErrors: candidateErrors}
-			f.Windows[i].Stable = api.RouteHealthCounts{Requests: stable}
+			f.Windows[i].Candidate = api.RouteHealthCounts{Requests: minuteCandidate}
+			f.Windows[i].Stable = api.RouteHealthCounts{Requests: 100}
+		}
+		for i := range f.PooledWindows {
+			f.PooledWindows[i].Candidate = api.RouteHealthCounts{Requests: pooledCandidate, ServerErrors: pooledErrors}
+			f.PooledWindows[i].Stable = api.RouteHealthCounts{Requests: 500}
 		}
 		return f
 	}
-	sparse := [4]string{"unknown", "insufficient_requests", "", ""}
 	report := api.RouteHealthReport{Routes: []api.RouteHealthFinding{
-		{Method: "POST", Path: "/checkout", Status: "healthy", Reason: "comparisons_healthy"},
-		func() api.RouteHealthFinding { f := pooledFinding(sparse, sparse); f.Path = "/refund"; return f }(),
-		func() api.RouteHealthFinding { f := pooledFinding(sparse, sparse); f.Path = "/export"; return f }(),
-		func() api.RouteHealthFinding { f := pooledFinding(sparse, sparse); f.Path = "/rare"; return f }(),
-	}, Status: "unknown"}
-	evaluated := api.RouteHealthReport{Routes: []api.RouteHealthFinding{
-		pooled("/refund", 40, 0, 200), // healthy over the stage
-		pooled("/export", 40, 8, 200), // 20% candidate 5xx in both halves
-		pooled("/rare", 6, 0, 200),    // still too sparse
+		finding("/busy", 100, 500, 0), // one-minute evidence suffices; pooled ignored
+		finding("/refund", 5, 40, 0),  // healthy over the stage
+		finding("/export", 5, 40, 8),  // 20% candidate 5xx in both halves
+		finding("/rare", 1, 6, 0),     // still too sparse
 	}}
-	Evaluate(&evaluated, &anchor, "")
-	ApplyPooled(&report, evaluated.Routes)
+	Evaluate(&report, &anchor, "")
 
 	byPath := map[string]api.RouteHealthFinding{}
 	for _, f := range report.Routes {
 		byPath[f.Path] = f
 	}
-	if f := byPath["/refund"]; f.Status != "healthy" || f.EvidenceWindow != "pooled" {
-		t.Errorf("/refund = %s/%q, want healthy pooled", f.Status, f.EvidenceWindow)
+	if f := byPath["/busy"]; f.Status != "healthy" || f.EvidenceWindow != "" {
+		t.Errorf("/busy = %s/%q, want healthy from one-minute windows", f.Status, f.EvidenceWindow)
+	}
+	if f := byPath["/refund"]; f.Status != "healthy" || f.EvidenceWindow != "pooled" || f.Windows[0].ErrorReason != "insufficient_requests" {
+		t.Errorf("/refund = %+v, want healthy pooled with sparse minute windows kept", f)
 	}
 	if f := byPath["/export"]; f.Status != "regressed" || f.EvidenceWindow != "pooled" {
 		t.Errorf("/export = %s/%q, want regressed pooled", f.Status, f.EvidenceWindow)
 	}
-	if f := byPath["/rare"]; f.Status != "unknown" || f.EvidenceWindow != "" || f.Windows[0].ErrorReason != "insufficient_requests" {
-		t.Errorf("/rare = %+v, want the original sparse finding", f)
-	}
-	if f := byPath["/checkout"]; f.EvidenceWindow != "" {
-		t.Errorf("/checkout gained pooled evidence: %+v", f)
+	if f := byPath["/rare"]; f.Status != "unknown" || f.EvidenceWindow != "" {
+		t.Errorf("/rare = %s/%q, want unknown", f.Status, f.EvidenceWindow)
 	}
 	if report.Status != "regressed" {
 		t.Errorf("report status = %s, want regressed", report.Status)
+	}
+
+	// Re-deriving a saved finding reaches the same verdict.
+	saved := byPath["/export"]
+	saved.Status, saved.EvidenceWindow = "", ""
+	SummarizeFindingWithPooled(&saved, &anchor)
+	if saved.Status != "regressed" || saved.EvidenceWindow != "pooled" {
+		t.Errorf("re-derived /export = %s/%q", saved.Status, saved.EvidenceWindow)
+	}
+
+	// Unavailable telemetry never adopts pooled evidence.
+	blocked := api.RouteHealthReport{Routes: []api.RouteHealthFinding{finding("/refund", 5, 40, 0)}}
+	Evaluate(&blocked, &anchor, "telemetry_not_entitled")
+	if blocked.Routes[0].EvidenceWindow != "" || blocked.Routes[0].Status != "unknown" {
+		t.Errorf("unavailable report adopted pooled evidence: %+v", blocked.Routes[0])
 	}
 }

@@ -69,20 +69,26 @@ func Evaluate(report *api.RouteHealthReport, anchor *time.Time, unavailable stri
 		if latency {
 			report.MinimumLatencyRequests = api.RouteHealthMinLatencyRequests
 		}
-		for j := range finding.Windows {
-			w := &finding.Windows[j]
-			rate(&w.Candidate)
-			rate(&w.Stable)
-			w.ErrorStatus, w.ErrorReason = errorWindow(*w, anchor, unavailable)
-			w.LatencyStatus, w.LatencyReason, w.LatencyDeltaMS, w.LatencyFactor = "", "", nil, nil
-			w.Status, w.Reason = w.ErrorStatus, w.ErrorReason
-			if latency {
-				w.LatencyStatus, w.LatencyReason = latencyWindow(w, finding.MaxP95MS, finding.CheckLatency, anchor, unavailable)
-				w.Status, w.Reason = combine(w.ErrorStatus, w.ErrorReason, w.LatencyStatus, w.LatencyReason)
-			}
-		}
+		evaluateWindows(finding.Windows, *finding, anchor, unavailable)
 		SummarizeFinding(finding)
+		applyPooledEvidence(finding, anchor, unavailable)
 		report.Status, report.Reason = combine(report.Status, report.Reason, finding.Status, finding.Reason)
+	}
+}
+
+func evaluateWindows(windows []api.RouteHealthWindowEvidence, finding api.RouteHealthFinding, anchor *time.Time, unavailable string) {
+	latency := LatencyEnabled(finding.CheckLatency, finding.MaxP95MS)
+	for j := range windows {
+		w := &windows[j]
+		rate(&w.Candidate)
+		rate(&w.Stable)
+		w.ErrorStatus, w.ErrorReason = errorWindow(*w, anchor, unavailable)
+		w.LatencyStatus, w.LatencyReason, w.LatencyDeltaMS, w.LatencyFactor = "", "", nil, nil
+		w.Status, w.Reason = w.ErrorStatus, w.ErrorReason
+		if latency {
+			w.LatencyStatus, w.LatencyReason = latencyWindow(w, finding.MaxP95MS, finding.CheckLatency, anchor, unavailable)
+			w.Status, w.Reason = combine(w.ErrorStatus, w.ErrorReason, w.LatencyStatus, w.LatencyReason)
+		}
 	}
 }
 

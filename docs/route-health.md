@@ -175,11 +175,12 @@ closed minute, capped at the newest 30 minutes and split into two equal,
 consecutive halves of at least two minutes each. Each half uses the same
 request minimums and thresholds, and both must agree. The finding reports
 `evidence_window: pooled` with the pooled windows when this reaches a healthy
-or regressed verdict; otherwise the one-minute finding is kept. A route with
+or regressed verdict, and lists the pooled counts in `pooled_windows`; the
+one-minute `windows` are always kept. A route with
 about five candidate requests per minute therefore gets a verdict after about
 eight minutes of a stage. A regressed one-minute window is never pooled away.
-Customer cohorts, investigations and production monitoring keep one-minute
-windows.
+Customer cohorts, watched status codes and investigations keep one-minute
+windows; production monitoring pools the same way for its budgets.
 
 A window regresses when the candidate has at least two 5xx responses, a rate
 of at least 5%, at least three times stable's rate, and at least five percentage

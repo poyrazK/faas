@@ -63,10 +63,13 @@ type RouteHealthFinding struct {
 	ErrorReason   string `json:"error_reason,omitempty"`
 	LatencyStatus string `json:"latency_status,omitempty"`
 	LatencyReason string `json:"latency_reason,omitempty"`
-	// EvidenceWindow is "pooled" when the two windows are halves of the stage
-	// so far because one-minute windows lacked requests (ADR-846).
+	// EvidenceWindow is "pooled" when the verdict comes from PooledWindows
+	// because the one-minute windows lacked requests (ADR-846).
 	EvidenceWindow string                      `json:"evidence_window,omitempty"`
 	Windows        []RouteHealthWindowEvidence `json:"windows"`
+	// PooledWindows are two halves of the stage so far, read only for routes
+	// whose one-minute windows were sparse.
+	PooledWindows []RouteHealthWindowEvidence `json:"pooled_windows,omitempty"`
 }
 
 // CanaryProfileSignal is a retained, advisory comparison for one canary stage.

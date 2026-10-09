@@ -128,8 +128,9 @@ func pgRouteHealthReport(ctx context.Context, db sqlc.DBTX, snapshot RoutePolicy
 	return report, nil
 }
 
-// pgPooledRouteHealth re-reads only routes that lacked one-minute requests
-// over two halves of the stage so far, with unchanged thresholds (ADR-846).
+// pgPooledRouteHealth reads pooled_windows only for routes whose one-minute
+// windows lacked requests, then re-evaluates with unchanged thresholds
+// (ADR-846). One-minute windows stay in every finding.
 func pgPooledRouteHealth(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport, anchor *time.Time) error {
 	windows, ok := routehealth.PooledWindows(anchor, report.CheckedAt)
 	if !ok {
@@ -138,24 +139,25 @@ func pgPooledRouteHealth(ctx context.Context, db sqlc.DBTX, accountID string, g 
 	selected := api.RouteHealthGate{Routes: []api.RouteHealthRoute{}}
 	pooled := *report
 	pooled.Routes = []api.RouteHealthFinding{}
+	targets := []int{}
 	for i, f := range report.Routes {
 		if i >= len(g.Routes) || !routehealth.NeedsPooledEvidence(f) {
 			continue
 		}
 		selected.Routes = append(selected.Routes, g.Routes[i])
-		pooled.Routes = append(pooled.Routes, api.RouteHealthFinding{
-			WatchStatuses: f.WatchStatuses, Method: f.Method, Path: f.Path, CheckLatency: f.CheckLatency, MaxP95MS: f.MaxP95MS,
-			Windows: append([]api.RouteHealthWindowEvidence(nil), windows...),
-		})
+		pooled.Routes = append(pooled.Routes, api.RouteHealthFinding{Method: f.Method, Path: f.Path, Windows: append([]api.RouteHealthWindowEvidence(nil), windows...)})
+		targets = append(targets, i)
 	}
-	if len(pooled.Routes) == 0 {
+	if len(targets) == 0 {
 		return nil
 	}
 	if err := pgRouteHealthObservationsInWindows(ctx, db, accountID, selected, &pooled, api.RouteHealthInvestigationSelection{}, windows); err != nil {
 		return err
 	}
-	routehealth.Evaluate(&pooled, anchor, "")
-	routehealth.ApplyPooled(report, pooled.Routes)
+	for k, i := range targets {
+		report.Routes[i].PooledWindows = pooled.Routes[k].Windows
+	}
+	routehealth.Evaluate(report, anchor, "")
 	return nil
 }
 func pgRouteHealthObservations(ctx context.Context, db sqlc.DBTX, accountID string, g api.RouteHealthGate, report *api.RouteHealthReport) error {

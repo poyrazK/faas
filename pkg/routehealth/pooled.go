@@ -32,9 +32,10 @@ func PooledWindows(anchor *time.Time, now time.Time) ([]api.RouteHealthWindowEvi
 	}, true
 }
 
-// NeedsPooledEvidence reports whether a finding is unknown only because its
-// one-minute windows lacked requests. A regressed window is never pooled
-// away, and other unknown reasons (anchor, telemetry, entitlement) stay.
+// NeedsPooledEvidence reports whether a finding's one-minute summary is
+// unknown only because its windows lacked requests. A regressed window is
+// never pooled away, and other unknown reasons (anchor, telemetry,
+// entitlement) stay.
 func NeedsPooledEvidence(f api.RouteHealthFinding) bool {
 	if f.Status != "unknown" {
 		return false
@@ -55,26 +56,34 @@ func NeedsPooledEvidence(f api.RouteHealthFinding) bool {
 	return insufficient
 }
 
-// ApplyPooled replaces a finding with its pooled evaluation when that
-// evaluation reaches a verdict, then recomputes the report status. pooled must
-// hold findings already evaluated over PooledWindows, in any order.
-func ApplyPooled(report *api.RouteHealthReport, pooled []api.RouteHealthFinding) {
-	for _, p := range pooled {
-		if p.Status != "healthy" && p.Status != "regressed" {
-			continue
-		}
-		for i := range report.Routes {
-			if f := &report.Routes[i]; f.Method == p.Method && f.Path == p.Path && NeedsPooledEvidence(*f) {
-				p.EvidenceWindow = "pooled"
-				*f = p
-			}
-		}
-	}
-	if len(report.Routes) == 0 {
+// applyPooledEvidence evaluates pooled_windows, when present, and adopts their
+// verdict only for a sparse one-minute summary that pooling resolves. The
+// one-minute windows always stay in the finding. It runs inside Evaluate, so
+// every caller that re-derives verdicts reaches the same result.
+func applyPooledEvidence(f *api.RouteHealthFinding, anchor *time.Time, unavailable string) {
+	f.EvidenceWindow = ""
+	if len(f.PooledWindows) != api.RouteHealthWindows {
+		f.PooledWindows = nil
 		return
 	}
-	report.Status, report.Reason = "healthy", "comparisons_healthy"
-	for _, f := range report.Routes {
-		report.Status, report.Reason = combine(report.Status, report.Reason, f.Status, f.Reason)
+	evaluateWindows(f.PooledWindows, *f, anchor, unavailable)
+	if unavailable != "" || !NeedsPooledEvidence(*f) {
+		return
 	}
+	pooled := api.RouteHealthFinding{CheckLatency: f.CheckLatency, MaxP95MS: f.MaxP95MS, Windows: f.PooledWindows}
+	SummarizeFinding(&pooled)
+	if pooled.Status != "healthy" && pooled.Status != "regressed" {
+		return
+	}
+	f.Status, f.Reason = pooled.Status, pooled.Reason
+	f.ErrorStatus, f.ErrorReason = pooled.ErrorStatus, pooled.ErrorReason
+	f.LatencyStatus, f.LatencyReason = pooled.LatencyStatus, pooled.LatencyReason
+	f.EvidenceWindow = "pooled"
+}
+
+// SummarizeFindingWithPooled re-derives a saved finding's verdict, including
+// any pooled evidence, for clients that validate reports.
+func SummarizeFindingWithPooled(f *api.RouteHealthFinding, anchor *time.Time) {
+	SummarizeFinding(f)
+	applyPooledEvidence(f, anchor, "")
 }

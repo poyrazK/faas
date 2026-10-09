@@ -38503,6 +38503,8 @@ components:
         error_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
         latency_status: {"type": "string", "enum": ["healthy", "violated", "unknown", "disabled"]}
         windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2}
+        evidence_window: {"type": "string", "enum": ["pooled"], "description": "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846). Budgets are unchanged."}
+        pooled_windows: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorWindow"}, "minItems": 2, "maxItems": 2, "description": "Two consecutive halves of up to the newest 30 minutes since the observation anchor, read only for routes whose one-minute windows were sparse."}
     RouteMonitorReport:
       type: object
       description: "Read-only absolute-budget evidence for the sole fully serving default-scope deployment. Coverage is limited to stored telemetry."
@@ -39087,8 +39089,9 @@ components:
         error_reason: { type: string }
         latency_status: { type: string, enum: [healthy, regressed, unknown], description: Independently confirmed latency verdict across both windows when selected. }
         latency_reason: { type: string }
-        evidence_window: { type: string, enum: [pooled], description: "Present when the two windows are consecutive halves of up to the newest 30 minutes of the stage because one-minute windows lacked requests (ADR-846). Thresholds are unchanged." }
+        evidence_window: { type: string, enum: [pooled], description: "Present when the verdict comes from pooled_windows because the one-minute windows lacked requests (ADR-846). Thresholds are unchanged." }
         windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' } }
+        pooled_windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' }, description: "Two consecutive halves of up to the newest 30 minutes of the stage, read only for routes whose one-minute windows were sparse." }
     RouteCustomerHealthAttribution:
       type: object
       description: Weighted request attribution for one selected identity dimension across both shared windows. Missing identities and unresolved scoped identities remain separate. Other requests are identified traffic outside the cohort output cap.

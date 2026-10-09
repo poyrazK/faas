@@ -44,12 +44,18 @@ type RouteMonitorWindow struct {
 	LatencyReason string            `json:"latency_reason"`
 }
 type RouteMonitorFinding struct {
-	Route         RouteMonitorRoute    `json:"route"`
-	Status        string               `json:"status"`
-	Reason        string               `json:"reason"`
-	ErrorStatus   string               `json:"error_status"`
-	LatencyStatus string               `json:"latency_status"`
-	Windows       []RouteMonitorWindow `json:"windows"`
+	Route         RouteMonitorRoute `json:"route"`
+	Status        string            `json:"status"`
+	Reason        string            `json:"reason"`
+	ErrorStatus   string            `json:"error_status"`
+	LatencyStatus string            `json:"latency_status"`
+	// EvidenceWindow is "pooled" when the verdict comes from PooledWindows
+	// because the one-minute windows lacked requests (ADR-846).
+	EvidenceWindow string               `json:"evidence_window,omitempty"`
+	Windows        []RouteMonitorWindow `json:"windows"`
+	// PooledWindows are two halves of up to the newest 30 minutes, read only
+	// for routes whose one-minute windows were sparse.
+	PooledWindows []RouteMonitorWindow `json:"pooled_windows,omitempty"`
 }
 
 // Monitoring describes stored observations, not a complete capture or an SLO.
