@@ -1471,6 +1471,7 @@ var cliCommands = []cliCommand{
 				{Name: "offset", Short: "starting offset (>= 0)", Value: "N"},
 				{Name: "all", Short: "walk every page using --limit and --offset"},
 			}},
+			{Name: "next", Short: "Show upcoming recurring Job expression times and readiness", Examples: []string{"gregale jobs next", "gregale jobs next --json"}},
 			{Name: "add", Short: "Create a new job", Positionals: []string{"[<name>]"}, Examples: []string{"gregale jobs add --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Bool: true, Short: "choose a name, image, command, resources, and optional recurring schedule"},
 				{Name: "image", Value: "REF", Short: "OCI image (required unless interactive)"},

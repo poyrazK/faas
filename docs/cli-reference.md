@@ -3636,6 +3636,17 @@ List jobs in this account
 | `--offset <N>` | starting offset (&gt;= 0) |  |
 | `--all` | walk every page using --limit and --offset |  |
 
+### jobs next
+
+Show upcoming recurring Job expression times and readiness
+
+Examples:
+
+```sh
+gregale jobs next
+gregale jobs next --json
+```
+
 ### jobs add
 
 Create a new job

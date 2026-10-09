@@ -800,6 +800,26 @@ the deletion. Last-use timestamp updates alone do not block removal. This is a
 client-side check, not an atomic server lock. Explicit
 `jobs registry rm JOB --registry HOST` remains available for scripts.
 
+## See upcoming Job schedules
+
+```sh
+gregale jobs next
+gregale jobs next --json
+```
+
+Read all Job pages and sort active recurring Jobs by their next nominal cron
+time, displayed in each Job's explicit timezone. The overview includes Job state,
+kind, timezone, and image preparation state. Paused and batch Jobs remain visible
+without a next dispatch time. A pending image still has a nominal expression
+time, which does not imply that execution will start.
+
+The JSON receipt contains one shared `as_of` timestamp and the sorted items,
+including scheduling policies and execution notes. Invalid recurring schedules
+or timezones are reported per Job and return a nonzero exit status.
+Expression times are candidates: image readiness, overlap, start deadlines,
+missed-run policy, and delays affect actual execution. This command only reads
+Job metadata; use `jobs occurrences` to inspect recorded schedule decisions.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
