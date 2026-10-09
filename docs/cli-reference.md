@@ -1699,10 +1699,11 @@ Inspect receipt expiry, backfill holds and account storage
 
 Compare an original publish file with retained content without publishing
 
-`gregale events publish-app-verify [--file <PATH>] <app>`
+`gregale events publish-app-verify [--expected-accepted-at <RFC3339>] [--file <PATH>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--expected-accepted-at <RFC3339>` | Pin the exact accepted_at from the saved receipt |  |
 | `--file <PATH>` | Original publish JSON with key, type and data |  |
 
 Examples:
@@ -1715,10 +1716,11 @@ gregale events publish-app-verify my-app --file event.json --json
 
 Reconcile retained publication and consumer evidence without submitting an event
 
-`gregale events publish-app-status [--key <KEY>] [--after <CURSOR>] [--limit <N>] <app>`
+`gregale events publish-app-status [--expected-accepted-at <RFC3339>] [--key <KEY>] [--after <CURSOR>] [--limit <N>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--expected-accepted-at <RFC3339>` | Pin the exact accepted_at from the saved receipt |  |
 | `--key <KEY>` | Original exact application producer key |  |
 | `--after <CURSOR>` | Continue the recipient evidence page |  |
 | `--limit <N>` | Recipients per page (1..200; default 100) |  |

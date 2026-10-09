@@ -7,6 +7,10 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.app_event_publish_status_response_acceptance import (
+    AppEventPublishStatusResponseAcceptance,
+    check_app_event_publish_status_response_acceptance,
+)
 from ..models.app_event_publish_status_response_reason import (
     AppEventPublishStatusResponseReason,
     check_app_event_publish_status_response_reason,
@@ -36,6 +40,10 @@ class AppEventPublishStatusResponse:
     status: AppEventPublishStatusResponseStatus
     """Routing progress of retained acceptance; never a consumer success claim."""
     receipt_url: str
+    expected_accepted_at: datetime.datetime | Unset = UNSET
+    """Saved acceptance timestamp requested for this status snapshot, emitted in UTC."""
+    acceptance: AppEventPublishStatusResponseAcceptance | Unset = UNSET
+    """Relationship of the retained receipt to the requested acceptance timestamp; absent for unguarded reads."""
     reason: AppEventPublishStatusResponseReason | Unset = UNSET
     """Missing receipt observation cannot establish nonexecution."""
     receipt: PublishEventResponse | Unset = UNSET
@@ -56,6 +64,14 @@ class AppEventPublishStatusResponse:
         status: str = self.status
 
         receipt_url = self.receipt_url
+
+        expected_accepted_at: str | Unset = UNSET
+        if not isinstance(self.expected_accepted_at, Unset):
+            expected_accepted_at = self.expected_accepted_at.isoformat()
+
+        acceptance: str | Unset = UNSET
+        if not isinstance(self.acceptance, Unset):
+            acceptance = self.acceptance
 
         reason: str | Unset = UNSET
         if not isinstance(self.reason, Unset):
@@ -81,6 +97,10 @@ class AppEventPublishStatusResponse:
                 "receipt_url": receipt_url,
             }
         )
+        if expected_accepted_at is not UNSET:
+            field_dict["expected_accepted_at"] = expected_accepted_at
+        if acceptance is not UNSET:
+            field_dict["acceptance"] = acceptance
         if reason is not UNSET:
             field_dict["reason"] = reason
         if receipt is not UNSET:
@@ -107,6 +127,20 @@ class AppEventPublishStatusResponse:
         status = check_app_event_publish_status_response_status(d.pop("status"))
 
         receipt_url = d.pop("receipt_url")
+
+        _expected_accepted_at = d.pop("expected_accepted_at", UNSET)
+        expected_accepted_at: datetime.datetime | Unset
+        if isinstance(_expected_accepted_at, Unset):
+            expected_accepted_at = UNSET
+        else:
+            expected_accepted_at = datetime.datetime.fromisoformat(_expected_accepted_at)
+
+        _acceptance = d.pop("acceptance", UNSET)
+        acceptance: AppEventPublishStatusResponseAcceptance | Unset
+        if isinstance(_acceptance, Unset):
+            acceptance = UNSET
+        else:
+            acceptance = check_app_event_publish_status_response_acceptance(_acceptance)
 
         _reason = d.pop("reason", UNSET)
         reason: AppEventPublishStatusResponseReason | Unset
@@ -136,6 +170,8 @@ class AppEventPublishStatusResponse:
             observed_at=observed_at,
             status=status,
             receipt_url=receipt_url,
+            expected_accepted_at=expected_accepted_at,
+            acceptance=acceptance,
             reason=reason,
             receipt=receipt,
             evidence=evidence,

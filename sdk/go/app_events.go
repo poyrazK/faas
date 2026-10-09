@@ -4,6 +4,7 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 
 // Application-scoped producer keys recover original retained acceptance receipts.
 type (
+	AppEventAcceptanceGuard         = api.AppEventAcceptanceGuard
 	AppEventPublicationVerification = api.AppEventPublicationVerification
 	AppEventPublishStatusQuery      = api.AppEventPublishStatusQuery
 	AppEventPublishStatusResponse   = api.AppEventPublishStatusResponse

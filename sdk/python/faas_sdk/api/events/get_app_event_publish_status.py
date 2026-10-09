@@ -17,6 +17,7 @@ def _get_kwargs(
     key: str,
     after: str | Unset = UNSET,
     limit: int | Unset = 100,
+    expected_accepted_at: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -26,6 +27,8 @@ def _get_kwargs(
     params["after"] = after
 
     params["limit"] = limit
+
+    params["expected_accepted_at"] = expected_accepted_at
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -102,6 +105,7 @@ def sync_detailed(
     key: str,
     after: str | Unset = UNSET,
     limit: int | Unset = 100,
+    expected_accepted_at: str | Unset = UNSET,
 ) -> Response[AppEventPublishStatusResponse | Problem]:
     """Reconcile an app producer key without publishing another event.
 
@@ -117,7 +121,11 @@ def sync_detailed(
     Evidence includes full routing summaries and a bounded recipient page.
     Follow evidence.next_after using after; pages are live snapshots and cursors
     bind account, source, event ID and acceptance identity. Stale cursors fail 400.
-    Raw producer keys and event payloads are not returned. App renames preserve
+    With expected_accepted_at, acceptance is same_acceptance, replacement_acceptance
+    or unavailable separately from routing status. Evidence describes the currently
+    observed acceptance, which can be a replacement. Never treat its outcomes as
+    proof for the expected acceptance. Raw keys and event payloads are not returned. App renames
+    preserve
     identity; replacement apps have a different UUID namespace. Matching legacy
     account/source/ID publication addresses the same identity.
 
@@ -126,6 +134,7 @@ def sync_detailed(
         key (str):
         after (str | Unset):
         limit (int | Unset):  Default: 100.
+        expected_accepted_at (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,6 +149,7 @@ def sync_detailed(
         key=key,
         after=after,
         limit=limit,
+        expected_accepted_at=expected_accepted_at,
     )
 
     response = client.get_httpx_client().request(
@@ -156,6 +166,7 @@ def sync(
     key: str,
     after: str | Unset = UNSET,
     limit: int | Unset = 100,
+    expected_accepted_at: str | Unset = UNSET,
 ) -> AppEventPublishStatusResponse | Problem | None:
     """Reconcile an app producer key without publishing another event.
 
@@ -171,7 +182,11 @@ def sync(
     Evidence includes full routing summaries and a bounded recipient page.
     Follow evidence.next_after using after; pages are live snapshots and cursors
     bind account, source, event ID and acceptance identity. Stale cursors fail 400.
-    Raw producer keys and event payloads are not returned. App renames preserve
+    With expected_accepted_at, acceptance is same_acceptance, replacement_acceptance
+    or unavailable separately from routing status. Evidence describes the currently
+    observed acceptance, which can be a replacement. Never treat its outcomes as
+    proof for the expected acceptance. Raw keys and event payloads are not returned. App renames
+    preserve
     identity; replacement apps have a different UUID namespace. Matching legacy
     account/source/ID publication addresses the same identity.
 
@@ -180,6 +195,7 @@ def sync(
         key (str):
         after (str | Unset):
         limit (int | Unset):  Default: 100.
+        expected_accepted_at (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -195,6 +211,7 @@ def sync(
         key=key,
         after=after,
         limit=limit,
+        expected_accepted_at=expected_accepted_at,
     ).parsed
 
 
@@ -205,6 +222,7 @@ async def asyncio_detailed(
     key: str,
     after: str | Unset = UNSET,
     limit: int | Unset = 100,
+    expected_accepted_at: str | Unset = UNSET,
 ) -> Response[AppEventPublishStatusResponse | Problem]:
     """Reconcile an app producer key without publishing another event.
 
@@ -220,7 +238,11 @@ async def asyncio_detailed(
     Evidence includes full routing summaries and a bounded recipient page.
     Follow evidence.next_after using after; pages are live snapshots and cursors
     bind account, source, event ID and acceptance identity. Stale cursors fail 400.
-    Raw producer keys and event payloads are not returned. App renames preserve
+    With expected_accepted_at, acceptance is same_acceptance, replacement_acceptance
+    or unavailable separately from routing status. Evidence describes the currently
+    observed acceptance, which can be a replacement. Never treat its outcomes as
+    proof for the expected acceptance. Raw keys and event payloads are not returned. App renames
+    preserve
     identity; replacement apps have a different UUID namespace. Matching legacy
     account/source/ID publication addresses the same identity.
 
@@ -229,6 +251,7 @@ async def asyncio_detailed(
         key (str):
         after (str | Unset):
         limit (int | Unset):  Default: 100.
+        expected_accepted_at (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -243,6 +266,7 @@ async def asyncio_detailed(
         key=key,
         after=after,
         limit=limit,
+        expected_accepted_at=expected_accepted_at,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -257,6 +281,7 @@ async def asyncio(
     key: str,
     after: str | Unset = UNSET,
     limit: int | Unset = 100,
+    expected_accepted_at: str | Unset = UNSET,
 ) -> AppEventPublishStatusResponse | Problem | None:
     """Reconcile an app producer key without publishing another event.
 
@@ -272,7 +297,11 @@ async def asyncio(
     Evidence includes full routing summaries and a bounded recipient page.
     Follow evidence.next_after using after; pages are live snapshots and cursors
     bind account, source, event ID and acceptance identity. Stale cursors fail 400.
-    Raw producer keys and event payloads are not returned. App renames preserve
+    With expected_accepted_at, acceptance is same_acceptance, replacement_acceptance
+    or unavailable separately from routing status. Evidence describes the currently
+    observed acceptance, which can be a replacement. Never treat its outcomes as
+    proof for the expected acceptance. Raw keys and event payloads are not returned. App renames
+    preserve
     identity; replacement apps have a different UUID namespace. Matching legacy
     account/source/ID publication addresses the same identity.
 
@@ -281,6 +310,7 @@ async def asyncio(
         key (str):
         after (str | Unset):
         limit (int | Unset):  Default: 100.
+        expected_accepted_at (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -297,5 +327,6 @@ async def asyncio(
             key=key,
             after=after,
             limit=limit,
+            expected_accepted_at=expected_accepted_at,
         )
     ).parsed

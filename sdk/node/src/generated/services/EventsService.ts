@@ -121,7 +121,10 @@ export class EventsService {
    * cache occurs. Neither match nor conflict establishes consumer execution.
    * Request and stored payloads and raw producer keys are not returned.
    * Read errors remain errors rather than being reported as unavailable.
-   * Query parameters are rejected; use the existing status read for consumer evidence.
+   * An optional expected_accepted_at returns acceptance=same_acceptance,
+   * replacement_acceptance or unavailable independently of content status.
+   * Returned receipts describe the currently observed acceptance even on mismatch.
+   * Only expected_accepted_at is accepted as a query parameter; use the status read for consumer evidence.
    *
    * @returns AppEventPublicationVerification Content comparison observation with retained acceptance when available.
    * @throws ApiError
@@ -129,6 +132,7 @@ export class EventsService {
   public static verifyAppEventPublication({
     slug,
     requestBody,
+    expectedAcceptedAt,
   }: {
     /**
      * Owned application for the exact producer-key content comparison.
@@ -138,12 +142,19 @@ export class EventsService {
      * Original application producer-key publication intent.
      */
     requestBody: AppPublishEventRequest,
+    /**
+     * Exact saved acceptance instant, with original fractional precision; offsets compare by UTC instant.
+     */
+    expectedAcceptedAt?: string,
   }): CancelablePromise<AppEventPublicationVerification> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/events/verify-publication',
       path: {
         'slug': slug,
+      },
+      query: {
+        'expected_accepted_at': expectedAcceptedAt,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -176,7 +187,10 @@ export class EventsService {
    * Evidence includes full routing summaries and a bounded recipient page.
    * Follow evidence.next_after using after; pages are live snapshots and cursors
    * bind account, source, event ID and acceptance identity. Stale cursors fail 400.
-   * Raw producer keys and event payloads are not returned. App renames preserve
+   * With expected_accepted_at, acceptance is same_acceptance, replacement_acceptance
+   * or unavailable separately from routing status. Evidence describes the currently
+   * observed acceptance, which can be a replacement. Never treat its outcomes as
+   * proof for the expected acceptance. Raw keys and event payloads are not returned. App renames preserve
    * identity; replacement apps have a different UUID namespace. Matching legacy
    * account/source/ID publication addresses the same identity.
    *
@@ -188,6 +202,7 @@ export class EventsService {
     key,
     after,
     limit = 100,
+    expectedAcceptedAt,
   }: {
     /**
      * Owned application whose producer-key namespace is inspected.
@@ -205,6 +220,10 @@ export class EventsService {
      * Number of consumer evidence rows in this page.
      */
     limit?: number,
+    /**
+     * Saved acceptance timestamp for routing and consumer evidence; preserve its exact precision.
+     */
+    expectedAcceptedAt?: string,
   }): CancelablePromise<AppEventPublishStatusResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -216,6 +235,7 @@ export class EventsService {
         'key': key,
         'after': after,
         'limit': limit,
+        'expected_accepted_at': expectedAcceptedAt,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

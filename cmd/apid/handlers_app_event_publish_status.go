@@ -23,12 +23,17 @@ func (s *server) getAppEventPublishStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 	for key, entries := range values {
-		if (key != "key" && key != "after" && key != "limit") || len(entries) != 1 || entries[0] == "" {
-			api.WriteProblem(w, api.ErrValidation("status accepts one nonempty key, after and limit value only"))
+		if (key != "key" && key != "after" && key != "limit" && key != "expected_accepted_at") || len(entries) != 1 || entries[0] == "" {
+			api.WriteProblem(w, api.ErrValidation("status accepts one nonempty key, after, limit and expected_accepted_at value only"))
 			return
 		}
 	}
-	query := api.AppEventPublishStatusQuery{Key: values.Get("key"), After: values.Get("after")}
+	guard, err := api.ParseAppEventAcceptanceGuard(values.Get("expected_accepted_at"))
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	query := api.AppEventPublishStatusQuery{Key: values.Get("key"), After: values.Get("after"), ExpectedAcceptedAt: guard.ExpectedAcceptedAt}
 	if raw := values.Get("limit"); raw != "" {
 		query.Limit, err = strconv.Atoi(raw)
 		if err != nil || query.Limit < 1 {
@@ -60,9 +65,10 @@ func (s *server) getAppEventPublishStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 	retained, err := store.EventReceipt(ctx, acct.ID, source, id, cursor, query.Limit)
-	out := api.AppEventPublishStatusResponse{AppID: appID, Source: source, EventID: id, ReceiptURL: eventReceiptURL(source, id), ObservedAt: time.Now().UTC()}
+	out := api.AppEventPublishStatusResponse{AppID: appID, Source: source, EventID: id, ReceiptURL: eventReceiptURL(source, id), ObservedAt: time.Now().UTC(), ExpectedAcceptedAt: guard.ExpectedAcceptedAt}
 	if errors.Is(err, state.ErrNotFound) {
 		out.Status, out.Reason = "unavailable", "not_retained_or_not_observed"
+		out.Acceptance = guard.Compare(nil)
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
@@ -70,6 +76,7 @@ func (s *server) getAppEventPublishStatus(w http.ResponseWriter, r *http.Request
 		s.writeEventReceiptError(w, r, err)
 		return
 	}
+	out.Acceptance = guard.Compare(&retained.AcceptedAt)
 	evidence := eventReceiptResponse(acct.ID, retained)
 	out.Evidence = &evidence
 	out.Receipt = &api.PublishEventResponse{ID: id, AccountID: acct.ID, AcceptedAt: retained.AcceptedAt, ReceiptURL: out.ReceiptURL}

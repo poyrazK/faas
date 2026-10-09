@@ -7,6 +7,14 @@ import type { PublishEventResponse } from './PublishEventResponse.js';
  * Snapshot comparison of intended content with an existing retained publication.
  */
 export type AppEventPublicationVerification = {
+  /**
+   * Optional requested acceptance instant normalized to UTC without precision loss.
+   */
+  expected_accepted_at?: string;
+  /**
+   * Acceptance timestamp comparison present only when the caller supplies a guard.
+   */
+  acceptance?: 'same_acceptance' | 'replacement_acceptance' | 'unavailable';
   app_id: string;
   source: string;
   event_id: string;

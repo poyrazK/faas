@@ -3457,7 +3457,10 @@ paths:
         cache occurs. Neither match nor conflict establishes consumer execution.
         Request and stored payloads and raw producer keys are not returned.
         Read errors remain errors rather than being reported as unavailable.
-        Query parameters are rejected; use the existing status read for consumer evidence.
+        An optional expected_accepted_at returns acceptance=same_acceptance,
+        replacement_acceptance or unavailable independently of content status.
+        Returned receipts describe the currently observed acceptance even on mismatch.
+        Only expected_accepted_at is accepted as a query parameter; use the status read for consumer evidence.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -3465,6 +3468,10 @@ paths:
           required: true
           description: Owned application for the exact producer-key content comparison.
           schema: { type: string }
+        - name: expected_accepted_at
+          in: query
+          description: Exact saved acceptance instant, with original fractional precision; offsets compare by UTC instant.
+          schema: { type: string, minLength: 20, maxLength: 35, pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$' }
       requestBody:
         required: true
         description: Original application producer-key publication intent.
@@ -3503,7 +3510,10 @@ paths:
         Evidence includes full routing summaries and a bounded recipient page.
         Follow evidence.next_after using after; pages are live snapshots and cursors
         bind account, source, event ID and acceptance identity. Stale cursors fail 400.
-        Raw producer keys and event payloads are not returned. App renames preserve
+        With expected_accepted_at, acceptance is same_acceptance, replacement_acceptance
+        or unavailable separately from routing status. Evidence describes the currently
+        observed acceptance, which can be a replacement. Never treat its outcomes as
+        proof for the expected acceptance. Raw keys and event payloads are not returned. App renames preserve
         identity; replacement apps have a different UUID namespace. Matching legacy
         account/source/ID publication addresses the same identity.
       security: [{ bearerAuth: [] }]
@@ -3526,6 +3536,10 @@ paths:
           in: query
           description: Number of consumer evidence rows in this page.
           schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: expected_accepted_at
+          in: query
+          description: Saved acceptance timestamp for routing and consumer evidence; preserve its exact precision.
+          schema: { type: string, minLength: 20, maxLength: 35, pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$' }
       responses:
         '200':
           description: Retained acceptance evidence or explicitly unavailable observation.
@@ -47405,6 +47419,14 @@ components:
       description: Snapshot comparison of intended content with an existing retained publication.
       required: [app_id, source, event_id, observed_at, status, receipt_url]
       properties:
+        expected_accepted_at:
+          type: string
+          format: date-time
+          description: Optional requested acceptance instant normalized to UTC without precision loss.
+        acceptance:
+          type: string
+          enum: [same_acceptance, replacement_acceptance, unavailable]
+          description: Acceptance timestamp comparison present only when the caller supplies a guard.
         app_id: { type: string, format: uuid }
         source: { type: string }
         event_id: { type: string }
@@ -47426,6 +47448,14 @@ components:
       description: Read-only producer-key reconciliation with retained consumer evidence.
       required: [app_id, source, event_id, observed_at, status, receipt_url]
       properties:
+        expected_accepted_at:
+          type: string
+          format: date-time
+          description: Saved acceptance timestamp requested for this status snapshot, emitted in UTC.
+        acceptance:
+          type: string
+          enum: [same_acceptance, replacement_acceptance, unavailable]
+          description: Relationship of the retained receipt to the requested acceptance timestamp; absent for unguarded reads.
         app_id: { type: string, format: uuid }
         source: { type: string }
         event_id: { type: string }

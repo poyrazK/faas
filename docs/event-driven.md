@@ -2980,7 +2980,7 @@ gregale events publish-app-status my-app --key order-123-created --json
 gregale events publish-app-status my-app --key order-123-created --after CURSOR --limit 100 --json
 ```
 
-`GET /v1/apps/{slug}/events/publish-status?key=KEY` derives the same identity as app-key publishing and only reads retained receipts. It requires apps:read/admin, MFA and existing app ownership and rate limits. The exact original key is required; repeated, empty, unknown or malformed query parameters are rejected. No publish, claim, replay or retention refresh occurs.
+`GET /v1/apps/{slug}/events/publish-status?key=KEY` derives the same identity as app-key publishing and only reads retained receipts. It requires apps:read/admin, MFA and existing app ownership and rate limits. The exact original key is required; optional expected_accepted_at pins a saved receipt instant. Repeated, empty, unknown or malformed query parameters are rejected. No publish, claim, replay or retention refresh occurs.
 
 The response includes `app_id`, `source`, `event_id`, `observed_at`, `status` and `receipt_url`. Retained observations also include the original acceptance `receipt` and the existing rich receipt `evidence`, with routing summaries and independently tracked consumer execution/workflow outcomes. It does not compare a proposed payload with stored content.
 
@@ -3002,7 +3002,7 @@ The CLI always prints JSON and exits 2 for unavailable, 0 for retained acceptanc
 gregale events publish-app-verify my-app --file event.json --json
 ```
 
-`POST /v1/apps/{slug}/events/verify-publication` accepts the same original JSON body as app-key publishing, including its exact key, type, data and optional schema version/time. Despite POST, it only reads: apps:read/admin, MFA, app ownership and rate limits apply. It rejects query parameters and uses the existing 1 MiB body limit and five-second deadline.
+`POST /v1/apps/{slug}/events/verify-publication` accepts the same original JSON body as app-key publishing, including its exact key, type, data and optional schema version/time. Despite POST, it only reads: apps:read/admin, MFA, app ownership and rate limits apply. It accepts only the optional expected_accepted_at query guard and uses the existing 1 MiB body limit and five-second deadline.
 
 Verification compares normalized type, schema version and semantic JSON data using the same retained-identity comparison as publication. Object formatting/order does not make otherwise equal JSON conflict. Occurrence time and trace metadata are excluded. Today's schema registration/admission rules do not invalidate comparison with previously accepted content.
 
@@ -3015,3 +3015,24 @@ Verification compares normalized type, schema version and semantic JSON data usi
 Match and conflict both include the original retained acceptance receipt, read in the same comparison snapshot. No supplied or stored event data is returned. Other read failures remain errors, not unavailable. None of these results automatically submits an event or refreshes retention. A match does not prove handler execution or side effects; use publish-app-status and its consumer evidence separately. A reaccepted key after pruning can describe a newer acceptance, so compare known acceptance timestamps when assessing continuity.
 
 Go exposes `VerifyAppEventPublication`; Node and Python expose `verifyAppEventPublication` / `verify_app_event_publication`. The CLI always emits JSON. No migration is required. See [ADR-849](adr/849-app-publication-content-verification.md).
+
+### Pin reconciliation to a saved acceptance
+
+```sh
+gregale events publish-app-status my-app --key order-123-created --expected-accepted-at '2026-10-09T12:34:56.123456Z' --json
+gregale events publish-app-verify my-app --file event.json --expected-accepted-at '2026-10-09T12:34:56.123456Z' --json
+```
+
+Copy the exact `accepted_at` from the saved receipt, including its fractional digits. Both existing read endpoints accept optional `expected_accepted_at` in the query string. Verification still takes the original publish body. Timestamps must be nonzero RFC3339 with up to nanosecond precision; offset spellings compare by the exact UTC instant. No rounding or tolerance is applied.
+
+When guarded, responses include the normalized expected timestamp and an independent `acceptance` result:
+
+| Acceptance | Meaning |
+| --- | --- |
+| `same_acceptance` | Current retained accepted_at equals the saved instant. |
+| `replacement_acceptance` | The same app/key has a different retained acceptance timestamp. |
+| `unavailable` | No retained acceptance is visible; the original's outcome remains unknown. |
+
+Content/routing `status` remains separate. A response can contain `status=match` and `acceptance=replacement_acceptance`: the content matches a newer acceptance. Returned receipt and consumer evidence describe that current acceptance and must not be used as proof of the original's outcome. Replacement returns CLI exit 3; unavailable returns 2; otherwise the existing command exits apply. Unguarded responses omit both new fields and preserve earlier behavior.
+
+Go status queries accept `ExpectedAcceptedAt`; verification methods accept one optional `AppEventAcceptanceGuard`. Node/Python methods expose `expectedAcceptedAt` / `expected_accepted_at`. The guard remains read-only, does not refresh retention, and requires a saved timestamp. It is a timestamp comparison rather than a permanent unique identity token; identical timestamp collisions cannot be distinguished. A stale recipient cursor still fails validation; restart with the saved acceptance guard to inspect the current retained record. See [ADR-850](adr/850-app-publication-acceptance-guards.md).

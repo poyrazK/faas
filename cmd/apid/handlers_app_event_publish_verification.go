@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -16,8 +17,20 @@ func (s *server) verifyAppEventPublication(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), api.EventRecoveryRequestTimeout)
 	defer cancel()
 	r = r.WithContext(ctx)
-	if r.URL.RawQuery != "" {
-		api.WriteProblem(w, api.ErrValidation("verification does not accept query parameters"))
+	values, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation("invalid verification query encoding"))
+		return
+	}
+	for key, entries := range values {
+		if key != "expected_accepted_at" || len(entries) != 1 || entries[0] == "" {
+			api.WriteProblem(w, api.ErrValidation("verification accepts one nonempty expected_accepted_at value only"))
+			return
+		}
+	}
+	guard, err := api.ParseAppEventAcceptanceGuard(values.Get("expected_accepted_at"))
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
@@ -60,9 +73,10 @@ func (s *server) verifyAppEventPublication(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	comparison, err := store.ComparePublishedEventAcceptance(ctx, acct.ID, payload)
-	out := api.AppEventPublicationVerification{AppID: appID, Source: source, EventID: id, ReceiptURL: eventReceiptURL(source, id), ObservedAt: time.Now().UTC()}
+	out := api.AppEventPublicationVerification{AppID: appID, Source: source, EventID: id, ReceiptURL: eventReceiptURL(source, id), ObservedAt: time.Now().UTC(), ExpectedAcceptedAt: guard.ExpectedAcceptedAt}
 	if errors.Is(err, state.ErrNotFound) {
 		out.Status, out.Reason = "unavailable", "not_retained_or_not_observed"
+		out.Acceptance = guard.Compare(nil)
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
@@ -70,6 +84,7 @@ func (s *server) verifyAppEventPublication(w http.ResponseWriter, r *http.Reques
 		s.writeEventReceiptError(w, r, err)
 		return
 	}
+	out.Acceptance = guard.Compare(&comparison.AcceptedAt)
 	out.Status = "conflict"
 	if comparison.Matches {
 		out.Status = "match"

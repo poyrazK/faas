@@ -10,12 +10,16 @@ import (
 )
 
 type AppEventPublishStatusQuery struct {
-	Key   string
-	After string
-	Limit int
+	ExpectedAcceptedAt *time.Time
+	Key                string
+	After              string
+	Limit              int
 }
 
 func (q *AppEventPublishStatusQuery) Normalize() error {
+	if err := (AppEventAcceptanceGuard{ExpectedAcceptedAt: q.ExpectedAcceptedAt}).Validate(); err != nil {
+		return err
+	}
 	if err := ValidateAppEventProducerKey(q.Key); err != nil {
 		return err
 	}
@@ -29,15 +33,17 @@ func (q *AppEventPublishStatusQuery) Normalize() error {
 }
 
 type AppEventPublishStatusResponse struct {
-	AppID      string                `json:"app_id"`
-	Source     string                `json:"source"`
-	EventID    string                `json:"event_id"`
-	ObservedAt time.Time             `json:"observed_at"`
-	Status     string                `json:"status"`
-	Reason     string                `json:"reason,omitempty"`
-	ReceiptURL string                `json:"receipt_url"`
-	Receipt    *PublishEventResponse `json:"receipt,omitempty"`
-	Evidence   *EventReceiptResponse `json:"evidence,omitempty"`
+	Acceptance         string                `json:"acceptance,omitempty"`
+	ExpectedAcceptedAt *time.Time            `json:"expected_accepted_at,omitempty"`
+	AppID              string                `json:"app_id"`
+	Source             string                `json:"source"`
+	EventID            string                `json:"event_id"`
+	ObservedAt         time.Time             `json:"observed_at"`
+	Status             string                `json:"status"`
+	Reason             string                `json:"reason,omitempty"`
+	ReceiptURL         string                `json:"receipt_url"`
+	Receipt            *PublishEventResponse `json:"receipt,omitempty"`
+	Evidence           *EventReceiptResponse `json:"evidence,omitempty"`
 }
 
 func (c *Client) GetAppEventPublishStatus(ctx context.Context, slug string, query AppEventPublishStatusQuery) (AppEventPublishStatusResponse, error) {
@@ -46,6 +52,9 @@ func (c *Client) GetAppEventPublishStatus(ctx context.Context, slug string, quer
 		return out, err
 	}
 	values := url.Values{"key": {query.Key}, "limit": {strconv.Itoa(query.Limit)}}
+	if query.ExpectedAcceptedAt != nil {
+		values.Set("expected_accepted_at", query.ExpectedAcceptedAt.UTC().Format(time.RFC3339Nano))
+	}
 	if query.After != "" {
 		values.Set("after", query.After)
 	}

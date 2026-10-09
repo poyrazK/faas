@@ -8,6 +8,14 @@ import type { PublishEventResponse } from './PublishEventResponse.js';
  * Read-only producer-key reconciliation with retained consumer evidence.
  */
 export type AppEventPublishStatusResponse = {
+  /**
+   * Saved acceptance timestamp requested for this status snapshot, emitted in UTC.
+   */
+  expected_accepted_at?: string;
+  /**
+   * Relationship of the retained receipt to the requested acceptance timestamp; absent for unguarded reads.
+   */
+  acceptance?: 'same_acceptance' | 'replacement_acceptance' | 'unavailable';
   app_id: string;
   source: string;
   event_id: string;
