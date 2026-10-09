@@ -203,10 +203,10 @@ jobs:
           # The newer Go 1.26 analyzers report baseline findings throughout
           # the existing tree. Retain the repository analyzer policies and gate findings
           # introduced since this event's base revision while the baseline is
-          # addressed separately. The expanded repository needs up to fifty
-          # minutes for cold-cache analysis under these memory bounds.
+          # addressed separately. Cold analysis exceeded fifty minutes on the
+          # route lifecycle release; allow sixty-five without raising memory.
           args: >-
-            --timeout=60m
+            --timeout=65m
             --new-from-merge-base=${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
           # The action's own cache is keyed per 7-day interval and never re-saved
           # on a hit (it restored 10 MB on run 34166672535); use the job cache above.

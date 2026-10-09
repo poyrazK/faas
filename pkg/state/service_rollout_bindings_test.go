@@ -192,7 +192,7 @@ func TestServiceRolloutBindingPGLockRaces(t *testing.T) {
 			}()
 			for {
 				var waiting bool
-				if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%select 1 from apps where id = $1 for update%')`).Scan(&waiting); err != nil {
+				if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND (query LIKE '%select 1 from apps where id = $1 for update%' OR query LIKE '%LockRoutePolicyApp%' OR query LIKE '%LockRoutePolicyAccount%'))`).Scan(&waiting); err != nil {
 					t.Fatal(err)
 				}
 				if waiting {
@@ -205,7 +205,7 @@ func TestServiceRolloutBindingPGLockRaces(t *testing.T) {
 				}
 				select {
 				case <-ctx.Done():
-					t.Fatal("app lock never observed")
+					t.Fatal("account/app policy lock never observed")
 				case <-time.After(10 * time.Millisecond):
 				}
 			}

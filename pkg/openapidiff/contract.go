@@ -35,12 +35,20 @@ var (
 )
 
 // SnapshotDiff is the stable, daemon-neutral result of comparing two
-// canonical snapshots. Breaks are blocking; additions are explanatory.
+// canonical snapshots. Breaks and unknowns are blocking; additions are
+// explanatory.
 type SnapshotDiff struct {
 	BaselineSHA256 string
 	ProposedSHA256 string
 	Breaks         []SchemaBreak
+	Unknowns       []SchemaUnknown
 	Additions      []AdditiveChange
+}
+
+// Blocking reports whether the comparison found a confirmed break or an
+// incomplete response-schema comparison.
+func (d SnapshotDiff) Blocking() bool {
+	return len(d.Breaks) > 0 || len(d.Unknowns) > 0
 }
 
 // PromotionCheck carries both the comparison and the snapshot metadata used
@@ -57,28 +65,46 @@ type PromotionCheck struct {
 	ProposedSource string
 }
 
-// GateError is returned when the proposed contract contains one or more
-// structural breaks. The message is deterministic so deployment errors and
-// audit records are useful without exposing the entire snapshot document.
+// GateError is returned when the proposed contract contains a confirmed
+// structural break or an incomplete response-schema comparison. The message
+// is deterministic so deployment errors and audit records are useful without
+// exposing the entire snapshot document.
 type GateError struct {
 	Diff SnapshotDiff
 }
 
 func (e *GateError) Error() string {
-	if e == nil || len(e.Diff.Breaks) == 0 {
+	if e == nil || !e.Diff.Blocking() {
 		return "openapi contract gate: breaking change"
 	}
-	parts := make([]string, 0, len(e.Diff.Breaks))
+	breaks := make([]string, 0, len(e.Diff.Breaks))
 	for _, b := range e.Diff.Breaks {
 		anchor := strings.TrimSpace(strings.Join([]string{b.Method, b.Path, b.Status, b.PathInSchema}, " "))
 		anchor = strings.Join(strings.Fields(anchor), " ")
 		if anchor == "" {
 			anchor = b.Path
 		}
-		parts = append(parts, fmt.Sprintf("%s (%s)", anchor, b.Kind))
+		breaks = append(breaks, fmt.Sprintf("%s (%s)", anchor, b.Kind))
 	}
-	sort.Strings(parts)
-	return fmt.Sprintf("openapi contract gate: %d breaking change(s): %s", len(parts), strings.Join(parts, "; "))
+	sort.Strings(breaks)
+	unknowns := make([]string, 0, len(e.Diff.Unknowns))
+	for _, unknown := range e.Diff.Unknowns {
+		anchor := strings.TrimSpace(strings.Join([]string{unknown.Method, unknown.Path, unknown.Status, unknown.PathInSchema}, " "))
+		anchor = strings.Join(strings.Fields(anchor), " ")
+		if anchor == "" {
+			anchor = unknown.Path
+		}
+		unknowns = append(unknowns, fmt.Sprintf("%s (%s)", anchor, unknown.Code))
+	}
+	sort.Strings(unknowns)
+	parts := make([]string, 0, 2)
+	if len(breaks) > 0 {
+		parts = append(parts, fmt.Sprintf("%d breaking change(s): %s", len(breaks), strings.Join(breaks, "; ")))
+	}
+	if len(unknowns) > 0 {
+		parts = append(parts, fmt.Sprintf("%d incomplete comparison(s): %s", len(unknowns), strings.Join(unknowns, "; ")))
+	}
+	return "openapi contract gate: " + strings.Join(parts, "; ")
 }
 
 // CompareSnapshots validates and compares two canonical snapshot envelopes.
@@ -99,10 +125,12 @@ func CompareSnapshots(baseline, proposed json.RawMessage) (SnapshotDiff, error) 
 	if err != nil {
 		return SnapshotDiff{}, fmt.Errorf("openapidiff: hash proposed snapshot: %w", err)
 	}
+	comparison := CompareDetailed(base, prop)
 	return SnapshotDiff{
 		BaselineSHA256: baseSHA,
 		ProposedSHA256: propSHA,
-		Breaks:         Compare(base, prop),
+		Breaks:         comparison.Breaks,
+		Unknowns:       comparison.Unknowns,
 		Additions:      CompareAdditive(base, prop),
 	}, nil
 }

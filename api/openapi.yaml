@@ -12993,7 +12993,7 @@ paths:
       tags: [openapi_discovery]
       operationId: getDeploymentOpenAPIDoc
       summary: Read the captured OpenAPI document for a deployment.
-      description: "Returns the OpenAPI document the cold-boot probe captured from the customer's app (issue #975 item #1, ADR-122). The probe runs unconditionally during cold boot; the apid surfaces the doc only on paid plans (Hobby/Pro/Scale). Free customers receive 402 + openapi_docs_not_allowed. Cache-Control: 5 min. Response headers: X-OpenAPI-Doc-Source (cold_boot or manual_upload), X-OpenAPI-Doc-Truncated (1 if clipped at 128 KiB), X-OpenAPI-Doc-Byte-Size."
+      description: "Returns the OpenAPI document the cold-boot probe captured from the customer's app (issue #975 item #1, ADR-122). The probe runs unconditionally during cold boot; the apid surfaces the doc only on paid plans (Hobby/Pro/Scale). Free customers receive 402 + openapi_docs_not_allowed. Cache-Control: 5 min. Response headers: X-OpenAPI-Doc-Source (cold_boot or manual_upload), X-OpenAPI-Doc-Truncated (1 if clipped at 128 KiB), X-OpenAPI-Doc-Byte-Size, X-OpenAPI-Doc-Deployment-ID, X-OpenAPI-Doc-App-ID, X-OpenAPI-Doc-SHA256, X-OpenAPI-Doc-Captured-At and X-OpenAPI-Doc-Updated-At. These authenticated metadata headers bind the unchanged body to its capture."
       responses:
         '200':
           description: The OpenAPI document.
@@ -13302,6 +13302,171 @@ paths:
                 $ref: '#/components/schemas/AppOpenAPIPolicyPreviewResponse'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/route-removal/policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getRouteRemovalPolicy
+      summary: Read the production route removal policy.
+      description: Requires apps:read or admin and completed MFA. An unconfigured app reports revision 0 and mode report.
+      responses:
+        '200':
+          description: Current policy and durable production baseline.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteRemovalPolicy' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setRouteRemovalPolicy
+      summary: Configure server route removal enforcement.
+      description: Requires account admin authorization and completed MFA. expected_revision is mandatory. First configuration requires one production baseline at 100 percent, or no production deployments. Policy changes invalidate previous approvals. Quiet observation begins when a policy first adopts a baseline, resets on full cutover or capture changes, and survives policy mode changes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetRouteRemovalPolicyRequest' }
+      responses:
+        '200':
+          description: Saved route retirement policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteRemovalPolicy' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-lifecycle/history:
+    get:
+      operationId: listRouteLifecycleHistory
+      tags: [apps]
+      summary: List production lifecycle review history
+      description: Requires read authorization and completed MFA. Returns newest retained reviews first by immutable review ID. Successful production traffic increases and blocked application review attempts are retained; rolled-back successful reviews and direct SQL rejections are not retained. Captures and graph IDs are historical metadata. Approval status is evaluated at read time and is not a fresh rollout authorization. Older reviews may have no recorded binding evidence. Metadata is bounded to 20 approvals, 64 captures and 64 graph IDs per approval; truncated indicates omitted metadata. Full successor pins remain available through the approval receipt endpoint. Configuration snapshots, credentials and OpenAPI payloads are never returned.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - { name: limit, in: query, description: Maximum retained reviews to return., schema: { type: integer, minimum: 1, maximum: 20, default: 10 } }
+        - { name: before, in: query, description: Retained app-owned review ID from next_cursor., schema: { type: string, pattern: '^[1-9][0-9]*$' } }
+      responses:
+        '200':
+          description: Retained production lifecycle reviews
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteLifecycleHistoryPage' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/route-lifecycle/approvals:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: approveRouteLifecycle
+      summary: Approve exact captured lifecycle successor changes.
+      description: Requires account admin authorization, owner or organization owner/admin identity, completed MFA and same-origin session protection. The server validates explicit authorized canonical or verified custom-domain HTTPS successor mappings against captured inline rooted OpenAPI operation contracts. Unknown or incompatible results fail closed. Receipt bindings include gate, saved requirements and removal policy revisions, configured policy fingerprint and authoritative capture hashes. Receipts expire after one hour and bind destination ownership, capture, hostname and production routing. Destination capture, domain, rule and routing changes invalidate receipts. All destination pins must be supplied together; project destinations require one active production graph member and verified frozen workload settings; ambiguous routing is unavailable for approval. Only successor-review findings on production traffic increases may be cleared; other lifecycle, removal and contract checks remain enforced. Workers also require the receipt database configuration binding to remain current.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApproveRouteLifecycleRequest' }
+      responses:
+        '201':
+          description: Durable compatibility approval receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteLifecycleApproval' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-lifecycle/approvals/{approval_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: approval_id
+        description: App-owned lifecycle approval receipt identifier.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getRouteLifecycleApproval
+      summary: Inspect an app-owned lifecycle approval receipt.
+      description: Requires read authorization and completed MFA. Returns the persisted review bindings and capture invalidation timestamp. An expired or policy-stale receipt remains readable and does not authorize a production traffic increase.
+      responses:
+        '200':
+          description: Persisted approval receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteLifecycleApproval' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-removal/approvals:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: approveRouteRemoval
+      summary: Store an authenticated approval for exact route removal.
+      description: Requires account admin authorization and completed MFA. Uses server-owned captures, canonical successor mappings and retained production telemetry. Requires a staged baseline exposing old and successor routes, compatible successors in the candidate, the configured quiet grace period and explicit observed-only acknowledgement. Approver and timestamps are derived from authentication and server time. Approval is recorded durably. Local attestations and uploaded readiness statuses cannot satisfy this authorization. An approval does not waive other deployment or contract gates.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApproveRouteRemovalRequest' }
+      responses:
+        '201':
+          description: Durable approval receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteRemovalApproval' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-removal/check:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: checkRouteRemoval
+      summary: Read authoritative route removal blockers.
+      description: Requires apps:read or admin and completed MFA. Uses the same evaluator as production traffic transitions. This read is advisory; enforcement repeats within the traffic transaction. Missing captures, stale approvals, changed policies or renewed old-route observations block enforce mode.
+      parameters:
+        - name: deployment_id
+          description: Candidate deployment whose removed routes are evaluated.
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current policy, removed operations and blockers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteRemovalCheck' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/apps/{slug}/route-requirements:
     parameters:
@@ -13781,7 +13946,7 @@ paths:
       tags: [apps]
       operationId: getCanaryRouteGate
       summary: Read canary route gate mode and revision.
-      description: Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates advances of an existing canary, not its initial activation.
+      description: Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates route-requirements evidence on canary advances and lifecycle declarations on production traffic increases, including initial activation and ordinary cutovers. Dark staging, validated abort and automatic incident recovery remain available.
       responses:
         '200':
           description: Current saved route-requirements gate mode and revision.
@@ -36462,6 +36627,202 @@ components:
         rule_ids: { type: array, items: { type: string } }
         reason: { type: string }
         next_action: { type: string }
+    RouteRemovalPolicy:
+      type: object
+      description: App route retirement policy and its current observation baseline.
+      required: [app_id, mode, revision, grace_period, max_approval_age]
+      properties:
+        app_id: { type: string, format: uuid }
+        mode: { type: string, enum: [report, enforce] }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+        grace_period: { type: string, description: Go duration; default 720h. }
+        max_approval_age: { type: string, description: Go duration; default 1h. }
+        baseline_deployment_id: { type: string, format: uuid }
+        updated_at: { type: string, format: date-time }
+    SetRouteRemovalPolicyRequest:
+      type: object
+      description: Replacement route retirement policy with an optimistic revision check.
+      additionalProperties: false
+      required: [expected_revision, mode]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 2147483646 }
+        mode: { type: string, enum: [report, enforce] }
+        grace_period: { type: string, description: Go duration between 1h and 2160h; default 720h. }
+        max_approval_age: { type: string, description: Go duration between 1m and 72h; default 1h. }
+    RouteRemovalMapping:
+      type: object
+      description: Removed operation and its optional successor operation.
+      additionalProperties: false
+      required: [method, path]
+      properties:
+        method: { type: string, enum: [GET, PUT, POST, DELETE, OPTIONS, HEAD, PATCH, TRACE] }
+        path: { type: string, maxLength: 4096 }
+        successor_method: { type: string, enum: [GET, PUT, POST, DELETE, OPTIONS, HEAD, PATCH, TRACE] }
+        successor_path: { type: string, maxLength: 4096 }
+    ApproveRouteRemovalRequest:
+      type: object
+      description: Pinned route retirement evidence and explicit acknowledgement of telemetry limits.
+      additionalProperties: false
+      required: [expected_policy_revision, baseline_deployment_id, candidate_deployment_id, baseline_contract_sha256, candidate_contract_sha256, mappings, acknowledge_observed_only]
+      properties:
+        expected_policy_revision: { type: integer, format: int64, minimum: 1 }
+        baseline_deployment_id: { type: string, format: uuid }
+        candidate_deployment_id: { type: string, format: uuid }
+        baseline_contract_sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: 'Authoritative doc_sha256 capture metadata, not a reserialized document digest.' }
+        candidate_contract_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        mappings:
+          type: array
+          minItems: 1
+          maxItems: 2000
+          items:
+            allOf:
+              - $ref: '#/components/schemas/RouteRemovalMapping'
+              - type: object
+                required: [successor_method, successor_path]
+        acknowledge_observed_only: { type: boolean, enum: [true], description: Explicit owner acknowledgement that telemetry is sampled and asynchronous and cannot establish absence of every client. }
+    RouteLifecycleMapping:
+      type: object
+      description: Retiring operation mapped to a verified captured successor.
+      additionalProperties: false
+      required: [method, path, successor_url, successor_method, successor_path]
+      properties:
+        method: { type: string, enum: [GET, PUT, POST, DELETE, OPTIONS, HEAD, PATCH, TRACE] }
+        path: { type: string, maxLength: 4096 }
+        successor_url: { type: string, format: uri, description: "Exact candidate x-gregale-successor HTTPS URL on the successor app's canonical host or verified application-wide custom domain, with no port, query or fragment. Ambiguous routing and tenant surfaces require further review." }
+        successor_method: { type: string, enum: [GET, PUT, POST, DELETE, OPTIONS, HEAD, PATCH, TRACE] }
+        successor_path: { type: string, maxLength: 4096 }
+        successor_app_id: { type: string, format: uuid, description: "Same-account destination app. Supply together with successor_deployment_id and successor_contract_sha256; omit all three for the source app candidate." }
+        successor_deployment_id: { type: string, format: uuid, description: "Destination deployment. Legacy apps require one production destination at 100 percent. Project apps require one live active production graph member with frozen settings. Source-app successors must use the candidate." }
+        successor_contract_sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: "Authoritative destination doc_sha256 capture metadata." }
+    ApproveRouteLifecycleRequest:
+      type: object
+      description: Pinned policy, contract and successor evidence for a lifecycle approval.
+      additionalProperties: false
+      required: [expected_gate_revision, expected_requirements_revision, expected_removal_policy_revision, configuration_sha256, baseline_deployment_id, candidate_deployment_id, baseline_contract_sha256, candidate_contract_sha256, mappings]
+      properties:
+        expected_gate_revision: { type: integer, format: int64, minimum: 0 }
+        expected_requirements_revision: { type: integer, format: int64, minimum: 1 }
+        expected_removal_policy_revision: { type: integer, format: int64, minimum: 0 }
+        configuration_sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: Configuration digest from the server's saved route requirements check. }
+        baseline_deployment_id: { type: string, format: uuid }
+        candidate_deployment_id: { type: string, format: uuid }
+        baseline_contract_sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: Authoritative doc_sha256 capture metadata; normalized document hashes are not accepted. }
+        candidate_contract_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        mappings:
+          type: array
+          minItems: 1
+          maxItems: 2000
+          items: { $ref: '#/components/schemas/RouteLifecycleMapping' }
+    RouteLifecycleHistoryCapture:
+      type: object
+      description: Deployment contract digest recorded at production review time.
+      required: [deployment_id, sha256]
+      properties:
+        deployment_id: { type: string }
+        sha256: { type: string }
+    RouteLifecycleHistoryApproval:
+      type: object
+      description: Historical approval binding with its current validity status.
+      required: [id, used, status, status_reason, baseline_deployment_id, candidate_deployment_id, baseline_contract_sha256, candidate_contract_sha256, configuration_sha256, valid_until, graph_ids]
+      properties:
+        id: { type: string, format: uuid }
+        used: { type: boolean }
+        status: { type: string, enum: [valid, expired, invalidated, unavailable] }
+        status_reason: { type: string }
+        baseline_deployment_id: { type: string }
+        candidate_deployment_id: { type: string }
+        baseline_contract_sha256: { type: string }
+        candidate_contract_sha256: { type: string }
+        configuration_sha256: { type: string }
+        valid_until: { type: string, format: date-time }
+        invalidated_at: { type: string, format: date-time }
+        graph_ids: { type: array, maxItems: 64, items: { type: string } }
+    RouteLifecycleHistoryEntry:
+      type: object
+      description: Retained production review outcome and bounded historical evidence.
+      required: [id, app_id, deployment_id, reviewed_at, scope, outcome, recovery, decision, evidence_available, truncated, captures, graph_ids, approvals]
+      properties:
+        id: { type: string, pattern: '^[1-9][0-9]*$' }
+        app_id: { type: string }
+        deployment_id: { type: string }
+        reviewed_at: { type: string, format: date-time }
+        scope: { type: string }
+        outcome: { type: string, enum: [applied, blocked] }
+        recovery: { type: boolean }
+        decision: { $ref: '#/components/schemas/RouteGateDecision' }
+        evidence_available: { type: boolean }
+        truncated: { type: boolean }
+        captures: { type: array, maxItems: 64, items: { $ref: '#/components/schemas/RouteLifecycleHistoryCapture' } }
+        graph_ids: { type: array, items: { type: string } }
+        approvals: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteLifecycleHistoryApproval' } }
+    RouteLifecycleHistoryPage:
+      type: object
+      description: Newest retained lifecycle reviews with an optional continuation cursor.
+      required: [app_id, entries]
+      properties:
+        app_id: { type: string }
+        entries: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteLifecycleHistoryEntry' } }
+        next_cursor: { type: string }
+
+    RouteLifecycleApproval:
+      type: object
+      description: Time-limited lifecycle receipt bound to configuration and captured successors.
+      required: [id, app_id, gate_revision, requirements_revision, removal_policy_revision, configuration_sha256, baseline_deployment_id, candidate_deployment_id, baseline_contract_sha256, candidate_contract_sha256, mapping_sha256, mappings, compatibility, checker_version, approved_by, approved_at, valid_until]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        gate_revision: { type: integer, format: int64 }
+        requirements_revision: { type: integer, format: int64 }
+        removal_policy_revision: { type: integer, format: int64 }
+        configuration_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        baseline_deployment_id: { type: string, format: uuid }
+        candidate_deployment_id: { type: string, format: uuid }
+        baseline_contract_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        candidate_contract_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        mapping_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        mappings: { type: array, items: { $ref: '#/components/schemas/RouteLifecycleMapping' } }
+        compatibility: { type: string, enum: [no_supported_breaks], description: "Server comparison found no supported declared request, response, method, path parameter or security breaks. This is not proof of runtime equivalence." }
+        checker_version: { type: integer, enum: [1] }
+        approved_by: { type: string, description: Authenticated owner/admin account and key or session identity. }
+        approved_at: { type: string, format: date-time }
+        valid_until: { type: string, format: date-time }
+        invalidated_at: { type: string, format: date-time, description: Permanently invalidated by capture replacement or deletion; old bytes cannot revive the receipt. }
+    RouteRemovalApproval:
+      type: object
+      description: Time-limited retirement receipt bound to captures and observed route usage.
+      required: [id, app_id, policy_revision, baseline_deployment_id, candidate_deployment_id, baseline_contract_sha256, candidate_contract_sha256, mapping_sha256, mappings, approved_by, approved_at, valid_until, observation_from, observation_until, coverage]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        policy_revision: { type: integer, format: int64 }
+        baseline_deployment_id: { type: string, format: uuid }
+        candidate_deployment_id: { type: string, format: uuid }
+        baseline_contract_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        candidate_contract_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        mapping_sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: Digest of server-normalized mapping entries. }
+        mappings: { type: array, items: { $ref: '#/components/schemas/RouteRemovalMapping' } }
+        approved_by: { type: string, description: Authenticated account and key or session identity. }
+        approved_at: { type: string, format: date-time }
+        valid_until: { type: string, format: date-time }
+        observation_from: { type: string, format: date-time }
+        observation_until: { type: string, format: date-time }
+        coverage: { type: string, enum: [observed_only] }
+    RouteRemovalCheck:
+      type: object
+      description: Current retirement evaluation with blockers and recovery guidance.
+      required: [policy, candidate_deployment_id, status, removed, blockers]
+      properties:
+        earliest_approval_at: { type: string, format: date-time, description: Earliest approval time for the current observed baseline and capture. }
+        approval_valid_until: { type: string, format: date-time, description: Expiry of the currently valid matching approval. }
+        next_actions: { type: array, items: { type: string }, description: Recovery guidance for the current check. }
+        baseline_contract_sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: Authoritative baseline capture digest to pin in an approval request. }
+        candidate_contract_sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: Authoritative candidate capture digest to pin in an approval request. }
+        policy: { $ref: '#/components/schemas/RouteRemovalPolicy' }
+        candidate_deployment_id: { type: string, format: uuid }
+        status: { type: string, enum: [not_configured, not_required, passed, blocked] }
+        removed: { type: array, items: { $ref: '#/components/schemas/RouteRemovalMapping' } }
+        blockers: { type: array, items: { type: string } }
+        approval_id: { type: string, format: uuid }
     SavedRouteRequirements:
       type: object
       description: Current version 2 route intent. Revision increments only when normalized intent changes. Original public rationale is never stored or returned.
@@ -37448,7 +37809,7 @@ components:
 
     CanaryRouteGate:
       type: object
-      description: Per-app canary advance gate. Absence is report mode with revision 0. Initial activation, stable rollbacks and aborts are outside this gate.
+      description: Per-app gate for canary route-requirements evidence and production lifecycle declarations. Absence is report mode with revision 0. Lifecycle enforcement includes initial positive activation, promotions, traffic redistribution and ordinary rollback. Dark staging, validated abort and automatic incident recovery remain available.
       required: [app_id, mode, revision]
       properties:
         app_id: { type: string, format: uuid }
@@ -37473,8 +37834,9 @@ components:
         status: { type: string, enum: [allowed, blocked, report_only] }
         reasons:
           type: array
-          items: { type: string, enum: [evidence_unavailable, check_missing, check_incomplete, check_stale, verdict_unknown, requirements_violated, use_canary_advance] }
+          items: { type: string, description: Route-check reason or lifecycle declaration code with the lifecycle_ prefix. }
         check_queued: { type: boolean }
+        lifecycle_approval_ids: { type: array, items: { type: string, format: uuid }, description: Exact persisted successor-review receipts accepted inside this advance transaction. }
     AutomaticRouteCheck:
       type: object
       description: Latest bounded deployment verdict and independently computed freshness. Recent completed checks have bounded immutable history and finding deltas; history is not current passing evidence. Queue runs after capture or saved intent changes; refresh reevaluates policy drift.
@@ -57232,9 +57594,12 @@ components:
         app document (or the projected edge-rule fallback) and the latest
         captured deployment snapshot.
         `blocking` is true when a production promotion would be rejected
-        while the contract-diff feature flag is enabled.
+        while the contract-diff feature flag is enabled. This includes
+        confirmed response breaks and changed response schemas the comparator
+        cannot classify as breaking or additive; those findings appear in
+        `unknowns` and remain distinct from confirmed breaks.
       type: object
-      required: [app_id, scope, source, proposed_sha256, blocking, breaks, additions]
+      required: [app_id, scope, source, proposed_sha256, blocking, breaks, unknowns, additions]
       properties:
         app_id:
           type: string
@@ -57262,6 +57627,10 @@ components:
         breaks:
           type: array
           items: { $ref: '#/components/schemas/OpenAPIContractBreak' }
+        unknowns:
+          type: array
+          description: "Changed unsupported response-schema features or incomplete legacy baselines whose compatibility could not be classified; these block promotion while the contract gate is enabled."
+          items: { $ref: '#/components/schemas/OpenAPIContractUnknown' }
         additions:
           type: array
           items: { $ref: '#/components/schemas/OpenAPIContractAddition' }
@@ -57278,10 +57647,25 @@ components:
         status: { type: string }
         kind:
           type: string
-          enum: [type_change, field_removed, required_added, nullability_change]
+          enum: [type_change, field_removed, required_added, required_removed, nullability_change]
         path_in_schema: { type: string }
         before: {}
         after: {}
+
+    OpenAPIContractUnknown:
+      description: "One changed unsupported response-schema feature or incomplete baseline that the current comparator cannot classify as breaking or additive."
+      type: object
+      required: [path, method, code]
+      properties:
+        path: { type: string }
+        method:
+          type: string
+          description: "HTTP method for the affected operation."
+        status: { type: string }
+        path_in_schema: { type: string }
+        code:
+          type: string
+          description: "Stable classification code for the unsupported schema change."
 
     OpenAPIContractAddition:
       description: "One additive, non-blocking schema change."

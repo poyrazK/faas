@@ -279,6 +279,10 @@ func readPreviewCustomerMigrationMappings(path string) (map[previewCustomerMigra
 	if err != nil || int64(len(body)) > api.RouteImpactReportMaxBytes {
 		return nil, errors.New("could not read mapping or it exceeds the 64 MiB limit")
 	}
+	return parsePreviewCustomerMigrationMappings(body)
+}
+
+func parsePreviewCustomerMigrationMappings(body []byte) (map[previewCustomerMigrationRouteKey]previewCustomerMigrationMapping, error) {
 	var document previewCustomerMigrationMappingFile
 	if err := json.Unmarshal(body, &document); err != nil || document.Version != 1 || document.Mappings == nil {
 		return nil, errors.New("mapping must be version 1 JSON with a mappings array")

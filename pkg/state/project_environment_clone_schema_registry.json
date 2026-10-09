@@ -726,6 +726,21 @@
     "kind": "configuration"
   },
   {
+    "table": "app_route_removal_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "baseline_deployment_id",
+      "baseline_since",
+      "grace_seconds",
+      "max_approval_age_seconds",
+      "mode",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "app_runtime_config_changes",
     "columns": [
       "app_id",
@@ -6091,6 +6106,20 @@
     "kind": "configuration"
   },
   {
+    "table": "production_lifecycle_reviews",
+    "columns": [
+      "app_id",
+      "decision",
+      "deployment_id",
+      "evidence",
+      "id",
+      "recovery",
+      "reviewed_at",
+      "scope"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "profile_canary_checks",
     "columns": [
       "account_id",
@@ -7201,6 +7230,37 @@
     "kind": "operational"
   },
   {
+    "table": "request_telemetry_app_gaps",
+    "columns": [
+      "app_id",
+      "dropped_total",
+      "last_gap_at",
+      "node_name",
+      "pending_count",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_telemetry_coverage",
+    "columns": [
+      "app_scoped",
+      "boot_id",
+      "dropped_total",
+      "enabled",
+      "healthy_since",
+      "node_name",
+      "pending_count",
+      "received_at",
+      "sampling_basis_points",
+      "sequence",
+      "source_at",
+      "unattributed_dropped_total",
+      "unattributed_pending_count"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "reserved_ip_inventory",
     "columns": [
       "address",
@@ -7297,6 +7357,23 @@
     "kind": "operational"
   },
   {
+    "table": "route_lifecycle_approvals",
+    "columns": [
+      "account_id",
+      "app_id",
+      "approved_at",
+      "baseline_deployment_id",
+      "candidate_deployment_id",
+      "configuration_snapshot",
+      "id",
+      "invalidated_at",
+      "receipt",
+      "successor_snapshot",
+      "valid_until"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "route_monitor_incidents",
     "columns": [
       "account_id",
@@ -7340,6 +7417,39 @@
       "idempotency_key",
       "receipt",
       "request_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "route_removal_approvals",
+    "columns": [
+      "account_id",
+      "app_id",
+      "approved_at",
+      "approved_by",
+      "baseline_deployment_id",
+      "baseline_sha256",
+      "candidate_deployment_id",
+      "candidate_sha256",
+      "id",
+      "mapping_sha256",
+      "mappings",
+      "observation_from",
+      "observation_until",
+      "policy_revision",
+      "receipt",
+      "valid_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "route_removal_policy_history",
+    "columns": [
+      "app_id",
+      "changed_at",
+      "changed_by",
+      "policy",
+      "revision"
     ],
     "kind": "operational"
   },

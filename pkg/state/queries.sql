@@ -16565,6 +16565,120 @@ WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.app_id=sqlc.arg(app_id)::uui
       (sqlc.narg(after_revision)::bigint,sqlc.narg(after_published_at)::timestamptz,sqlc.narg(after_operation_id)::uuid,sqlc.narg(after_id)::uuid))
 ORDER BY r.revision,r.created_at,r.operation_id,r.id LIMIT sqlc.arg(page_limit)::integer;
 
+-- name: ReadLifecycleCanaryBaselines :many
+SELECT id::text FROM deployments
+WHERE app_id = sqlc.arg(app_id)::text::uuid AND id != sqlc.arg(candidate_id)::text::uuid
+AND (scope = sqlc.arg(scope)::text OR (coalesce(nullif(scope,''),'default') IN ('default','prod','production') AND coalesce(nullif(sqlc.arg(scope)::text,''),'default') IN ('default','prod','production')))
+AND ((status = 'live' AND traffic_percent > 0) OR id IN (SELECT baseline_deployment_id FROM app_route_removal_policies WHERE app_id = sqlc.arg(app_id)::text::uuid))
+ORDER BY id;
+
+-- name: InsertRouteLifecycleApproval :execrows
+INSERT INTO route_lifecycle_approvals(id,account_id,app_id,baseline_deployment_id,candidate_deployment_id,receipt,approved_at,valid_until,configuration_snapshot,successor_snapshot)
+SELECT sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(app_id)::text::uuid,sqlc.arg(baseline_id)::text::uuid,sqlc.arg(candidate_id)::text::uuid,sqlc.arg(receipt)::jsonb,sqlc.arg(approved_at)::timestamptz,sqlc.arg(valid_until)::timestamptz,lifecycle_configuration(sqlc.arg(app_id)::text::uuid),lifecycle_approval_successor_bindings(sqlc.arg(app_id)::text::uuid,sqlc.arg(receipt)::jsonb) WHERE sqlc.arg(successor_snapshot)::jsonb=lifecycle_approval_successor_bindings(sqlc.arg(app_id)::text::uuid,sqlc.arg(receipt)::jsonb);
+
+-- name: ReadRouteLifecycleApproval :one
+SELECT (r.receipt || jsonb_build_object('invalidated_at',r.invalidated_at))::jsonb AS receipt FROM route_lifecycle_approvals r
+JOIN apps a ON a.id=r.app_id AND a.account_id=r.account_id
+WHERE r.id=sqlc.arg(id)::text::uuid AND r.account_id=sqlc.arg(account_id)::text::uuid AND r.app_id=sqlc.arg(app_id)::text::uuid AND a.status<>'deleted';
+
+-- name: ReadValidRouteLifecycleApprovals :many
+SELECT receipt FROM route_lifecycle_approvals
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND app_id=sqlc.arg(app_id)::text::uuid
+AND baseline_deployment_id=sqlc.arg(baseline_id)::text::uuid AND candidate_deployment_id=sqlc.arg(candidate_id)::text::uuid
+AND invalidated_at IS NULL AND valid_until > sqlc.arg(at)::timestamptz
+AND successor_snapshot=lifecycle_approval_successor_bindings(app_id,receipt)
+AND receipt->>'baseline_contract_sha256'=sqlc.arg(baseline_sha)::text
+AND receipt->>'candidate_contract_sha256'=sqlc.arg(candidate_sha)::text
+AND receipt->>'configuration_sha256'=sqlc.arg(configuration_sha)::text
+AND (receipt->>'gate_revision')::bigint=sqlc.arg(gate_revision)::bigint
+AND (receipt->>'requirements_revision')::bigint=sqlc.arg(requirements_revision)::bigint
+AND (receipt->>'removal_policy_revision')::bigint=sqlc.arg(removal_revision)::bigint
+ORDER BY approved_at DESC LIMIT 1;
+
+-- name: LifecycleApprovalClock :one
+SELECT clock_timestamp()::timestamptz AS now;
+
+-- name: ReadLifecycleDeploymentScope :one
+SELECT coalesce(scope,'')::text AS scope FROM deployments WHERE id=sqlc.arg(deployment_id)::text::uuid AND app_id=sqlc.arg(app_id)::text::uuid;
+
+-- name: ReadLifecycleConfigurationReceipt :one
+SELECT (receipt->>'configuration_sha256')::text AS sha FROM route_lifecycle_approvals
+WHERE app_id=sqlc.arg(app_id)::text::uuid AND candidate_deployment_id=sqlc.arg(deployment_id)::text::uuid
+AND successor_snapshot=lifecycle_approval_successor_bindings(app_id,receipt)
+AND configuration_snapshot=lifecycle_configuration(app_id) AND invalidated_at IS NULL AND valid_until>clock_timestamp()
+ORDER BY approved_at DESC LIMIT 1;
+
+-- name: ReadLifecycleTrafficInputs :one
+SELECT lifecycle_traffic_inputs(sqlc.arg(app_id)::text::uuid)::jsonb AS inputs;
+
+-- name: AuthorizeLifecycleTraffic :one
+SELECT set_config('faas.lifecycle_fences',sqlc.arg(fences)::text,true)::text;
+
+-- name: ReadLifecycleTrafficCandidates :many
+SELECT id::text FROM deployments WHERE app_id=sqlc.arg(app_id)::text::uuid
+AND (id=sqlc.arg(deployment_id)::text::uuid OR status='live')
+ORDER BY id;
+
+-- name: ReadLifecycleTrafficFences :one
+SELECT coalesce(nullif(current_setting('faas.lifecycle_fences',true),''),'[]')::jsonb AS fences;
+
+-- name: ReadLifecycleDarkActivation :one
+SELECT (d.traffic_percent=0 AND (d.traffic_percent_explicit OR EXISTS(SELECT 1 FROM deployment_rollback_operations r WHERE r.target_deployment_id=d.id AND r.status='preparing')))::boolean FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::text::uuid;
+
+-- name: ReadLifecycleCurrentTraffic :one
+SELECT CASE WHEN status='live' THEN traffic_percent ELSE 0 END::integer FROM deployments WHERE id=sqlc.arg(deployment_id)::text::uuid;
+
+-- name: ReadLifecycleAppOwner :one
+SELECT account_id::text FROM apps WHERE id=sqlc.arg(app_id)::text::uuid;
+
+-- name: ReadLifecycleSuccessorHost :one
+SELECT jsonb_build_object('verified_domain',EXISTS(SELECT 1 FROM custom_domains d WHERE d.domain::text=sqlc.arg(host)::text AND d.app_id=sqlc.arg(app_id)::text::uuid AND d.verified_at IS NOT NULL AND d.environment_id IS NULL),
+ 'claimed',EXISTS(SELECT 1 FROM tenant_hostnames h WHERE h.hostname::text=sqlc.arg(host)::text))::jsonb AS routing;
+
+-- name: ReadLifecycleSuccessorDeployments :many
+SELECT jsonb_build_object('ID',id,'AppID',app_id,'Status',status,'scope',scope,'traffic_percent',traffic_percent)::jsonb AS deployment FROM deployments WHERE app_id=sqlc.arg(app_id)::text::uuid AND status='live' ORDER BY id;
+
+-- name: ReadLifecycleApprovalSuccessorBindings :one
+SELECT lifecycle_approval_successor_bindings(sqlc.arg(app_id)::text::uuid,sqlc.arg(receipt)::jsonb)::jsonb AS bindings;
+
+-- name: ReadLifecycleSuccessorAppMetadata :one
+SELECT jsonb_build_object('OrgID',coalesce(org_id::text,''),'ProjectID',coalesce(project_id::text,''),'Visibility',visibility,'OnlyAllowDeclaredRoutes',only_declared_routes,'DeclaredRoutes',declared_routes)::jsonb AS metadata FROM apps WHERE id=sqlc.arg(app_id)::text::uuid;
+
+-- name: ReadLifecycleProjectSuccessor :one
+SELECT lifecycle_project_successor(sqlc.arg(app_id)::text::uuid,sqlc.arg(deployment_id)::text::uuid)::jsonb AS routing;
+
+-- name: LockLifecycleSuccessorProject :one
+SELECT id::text FROM projects WHERE id=sqlc.arg(project_id)::text::uuid FOR UPDATE;
+
+-- name: InsertBlockedLifecycleHistory :exec
+INSERT INTO production_lifecycle_reviews(app_id,deployment_id,decision,recovery,scope,evidence)
+VALUES(sqlc.arg(app_id)::text::uuid,sqlc.arg(deployment_id)::text::uuid,sqlc.arg(decision)::jsonb,false,sqlc.arg(scope)::text,sqlc.arg(evidence)::jsonb);
+
+-- name: ReadLifecycleHistoryEvidence :one
+SELECT lifecycle_history_evidence(sqlc.arg(app_id)::text::uuid,sqlc.arg(deployment_id)::text::uuid,sqlc.arg(decision)::jsonb)::jsonb;
+
+-- name: LifecycleHistoryCursorExists :one
+SELECT EXISTS(SELECT 1 FROM production_lifecycle_reviews h JOIN apps a ON a.id=h.app_id
+WHERE h.id=sqlc.arg(before_id)::bigint AND a.id=sqlc.arg(app_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted');
+
+-- name: ListProductionLifecycleHistory :many
+SELECT jsonb_build_object('id',h.id::text,'app_id',h.app_id,'deployment_id',h.deployment_id,'reviewed_at',h.reviewed_at,
+ 'scope',coalesce(h.scope,''),'outcome',CASE WHEN h.decision->>'status'='blocked' THEN 'blocked' ELSE 'applied' END,
+ 'recovery',h.recovery,'decision',h.decision,'evidence_available',h.evidence IS NOT NULL,
+ 'truncated',coalesce((h.evidence->>'truncated')::boolean,false),'captures',coalesce(h.evidence->'captures','[]'::jsonb),
+ 'graph_ids',coalesce(h.evidence->'graph_ids','[]'::jsonb),
+ 'approvals',coalesce((SELECT jsonb_agg(p || jsonb_build_object('invalidated_at',r.invalidated_at,
+ 'status',CASE WHEN r.id IS NULL THEN 'unavailable' WHEN r.invalidated_at IS NOT NULL OR r.successor_snapshot IS DISTINCT FROM lifecycle_approval_successor_bindings(r.app_id,r.receipt) THEN 'invalidated' WHEN r.valid_until<=now() THEN 'expired' ELSE 'valid' END,
+ 'status_reason',CASE WHEN r.id IS NULL THEN 'approval_not_retained' WHEN r.invalidated_at IS NOT NULL THEN 'review_inputs_changed' WHEN r.successor_snapshot IS DISTINCT FROM lifecycle_approval_successor_bindings(r.app_id,r.receipt) THEN 'destination_binding_changed' WHEN r.valid_until<=now() THEN 'approval_expired' ELSE '' END))
+ FROM jsonb_array_elements(coalesce(h.evidence->'approvals','[]'::jsonb)) p LEFT JOIN route_lifecycle_approvals r ON r.id::text=p->>'id' AND r.app_id=h.app_id),'[]'::jsonb))::jsonb
+FROM production_lifecycle_reviews h JOIN apps a ON a.id=h.app_id
+WHERE a.id=sqlc.arg(app_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted'
+AND (sqlc.arg(before_id)::bigint=0 OR h.id<sqlc.arg(before_id)::bigint)
+ORDER BY h.id DESC LIMIT sqlc.arg(page_limit);
+
+-- name: ReadLifecycleHistoryDeployment :one
+SELECT app_id::text AS app_id,scope FROM deployments WHERE id=sqlc.arg(deployment_id)::text::uuid;
+
 -- name: ReadProfileAlertOwner :one
 SELECT slug FROM apps WHERE id=sqlc.arg(app_id)::text::uuid
  AND account_id=sqlc.arg(account_id)::text::uuid AND status <> 'deleted';

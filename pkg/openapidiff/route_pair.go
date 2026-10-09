@@ -16,8 +16,8 @@ type RoutePairFinding struct {
 }
 
 // RoutePairComparison compares two explicitly mapped operations. A
-// no_supported_breaks result means the supported contract checks found no
-// breaking difference; it does not establish behavioral equivalence.
+// no_supported_breaks result means no confirmed break or unsupported response
+// schema change was found; it does not establish behavioral equivalence.
 type RoutePairComparison struct {
 	Status   string             `json:"status"`
 	Findings []RoutePairFinding `json:"findings"`
@@ -75,12 +75,20 @@ func CompareRoutePair(baseline *Spec, baselineMethod, baselinePath string, candi
 	baseView := routePairSpec(baseline, baselineItem, baselineOperation, baselineRename, canonicalPath)
 	candidateView := routePairSpec(candidate, candidateItem, candidateOperation, candidateRename, canonicalPath)
 
-	for _, change := range Compare(baseView, candidateView) {
+	response := CompareDetailed(baseView, candidateView)
+	for _, change := range response.Breaks {
 		location := "/responses/" + routePairPointer(change.Status)
 		if change.PathInSchema != "" {
 			location += "/" + routePairPointer(change.PathInSchema)
 		}
 		result.add("breaking", "response_"+string(change.Kind), location)
+	}
+	for _, unknown := range response.Unknowns {
+		location := "/responses/" + routePairPointer(unknown.Status)
+		if unknown.PathInSchema != "" {
+			location += "/" + routePairPointer(unknown.PathInSchema)
+		}
+		result.add("unknown", "response_"+string(unknown.Code), location)
 	}
 	requests, err := CompareRequests(baseView, candidateView)
 	if err != nil {

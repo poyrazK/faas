@@ -17,6 +17,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.open_api_contract_addition import OpenAPIContractAddition
     from ..models.open_api_contract_break import OpenAPIContractBreak
+    from ..models.open_api_contract_unknown import OpenAPIContractUnknown
 
 
 T = TypeVar("T", bound="OpenAPIContractDiffResponse")
@@ -28,7 +29,10 @@ class OpenAPIContractDiffResponse:
     app document (or the projected edge-rule fallback) and the latest
     captured deployment snapshot.
     `blocking` is true when a production promotion would be rejected
-    while the contract-diff feature flag is enabled.
+    while the contract-diff feature flag is enabled. This includes
+    confirmed response breaks and changed response schemas the comparator
+    cannot classify as breaking or additive; those findings appear in
+    `unknowns` and remain distinct from confirmed breaks.
 
     """
 
@@ -39,6 +43,9 @@ class OpenAPIContractDiffResponse:
     proposed_sha256: str
     blocking: bool
     breaks: list[OpenAPIContractBreak]
+    unknowns: list[OpenAPIContractUnknown]
+    """Changed unsupported response-schema features or incomplete legacy baselines whose compatibility could not be
+    classified; these block promotion while the contract gate is enabled."""
     additions: list[OpenAPIContractAddition]
     baseline_deployment_id: UUID | Unset = UNSET
     baseline_sha256: str | Unset = UNSET
@@ -60,6 +67,11 @@ class OpenAPIContractDiffResponse:
         for breaks_item_data in self.breaks:
             breaks_item = breaks_item_data.to_dict()
             breaks.append(breaks_item)
+
+        unknowns = []
+        for unknowns_item_data in self.unknowns:
+            unknowns_item = unknowns_item_data.to_dict()
+            unknowns.append(unknowns_item)
 
         additions = []
         for additions_item_data in self.additions:
@@ -86,6 +98,7 @@ class OpenAPIContractDiffResponse:
                 "proposed_sha256": proposed_sha256,
                 "blocking": blocking,
                 "breaks": breaks,
+                "unknowns": unknowns,
                 "additions": additions,
             }
         )
@@ -102,6 +115,7 @@ class OpenAPIContractDiffResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.open_api_contract_addition import OpenAPIContractAddition
         from ..models.open_api_contract_break import OpenAPIContractBreak
+        from ..models.open_api_contract_unknown import OpenAPIContractUnknown
 
         d = dict(src_dict)
         app_id = UUID(d.pop("app_id"))
@@ -120,6 +134,13 @@ class OpenAPIContractDiffResponse:
             breaks_item = OpenAPIContractBreak.from_dict(breaks_item_data)
 
             breaks.append(breaks_item)
+
+        unknowns = []
+        _unknowns = d.pop("unknowns")
+        for unknowns_item_data in _unknowns:
+            unknowns_item = OpenAPIContractUnknown.from_dict(unknowns_item_data)
+
+            unknowns.append(unknowns_item)
 
         additions = []
         _additions = d.pop("additions")
@@ -151,6 +172,7 @@ class OpenAPIContractDiffResponse:
             proposed_sha256=proposed_sha256,
             blocking=blocking,
             breaks=breaks,
+            unknowns=unknowns,
             additions=additions,
             baseline_deployment_id=baseline_deployment_id,
             baseline_sha256=baseline_sha256,

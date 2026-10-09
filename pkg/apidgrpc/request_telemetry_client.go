@@ -174,3 +174,8 @@ func (s *requestTelemetryStream) CloseSend() error {
 	}
 	return s.stream.CloseSend()
 }
+
+// RecordTelemetryCoverage persists an idle or busy gateway delivery heartbeat.
+func (c *RequestTelemetryClientImpl) RecordTelemetryCoverage(ctx context.Context, report *apidpb.TelemetryCoverage) (*apidpb.TelemetryCoverageReceipt, error) {
+	return c.cli.RecordTelemetryCoverage(ctx, report)
+}

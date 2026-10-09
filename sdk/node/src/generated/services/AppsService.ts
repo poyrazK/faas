@@ -13,6 +13,8 @@ import type { AppOperationalSummary } from '../models/AppOperationalSummary.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { AppRestartResponse } from '../models/AppRestartResponse.js';
 import type { AppRoutesResponse } from '../models/AppRoutesResponse.js';
+import type { ApproveRouteLifecycleRequest } from '../models/ApproveRouteLifecycleRequest.js';
+import type { ApproveRouteRemovalRequest } from '../models/ApproveRouteRemovalRequest.js';
 import type { AppSLOResponse } from '../models/AppSLOResponse.js';
 import type { AppsMetricsResponse } from '../models/AppsMetricsResponse.js';
 import type { AppStreamingStatus } from '../models/AppStreamingStatus.js';
@@ -87,6 +89,8 @@ import type { RouteHealthHistoryEntry } from '../models/RouteHealthHistoryEntry.
 import type { RouteHealthHistoryPage } from '../models/RouteHealthHistoryPage.js';
 import type { RouteHealthInvestigation } from '../models/RouteHealthInvestigation.js';
 import type { RouteHealthReport } from '../models/RouteHealthReport.js';
+import type { RouteLifecycleApproval } from '../models/RouteLifecycleApproval.js';
+import type { RouteLifecycleHistoryPage } from '../models/RouteLifecycleHistoryPage.js';
 import type { RouteMonitorConfig } from '../models/RouteMonitorConfig.js';
 import type { RouteMonitorIncident } from '../models/RouteMonitorIncident.js';
 import type { RouteMonitorIncidentPage } from '../models/RouteMonitorIncidentPage.js';
@@ -97,6 +101,9 @@ import type { RoutePolicyApplyResponse } from '../models/RoutePolicyApplyRespons
 import type { RoutePolicyPlan } from '../models/RoutePolicyPlan.js';
 import type { RoutePolicyPlanRequest } from '../models/RoutePolicyPlanRequest.js';
 import type { RoutePolicyReceipt } from '../models/RoutePolicyReceipt.js';
+import type { RouteRemovalApproval } from '../models/RouteRemovalApproval.js';
+import type { RouteRemovalCheck } from '../models/RouteRemovalCheck.js';
+import type { RouteRemovalPolicy } from '../models/RouteRemovalPolicy.js';
 import type { RouteRequirementsCheck } from '../models/RouteRequirementsCheck.js';
 import type { RuntimeConfigRestartStatusResponse } from '../models/RuntimeConfigRestartStatusResponse.js';
 import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
@@ -108,6 +115,7 @@ import type { SetBindingReleasePolicyRequest } from '../models/SetBindingRelease
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
 import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequest.js';
 import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
+import type { SetRouteRemovalPolicyRequest } from '../models/SetRouteRemovalPolicyRequest.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
@@ -4074,6 +4082,268 @@ export class AppsService {
     });
   }
   /**
+   * Read the production route removal policy.
+   * Requires apps:read or admin and completed MFA. An unconfigured app reports revision 0 and mode report.
+   * @returns RouteRemovalPolicy Current policy and durable production baseline.
+   * @throws ApiError
+   */
+  public static getRouteRemovalPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RouteRemovalPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-removal/policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Configure server route removal enforcement.
+   * Requires account admin authorization and completed MFA. expected_revision is mandatory. First configuration requires one production baseline at 100 percent, or no production deployments. Policy changes invalidate previous approvals. Quiet observation begins when a policy first adopts a baseline, resets on full cutover or capture changes, and survives policy mode changes.
+   * @returns RouteRemovalPolicy Saved route retirement policy.
+   * @throws ApiError
+   */
+  public static setRouteRemovalPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetRouteRemovalPolicyRequest,
+  }): CancelablePromise<RouteRemovalPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/route-removal/policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List production lifecycle review history
+   * Requires read authorization and completed MFA. Returns newest retained reviews first by immutable review ID. Successful production traffic increases and blocked application review attempts are retained; rolled-back successful reviews and direct SQL rejections are not retained. Captures and graph IDs are historical metadata. Approval status is evaluated at read time and is not a fresh rollout authorization. Older reviews may have no recorded binding evidence. Metadata is bounded to 20 approvals, 64 captures and 64 graph IDs per approval; truncated indicates omitted metadata. Full successor pins remain available through the approval receipt endpoint. Configuration snapshots, credentials and OpenAPI payloads are never returned.
+   * @returns RouteLifecycleHistoryPage Retained production lifecycle reviews
+   * @throws ApiError
+   */
+  public static listRouteLifecycleHistory({
+    slug,
+    limit = 10,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Maximum retained reviews to return.
+     */
+    limit?: number,
+    /**
+     * Retained app-owned review ID from next_cursor.
+     */
+    before?: string,
+  }): CancelablePromise<RouteLifecycleHistoryPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-lifecycle/history',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Approve exact captured lifecycle successor changes.
+   * Requires account admin authorization, owner or organization owner/admin identity, completed MFA and same-origin session protection. The server validates explicit authorized canonical or verified custom-domain HTTPS successor mappings against captured inline rooted OpenAPI operation contracts. Unknown or incompatible results fail closed. Receipt bindings include gate, saved requirements and removal policy revisions, configured policy fingerprint and authoritative capture hashes. Receipts expire after one hour and bind destination ownership, capture, hostname and production routing. Destination capture, domain, rule and routing changes invalidate receipts. All destination pins must be supplied together; project destinations require one active production graph member and verified frozen workload settings; ambiguous routing is unavailable for approval. Only successor-review findings on production traffic increases may be cleared; other lifecycle, removal and contract checks remain enforced. Workers also require the receipt database configuration binding to remain current.
+   * @returns RouteLifecycleApproval Durable compatibility approval receipt.
+   * @throws ApiError
+   */
+  public static approveRouteLifecycle({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: ApproveRouteLifecycleRequest,
+  }): CancelablePromise<RouteLifecycleApproval> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-lifecycle/approvals',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect an app-owned lifecycle approval receipt.
+   * Requires read authorization and completed MFA. Returns the persisted review bindings and capture invalidation timestamp. An expired or policy-stale receipt remains readable and does not authorize a production traffic increase.
+   * @returns RouteLifecycleApproval Persisted approval receipt.
+   * @throws ApiError
+   */
+  public static getRouteLifecycleApproval({
+    slug,
+    approvalId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * App-owned lifecycle approval receipt identifier.
+     */
+    approvalId: string,
+  }): CancelablePromise<RouteLifecycleApproval> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-lifecycle/approvals/{approval_id}',
+      path: {
+        'slug': slug,
+        'approval_id': approvalId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Store an authenticated approval for exact route removal.
+   * Requires account admin authorization and completed MFA. Uses server-owned captures, canonical successor mappings and retained production telemetry. Requires a staged baseline exposing old and successor routes, compatible successors in the candidate, the configured quiet grace period and explicit observed-only acknowledgement. Approver and timestamps are derived from authentication and server time. Approval is recorded durably. Local attestations and uploaded readiness statuses cannot satisfy this authorization. An approval does not waive other deployment or contract gates.
+   * @returns RouteRemovalApproval Durable approval receipt.
+   * @throws ApiError
+   */
+  public static approveRouteRemoval({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: ApproveRouteRemovalRequest,
+  }): CancelablePromise<RouteRemovalApproval> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-removal/approvals',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read authoritative route removal blockers.
+   * Requires apps:read or admin and completed MFA. Uses the same evaluator as production traffic transitions. This read is advisory; enforcement repeats within the traffic transaction. Missing captures, stale approvals, changed policies or renewed old-route observations block enforce mode.
+   * @returns RouteRemovalCheck Current policy, removed operations and blockers.
+   * @throws ApiError
+   */
+  public static checkRouteRemoval({
+    slug,
+    deploymentId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Candidate deployment whose removed routes are evaluated.
+     */
+    deploymentId: string,
+  }): CancelablePromise<RouteRemovalCheck> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-removal/check',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Read saved route requirements.
    * Read the current normalized version 2 route intent and its revision. Public exception rationale is replaced before storage. Requires apps:read or admin and completed MFA. This is the current record; previous revisions remain in customer version control.
    * @returns SavedRouteRequirements Current saved route intent.
@@ -4760,7 +5030,7 @@ export class AppsService {
   }
   /**
    * Read canary route gate mode and revision.
-   * Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates advances of an existing canary, not its initial activation.
+   * Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates route-requirements evidence on canary advances and lifecycle declarations on production traffic increases, including initial activation and ordinary cutovers. Dark staging, validated abort and automatic incident recovery remain available.
    * @returns CanaryRouteGate Current saved route-requirements gate mode and revision.
    * @throws ApiError
    */
