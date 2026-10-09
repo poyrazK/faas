@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE profile_periodic_monitors (
+CREATE TABLE IF NOT EXISTS profile_periodic_monitors (
  id uuid PRIMARY KEY,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -15,8 +15,8 @@ CREATE TABLE profile_periodic_monitors (
  UNIQUE(deployment_id,policy_revision,route),
  CHECK ((lease_token IS NULL)=(lease_until IS NULL))
 );
-CREATE INDEX profile_periodic_monitors_due_idx ON profile_periodic_monitors(next_attempt_at,id);
-CREATE INDEX profile_periodic_monitors_app_idx ON profile_periodic_monitors(app_id,updated_at DESC,id);
+CREATE INDEX IF NOT EXISTS profile_periodic_monitors_due_idx ON profile_periodic_monitors(next_attempt_at,id);
+CREATE INDEX IF NOT EXISTS profile_periodic_monitors_app_idx ON profile_periodic_monitors(app_id,updated_at DESC,id);
 -- +goose Down
 -- Retain incident evidence during binary rollback.
 SELECT 1;

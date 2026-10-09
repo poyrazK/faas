@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE profile_route_alert_state (
+CREATE TABLE IF NOT EXISTS profile_route_alert_state (
  context_key text PRIMARY KEY CHECK (length(context_key)=64),
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -7,7 +7,7 @@ CREATE TABLE profile_route_alert_state (
  state jsonb NOT NULL,
  updated_at timestamptz NOT NULL
 );
-CREATE INDEX profile_route_alert_state_app_idx ON profile_route_alert_state(app_id);
+CREATE INDEX IF NOT EXISTS profile_route_alert_state_app_idx ON profile_route_alert_state(app_id);
 ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
 ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk CHECK (event IN (
  'usage_statement.finalized','app.parked','app.woken',

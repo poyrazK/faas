@@ -1,5 +1,5 @@
 -- +goose Up
-ALTER TABLE profile_investigations ADD COLUMN assessment jsonb
+ALTER TABLE profile_investigations ADD COLUMN IF NOT EXISTS assessment jsonb
     CHECK (assessment IS NULL OR (
         jsonb_typeof(assessment) = 'object'
         AND assessment->>'status' IS NOT NULL

@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE profile_investigations (
+CREATE TABLE IF NOT EXISTS profile_investigations (
     id uuid PRIMARY KEY,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -8,7 +8,7 @@ CREATE TABLE profile_investigations (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX profile_investigations_app_updated_idx ON profile_investigations (app_id, updated_at DESC, id);
+CREATE INDEX IF NOT EXISTS profile_investigations_app_updated_idx ON profile_investigations (app_id, updated_at DESC, id);
 
 -- +goose Down
 DROP TABLE profile_investigations;

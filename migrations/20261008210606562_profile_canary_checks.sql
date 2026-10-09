@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE profile_canary_checks (
+CREATE TABLE IF NOT EXISTS profile_canary_checks (
     deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -19,8 +19,8 @@ CREATE TABLE profile_canary_checks (
     CHECK ((status = 'running') = (lease_token IS NOT NULL AND lease_until IS NOT NULL)),
     CHECK ((status IN ('queued', 'running')) = (completed_at IS NULL AND next_attempt_at IS NOT NULL))
 );
-CREATE INDEX profile_canary_checks_due_idx ON profile_canary_checks (next_attempt_at, created_at, deployment_id) WHERE status IN ('queued', 'running');
-CREATE INDEX profile_canary_checks_retention_idx ON profile_canary_checks (completed_at, deployment_id) WHERE completed_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS profile_canary_checks_due_idx ON profile_canary_checks (next_attempt_at, created_at, deployment_id) WHERE status IN ('queued', 'running');
+CREATE INDEX IF NOT EXISTS profile_canary_checks_retention_idx ON profile_canary_checks (completed_at, deployment_id) WHERE completed_at IS NOT NULL;
 
 -- +goose Down
 DROP TABLE profile_canary_checks;
