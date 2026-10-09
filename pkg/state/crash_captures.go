@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"time"
+	"unicode/utf8"
 )
 
 // CrashCaptureStatus is the ADR-733 lifecycle: requested → capturing →
@@ -22,19 +23,27 @@ const (
 const (
 	CrashTriggerHTTP5xx = "http_5xx"
 	CrashTriggerManual  = "manual"
+	// CrashTriggerSDK: the app asked from inside its error handler, through
+	// the guest metadata endpoint; vmmd writes the request.
+	CrashTriggerSDK = "sdk"
 )
+
+// CrashCaptureReasonMaxBytes bounds an SDK capture's reason label.
+const CrashCaptureReasonMaxBytes = 256
 
 // CrashCapture is one capture of a running instance (ADR-733). It is never a
 // snapshots row: only an ADR-732 fork can restore it.
 type CrashCapture struct {
-	ID                string
-	AccountID         string
-	AppID             string
-	DeploymentID      string
-	InstanceID        string
-	Trigger           string
-	StatusCode        *int
-	Route             string
+	ID           string
+	AccountID    string
+	AppID        string
+	DeploymentID string
+	InstanceID   string
+	Trigger      string
+	StatusCode   *int
+	Route        string
+	// Reason is the app's label for an SDK capture; empty otherwise.
+	Reason            string
 	Status            CrashCaptureStatus
 	StorageKey        *string
 	VMStateStorageKey *string
@@ -101,13 +110,17 @@ type CompleteCrashCaptureParams struct {
 var ErrCrashCaptureRefused = errors.New("state: crash capture refused")
 
 // CrashCaptureStore is the ADR-733 surface. apid writes settings and manual
-// requests, gatewayd-internal writes 5xx requests, schedd owns the capture
+// requests, gatewayd-internal writes 5xx requests, vmmd writes SDK
+// requests, schedd owns the capture
 // lifecycle, and imaged owns the files: encryption, staging and expiry.
 type CrashCaptureStore interface {
 	SetCrashSnapshotSettings(ctx context.Context, accountID, appID string, enabled bool, now time.Time) (CrashSnapshotSettings, error)
 	CrashSnapshotSettingsFor(ctx context.Context, accountID, appID string) (CrashSnapshotSettings, error)
 	RequestHTTPCrashCapture(ctx context.Context, appID, instanceID string, statusCode int, route string, cooldown time.Duration, now time.Time) (CrashCapture, error)
 	RequestManualCrashCapture(ctx context.Context, accountID, appID string, cooldown time.Duration, now time.Time) (CrashCapture, error)
+	// RequestSDKCrashCapture is vmmd's write for the SDK trigger. The
+	// instance comes from the vsock listener, never from the guest.
+	RequestSDKCrashCapture(ctx context.Context, appID, instanceID, route, reason string, cooldown time.Duration, now time.Time) (CrashCapture, error)
 	ClaimNextCrashCapture(ctx context.Context, now time.Time) (CrashCapture, error)
 	CompleteCrashCapture(ctx context.Context, params CompleteCrashCaptureParams) (CrashCapture, error)
 	FailCrashCapture(ctx context.Context, id, code, message string, now time.Time) (CrashCapture, error)
@@ -151,4 +164,17 @@ func (c CrashCapture) Snapshot() (Snapshot, bool) {
 		return Snapshot{}, false
 	}
 	return Snapshot{ID: c.ID, DeploymentID: c.DeploymentID, FCVersion: *c.FCVersion, StorageKey: *c.StorageKey}, true
+}
+
+// truncateUTF8 cuts s to at most n bytes on a rune boundary. The columns'
+// CHECKs bound bytes, while Postgres left() counts characters, so a long
+// non-ASCII route or reason must be cut here first.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }

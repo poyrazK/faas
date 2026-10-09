@@ -45,6 +45,12 @@ from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
 from .commit import CommitEventRouting, insert_commit_event
+from .crash_snapshots import (
+    CRASH_SNAPSHOT_ENDPOINT,
+    CrashSnapshotResult,
+    acapture_crash_snapshot,
+    capture_crash_snapshot,
+)
 from .dev_bridge import (
     DEV_BRIDGE_CONTEXT_HEADER,
     AsyncDevBridgeTransport,
@@ -146,6 +152,10 @@ __all__ = (
     "AsyncGregaleReleaseTransport",
     "current_gregale_release",
     "with_gregale_release",
+    "CRASH_SNAPSHOT_ENDPOINT",
+    "CrashSnapshotResult",
+    "capture_crash_snapshot",
+    "acapture_crash_snapshot",
     "verify_webhook",
     "VerifiedWebhook",
     "WebhookVerificationError",

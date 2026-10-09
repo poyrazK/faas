@@ -112,6 +112,7 @@ func RunResumeHook(hostTimeUnixNano int64, hostEntropy []byte) error {
 		resumeDiag(fmt.Sprintf("resume: writeUUIDMarker err=%v", err))
 		return fmt.Errorf("resume: write uuid marker: %w", err)
 	}
+	restoreGeneration.bump()
 	return nil
 }
 

@@ -31,11 +31,17 @@ class CrashCaptureResponse:
     app_id: UUID
     deployment_id: UUID
     trigger: CrashCaptureResponseTrigger
+    """`http_5xx` after a 5xx response, `manual` from this API, `sdk` from the
+    app itself through the guest metadata endpoint
+    (`POST http://169.254.169.254/v1/crash-snapshots:capture`).
+    """
     status: CrashCaptureResponseStatus
     requested_at: datetime.datetime
     status_code: int | Unset = UNSET
     route: str | Unset = UNSET
-    """Request path of the failing request (http_5xx only)."""
+    """Request path of the failing request (http_5xx"""
+    reason: str | Unset = UNSET
+    """The app's label for an sdk capture."""
     mem_bytes: int | Unset = UNSET
     failure: CrashCaptureResponseFailure | Unset = UNSET
     captured_at: datetime.datetime | Unset = UNSET
@@ -59,6 +65,8 @@ class CrashCaptureResponse:
         status_code = self.status_code
 
         route = self.route
+
+        reason = self.reason
 
         mem_bytes = self.mem_bytes
 
@@ -90,6 +98,8 @@ class CrashCaptureResponse:
             field_dict["status_code"] = status_code
         if route is not UNSET:
             field_dict["route"] = route
+        if reason is not UNSET:
+            field_dict["reason"] = reason
         if mem_bytes is not UNSET:
             field_dict["mem_bytes"] = mem_bytes
         if failure is not UNSET:
@@ -121,6 +131,8 @@ class CrashCaptureResponse:
         status_code = d.pop("status_code", UNSET)
 
         route = d.pop("route", UNSET)
+
+        reason = d.pop("reason", UNSET)
 
         mem_bytes = d.pop("mem_bytes", UNSET)
 
@@ -154,6 +166,7 @@ class CrashCaptureResponse:
             requested_at=requested_at,
             status_code=status_code,
             route=route,
+            reason=reason,
             mem_bytes=mem_bytes,
             failure=failure,
             captured_at=captured_at,

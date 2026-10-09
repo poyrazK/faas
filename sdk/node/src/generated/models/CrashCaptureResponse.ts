@@ -12,12 +12,22 @@ export type CrashCaptureResponse = {
   id: string;
   app_id: string;
   deployment_id: string;
-  trigger: 'http_5xx' | 'manual';
+  /**
+   * `http_5xx` after a 5xx response, `manual` from this API, `sdk` from the
+   * app itself through the guest metadata endpoint
+   * (`POST http://169.254.169.254/v1/crash-snapshots:capture`).
+   *
+   */
+  trigger: 'http_5xx' | 'manual' | 'sdk';
   status_code?: number;
   /**
-   * Request path of the failing request (http_5xx only).
+   * Request path of the failing request (http_5xx
    */
   route?: string;
+  /**
+   * The app's label for an sdk capture.
+   */
+  reason?: string;
   status: 'requested' | 'capturing' | 'ready' | 'failed' | 'expired';
   mem_bytes?: number;
   failure?: {

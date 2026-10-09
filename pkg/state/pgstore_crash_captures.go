@@ -21,7 +21,7 @@ func crashCaptureFromSQLC(row sqlc.CrashCapture) CrashCapture {
 	return CrashCapture{
 		ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID),
 		DeploymentID: pgUUIDString(row.DeploymentID), InstanceID: pgUUIDString(row.InstanceID),
-		Trigger: row.Trigger, StatusCode: executionIntPtr(row.StatusCode), Route: row.Route,
+		Trigger: row.Trigger, StatusCode: executionIntPtr(row.StatusCode), Route: row.Route, Reason: row.Reason,
 		Status: CrashCaptureStatus(row.Status), StorageKey: executionStringPtr(row.StorageKey),
 		VMStateStorageKey: executionStringPtr(row.VmstateStorageKey), FCVersion: executionStringPtr(row.FcVersion),
 		MemBytes: memBytes, FailureCode: executionStringPtr(row.FailureCode), FailureMessage: executionStringPtr(row.FailureMessage),
@@ -95,7 +95,7 @@ func (s *PgStore) RequestHTTPCrashCapture(ctx context.Context, appID, instanceID
 		return CrashCapture{}, ErrCrashCaptureRefused
 	}
 	row, err := sqlc.New().RequestHTTPCrashCapture(ctx, s.pool, sqlc.RequestHTTPCrashCaptureParams{
-		StatusCode: int32(statusCode), Route: route, Now: pgTime(now), //nolint:gosec // 500..599
+		StatusCode: int32(statusCode), Route: truncateUTF8(route, 512), Now: pgTime(now), //nolint:gosec // 500..599
 		InstanceID: mustPgUUID(instanceID), AppID: mustPgUUID(appID), CooldownSeconds: cooldownSeconds(cooldown),
 	})
 	return crashCaptureRow(row, err, ErrCrashCaptureRefused)
@@ -104,6 +104,14 @@ func (s *PgStore) RequestHTTPCrashCapture(ctx context.Context, appID, instanceID
 func (s *PgStore) RequestManualCrashCapture(ctx context.Context, accountID, appID string, cooldown time.Duration, now time.Time) (CrashCapture, error) {
 	row, err := sqlc.New().RequestManualCrashCapture(ctx, s.pool, sqlc.RequestManualCrashCaptureParams{
 		Now: pgTime(now), AppID: mustPgUUID(appID), AccountID: mustPgUUID(accountID), CooldownSeconds: cooldownSeconds(cooldown),
+	})
+	return crashCaptureRow(row, err, ErrCrashCaptureRefused)
+}
+
+func (s *PgStore) RequestSDKCrashCapture(ctx context.Context, appID, instanceID, route, reason string, cooldown time.Duration, now time.Time) (CrashCapture, error) {
+	row, err := sqlc.New().RequestSDKCrashCapture(ctx, s.pool, sqlc.RequestSDKCrashCaptureParams{
+		Route: truncateUTF8(route, 512), Reason: truncateUTF8(reason, CrashCaptureReasonMaxBytes), Now: pgTime(now),
+		InstanceID: mustPgUUID(instanceID), AppID: mustPgUUID(appID), CooldownSeconds: cooldownSeconds(cooldown),
 	})
 	return crashCaptureRow(row, err, ErrCrashCaptureRefused)
 }

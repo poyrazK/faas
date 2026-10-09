@@ -79,6 +79,13 @@ func DurableCounterImageAboveBase(repo string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, "durable-counter", true, 8080, []string{"/hello-server", "-durable-counter"})
 }
 
+// CrashCaptureImageAboveBase is HelloImageAboveBase whose /boom route asks
+// for an ADR-733 crash capture of its own instance from inside the handler
+// (the SDK trigger) and /last-capture reports the answer.
+func CrashCaptureImageAboveBase(repo, helloBody string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, helloBody, true, 8080, []string{"/hello-server", "-crash-capture"})
+}
+
 // HelloImageOnPort returns the same scratch-style image as HelloImage, but
 // advertises a non-default TCP listener. The image's process has no baked-in
 // port argument; it binds the PORT environment variable that guest-init

@@ -24,6 +24,7 @@ type CrashCaptureResponse struct {
 	Trigger      string          `json:"trigger"`
 	StatusCode   *int            `json:"status_code,omitempty"`
 	Route        string          `json:"route,omitempty"`
+	Reason       string          `json:"reason,omitempty"`
 	Status       string          `json:"status"`
 	MemBytes     *int64          `json:"mem_bytes,omitempty"`
 	Failure      *AppForkFailure `json:"failure,omitempty"`

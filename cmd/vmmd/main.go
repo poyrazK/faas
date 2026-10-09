@@ -1329,6 +1329,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		defer runtimeConfigRecv.Close()
 	}
+	// ADR-733 SDK trigger: an app asks for a crash capture of its own
+	// instance; the stream's listener names the instance.
+	crashStore, _ := store.(crashCaptureStore)
+	crashRecv, crashRecvErr := StartCrashCaptureReceiver(log, mgr, crashStore,
+		strings.TrimSpace(os.Getenv("FAAS_CRASH_SNAPSHOTS")) == "1", jailer)
+	if crashRecvErr != nil {
+		log.Warn("vmmd: crash capture receiver unavailable", "err", crashRecvErr, "goos", runtime.GOOS)
+	} else {
+		defer crashRecv.Close()
+	}
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,
 		"uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax,
 		"host_key_path", keyPath, "recipient_path", pubPath,

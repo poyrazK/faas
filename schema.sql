@@ -11958,16 +11958,18 @@ CREATE TABLE public.crash_captures (
     plaintext_state text DEFAULT 'present'::text NOT NULL,
     sealed_key bytea,
     encrypted_at timestamp with time zone,
+    reason text DEFAULT ''::text NOT NULL,
     CONSTRAINT crash_captures_encryption_chk CHECK (((plaintext_state = ANY (ARRAY['present'::text, 'purging'::text, 'absent'::text, 'staging'::text, 'staged'::text])) AND ((encrypted_at IS NULL) OR (status = ANY (ARRAY['ready'::text, 'expired'::text]))) AND ((status = 'expired'::text) OR ((encrypted_at IS NULL) = (plaintext_state = 'present'::text))) AND ((status = 'expired'::text) OR ((encrypted_at IS NULL) = (sealed_key IS NULL))) AND ((status <> 'expired'::text) OR ((sealed_key IS NULL) AND (plaintext_state = 'absent'::text))) AND ((sealed_key IS NULL) OR ((octet_length(sealed_key) >= 1) AND (octet_length(sealed_key) <= 4096))))),
     CONSTRAINT crash_captures_failure_shape_chk CHECK ((((failure_code IS NULL) = (failure_message IS NULL)) AND ((status = 'failed'::text) = (failure_code IS NOT NULL)) AND ((failure_code IS NULL) OR ((octet_length(failure_code) >= 1) AND (octet_length(failure_code) <= 64))) AND ((failure_message IS NULL) OR (octet_length(failure_message) <= 4096)))),
     CONSTRAINT crash_captures_finished_chk CHECK (((status = ANY (ARRAY['failed'::text, 'expired'::text])) = (finished_at IS NOT NULL))),
     CONSTRAINT crash_captures_keys_chk CHECK ((((storage_key IS NULL) OR ((octet_length(storage_key) >= 1) AND (octet_length(storage_key) <= 1024))) AND ((vmstate_storage_key IS NULL) OR ((octet_length(vmstate_storage_key) >= 1) AND (octet_length(vmstate_storage_key) <= 1024))) AND ((fc_version IS NULL) OR ((octet_length(fc_version) >= 1) AND (octet_length(fc_version) <= 64))) AND ((mem_bytes IS NULL) OR (mem_bytes >= 0)))),
     CONSTRAINT crash_captures_order_chk CHECK (((updated_at >= requested_at) AND ((captured_at IS NULL) OR (captured_at >= requested_at)) AND ((finished_at IS NULL) OR (finished_at >= requested_at)) AND ((expires_at IS NULL) OR (captured_at IS NULL) OR (expires_at > captured_at)))),
+    CONSTRAINT crash_captures_reason_chk CHECK (((octet_length(reason) <= 256) AND ((trigger = 'sdk'::text) OR (reason = ''::text)))),
     CONSTRAINT crash_captures_ready_shape_chk CHECK (((status <> ALL (ARRAY['ready'::text, 'expired'::text])) OR ((storage_key IS NOT NULL) AND (vmstate_storage_key IS NOT NULL) AND (fc_version IS NOT NULL) AND (mem_bytes IS NOT NULL) AND (captured_at IS NOT NULL) AND (expires_at IS NOT NULL)))),
     CONSTRAINT crash_captures_route_chk CHECK ((octet_length(route) <= 512)),
     CONSTRAINT crash_captures_status_chk CHECK ((status = ANY (ARRAY['requested'::text, 'capturing'::text, 'ready'::text, 'failed'::text, 'expired'::text]))),
     CONSTRAINT crash_captures_status_code_chk CHECK ((((trigger = 'http_5xx'::text) = (status_code IS NOT NULL)) AND ((status_code IS NULL) OR ((status_code >= 500) AND (status_code <= 599))))),
-    CONSTRAINT crash_captures_trigger_chk CHECK ((trigger = ANY (ARRAY['http_5xx'::text, 'manual'::text])))
+    CONSTRAINT crash_captures_trigger_chk CHECK ((trigger = ANY (ARRAY['http_5xx'::text, 'manual'::text, 'sdk'::text])))
 );
 
 

@@ -121,6 +121,8 @@ export {
   GREGALE_RELEASE_HEADER,
   GREGALE_REVISION_HEADER,
 } from './release-context.js';
+export { captureCrashSnapshot, CRASH_SNAPSHOT_ENDPOINT } from './crash-snapshots.js';
+export type { CrashSnapshotOptions, CrashSnapshotResult, CrashSnapshotStatus } from './crash-snapshots.js';
 
 // Server-side verification of incoming service-binding identity assertions.
 export {

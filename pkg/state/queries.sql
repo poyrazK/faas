@@ -15503,6 +15503,31 @@ WHERE i.id = sqlc.arg(instance_id)::uuid
 ON CONFLICT DO NOTHING
 RETURNING *;
 
+-- name: RequestSDKCrashCapture :one
+-- vmmd, when an app asks for a capture of its own instance from inside its
+-- error handler (guest metadata endpoint). vmmd names the instance from the
+-- vsock listener that accepted the request. Same rules as the 5xx trigger:
+-- opt-in, a running non-fork instance, nothing in flight, cooldown passed.
+INSERT INTO crash_captures (account_id, app_id, deployment_id, instance_id, trigger,
+                            route, reason, requested_at, updated_at)
+SELECT a.account_id, a.id, i.deployment_id, i.id, 'sdk',
+       left(sqlc.arg(route)::text, 512), left(sqlc.arg(reason)::text, 256),
+       sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
+FROM instances i
+JOIN apps a ON a.id = i.app_id
+JOIN crash_snapshot_settings s ON s.app_id = a.id AND s.enabled
+WHERE i.id = sqlc.arg(instance_id)::uuid
+  AND i.app_id = sqlc.arg(app_id)::uuid
+  AND i.state = 'running' AND i.mode <> 'fork' AND a.status <> 'deleted'
+  AND NOT EXISTS (
+      SELECT 1 FROM crash_captures c
+      WHERE c.app_id = a.id
+        AND (c.status IN ('requested', 'capturing')
+             OR c.requested_at > sqlc.arg(now)::timestamptz - make_interval(secs => sqlc.arg(cooldown_seconds)::integer))
+  )
+ON CONFLICT DO NOTHING
+RETURNING *;
+
 -- name: RequestManualCrashCapture :one
 -- apid, on an explicit customer request: the app's newest running
 -- non-fork instance, with the same in-flight and cooldown rules.

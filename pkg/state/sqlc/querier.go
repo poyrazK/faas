@@ -2601,6 +2601,11 @@ type Querier interface {
 	// apid, on an explicit customer request: the app's newest running
 	// non-fork instance, with the same in-flight and cooldown rules.
 	RequestManualCrashCapture(ctx context.Context, db DBTX, arg RequestManualCrashCaptureParams) (CrashCapture, error)
+	// vmmd, when an app asks for a capture of its own instance from inside its
+	// error handler (guest metadata endpoint). vmmd names the instance from the
+	// vsock listener that accepted the request. Same rules as the 5xx trigger:
+	// opt-in, a running non-fork instance, nothing in flight, cooldown passed.
+	RequestSDKCrashCapture(ctx context.Context, db DBTX, arg RequestSDKCrashCaptureParams) (CrashCapture, error)
 	// Bounded deployment cost allocation for the customer request analytics
 	// window. Request counts are weighted by the publisher's collapsed `count`.
 	// The window total is computed before LIMIT so the handler can allocate the
