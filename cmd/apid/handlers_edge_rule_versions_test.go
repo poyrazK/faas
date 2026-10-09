@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-732 §2 end to end over HTTP: every change records a version, the
+// ADR-831 §2 end to end over HTTP: every change records a version, the
 // listing carries an ETag, a stale If-Match is refused with 412 without
 // touching the rules, and rollback restores an earlier set as a new version.
 func TestEdgeRuleSetVersions_IfMatchAndRollback(t *testing.T) {

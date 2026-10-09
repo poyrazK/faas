@@ -1,4 +1,4 @@
-// adr: 733
+// adr: 832
 package gateway
 
 import (
@@ -25,7 +25,7 @@ func conditionFromJSON(t *testing.T, raw string) EdgeRuleCondition {
 	return EdgeRuleCondition{Match: p}
 }
 
-// adr: 733 — a rule's condition acts as one more selector on every kind: a
+// adr: 832 — a rule's condition acts as one more selector on every kind: a
 // cookie-gated route applies only to beta testers, an unconditioned rule
 // still applies to everyone, and owner scoping still runs first.
 func TestApplicableEdgeRulesFiltersByCondition(t *testing.T) {
@@ -57,7 +57,7 @@ func TestApplicableEdgeRulesFiltersByCondition(t *testing.T) {
 	}
 }
 
-// adr: 733 — the country lookup runs at most once per request, and an
+// adr: 832 — the country lookup runs at most once per request, and an
 // untrusted client IP leaves both client_ip and country absent.
 func TestEdgeRuleMatchContextCountryLookupIsLazyAndOnce(t *testing.T) {
 	calls := 0
@@ -85,7 +85,7 @@ func TestEdgeRuleMatchContextCountryLookupIsLazyAndOnce(t *testing.T) {
 	}
 }
 
-// adr: 733 — a stored condition that no longer compiles disables its rule.
+// adr: 832 — a stored condition that no longer compiles disables its rule.
 func TestNeverMatchingConditionDisablesRule(t *testing.T) {
 	rules := []EdgeRuleResolved{{ID: "broken", AccountID: "acct", EdgeRuleCondition: EdgeRuleCondition{Match: api.NeverMatchingEdgeRuleProgram()}}}
 	got := ApplicableEdgeRules(context.Background(), rules, func(r *EdgeRuleResolved) string { return r.AccountID }, "/", http.MethodGet)

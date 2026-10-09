@@ -5684,7 +5684,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
 	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
-	// ADR-733: the snapshot rule conditions read. The client IP is only the
+	// ADR-832: the snapshot rule conditions read. The client IP is only the
 	// single trusted forwarded hop; country is looked up lazily.
 	trustedIP, _ := clientIPFromTrustedXFF(r)
 	requestCtx = WithEdgeRuleMatchContext(requestCtx, NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup()))

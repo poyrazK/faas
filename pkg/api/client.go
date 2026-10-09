@@ -3258,7 +3258,7 @@ func (c *Client) DeleteEdgeRule(ctx context.Context, id string) error {
 }
 
 // ListEdgeRuleSetVersions returns the app's recorded edge-rule set versions,
-// newest first, without rule bodies (ADR-732).
+// newest first, without rule bodies (ADR-831).
 func (c *Client) ListEdgeRuleSetVersions(ctx context.Context, slug string) ([]EdgeRuleSetVersionResponse, error) {
 	var out []EdgeRuleSetVersionResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/versions", nil, &out)

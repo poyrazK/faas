@@ -1,6 +1,6 @@
 package gateway
 
-// ADR-733: per-rule match conditions. Every compiled rule kind embeds an
+// ADR-832: per-rule match conditions. Every compiled rule kind embeds an
 // EdgeRuleCondition; ApplicableEdgeRules drops rules whose condition does not
 // hold for the request before the kind's first-match pick runs, so a
 // condition behaves exactly like one more selector on every kind.
@@ -86,7 +86,7 @@ func edgeRuleMatchContextFrom(ctx context.Context) *EdgeRuleMatchContext {
 	return m
 }
 
-// ApplicableEdgeRules is OwnedEdgeRules plus ADR-733 conditions: it keeps the
+// ApplicableEdgeRules is OwnedEdgeRules plus ADR-832 conditions: it keeps the
 // owner's rules whose condition holds for this request. requestPath and
 // method are the values the kind's selectors see. When no rule carries a
 // condition the owned slice is returned without building a snapshot. With no

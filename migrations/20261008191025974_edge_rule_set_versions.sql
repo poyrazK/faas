@@ -1,6 +1,6 @@
 -- filename: 20261008191025974_edge_rule_set_versions.sql
 --
--- ADR-732 §2: versioned edge-rule sets. Every committed change to an app's
+-- ADR-831 §2: versioned edge-rule sets. Every committed change to an app's
 -- edge rules records the app's whole rule set as a new per-app version, so
 -- operators can list prior policy, restore it, and send If-Match on edits.
 --

@@ -2453,7 +2453,7 @@ func RedactHeaderInputForDisplay(raw string) string {
 	return strings.Join(lines, "")
 }
 
-// traceConditionMatches evaluates a rule's ADR-733 match condition with the
+// traceConditionMatches evaluates a rule's ADR-832 match condition with the
 // gateway's evaluator. The simulated client IP and country stand in for the
 // trusted values the gateway would see; the trace takes no query string, so
 // query fields are absent. A condition that does not compile never matches,

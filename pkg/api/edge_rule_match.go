@@ -1,6 +1,6 @@
 package api
 
-// ADR-733: edge-rule match expressions. One structured condition language
+// ADR-832: edge-rule match expressions. One structured condition language
 // for every rule kind, validated, compiled and evaluated here so the gateway
 // and the trace simulator share a single implementation.
 
@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// Match-expression bounds (ADR-733 §3).
+// Match-expression bounds (ADR-832 §3).
 const (
 	EdgeRuleMatchMaxDepth       = 4
 	EdgeRuleMatchMaxNodes       = 32
@@ -37,7 +37,7 @@ type EdgeRuleMatchExpr struct {
 
 // EdgeRuleMatchInput is the request snapshot a condition is evaluated
 // against. ClientIP / Country are empty when the gateway has no trusted
-// value; such a field is absent (ADR-733 §5).
+// value; such a field is absent (ADR-832 §5).
 type EdgeRuleMatchInput struct {
 	Method   string
 	Path     string

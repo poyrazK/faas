@@ -97,7 +97,7 @@ func TestApplyProposalRejectsInvalidDrafts(t *testing.T) {
 	}
 }
 
-// adr: 733 — the simulator evaluates match conditions with the gateway's
+// adr: 832 — the simulator evaluates match conditions with the gateway's
 // evaluator: a cookie-gated maintenance rule applies only to beta testers,
 // and a proposal can add such a rule and show who it affects.
 func TestSimulateEvaluatesMatchConditions(t *testing.T) {

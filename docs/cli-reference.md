@@ -5598,7 +5598,7 @@ Add an edge rule
 | `--circuit-max-open-seconds <SECONDS>` | kind=circuit_breaker: maximum open interval |  |
 | `--maintenance-retry-after-seconds <SECONDS>` | kind=maintenance: Retry-After hint |  |
 | `--maintenance-message <TEXT>` | kind=maintenance: operator message |  |
-| `--match <JSON|@FILE|->` | match condition ANDed with the selectors (ADR-733 JSON, @file, or -) |  |
+| `--match <JSON|@FILE|->` | match condition ANDed with the selectors (ADR-832 JSON, @file, or -) |  |
 
 Examples:
 
@@ -5705,7 +5705,7 @@ Update one edge rule
 | `--validate-max-body-bytes <N>` | body cap in bytes (0 = plan default) |  |
 | `--validate-apply-while-streaming` | also validate streaming requests |  |
 | `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
-| `--match <JSON|@FILE|->` | replace the match condition (ADR-733 JSON, @file, or -) |  |
+| `--match <JSON|@FILE|->` | replace the match condition (ADR-832 JSON, @file, or -) |  |
 | `--clear-match` | remove the match condition |  |
 
 Examples:

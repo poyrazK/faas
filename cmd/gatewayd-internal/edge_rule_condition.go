@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 )
 
-// compileEdgeRuleCondition compiles a rule's ADR-733 match condition once,
+// compileEdgeRuleCondition compiles a rule's ADR-832 match condition once,
 // at host load. apid validates conditions on write, so a stored condition
 // that no longer compiles (a direct-database edit, or a bound tightened
 // since) makes the rule never match — the same posture as an unparseable

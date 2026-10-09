@@ -14,7 +14,7 @@ T = TypeVar("T", bound="EdgeRuleMatchExpr")
 
 @_attrs_define
 class EdgeRuleMatchExpr:
-    """ADR-733 match condition, ANDed with the rule's fixed selectors. A node
+    """ADR-832 match condition, ANDed with the rule's fixed selectors. A node
     is exactly one of all, any, not, or a field/op leaf. Fields: method,
     path, host, client_ip, country, header:<name>, cookie:<name>,
     query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,
@@ -27,7 +27,7 @@ class EdgeRuleMatchExpr:
     all_: list[EdgeRuleMatchExpr] | Unset = UNSET
     any_: list[EdgeRuleMatchExpr] | Unset = UNSET
     not_: EdgeRuleMatchExpr | Unset = UNSET
-    """ADR-733 match condition, ANDed with the rule's fixed selectors. A node
+    """ADR-832 match condition, ANDed with the rule's fixed selectors. A node
     is exactly one of all, any, not, or a field/op leaf. Fields: method,
     path, host, client_ip, country, header:<name>, cookie:<name>,
     query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,

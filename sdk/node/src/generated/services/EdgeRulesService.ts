@@ -279,7 +279,7 @@ export class EdgeRulesService {
   /**
    * List recorded versions of an app's edge-rule set, newest first.
    * Every committed change to an app's edge rules records the whole rule
-   * set as a new version (ADR-732). Up to the 50 newest versions are
+   * set as a new version (ADR-831). Up to the 50 newest versions are
    * returned, without rule bodies; the newest 100 are retained.
    *
    * @returns EdgeRuleSetVersionResponse Versions, newest first.

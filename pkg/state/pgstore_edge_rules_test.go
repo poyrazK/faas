@@ -758,7 +758,7 @@ func TestPgStore_EdgeRule_ValidateModeInvalidRejected(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
-// ADR-732: every committed change records the app's whole rule set as a new
+// ADR-831: every committed change records the app's whole rule set as a new
 // version (the deferred trigger collapses a multi-row commit into one), an
 // expired rule is listed but not served, and a restore puts back an earlier
 // set — same rule IDs and labels — as a new version.
@@ -826,7 +826,7 @@ func TestPgStore_EdgeRuleSetVersions_RecordAndRestore(t *testing.T) {
 	}
 }
 
-// ADR-733: a match condition round-trips through edge_rules.match_expr, is
+// ADR-832: a match condition round-trips through edge_rules.match_expr, is
 // part of the rule-set snapshot, and comes back on rollback.
 func TestPgStore_EdgeRuleMatchExpr_RoundTripAndRollback(t *testing.T) {
 	s, ctx := pgStore(t)

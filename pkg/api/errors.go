@@ -640,7 +640,7 @@ const (
 	CodeAutomationOwnershipConflict    = "automation_ownership_conflict"
 	CodeAutomationInvalid              = "automation_invalid"
 	CodeConflict                       = "conflict"
-	// ADR-732: an edge-rule mutation's If-Match named a rule-set version
+	// ADR-831: an edge-rule mutation's If-Match named a rule-set version
 	// that is no longer the app's latest.
 	CodeEdgeRulesVersionMismatch        = "edge_rules_version_mismatch"
 	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
@@ -5731,7 +5731,7 @@ func ErrValidation(detail string) *Problem {
 		"Validation failed", detail)
 }
 
-// ErrEdgeRulesVersionMismatch (ADR-732) is the 412 for an edge-rule mutation
+// ErrEdgeRulesVersionMismatch (ADR-831) is the 412 for an edge-rule mutation
 // whose If-Match no longer names the app's latest rule-set version.
 func ErrEdgeRulesVersionMismatch(expected string, current int) *Problem {
 	return NewProblem(http.StatusPreconditionFailed, CodeEdgeRulesVersionMismatch,

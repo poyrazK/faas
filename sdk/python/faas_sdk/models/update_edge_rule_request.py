@@ -84,7 +84,7 @@ class UpdateEdgeRuleRequest:
     clear_expires_at: bool | Unset = UNSET
     """Remove the expiry so the rule applies indefinitely."""
     match: EdgeRuleMatchExpr | Unset = UNSET
-    """ADR-733 match condition, ANDed with the rule's fixed selectors. A node
+    """ADR-832 match condition, ANDed with the rule's fixed selectors. A node
     is exactly one of all, any, not, or a field/op leaf. Fields: method,
     path, host, client_ip, country, header:<name>, cookie:<name>,
     query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,

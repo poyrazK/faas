@@ -168,7 +168,7 @@ func TestMemStore_EdgeRule_ManifestKeyUniquePerApp(t *testing.T) {
 	}
 }
 
-// MemStore mirrors the ADR-732 version trigger: one version per effective
+// MemStore mirrors the ADR-831 version trigger: one version per effective
 // change, none for a no-op, and restore appends a version equal to the target.
 func TestMemStore_EdgeRuleSetVersions_RecordAndRestore(t *testing.T) {
 	m, ctx := state.NewMemStore(), context.Background()

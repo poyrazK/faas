@@ -9640,7 +9640,7 @@ type EdgeRuleResponse struct {
 	// reports that it has passed (the row is kept for the listing).
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Expired   bool       `json:"expired,omitempty"`
-	// Match (ADR-733) is the optional condition ANDed with the selectors.
+	// Match (ADR-832) is the optional condition ANDed with the selectors.
 	Match     *EdgeRuleMatchExpr `json:"match,omitempty"`
 	CreatedAt time.Time          `json:"created_at"`
 	UpdatedAt time.Time          `json:"updated_at"`
@@ -9717,12 +9717,12 @@ type UpdateEdgeRuleRequest struct {
 	// then applies indefinitely). Setting both is rejected.
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	ClearExpiresAt bool       `json:"clear_expires_at,omitempty"`
-	// Match replaces the condition (ADR-733); ClearMatch removes it.
+	// Match replaces the condition (ADR-832); ClearMatch removes it.
 	Match      *EdgeRuleMatchExpr `json:"match,omitempty"`
 	ClearMatch bool               `json:"clear_match,omitempty"`
 }
 
-// EdgeRuleSetVersionResponse (ADR-732) describes one recorded state of an
+// EdgeRuleSetVersionResponse (ADR-831) describes one recorded state of an
 // app's whole edge-rule set. Rules is populated only when a single version
 // is fetched. Current marks the app's latest version.
 type EdgeRuleSetVersionResponse struct {

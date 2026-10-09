@@ -1,8 +1,8 @@
 -- filename: 20261009105907357_edge_rules_match_expr.sql
 --
--- ADR-733: an optional structured match condition on every edge rule. The
+-- ADR-832: an optional structured match condition on every edge rule. The
 -- application validates and bounds the expression; the database only pins
--- its outer shape. The ADR-732 rule-set snapshot gains the column so
+-- its outer shape. The ADR-831 rule-set snapshot gains the column so
 -- versions and rollback carry it.
 
 -- +goose Up

@@ -193,7 +193,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	ruleDescription := fs.String("description", "", "operator-facing description (<=1000 chars)")
 	expiresIn := fs.Duration("expires-in", 0, "stop applying the rule after this duration (e.g. 2h)")
 	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
-	matchCondition := fs.String("match", "", "match condition (ADR-733 JSON, @file, or -)")
+	matchCondition := fs.String("match", "", "match condition (ADR-832 JSON, @file, or -)")
 
 	// route
 	routeTarget := fs.String("route-target-slug", "", "kind=route: target app slug (required)")
@@ -586,7 +586,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	ruleDescription := fs.String("description", "", "operator-facing description (<=1000 chars)")
 	expiresIn := fs.Duration("expires-in", 0, "stop applying the rule after this duration (e.g. 2h)")
 	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
-	matchCondition := fs.String("match", "", "match condition (ADR-733 JSON, @file, or -)")
+	matchCondition := fs.String("match", "", "match condition (ADR-832 JSON, @file, or -)")
 	clearExpiry := fs.Bool("clear-expiry", false, "remove the rule's expiry")
 	clearMatch := fs.Bool("clear-match", false, "remove the rule's match condition")
 	// Per-kind action re-marshaling on PATCH. PATCHing the action

@@ -14,7 +14,7 @@ import (
 // expression itself; this only stops an accidental huge file).
 const edgeRuleMatchFlagMaxBytes = 64 << 10
 
-// parseEdgeRuleMatchFlag reads an ADR-733 match condition from --match:
+// parseEdgeRuleMatchFlag reads an ADR-832 match condition from --match:
 // inline JSON, @file, or - for stdin. Empty means no condition. Unknown
 // fields are rejected and the condition is validated locally so mistakes
 // surface before the request is sent.

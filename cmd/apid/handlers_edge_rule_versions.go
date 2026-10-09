@@ -1,6 +1,6 @@
 package main
 
-// ADR-732 §2: versioned edge-rule sets. The store records a version of an
+// ADR-831 §2: versioned edge-rule sets. The store records a version of an
 // app's whole rule set on every committed change; these handlers list and
 // read versions, roll back to one, and implement ETag / If-Match so two
 // editors cannot silently overwrite each other.

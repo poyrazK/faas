@@ -1,4 +1,4 @@
-# ADR-732: Edge-rule metadata, expiry, and versioned rule sets
+# ADR-831: Edge-rule metadata, expiry, and versioned rule sets
 
 - **Status:** accepted
 - **Date:** 2026-10-08
