@@ -201,6 +201,7 @@ type Querier interface {
 	ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequest(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequestParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	ClaimProjectEnvironmentClonePostgresVerification(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresVerificationParams) (ProjectEnvironmentClonePostgresVerification, error)
 	ClaimProjectEnvironmentClonePostgresVerificationAttempt(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresVerificationAttemptParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error)
+	ClaimRouteProbeRound(ctx context.Context, db DBTX, arg ClaimRouteProbeRoundParams) (string, error)
 	ClaimRuntimeUpgradeOperation(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeOperation, error)
 	ClaimRuntimeUpgradeVerification(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeVerification, error)
 	ClaimServiceRecovery(ctx context.Context, db DBTX, arg ClaimServiceRecoveryParams) (ServiceRecovery, error)
@@ -1732,6 +1733,9 @@ type Querier interface {
 	ListRouteCheckHistory(ctx context.Context, db DBTX, arg ListRouteCheckHistoryParams) ([][]byte, error)
 	ListRouteHealthHistory(ctx context.Context, db DBTX, arg ListRouteHealthHistoryParams) ([][]byte, error)
 	ListRouteMonitorIncidents(ctx context.Context, db DBTX, arg ListRouteMonitorIncidentsParams) ([][]byte, error)
+	// ADR-847: apps whose route health gate opts a selector into probes and that
+	// have exactly one in-flight canary candidate in the default scope.
+	ListRouteProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListRouteProbeTargetsRow, error)
 	ListRuntimeReleases(ctx context.Context, db DBTX, arg ListRuntimeReleasesParams) ([]RuntimeRelease, error)
 	ListRuntimeUpgradeGatewayDrainRepairApps(ctx context.Context, db DBTX, arg ListRuntimeUpgradeGatewayDrainRepairAppsParams) ([]string, error)
 	ListRuntimeUpgradeGatewayRepairApps(ctx context.Context, db DBTX, arg ListRuntimeUpgradeGatewayRepairAppsParams) ([]string, error)
@@ -2409,6 +2413,8 @@ type Querier interface {
 	PruneRouteCheckHistory(ctx context.Context, db DBTX, arg PruneRouteCheckHistoryParams) error
 	PruneRouteHealthHistory(ctx context.Context, db DBTX, arg PruneRouteHealthHistoryParams) error
 	PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg PruneRouteMonitorIncidentsParams) error
+	PruneRouteProbeObservations(ctx context.Context, db DBTX, before pgtype.Timestamptz) error
+	PruneRouteProbeRounds(ctx context.Context, db DBTX, before pgtype.Timestamptz) error
 	PruneRuntimeUpgradeGatewayDrains(ctx context.Context, db DBTX, limit int32) (int64, error)
 	PruneRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneRuntimeUpgradeGatewayReceiptsParams) error
 	PruneTCPListenerTLSObservations(ctx context.Context, db DBTX, beforeAt pgtype.Timestamptz) (int64, error)
@@ -2796,6 +2802,7 @@ type Querier interface {
 	// caller-generated record UUID makes an RPC retry idempotent without
 	// collapsing two customer requests that happen to reuse a public ID.
 	RecordRequestIDJournal(ctx context.Context, db DBTX, arg RecordRequestIDJournalParams) (pgtype.UUID, error)
+	RecordRouteProbeObservation(ctx context.Context, db DBTX, arg RecordRouteProbeObservationParams) error
 	// Operator-owned native runtime qualification (ADR-739), never customer intent.
 	RecordRuntimeReleaseQualification(ctx context.Context, db DBTX, arg RecordRuntimeReleaseQualificationParams) (RuntimeReleaseQualification, error)
 	RecordRuntimeUpgradeGatewayDrain(ctx context.Context, db DBTX, arg RecordRuntimeUpgradeGatewayDrainParams) (int64, error)
@@ -3014,6 +3021,7 @@ type Querier interface {
 	// full verdict and distinct counts are computed before either output cap.
 	RouteMonitorCustomerObservations(ctx context.Context, db DBTX, arg RouteMonitorCustomerObservationsParams) ([]byte, error)
 	RouteMonitorServingDeployments(ctx context.Context, db DBTX, appID string) ([]RouteMonitorServingDeploymentsRow, error)
+	RouteProbeObservations(ctx context.Context, db DBTX, arg RouteProbeObservationsParams) ([]RouteProbeObservationsRow, error)
 	RouteRemovalCoverageBlockers(ctx context.Context, db DBTX, arg RouteRemovalCoverageBlockersParams) ([]byte, error)
 	RuntimeConfigInputsFresh(ctx context.Context, db DBTX, arg RuntimeConfigInputsFreshParams) (bool, error)
 	RuntimeConfigReceiptRequired(ctx context.Context, db DBTX, arg RuntimeConfigReceiptRequiredParams) (bool, error)

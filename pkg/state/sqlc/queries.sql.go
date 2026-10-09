@@ -4615,6 +4615,25 @@ func (q *Queries) ClaimProjectEnvironmentClonePostgresVerificationAttempt(ctx co
 	return i, err
 }
 
+const claimRouteProbeRound = `-- name: ClaimRouteProbeRound :one
+INSERT INTO route_probe_rounds (app_id, window_start)
+VALUES ($1::text::uuid, $2)
+ON CONFLICT (app_id, window_start) DO NOTHING
+RETURNING app_id::text
+`
+
+type ClaimRouteProbeRoundParams struct {
+	AppID       string
+	WindowStart pgtype.Timestamptz
+}
+
+func (q *Queries) ClaimRouteProbeRound(ctx context.Context, db DBTX, arg ClaimRouteProbeRoundParams) (string, error) {
+	row := db.QueryRow(ctx, claimRouteProbeRound, arg.AppID, arg.WindowStart)
+	var app_id string
+	err := row.Scan(&app_id)
+	return app_id, err
+}
+
 const claimRuntimeUpgradeOperation = `-- name: ClaimRuntimeUpgradeOperation :one
 WITH due AS (
  SELECT id FROM runtime_upgrade_operations WHERE (phase IN ('prepared','waiting') OR (phase='reserved' AND deadline_at<=clock_timestamp()))
@@ -31805,6 +31824,52 @@ func (q *Queries) ListRouteMonitorIncidents(ctx context.Context, db DBTX, arg Li
 	return items, nil
 }
 
+const listRouteProbeTargets = `-- name: ListRouteProbeTargets :many
+SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug, d.id::text AS candidate_id
+FROM route_health_gates g
+JOIN apps a ON a.id = g.app_id AND a.account_id = g.account_id AND a.status <> 'deleted'
+JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
+ AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+WHERE jsonb_path_exists(g.routes, '$[*].probe')
+ORDER BY a.id, d.id
+LIMIT $1::int
+`
+
+type ListRouteProbeTargetsRow struct {
+	AppID       string
+	AccountID   string
+	Slug        string
+	CandidateID string
+}
+
+// ADR-847: apps whose route health gate opts a selector into probes and that
+// have exactly one in-flight canary candidate in the default scope.
+func (q *Queries) ListRouteProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListRouteProbeTargetsRow, error) {
+	rows, err := db.Query(ctx, listRouteProbeTargets, batchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRouteProbeTargetsRow{}
+	for rows.Next() {
+		var i ListRouteProbeTargetsRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.AccountID,
+			&i.Slug,
+			&i.CandidateID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRuntimeReleases = `-- name: ListRuntimeReleases :many
 SELECT id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at FROM runtime_releases WHERE runtime=$1 AND architecture=$2 ORDER BY created_at DESC,id LIMIT $3
 `
@@ -47972,6 +48037,24 @@ func (q *Queries) PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg P
 	return err
 }
 
+const pruneRouteProbeObservations = `-- name: PruneRouteProbeObservations :exec
+DELETE FROM route_probe_observations WHERE window_start < $1
+`
+
+func (q *Queries) PruneRouteProbeObservations(ctx context.Context, db DBTX, before pgtype.Timestamptz) error {
+	_, err := db.Exec(ctx, pruneRouteProbeObservations, before)
+	return err
+}
+
+const pruneRouteProbeRounds = `-- name: PruneRouteProbeRounds :exec
+DELETE FROM route_probe_rounds WHERE window_start < $1
+`
+
+func (q *Queries) PruneRouteProbeRounds(ctx context.Context, db DBTX, before pgtype.Timestamptz) error {
+	_, err := db.Exec(ctx, pruneRouteProbeRounds, before)
+	return err
+}
+
 const pruneRuntimeUpgradeGatewayDrains = `-- name: PruneRuntimeUpgradeGatewayDrains :execrows
 DELETE FROM runtime_upgrade_gateway_drains WHERE (app_id,gateway_session_id) IN
  (SELECT app_id,gateway_session_id FROM runtime_upgrade_gateway_drains WHERE expires_at<=statement_timestamp()
@@ -57602,6 +57685,42 @@ func (q *Queries) RecordRequestIDJournal(ctx context.Context, db DBTX, arg Recor
 	return id, err
 }
 
+const recordRouteProbeObservation = `-- name: RecordRouteProbeObservation :exec
+INSERT INTO route_probe_observations (app_id, account_id, deployment_id, method, path, window_start, requests, server_errors, unauthenticated)
+VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid, $4, $5, $6, $7, $8, $9)
+ON CONFLICT (app_id, deployment_id, method, path, window_start) DO UPDATE SET
+ requests = route_probe_observations.requests + EXCLUDED.requests,
+ server_errors = route_probe_observations.server_errors + EXCLUDED.server_errors,
+ unauthenticated = route_probe_observations.unauthenticated + EXCLUDED.unauthenticated
+`
+
+type RecordRouteProbeObservationParams struct {
+	AppID           string
+	AccountID       string
+	DeploymentID    string
+	Method          string
+	Path            string
+	WindowStart     pgtype.Timestamptz
+	Requests        int64
+	ServerErrors    int64
+	Unauthenticated int64
+}
+
+func (q *Queries) RecordRouteProbeObservation(ctx context.Context, db DBTX, arg RecordRouteProbeObservationParams) error {
+	_, err := db.Exec(ctx, recordRouteProbeObservation,
+		arg.AppID,
+		arg.AccountID,
+		arg.DeploymentID,
+		arg.Method,
+		arg.Path,
+		arg.WindowStart,
+		arg.Requests,
+		arg.ServerErrors,
+		arg.Unauthenticated,
+	)
+	return err
+}
+
 const recordRuntimeReleaseQualification = `-- name: RecordRuntimeReleaseQualification :one
 INSERT INTO runtime_release_qualifications(release_id,profile,architecture,host_id,kernel_boot_id,source_commit,
  kernel_sha256,firecracker_sha256,report_sha256,test_metal_sha256,leakcheck_sha256,started_at,completed_at)
@@ -62550,6 +62669,69 @@ func (q *Queries) RouteMonitorServingDeployments(ctx context.Context, db DBTX, a
 			&i.TrafficPercent,
 			&i.CanaryStep,
 			&i.CanaryTotalSteps,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const routeProbeObservations = `-- name: RouteProbeObservations :many
+SELECT deployment_id::text AS deployment_id, method, path, window_start, requests, server_errors, unauthenticated
+FROM route_probe_observations
+WHERE app_id = $1::text::uuid AND account_id = $2::text::uuid
+ AND deployment_id IN ($3::text::uuid, $4::text::uuid)
+ AND window_start >= $5 AND window_start < $6
+ORDER BY window_start, method, path
+`
+
+type RouteProbeObservationsParams struct {
+	AppID       string
+	AccountID   string
+	CandidateID string
+	StableID    string
+	Since       pgtype.Timestamptz
+	Until       pgtype.Timestamptz
+}
+
+type RouteProbeObservationsRow struct {
+	DeploymentID    string
+	Method          string
+	Path            string
+	WindowStart     pgtype.Timestamptz
+	Requests        int64
+	ServerErrors    int64
+	Unauthenticated int64
+}
+
+func (q *Queries) RouteProbeObservations(ctx context.Context, db DBTX, arg RouteProbeObservationsParams) ([]RouteProbeObservationsRow, error) {
+	rows, err := db.Query(ctx, routeProbeObservations,
+		arg.AppID,
+		arg.AccountID,
+		arg.CandidateID,
+		arg.StableID,
+		arg.Since,
+		arg.Until,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RouteProbeObservationsRow{}
+	for rows.Next() {
+		var i RouteProbeObservationsRow
+		if err := rows.Scan(
+			&i.DeploymentID,
+			&i.Method,
+			&i.Path,
+			&i.WindowStart,
+			&i.Requests,
+			&i.ServerErrors,
+			&i.Unauthenticated,
 		); err != nil {
 			return nil, err
 		}
