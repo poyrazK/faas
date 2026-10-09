@@ -1767,7 +1767,14 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID, scope string) (state.Instance, error) {
 	var dep state.Deployment
 	var err error
-	if deploymentID == "" {
+	selected, haveSelection := wakeEnvironmentFrom(ctx)
+	haveSelection = haveSelection && selected.reusableFor(appID) &&
+		(deploymentID == "" || deploymentID == selected.deployment.ID)
+	if haveSelection {
+		// Reusing an instance of the selection made for this wake routes no
+		// differently than the gateway's cached target; admission re-resolves.
+		dep, deploymentID = selected.deployment, selected.deployment.ID
+	} else if deploymentID == "" {
 		if scope == "" {
 			dep, err = state.ResolveProductionDeployment(ctx, e.store, appID)
 		} else {
@@ -1786,8 +1793,8 @@ func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID
 	if dep.AppID != appID || dep.Status != state.DeployLive || scope != "" && normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(scope) {
 		return state.Instance{}, state.ErrNotFound
 	}
-	if selected, ok := wakeEnvironmentFrom(ctx); ok {
-		owner, err := e.runtimeScalingStateForDeployment(ctx, selected.app, dep)
+	if prior, ok := wakeEnvironmentFrom(ctx); ok && !haveSelection {
+		owner, err := e.runtimeScalingStateForDeployment(ctx, prior.app, dep)
 		if err != nil {
 			return state.Instance{}, err
 		}
@@ -2745,7 +2752,16 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		err    error
 	)
 	deploymentSmoke := deploymentID != "" && trigger == TriggerDeploymentSmoke
-	if deploymentSmoke {
+	// A coordinated wake resolved app, account and owner moments ago; only the
+	// live deployment is re-read here, so a cutover still fails closed below.
+	selected, reuseSelection := wakeEnvironmentFrom(ctx)
+	reuseSelection = reuseSelection && !deploymentSmoke && selected.reusableFor(appID)
+	if reuseSelection {
+		app, acct, limits = selected.app, selected.account, selected.limits
+		if deploymentID == "" {
+			dep, err = e.resolveLiveDeployment(ctx, appID)
+		}
+	} else if deploymentSmoke {
 		// The authenticated post-readiness smoke runs before the atomic live
 		// pointer swap. A first deployment therefore has no live row yet, and a
 		// redeploy must continue resolving the old live row for customer traffic.
@@ -2785,14 +2801,20 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		release()
 		return WakeResult{}, err
 	}
-	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
 	var scaling state.RuntimeScalingState
-	if err == nil {
-		scaling, err = e.runtimeScalingStateForDeployment(ctx, app, dep)
-		if err == nil {
-			err = checkWakeEnvironmentOwner(ctx, scaling)
-		}
+	if reuseSelection && dep.ID == selected.deployment.ID {
+		// selected.app already carries this deployment's pinned settings.
+		scaling = selected.owner
 		app.LastScaleInAt, app.LastScaleOutAt = scaling.LastScaleInAt, scaling.LastScaleOutAt
+	} else {
+		app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
+		if err == nil {
+			scaling, err = e.runtimeScalingStateForDeployment(ctx, app, dep)
+			if err == nil {
+				err = checkWakeEnvironmentOwner(ctx, scaling)
+			}
+			app.LastScaleInAt, app.LastScaleOutAt = scaling.LastScaleInAt, scaling.LastScaleOutAt
+		}
 	}
 	if err != nil {
 		release()
@@ -7843,29 +7865,37 @@ func (e *Engine) resolveApp(ctx context.Context, appID string) (state.App, state
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, state.Deployment{}, err
 	}
-	scope := ScopeFrom(ctx)
-	var dep state.Deployment
-	if scope == "" {
-		dep, err = state.ResolveProductionDeployment(ctx, e.store, appID)
-	} else {
-		dep, err = e.store.LiveDeploymentForScope(ctx, appID, scope)
-	}
+	dep, err := e.resolveLiveDeployment(ctx, appID)
 	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			return state.App{}, state.Account{}, api.Limits{}, state.Deployment{}, errors.Join(
-				ErrPermanentWake,
-				api.NewProblem(404, api.CodeNotFound, "No live deployment",
-					"the app has no live deployment to wake"),
-			)
-		}
-		return state.App{}, state.Account{}, api.Limits{}, state.Deployment{},
-			fmt.Errorf("sched: resolve app: live deployment: %w", err)
+		return state.App{}, state.Account{}, api.Limits{}, state.Deployment{}, err
 	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, state.Deployment{}, fmt.Errorf("sched: resolve workload settings: %w", err)
 	}
 	return app, acct, limits, dep, nil
+}
+
+// resolveLiveDeployment selects the deployment a wake in ctx's scope targets.
+func (e *Engine) resolveLiveDeployment(ctx context.Context, appID string) (state.Deployment, error) {
+	var dep state.Deployment
+	var err error
+	if scope := ScopeFrom(ctx); scope == "" {
+		dep, err = state.ResolveProductionDeployment(ctx, e.store, appID)
+	} else {
+		dep, err = e.store.LiveDeploymentForScope(ctx, appID, scope)
+	}
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return state.Deployment{}, errors.Join(
+				ErrPermanentWake,
+				api.NewProblem(404, api.CodeNotFound, "No live deployment",
+					"the app has no live deployment to wake"),
+			)
+		}
+		return state.Deployment{}, fmt.Errorf("sched: resolve app: live deployment: %w", err)
+	}
+	return dep, nil
 }
 
 func (e *Engine) resolveAppForDeploy(ctx context.Context, appID string) (state.App, state.Account, api.Limits, error) {
