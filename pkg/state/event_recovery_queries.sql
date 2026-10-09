@@ -457,3 +457,24 @@ WHERE d.id=sqlc.arg(delivery_id)::uuid AND d.webhook_id=sqlc.arg(webhook_id)::uu
  AND d.account_id=sqlc.arg(account_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
  AND d.event=sqlc.arg(event)::text AND d.source_event_id=sqlc.arg(event_id)::uuid
  AND a.replay_generation=sqlc.arg(generation)::integer;
+
+-- name: EventRecoveryNotificationRetryHistoryOutcomes :many
+WITH targets AS (
+ SELECT (value->>'delivery_id')::uuid AS delivery_id,
+        (value->>'webhook_id')::uuid AS webhook_id,
+        (value->>'event_id')::uuid AS event_id,
+        value->>'event' AS event,
+        (value->>'generation')::integer AS generation
+ FROM jsonb_array_elements(sqlc.arg(targets)::jsonb)
+)
+SELECT t.delivery_id,t.generation,
+       count(a.id)::integer AS retained_count,
+       coalesce(max(a.attempt_number),0)::integer AS highest_attempt,
+       coalesce(max(a.outcome) FILTER (WHERE a.outcome IN ('succeeded','dead')),'')::text AS terminal_outcome,
+       (max(a.finished_at) FILTER (WHERE a.outcome IN ('succeeded','dead')))::timestamptz AS completed_at
+FROM targets t
+JOIN app_webhook_deliveries d ON d.id=t.delivery_id AND d.webhook_id=t.webhook_id
+ AND d.source_event_id=t.event_id AND d.event=t.event
+ AND d.account_id=sqlc.arg(account_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
+LEFT JOIN app_webhook_delivery_attempts a ON a.delivery_id=d.id AND a.replay_generation=t.generation
+GROUP BY t.delivery_id,t.generation;

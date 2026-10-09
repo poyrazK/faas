@@ -14,11 +14,18 @@ type EventRecoveryNotificationRetryHistory struct {
 	Decisions  []EventRecoveryNotificationRetryDecisionSummary `json:"decisions"`
 }
 type EventRecoveryNotificationRetryDecisionSummary struct {
-	RequestID    string    `json:"request_id"`
-	DecidedAt    time.Time `json:"decided_at"`
-	TargetCount  int       `json:"target_count"`
-	QueuedCount  int       `json:"queued_count"`
-	SkippedCount int       `json:"skipped_count"`
+	RequestID        string     `json:"request_id"`
+	DecidedAt        time.Time  `json:"decided_at"`
+	TargetCount      int        `json:"target_count"`
+	QueuedCount      int        `json:"queued_count"`
+	SkippedCount     int        `json:"skipped_count"`
+	SucceededCount   int        `json:"succeeded_count"`
+	FailedCount      int        `json:"failed_count"`
+	PendingCount     int        `json:"pending_count"`
+	UnknownCount     int        `json:"unknown_count"`
+	Status           string     `json:"status"`
+	EvidenceComplete bool       `json:"evidence_complete"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
 }
 type EventRecoveryNotificationRetryDecision struct {
 	Target                  EventRecoveryNotificationRetryTarget `json:"target"`

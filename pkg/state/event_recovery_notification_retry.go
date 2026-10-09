@@ -206,3 +206,60 @@ func recoveryNotificationRetryOutcome(row *api.EventRecoveryNotificationRetryDec
 		row.AttemptCountComplete = false
 	}
 }
+
+// Counts describe original queued generations; skipped targets never prove delivery.
+func recoveryNotificationRetrySummarize(summary *api.EventRecoveryNotificationRetryDecisionSummary, detail api.EventRecoveryNotificationRetryDecisionDetail) {
+	summary.EvidenceComplete = true
+	var latest time.Time
+	for _, row := range detail.Decisions {
+		if row.State != "queued" {
+			continue
+		}
+		if !row.AttemptCountComplete {
+			summary.EvidenceComplete = false
+		}
+		switch row.RetryOutcome {
+		case "succeeded":
+			summary.SucceededCount++
+		case "failed":
+			summary.FailedCount++
+		case "pending":
+			summary.PendingCount++
+		default:
+			summary.UnknownCount++
+			summary.EvidenceComplete = false
+		}
+		if row.CompletedAt != nil && row.CompletedAt.After(latest) {
+			latest = *row.CompletedAt
+		}
+	}
+	switch {
+	case summary.FailedCount > 0:
+		summary.Status = "failed"
+	case summary.UnknownCount > 0 || summary.QueuedCount == 0:
+		summary.Status = "inconclusive"
+	case summary.PendingCount > 0:
+		summary.Status = "pending"
+	default:
+		summary.Status = "succeeded"
+	}
+	if summary.QueuedCount > 0 && summary.FailedCount+summary.SucceededCount == summary.QueuedCount && !latest.IsZero() {
+		summary.CompletedAt = &latest
+	}
+}
+
+func recoveryNotificationRetryHistoryDetails(out api.EventRecoveryNotificationRetryHistory, receipts map[string]json.RawMessage, report api.EventRecoveryNotifications) ([]api.EventRecoveryNotificationRetryDecisionDetail, error) {
+	details := make([]api.EventRecoveryNotificationRetryDecisionDetail, 0, len(out.Decisions))
+	for _, summary := range out.Decisions {
+		var saved recoveryNotificationRetryReceipt
+		if err := json.Unmarshal(receipts[summary.RequestID], &saved); err != nil {
+			return nil, err
+		}
+		detail, err := recoveryNotificationRetryDecisionDetail(out.JobID, out.AppID, summary.RequestID, out.ObservedAt, saved, report)
+		if err != nil {
+			return nil, err
+		}
+		details = append(details, detail)
+	}
+	return details, nil
+}

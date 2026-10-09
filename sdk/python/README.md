@@ -429,3 +429,9 @@ Retry history detail also exposes `retry_outcome` for the original queued
 generation, `retained_attempt_count`, `attempt_count_complete`, and optional
 `completed_at`. Later retries do not establish an earlier generation's outcome.
 Missing terminal evidence reports unknown; skipped decisions are not applicable.
+
+History list summaries now include succeeded, failed, pending, and unknown
+counts for the originally queued generations, aggregate `status`,
+`evidence_complete`, and optional `completed_at`. Completion time requires
+terminal evidence for every queued target. All-skipped requests are inconclusive;
+later retries never establish an earlier generation's outcome.

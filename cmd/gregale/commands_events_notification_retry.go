@@ -169,9 +169,13 @@ func cmdEventsRecoveryNotificationRetryHistory(args []string) int {
 		return printErr("Notification retry history failed", err)
 	}
 	_, _ = fmt.Fprintf(osStdout, "Recovery %s | app: %s | observed: %s\n", oneLine(out.JobID), oneLine(out.AppID), out.ObservedAt.Format(time.RFC3339))
-	_, _ = fmt.Fprintln(osStdout, "REQUEST\tDECIDED\tTARGETS\tQUEUED\tSKIPPED")
+	_, _ = fmt.Fprintln(osStdout, "REQUEST\tDECIDED\tTARGETS\tQUEUED\tSKIPPED\tSTATUS\tSUCCEEDED\tFAILED\tPENDING\tUNKNOWN\tEVIDENCE COMPLETE\tCOMPLETED")
 	for _, d := range out.Decisions {
-		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%d\t%d\t%d\n", oneLine(d.RequestID), d.DecidedAt.Format(time.RFC3339), d.TargetCount, d.QueuedCount, d.SkippedCount)
+		completed := "-"
+		if d.CompletedAt != nil {
+			completed = d.CompletedAt.Format(time.RFC3339)
+		}
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%t\t%s\n", oneLine(d.RequestID), d.DecidedAt.Format(time.RFC3339), d.TargetCount, d.QueuedCount, d.SkippedCount, oneLine(d.Status), d.SucceededCount, d.FailedCount, d.PendingCount, d.UnknownCount, d.EvidenceComplete, completed)
 	}
 	return 0
 }

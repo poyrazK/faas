@@ -1374,6 +1374,70 @@ func (q *Queries) EventRecoveryNotificationRetryGenerationOutcome(ctx context.Co
 	return i, err
 }
 
+const eventRecoveryNotificationRetryHistoryOutcomes = `-- name: EventRecoveryNotificationRetryHistoryOutcomes :many
+WITH targets AS (
+ SELECT (value->>'delivery_id')::uuid AS delivery_id,
+        (value->>'webhook_id')::uuid AS webhook_id,
+        (value->>'event_id')::uuid AS event_id,
+        value->>'event' AS event,
+        (value->>'generation')::integer AS generation
+ FROM jsonb_array_elements($3::jsonb)
+)
+SELECT t.delivery_id,t.generation,
+       count(a.id)::integer AS retained_count,
+       coalesce(max(a.attempt_number),0)::integer AS highest_attempt,
+       coalesce(max(a.outcome) FILTER (WHERE a.outcome IN ('succeeded','dead')),'')::text AS terminal_outcome,
+       (max(a.finished_at) FILTER (WHERE a.outcome IN ('succeeded','dead')))::timestamptz AS completed_at
+FROM targets t
+JOIN app_webhook_deliveries d ON d.id=t.delivery_id AND d.webhook_id=t.webhook_id
+ AND d.source_event_id=t.event_id AND d.event=t.event
+ AND d.account_id=$1::uuid AND d.app_id=$2::uuid
+LEFT JOIN app_webhook_delivery_attempts a ON a.delivery_id=d.id AND a.replay_generation=t.generation
+GROUP BY t.delivery_id,t.generation
+`
+
+type EventRecoveryNotificationRetryHistoryOutcomesParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Targets   []byte
+}
+
+type EventRecoveryNotificationRetryHistoryOutcomesRow struct {
+	DeliveryID      pgtype.UUID
+	Generation      int32
+	RetainedCount   int32
+	HighestAttempt  int32
+	TerminalOutcome string
+	CompletedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) EventRecoveryNotificationRetryHistoryOutcomes(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryHistoryOutcomesParams) ([]EventRecoveryNotificationRetryHistoryOutcomesRow, error) {
+	rows, err := db.Query(ctx, eventRecoveryNotificationRetryHistoryOutcomes, arg.AccountID, arg.AppID, arg.Targets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventRecoveryNotificationRetryHistoryOutcomesRow{}
+	for rows.Next() {
+		var i EventRecoveryNotificationRetryHistoryOutcomesRow
+		if err := rows.Scan(
+			&i.DeliveryID,
+			&i.Generation,
+			&i.RetainedCount,
+			&i.HighestAttempt,
+			&i.TerminalOutcome,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const eventRecoveryNotificationRetryHistoryOwner = `-- name: EventRecoveryNotificationRetryHistoryOwner :one
 SELECT app_id,notification_retry_receipts FROM event_recovery_jobs
 WHERE id=$1::uuid AND account_id=$2::uuid

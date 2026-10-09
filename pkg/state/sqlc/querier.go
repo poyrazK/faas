@@ -647,6 +647,7 @@ type Querier interface {
 	EventRecoveryNotificationReceivers(ctx context.Context, db DBTX, arg EventRecoveryNotificationReceiversParams) ([]pgtype.UUID, error)
 	EventRecoveryNotificationRetryDeliveryLock(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryDeliveryLockParams) (EventRecoveryNotificationRetryDeliveryLockRow, error)
 	EventRecoveryNotificationRetryGenerationOutcome(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryGenerationOutcomeParams) (EventRecoveryNotificationRetryGenerationOutcomeRow, error)
+	EventRecoveryNotificationRetryHistoryOutcomes(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryHistoryOutcomesParams) ([]EventRecoveryNotificationRetryHistoryOutcomesRow, error)
 	EventRecoveryNotificationRetryHistoryOwner(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryHistoryOwnerParams) (EventRecoveryNotificationRetryHistoryOwnerRow, error)
 	EventRecoveryNotificationRetryHookLock(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryHookLockParams) (bool, error)
 	EventRecoveryNotificationRetryHooks(ctx context.Context, db DBTX, arg EventRecoveryNotificationRetryHooksParams) ([]EventRecoveryNotificationRetryHooksRow, error)

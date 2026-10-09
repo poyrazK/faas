@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/google/uuid"
 	"time"
 
@@ -179,6 +180,22 @@ func (s *PgStore) GetEventRecoveryNotificationRetryHistory(ctx context.Context, 
 	if err != nil {
 		return out, err
 	}
+	if len(out.Decisions) > 0 {
+		report, err := getEventRecoveryNotifications(ctx, q, tx, account, id, now)
+		if err != nil {
+			return out, err
+		}
+		details, err := recoveryNotificationRetryHistoryDetails(out, receipts, report)
+		if err != nil {
+			return out, err
+		}
+		if err := recoveryNotificationRetryHistoryOutcomes(ctx, q, tx, account, report, details); err != nil {
+			return out, err
+		}
+		for i := range details {
+			recoveryNotificationRetrySummarize(&out.Decisions[i], details[i])
+		}
+	}
 	return out, tx.Commit(ctx)
 }
 func (s *PgStore) GetEventRecoveryNotificationRetryDecision(ctx context.Context, account, id, requestID string, now time.Time) (api.EventRecoveryNotificationRetryDecisionDetail, error) {
@@ -249,4 +266,68 @@ func (s *PgStore) GetEventRecoveryNotificationRetryDecision(ctx context.Context,
 		recoveryNotificationRetryOutcome(row, int(evidence.RetainedCount), int(evidence.HighestAttempt), evidence.TerminalOutcome, completed)
 	}
 	return out, tx.Commit(ctx)
+}
+
+type recoveryNotificationRetryEvidenceTarget struct {
+	DeliveryID string `json:"delivery_id"`
+	WebhookID  string `json:"webhook_id"`
+	EventID    string `json:"event_id"`
+	Event      string `json:"event"`
+	Generation int    `json:"generation"`
+}
+
+func recoveryNotificationRetryHistoryOutcomes(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, account string, report api.EventRecoveryNotifications, details []api.EventRecoveryNotificationRetryDecisionDetail) error {
+	targets := []recoveryNotificationRetryEvidenceTarget{}
+	seen := map[string]bool{}
+	for _, detail := range details {
+		for _, row := range detail.Decisions {
+			if row.State != "queued" || row.ReplayGeneration == nil {
+				continue
+			}
+			_, event, reason := recoveryNotificationRetryReceiver(report, row.Target)
+			if reason != "" {
+				continue
+			}
+			key := fmt.Sprintf("%s/%d", row.Target.DeliveryID, *row.ReplayGeneration)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			targets = append(targets, recoveryNotificationRetryEvidenceTarget{DeliveryID: row.Target.DeliveryID, WebhookID: row.Target.WebhookID, EventID: recoveryNotificationEventID(report.JobID, event), Event: event, Generation: *row.ReplayGeneration})
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(targets)
+	if err != nil {
+		return err
+	}
+	evidence, err := q.EventRecoveryNotificationRetryHistoryOutcomes(ctx, db, sqlc.EventRecoveryNotificationRetryHistoryOutcomesParams{Targets: raw, AccountID: mustPgUUID(account), AppID: mustPgUUID(report.AppID)})
+	if err != nil {
+		return err
+	}
+	byGeneration := map[string]sqlc.EventRecoveryNotificationRetryHistoryOutcomesRow{}
+	for _, row := range evidence {
+		byGeneration[fmt.Sprintf("%s/%d", uuidString(row.DeliveryID), row.Generation)] = row
+	}
+	for i := range details {
+		for j := range details[i].Decisions {
+			row := &details[i].Decisions[j]
+			if row.State != "queued" || row.ReplayGeneration == nil {
+				continue
+			}
+			one, ok := byGeneration[fmt.Sprintf("%s/%d", row.Target.DeliveryID, *row.ReplayGeneration)]
+			if !ok {
+				continue
+			}
+			var completed *time.Time
+			if one.CompletedAt.Valid {
+				t := one.CompletedAt.Time
+				completed = &t
+			}
+			recoveryNotificationRetryOutcome(row, int(one.RetainedCount), int(one.HighestAttempt), one.TerminalOutcome, completed)
+		}
+	}
+	return nil
 }

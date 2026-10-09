@@ -1061,6 +1061,9 @@ from .event_recovery_notification_retry_decision_detail import EventRecoveryNoti
 from .event_recovery_notification_retry_decision_retry_outcome import EventRecoveryNotificationRetryDecisionRetryOutcome
 from .event_recovery_notification_retry_decision_state import EventRecoveryNotificationRetryDecisionState
 from .event_recovery_notification_retry_decision_summary import EventRecoveryNotificationRetryDecisionSummary
+from .event_recovery_notification_retry_decision_summary_status import (
+    EventRecoveryNotificationRetryDecisionSummaryStatus,
+)
 from .event_recovery_notification_retry_history import EventRecoveryNotificationRetryHistory
 from .event_recovery_notification_retry_preview import EventRecoveryNotificationRetryPreview
 from .event_recovery_notification_retry_request import EventRecoveryNotificationRetryRequest
@@ -4113,6 +4116,7 @@ __all__ = (
     "EventRecoveryNotificationRetryDecisionRetryOutcome",
     "EventRecoveryNotificationRetryDecisionState",
     "EventRecoveryNotificationRetryDecisionSummary",
+    "EventRecoveryNotificationRetryDecisionSummaryStatus",
     "EventRecoveryNotificationRetryHistory",
     "EventRecoveryNotificationRetryPreview",
     "EventRecoveryNotificationRetryRequest",

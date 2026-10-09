@@ -145,7 +145,29 @@ func (m *MemStore) GetEventRecoveryNotificationRetryHistory(ctx context.Context,
 	for key, raw := range entry.NotificationRetryReceipts {
 		receipts[key] = json.RawMessage(raw)
 	}
-	return recoveryNotificationRetryHistory(entry.Job.ID, entry.Job.AppID, now, receipts)
+	out, err = recoveryNotificationRetryHistory(entry.Job.ID, entry.Job.AppID, now, receipts)
+	if err != nil {
+		return out, err
+	}
+	if len(out.Decisions) == 0 {
+		return out, ctx.Err()
+	}
+	report, err := m.recoveryNotificationReportLocked(ctx, entry, now)
+	if err != nil {
+		return out, err
+	}
+	details, err := recoveryNotificationRetryHistoryDetails(out, receipts, report)
+	if err != nil {
+		return out, err
+	}
+	for i := range details {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+		m.recoveryNotificationRetryOutcomesLocked(account, entry, report, &details[i])
+		recoveryNotificationRetrySummarize(&out.Decisions[i], details[i])
+	}
+	return out, ctx.Err()
 }
 func (m *MemStore) GetEventRecoveryNotificationRetryDecision(ctx context.Context, account, id, requestID string, now time.Time) (api.EventRecoveryNotificationRetryDecisionDetail, error) {
 	ctx, cancel := context.WithTimeout(ctx, api.EventRecoveryRequestTimeout)
@@ -186,6 +208,11 @@ func (m *MemStore) GetEventRecoveryNotificationRetryDecision(ctx context.Context
 	if err != nil {
 		return out, err
 	}
+	m.recoveryNotificationRetryOutcomesLocked(account, entry, report, &out)
+	return out, ctx.Err()
+}
+
+func (m *MemStore) recoveryNotificationRetryOutcomesLocked(account string, entry *memEventRecoveryJob, report api.EventRecoveryNotifications, out *api.EventRecoveryNotificationRetryDecisionDetail) {
 	for i := range out.Decisions {
 		row := &out.Decisions[i]
 		if row.State != "queued" || row.ReplayGeneration == nil {
@@ -215,5 +242,4 @@ func (m *MemStore) GetEventRecoveryNotificationRetryDecision(ctx context.Context
 		}
 		recoveryNotificationRetryOutcome(row, count, highest, outcome, completed)
 	}
-	return out, ctx.Err()
 }

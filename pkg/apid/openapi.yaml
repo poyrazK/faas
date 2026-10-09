@@ -47762,14 +47762,30 @@ components:
           description: Most recently recorded admission wait; cleared on tracked progress.
     EventRecoveryNotificationRetryDecisionSummary:
       type: object
-      description: Compact immutable retry request count and decision time; use the detail endpoint for original per receiver outcomes and current delivery state.
-      required: [request_id, decided_at, target_count, queued_count, skipped_count]
+      description: Original retry request counts and decision time with current outcomes for its queued generations, observed at the history response timestamp.
+      required: [request_id, decided_at, target_count, queued_count, skipped_count, succeeded_count, failed_count, pending_count, unknown_count, status, evidence_complete]
       properties:
         request_id: { type: string, format: uuid }
         decided_at: { type: string, format: date-time }
         target_count: { type: integer, minimum: 0, maximum: 100 }
         queued_count: { type: integer, minimum: 0, maximum: 100 }
         skipped_count: { type: integer, minimum: 0, maximum: 100 }
+        succeeded_count: { type: integer, minimum: 0, maximum: 100 }
+        failed_count: { type: integer, minimum: 0, maximum: 100 }
+        pending_count: { type: integer, minimum: 0, maximum: 100 }
+        unknown_count: { type: integer, minimum: 0, maximum: 100 }
+        status:
+          type: string
+          enum: [succeeded, failed, pending, inconclusive]
+          description: Aggregate outcome for original queued generations. Known failure takes precedence, then unknown evidence or no queued targets, then pending; success requires every queued target succeeded.
+        evidence_complete:
+          type: boolean
+          description: True when every queued target has a known outcome and complete retained attempt sequence. All-skipped requests have complete empty evidence but are inconclusive.
+        completed_at:
+          type: string
+          format: date-time
+          description: Latest terminal attempt finish time, present only when every queued target has a retained terminal outcome and at least one target was queued.
+
     EventRecoveryNotificationRetryHistory:
       type: object
       description: All retained explicit retry decisions for one recovery job, newest first. The job stores at most 100 decisions and pruning removes this history.

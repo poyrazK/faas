@@ -2855,3 +2855,11 @@ The command stops on success for all queued targets, the first known failed targ
 | 130 | Interrupted |
 
 Timeouts, interrupts, and later read errors preserve the last valid observation and request identity; an initial read failure has no observation. A pruned job/request stops with a read error. Waiting does not cancel or create deliveries. Resume inspection with the same job and request IDs.
+
+### Notification retry history outcome summaries
+
+The retry history list now includes `succeeded_count`, `failed_count`, `pending_count`, and `unknown_count` for each request's originally queued generations. These sum to `queued_count`; skipped targets remain separate. The list's `observed_at` applies to current evidence, while each request's `decided_at` remains its original decision time.
+
+`status` is `failed` if any queued generation failed, otherwise `inconclusive` for unknown evidence or no queued targets, otherwise `pending` while any target remains pending, otherwise `succeeded`. Later retries do not establish earlier generation outcomes. `completed_at` is the latest terminal attempt finish time and appears only when every queued target has a known terminal outcome and at least one target was queued.
+
+`evidence_complete` requires known outcomes and complete retained attempt sequences for every queued target. An intact terminal attempt can prove success or failure even when earlier attempts are missing; completeness remains false in that case. All-skipped requests have complete empty evidence but are inconclusive. Removed deliveries remain unknown. Use `gregale events recovery-notification-retry-history JOB_ID --json` to scan request summaries, then inspect an individual request for receiver details.
