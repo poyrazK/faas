@@ -699,7 +699,7 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app <slug> scale [--interactive | --plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Uses the same fs.Visit pattern so 0 is distinguishable from "unset".
@@ -709,6 +709,7 @@ func cmdAppScale(slug string, args []string) int {
 		return 0
 	}
 	fs := newFlagSet("app scale", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose resource settings with a guided preview and confirmation")
 	planOnly := fs.Bool("plan", false, "show the proposed change, plan limits and resident-usage estimate without applying it")
 	planOutput := fs.String("out", "", "write a reusable reviewed plan to a new JSON file (requires --plan)")
 	applyPlan := fs.String("apply", "", "apply a saved scale plan JSON file")
@@ -775,6 +776,15 @@ func cmdAppScale(slug string, args []string) int {
 	}
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if *interactive {
+		if explicit["plan"] || explicit["out"] || explicit["apply"] || explicit["confirm"] || appScaleHasSettingFlags(explicit) {
+			return printErr("Invalid interactive scale flags", fmt.Errorf("--interactive accepts only --environment; enter settings in the guided flow"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", fmt.Errorf("--interactive requires terminal input and output; use --plan with setting flags for scripts or JSON"))
+		}
+		return cmdAppScaleInteractive(slug, *environment)
+	}
 	if explicit["apply"] {
 		if *applyPlan == "" || !*confirmPlan || explicit["plan"] || explicit["out"] || explicit["environment"] || appScaleHasSettingFlags(explicit) {
 			return printErr("Invalid scale plan flags", fmt.Errorf("--apply requires a plan file and --confirm; do not combine it with --plan, --out, --environment or setting flags"))

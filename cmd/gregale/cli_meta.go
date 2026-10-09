@@ -1052,9 +1052,11 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: subHealth, Short: "Explain default-scope serving health and missing evidence"},
 			{Name: "scale", Short: "Preview, save, apply or update app resource and runtime settings", Examples: []string{
+				"gregale app my-api scale --interactive",
 				"gregale app my-api scale --plan --ram 512 --out scale-change.json",
 				"gregale app my-api scale --apply scale-change.json --confirm",
 			}, Flags: append([]cliFlag{
+				{Name: "interactive", Short: "choose resource settings with a guided preview and confirmation", Bool: true},
 				{Name: "plan", Short: "show changes and supported plan effects without applying them"},
 				{Name: "out", Short: "write a reusable plan JSON to a new file (requires --plan)", Value: "PATH"},
 				{Name: "apply", Short: "apply a saved scale plan JSON file", Value: "PATH"},

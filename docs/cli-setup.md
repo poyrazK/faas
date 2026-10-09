@@ -24,6 +24,22 @@ For scripts, pass the slug explicitly or save a specific app with
 `gregale link <project-slug> --app <slug>`. `gregale open` also accepts
 `--app <slug>`.
 
+## Guided resource settings
+
+Run `gregale app my-api scale --interactive` to review current settings and
+choose a resource profile, instance cap, and minimum warm instances within
+your account plan's limits. Add `--environment staging` to edit that
+environment's desired workload settings.
+
+The flow previews the changes, compatibility warnings, and available resident
+usage estimates. Choose to finish, save a reusable plan to a new file, or apply
+after a separate confirmation (default: no). Applying reuses saved-plan checks
+and rejects settings that changed since the preview was read.
+
+This mode requires terminal input and output and cannot be combined with JSON,
+automation mode, setting flags, or the saved-plan flags. For scripts, use
+`scale --plan ... --out plan.json`, then `scale --apply plan.json --confirm`.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
