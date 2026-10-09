@@ -704,6 +704,7 @@ jobs:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports:
           - 5432:5432
         options: >-
