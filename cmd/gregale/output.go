@@ -76,6 +76,9 @@ func PrintFail(w io.Writer, format string, a ...any) {
 
 // PrintProgress emits an "in-progress" line. Glyph `→` when Enabled.
 func PrintProgress(w io.Writer, format string, a ...any) {
+	if nonInteractive && w == osStdout {
+		w = osStderr
+	}
 	writeStatus(w, "→", format, a...)
 }
 
@@ -266,14 +269,30 @@ func printCommandValidation(w io.Writer, format string, args ...any) {
 		_, _ = fmt.Fprintf(w, format, args...)
 		return
 	}
-	_ = writeJSONProblemTo(w, api.Problem{
+	_ = writeJSONProblemWithExit(w, api.Problem{
 		Type:    docsSiteURL + "/errors/invalid-request",
 		Title:   "Invalid command usage",
 		Status:  400,
 		Code:    api.CodeValidation,
 		Detail:  strings.TrimSpace(fmt.Sprintf(format, args...)),
 		DocsURL: docsURLForTopic("cli"),
-	})
+	}, 1)
+}
+
+// printUnknownSubcommand keeps dispatcher failures in the same single-error
+// shape as flag validation when --json is active, while retaining the legacy
+// text diagnostic and typo hint for interactive use.
+func printUnknownSubcommand(w io.Writer, path string, command cliCommand, got string) int {
+	detail := fmt.Sprintf("gregale %s: unknown subcommand %q", path, got)
+	suggestion, ok := suggestSubcommand(got, command)
+	if ok && jsonOutput && !jsonUsageHelp {
+		detail += fmt.Sprintf("; did you mean %q?", "gregale "+path+" "+suggestion)
+	}
+	printCommandValidation(w, "%s\n", detail)
+	if ok && !jsonOutput {
+		maybeSuggestSub(suggestion)
+	}
+	return 1
 }
 
 // PrintUsage emits a one-line "usage:" hint followed by a "Docs:" line
@@ -289,14 +308,14 @@ func PrintUsage(w io.Writer, usage, topic string) {
 // checking literal command topics.
 func printUsage(w io.Writer, usage, topic string) {
 	if jsonOutput && !jsonUsageHelp {
-		_ = writeJSONProblemTo(w, api.Problem{
+		_ = writeJSONProblemWithExit(w, api.Problem{
 			Type:    docsSiteURL + "/errors/invalid-request",
 			Title:   "Invalid command usage",
 			Status:  400,
 			Code:    api.CodeValidation,
 			Detail:  usage,
 			DocsURL: docsURLForTopic(topic),
-		})
+		}, 1)
 		return
 	}
 	_, _ = fmt.Fprintf(w, "%s\n", usage)

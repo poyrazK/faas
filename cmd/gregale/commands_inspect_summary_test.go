@@ -188,7 +188,7 @@ func TestCmdInspectSummary_OptionalSignalsDegrade(t *testing.T) {
 		t.Fatalf("inspect degraded = %d, want 0 (stderr=%s)", code, readStderr())
 	}
 	body := stdout.String()
-	for _, want := range []string{"api:       unavailable", "data:      unavailable", "release:   unavailable", "unavailable: alerts, deployment, openapi, upstreams"} {
+	for _, want := range []string{"api:       unavailable", "data:      unavailable", "release:   unavailable", "unavailable: alerts, deployment, openapi, operational, upstreams"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("degraded summary missing %q; got:\n%s", want, body)
 		}
@@ -236,7 +236,7 @@ func TestInspectRecommendations_DistinguishSmokeVerifierFromHealthEndpoint(t *te
 			name:     "verifier disabled",
 			health:   &inspectHealthSummary{Status: apihostingreceipt.SmokeSkipped, ErrorCode: apihostingreceipt.SmokeErrorNotConfigured},
 			want:     "health_verifier_unconfigured",
-			wantNext: "FAAS_API_HOSTING_SMOKE_URL",
+			wantNext: "contact support",
 		},
 		{
 			name:     "health endpoint missing",
@@ -285,6 +285,11 @@ func newInspectSummaryServer(t *testing.T, failOptional bool) *httptest.Server {
 			return
 		}
 		switch r.URL.Path {
+		case "/v1/apps/" + inspectSlug + "/operational-summary":
+			writeInspectSummaryJSON(t, w, api.AppOperationalSummary{Version: 1, AppID: app.ID,
+				Monitoring:      api.AppOperationalMonitoring{Available: true, Status: "disabled", Reason: "disabled", Coverage: "observed_only", IncidentsAvailable: true},
+				Recovery:        api.AppOperationalRecovery{RollbacksAvailable: true, RestartsAvailable: true, Rollbacks: []api.AppOperationalRollback{}, Restarts: []api.RuntimeConfigRestartStatusResponse{}},
+				Recommendations: []api.AppOperationalRecommendation{}})
 		case "/v1/apps/" + inspectSlug + "/deployments":
 			writeInspectSummaryJSON(t, w, api.DeploymentListResponse{Items: []api.DeploymentResponse{dep}})
 		case "/v1/apps/" + inspectSlug + "/openapi":
@@ -342,5 +347,35 @@ func writeInspectSummaryJSON(t *testing.T, w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		t.Errorf("encode response: %v", err)
+	}
+}
+
+// hunt #8 (H8-23): a parked app says why and how to resume it.
+func TestInspectRecommendations_ParkedAppPointsToWake(t *testing.T) {
+	for _, tc := range []struct {
+		reason, want string
+	}{
+		{reason: "liveness_exhausted", want: "repeatedly failed liveness checks"},
+		{reason: "admin_park", want: "This app is parked"},
+		{reason: "", want: "This app is parked"},
+	} {
+		recs := inspectRecommendations(inspectSummary{
+			App:     inspectAppSummary{Slug: "demo", Status: "evicted_cold", ParkedReason: tc.reason},
+			Release: inspectReleaseSummary{Available: true, Status: "live"},
+			Runtime: inspectRuntimeSummary{Health: &inspectHealthSummary{Status: apihostingreceipt.SmokeVerified}},
+		})
+		if len(recs) == 0 || recs[0].Code != "app_parked" || !strings.Contains(recs[0].Message, tc.want) || !strings.Contains(recs[0].Next, "gregale wake demo") {
+			t.Fatalf("reason %q: recommendations = %+v", tc.reason, recs)
+		}
+	}
+	recs := inspectRecommendations(inspectSummary{
+		App:     inspectAppSummary{Slug: "demo", Status: "evicted_cold", ParkedReason: "security_scan_regressed"},
+		Release: inspectReleaseSummary{Available: true, Status: "live"},
+		Runtime: inspectRuntimeSummary{Health: &inspectHealthSummary{Status: apihostingreceipt.SmokeVerified}},
+	})
+	for _, rec := range recs {
+		if rec.Code == "app_parked" {
+			t.Fatal("a security quarantine must not be told to wake")
+		}
 	}
 }

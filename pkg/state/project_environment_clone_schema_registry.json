@@ -177,6 +177,7 @@
       "cooldown_minutes",
       "created_at",
       "enabled",
+      "event_subscription_id",
       "failure_source",
       "id",
       "last_evaluated_at",
@@ -517,6 +518,35 @@
     "kind": "operational"
   },
   {
+    "table": "app_health_collection_state",
+    "columns": [
+      "account_id",
+      "app_id",
+      "assessment",
+      "assessment_key",
+      "checked_at",
+      "lease_started_at",
+      "lease_token",
+      "lease_until",
+      "next_check_at",
+      "notification_state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_health_history",
+    "columns": [
+      "account_id",
+      "app_id",
+      "encoded_bytes",
+      "entry",
+      "id",
+      "kind",
+      "observed_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_issue_impact_alert_policies",
     "columns": [
       "app_id",
@@ -692,6 +722,21 @@
       "registry",
       "updated_at",
       "username"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "app_route_removal_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "baseline_deployment_id",
+      "baseline_since",
+      "grace_seconds",
+      "max_approval_age_seconds",
+      "mode",
+      "revision",
+      "updated_at"
     ],
     "kind": "configuration"
   },
@@ -1235,6 +1280,7 @@
       "plan",
       "railpack_version",
       "runner_digest",
+      "runtime_base_ref",
       "sbom_storage_key",
       "source_sha256",
       "source_url",
@@ -1709,9 +1755,35 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_job_executions",
+    "columns": [
+      "created_at",
+      "generation",
+      "operation_id",
+      "record",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_operation_milestones",
+    "columns": [
+      "created_at",
+      "event_sequence",
+      "fingerprint",
+      "id",
+      "name",
+      "occurred_at",
+      "operation_id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_recoveries",
     "columns": [
       "created_at",
+      "decision",
       "fingerprint",
       "operation_id",
       "recovery_id",
@@ -1740,6 +1812,7 @@
       "fingerprint",
       "generation",
       "id",
+      "job_run_id",
       "lease_token",
       "lease_until",
       "next_attempt_at",
@@ -1747,7 +1820,9 @@
       "report_id",
       "size_bytes",
       "state",
-      "storage_key"
+      "storage_key",
+      "workflow_run_id",
+      "workflow_step"
     ],
     "kind": "operational"
   },
@@ -1775,12 +1850,25 @@
     ]
   },
   {
+    "table": "customer_operation_workflow_executions",
+    "columns": [
+      "created_at",
+      "generation",
+      "operation_id",
+      "record",
+      "resume_count",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_workflow_guest_claims",
     "columns": [
       "bound_at",
       "capability_digest",
       "coordinator_attempt",
       "deadline_at",
+      "dispatch_started_at",
       "execution_kind",
       "generation",
       "instance_id",
@@ -1788,6 +1876,53 @@
       "step_attempt",
       "step_name",
       "workflow_run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_operation_workflow_state_reports",
+    "columns": [
+      "blocker_resolutions",
+      "blockers",
+      "blockers_only",
+      "contract_version",
+      "created_at",
+      "deadline_at",
+      "deadline_only",
+      "dependencies_only",
+      "depends_on",
+      "evidence_milestones",
+      "fingerprint",
+      "from_state",
+      "id",
+      "instance_id",
+      "occurred_at",
+      "operation_id",
+      "outcome_code",
+      "outcome_description",
+      "outcome_only",
+      "revision",
+      "state",
+      "workflow"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_operation_workflow_states",
+    "columns": [
+      "account_id",
+      "app_id",
+      "instance_id",
+      "operation_id",
+      "platform_tenant_id",
+      "report_id",
+      "revision",
+      "scope",
+      "state",
+      "subject_id",
+      "subject_type",
+      "updated_at",
+      "workflow"
     ],
     "kind": "operational"
   },
@@ -1804,9 +1939,11 @@
       "execution_kind",
       "expires_at",
       "id",
+      "job_run_id",
       "platform_tenant_id",
       "record",
-      "state"
+      "state",
+      "workflow_run_id"
     ],
     "kind": "operational"
   },
@@ -2055,6 +2192,65 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_runtime_upgrade_acceptances",
+    "columns": [
+      "configuration_fingerprint",
+      "deployment_id",
+      "instance_id",
+      "node_id",
+      "profile",
+      "qualification_report_sha256",
+      "ready_at",
+      "rootfs_key",
+      "secret_fingerprint",
+      "started_at",
+      "target_release_id",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_runtime_upgrade_baselines",
+    "columns": [
+      "captured_at",
+      "configuration_fingerprint",
+      "deployment_id",
+      "input_fingerprint",
+      "input_secret_fingerprint",
+      "secret_fingerprint",
+      "serving_deployment_id",
+      "serving_rootfs_key",
+      "serving_runtime_release_id",
+      "target_release_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_runtime_upgrade_cutovers",
+    "columns": [
+      "cutover_at",
+      "deployment_id",
+      "qualification_report_sha256",
+      "serving_deployment_id",
+      "target_release_id",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_runtime_upgrade_targets",
+    "columns": [
+      "deployment_id",
+      "handler",
+      "kind",
+      "release_id",
+      "source_bytes",
+      "source_root",
+      "source_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_scope_exclusions",
     "columns": [
       "account_id",
@@ -2167,6 +2363,7 @@
       "rootfs_bytes",
       "rootfs_key",
       "rootfs_path",
+      "runtime_upgrade_routing_token",
       "scan_result",
       "scan_status",
       "scanned_at",
@@ -2626,11 +2823,13 @@
       "capacity_scope",
       "details_truncated",
       "failure_code",
+      "filter_reason",
       "history_bytes",
       "id",
       "last_error",
       "occurred_at",
       "outbox_id",
+      "retry_stop_reason",
       "retryable",
       "state",
       "subscription_id"
@@ -2696,14 +2895,80 @@
       "backfill_job_id",
       "capacity_deferrals",
       "claim_token",
+      "delivery_deadline_at",
       "generation",
       "generation_capacity_deferrals",
       "lease_until",
       "outbox_id",
+      "receipt_position",
       "recipient",
       "state",
       "subscription_id",
       "total_attempts"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_recovery_history",
+    "columns": [
+      "action",
+      "actor_id",
+      "actor_kind",
+      "id",
+      "job_id",
+      "occurred_at",
+      "previous_rate",
+      "previous_state",
+      "rate",
+      "reason",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_recovery_items",
+    "columns": [
+      "event_id",
+      "event_source",
+      "event_type",
+      "expected_progress",
+      "failed_at",
+      "failure_code",
+      "job_id",
+      "outbox_id",
+      "position",
+      "reason",
+      "replay_created_at",
+      "replay_generation",
+      "replay_invocation_id",
+      "retryable",
+      "state",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_recovery_jobs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "capacity_scope",
+      "capacity_wait_observed_at",
+      "capacity_wait_started_at",
+      "completed_at",
+      "created_at",
+      "expires_at",
+      "id",
+      "last_progress_at",
+      "next_attempt_at",
+      "paused_at",
+      "rate_per_second",
+      "selection",
+      "state",
+      "updated_at",
+      "wait_reason",
+      "window_count",
+      "window_started_at"
     ],
     "kind": "operational"
   },
@@ -2737,6 +3002,7 @@
       "cursor_at",
       "cursor_outbox_id",
       "cutoff_at",
+      "consumer_kind",
       "duplicate_policy",
       "earliest_retained_at",
       "filtered_count",
@@ -2754,7 +3020,8 @@
       "subscription_id",
       "subscription_revision",
       "until_at",
-      "updated_at"
+      "updated_at",
+      "workflow_name"
     ],
     "kind": "operational"
   },
@@ -2767,12 +3034,15 @@
       "attempts",
       "capacity_deferrals",
       "capacity_scope",
+      "consumer_kind",
       "lease_until",
       "next_attempt_at",
+      "origin",
       "outbox_id",
       "routing_mode",
       "routing_state",
-      "subscription_id"
+      "subscription_id",
+      "workflow_name"
     ],
     "kind": "operational"
   },
@@ -2805,12 +3075,40 @@
     "kind": "operational"
   },
   {
+    "table": "event_subscription_circuit_breakers",
+    "columns": [
+      "account_id",
+      "app_id",
+      "policy",
+      "state_data",
+      "subscription_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_subscription_delivery_controls",
+    "columns": [
+      "account_id",
+      "app_id",
+      "paused",
+      "paused_at",
+      "rate_per_second",
+      "subscription_id",
+      "updated_at",
+      "window_count",
+      "window_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_subscription_work_bindings",
     "columns": [
       "action",
       "app_id",
       "fairness_key_selector",
       "key_selector",
+      "ordered",
       "policy_name",
       "subscription_id"
     ],
@@ -2825,6 +3123,8 @@
       "enabled",
       "filter",
       "id",
+      "routing_retry_policy",
+      "schema_versions",
       "source",
       "type",
       "updated_at"
@@ -3350,6 +3650,7 @@
       "account_id",
       "created_at",
       "key",
+      "request_digest",
       "response_body",
       "response_status"
     ],
@@ -5713,6 +6014,7 @@
     "columns": [
       "app_id",
       "deployment_id",
+      "last_admitted_at",
       "last_evaluated_at",
       "last_run_id",
       "platform_tenant_id",
@@ -5814,6 +6116,117 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "production_lifecycle_reviews",
+    "columns": [
+      "app_id",
+      "decision",
+      "deployment_id",
+      "evidence",
+      "id",
+      "recovery",
+      "reviewed_at",
+      "scope"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_canary_checks",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "canary_step",
+      "canary_step_started_at",
+      "completed_at",
+      "created_at",
+      "data",
+      "deployment_id",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "policy_revision",
+      "reason",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_deployment_checks",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "completed_at",
+      "created_at",
+      "data",
+      "deployment_id",
+      "investigation_id",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "policy_revision",
+      "reason",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_deployment_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "config",
+      "enabled",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "profile_investigations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "assessment",
+      "created_at",
+      "id",
+      "investigation",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_periodic_monitors",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "data",
+      "deployment_id",
+      "id",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "policy_revision",
+      "route",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_route_alert_state",
+    "columns": [
+      "account_id",
+      "app_id",
+      "context_key",
+      "deployment_id",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "project_environment_approvals",
@@ -6829,6 +7242,37 @@
     "kind": "operational"
   },
   {
+    "table": "request_telemetry_app_gaps",
+    "columns": [
+      "app_id",
+      "dropped_total",
+      "last_gap_at",
+      "node_name",
+      "pending_count",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_telemetry_coverage",
+    "columns": [
+      "app_scoped",
+      "boot_id",
+      "dropped_total",
+      "enabled",
+      "healthy_since",
+      "node_name",
+      "pending_count",
+      "received_at",
+      "sampling_basis_points",
+      "sequence",
+      "source_at",
+      "unattributed_dropped_total",
+      "unattributed_pending_count"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "reserved_ip_inventory",
     "columns": [
       "address",
@@ -6925,6 +7369,23 @@
     "kind": "operational"
   },
   {
+    "table": "route_lifecycle_approvals",
+    "columns": [
+      "account_id",
+      "app_id",
+      "approved_at",
+      "baseline_deployment_id",
+      "candidate_deployment_id",
+      "configuration_snapshot",
+      "id",
+      "invalidated_at",
+      "receipt",
+      "successor_snapshot",
+      "valid_until"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "route_monitor_incidents",
     "columns": [
       "account_id",
@@ -6950,6 +7411,7 @@
       "customer_recovery_state",
       "enabled",
       "last_deployment_id",
+      "last_healthy_deployment",
       "next_check_at",
       "revision",
       "routes",
@@ -6967,6 +7429,48 @@
       "idempotency_key",
       "receipt",
       "request_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "route_removal_approvals",
+    "columns": [
+      "account_id",
+      "app_id",
+      "approved_at",
+      "approved_by",
+      "baseline_deployment_id",
+      "baseline_sha256",
+      "candidate_deployment_id",
+      "candidate_sha256",
+      "id",
+      "mapping_sha256",
+      "mappings",
+      "observation_from",
+      "observation_until",
+      "policy_revision",
+      "receipt",
+      "valid_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "route_removal_policy_history",
+    "columns": [
+      "app_id",
+      "changed_at",
+      "changed_by",
+      "policy",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_artifact_bindings",
+    "columns": [
+      "account_id",
+      "release_id",
+      "rootfs_key"
     ],
     "kind": "operational"
   },
@@ -7059,6 +7563,42 @@
     "kind": "operational"
   },
   {
+    "table": "runtime_release_qualifications",
+    "columns": [
+      "architecture",
+      "completed_at",
+      "firecracker_sha256",
+      "host_id",
+      "kernel_boot_id",
+      "kernel_sha256",
+      "leakcheck_sha256",
+      "profile",
+      "recorded_at",
+      "release_id",
+      "report_sha256",
+      "revocation_sha256",
+      "revoked_at",
+      "source_commit",
+      "started_at",
+      "test_metal_sha256"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_releases",
+    "columns": [
+      "architecture",
+      "base_sha256",
+      "created_at",
+      "guest_init_sha256",
+      "id",
+      "layout_version",
+      "runtime",
+      "source_ref"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "runtime_snapshots",
     "columns": [
       "architecture",
@@ -7084,6 +7624,250 @@
       "vm_state_bytes"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_external_fence_authorities",
+    "columns": [
+      "created_at",
+      "id",
+      "public_key",
+      "revoked_at"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_external_fence_intents",
+    "columns": [
+      "authority_id",
+      "boot_id",
+      "challenge",
+      "created_at",
+      "gateway_revision",
+      "id",
+      "machine_id",
+      "public_revision",
+      "resource_id",
+      "scope_sha256",
+      "withdrawal_id"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_external_fence_receipts",
+    "columns": [
+      "enforced_at",
+      "envelope",
+      "envelope_sha256",
+      "intent_id",
+      "issued_at",
+      "observed_at",
+      "receipt_id",
+      "withdrawal_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_gateway_drains",
+    "columns": [
+      "active_forwards",
+      "activity_version",
+      "app_id",
+      "cutover_at",
+      "deployment_id",
+      "expires_at",
+      "fence_id",
+      "gateway_roster_revision",
+      "gateway_session_id",
+      "observed_at",
+      "operation_id",
+      "routing_revision",
+      "serving_deployment_id",
+      "slot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_gateway_heartbeats",
+    "columns": [
+      "expires_at",
+      "gateway_session_id",
+      "roster_revision",
+      "seen_at",
+      "slot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_gateway_receipts",
+    "columns": [
+      "app_id",
+      "cutover_at",
+      "deployment_id",
+      "gateway_session_id",
+      "installed_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_gateway_roster_head",
+    "columns": [
+      "revision",
+      "singleton"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_gateway_rosters",
+    "columns": [
+      "created_at",
+      "gateway_sessions",
+      "revision",
+      "slot_ids"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_native_public_startups",
+    "columns": [
+      "boot_id",
+      "config_sha256",
+      "envelope",
+      "envelope_sha256",
+      "gateway_revision",
+      "machine_id",
+      "net_namespace",
+      "observed_at",
+      "pid",
+      "pid_namespace",
+      "public_revision",
+      "public_session_id",
+      "recorded_at",
+      "review",
+      "review_sha256",
+      "slot_id",
+      "start_ticks"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_operations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "blocker",
+      "created_at",
+      "deadline_at",
+      "deployment_id",
+      "finished_at",
+      "id",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "phase",
+      "qualification_report_sha256",
+      "serving_deployment_id",
+      "source_path",
+      "source_sha256",
+      "target_release_id",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_activity",
+    "columns": [
+      "activity_version",
+      "config_sha256",
+      "coverage_known",
+      "current_forwards",
+      "expires_at",
+      "guard_enabled",
+      "observed_at",
+      "pending_forwards",
+      "previous_forwards",
+      "public_roster_revision",
+      "public_session_id",
+      "slot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_guards",
+    "columns": [
+      "config_sha256",
+      "expires_at",
+      "guard_enabled",
+      "observed_at",
+      "public_roster_revision",
+      "public_session_id",
+      "slot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_roster_head",
+    "columns": [
+      "revision",
+      "singleton"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_rosters",
+    "columns": [
+      "config_sha256s",
+      "created_at",
+      "gateway_roster_revision",
+      "public_sessions",
+      "revision",
+      "slot_ids",
+      "topology_sha256"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_withdrawal_receipts",
+    "columns": [
+      "active_forwards",
+      "activity_version",
+      "admission_closed",
+      "coverage_known",
+      "fence_id",
+      "observed_at",
+      "withdrawal_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_upgrade_public_edge_withdrawals",
+    "columns": [
+      "config_sha256",
+      "created_at",
+      "id",
+      "public_session_id",
+      "roster_revision",
+      "slot_id"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "runtime_upgrade_verifications",
+    "columns": [
+      "created_at",
+      "cutover_at",
+      "deadline_at",
+      "finished_at",
+      "gateway_roster_revision",
+      "gateway_sessions",
+      "last_observation",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "operation_id",
+      "phase",
+      "reason"
+    ],
+    "kind": "operational"
   },
   {
     "table": "safe_release_worker_lease",
@@ -7647,6 +8431,34 @@
     "kind": "configuration"
   },
   {
+    "table": "workflow_code_pins",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "expires_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_dispatch_cursors",
+    "columns": [
+      "app_id",
+      "last_claimed_at",
+      "platform_tenant_id",
+      "scope_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_event_code_refs",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "outbox_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "workflow_event_receipts",
     "kind": "operational",
     "columns": [
@@ -7708,6 +8520,7 @@
       "created_at",
       "current_step",
       "definition_snapshot",
+      "deployment_id",
       "finished_at",
       "id",
       "input",
@@ -7731,6 +8544,7 @@
     "columns": [
       "app_id",
       "deployment_id",
+      "last_admitted_at",
       "last_evaluated_at",
       "last_run_id",
       "scheduled_for",
@@ -7739,6 +8553,24 @@
       "updated_at",
       "workflow_name"
     ]
+  },
+  {
+    "table": "workflow_schedule_occurrences",
+    "columns": [
+      "app_id",
+      "definition_hash",
+      "deployment_id",
+      "evaluated_at",
+      "id",
+      "platform_tenant_id",
+      "replay_run_id",
+      "replayed_at",
+      "run_id",
+      "scheduled_for",
+      "status",
+      "workflow_name"
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_step_attempts",

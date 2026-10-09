@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-// Restore reseed (GHSA-24j2-p895-mwc9, ADR-680).
+// Restore reseed (GHSA-24j2-p895-mwc9, ADR-687).
 //
 // The resume hook reseeds the guest kernel, but a restored process also
 // resumes with every userspace generator it held at capture: OpenSSL's DRBG
@@ -36,10 +36,15 @@ const (
 	RestoreReseedSocketPath = "/run/guest-init/reseed.sock"
 	RestoreReseedAssetDir   = "/run/guest-init/rng"
 	RestoreReseedSocketMode = 0o660
-	// RestoreReseedTimeout bounds the whole barrier. Parked processes are
-	// idle, so their event loops answer in well under a millisecond; the
-	// margin covers lazily faulted pages right after a snapshot restore.
-	RestoreReseedTimeout = 250 * time.Millisecond
+	// RestoreReseedTimeout bounds the whole barrier. A parked process is
+	// idle and answers in well under a millisecond once its pages are in,
+	// but right after a restore its event loop first faults its heap back
+	// from the snapshot. With several restores at once on production-us a
+	// Node process missed the original 250 ms budget on about 1 in 20
+	// restores (hunt #6, H5-57), and each miss cold-booted the instance,
+	// which costs seconds. The barrier still fails closed; the budget only
+	// has to stay far below a cold boot.
+	RestoreReseedTimeout = 2 * time.Second
 
 	restoreReseedOptOutEnv = "GREGALE_RESTORE_RESEED"
 	restoreReseedSocketEnv = "GREGALE_RESEED_SOCKET"

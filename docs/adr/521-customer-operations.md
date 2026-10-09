@@ -200,6 +200,32 @@ unconfirmed receipts fail closed. `queued` describes the decision at its recorde
 time. Callers must inspect the delivery for live transport status. No decision
 repeats business work or relaxes receiver cooldown/delivery policy.
 
+## Cooperative HTTP control — 2026-10-05
+
+Running ordinary HTTP handlers may observe cancellation intent, the admitted
+deadline and live lease through a workload-authenticated control read. Account,
+app, instance, invocation, attempt and capability must match the current claim;
+an expired deadline is rejected even if an earlier lease extends beyond it.
+Both stores observe invocation and operation together, using the existing
+lifecycle lock ordering. This read creates no report, event or durable state,
+grants no renewal and stays available after admission rollback. The projection
+omits business data and execution secrets. Poll recommendations are bounded at
+100–1000 ms in pkg/api/limits.go and adapt to short scheduler claims.
+
+The opt-in Node request scope checks control before business code and before
+returning its result, polls with fresh assertions, supplies cooperative I/O
+cancellation and bounds CPU checkpoints. Server observation durations consume
+request latency; monotonic elapsed time and forward wall-clock steps can shorten
+but never extend the local budget. Request cleanup aborts polling and pending
+control I/O. Reporting and prepared file writes obey the scope's stop state.
+
+Control reads are advisory and cannot atomically fence external effects. Code
+that ignores cancellation may continue. An observed stop neither undoes an
+effect nor certifies a safe retry or cancelled business outcome. schedd still
+settles dispatched work under its pinned recovery policy; uncertainty remains
+reconciliation unless the existing contract declares safe repeat execution.
+Native lifecycle and park/restore qualification remain separate requirements.
+
 ## Backend execution identity ledger — 2026-10-06
 
 Each operation generation binds exactly one real backend execution: an HTTP
@@ -315,3 +341,22 @@ The Node runtime keeps typed execution context isolated to the delivered
 request and forwards workflow fields without an invocation header. These
 reporting seams remain internal; dispatch, aggregate progress, business
 settlement and explicit confirmed-step recovery still gate public admission.
+
+## Workflow progression ledger — 2026-10-08
+
+The private coordinator query seam can read a workflow's ordered step snapshot
+and first matching event, preserve a received-event wake across wait
+registration/parking, and compare-and-set step and attempt transitions against
+their prior state and exact attempt. Run settlement remains scoped to the
+operation association and an unsettled native run. Callers must hold the parent
+run lock and validate coordinator custody; these queries do not independently
+authorize a transition or wire the production coordinator loop.
+
+The additive `workflow_progress` event type is reserved for aggregate workflow
+progress. It remains separate from guest-reported business progress and does
+not consume the guest report budget. Native retry defaults are centralized in
+`pkg/api/limits.go`: one-second failed-wake delay, three attempts, retry shift
+of eight, and a five-minute backoff cap. Public workflow admission still waits
+for production loop wiring, aggregate progress projection, business
+settlement, explicit confirmed-step recovery, and native lifecycle
+qualification.

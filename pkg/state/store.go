@@ -352,8 +352,12 @@ var ErrRolloutStateInvalid = errors.New("state: rollout state does not permit re
 // The store applies all requested gates with the expected-step CAS, traffic
 // rebalance, rollout completion, and audit insert atomically.
 type CanaryAdvanceParams struct {
-	ExpectedStep   int
-	TrafficPercent int
+	ProfileGateOverride *api.ProfileGateOverride
+	ProfileGateDecision *api.ProfileCanaryGateDecision
+	// Only the worker may request a preplanned zero-traffic recovery.
+	ProfileGateRollback bool
+	ExpectedStep        int
+	TrafficPercent      int
 	// RequireSafeReleaseLease gates an automated worker advance on the
 	// durable meterd lease and rechecks it inside the transaction.
 	RequireSafeReleaseLease bool
@@ -6473,6 +6477,11 @@ type Store interface {
 	// tenant-scoped and within the caller's plan retention window.
 	GetRequestTelemetryByAppAndIdentifier(ctx context.Context, arg sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error)
 
+	// ListRequestTelemetryByAccountTrace backs GET /v1/account/traces/{id}:
+	// the newest retained row per app for one trace id, in one indexed read
+	// instead of one lookup per app.
+	ListRequestTelemetryByAccountTrace(ctx context.Context, arg sqlc.ListRequestTelemetryByAccountTraceParams) ([]sqlc.ListRequestTelemetryByAccountTraceRow, error)
+
 	// RequestTelemetryByDeployment backs the per-deployment
 	// drilldown and the regression detector (PR-B cron). Uses
 	// request_telemetry_app_dep_received_idx and returns each row's
@@ -6857,6 +6866,31 @@ type IdempotencyReservation struct {
 	InFlight bool
 	Status   int
 	Body     []byte
+}
+
+// ManagedRealtimePublishReservation extends the ordinary idempotency receipt
+// with a payload-conflict result. Publish keys stay bound to their first
+// request fingerprint for the 24-hour replay window.
+type ManagedRealtimePublishReservation struct {
+	Reserved bool
+	InFlight bool
+	Conflict bool
+	Status   int
+	Body     []byte
+}
+
+// ManagedRealtimePublishIdempotencyStore is optional so unrelated Store
+// adapters can remain narrow. The reservation is scoped by account and the
+// caller-provided route key; requestDigest is the canonical payload digest.
+type ManagedRealtimePublishIdempotencyStore interface {
+	ReserveManagedRealtimePublish(ctx context.Context, accountID, key string, requestDigest []byte) (ManagedRealtimePublishReservation, error)
+}
+
+// ManagedRealtimePublishIdempotencyReaper removes expired payload-bound
+// publish receipts in bounded batches. It is separate from reservation so
+// store adapters can expose reservation and cleanup capabilities independently.
+type ManagedRealtimePublishIdempotencyReaper interface {
+	ReapManagedRealtimePublishIdempotency(ctx context.Context, limit int) (int, error)
 }
 
 // UDPListenerStore is optional so unrelated Store adapters stay narrow.

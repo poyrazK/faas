@@ -22,8 +22,10 @@
 //     header (UUIDv4) on the way out when the caller didn't supply one.
 //     The server's replay middleware (apid/server.go::idempotent) keeps
 //     responses for 24h; SDK callers who want deterministic retry
-//     semantics should pass their own key. DeleteAccount accepts an
-//     explicit key argument for this reason.
+//     semantics should pass their own key. Live realtime channel publishes
+//     are high volume and opt in with ContextWithIdempotencyKey or the
+//     explicit PublishManagedRealtimeChannelWithIdempotencyKey method.
+//     DeleteAccount accepts an explicit key argument for this reason.
 //
 //   - Errors — every 4xx/5xx with a Problem-shaped body returns an
 //     *APIError wrapping the canonical Problem. Bodies that fail JSON
@@ -141,7 +143,7 @@ func NewClient(baseURL, token string) *Client {
 		baseURL: baseURL,
 		token:   token,
 		http:    &http.Client{Timeout: DefaultClientTimeout, Transport: newClientTransport()},
-		cache:   NewCompletionCache(),
+		cache:   NewCompletionCacheForCredential(baseURL, token),
 	}
 }
 
@@ -227,7 +229,13 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 }
 
 func (c *Client) doWithHeaders(ctx context.Context, method, path string, body, out any, headers http.Header) error {
-	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.http, method, path, body, out, "", headers)
+	cli := c.http
+	if strings.HasPrefix(path, "/v1/runtime/job-operations/") || headers.Get(OperationJobCapabilityHeader) != "" {
+		clone := *cli
+		clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		cli = &clone
+	}
+	return c.doWithClientAndHeadersAndIdempotencyKey(ctx, cli, method, path, body, out, "", headers)
 }
 
 // doWithIdempotencyKey is the same request path as do, with an optional
@@ -246,6 +254,14 @@ func (c *Client) doWithClientAndIdempotencyKey(ctx context.Context, cli *http.Cl
 }
 
 func (c *Client) doWithClientAndHeadersAndIdempotencyKey(ctx context.Context, cli *http.Client, method, path string, body, out any, idempotencyKey string, headers http.Header) error {
+	return c.doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx, cli, method, path, body, out, idempotencyKey, headers, true)
+}
+
+func (c *Client) doWithoutIdempotencyKey(ctx context.Context, method, path string, body, out any) error {
+	return c.doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx, c.http, method, path, body, out, "", nil, false)
+}
+
+func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Context, cli *http.Client, method, path string, body, out any, idempotencyKey string, headers http.Header, addDefaultIdempotencyKey bool) error {
 	// Cookie-only-route guard — reject paths the bearer-key CLI cannot
 	// reach before allocating anything. The regex matches the closed
 	// set /v1/auth/sessions and /v1/auth/capabilities (with optional
@@ -288,11 +304,11 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKey(ctx context.Context, cl
 	// so a retried deploy/park/wake/rollback/etc. never double-charges
 	// or double-creates. We never override an explicit key the caller
 	// already set.
-	if method != http.MethodGet && method != http.MethodHead {
-		if idempotencyKey == "" {
+	if method != http.MethodGet && method != http.MethodHead && (idempotencyKey != "" || addDefaultIdempotencyKey) {
+		if idempotencyKey == "" && addDefaultIdempotencyKey {
 			idempotencyKey = IdempotencyKeyFromContext(ctx)
 		}
-		if idempotencyKey == "" {
+		if idempotencyKey == "" && addDefaultIdempotencyKey {
 			idempotencyKey = newUUIDv4()
 		}
 		req.Header.Set("Idempotency-Key", idempotencyKey)
@@ -2736,8 +2752,24 @@ func (c *Client) SubmitExclusiveJobOperation(ctx context.Context, name string, r
 // Server clamps limit to [1,200] and surfaces a 400 Problem on
 // garbage input. For a wider, cross-source view use ListInvocations.
 func (c *Client) ListJobRuns(ctx context.Context, name string) (ListJobRunsResponse, error) {
+	return c.ListJobRunsPage(ctx, name, 0, 0)
+}
+
+// ListJobRunsPage requests one offset page; zero limit uses the server default.
+func (c *Client) ListJobRunsPage(ctx context.Context, name string, limit, offset int) (ListJobRunsResponse, error) {
 	var out ListJobRunsResponse
-	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs", nil, &out)
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	path := "/v1/jobs/" + url.PathEscape(name) + "/runs"
+	if len(q) != 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // ListJobScheduleOccurrences returns the durable decision history for each
@@ -6020,11 +6052,45 @@ func (c *Client) UnsubscribeManagedRealtimeConnection(ctx context.Context, slug,
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/subscriptions/"+channel, nil, nil)
 }
 
-// PublishManagedRealtimeChannel publishes a message to subscribed live
-// connections on an endpoint channel.
+// PublishManagedRealtimeChannel publishes a live-only message to subscribed
+// raw-frame connections on an endpoint channel. Supply a stable key with
+// ContextWithIdempotencyKey or PublishManagedRealtimeChannelWithIdempotencyKey
+// when retries must replay the original queue outcome. Unkeyed publishes avoid
+// creating one durable idempotency receipt per high-volume event.
 func (c *Client) PublishManagedRealtimeChannel(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeMessageRequest) (ManagedRealtimePublishResponse, error) {
+	return c.PublishManagedRealtimeChannelWithIdempotencyKey(ctx, slug, endpointID, channel, req, IdempotencyKeyFromContext(ctx))
+}
+
+// PublishManagedRealtimeChannelWithIdempotencyKey publishes a live-only
+// message using a caller-stable key. Reuse the key only for the same decoded
+// payload and binary flag; the server replays the original queue outcome for
+// 24 hours.
+func (c *Client) PublishManagedRealtimeChannelWithIdempotencyKey(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeMessageRequest, idempotencyKey string) (ManagedRealtimePublishResponse, error) {
+	return c.PublishManagedRealtimeChannelWithDelivery(ctx, slug, endpointID, channel, req, ManagedRealtimeDeliveryLive, idempotencyKey)
+}
+
+// PublishManagedRealtimeChannelWithDelivery publishes a live-only message or
+// commits a retained message before fan-out. Retained delivery requires a
+// stable Idempotency-Key because it assigns a durable channel sequence.
+func (c *Client) PublishManagedRealtimeChannelWithDelivery(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeMessageRequest, delivery ManagedRealtimeDelivery, idempotencyKey string) (ManagedRealtimePublishResponse, error) {
 	var out ManagedRealtimePublishResponse
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/channels/"+channel+"/publish", req, &out)
+	path := "/v1/apps/" + slug + "/realtime/endpoints/" + endpointID + "/channels/" + channel + "/publish"
+	switch delivery {
+	case "", ManagedRealtimeDeliveryLive:
+	case ManagedRealtimeDeliveryRetained:
+		query := url.Values{"delivery": {string(ManagedRealtimeDeliveryRetained)}}
+		path += "?" + query.Encode()
+	default:
+		return out, fmt.Errorf("unsupported managed realtime delivery mode %q", delivery)
+	}
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if delivery == ManagedRealtimeDeliveryRetained && idempotencyKey == "" {
+		return out, fmt.Errorf("retained realtime publishing requires an Idempotency-Key")
+	}
+	if idempotencyKey == "" {
+		return out, c.doWithoutIdempotencyKey(ctx, http.MethodPost, path, req, &out)
+	}
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, req, &out, idempotencyKey)
 }
 
 // AppendManagedRealtimeRetainedMessage commits a message to ordered channel
@@ -6366,7 +6432,45 @@ func (c *Client) ClearObsoleteDeployments(ctx context.Context, appSlug string, o
 // on errors.Is(err, api.ErrNotFound).
 func (c *Client) GetAppsDeploymentOpenAPIDoc(ctx context.Context, slug, deployment string) (OpenAPIDocResponse, error) {
 	var out OpenAPIDocResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/deployments/"+deployment+"/openapi", nil, &out)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/apps/"+url.PathEscape(slug)+"/deployments/"+url.PathEscape(deployment)+"/openapi", nil)
+	if err != nil {
+		return out, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	var raw json.RawMessage
+	err = c.doReqWithSuccess(c.http, req, &raw, func(resp *http.Response) bool {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return false
+		}
+		out.DeploymentID = resp.Header.Get("X-OpenAPI-Doc-Deployment-ID")
+		out.AppID = resp.Header.Get("X-OpenAPI-Doc-App-ID")
+		out.Source = resp.Header.Get("X-OpenAPI-Doc-Source")
+		out.DocSHA256 = resp.Header.Get("X-OpenAPI-Doc-SHA256")
+		out.CapturedAt = resp.Header.Get("X-OpenAPI-Doc-Captured-At")
+		out.UpdatedAt = resp.Header.Get("X-OpenAPI-Doc-Updated-At")
+		out.ByteSize, _ = strconv.Atoi(resp.Header.Get("X-OpenAPI-Doc-Byte-Size"))
+		out.Truncated = resp.Header.Get("X-OpenAPI-Doc-Truncated") == "1"
+		return true
+	})
+	if err != nil {
+		return out, err
+	}
+	var document map[string]any
+	if err = json.Unmarshal(raw, &document); err != nil {
+		return out, err
+	}
+	if _, rawDocument := document["openapi"]; rawDocument {
+		// GET serves the captured OpenAPI body unchanged. Identity and digest
+		// come from server metadata, never inferred from requested selectors.
+		out.Doc = document
+		return out, nil
+	}
+	// Accept the historical wrapped response used by alternate API versions.
+	// Callers still reject an incomplete identity or capture source.
+	err = json.Unmarshal(raw, &out)
+	return out, err
 }
 
 // GetAppsDeploymentRoutePolicySnapshot returns the gateway edge-rule policy
@@ -7306,5 +7410,25 @@ func (c *Client) GetEventReceiptAttempts(ctx context.Context, source, id, subscr
 func (c *Client) GetEventStorageUsage(ctx context.Context) (EventStorageUsageResponse, error) {
 	var out EventStorageUsageResponse
 	err := c.do(ctx, http.MethodGet, "/v1/events/storage", nil, &out)
+	return out, err
+}
+
+// GetAppHealth reads the default-scope HTTP health evidence without waking the app.
+func (c *Client) GetAppHealth(ctx context.Context, slug string) (AppHealthResponse, error) {
+	var out AppHealthResponse
+	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/health", nil, &out)
+	return out, err
+}
+
+func (c *Client) ListAppHealthHistory(ctx context.Context, slug string, limit int, before string) (AppHealthHistoryPage, error) {
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	if before != "" {
+		query.Set("before", before)
+	}
+	var out AppHealthHistoryPage
+	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/health/history?"+query.Encode(), nil, &out)
 	return out, err
 }

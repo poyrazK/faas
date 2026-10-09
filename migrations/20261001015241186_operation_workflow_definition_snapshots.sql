@@ -10,16 +10,10 @@ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'customer_operation_d
 ALTER TABLE customer_operation_definitions ADD CONSTRAINT customer_operation_definition_target CHECK ((
     (NOT (spec ? 'workflow') AND workflow_snapshot IS NULL)
     OR (
-        jsonb_typeof(spec->'workflow') = 'object'
-        AND NOT (spec ? 'method' OR spec ? 'path')
-        AND jsonb_typeof(spec->'workflow'->'name') = 'string'
-        AND spec->'workflow'->>'name' <> ''
-        AND jsonb_typeof(spec->'workflow'->'result_step') = 'string'
-        AND spec->'workflow'->>'result_step' <> ''
-        AND jsonb_typeof(spec->'workflow'->'progress_stage') = 'string'
-        AND spec->'workflow'->>'progress_stage' <> ''
+        jsonb_typeof(spec->'workflow') = 'string'
+        AND spec->>'workflow' <> ''
         AND jsonb_typeof(workflow_snapshot) = 'object'
-        AND workflow_snapshot->>'name' = spec->'workflow'->>'name'
+        AND workflow_snapshot->>'name' = spec->>'workflow'
         AND jsonb_typeof(workflow_snapshot->'steps') = 'array'
     )
 ) IS TRUE);

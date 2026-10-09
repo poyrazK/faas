@@ -52,6 +52,9 @@ func (m *MemStore) serviceRolloutTargetLocked(id string) (Deployment, []memServi
 	if !ok {
 		return Deployment{}, nil, ErrNotFound
 	}
+	if err := m.checkRuntimeUpgradeRecoveryLocked(target.AppID); err != nil {
+		return Deployment{}, nil, err
+	}
 	if target.Status != DeployLive || !IsServiceRollout(target) {
 		return Deployment{}, nil, ErrServiceRolloutInvalid
 	}
@@ -289,7 +292,7 @@ func (m *MemStore) AbortServiceRollout(ctx context.Context, id, reason string) (
 	}
 	now := time.Now().UTC()
 	target.Status = DeploySuperseded
-	if m.operationRetainsDeploymentLocked(target.ID) {
+	if m.durableWorkRetainsDeploymentLocked(target.ID) {
 		target.Status = DeployLive
 	}
 	target.TrafficPercent = 0

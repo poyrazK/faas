@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -571,6 +572,9 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		ManagedOperationGeneration: req.ManagedWorkflowOperationGeneration,
 		ManagedOperationAccountID:  workflowOperationAccount,
 	}
+	if req.Source == "workflow" {
+		inv.WorkflowRunID = strings.TrimSpace(req.Headers["X-Faas-Workflow-Run-Id"])
+	}
 	// Pre-flush logsanitised fields so a malicious /invocations:dispatch
 	// caller cannot forge lines.
 	s.log.Debug("gateway synth: invocation dispatched",
@@ -619,7 +623,7 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	// Echo the post-dispatch state + result back so the drain can
 	// call CompleteInvocation(result) on the same transaction.
 	encoder := json.NewEncoder(w)
-	if (req.ExclusiveClaim != nil || inv.ManagedOperationID != "") && req.OperationResultVersion == api.ManagedOperationResultVersion {
+	if state.InvocationHasOperation(out) || ((req.ExclusiveClaim != nil || inv.ManagedOperationID != "") && req.OperationResultVersion == api.ManagedOperationResultVersion) {
 		// This authenticated JSON transport is not an HTML context. Preserve
 		// the handler's byte budget: HTML escaping could expand a valid 1 MiB
 		// result beyond the scheduler's bounded response envelope.
@@ -630,7 +634,8 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		Result      json.RawMessage `json:"result,omitempty"`
 		StatusCode  int             `json:"status_code,omitempty"`
 		OutcomeCode string          `json:"outcome_code,omitempty"`
-	}{string(out.State), out.Result, statusCode, out.OutcomeCode})
+		RetryAfter  string          `json:"retry_after,omitempty"`
+	}{string(out.State), out.Result, statusCode, out.OutcomeCode, out.ResponseRetryAfter})
 }
 
 func jsonOrEmpty(m map[string]string) json.RawMessage {

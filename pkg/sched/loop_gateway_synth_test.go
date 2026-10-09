@@ -41,6 +41,31 @@ func TestHTTPGatewaySynthNegotiatesManagedOperationResults(t *testing.T) {
 	}
 }
 
+// adr: 638
+func TestHTTPGatewaySynthCustomerOperationResultBudget(t *testing.T) {
+	result := `"` + strings.Repeat("x", api.MaxExclusiveResultBytes-2) + `"`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got struct {
+			Headers map[string]string `json:"headers"`
+			Version int               `json:"operation_result_version"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil || got.Version != 0 || got.Headers[api.OperationTransactionVersionHeader] != "1" || got.Headers[api.OperationMilestoneVersionHeader] != "1" {
+			t.Errorf("customer protocol crossed managed negotiation: %+v %v", got, err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"state":"dispatching","status_code":200,"result":` + result + `}`))
+	}))
+	defer srv.Close()
+	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL, mintInternalSvcToken: func(string) (string, error) { return "test-token", nil }}
+	inv := state.Invocation{ID: "invocation", OperationID: "customer-operation", AppID: "app", Source: state.InvocationAsyncInvoke,
+		Method: http.MethodPost, Path: "/orders", Headers: json.RawMessage(`{"X-Gregale-Customer-Operation-Transaction-Version":"1","X-Gregale-Customer-Operation-Milestone-Version":"1"}`)}
+	out, err := h.InvokeWithWake(t.Context(), inv.AppID, inv, WakeResult{InstanceID: "instance", NodeID: "node"})
+	if err != nil || string(out.Result) != result {
+		t.Fatalf("bounded customer result: bytes=%d err=%v", len(out.Result), err)
+	}
+}
+
 func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/invocations:dispatch" {
@@ -93,6 +118,7 @@ func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 }
 
 func TestHTTPGatewaySynthWorkflowStepCarriesPersistedTenantIdentity(t *testing.T) {
+	deploymentID := "22222222-2222-4222-8222-222222222222"
 	runID := "11111111-1111-4111-8111-111111111111"
 	operationID, err := api.ManagedWorkflowStepOperationID(runID, "process")
 	if err != nil {
@@ -111,7 +137,7 @@ func TestHTTPGatewaySynthWorkflowStepCarriesPersistedTenantIdentity(t *testing.T
 			t.Fatal(err)
 		}
 		if got.PlatformTenantID != "tenant-1" || got.Source != "workflow" || got.Headers["X-Faas-Workflow-Run-Id"] != runID ||
-			got.OperationResultVersion != api.ManagedOperationResultVersion || got.ManagedWorkflowOperationID != operationID || got.ManagedWorkflowOperationGeneration != 1 {
+			got.Headers[api.RevisionHeader] != deploymentID || got.OperationResultVersion != api.ManagedOperationResultVersion || got.ManagedWorkflowOperationID != operationID || got.ManagedWorkflowOperationGeneration != 1 {
 			t.Fatalf("workflow identity envelope=%+v", got)
 		}
 		_, _ = w.Write([]byte(`{"state":"dispatching","status_code":200,"result":{"ok":true}}`))
@@ -119,7 +145,7 @@ func TestHTTPGatewaySynthWorkflowStepCarriesPersistedTenantIdentity(t *testing.T
 	defer srv.Close()
 	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL, mintInternalSvcToken: func(string) (string, error) { return "test-token", nil }}
 	status, body, err := h.ExecuteWorkflowStep(context.Background(), "app-1", WorkflowStepIdentity{
-		RunID: runID, PlatformTenantID: "tenant-1",
+		RunID: runID, PlatformTenantID: "tenant-1", DeploymentID: deploymentID,
 	}, "/process", http.MethodPost, map[string]string{
 		"X-Faas-Internal-Wake": "workflow", "X-Faas-Workflow-Run-Id": runID,
 		"X-Faas-Workflow-Step": "process", "X-Faas-Workflow-Attempt": "1",
@@ -259,5 +285,64 @@ func TestHTTPGatewaySynthExecuteStepRequiresWorkflowTokenMinter(t *testing.T) {
 	_, _, err := h.ExecuteStep(context.Background(), "app-1", "/step", http.MethodPost, nil, nil, time.Second)
 	if err == nil || !strings.Contains(err.Error(), "workflow invocation requires internal service token minter") {
 		t.Fatalf("err = %v, want missing workflow token minter", err)
+	}
+}
+
+func TestHTTPGatewaySynthWorkflowThrottlingParksUntilRetryAfter(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	calls := 0
+	var keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Headers map[string]string `json:"headers"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		keys = append(keys, request.Headers["Idempotency-Key"])
+		calls++
+		_, _ = w.Write([]byte(`{"state":"failed","status_code":429,"retry_after":"2","result":{"error":"throttled"}}`))
+	}))
+	defer srv.Close()
+	transport := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL, mintInternalSvcToken: func(string) (string, error) { return "test-token", nil }}
+	run := &state.WorkflowRun{AppID: "00000000-0000-4000-8000-000000000001", WorkflowName: "report", Input: json.RawMessage(`{}`), DefinitionSnapshot: json.RawMessage(`{"name":"report","steps":[{"name":"main","run":"report","retry":{"max_attempts":2}}]}`)}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	orchestrator := NewWorkflowOrchestrator(store, transport, nil, nil, nil)
+	before := time.Now().UTC()
+	if err := orchestrator.DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	steps, err := store.GetWorkflowSteps(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked, err := store.GetWorkflowRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(steps) != 1 || steps[0].NextRetryAt == nil || steps[0].NextRetryAt.Before(before.Add(2*time.Second)) || parked.ScheduledFor.Before(*steps[0].NextRetryAt) {
+		t.Fatalf("not durably parked: calls=%d run=%+v steps=%+v", calls, parked, steps)
+	}
+	// Reconstruct the orchestrator, as after scheduler restart.
+	orchestrator = NewWorkflowOrchestrator(store, transport, nil, nil, nil)
+	if err := orchestrator.DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatal("restart ignored retry deadline")
+	}
+	time.Sleep(time.Until(*steps[0].NextRetryAt) + 10*time.Millisecond)
+	if err := orchestrator.DispatchTick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	final, err := store.GetWorkflowRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || len(keys) != 2 || keys[0] == "" || keys[0] != keys[1] || final.Status != state.WorkflowRunStatusFailed {
+		t.Fatalf("retry budget/idempotency: calls=%d keys=%v run=%+v", calls, keys, final)
 	}
 }

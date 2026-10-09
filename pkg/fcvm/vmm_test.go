@@ -1680,7 +1680,7 @@ func handleFakeVsockHook(t *testing.T, c net.Conn, ack byte, onHook func(hostTim
 const ackOK = byte(0)
 
 // fakeGuestAckFrame models a current guest-init: an OK ack is followed by
-// the ADR-680 userspace reseed capability byte.
+// the ADR-687 userspace reseed capability byte.
 func fakeGuestAckFrame(ack byte) []byte {
 	if ack == ackOK {
 		return []byte{ack, resumeCapUserspaceReseed}
@@ -1689,7 +1689,7 @@ func fakeGuestAckFrame(ack byte) []byte {
 }
 
 // TestTriggerResumeHookRefusesGuestWithoutReseedBarrier: a guest-init that
-// predates ADR-680 acks OK and closes. Its processes may replay the
+// predates ADR-687 acks OK and closes. Its processes may replay the
 // snapshot's random state, so the restore must be refused (the manager then
 // cold-boots) and the resume must not be re-sent by the transport retry.
 func TestTriggerResumeHookRefusesGuestWithoutReseedBarrier(t *testing.T) {
@@ -1732,7 +1732,7 @@ func TestTriggerResumeHookRefusesGuestWithoutReseedBarrier(t *testing.T) {
 }
 
 // oneByteAckConn drops everything after the first byte of the final ack
-// frame, which is what a pre-ADR-680 guest-init writes.
+// frame, which is what a pre-ADR-687 guest-init writes.
 type oneByteAckConn struct {
 	net.Conn
 }
@@ -2259,12 +2259,12 @@ func TestHealthcheckNotReadyProblemDistinguishesGuestAndHandler(t *testing.T) {
 	v := &JailerVMM{}
 	l := Lease{Instance: "i-health"}
 
-	guest := v.healthcheckNotReadyProblem(l, "/healthz", 0, 35*time.Second)
+	guest := v.healthcheckNotReadyProblem(l, "/healthz", readinessObservation{}, 35*time.Second)
 	if guest.Code != api.CodeAppStartupTimeout || !strings.Contains(guest.Detail, "startup_phase=guest_startup") {
 		t.Fatalf("guest problem = %+v", guest)
 	}
 
-	handler := v.healthcheckNotReadyProblem(l, "/healthz", 3, 35*time.Second)
+	handler := v.healthcheckNotReadyProblem(l, "/healthz", readinessObservation{responses: 3, lastStatus: 503}, 35*time.Second)
 	if handler.Code != api.CodeAppStartupTimeout || !strings.Contains(handler.Detail, "startup_phase=handler_healthcheck") {
 		t.Fatalf("handler problem = %+v", handler)
 	}
@@ -2319,5 +2319,40 @@ func TestWaitReady_AllConnRefusedReturnsAppNotListening(t *testing.T) {
 	}
 	if p.Status != 422 {
 		t.Errorf("waitReady on closed port: status = %d, want 422", p.Status)
+	}
+}
+
+// H4-21: an app that exited during startup left nothing listening, yet every
+// refused readiness GET counted as an answer and the customer was told the
+// guest "answered 348 readiness probes without a 2xx". A refused probe is
+// not an answer.
+func TestWaitReady_HealthcheckRefusedIsAppNotListening(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	host, _, _ := net.SplitHostPort(ln.Addr().String())
+	_ = ln.Close()
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := &JailerVMM{readyTimeout: 250 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err = v.waitReady(ctx, Lease{Instance: "i-crashed", HostIP: addr}, "/healthz")
+	var p *api.Problem
+	if !errors.As(err, &p) || p.Code != api.CodeAppNotListening {
+		t.Fatalf("waitReady against no listener = %v, want app_not_listening", err)
+	}
+	if strings.Contains(p.Detail, "answered") {
+		t.Fatalf("refused probes reported as answers: %q", p.Detail)
+	}
+}
+
+func TestHealthcheckNotReadyProblemNamesTheLastStatus(t *testing.T) {
+	p := (&JailerVMM{}).healthcheckNotReadyProblem(Lease{Instance: "i"}, "/healthz", readinessObservation{responses: 7, lastStatus: 503}, time.Second)
+	if p.Code != api.CodeAppStartupTimeout || !strings.Contains(p.Detail, "last status 503") {
+		t.Fatalf("problem = %+v", p)
 	}
 }

@@ -56,17 +56,55 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 731 | [Durable PostgreSQL lifecycle qualification](731-managed-postgres-durable-qualification.md) | accepted | Version-8 SQL restart, encrypted credential delivery, workload rotation and cleanup evidence |
+| 687 | [Object version listing and bound historical downloads](687-object-version-cli-and-bound-downloads.md) | accepted | Public immutable version identities, bounded listings and exact-version gateway read authority |
+| 688 | [Resumable CLI object uploads](688-resumable-cli-object-uploads.md) | accepted | Private fingerprint-bound multipart checkpoints and uncertain-completion recovery |
+| 792 | [Continuous CPU profiling across guest lifetimes](819-continuous-cpu-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 793 | [Route-associated CPU profiling](820-route-associated-cpu-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 794 | [Advisory route CPU regression checks](821-advisory-route-cpu-regression-checks.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 795 | [Route attribution quality reporting](822-route-attribution-quality.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 796 | [Per-route request labeling consistency](823-per-route-request-label-consistency.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 797 | [Native profiling restore qualification](824-native-profile-restore-qualification.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 798 | [Advisory route profiling notifications](825-advisory-profile-route-notifications.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 799 | [Periodic route profiling for running deployments](826-periodic-route-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 800 | [Route-specific profiling code evidence](827-route-specific-profile-code-evidence.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 801 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
+| 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
+| 903 | [Object-storage entity outbox commit contract](903-object-storage-entity-outbox-contract.md) | internal engine; delivery pending | Atomically rooted outgoing intents with bounded restore, receipt replay and storage accounting |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
 | 634 | [Asynchronous request-ID journal](634-async-request-id-journal.md) | proposed | The exact request-ID index is queued and written by bounded workers; a failed or dropped write never fails the request |
 | 635 | [Authenticated tenant workflow continuations](635-tenant-workflow-continuations.md) | accepted | Tenant-authenticated event and callback continuation routes with atomic live-link checks |
 | 636 | [Tenant-scoped scheduled workflow starts](636-tenant-scheduled-workflow-starts.md) | accepted | Per-tenant schedule cursors and atomic tenant-bound run admission |
 | 637 | [Tenant-configurable workflow schedules](637-tenant-configurable-workflow-schedules.md) | accepted | Explicitly opt in to tenant-owned cadence, overlap, and enablement settings |
+| 640 | [Watchdog claims WAKING rows before teardown](640-watchdog-claims-waking-rows-before-teardown.md) | proposed | Every WAKING row gets the restore + cold-boot budget, and the watchdog CASes it to COLD_BOOTING before Destroy so a peer schedd's RUNNING publication can never point at a destroyed VM |
+| 641 | [Edge health follows the last instance](641-edge-health-follows-last-instance.md) | proposed | A parked app's edge health answer comes from its last instance (only FAILED is unhealthy), cached 15 s per gateway, instead of the process-local wake outcome that went unknown after every restart |
+| 642 | [Restore-safe guest timers](642-restore-safe-guest-timers.md) | proposed | Guests boot with kvm-clock and the one-shot LAPIC timer because Firecracker 1.7 restores lost TSC-deadline interrupts; backing identity v2 refuses captures booted with the old profile |
+| 643 | [Park-to-admit for refused wakes](643-park-to-admit-refused-wakes.md) | proposed | A gateway wake refused for fleet capacity parks one idle, floor-respecting instance of another owned app and retries once, instead of answering 503 until the idle timeout |
 | 680 | [Restored processes reseed their userspace random generators before serving](680-restore-userspace-rng-reseed.md) | accepted | guest-init reseed barrier with Node (N-API RAND_poll addon) and Python preloads; fails closed to cold boot; GHSA-24j2-p895-mwc9 |
+| 790 | [meterd catches up closed minutes it did not roll](790-meterd-closed-minute-catch-up.md) | proposed | A sample tick re-rolls, from the billing ledger, closed minutes of the last 24 h never recorded compute-complete (≤15 per tick); idempotent through first-write-wins; H5-55 |
+| 791 | [The build wall-clock limit is 15 minutes](791-build-wall-clock-limit.md) | accepted | Records `BuildTimeoutSeconds = 900` (raised from the spec's 10 min in August without an ADR); end-to-end deploy time is not separately enforced; H5-71 |
+| 815 | [Guarded native runtime qualification collector](815-guarded-native-runtime-qualification-collector.md) | accepted | Collects and signs exact-runtime native evidence only after teardown, host rechecks, service restoration and retained import |
+| 816 | [Fresh cold-boot readiness receipts for runtime upgrade candidates](816-runtime-upgrade-candidate-acceptance.md) | accepted | Requires exact candidate identity, unrevoked qualification and a fresh cold-boot readiness receipt before activation |
+| 817 | [Trusted import of exact runtime native qualification evidence](817-trusted-runtime-qualification-import.md) | accepted | Verifies trusted signatures, native test/leak evidence, published artifact bindings and durable readback before recording receipts |
 | 644 | [Verified MCP promotion and resource policy](644-mcp-verified-promotion-and-resource-policy.md) | accepted | Verify zero-traffic candidates, gate caller catalogs, and reuse gateway JWT resource authorization |
+| 646 | [Unified backfill delivery inspection](646-unified-backfill-delivery-inspection.md) | accepted | Complete source/consumer inspection across webhook and workflow backfills |
+| 647 | [Independent event routing by default](647-independent-event-routing-default.md) | accepted | Default independent routing for captured event recipients |
+| 648 | [Independent workflow event routing](648-independent-workflow-event-routing.md) | accepted | Workflow event recipient routing with lease-bound recovery |
+| 725 | [Fair workflow admission, history, and transient retries](725-workflow-admission-history-and-transient-retries.md) | accepted | Durable tenant/workflow fairness, atomic occurrence history, throttling retries, and workflow alert signals |
+| 726 | [Bounded workflow schedule catch-up](726-bounded-workflow-schedule-catch-up.md) | accepted | Opt-in latest-fire recovery with a bounded window and tenant parity |
+| 727 | [Workflow handler deployment pins](727-workflow-handler-deployment-pins.md) | accepted | Immutable handler code per run, private retention from event acceptance, and exact deployment routing |
+| 649 | [Fair bounded workflow dispatch](649-fair-bounded-workflow-dispatch.md) | accepted | Fill bounded execution slots and persist app/tenant service order with lease-aware dispatch caps |
+| 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Restricted customer SQL through schema-bound, generated application clients |
+| 730 | [Automation queue health](730-automation-queue-health.md) | accepted | Current dispatch capacity and bounded aggregate waiting reasons, independent of the historical health window |
+| 651 | [Due automation backlog alerts](651-due-automation-backlog-alerts.md) | accepted | Opt-in webhook alerts for aged due work, including overdue parked wakes and expired leases |
+| 652 | [Workflow run diagnostics and resume preview](652-workflow-run-diagnostics-and-resume-preview.md) | accepted | Read-only queue and step diagnostics with precise recovery blockers and the existing continuation plan |
+| 653 | [Read-only workflow schedule preview](653-workflow-schedule-preview.md) | accepted | Timezone-aware upcoming fires and a what-if catch-up decision using the durable schedule cursor |
+| 654 | [Controlled workflow schedule replay](654-controlled-workflow-schedule-replay.md) | accepted | Explicit replay of selected skipped occurrences with definition pins, idempotency, and normal admission checks |
+| 655 | [Selected unstarted workflow cancellation](655-selected-unstarted-workflow-cancellation.md) | accepted | Preview and atomically cancel selected pending runs that have never started |
 | 678 | [Compose prebuilt image workloads](678-compose-prebuilt-image-workloads.md) | accepted | Deploy stateless image services through imaged with immutable resolution and existing project dependency policies |
 | 679 | [Image-published deployment trigger](679-image-published-deployment-trigger.md) | accepted | CI publishes an immutable image, then hands it to existing deployment admission with durable workload/scope/digest deduplication |
-| 680 | [Freeze Compose commands per image deployment](680-frozen-project-image-commands.md) | accepted | Capture Compose CMD in the deployment profile and preserve it through app edits, image processing, retries, and runtime port updates |
+| 686 | [Freeze Compose commands per image deployment](686-frozen-project-image-commands.md) | accepted | Capture Compose CMD in the deployment profile and preserve it through app edits, image processing, retries, and runtime port updates |
 | 681 | [Image deployment promotion ordering](681-image-deployment-promotion-ordering.md) | accepted | Atomically reject older same-scope image candidates at cutover and recheck recorded GitHub branches while preserving explicit rollback |
 | 682 | [Compose image healthchecks](682-compose-image-healthchecks.md) | accepted | Validate and freeze partial Compose healthcheck overrides for prebuilt image workloads, preserving artifact inheritance and existing guest execution |
 | 683 | [Fresh image healthchecks gate readiness](683-image-healthcheck-readiness.md) | implemented; native qualification pending | Require fresh command proof before serving boot, restore, warm resume, or migration |
@@ -613,8 +651,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 ## Customer operation decisions
 
 - [ADR-521: customer operations above execution ledgers](521-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery
+- [ADR-517: version customer workflow contracts and require transition evidence](517-versioned-customer-workflow-contracts.md) — pin workflow meaning and verify required milestones across app commit and platform publication
+- [ADR-518: business workflow observations and transactional evidence](518-business-workflow-observations-and-evidence.md) — scoped workflow assessments, typed business evidence, reconciliation, and compensation observations
 
 - [ADR-571: S3 write proof custody and owned cleanup](571-s3-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
+- [ADR-658: Private result files for workflow Operations](658-workflow-operation-artifacts.md)
 
 ## Events and delivery
 
@@ -630,5 +671,55 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-615: Customer event storage admission](615-customer-event-storage-admission.md)
 - [ADR-616: Bounded event routing history](616-bounded-event-routing-history.md)
 - [ADR-617: Event consumer backlog inspection](617-event-consumer-backlog-inspection.md)
+
+- [ADR-638: Object version listing and bound historical downloads](638-object-version-cli-and-bound-downloads.md)
+
+- [ADR-639: Resumable CLI object uploads](639-resumable-cli-object-uploads.md)
 - [ADR-645: Subscription-scoped retained-event replay preview](645-subscription-retained-event-replay-preview.md)
 - [ADR-639: Durable subscription event backfill](639-durable-subscription-event-backfill.md)
+- [ADR-646: Unified backfill delivery inspection](646-unified-backfill-delivery-inspection.md)
+- [ADR-647: Independent event routing by default](647-independent-event-routing-default.md)
+- [ADR-648: Independent workflow event routing](648-independent-workflow-event-routing.md)
+- [ADR-792: Workflow and backfill event backlog discovery](792-event-backlog-workflow-backfill-discovery.md)
+- [ADR-793: Workflow event replay preview](793-workflow-event-replay-preview.md)
+- [ADR-794: Durable workflow event backfill](794-durable-workflow-event-backfill.md)
+- [ADR-795: Opt-in keyed event delivery ordering](795-keyed-event-delivery-ordering.md)
+- [ADR-796: Event ordering backlog diagnostics](796-event-ordering-backlog-diagnostics.md)
+- [ADR-797: Durable bulk event recovery](797-durable-bulk-event-recovery.md)
+- [ADR-798: Subscription pause and paced drain](798-subscription-pause-and-paced-drain.md)
+- [ADR-799: Consumer routing health and alerts](799-event-consumer-health-and-alerts.md)
+- [ADR-800: Consumer routing retry policies](800-consumer-routing-retry-policies.md)
+- [ADR-803: Application subscription schema version selection](803-event-subscription-schema-versions.md)
+- [ADR-804: Read-only event schema rollout preview](804-event-schema-rollout-preview.md)
+- [ADR-805: Consumer execution health and alerts](805-event-consumer-execution-health.md)
+- [ADR-806: Paced event execution recovery](806-paced-event-execution-recovery.md)
+- [ADR-807: Recovery execution outcomes](807-recovery-execution-outcomes.md)
+- [ADR-808: Recovery job controls](808-recovery-job-controls.md)
+- [ADR-809: Recovery job discovery](809-recovery-job-discovery.md)
+- [ADR-810: Recovery control audit history](810-recovery-control-audit-history.md)
+- [ADR-811: Recovery health and alerts](811-recovery-health-and-alerts.md)
+- [ADR-812: Durable recovery lifecycle notifications](812-recovery-lifecycle-notifications.md)
+- [ADR-813: Recovery capacity diagnostics](813-recovery-capacity-diagnostics.md)
+- [ADR-814: Read-only recovery preflight](814-recovery-preflight.md)
+
+- [ADR-838: Approved route removal exceptions in the contract gate](838-approved-route-removal-contract-exceptions.md)
+
+- [ADR-839: Telemetry coverage for route removal approvals](839-route-removal-telemetry-coverage.md)
+
+- [ADR-840: App-scoped route removal coverage](840-app-scoped-route-removal-coverage.md)
+- [ADR-841: Operation deprecation and sunset headers](841-route-deprecation-headers.md)
+- [ADR-829: Gregale route sunset report](829-route-sunset-report.md)
+- [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
+- [ADR-831: Deployment-specific route lifecycle metadata](831-deployment-route-lifecycle.md)
+- [ADR-842: Lifecycle guidance on cached responses](842-cached-route-lifecycle.md)
+- [ADR-832: Lifecycle declaration reviews and canary gate](832-route-lifecycle-declaration-gate.md)
+
+- [ADR-833: Durable lifecycle successor compatibility approvals](833-lifecycle-successor-review-receipts.md)
+
+- [ADR-834: Lifecycle review at the production traffic boundary](834-production-lifecycle-transaction-guards.md)
+
+- [ADR-835: Verified lifecycle successors](835-verified-lifecycle-successors.md)
+
+- [ADR-836: Release graph lifecycle successor bindings](836-release-graph-lifecycle-successors.md)
+
+- [ADR-837: Production lifecycle review history](837-production-lifecycle-review-history.md)

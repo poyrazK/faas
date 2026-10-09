@@ -61,13 +61,12 @@ func (m *MemStore) admitEventRecipientLocked(claim PublishedEventRoutingClaim, p
 		return PublishedEventRoutingResult{}, ErrConflict
 	}
 	if p.matched {
-		app, ok := m.apps[p.recipient.AppID]
-		if !ok {
-			app, ok = m.apps[canonicalMemUUID(p.recipient.AppID)]
-		}
+		app, ok := m.eventSubscriptionAppLocked(p.recipient.AppID)
 		if !ok || app.Status == AppDeleted || !sameMemUUID(app.AccountID, p.recipient.AccountID) {
 			return eventAdmissionResult(p, PublishedEventRecipientProgress{}, false, false), admissionError(EventFanoutFailureCodeTargetUnavailable, false, ErrNotFound)
 		}
+		// Invocation helpers address the stored app row by its original spelling.
+		p.invocation.AppID = app.ID
 	}
 	previous := receipt.RecipientProgress[claim.SubscriptionID]
 	if routingAdmissionRecorded(previous) {
@@ -87,8 +86,18 @@ func (m *MemStore) admitEventRecipientLocked(claim PublishedEventRoutingClaim, p
 	invocations, cancellations, history, next := m.invocations, m.workCancellations, m.invocationAttemptHistory, m.nextInvocationAttemptID
 	m.invocations, m.workCancellations, m.invocationAttemptHistory = maps.Clone(invocations), maps.Clone(cancellations), maps.Clone(history)
 	var created bool
-	var err error
+	var controlReason string
+	var controlNext time.Time
+	var controlBefore *memEventSubscriptionControl
+	if c := m.eventSubscriptionControls[canonicalMemUUID(p.recipient.ID)]; c != nil {
+		copy := *c
+		controlBefore = &copy
+	}
 	if scope == "" {
+		controlReason, controlNext = m.eventSubscriptionGateLocked(p)
+	}
+	var err error
+	if scope == "" && controlReason == "" {
 		created, err = m.performEventAdmissionLocked(receipt, p)
 	}
 	if err == nil && !eventRoutingClaimValidLocked(receipt, r, claim) {
@@ -96,6 +105,9 @@ func (m *MemStore) admitEventRecipientLocked(claim PublishedEventRoutingClaim, p
 	}
 	if err != nil {
 		m.invocations, m.workCancellations, m.invocationAttemptHistory, m.nextInvocationAttemptID = invocations, cancellations, history, next
+		if controlBefore != nil {
+			m.eventSubscriptionControls[canonicalMemUUID(p.recipient.ID)] = controlBefore
+		}
 		return eventAdmissionResult(p, PublishedEventRecipientProgress{}, false, false), admissionError(EventFanoutFailureCodeInvocationEnqueueFailed, true, err)
 	}
 	attempts := previous.Attempts + 1
@@ -103,9 +115,15 @@ func (m *MemStore) admitEventRecipientLocked(claim PublishedEventRoutingClaim, p
 		attempts = r.TotalAttempts
 	}
 	progress := eventAdmissionProgress(p, attempts)
+	if progress.FilterReason == "schema_version_mismatch" {
+		progress = EventSchemaVersionFilteredProgress(previous, progress.Attempts, time.Now().UTC())
+	}
 	preserveEventCapacityHistory(&progress, previous)
 	if scope != "" {
 		progress = eventCapacityProgress(previous, attempts, scope)
+	}
+	if controlReason != "" {
+		progress = eventSubscriptionControlProgress(previous, attempts, controlReason, controlNext)
 	}
 	if created {
 		m.recordEventDeliverySlotLocked(p.invocation.ID, slot)
@@ -118,6 +136,10 @@ func (m *MemStore) admitEventRecipientLocked(claim PublishedEventRoutingClaim, p
 	if receipt.RecipientClaims {
 		r.State, r.ClaimToken, r.LeaseUntil = progress.State, "", time.Time{}
 		r.AvailableAt = eventProgressNext(progress)
+		if controlReason != "" || progress.FilterReason == "schema_version_mismatch" {
+			r.Attempts--
+			r.TotalAttempts--
+		}
 		if scope != "" {
 			r.CapacityDeferrals++
 			r.GenerationCapacityDeferrals++
@@ -154,6 +176,9 @@ func eventRoutingClaimValidLocked(receipt *PublishedEventWork, r *PublishedEvent
 func (m *MemStore) performEventAdmissionLocked(receipt *PublishedEventWork, p eventAdmissionPlan) (bool, error) {
 	if !p.matched || p.prior {
 		return false, nil
+	}
+	if !p.deliveryDeadline.IsZero() && !p.deliveryDeadline.After(time.Now().UTC()) {
+		return false, ErrEventDeliveryExpired
 	}
 	if p.cancel {
 		cancellation, err := m.cancelPendingKeyedInvocationsLocked(p.invocation.AppID, p.invocation.WorkPolicyName, p.key, p.invocation.ID)

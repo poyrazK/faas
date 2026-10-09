@@ -1,0 +1,26 @@
+name: Data API client
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - name: Restore and verify the pinned SDK
+        run: node tools/artifacts.mjs restore
+      - run: npm ci --prefix client --ignore-scripts --no-audit --no-fund
+      - run: npm run typecheck --prefix client
+      - run: npm test --prefix client

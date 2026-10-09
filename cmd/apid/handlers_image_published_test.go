@@ -1,4 +1,4 @@
-// adr: 679, 680, 682
+// adr: 679, 686, 682
 package main
 
 import (

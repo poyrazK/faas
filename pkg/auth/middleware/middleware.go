@@ -765,8 +765,14 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == path {
 		return false
 	}
+	if suffix == "customer-operations/submissions/lookup" {
+		return method == http.MethodPost
+	}
 	if suffix == "customer-operations" {
 		return method == http.MethodPost || method == http.MethodGet
+	}
+	if suffix == "customer-operation-milestones" {
+		return method == http.MethodGet
 	}
 	if strings.HasPrefix(suffix, "customer-operations/") {
 		parts := strings.Split(suffix, "/")
@@ -774,7 +780,7 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 			return method == http.MethodGet
 		}
 		if len(parts) == 3 && parts[1] != "" {
-			return (parts[2] == "events" && method == http.MethodGet) || (parts[2] == "cancel" && method == http.MethodPost)
+			return ((parts[2] == "events" || parts[2] == "milestones") && method == http.MethodGet) || (parts[2] == "cancel" && method == http.MethodPost)
 		}
 		if len(parts) == 4 && parts[1] != "" && parts[2] == "artifacts" && parts[3] != "" {
 			return method == http.MethodGet
@@ -797,6 +803,9 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 			return true
 		}
 		if method == http.MethodGet && len(parts) == 4 && parts[1] != "" && parts[2] == "workflows" && parts[3] == "schedules" {
+			return true
+		}
+		if method == http.MethodGet && len(parts) == 6 && parts[1] != "" && parts[2] == "workflows" && parts[3] == "schedules" && parts[4] != "" && parts[5] == "preview" {
 			return true
 		}
 		if method == http.MethodPut && len(parts) == 5 && parts[1] != "" && parts[2] == "workflows" && parts[3] == "schedules" && parts[4] != "" {
@@ -832,7 +841,7 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 			return method == http.MethodPost
 		}
 		if len(parts) == 4 && parts[2] != "" {
-			return (parts[3] == "callbacks" && method == http.MethodGet) ||
+			return ((parts[3] == "callbacks" || parts[3] == "diagnostics") && method == http.MethodGet) ||
 				(parts[3] == "events" && method == http.MethodPost)
 		}
 		if len(parts) == 5 && parts[2] != "" && parts[3] == "callbacks" && parts[4] != "" {

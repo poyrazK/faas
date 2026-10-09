@@ -746,6 +746,10 @@ type Engine struct {
 	// to fast-forward the CapacityFreshness budget without sleeping.
 	now func() time.Time
 
+	// pressurePark is the reaper's latest list of idle instances a wake
+	// refused for fleet capacity may park (ADR-643).
+	pressurePark pressureParkView
+
 	// egressAbuseRecycles is each account's recent ADR-361 egress abuse
 	// recycle times (fan-out or flood), for the escalation to the account
 	// abuse hold. It is per schedd and in memory: a restart forgets it,
@@ -835,6 +839,13 @@ func (e *Engine) ownsApp(app state.App) bool {
 		e.ops.ObserveAppOwnership(owned)
 	}
 	return owned
+}
+
+// OwnsApp is ownsApp for the background triggers (floor, scale-up,
+// targets) that enumerate apps themselves. It does not count toward the
+// notification-discard metric ownsApp feeds.
+func (e *Engine) OwnsApp(app state.App) bool {
+	return e.ownsAppDecision(app)
 }
 
 func (e *Engine) ownsAppDecision(app state.App) bool {
@@ -1671,6 +1682,16 @@ type WakeResult struct {
 // skips Phase 1 explicitly so a gateway can demand a new instance
 // even when others are already RUNNING.
 func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
+	res, err := e.wake(ctx, appID, deploymentID, scope, trigger)
+	// ADR-643: a gateway wake refused for fleet capacity parks one idle
+	// instance of another app and retries once.
+	if e.parkForCapacity(ctx, appID, trigger, err) {
+		res, err = e.wake(ctx, appID, deploymentID, scope, trigger)
+	}
+	return res, err
+}
+
+func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
 	if scope == "" {
 		scope = ScopeFrom(ctx)
 	}
@@ -2368,6 +2389,15 @@ func compareAndSetAppStatus(ctx context.Context, store state.Store, appID string
 // (legacy single-deployment behaviour). Stamped on the ctx via
 // WithScope so resolveApp / loadAPIEnv read the same value.
 func (e *Engine) AdmitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
+	res, err := e.admitInstance(ctx, appID, deploymentID, scope, trigger)
+	if e.parkForCapacity(ctx, appID, trigger, err) ||
+		(err == nil && res.AtCapacity && e.parkZeroTrafficSibling(ctx, appID, deploymentID)) {
+		res, err = e.admitInstance(ctx, appID, deploymentID, scope, trigger)
+	}
+	return res, err
+}
+
+func (e *Engine) admitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
 	ctx = WithScope(ctx, scope)
 	if trigger == TriggerDeploymentSmoke && deploymentID == "" {
 		return WakeResult{}, errors.New("sched: deployment smoke requires deployment_id")
@@ -3392,8 +3422,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
+	pinnedBase, err := e.artifactBaseKey(ctx, app, layerKey(dep.RootfsKey, dep.ID))
+	if err != nil {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_runtime_release_unavailable")
+		release()
+		return WakeResult{}, err
+	}
 	spec := AppSpec{
-		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
+		BaseKey: pinnedBase, LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: resolve the optional app override against the account's
@@ -3455,6 +3491,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		HealthcheckGRPCService:   healthcheckGRPCService,
 		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
 		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
+		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label
@@ -3757,7 +3794,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// Audit-log it under kind="wake_boot_error" so a query for
 		// `kind='wake_boot_error'` finds both this and the
 		// SetInstanceRuntime-failure case below.
-		transitionCtx := ctx
+		// The caller's deadline usually is the error: a wake that outlives
+		// it fails with the same expired context. Write FAILED on a bounded,
+		// detached context, or the row stays WAKING until the watchdog
+		// (production-us 2026-10-07: "transition: load instance … context
+		// deadline exceeded" after a 10 s restore fallback).
+		transitionCtx, transitionCancel := context.WithTimeout(context.WithoutCancel(ctx), DestroyTimeout)
+		defer transitionCancel()
 		if mode == string(state.InstanceModeMirror) {
 			// The gateway's mirror deadline can cancel this RPC after
 			// schedd has inserted and admitted the shadow row. The VMMD
@@ -5241,9 +5284,13 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
+	pinnedBase, err := e.artifactBaseKey(ctx, app, layerKey(dep.RootfsKey, dep.ID))
+	if err != nil {
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, err
+	}
 	return AppSpec{
 		migrationRuntime: migrationInputs,
-		BaseKey:          baseKey(app.Runtime),
+		BaseKey:          pinnedBase,
 		LayerKey:         layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount:        int32(limits.VCPU),
 		MemSizeMiB:       int32(app.RAMMB),
@@ -5295,6 +5342,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		HealthcheckGRPCService:   healthcheckGRPCService,
 		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
 		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
+		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22", "python312"). The sched sources it
 		// from the apps row at Wake time and threads it onto
@@ -5878,6 +5926,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		return err
 	}
 	primeLayer := layerKey(dep.RootfsKey, dep.ID)
+	upgradeTarget, err := e.runtimeUpgradePrimeTarget(ctx, app, dep)
+	if err != nil {
+		return err
+	}
 	if executionModeForApp(app) == api.ExecutionModeJob {
 		if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
 			return err
@@ -5984,6 +6036,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		return err
 	}
 	runtimeInputs, spec := prepared.Inputs, prepared.Spec
+	if upgradeTarget != nil && (spec.BaseKey != upgradeTarget.BaseKey() || spec.LayerKey != dep.RootfsKey) {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_runtime_upgrade_artifact_mismatch")
+		return fmt.Errorf("sched: prime: runtime upgrade artifact mismatch: %w", state.ErrConflict)
+	}
 	primeDelivery := bootInput{
 		insID: ins.ID, appID: appID, accountID: acct.ID, wakeID: primeWakeID,
 		secretDeliveries: prepared.SecretDeliveries,
@@ -6022,11 +6078,18 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// longer (primeStartupExtension).
 	bootCtx, pcancel := context.WithTimeout(ctx, e.primeColdBootBudget(spec.StartupDeadlineS))
 	defer pcancel()
+	bootStartedAt := time.Now().UTC()
 	out, err := e.vmm.CreateColdBoot(bootCtx, placement.NodeID, ins.ID, spec)
 	if err != nil {
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_failed")
 		return fmt.Errorf("sched: prime: cold boot: %w", err)
+	}
+	if out == nil || (upgradeTarget != nil && (out.Instance != ins.ID || out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT || out.RestoreFallbackReason != "")) {
+		e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
+		e.ledger.Release(ins.ID)
+		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_identity_invalid")
+		return fmt.Errorf("sched: prime: cold boot response does not prove the admitted candidate: %w", state.ErrConflict)
 	}
 	if primeStartupCPU > primeConfiguredCPU {
 		boostUntil := time.Now().Add(fcvm.StartupCPUBoostTailDuration)
@@ -6038,10 +6101,16 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		}
 		e.ledger.SetCPUStartupBoostUntil(ins.ID, boostUntil)
 	}
-	primed, err := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
+	publication := state.RuntimeInstancePublication{
 		AccountID: acct.ID, AppID: appID, InstanceID: ins.ID, NodeID: placement.NodeID, WakeID: primeWakeID,
 		ExpectedState: string(state.StateColdBooting), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID), Fence: prepared.SecretFence, ConfigFence: prepared.ConfigFence, Inputs: &runtimeInputs,
-	})
+	}
+	if upgradeTarget != nil {
+		publication.RuntimeUpgradeColdBoot = &state.RuntimeUpgradeColdBoot{
+			TargetReleaseID: upgradeTarget.ID, BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, StartedAt: bootStartedAt,
+		}
+	}
+	primed, err := e.store.PublishOwnedInstanceRuntime(ctx, publication)
 	if err != nil {
 		// Best-effort destroy; same rationale as Wake above. Uses a
 		// detached context so a cancelled caller ctx doesn't make the
@@ -7466,10 +7535,14 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	snapStart := time.Now()
 	var b SnapshotBytes
 	var reused *state.Snapshot
-	if allowReuse {
-		b, reused, err = e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil)
+	// A profiled process must acknowledge its current collection checkpoint
+	// before terminal capture. Reusing an older snapshot bypasses that handshake
+	// and loses the process state needed to qualify park/restore (ADR-824).
+	profilingEnabled := app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled
+	if allowReuse && !profilingEnabled {
+		b, reused, err = e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil || profilingEnabled)
 	} else {
-		b, err = e.vmm.PauseAndSnapshot(snapCtx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil)
+		b, err = e.vmm.PauseAndSnapshot(snapCtx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil || profilingEnabled)
 	}
 	if reused != nil {
 		storageKey = reused.StorageKey
@@ -7618,7 +7691,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instance, app state.App) (SnapshotBytes, error) {
 	// The source VM resumes after warm capture. A callback may close sockets
 	// or flush state for checkpoint and leave that VM unable to serve traffic.
-	if app.Manifest.BeforeCheckpoint != nil {
+	if app.Manifest.BeforeCheckpoint != nil || (app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled) {
 		return SnapshotBytes{}, nil
 	}
 	// Gate 1 + 2: the cheap configuration checks. snapshotAndPark loaded
@@ -8363,6 +8436,24 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 
 	terminal := terminalStateForReason(reason)
 
+	// appMu is process-local, so the schedd that owns this wake may run on
+	// another node and publish RUNNING while this one tears the VM down.
+	// Claim a WAKING row before Destroy (ADR-640): the owner's publication
+	// expects WAKING and aborts on the lost CAS instead of exposing a RUNNING
+	// row with no VM. COLD_BOOTING still counts RAM, so a failed Destroy
+	// keeps the reservation and the cold-boot sweep retries it (ADR-470).
+	claimed := false
+	if reason == StuckWakingTimeout {
+		if err := e.store.UpdateInstanceStateIf(ctx, instanceID, string(want), string(terminal)); err != nil {
+			if errors.Is(err, state.ErrConflict) {
+				return nil
+			}
+			return fmt.Errorf("sched: KillStuck: claim instance %s: %w", instanceID, err)
+		}
+		claimed = true
+		e.recordCommittedInstanceTransition(ctx, fresh, want, terminal, appID, "watchdog_timeout", string(reason))
+	}
+
 	// Retain both the resident state and reservation until vmmd confirms
 	// teardown. A failed attempt remains visible to the next watchdog sweep
 	// and to SeedLedger after a scheduler restart (ADR-470).
@@ -8390,7 +8481,9 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 			Reason:     string(reason),
 		})
 	}
-	e.transitionWithKind(ctx, instanceID, appID, terminal, "watchdog_timeout", string(reason))
+	if !claimed {
+		e.transitionWithKind(ctx, instanceID, appID, terminal, "watchdog_timeout", string(reason))
+	}
 	if e.ops != nil {
 		e.ops.WatchdogKills(string(reason), string(terminal)).Inc()
 	}

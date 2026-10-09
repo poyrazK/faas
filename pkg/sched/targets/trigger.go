@@ -482,6 +482,7 @@ type Trigger struct {
 	// ownerNodeID is the durable shard key this schedd scales. Empty
 	// preserves the central/legacy posture and reads all apps.
 	ownerNodeID string
+	ownsApp     func(state.App) bool
 
 	// per-app sliding window of per-instance max-inflight. Reads
 	// from instats on each Tick; the window keeps the most recent
@@ -656,6 +657,21 @@ func (t *Trigger) WithOwnerNodeID(nodeID string) {
 	t.ownerNodeID = nodeID
 }
 
+// WithAppOwnership installs the scheduler's app-ownership rule. An
+// owner-less (control-plane) schedd lists every app, but on a multi-node
+// fleet the compute schedds own their shards; acting on those apps as well
+// duplicates their target-scaling decisions (production-us hunt #5, H5-33).
+func (t *Trigger) WithAppOwnership(owns func(state.App) bool) {
+	if t == nil {
+		return
+	}
+	t.ownsApp = owns
+}
+
+func (t *Trigger) manages(app state.App) bool {
+	return t.ownsApp == nil || t.ownsApp(app)
+}
+
 // admit requests a bounded batch. Production's sched.Engine implements the
 // BurstEngine fast path; small adapters and existing tests intentionally fall
 // back to the original one-at-a-time call. The engine remains the authority on
@@ -703,6 +719,11 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		return fmt.Errorf("targets: list apps: %w", err)
 	}
 	for _, app := range apps {
+		// A parked or suspended app is not scaled: the reaper parks whatever
+		// a target admits for it (H5-54).
+		if !t.manages(app) || (app.Status != "" && app.Status != state.AppActive) {
+			continue
+		}
 		policy := app.ScalingPolicy
 		// ADR-194: an app declares a LIST of signals. EffectiveTargets is
 		// the only correct reader — it promotes the pre-ADR-194 singular

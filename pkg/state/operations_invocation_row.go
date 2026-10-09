@@ -41,6 +41,30 @@ func purgeOperationOwnerTx(ctx context.Context, tx pgx.Tx, accountID, appID stri
 		}
 	}
 	q := sqlc.New()
+	tasks, err := q.LockOwnedActiveOperationJobTasksForPurge(ctx, tx, sqlc.LockOwnedActiveOperationJobTasksForPurgeParams{AccountID: account, AppID: app})
+	if err != nil {
+		return err
+	}
+	count, err := q.CountOwnedActiveOperationJobTasksForPurge(ctx, tx, sqlc.CountOwnedActiveOperationJobTasksForPurgeParams{AccountID: account, AppID: app})
+	if err != nil {
+		return err
+	}
+	if count != int64(len(tasks)) {
+		return ErrConflict
+	}
+	for _, task := range tasks {
+		if task.Status == "claimed" {
+			return ErrConflict
+		}
+	}
+	for _, task := range tasks {
+		if err := q.CancelQueuedCustomerOperationJobTask(ctx, tx, task.RunID); err != nil {
+			return err
+		}
+		if err := q.RecomputeCustomerOperationJobRun(ctx, tx, task.RunID); err != nil {
+			return err
+		}
+	}
 	if err := q.DeleteCustomerOperationsForOwner(ctx, tx, sqlc.DeleteCustomerOperationsForOwnerParams{AccountID: account, AppID: app}); err != nil {
 		return err
 	}

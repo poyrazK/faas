@@ -1091,8 +1091,8 @@ func TestMFARecover_SendsBurnEmail(t *testing.T) {
 	if len(got.To) != 1 || got.To[0] != e.acct.Email {
 		t.Errorf("To = %v, want [%s]", got.To, e.acct.Email)
 	}
-	if got.Subject != "Recovery code used on your faas account" {
-		t.Errorf("Subject = %q, want %q", got.Subject, "Recovery code used on your faas account")
+	if got.Subject != "Recovery code used on your Gregale account" {
+		t.Errorf("Subject = %q, want %q", got.Subject, "Recovery code used on your Gregale account")
 	}
 	if !strings.Contains(got.TextBody, "9 recovery codes remaining") {
 		t.Errorf("body missing '9 recovery codes remaining'; got:\n%s", got.TextBody)

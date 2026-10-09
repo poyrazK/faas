@@ -51,10 +51,10 @@ func mcpCLICommand() cliCommand {
 	return cliCommand{Name: "mcp", DocSlug: "mcp", Short: "Scaffold, deploy and verify stateless MCP servers", Subcommands: []cliSub{
 		{Name: "init", Short: "Create the Node MCP starter", Flags: []cliFlag{{Name: "path", Short: "empty destination directory", Value: "DIR", Req: true}}, Examples: []string{"gregale mcp init --path ./my-mcp"}},
 		{Name: "deploy", Short: "Deploy the worktree, enable streaming and verify MCP discovery", Flags: []cliFlag{{Name: "path", Short: "source directory (default .)", Value: "DIR"}, {Name: "name", Short: "app slug", Value: "SLUG", Req: true}, {Name: "profile", Short: "app resource profile", Value: "NAME", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}}, {Name: "token-env", Short: "client token for external OAuth verification", Value: "ENV"}, {Name: "secrets-file", Short: "sealed app secrets", Value: "PATH"}, {Name: "timeout", Short: "deployment wait timeout in seconds (default 1200)", Value: "SECONDS"}}, Examples: []string{"gregale mcp deploy --path ./my-mcp --name my-mcp --profile small"}},
-		{Name: "doctor", Short: "Check discovery, Origin rejection, compatibility and optional streaming", Flags: remote, Examples: []string{"gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo"}},
-		{Name: "tools", Short: "Discover tool schemas without invoking tools", Flags: remote, Examples: []string{"gregale mcp tools --app my-mcp"}},
-		{Name: "resources", Short: "Discover resource and template definitions without reading contents", Flags: remote, Examples: []string{"gregale mcp resources --app my-mcp"}},
-		{Name: "resource-read", Short: "Read one explicitly selected resource URI", Flags: remote, Examples: []string{"gregale mcp resource-read --app my-mcp --uri 'file:///reports/current'"}},
+		{Name: "doctor", Short: "Check discovery, Origin rejection, compatibility and optional streaming", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo"}},
+		{Name: "tools", Short: "Discover tool schemas without invoking tools", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp tools --app my-mcp"}},
+		{Name: "resources", Short: "Discover resource and template definitions without reading contents", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp resources --app my-mcp"}},
+		{Name: "resource-read", Short: "Read one explicitly selected resource URI", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp resource-read --app my-mcp --uri 'file:///reports/current'"}},
 		{Name: "resource-watch", Short: "Watch one resource URI for content updates", Flags: []cliFlag{
 			{Name: "url", Short: "full MCP endpoint URL", Value: "URL"},
 			{Name: "app", Short: "resolve a Gregale app's public endpoint", Value: "SLUG"},
@@ -63,13 +63,13 @@ func mcpCLICommand() cliCommand {
 			{Name: "uri", Short: "resource URI to read and watch", Value: "URI", Req: true},
 			{Name: "interval", Short: "poll and stream reconciliation interval (default 30s)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp resource-watch --app my-mcp --uri 'file:///reports/current'"}},
-		{Name: "prompts", Short: "Discover prompt definitions without rendering them", Flags: remote, Examples: []string{"gregale mcp prompts --app my-mcp"}},
-		{Name: "prompt-get", Short: "Render one explicitly selected prompt", Flags: remote, Examples: []string{`gregale mcp prompt-get --app my-mcp --prompt summarize --arguments '{"text":"weekly report"}'`}},
+		{Name: "prompts", Short: "Discover prompt definitions without rendering them", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp prompts --app my-mcp"}},
+		{Name: "prompt-get", Short: "Render one explicitly selected prompt", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{`gregale mcp prompt-get --app my-mcp --prompt summarize --arguments '{"text":"weekly report"}'`}},
 		{Name: "complete", Short: "Request bounded suggestions for a prompt or resource-template argument", Flags: completionFlags, Examples: []string{"gregale mcp complete --app my-mcp --prompt summarize --argument style --value exec", "gregale mcp complete --app my-mcp --resource-template 'customer://records/{recordId}' --argument recordId --value example-"}},
-		{Name: "call", Short: "Execute one discovered tool; opt in to input requests or durable tasks", Flags: callFlags, Examples: []string{`gregale mcp call --app my-mcp --tool add --arguments '{"a":7,"b":5}'`, `gregale mcp call --app my-mcp --tool report_preview --wait`, `gregale mcp call --app my-mcp --tool report_preview --tasks`}},
-		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Flags: taskRemote, Examples: []string{"gregale mcp task-get --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
-		{Name: "task-wait", Short: "Resume waiting for a task to finish", Flags: taskWaitFlags, Examples: []string{"gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
-		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Flags: taskRemote, Examples: []string{"gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
+		{Name: "call", Short: "Execute one discovered tool; opt in to input requests or durable tasks", Positionals: []string{"[<slug>]"}, Flags: callFlags, Examples: []string{`gregale mcp call --app my-mcp --tool add --arguments '{"a":7,"b":5}'`, `gregale mcp call --app my-mcp --tool report_preview --wait`, `gregale mcp call --app my-mcp --tool report_preview --tasks`}},
+		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp task-get --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
+		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp task-wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
+		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "tasks", Short: "Configure and inspect durable task worker scaling", Subcommands: []cliSub{
 			{Name: "setup", Short: "Preview or apply the task-backlog scaling policy", Flags: []cliFlag{
 				{Name: "app", Short: "worker app slug (defaults to the linked project app)", Value: "SLUG"},
@@ -93,7 +93,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "resources", Short: "subscribe to resource and template definition changes"},
 			{Name: "prompts", Short: "subscribe to prompt definition changes"},
 		}, Examples: []string{"gregale mcp watch --app my-mcp --baseline gregale-mcp.lock.json"}},
-		{Name: "config", Short: "Emit remote MCP connection JSON without credentials", Flags: remote, Examples: []string{"gregale mcp config --app my-mcp --name my-mcp"}},
+		{Name: "config", Short: "Emit remote MCP connection JSON without credentials", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp config --app my-mcp --name my-mcp"}},
 		{Name: "lock", Short: "Capture MCP catalog definitions without reading resources, rendering prompts or invoking tools", Flags: []cliFlag{
 			{Name: "url", Short: "full MCP endpoint URL", Value: "URL"},
 			{Name: "app", Short: "resolve a Gregale app endpoint", Value: "SLUG"},

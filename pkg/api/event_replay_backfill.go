@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
 // EventReplayBackfillRequest creates a durable historical delivery job.
 type EventReplayBackfillRequest struct {
-	From  time.Time `json:"from"`
-	Until time.Time `json:"until"`
+	AllowExpired bool      `json:"allow_expired,omitempty"`
+	From         time.Time `json:"from"`
+	Until        time.Time `json:"until"`
 }
 
 func (r EventReplayBackfillRequest) Validate() error {
@@ -19,6 +21,21 @@ func (r EventReplayBackfillRequest) Validate() error {
 		return fmt.Errorf("from and until must define a nonempty acceptance-time range")
 	}
 	return nil
+}
+
+// WorkflowEventReplayBackfillRequest creates a historical workflow-start job.
+// The current workflow definition is captured when the job is created.
+type WorkflowEventReplayBackfillRequest struct {
+	WorkflowName string    `json:"workflow_name"`
+	From         time.Time `json:"from"`
+	Until        time.Time `json:"until"`
+}
+
+func (r WorkflowEventReplayBackfillRequest) Validate() error {
+	if strings.TrimSpace(r.WorkflowName) == "" || len(r.WorkflowName) > 256 {
+		return fmt.Errorf("workflow_name must contain 1 to 256 non-whitespace bytes")
+	}
+	return (EventReplayBackfillRequest{From: r.From, Until: r.Until}).Validate()
 }
 
 // EventReplayBackfillProgress reports durable per-envelope routing outcomes.
@@ -40,8 +57,11 @@ type EventReplayBackfillProgress struct {
 type EventReplayBackfillJobResponse struct {
 	ID                   string                      `json:"id"`
 	AppSlug              string                      `json:"app_slug"`
-	SubscriptionID       string                      `json:"subscription_id"`
-	SubscriptionRevision string                      `json:"subscription_revision"`
+	ConsumerKind         string                      `json:"consumer_kind"`
+	WorkflowName         string                      `json:"workflow_name,omitempty"`
+	WorkflowRevision     string                      `json:"workflow_revision,omitempty"`
+	SubscriptionID       string                      `json:"subscription_id,omitempty"`
+	SubscriptionRevision string                      `json:"subscription_revision,omitempty"`
 	From                 time.Time                   `json:"from"`
 	Until                time.Time                   `json:"until"`
 	CutoffAt             time.Time                   `json:"cutoff_at"`
@@ -69,18 +89,22 @@ type EventReplayBackfillRetryRequest struct {
 // EventReplayBackfillItem is the metadata-only outcome for one envelope in a
 // durable backfill. It remains useful after the source envelope is pruned.
 type EventReplayBackfillItem struct {
-	EventSource      string    `json:"event_source"`
-	EventID          string    `json:"event_id"`
-	EventType        string    `json:"event_type"`
-	SchemaVersion    string    `json:"schema_version,omitempty"`
-	AcceptedAt       time.Time `json:"accepted_at"`
-	State            string    `json:"state"`
-	Attempts         int       `json:"attempts"`
-	FailureCode      string    `json:"failure_code,omitempty"`
-	LastError        string    `json:"last_error,omitempty"`
-	DetailsTruncated bool      `json:"details_truncated,omitempty"`
-	Retryable        bool      `json:"retryable"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	EventSource       string    `json:"event_source"`
+	EventID           string    `json:"event_id"`
+	EventType         string    `json:"event_type"`
+	SchemaVersion     string    `json:"schema_version,omitempty"`
+	AcceptedAt        time.Time `json:"accepted_at"`
+	State             string    `json:"state"`
+	Attempts          int       `json:"attempts"`
+	FailureCode       string    `json:"failure_code,omitempty"`
+	LastError         string    `json:"last_error,omitempty"`
+	DetailsTruncated  bool      `json:"details_truncated,omitempty"`
+	Retryable         bool      `json:"retryable"`
+	UpdatedAt         time.Time `json:"updated_at"`
+	ReceiptURL        string    `json:"receipt_url,omitempty"`
+	AttemptHistoryURL string    `json:"attempt_history_url,omitempty"`
+	WorkflowRunID     string    `json:"workflow_run_id,omitempty"`
+	WorkflowRunStatus string    `json:"workflow_run_status,omitempty"`
 }
 
 // EventReplayBackfillItemsResponse is one stable, acceptance-ordered page of
@@ -101,6 +125,12 @@ type EventReplayBackfillItemsQuery struct {
 func (c *Client) CreateEventReplayBackfill(ctx context.Context, appSlug, subscriptionID string, request EventReplayBackfillRequest) (EventReplayBackfillJobResponse, error) {
 	var out EventReplayBackfillJobResponse
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(appSlug)+"/event-subscriptions/"+url.PathEscape(subscriptionID)+"/replays", request, &out)
+	return out, err
+}
+
+func (c *Client) CreateWorkflowEventReplayBackfill(ctx context.Context, appSlug string, request WorkflowEventReplayBackfillRequest) (EventReplayBackfillJobResponse, error) {
+	var out EventReplayBackfillJobResponse
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(appSlug)+"/workflow-event-replays", request, &out)
 	return out, err
 }
 

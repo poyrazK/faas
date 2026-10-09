@@ -18,6 +18,7 @@ func admitOperationDispatch(ctx context.Context, store any, stored, wire Invocat
 	}
 	reader, ok := store.(interface {
 		OperationByID(context.Context, string, string, string) (Operation, error)
+		OperationDefinitionByID(context.Context, string, string) (OperationDefinition, error)
 	})
 	if !ok {
 		return Invocation{}, ErrNotFound
@@ -41,14 +42,19 @@ func admitOperationDispatch(ctx context.Context, store any, stored, wire Invocat
 	if proof[strings.ToLower(api.OperationIDHeader)] != op.ID {
 		return Invocation{}, ErrOperationStaleAttempt
 	}
-	attempt, err := strconv.Atoi(proof[strings.ToLower(api.OperationAttemptHeader)])
+	attemptValue, err := strconv.ParseInt(proof[strings.ToLower(api.OperationAttemptHeader)], 10, 32)
 	if err != nil {
 		return Invocation{}, ErrInvalidArgument
 	}
+	attempt := int(attemptValue)
 	capability := proof[strings.ToLower(api.OperationCapabilityHeader)]
 	authority := OperationExecutionAuthority{AccountID: stored.AccountID, AppID: stored.AppID, InstanceID: stored.InstanceID, InvocationID: stored.ID, Attempt: attempt, Capability: capability}
 	if err := ValidateOperationExecutionAuthority(op, stored, authority, time.Now()); err != nil {
 		return Invocation{}, err
 	}
-	return operationExecutionHeaders(stored, op, capability), nil
+	def, err := reader.OperationDefinitionByID(ctx, op.AccountID, op.DefinitionID)
+	if err != nil {
+		return Invocation{}, err
+	}
+	return operationExecutionHeaders(stored, op, def, capability), nil
 }

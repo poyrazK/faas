@@ -735,15 +735,25 @@ Admission commits a run with a durable event receipt, preventing duplicate runs
 on recovery even after run history is pruned. Event identities and receipts use
 the existing 30-day retention window.
 
+Independent recipient routing also covers workflow-only and mixed
+workflow/application events. Workflow admission and its routing checkpoint
+commit together under the recipient's lease. A blocked workflow does not make
+a failed sibling wait for the parent receipt to settle before selective recovery.
+
 Capacity or temporary target failures retry through the existing fanout system.
 After the 12-attempt cap, inspect routing failures and replay them using
 `gregale events deliveries APP` and `gregale events replay`; `subscription_id`
-also identifies workflow recipients. Disabling the workflow runtime leaves
-workflow recipients pending without consuming their retry attempts. App handler
-side effects must remain idempotent because workflow steps may retry.
+also identifies workflow recipients. You can select the same routing recovery
+with `gregale events recover --source SOURCE --id EVENT_ID --subscription ID`
+and preview it with `--dry-run`. After admission, inspect and recover execution
+through the workflow run and step commands. Disabling the workflow runtime
+leaves workflow recipients waiting without consuming new retry attempts. App
+handler side effects must remain idempotent because workflow steps may retry.
 
 See the [two-step event workflow recipe](../examples/event-workflows/README.md)
-and [ADR-432](adr/432-event-workflow-starts.md).
+and [ADR-432](adr/432-event-workflow-starts.md). Independent workflow admission
+and its upgrade requirements are recorded in
+[ADR-648](adr/648-independent-workflow-event-routing.md).
 
 ## Internal event subscriptions
 
@@ -792,6 +802,37 @@ work. Running work continues; handlers should still protect external side
 effects with an idempotency key or version check. See
 [application work policies](work-policies.md) for the complete contract.
 
+To preserve event acceptance order for one key, opt the subscription into
+ordered delivery and use a policy that keeps every item until it runs:
+
+```yaml
+work_policies:
+  - name: ordered-orders
+    max_running_per_key: 1
+    pending_updates: all
+event_triggers:
+  - source: orders
+    type: order.changed
+    work_policy: ordered-orders
+    work_key: data.order_id
+    ordered: true
+```
+
+For an opted-in subscription, Gregale routes the oldest unresolved matching
+delivery first for each app, policy, and canonical scalar key. A routing retry
+holds that key until it succeeds or reaches a terminal failure; different keys
+can proceed independently. After routing admission, the work policy keeps
+invocations for that key serialized and in the admitted order. Ordered policies
+must set `max_running_per_key: 1`, `pending_updates: all`, and leave debounce
+and expiry at zero. These restrictions prevent coalescing, expiry, and parallel
+execution from violating the guarantee.
+
+Manual replay restores routing for a failed delivery, but cannot undo a younger
+invocation that was already admitted or completed. Replaying older events after
+newer work has advanced can therefore change the observed order. Ordering is
+per keyed lane; Gregale does not impose a global order across keys or unrelated
+subscriptions.
+
 The filter is a JSON object encoded as a string. `app` is optional for a
 single-app deploy and is bound to the target application during source-ref
 reconciliation. Event-only projects may use the equivalent TOML form,
@@ -820,8 +861,8 @@ gregale events publish --id evt-123 --source billing.stripe --type invoice.paid 
 Gregale identifies an event by account, source, and id. Repeating that
 identity with the same type, schema version, and JSON data is safe. Changing
 the content returns `409 Conflict` within the 30-day identity retention
-window. Fanout work is stored with the event, so delivery resumes after a
-scheduler outage regardless of its duration or backlog size. New events capture
+window. Fanout work is stored with the event, so durable routing resumes after a
+scheduler outage. Configured delivery age limits can expire stale recipients. New events capture
 their enabled source/type subscription candidates when they are accepted. A
 later subscription edit or deletion does not change that event's recipients;
 the captured JSON data filter is evaluated when fanout runs. Receipts accepted
@@ -843,43 +884,60 @@ notification destinations keep their existing routing paths. See
 [ADR-613](adr/613-atomic-event-routing-handoff.md) for the transaction and upgrade
 boundary. Handler side effects still require application deduplication.
 
-When operators enable independent recipient routing (ADR-606), each captured
+Independent recipient routing is enabled by default (ADR-647). Each captured
 candidate has its own five-minute lease and backoff from five seconds to five
 minutes. A terminal recipient can be replayed while its siblings are routing
 or waiting to retry. Each replay gets a fresh twelve-attempt routing budget;
 the visible attempt count and history remain cumulative. Successful siblings
-are not rerun. The flag `FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED=1` enables adoption
-on schedd after all API and scheduler binaries are compatible. It defaults off;
-disabling it stops adoption but continues draining already adopted receipts.
-See [ADR-606](adr/606-independent-event-recipient-routing.md) for rollout and
-rollback requirements.
+are not rerun. On schedd, an unset `FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED` or the
+value `1` enables adoption. Set it to `0` on every scheduler before a
+mixed-version upgrade; enable adoption after the migrations are applied and
+all API and scheduler writers support recipient ownership and atomic admission.
+Other nonempty values also disable adoption. Disabling adoption continues
+draining already adopted receipts and does not make old binaries safe to restore.
+Captured workflows use independent recipient routing too. Upgrade all
+schedulers to support atomic workflow recipient admission before enabling
+adoption during a mixed-version upgrade. Receipts without snapshots keep
+legacy routing. Explicitly disabled adoption keeps whole-event ownership for
+new receipts, including those with workflows.
+Subscription backfill jobs keep their existing recipient routing under either
+flag setting; start new jobs after the fleet upgrade is complete.
+See [ADR-647](adr/647-independent-event-routing-default.md) for qualification,
+upgrade, and fallback requirements, and
+[ADR-606](adr/606-independent-event-recipient-routing.md) for the ownership model.
 
 Publish acceptance means the event is durably stored. A recipient marked
 `enqueued` has been handled by routing; normally it has an invocation, while
 work-policy `cancel_pending` creates a cancellation receipt instead; the receipt is `delivered` when all routing
 candidates settle, including terminal failures. Handler completion is tracked
 by the invocation lifecycle. Handler execution is at least once: use an
-idempotency key or version check for side effects. Gregale does not promise
-FIFO ordering across events or subscriptions. Retry backoff, recovery, and
-replay can change enqueue and completion order; work policies constrain
-dispatch within a key without guaranteeing publication order.
+idempotency key or version check for side effects. Subscriptions without
+`ordered: true` have no publication-order guarantee. Ordered subscriptions
+preserve acceptance order within their keyed lane during normal routing and
+automatic retries; explicit replay after newer work has advanced can change
+that order.
 
 Find recipients waiting to be routed without knowing their event IDs:
 
 ```bash
 gregale events backlog
 gregale events backlog --app analytics --capacity-scope consumer --min-age 10m
-gregale events backlog --subscription-id SUB --state pending --json
+gregale events backlog --consumer-kind workflow --state pending --json
+gregale events backlog --origin backfill --subscription-id SUB
 ```
 
-The API is `GET /v1/events/backlog` with `app`, `subscription_id`, `state`,
-`capacity_scope` and `min_age_seconds` filters. It lists captured application
-recipients waiting in either routing mode, including capacity waits before
-an invocation exists. Rows show event identity, recorded wait reason, age
-since acceptance, cumulative deferrals, retry/lease metadata and links to
-receipt and routing history. Consumer counts cover all matching waiting rows,
-independently of the recipient page. This view excludes settled routing and
-handler execution queues, which remain available through delivery inspection.
+The API is `GET /v1/events/backlog` with `app`, `subscription_id`,
+`consumer_kind`, `origin`, `state`, `capacity_scope` and `min_age_seconds`
+filters. It lists captured application and workflow recipients, plus recipients
+added by durable backfill, waiting in either routing mode. Rows show event
+identity, consumer kind, origin, workflow name when applicable, recorded wait
+reason, age since acceptance, cumulative deferrals, retry/lease metadata and
+receipt links, plus routing history links for application subscriptions.
+Workflow admission and run state are available through the receipt. Consumer
+counts cover all matching waiting rows, independently of the recipient page.
+This view excludes settled
+routing and handler execution queues, which remain available through delivery
+inspection.
 
 Use `--after` for the recipient continuation and `--consumers-after` for the
 independent consumer continuation; the API names the latter `consumers_after`.
@@ -892,13 +950,16 @@ restart discovery to include it. Listing oldest first does not promise delivery
 FIFO. A whole-event lease appears as `receipt_processing` because it does not
 identify which recipient is currently being routed.
 
-The response declares `coverage=captured_application_recipients` and reports
+The response declares `coverage=captured_and_backfill_recipients` and reports
 unresolved older receipts without snapshots as `unattributed_receipts`. That
 count is account-wide and uses only the acceptance/age window, even with other
 filters. The API requires a read key, returns metadata with no-store caching,
 and bounds reads to five seconds. Narrow filters and retry on
 `event_backlog_read_timeout`. Apply the [backlog migration](adr/617-event-consumer-backlog-inspection.md)
-before upgrading the API; routing behavior and recipient adoption are unchanged.
+and consumer origin migration before upgrading the API. Workflow rows represent
+routing admission; after admission, inspect the workflow run and its steps for
+execution status and recovery. `workflow_routing` identifies a pending workflow
+admission that is not currently in a capacity wait, retry delay, or active lease.
 
 Published and inbox envelopes use CloudEvents `datacontenttype` and the
 `accountid` extension. The API accepts the older `data_content_type` and
@@ -979,7 +1040,8 @@ acceptance time** `[from, until)`, independent of producer event time. Events
 accepted before the subscription was created can match its current filter. The
 preview returns event metadata and receipt links without creating deliveries.
 Work-bound subscriptions, workflow starts and object notification declarations
-are outside this first historical preview surface.
+are outside this subscription-specific preview surface. Workflow starts have a
+separate read-only preview described below.
 
 Each page examines at most `--limit` retained envelopes (default 50, maximum
 100), including nonmatches. Counts apply to that page. An empty matching page
@@ -996,6 +1058,55 @@ prove gap-free history. `history_complete` is always false. Retention can remove
 rows between pages, and delayed commits of older acceptances can change visible
 membership. This preview does not pin events or provide a frozen export. See
 [ADR-645](adr/645-subscription-retained-event-replay-preview.md) for the contract.
+
+To inspect historical workflow starts captured when each event was accepted,
+use the separate workflow replay preview:
+
+```bash
+gregale events workflow-replay-preview APP --workflow-name paid \
+  --from 2026-10-01T00:00:00Z --until 2026-10-06T00:00:00Z --limit 50
+```
+
+The API is `GET /v1/apps/{slug}/workflow-event-replay-preview`; the Go client is
+`pkg/api.Client.PreviewWorkflowEventReplay`. It scans retained envelopes in the
+same half-open platform acceptance-time range and reports whether the named
+workflow was captured, whether its captured trigger filter matches, the latest
+routing checkpoint, and whether the durable `(outbox, workflow recipient)`
+admission receipt exists. A retained run ID and status are included when the
+run still exists. The durable admission receipt remains visible after run
+retention expires, so a pruned run is still recognized as deduplicated.
+
+`potential_admission_count` counts matching captured recipients without an
+admission receipt. It estimates future admission impact; it does not check
+current account quota, app availability, or a future replay policy. The preview
+does not start workflow runs or create deliveries. It does not evaluate the
+current workflow definition for events where the workflow was not captured;
+those are reported as `not_captured`, while legacy envelopes without recipient
+snapshots are `unknown`. Counts are page-local, `history_complete` remains
+false, and continuation is not a frozen export. See
+[ADR-793](adr/793-workflow-event-replay-preview.md) for the contract.
+
+To start a currently eligible app workflow for retained events whose immutable
+recipient snapshot excluded it, create a durable workflow backfill:
+
+```bash
+gregale events workflow-backfill APP --workflow-name paid \
+  --from 2026-10-01T00:00:00Z --until 2026-10-06T00:00:00Z --yes
+gregale events backfill-status JOB_UUID
+gregale events backfill-items JOB_UUID --state enqueued
+```
+
+The job snapshots the current workflow definition and trigger. It considers
+only events with known recipient membership, a settled delivered receipt, no
+captured membership for this app workflow, and a matching trigger. Unknown
+legacy snapshots, captured workflows, unsettled receipts and prior admission
+receipts are skipped. The durable `(event, app workflow)` admission receipt
+deduplicates future jobs even after run retention removes the linked run.
+`enqueued` means the run was admitted; monitor the run separately for
+completion. Retryable quota and temporary target failures can be retried with
+`gregale events backfill-retry JOB_UUID --yes`. The 30-day range, active-job
+quotas, retained-history coverage and pruning protection follow subscription
+backfills. See [ADR-794](adr/794-durable-workflow-event-backfill.md).
 
 To create actual independent deliveries for eligible historical events, start
 a durable backfill for the same ordinary subscription:
@@ -1048,10 +1159,14 @@ The command prints a continuation command when another page is available. Keep
 the job and state filter unchanged when following its cursor. Each item shows
 the event identity, acceptance time, routing state, attempts and bounded
 failure details; it never includes event data and remains readable after the
-source envelope expires. Item states are live while a job is running, so for a
+source envelope expires. While the original receipt is retained, `receipt_url`
+opens unified delivery inspection; `attempt_history_url` opens the consumer's
+handler attempts when its delivery provenance and current app ownership are
+available. Links are omitted after their source expires, including if a new
+event reuses that source and ID. Item states are live while a job is running, so for a
 complete filtered view, inspect after the job reaches a terminal state.
 
-Inspect one published event across every captured consumer:
+Inspect one published event across captured and backfilled consumers:
 
 ```bash
 gregale events inspect --source billing.stripe --id evt-123
@@ -1063,13 +1178,19 @@ Publish returns a `receipt_url` and `Location` header for
 original `accepted_at`. The receipt includes every source/type candidate captured
 at acceptance, even before an invocation exists, and separates routing from
 handler execution. Whole-snapshot counts cover pending, processing, filtered,
-enqueued, and failed recipients. Handler outcomes preserve cancellation,
+enqueued, and failed recipients. `recipient_count` and `routing_summary` retain
+their acceptance-snapshot meaning; `backfill_recipient_count` and
+`backfill_routing_summary` count added consumers separately. Recipients label
+their `origin` and link to the originating backfill job while it is retained.
+Handler outcomes preserve cancellation,
 supersession, expiry, and dead letters. A `cancel_pending` operation reports its
 cancellation receipt rather than a handler invocation.
 
 Use `--limit` (1–200, default 100) and `--after` with `next_after` for larger
-fanouts. Pagination follows captured recipient order even during retries or
-replay; outcomes can change between pages. `routing_settled_at` means routing
+fanouts. Pagination follows captured recipient order, then stable appended
+backfill positions even during retries, replay, or job pruning; outcomes can
+change between pages. Inspection order does not guarantee delivery order.
+`routing_settled_at` means routing
 has settled, including failures, and `retain_until` is thirty days later. These
 fields are absent while routing is active. Legacy receipts without snapshots
 report `snapshot_captured=false`; their membership cannot be reconstructed.
@@ -1082,6 +1203,11 @@ and routing history URL, plus the retained original invocation or cancellation.
 routing; it does not assert success. Execution records have independent
 retention. The JSON response supplies applicable selective recovery requests;
 calling them requires the existing write scopes and rechecks current eligibility.
+A retryable backfill routing failure has the same selective routing recovery
+action, even while sibling events in the job are pending. Recovery resets just
+that delivery and keeps the job item and receipt consistent. Backfill handler
+failures use the same handler replay and dead-letter recovery as captured
+consumers. See [ADR-646](adr/646-unified-backfill-delivery-inspection.md).
 Routing replay and in-place dead-letter replay remain visible on the original
 receipt. Generic handler replay creates a new invocation with ledger-owned parent
 and root identity. The receipt preserves the original failure and adds `recovery`
@@ -1089,6 +1215,45 @@ with `latest_replay`, `retained_replay_count`, and `history_url`. A completed la
 replay means that replay succeeded; text inspection labels it `recovered`.
 Recovery requests target the latest retained replay, and are absent while that
 replay is active or completed. Independent consumer outcomes remain separate.
+
+Recover one captured application or workflow consumer, or a backfilled
+application consumer, directly from its receipt:
+
+```bash
+gregale events recover --source billing.stripe --id evt-123 \
+  --subscription SUBSCRIPTION_ID --dry-run
+gregale events recover --source billing.stripe --id evt-123 \
+  --subscription SUBSCRIPTION_ID
+```
+
+The command follows recipient pages automatically and selects the receipt's
+current `routing_replay`, `handler_replay`, `keyed_handler_replay`, or
+`dead_letter_replay` action. It sends one selective request through the existing
+replay API. Successful consumers retain their original deliveries. Routing
+recovery uses the accepted subscription snapshot; handler recovery targets the
+latest eligible execution in its trusted replay lineage.
+For workflow recipients, `routing_replay` recovers admission of the captured
+workflow definition. Once admitted, inspect the linked workflow run for step
+status and execution recovery. Text inspection shows the workflow name and
+retained run ID/status alongside its routing outcome.
+
+`--dry-run` reads the receipt without changing delivery state. It reports the
+selected action or explains why recovery is unavailable, including successful
+consumers, active deliveries/replays, cancellation, unavailable execution
+records, and workflows whose admission already completed. A dry run exits zero
+when it can inspect the selected recipient, including when no action is available.
+Actual recovery exits nonzero if the receipt offers no action. Missing recipients, legacy
+receipts without captured membership, unsupported actions, and API failures
+also exit nonzero. `--json` emits event/subscription identity, `dry_run`,
+`status` (`available`, `queued`, or `unavailable`), the selected `action`, and
+the replay `result` or an unavailable `reason`.
+
+Availability can change after inspection. The replay endpoint rechecks current
+ownership, scopes, deadlines, and claim eligibility; a rejected request is
+reported without trying another recovery path. `queued` means recovery was
+accepted, not that the handler completed. Use `events inspect` and `events
+attempts` to follow it. At-least-once delivery and application side-effect
+deduplication still apply.
 
 Plain handler replay uses `POST /v1/invocations/{id}/replay` (or
 `gregale invocations get --replay INVOCATION_ID`). Each failed parent creates
@@ -1261,3 +1426,876 @@ single-recipient replay.
 The machine-readable event contract is published in
 [`api/asyncapi.yaml`](../api/asyncapi.yaml), including the authenticated
 `POST /v1/events:publish` ingress.
+
+### Diagnosing ordered routing waits
+
+`gregale events backlog --waiting-reason ordering_blocked` lists recipients waiting for earlier routing in their captured app/policy/key lane. Filtering happens before recipient pagination and consumer aggregation. Consumer summaries include `ordering_waiting_recipients`.
+
+Each blocked recipient includes `ordering_blocker`: the earliest unresolved event and subscription, acceptance time and age, current routing state, next retry time when pending, and a receipt URL. Event data and resolved work keys are not exposed. The lookup uses the same predicate as recipient claims and is recomputed on each read, so recovering a blocker clears the wait without a projection update.
+
+Active routing and shared receipt leases take precedence over subscription controls and ordering; live subscription controls precede ordering, which precedes recorded capacity and retry backoff. These diagnostics describe event routing, not an invocation already admitted to its execution lane. Whole-receipt routing excludes earlier positions in its own snapshot because it walks those positions serially.
+
+### Bulk recovery of failed application consumers
+
+Use a recovery preview to select retained terminal **routing** failures captured
+at publication. Filters are exact subscription ID, event source, event type,
+failure classification, and minimum time since the recorded failure. Retryable
+failures are selected by default; `--include-non-retryable` explicitly broadens
+the selection.
+
+```sh
+gregale events recovery-preview invoice-worker \
+  --event-type invoice.created --failure-code invocation_enqueue_failed --min-age 10m
+
+gregale events recovery-create invoice-worker \
+  --event-type invoice.created --failure-code invocation_enqueue_failed --min-age 10m \
+  --rate 10 --yes
+
+gregale events recovery-status JOB_ID
+gregale events recovery-items JOB_ID --limit 100
+gregale events recovery-cancel JOB_ID --yes
+```
+
+The preview is read-only and returns at most 100 sample recipients. Its match
+count is exact up to 10,000; `exceeds_job_limit` means the reported count is a
+lower bound and the filters must be narrowed. Creation captures its own current
+selection and rejects more than 10,000 recipients without creating a partial
+job. New failures after creation are excluded. An empty selection completes
+immediately.
+
+Jobs are durable and account scoped. At most three jobs may run per account.
+Each job processes at most 1–100 recipients per one-second window (default 10),
+including skipped items; the persisted budget survives restarts and concurrent
+workers. Processing may be slower under scheduler load. Jobs expire after 24
+hours, cancelling remaining items. Completed/cancelled jobs and their
+metadata-only item outcomes are retained for 30 days.
+
+Each retry checks the selected recipient's failure identity before atomically
+reopening it and recording `queued`. If another recovery already changed it,
+the item becomes `skipped` with reason `changed`; missing retained receipts and
+deleted targets are also skipped. Legacy whole-receipt routing claims defer
+recovery until they settle. No new event identity is published, immutable
+recipient snapshots are preserved, and successful sibling consumers keep their
+outcomes. Existing work ordering and deduplication rules apply. Replaying an
+older terminal failure cannot undo younger deliveries that already completed.
+
+Cancellation and processing share a job lock. Cancellation waits for any retry
+transaction already in progress, then cancels remaining selected items. Already
+queued retries continue through normal delivery. `completed` means every
+selection item was queued or skipped; it does not mean invocation execution
+succeeded. Inspect receipts and existing attempt history for delivery outcomes.
+
+API endpoints:
+
+- `POST /v1/apps/{slug}/event-recoveries/preview`
+- `POST /v1/apps/{slug}/event-recoveries` (supports `Idempotency-Key`)
+- `GET /v1/event-recoveries/{jobID}`
+- `GET /v1/event-recoveries/{jobID}/items?after=POSITION&limit=100`
+- `POST /v1/event-recoveries/{jobID}/cancel`
+
+Preview and reads require `apps:read` or `admin`; creation and cancellation
+require `deploy:write` or `admin`, with the existing MFA policy. Responses use
+`coverage: captured_application_recipients`. Historical backfill recovery,
+workflow recovery, and failures after invocation admission retain their existing
+recovery APIs; they are excluded from this job selection. Envelope data, work
+keys, and raw errors are not returned or copied into recovery item metadata.
+Receipt retention is independent: an expired receipt is skipped rather than
+reconstructed from the job.
+
+### Pause and drain a subscription
+
+Pause a captured application consumer during maintenance or an outage:
+
+```sh
+gregale events subscription-pause invoice-worker SUBSCRIPTION_ID --yes
+gregale events subscription-status invoice-worker SUBSCRIPTION_ID
+gregale events backlog --app invoice-worker --waiting-reason subscription_paused
+
+gregale events subscription-resume invoice-worker SUBSCRIPTION_ID --rate 10 --yes
+gregale events backlog --app invoice-worker --waiting-reason subscription_rate_limited
+```
+
+Pausing stops new routing admissions for that subscription ID. It does not
+change subscription matching: enabled declarations continue capturing events.
+Other consumers continue according to their existing capacity and ordering
+rules. Invocations already admitted, including their execution retries,
+continue. Pause and admission serialize on the same consumer lock; a successful
+pause response follows any admission transaction already in progress.
+
+Pause and drain rate are live operator controls stored independently from
+manifest declarations. They survive restarts, redeployment and subscription
+removal. A removed subscription with retained controls can still be inspected
+and resumed using its captured ID. A newly created subscription ID has its own
+controls. Deleting a target app lets its waiting recipients settle as
+unavailable targets rather than holding them indefinitely.
+
+Resume defaults to ten new routing admissions per one-second window. Rates
+1–100 are supported; `--rate 0` removes pacing. This rate also applies to future
+publications after the backlog drains. The persisted budget is shared by all
+workers and is reserved in the admission transaction, so rollbacks restore it.
+Repeating a resume with the same active rate does not reset the budget.
+Normal claim polling and previously scheduled retry times may delay draining.
+Pause and rate waits do not consume the recipient's routing retry budget.
+
+Status reports pending and processing recipient counts, the oldest pending
+acceptance time and age, pause state, and rate. Counts cover retained publication
+and historical backfill recipients for that application subscription. Backlog
+filters run before pagination and consumer aggregation. Active routing and
+shared receipt leases take precedence in waiting reasons; live subscription
+controls precede ordering, recorded capacity and retry backoff.
+
+Pending captured receipts are retained until routing settles; pausing does not
+start an expiry timer. Paused events consume the existing account retained-event
+and byte budgets. Once those budgets are full, publication is rejected by the
+normal storage admission rules. Resume retains original event identities and
+snapshots, and uses the existing ordering and deduplication behavior. Settled
+receipt retention and invocation retention follow their existing rules.
+
+API controls are available at:
+
+- `GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control`
+- `POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pause`
+- `POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/resume`
+  with `{ "rate_per_second": 10 }` (or `{}` for the default).
+
+Reads require `apps:read` or `admin`; writes require `deploy:write` or `admin`,
+with the existing MFA policy. Controls apply to captured application routing
+admission, including application backfill recipients. Workflow and object
+notification recipients have their own delivery paths. Pre-snapshot legacy
+receipts use their original dynamic routing path.
+
+### Consumer routing health and maintenance alerts
+
+Inspect one application's subscription:
+
+```sh
+gregale events subscription-health my-app <subscription-id> --window 15m
+```
+
+The health endpoint at
+`GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/health?window=15m`
+reports live pending and processing counts, oldest pending age, pause duration,
+scheduled retries per second, terminal failure percentage, successful routing
+rate, and acceptance-to-routing p95 latency. Routing ends at invocation admission;
+execution completion is observed separately. Historical backfill latency includes
+the event's original age. Supported windows are `5m`, `15m`, `1h`, `6h`, and `24h`.
+
+Rates count retained `fanout_attempt` and `backfill_attempt` outcomes. Terminal
+failure percentage uses failed / (failed + enqueued); recovery can record more
+than one outcome per recipient. Retry rate counts error outcomes returning to
+pending and excludes capacity, pause, and pacing waits. Coverage is
+`bounded_recorded_outcomes`. `history_compacted=true` means windowed rates are
+incomplete retained samples. These are consumer API observations; they do not
+create subscription-labelled Prometheus series.
+
+Create an alert with `gregale alerts add --event-subscription-id <uuid>` and one
+of these metrics:
+
+| Metric | Unit |
+| --- | --- |
+| `event_pending_recipients` | Pending routing recipients |
+| `event_oldest_pending_seconds` | Age of oldest pending recipient |
+| `event_retry_rate_per_second` | Recorded retries scheduled / second |
+| `event_terminal_failure_pct` | Recorded terminal failure percentage |
+| `event_routing_latency_p95_seconds` | Acceptance-to-routing p95 seconds |
+| `event_paused_seconds` | Continuous duration of current pause |
+| `event_drain_rate_per_second` | Recorded successful routes / second |
+
+For example, use `--metric event_oldest_pending_seconds --comparison gt
+--threshold 600 --window-spec 15m` with the usual app, name, webhook URL, and
+secret flags. A failure alert can use `event_terminal_failure_pct`, `gt`, and
+`5`. Consumer rules require webhook actions, windows up to 24h, and an immutable
+subscription selector. Failure percentages need 20 terminal observations; latency
+needs one success. Drain-rate alerts require a pending or processing backlog.
+History-dependent alerts skip compacted windows.
+
+Pausing suppresses all consumer health alerts except `event_paused_seconds`.
+A separate pause alert detects maintenance that runs too long. Suppressed or
+insufficient observations set the rule to `unknown`; existing queued webhook
+notifications continue through the alert delivery outbox. Repeated pause requests
+preserve pause duration; resume resets it.
+
+### Per-consumer routing retry policies
+
+Application subscriptions can configure routing retries in YAML:
+
+```yaml
+event_triggers:
+  - source: orders
+    type: order.created
+    retry:
+      max_attempts: 20
+      initial_backoff: 2s
+      max_backoff: 2m
+      max_retry_duration: 30m
+      jitter: true
+```
+
+The equivalent TOML declaration uses `[triggers.event.retry]` after its
+`[[triggers.event]]` entry. A retry block defaults to 12 attempts, 5s initial
+backoff, a 5m cap, unlimited duration budget, and jitter enabled. Backoffs use
+whole milliseconds up to 1h; attempts range from 1 to 100 and duration budgets
+from 0 to 7d. Maximum backoff must be at least the initial delay.
+
+Inspect or replace settings for future events:
+
+```sh
+gregale events subscription-retry-status my-app <subscription-id>
+gregale events subscription-retry-set my-app <subscription-id> --max-attempts 20 --initial-backoff 2s --max-backoff 2m --max-retry-duration 30m --yes
+gregale events subscription-retry-reset my-app <subscription-id> --yes
+```
+
+GET, PUT, and DELETE at
+`/v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy` inspect,
+replace, or reset current subscription configuration. API replacement uses
+`max_attempts`, `initial_backoff_ms`, `max_backoff_ms`,
+`max_retry_duration_ms` (default 0), and `jitter` (default false). Reads require
+`apps:read` or `admin`; writes require `deploy:write` or `admin` and MFA.
+
+The duration budget counts failed routing attempt time and reserves scheduled
+retry delays. A retry is scheduled only if its entire delay fits. Pause, pacing,
+capacity, ordering, and worker downtime add no budget cost. This budget does not
+impose an event age deadline or interrupt an in-flight admission. Delay grows
+exponentially up to the configured cap; jitter spreads it between 1ms and that
+cap using a stable per-recipient, generation, and attempt hash.
+
+Policies are captured at event publication or backfill job creation. Changing
+or resetting configuration leaves those snapshots intact. Reapplying a manifest
+without a retry block restores legacy defaults for future events: 12 attempts,
+5s initial backoff, 5m maximum, no duration bound, and jitter disabled. Legacy
+snapshots use those same defaults. Apply the migration and upgrade all routing
+workers before enabling custom policies.
+
+Receipt routing diagnostics expose the captured `routing_retry_policy`,
+`retry_spent_ms`, and `retry_stop_reason`. Retained routing attempt history
+also records stop reason: `non_retryable`, `max_attempts`, or `max_duration`.
+The underlying `failure_code` remains visible. Operator replay starts a fresh
+retry generation under the same snapshot, preserving ordering and deduplication.
+Invocation execution retries have their separate existing policy.
+
+### Automatic consumer circuit breakers
+
+Enable an opt-in circuit breaker for an application event subscription:
+
+```sh
+gregale events subscription-circuit-set my-app <subscription-id> --yes
+gregale events subscription-circuit-status my-app <subscription-id>
+gregale events subscription-circuit-reset my-app <subscription-id> --yes
+gregale events subscription-circuit-disable my-app <subscription-id> --yes
+```
+
+Defaults open a circuit at 50% routing failures with at least 20 outcomes in
+300 seconds. Configure `--failure-threshold-pct`, `--min-samples`,
+`--window-seconds`, `--cooldown-seconds`, `--probe-successes`,
+`--recovery-max-rate`, and `--recovery-seconds`. Configuration is operational;
+deployments do not declare or overwrite it.
+
+An open consumer waits for the cooldown (default 60s). Available pending work
+then probes one delivery at a time. Three successful admissions start paced
+recovery: one routing permit per second, doubling every 10s to the configured
+cap (default 10/s). After the recovery interval (default 60s), it closes. A
+probe or recovery routing failure reopens it. A lost probe lease also reopens
+it when no durable outcome exists. Filtered events and capacity waits release
+a probe without counting as success or failure. Healthy consumers continue.
+
+Breaker waits spend no routing retry attempts or duration budget. It measures
+routing failures before invocation admission; execution retries and failures
+retain their existing policy. It does not replay dead letters automatically.
+Existing in-flight routing may finish, and a permit consumed by a neutral
+outcome can reduce actual throughput. Ordering and deduplication still apply.
+
+Status, delivery controls, and consumer health expose durable state, transition
+reason, cooldown, probe status, recovery rate, and incomplete history. Backlog
+waiting reasons include `circuit_open`, `circuit_probe_wait`, and
+`circuit_recovery_rate_limited`. State transitions occur with routing work;
+reading status does not schedule probes. Threshold checks occur at most once
+per second per consumer. Compacted observation windows prevent automatic
+threshold decisions and recovery completion.
+
+Manual pause always stays in effect until explicitly resumed. Reset closes an
+enabled breaker with a fresh observation window; disable removes it. Both
+preserve manual pause and pacing. Enabling or replacing policy also starts a
+fresh observation window. Terminal failures remain recoverable using the
+existing replay and recovery commands.
+
+The REST resource is
+`/v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker`: GET
+reads, PUT enables/replaces with defaults for omitted fields, DELETE disables,
+and POST to `/reset` closes an enabled breaker. Policy fields are
+`failure_threshold_pct`, `min_samples`, `window_seconds`, `cooldown_seconds`,
+`probe_successes`, `recovery_max_rate_per_second`, and `recovery_seconds`.
+Reads require `apps:read` or `admin`; writes require `deploy:write` or `admin`
+and MFA. Apply the migration and upgrade all routing workers before enabling.
+
+### Per-consumer delivery age limits
+
+Set a wall-clock limit for newly admitted event deliveries:
+
+```yaml
+event_triggers:
+  - source: inventory
+    type: stock.changed
+    retry:
+      max_delivery_age: 15m
+```
+
+The same field is supported under `[triggers.event.retry]` in TOML. It defaults
+to zero (no expiry), supports whole milliseconds up to 720h, and is captured
+with each event recipient. Configure future events through the existing retry
+policy API using `max_delivery_age_ms`, or the CLI:
+
+```sh
+gregale events subscription-retry-set inventory-api <subscription-id> --max-delivery-age 15m --yes
+```
+
+This command replaces the routing policy; include other retry flags to retain
+custom settings. Resetting the policy disables expiry for future events.
+Captured events keep their original policy. Strictly ordered subscriptions
+reject positive delivery age limits.
+
+Age starts when Gregale accepts the event, using the platform timestamp. Pauses,
+capacity waits, circuit cooldowns, retry backoff, and worker downtime all count.
+Once the limit is reached, pending routing becomes a terminal failure with
+`failure_code` and `retry_stop_reason` set to `delivery_expired`. The scheduler
+can select it for expiry even while normal delivery is paused or circuit-blocked.
+Active claims remain fenced until they finish or their leases are recovered.
+Expiry spends no extra retry attempt or duration budget, and other consumers
+continue independently. Already admitted invocations keep their execution lifecycle.
+
+Receipt diagnostics show `delivery_deadline_at` and `delivery_age_override`.
+Consumer health reports `expired_deliveries` in its observation window; these
+are included in terminal failures. Expiry does not count as a routing failure
+for circuit breakers. Retained failed-delivery listings and history keep the
+expiry reason for inspection.
+
+Replay preview includes `delivery_expired` and `delivery_deadline_at` for each
+match, plus `expired_count`, under the current target policy. A historical
+backfill uses its captured policy against the original event acceptance time.
+To deliberately deliver stale work, request an explicit override:
+
+```sh
+gregale events replay inventory-api --event-source inventory --event-id evt-123 --subscription-id <subscription-id> --allow-expired
+gregale events backfill inventory-api --subscription-id <subscription-id> --from 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z --allow-expired --yes
+```
+
+The equivalent replay/backfill request field is `allow_expired: true`.
+Individual replay returns `409 Conflict` without it when the original deadline
+has passed. The override applies to that replay generation, or to the explicitly
+created historical backfill job. It is persisted and audited, while ordering,
+deduplication, manual pause, and circuit controls still apply. Bulk retry and
+recovery never silently override age; recovery skips items that expire after
+selection. Apply the migration and upgrade all routing workers before enabling.
+
+## Select schema versions per application consumer
+
+Use `schema_versions` to upgrade consumers independently of event producers:
+
+```yaml
+triggers:
+  event:
+    - source: billing.*
+      type: invoice.paid
+      schema_versions: [v1, v2]
+```
+
+An omitted or empty list accepts every version, including unversioned events.
+A nonempty list accepts only exact, case-sensitive identifiers and excludes
+unversioned events. Select up to 16 unique versions; each identifier is 1–64
+characters, starts with a letter or digit, and contains letters, digits, dots,
+underscores, or hyphens. Versions may be selected before registration.
+
+```sh
+gregale events subscription-versions-status <app> <subscription-id>
+gregale events subscription-versions-set <app> <subscription-id> --versions v1,v2 --yes
+gregale events subscription-versions-reset <app> <subscription-id> --yes
+```
+
+The API resource is
+`/v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions`: GET
+inspects the selection, PUT accepts `{ "schema_versions": ["v1", "v2"] }`,
+and DELETE resets it. PUT requires an array; an empty array accepts all versions.
+
+Selection is captured when an event is published, or when a retained backfill
+job is created. Updating a subscription affects future captures. Manifest
+omission resets the selection. Existing captured deliveries without a selection
+accept every version. Workflow and object notification subscriptions use their
+existing behavior.
+
+Incompatible versions settle as `filtered` with
+`filter_reason: schema_version_mismatch`, create no invocation, consume no
+routing retry attempt, and do not count as circuit breaker failures. Filtering
+precedes pause, backoff, ordering, circuit, and expiry gates. Routing and retained
+replay previews report `schema_version_mismatch_count`; backfills skip incompatible
+versions as filtered items. Retained replay cursors become invalid when the
+subscription selection changes.
+
+## Preview a schema rollout
+
+Before switching a producer to a new version, check consumer version coverage
+and validate event data with a read-only rollout preview:
+
+```sh
+gregale events schema-rollout-preview billing.stripe invoice.paid \
+  --version v2 --schema @invoice-v2.schema.json \
+  --samples @invoice-samples.json \
+  --from 2026-10-01T00:00:00Z --until 2026-10-08T00:00:00Z \
+  --retained-limit 100
+```
+
+`invoice-samples.json` is an array of event **data** values, such as
+`[{"amount":150,"currency":"TRY"}]`. Omit `--schema` to check an already
+registered version. Schema and samples accept inline JSON, `@file`, or `-`
+for stdin; only one input may use stdin. `--json` returns the complete response.
+
+The API is `POST /v1/event-schemas:preview-rollout`, available to read keys
+(`apps:read` or `admin`) with the same MFA requirements as schema inspection:
+
+```json
+{
+  "source": "billing.stripe",
+  "type": "invoice.paid",
+  "version": "v2",
+  "schema": {
+    "type": "object",
+    "required": ["amount", "currency"],
+    "properties": {
+      "amount": {"type": "number"},
+      "currency": {"type": "string"}
+    }
+  },
+  "samples": [{"amount":150,"currency":"TRY"}]
+}
+```
+
+The response lists enabled application consumers whose source/type patterns
+match, with `accepts_version` and `content_filter_present`, plus accepting and
+excluding counts. Version acceptance alone does not evaluate content filters
+or guarantee delivery. At most 1,000 consumers are returned; when
+`consumers_truncated` is true, counts cover only the returned consumers.
+Workflow and object notification subscriptions are outside this coverage.
+
+Supply both `from` and `until` to check retained payloads. These are inclusive
+start and exclusive end platform acceptance times; future end times are capped
+at `observed_at`. The preview scans the newest 1,000 **account** receipts in
+that range, including unrelated event types, then checks up to 100 matching
+payloads, or the lower `retained_limit`. It validates original event data
+against the proposed schema regardless of the original version.
+
+`retained.scanned_count` counts account candidates; `examined_count` counts
+matching results. Valid, invalid, and unreadable counts are separate. Envelopes
+larger than 64 KiB, malformed envelopes, or inconsistent identities are
+unreadable rather than schema-invalid. The aggregate validation byte budget is
+4 MiB. Limit exhaustion sets `retained.truncated`; `history_complete` is always
+false because retained sampling cannot establish complete historical coverage.
+An empty sample is not evidence of compatibility.
+
+Caller samples are limited to 20 data values of 64 KiB each; schemas are limited
+to 64 KiB and cannot fetch external references. The request body is limited to
+2 MiB and the observation times out after 15 seconds. Validation diagnostics
+return a bounded first failing field path and reason, without payload values.
+The preview registers no schema, publishes no event, and changes no delivery.
+Go, Node, and Python clients expose `previewEventSchemaRollout` (following each
+SDK's naming conventions).
+
+## Consumer execution health
+
+Routing health ends at admission. Inspect what admitted handlers do separately:
+
+```sh
+gregale events subscription-execution-health my-app <subscription-id> --window 15m
+```
+
+The API is
+`GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-health?window=15m`.
+It uses the same read scopes and MFA requirements as routing health. Windows
+are `5m`, `15m`, `1h`, `6h`, and `24h`. Go, Node, and Python SDKs expose the
+corresponding execution-health operation.
+
+Current counts separate queued, running, retrying, succeeded, failed, expired,
+dead-lettered, cancelled, superseded, and unknown executions. Running includes
+claimed/dispatching work and its wake waits. Pending executions with attempts
+in the current generation count as retrying; other pending executions are queued.
+Handler replay invocations and admitted backfill deliveries are included. Counts
+cover retained executions, not unique events or only arrivals within the window.
+
+`handler_failure_pct` uses retained finished attempts in the window:
+`(retry + failed + dead_letter) / (succeeded + retry + failed + dead_letter)`.
+Unknown attempts are reported separately. `window_dead_letters` counts retained
+dead-letter attempt outcomes; `dead_letter_rate_per_second` divides that count by
+the window duration. Replays can contribute additional outcomes, so this rate
+measures formation rather than net backlog growth.
+
+`completion_latency_p95_seconds` measures original event acceptance to successful
+completion for retained invocations completing in the window. It includes routing,
+queue waits, handler retries, original backfill age, and replay delay. A retained
+replay child contributes its own completion; an in-place replay exposes the
+invocation's latest completion.
+
+Coverage is `bounded_retained_execution_roots`. The observation selects the newest
+1,000 retained admitted roots and at most 5,000 linked invocations. `truncated`
+marks a bound; `missing_roots` identifies absent original invocation rows.
+Pruned receipts, invocations, and attempt history cannot be reconstructed, so
+`history_complete` is always false and rates describe retained observations.
+
+New subscription alert metrics are:
+
+| Metric | Meaning |
+| --- | --- |
+| `event_execution_dead_letters` | Current retained dead-letter executions |
+| `event_execution_dead_letter_rate_per_second` | Recorded dead-letter attempt outcomes per second |
+| `event_handler_failure_pct` | Retained handler attempt failure percentage |
+| `event_completion_latency_p95_seconds` | Acceptance-to-completion p95 seconds |
+
+For example, use `gregale alerts add` with the app and webhook flags,
+`--event-subscription-id <uuid> --metric event_handler_failure_pct
+--comparison gt --threshold 5 --window-spec 15m`. These rules require webhook
+actions and the supported windows. Failure percentage requires 20 retained
+success/failure observations; latency requires one completion. Missing roots,
+truncation, unknown current states, or no retained roots make execution rules
+`unknown`; attempt-based rules also reject unknown attempts. Routing pauses do
+not suppress execution alerts because admitted handlers can still fail.
+
+Cancellation-only event work has a durable cancellation proof instead of a
+handler invocation. Execution health excludes these actions from its roots;
+its cancelled count describes invocation cancellation, not cancellation commands.
+
+
+### Paced recovery after handler admission
+
+Use the same durable jobs with `--mode execution` to recover the latest retained
+failed handler or dead letter for each application event consumer:
+
+```sh
+gregale events recovery-preview invoice-worker --mode execution \
+  --subscription-id SUBSCRIPTION_ID --event-type invoice.created \
+  --outcome dead_letter --min-age 10m
+
+gregale events recovery-create invoice-worker --mode execution \
+  --subscription-id SUBSCRIPTION_ID --event-type invoice.created \
+  --outcome dead_letter --min-age 10m --rate 5 --yes
+
+gregale events recovery-items JOB_ID
+gregale events recovery-cancel JOB_ID --yes
+```
+
+Omit `--outcome` to select both replayable `failed` and `dead_letter` executions.
+Routing failure-code and non-retryable filters cannot be combined with execution
+mode. API clients send `mode: execution` and optional `outcome` to the existing
+`/v1/apps/{slug}/event-recoveries/preview` and `/event-recoveries` endpoints.
+The Go, Node, and Python clients expose these fields.
+
+Execution coverage is `retained_application_executions`: admission receipts and
+execution rows must still be retained. Materialized backfill consumers are
+included; workflows, object notifications, cancellation commands, environment
+work, customer operations, and failed queue-bound handlers are excluded. Bound
+work in the unified dead-letter ledger can be recovered through its existing
+in-place replay. A pruned replay child never authorizes another child for the
+same parent. A newer active or successful execution prevents selection of an
+older failure. Broad selections may time out; narrow by consumer/type/source.
+
+The existing preview sample, item/job limits, pacing, cancellation, expiry, and
+retention apply across both modes. Items include `invocation_id`, identifying
+the selected failed execution. Each replay rechecks its frozen failure identity;
+changed generations, already replayed work, deleted targets, pruned receipts,
+and expired keyed work are skipped independently. Capacity waits keep the item
+pending and retry after five seconds; they may delay the rest of that job.
+
+Plain/keyed handler recovery preserves captured headers and retry policy,
+renews original execution/result durations for the child, and retains absolute
+work/start deadlines. Captured deployment pins are preserved. Dead-letter
+recovery uses the unified in-place replay. Keyed lane ordering, replay-child
+identity, capacity admission, and successful sibling outcomes are preserved.
+A routing pause does not block this explicit execution recovery. Cancelling a
+job stops remaining admissions; already queued handlers continue. `queued` and
+job `completed` do not imply handler success. Consumers still need idempotent
+business effects. See [ADR-806](adr/806-paced-event-execution-recovery.md).
+
+
+### Inspecting handler results after recovery
+
+Execution recovery now records the exact replay invocation and generation when
+it admits each item. Inspect them through the existing commands:
+
+```sh
+gregale events recovery-status JOB_ID
+gregale events recovery-items JOB_ID --limit 100
+gregale --json events recovery-items JOB_ID --limit 100
+```
+
+Job status includes an `execution` summary with queued, running, retrying,
+succeeded, failed, dead-lettered, expired, cancelled, superseded, and unknown
+counts. These counts cover admitted execution-mode items and sum to both
+`execution.tracked_count` and the job's admission `queued_count`. Item output
+includes `replay_invocation_id`, `replay_generation` (including zero), and an
+`execution` observation with state, attempts, observation time, optional
+completion time, and evidence source. Routing recovery, previews, and items
+that were not admitted omit execution observations.
+
+`execution.source` is `invocation` when the exact retained generation is present,
+`attempt_history` when retained terminal attempt evidence describes it, or
+`unavailable` when neither is present. Later manual replay generations and child
+invocations cannot replace this job's tracked outcome. Missing or expired
+history, uncertain outcomes, and admissions made before tracking was introduced
+report `unknown`. A retry attempt alone does not prove a final result; an
+expired or superseded invocation without a terminal attempt may become unknown
+once its row is pruned. These observations describe retained history, so a
+previously known result can become unknown after retention.
+
+Job `state`, `queued_count`, and `completed_at` continue to describe admission.
+For example, a job can be `completed` while its execution summary shows ten
+running handlers, or eight successes and two dead letters. Cancelling a job
+stops remaining admissions while already admitted handlers continue and remain
+observable. Handler success does not guarantee exactly-once business effects.
+The API and Go/Node/Python SDKs return these fields through the existing job and
+item endpoints. See [ADR-807](adr/807-recovery-execution-outcomes.md).
+
+
+### Pause, resume, or slow a recovery job
+
+If outcomes show renewed failures, pause further admissions without losing the
+job's frozen selection:
+
+```sh
+gregale events recovery-pause JOB_ID --yes
+gregale events recovery-rate JOB_ID --rate 2 --yes
+gregale events recovery-resume JOB_ID --yes
+gregale events recovery-status JOB_ID
+```
+
+These controls apply to routing and execution recovery. Pause waits for an
+in-flight admission transaction, then leaves remaining items pending. Already
+queued routing retries and handler executions continue; their execution results
+remain observable. Resume continues the same selection and progress. The job
+response reports `state: paused`, its current `paused_at`, and the current
+`rate_per_second`. The original rate stays in `selection.rate_per_second`.
+
+Rate changes accept 1–100 items per second while running or paused. They preserve
+spent permits in the current one-second window and keep existing admission
+waits. Lowering the rate can delay new admissions until that window ends;
+increasing it does not accelerate an already scheduled wait. Pause/resume never
+resets the delivery budget.
+
+Paused jobs still count toward the three-active-job account quota and retain
+their original 24-hour expiry. The worker expires paused jobs too, cancelling
+remaining items without admitting them. Completed, cancelled, or expired jobs
+cannot be paused, resumed, or rate-adjusted and return 409. Repeating a desired
+control state on an active job is safe. To abandon a paused job, use
+`recovery-cancel JOB_ID --yes`; admitted handlers continue.
+
+API and SDK clients use `POST /v1/event-recoveries/{jobID}/pause`, `POST
+/v1/event-recoveries/{jobID}/resume`, and `PUT
+/v1/event-recoveries/{jobID}/rate` with `{ "rate_per_second": 2 }`. Writes require
+deploy-write/admin scope and MFA. See [ADR-808](adr/808-recovery-job-controls.md).
+
+Discover paused jobs and recent recovery runs without retaining their IDs:
+
+```sh
+gregale events recovery-list APP --state paused
+gregale events recovery-list APP --mode execution --subscription-id SUBSCRIPTION_ID --limit 10 --json
+gregale events recovery-list APP --created-after 2026-10-01T00:00:00Z
+```
+
+`recovery-list` returns newest jobs first, showing admission progress, current
+rate, pause time and expiry. Execution outcomes remain available with
+`recovery-status JOB_ID`. Use `--cursor NEXT_CURSOR` with the same app and filters
+to continue; `--limit` accepts 1–50 and may change between pages. Creation bounds
+are exclusive RFC3339 timestamps. Subscription filtering matches the original
+selection filter or any frozen job item. Changing filters starts a new search.
+
+The API is `GET /v1/apps/{slug}/event-recoveries`, requiring apps-read/admin scope
+and MFA. SDK clients provide Go `ListEventRecoveries`, Node
+`EventsService.listEventRecoveries`, and Python
+`faas_sdk.api.events.list_event_recoveries`. Pages include `jobs` and, when more jobs exist,
+`next_cursor`. State changes and retention remain live between pages; stored
+active states can remain visible until the worker processes expiry. See
+[ADR-809](adr/809-recovery-job-discovery.md).
+
+Recovery control history identifies the authenticated account or API key that
+created or changed a job. Add an optional reason to write controls:
+
+```sh
+gregale events recovery-create APP --mode execution --reason "Recover after billing fix" --yes
+gregale events recovery-pause JOB_ID --reason "Consumer failures increased" --yes
+gregale events recovery-rate JOB_ID --rate 2 --reason "Reduce downstream load" --yes
+gregale events recovery-resume JOB_ID --reason "Downstream service recovered" --yes
+gregale events recovery-cancel JOB_ID --reason "Abandon remaining recovery" --yes
+gregale events recovery-history JOB_ID --limit 20 --json
+```
+
+History records creation, effective pause/resume/rate changes, cancellation and
+automatic expiry. Entries include actor, timestamp, previous/new state and rate,
+and optional reason. API key identity identifies the credential rather than an
+individual person. Expiry uses a system identity. Repeating a control that
+changes nothing adds no entry. The history write commits with its action; expiry
+cleanup detected by a control can commit an expiry entry before returning 409.
+Natural completion and handler attempts are observed through recovery status and
+items, rather than this control trail.
+
+Use `--after NEXT_AFTER` for subsequent oldest-first pages. The API is
+`GET /v1/event-recoveries/{jobID}/history?after=0&limit=20`, requiring apps-read/admin
+scope and MFA. SDK methods are Go `ListEventRecoveryHistory`, Node
+`EventsService.listEventRecoveryHistory`, and Python
+`faas_sdk.api.events.list_event_recovery_history`. History is retained with the
+job; older actions from before this feature are not reconstructed.
+
+Creation/rate bodies accept `reason`; pause/resume/cancel accept an optional
+`{ "reason": "Downstream service recovered" }` body. Empty bodies remain supported.
+Reasons must be valid UTF-8, at most 512 bytes and contain no control characters.
+They are stored in history, not the frozen recovery selection. Go retains the
+existing body-free control methods and adds `PauseEventRecoveryWithReason`,
+`ResumeEventRecoveryWithReason`, and `CancelEventRecoveryWithReason`.
+See [ADR-810](adr/810-recovery-control-audit-history.md).
+
+Inspect active recovery progress and expiry risk:
+
+```sh
+gregale events recovery-health APP
+gregale events recovery-health APP --json
+```
+
+The health view reports running, paused, stalled and expiring job counts, with
+paused expiry risk shown separately. Each job includes pending work, rate, last
+tracked progress, next eligible attempt and expiry. Progress advances only when
+an item is admitted or skipped; controls and retries that leave an item pending
+do not advance it. If tracking is unavailable, `progress_known` is false and the
+age uses job creation as an explicit fallback.
+
+A job is stalled after at least five minutes without progress and five minutes
+overdue for its next eligible attempt. Eligibility accounts for rate limits,
+capacity retry delays and legacy receipt claims. Ongoing capacity and claim
+retries appear as explicit waits, rather than scheduler stalls. Resume schedules
+a fresh eligibility grace without rewriting progress. Paused jobs appear
+separately and do not contribute to stalled or running-expiry alert counts.
+
+Pending work within an hour of expiry, or already overdue for expiry cleanup,
+is flagged as expiring. Paused expiry risk remains visible separately. Terminal
+jobs are omitted from health; use recovery-list or recovery-status for them.
+Health describes recovery admission, while handler outcomes remain on status
+and items.
+
+The API is `GET /v1/apps/{slug}/event-recoveries/health`, requiring apps-read/admin
+scope and MFA. SDK clients expose Go `GetEventRecoveryHealth`, Node
+`EventsService.getEventRecoveryHealth`, and Python
+`faas_sdk.api.events.get_event_recovery_health`.
+
+Existing alert rules support app-scoped `event_recovery_stalled_jobs` and
+`event_recovery_expiring_jobs`. Configure a threshold greater than zero to notice
+at least one affected running job. These are current counts; the rule window
+does not aggregate history. Rules use supported 5m/15m/1h/6h/24h windows, omit
+`event_subscription_id`, and permit webhook notifications only. Existing cooldown
+and recovery notifications apply. Read failures produce a degraded observation,
+not a healthy zero. No rules or notifications are created automatically.
+See [ADR-811](adr/811-recovery-health-and-alerts.md).
+
+Receive terminal recovery notifications through app webhooks:
+
+```sh
+gregale webhooks add --app APP --target-url https://receiver.example.com/recoveries \
+  --event event_recovery.completed \
+  --event event_recovery.cancelled \
+  --event event_recovery.expired \
+  --retry-policy default
+```
+
+`event_recovery.completed` means the frozen selection has finished admission,
+including an empty selection created already completed. It does not mean the
+admitted handlers succeeded. `event_recovery.cancelled` reports an effective
+operator cancellation; `event_recovery.expired` reports automatic expiry, even
+when cleanup is detected by a control returning 409. Both cancellation outcomes
+retain job state `cancelled`. Previously admitted work continues.
+
+Each event contains a stable `event_id`, job/app IDs, recovery mode, stored state,
+outcome, final selected/pending/queued/skipped/cancelled counts, and
+creation/expiry/completion timestamps. Pending is zero. Payloads omit application
+data, errors, operator reasons and live execution outcomes. Use recovery status
+or items to observe handler results.
+
+The outbox write commits with the terminal transition. Recipients are matching,
+enabled app-scoped webhooks captured at that moment. An empty app event filter
+includes these lifecycle events; account release and platform tenant receivers
+do not receive them. Later subscriptions do not receive past transitions, and
+repeating a terminal control creates no new notification.
+
+Existing webhook signing, JSON/CloudEvents formats, independent retry policies,
+delivery attempts, dead letters and operator retry apply. JSON deliveries carry
+the recovery payload under `payload.data`; CloudEvents carries it under `data`.
+Payload `event_id` is stable across receivers and retries, while each receiver has
+its own delivery ID. Notifications are at least once and may arrive out of order.
+Deduplicate business effects by event ID within the receiving consumer before
+acknowledging them. One failed receiver does not block recovery completion or
+another receiver's notification delivery.
+
+Go exposes `EventRecoveryFinishedWebhookPayload`; Node and Python SDKs generate
+the corresponding payload model and updated webhook filter enums. No new
+recovery-specific subscription commands are needed. See
+[ADR-812](adr/812-recovery-lifecycle-notifications.md) and
+[receiver verification](webhook-receiver-verification.md).
+
+Recovery health now includes capacity diagnostics for execution recovery:
+
+```sh
+gregale events recovery-health APP
+gregale events recovery-health APP --json
+```
+
+When admission hits a pending-delivery limit, `capacity_wait` identifies account,
+app or captured consumer scope and supplies a safe explanation, episode start,
+last observation and age. Untyped capacity exhaustion uses `unknown`; execution
+lane locks are not reported as pending-delivery limits. No application payloads,
+resolved work keys or raw errors appear in diagnostics. `next_attempt_at` shows
+the retry schedule, while `eligible_at` also accounts for the rate budget.
+
+The current item remains pending. Repeated capacity retries retain the episode
+start and refresh the observed scope/time. Admission or skip clears the episode;
+effective resume starts fresh tracking so intentional pause time does not count
+as contention. Paused jobs retain their prior observation for inspection and are
+excluded from capacity counts. Older waits acquire diagnostics on their next
+observed retry rather than receiving guessed historical timestamps.
+
+`capacity_waiting_jobs` counts fresh running capacity waits.
+`prolonged_capacity_wait_jobs` counts those lasting at least fifteen minutes,
+with a capacity observation within the five-minute freshness grace. Stalled,
+expired and paused jobs are excluded. Diagnostics show the last observed gate,
+so a stale observation does not prove a limit is still full.
+
+The existing alert system supports `event_recovery_capacity_wait_jobs`, observing
+the prolonged count. Use an app-scoped webhook rule with `gt` zero, no subscription
+selector, and a supported 5m/15m/1h/6h/24h window. Existing cooldown and recovery
+behavior apply; read failures degrade the observation rather than produce a
+healthy zero. Scheduler stalls and expiry risks remain separate metrics. See
+[ADR-813](adr/813-recovery-capacity-diagnostics.md).
+
+Assess a frozen recovery job before resuming it:
+
+```sh
+gregale events recovery-preflight JOB_ID
+gregale events recovery-preflight JOB_ID --json
+```
+
+Preflight is read-only. It reports all pending items as currently eligible,
+waiting, likely skipped, or unknown, and includes up to 100 sample positions for
+inspection through recovery-items. Checks cover retained receipts, captured
+recipients, frozen execution/failure identity, replay lineage, absolute delivery
+and work deadlines, target availability, and current execution admission capacity.
+Reasons include changed executions, expired work or receipts, unavailable targets,
+legacy receipt claims and capacity scope. Unknown cases remain explicit.
+
+Capacity observations evaluate candidates independently against current
+account/app/consumer pending-delivery limits. They do not reserve slots or prove
+that the whole selection can be admitted together. Samples do not expose payloads,
+raw errors, resolved work keys or tenant/consumer identifiers.
+
+The report compares remaining lifetime with an optimistic rate-window drain
+estimate. It respects the configured rate, spent permits and next scheduled
+attempt, includes likely skips, and assumes immediate resume for paused jobs.
+An available first-window burst can have a zero-second minimum. The estimate
+excludes future capacity waits, worker latency, handler execution and subsequent
+changes. `fits_before_expiry: true` is not a completion guarantee. Terminal and
+expired jobs have `active: false` and cannot be made active by preflight.
+
+The API is `GET /v1/event-recoveries/{jobID}/preflight`, requiring apps-read/admin
+scope and MFA. SDK clients expose Go `GetEventRecoveryPreflight`, Node
+`EventsService.getEventRecoveryPreflight`, and Python
+`faas_sdk.api.events.get_event_recovery_preflight`. No progress, pacing, audit,
+expiry or notification state changes during the read. See
+[ADR-814](adr/814-recovery-preflight.md).

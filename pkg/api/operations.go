@@ -12,22 +12,33 @@ import (
 type OperationState string
 
 const (
-	OperationAccepted               OperationState = "accepted"
-	OperationRunning                OperationState = "running"
-	OperationSucceeded              OperationState = "succeeded"
-	OperationFailed                 OperationState = "failed"
-	OperationCancelled              OperationState = "cancelled"
-	OperationRequiresReconciliation OperationState = "requires_reconciliation"
-	OperationRecoveryReconcile                     = "reconcile_on_unknown"
-	OperationRecoverySafeRetry                     = "safe_retry"
-	OperationOwnerPlatformTenant                   = "platform_tenant"
-	OperationIDHeader                              = "X-Gregale-Customer-Operation-Id"
-	OperationAttemptHeader                         = "X-Gregale-Operation-Attempt"
-	OperationCapabilityHeader                      = "X-Gregale-Operation-Capability"
-	OperationExecutionKindHeader                   = "X-Gregale-Operation-Execution-Kind"
-	OperationExecutionIDHeader                     = "X-Gregale-Operation-Execution-Id"
-	OperationStepHeader                            = "X-Gregale-Operation-Step"
-	OperationStepAttemptHeader                     = "X-Gregale-Operation-Step-Attempt"
+	OperationAccepted                 OperationState = "accepted"
+	OperationRunning                  OperationState = "running"
+	OperationSucceeded                OperationState = "succeeded"
+	OperationFailed                   OperationState = "failed"
+	OperationCancelled                OperationState = "cancelled"
+	OperationRequiresReconciliation   OperationState = "requires_reconciliation"
+	OperationRecoveryReconcile                       = "reconcile_on_unknown"
+	OperationRecoverySafeRetry                       = "safe_retry"
+	OperationOwnerPlatformTenant                     = "platform_tenant"
+	OperationIDHeader                                = "X-Gregale-Customer-Operation-Id"
+	OperationAttemptHeader                           = "X-Gregale-Operation-Attempt"
+	OperationCapabilityHeader                        = "X-Gregale-Operation-Capability"
+	OperationExecutionKindHeader                     = "X-Gregale-Operation-Execution-Kind"
+	OperationExecutionIDHeader                       = "X-Gregale-Operation-Execution-Id"
+	OperationStepHeader                              = "X-Gregale-Operation-Step"
+	OperationStepAttemptHeader                       = "X-Gregale-Operation-Step-Attempt"
+	OperationWorkflowRunHeader                       = "X-Gregale-Operation-Workflow-Run-Id"
+	OperationWorkflowStepHeader                      = "X-Gregale-Operation-Workflow-Step"
+	OperationGenerationHeader                        = "X-Gregale-Operation-Generation"
+	OperationWorkflowCapabilityHeader                = "X-Gregale-Operation-Workflow-Capability"
+	OperationReceiptVersionHeader                    = "X-Gregale-Customer-Operation-Receipt-Version"
+	OperationReceiptBindingHeader                    = "X-Gregale-Customer-Operation-Receipt-Binding"
+	OperationTransactionPostgres                     = "postgres_v1"
+	OperationTransactionVersionHeader                = "X-Gregale-Customer-Operation-Transaction-Version"
+	OperationResultMaxBytesHeader                    = "X-Gregale-Customer-Operation-Result-Max-Bytes"
+	OperationHTTPTransactionVersion                  = 1
+	OperationMilestoneVersionHeader                  = "X-Gregale-Customer-Operation-Milestone-Version"
 )
 
 func (s OperationState) Terminal() bool {
@@ -37,15 +48,22 @@ func (s OperationState) Terminal() bool {
 // OperationDefinitionSpec is a resolved immutable contract. Schema documents
 // are bundled with deployment; runtime validation never loads external URLs.
 type OperationDefinitionSpec struct {
-	Name                string          `json:"name" yaml:"name"`
-	Method              string          `json:"method" yaml:"method"`
-	Path                string          `json:"path" yaml:"path"`
-	Owner               string          `json:"owner" yaml:"owner"`
-	InputSchema         json.RawMessage `json:"input_schema"`
-	OutputSchema        json.RawMessage `json:"output_schema"`
-	ProgressStages      []string        `json:"progress_stages" yaml:"progress_stages"`
-	CompletionWebhookID string          `json:"completion_webhook_id,omitempty" yaml:"completion_webhook_id,omitempty"`
-	Recovery            string          `json:"recovery" yaml:"recovery"`
+	Name                   string                     `json:"name" yaml:"name"`
+	Job                    string                     `json:"job,omitempty" yaml:"job,omitempty"`
+	Workflow               string                     `json:"workflow,omitempty" yaml:"workflow,omitempty"`
+	TransactionReceipt     string                     `json:"transaction_receipt,omitempty" yaml:"transaction_receipt,omitempty"`
+	Method                 string                     `json:"method" yaml:"method"`
+	Path                   string                     `json:"path" yaml:"path"`
+	Owner                  string                     `json:"owner" yaml:"owner"`
+	InputSchema            json.RawMessage            `json:"input_schema"`
+	OutputSchema           json.RawMessage            `json:"output_schema"`
+	ProgressStages         []string                   `json:"progress_stages" yaml:"progress_stages"`
+	CompletionWebhookID    string                     `json:"completion_webhook_id,omitempty" yaml:"completion_webhook_id,omitempty"`
+	Recovery               string                     `json:"recovery" yaml:"recovery"`
+	Milestones             map[string]json.RawMessage `json:"milestones,omitempty"`
+	WorkflowSteps          []OperationWorkflowSpec    `json:"workflow_steps,omitempty"`
+	Subject                *OperationSubjectSpec      `json:"subject,omitempty" yaml:"subject,omitempty"`
+	HTTPTransactionVersion int                        `json:"http_transaction_version,omitempty" yaml:"http_transaction_version,omitempty"`
 }
 
 type OperationDefinitionResponse struct {
@@ -66,20 +84,27 @@ type OperationDefinitionsResponse struct {
 // Fetch schemas through the single-definition read to keep maximum-plan
 // collection responses within the existing SDK response bound.
 type OperationDefinitionSummary struct {
-	ID                  string    `json:"id"`
-	AppID               string    `json:"app_id"`
-	Scope               string    `json:"scope"`
-	Revision            string    `json:"revision"`
-	DeploymentID        string    `json:"deployment_id"`
-	ReleaseID           string    `json:"release_id,omitempty"`
-	Name                string    `json:"name"`
-	Method              string    `json:"method"`
-	Path                string    `json:"path"`
-	Owner               string    `json:"owner"`
-	ProgressStages      []string  `json:"progress_stages"`
-	CompletionWebhookID string    `json:"completion_webhook_id,omitempty"`
-	Recovery            string    `json:"recovery"`
-	CreatedAt           time.Time `json:"created_at"`
+	ID                     string                  `json:"id"`
+	AppID                  string                  `json:"app_id"`
+	Scope                  string                  `json:"scope"`
+	Revision               string                  `json:"revision"`
+	DeploymentID           string                  `json:"deployment_id"`
+	ReleaseID              string                  `json:"release_id,omitempty"`
+	Name                   string                  `json:"name"`
+	Job                    string                  `json:"job,omitempty" yaml:"job,omitempty"`
+	Workflow               string                  `json:"workflow,omitempty"`
+	TransactionReceipt     string                  `json:"transaction_receipt,omitempty"`
+	Method                 string                  `json:"method"`
+	Path                   string                  `json:"path"`
+	Owner                  string                  `json:"owner"`
+	ProgressStages         []string                `json:"progress_stages"`
+	CompletionWebhookID    string                  `json:"completion_webhook_id,omitempty"`
+	Recovery               string                  `json:"recovery"`
+	CreatedAt              time.Time               `json:"created_at"`
+	Milestones             []string                `json:"milestones,omitempty"`
+	WorkflowSteps          []OperationWorkflowSpec `json:"workflow_steps,omitempty"`
+	Subject                *OperationSubjectSpec   `json:"subject,omitempty"`
+	HTTPTransactionVersion int                     `json:"http_transaction_version,omitempty"`
 }
 
 // OperationTenantIdentity binds local submission receipts to the authenticated
@@ -104,6 +129,34 @@ type OperationReportRequest struct {
 	Total     int64  `json:"total"`
 }
 
+// OperationExecutionControlResponse is a read-only observation of the current
+// HTTP claim. It grants no lease renewal or external-effect authority.
+type OperationExecutionControlResponse struct {
+	OperationID           string    `json:"operation_id"`
+	InvocationID          string    `json:"invocation_id"`
+	Attempt               int       `json:"attempt"`
+	CancellationRequested bool      `json:"cancellation_requested"`
+	DeadlineAt            time.Time `json:"deadline_at"`
+	LeaseExpiresAt        time.Time `json:"lease_expires_at"`
+	ObservedAt            time.Time `json:"observed_at"`
+	PollAfterMS           int       `json:"poll_after_ms"`
+}
+
+// OperationWorkflowControlResponse observes one native attempt. Reading it
+// grants no lease renewal, retry permission or evidence of undone effects.
+type OperationWorkflowControlResponse struct {
+	OperationID           string    `json:"operation_id"`
+	WorkflowRunID         string    `json:"workflow_run_id"`
+	WorkflowStep          string    `json:"workflow_step"`
+	Generation            int       `json:"generation"`
+	Attempt               int       `json:"attempt"`
+	CancellationRequested bool      `json:"cancellation_requested"`
+	DeadlineAt            time.Time `json:"deadline_at"`
+	LeaseExpiresAt        time.Time `json:"lease_expires_at"`
+	ObservedAt            time.Time `json:"observed_at"`
+	PollAfterMS           int       `json:"poll_after_ms"`
+}
+
 type OperationResultArtifact struct {
 	ID        string     `json:"id"`
 	Name      string     `json:"name"`
@@ -123,6 +176,12 @@ type OperationArtifactRequest struct {
 	SHA256    string `json:"sha256"`
 }
 
+// Available is explicit: an authorization failure must never authorize an upload.
+type OperationWorkflowArtifactResponse struct {
+	Available bool                     `json:"available"`
+	Artifact  *OperationResultArtifact `json:"artifact,omitempty"`
+}
+
 type OperationDeliveryResponse struct {
 	State         string     `json:"state"`
 	DeliveryID    string     `json:"delivery_id,omitempty"`
@@ -132,6 +191,7 @@ type OperationDeliveryResponse struct {
 }
 
 type OperationResponse struct {
+	Subject               *OperationSubject         `json:"subject,omitempty"`
 	ID                    string                    `json:"id"`
 	Name                  string                    `json:"name"`
 	Generation            int                       `json:"generation"`
@@ -157,6 +217,7 @@ type OperationAcceptedResponse struct {
 // OperationSummary deliberately excludes input, result bytes, artifact locations,
 // delivery errors and execution authority. Fetch detail separately to reopen work.
 type OperationSummary struct {
+	Subject               *OperationSubject        `json:"subject,omitempty"`
 	PlatformTenantID      string                   `json:"platform_tenant_id,omitempty"` // Account operator listings only.
 	ID                    string                   `json:"id"`
 	Name                  string                   `json:"name"`
@@ -184,25 +245,29 @@ type OperationListResponse struct {
 
 // AppID and Scope are explicit selectors, never sources of customer authority.
 type OperationListOptions struct {
-	TenantID string // Optional account operator filter; ignored by tenant-self clients.
-	AppID    string
-	Scope    string
-	Name     string
-	State    OperationState
-	Limit    int
-	Cursor   string
+	SubjectType string
+	SubjectID   string
+	TenantID    string // Optional account operator filter; ignored by tenant-self clients.
+	AppID       string
+	Scope       string
+	Name        string
+	State       OperationState
+	Limit       int
+	Cursor      string
 }
 
 // OperationExecution summarizes a retained execution generation without payload,
 // headers, instance credentials or runtime capability. Attempts is the execution
 // ledger's attempt count, not a fabricated per-attempt outcome history.
 type OperationExecution struct {
-	Generation   int        `json:"generation"`
-	InvocationID string     `json:"invocation_id"`
-	State        string     `json:"state"`
-	Attempts     int        `json:"attempts"`
-	CreatedAt    time.Time  `json:"created_at"`
-	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	Generation    int        `json:"generation"`
+	InvocationID  string     `json:"invocation_id,omitempty"`
+	JobRunID      string     `json:"job_run_id,omitempty"`
+	WorkflowRunID string     `json:"workflow_run_id,omitempty"`
+	State         string     `json:"state"`
+	Attempts      int        `json:"attempts"`
+	CreatedAt     time.Time  `json:"created_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
 }
 
 type OperationExecutionsResponse struct {
@@ -229,16 +294,19 @@ type OperationEventsResponse struct {
 // OperationRecoveryRequest requires an explicit resolution and evidence.
 // safe_to_retry admits a fresh execution, retaining logical operation identity.
 type OperationRecoveryRequest struct {
-	RecoveryID         string          `json:"recovery_id"`
-	ExpectedGeneration int             `json:"expected_generation"`
-	Resolution         string          `json:"resolution"`
-	Evidence           string          `json:"evidence"`
-	Result             json.RawMessage `json:"result,omitempty"`
+	RecoveryID                 string          `json:"recovery_id"`
+	ExpectedGeneration         int             `json:"expected_generation"`
+	Resolution                 string          `json:"resolution"`
+	Evidence                   string          `json:"evidence"`
+	Result                     json.RawMessage `json:"result,omitempty"`
+	ExpectedInspectionRevision string          `json:"expected_inspection_revision,omitempty"`
 }
 
 type OperationStartRequest struct {
-	DefinitionID string          `json:"definition_id"`
-	Input        json.RawMessage `json:"input"`
+	ExpectedScope    *OperationSubmissionScope `json:"expected_scope,omitempty"`
+	ExpectedIdentity *OperationTenantIdentity  `json:"expected_identity,omitempty"`
+	DefinitionID     string                    `json:"definition_id"`
+	Input            json.RawMessage           `json:"input"`
 }
 
 type OperationCancellationRequest struct {
@@ -263,4 +331,11 @@ func OperationLimitProblem(err error) *Problem {
 func IsReservedOperationHeader(name string) bool {
 	lower := strings.ToLower(name)
 	return strings.HasPrefix(lower, "x-gregale-operation-") || strings.HasPrefix(lower, "x-gregale-customer-operation-")
+}
+
+// OperationArtifactUploadResponse is a verified private file receipt, not a
+// business completion or a public download URL.
+type OperationArtifactUploadResponse struct {
+	Available bool                     `json:"available"`
+	Artifact  *OperationResultArtifact `json:"artifact,omitempty"`
 }

@@ -75,8 +75,10 @@ var AllowedAppWebhookDeliveryFormats = []string{"json", "cloudevents"}
 // The delivery ledger intentionally retains its wider historical enum so old
 // rows remain readable during upgrades.
 var AllowedAppWebhookEvents = []string{
+	"profile.route_regressed", "profile.route_recovered",
 	"operation.effect",
 	"app.parked", "app.woken",
+	"app.health.changed",
 	"deployment.live", "deployment.failed",
 	"rollout.completed", "rollout.aborted",
 	"job.finished",
@@ -86,9 +88,10 @@ var AllowedAppWebhookEvents = []string{
 	"routes.requirements.changed", "routes.requirements.violated",
 	"routes.requirements.recovered",
 	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
-	"routes.monitor.violated", "routes.monitor.recovered",
+	"routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered",
 	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
 	"workflow.finished",
+	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired",
 }
 
 // Account receivers intentionally cannot use the app-level all-events

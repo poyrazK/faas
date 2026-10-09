@@ -122,6 +122,10 @@ func renderManTop(w io.Writer) {
 	})
 	manSection(w, "GLOBAL FLAGS", func(w io.Writer) {
 		_, _ = fmt.Fprintln(w, ".TP")
+		_, _ = fmt.Fprintln(w, `.BR \-\-profile " NAME"`)
+		_, _ = fmt.Fprintln(w, "Select a named connection. Place before the command;")
+		_, _ = fmt.Fprintln(w, "command-local profile flags retain their meaning.")
+		_, _ = fmt.Fprintln(w, ".TP")
 		_, _ = fmt.Fprintln(w, ".BR \\-\\-json")
 		_, _ = fmt.Fprintln(w, `Machine-readable output. Equivalent to`)
 		_, _ = fmt.Fprintln(w, `.B FAAS_JSON=1`)
@@ -139,7 +143,7 @@ func renderManTop(w io.Writer) {
 		_, _ = fmt.Fprintln(w, `Deploy from a tarball:`)
 		_, _ = fmt.Fprintln(w, ".RS 4")
 		_, _ = fmt.Fprintln(w, ".nf")
-		_, _ = fmt.Fprintln(w, "gregale deploy --tarball ./app.tar.gz --app my-app")
+		_, _ = fmt.Fprintln(w, "gregale deploy --tarball ./app.tar.gz --name my-app")
 		_, _ = fmt.Fprintln(w, ".fi")
 		_, _ = fmt.Fprintln(w, ".RE")
 	})
@@ -210,11 +214,12 @@ func renderManCommand(w io.Writer, c cliCommand) {
 				// Required flags get a "(required)" suffix in the
 				// FLAGS section so a reader scanning for the marker
 				// finds it without cross-referencing the SYNOPSIS.
-				flagHeader := fmt.Sprintf("--%s", f.Name)
+				flagNames := manFlagSpellings(f)
 				if f.Req {
-					_, _ = fmt.Fprintf(w, ".BR %s\n(required)\n", flagHeader)
+					writeManFlagHeader(w, flagNames)
+					_, _ = fmt.Fprintln(w, "(required)")
 				} else {
-					_, _ = fmt.Fprintf(w, ".BR %s\n", flagHeader)
+					writeManFlagHeader(w, flagNames)
 				}
 				writeRoffParagraph(w, f.Short)
 				if len(f.ClosedSet) > 0 {
@@ -271,11 +276,20 @@ func writeManCommandArguments(w io.Writer, c cliCommand) {
 // or another request in a .RI argument list makes the request visible as
 // text, so valued and boolean flags use separate, valid invocations.
 func manSynopsisFlag(w io.Writer, f cliFlag) {
-	name := `\-\-` + f.Name
+	name := manRoffFlagName(cliFlagPrimarySpelling(f))
 	value := f.Value
 	repeat := ""
 	if f.Repeatable {
 		repeat = " ..."
+	}
+	if f.Bool && len(f.ClosedSet) > 0 {
+		values := strings.Join(f.ClosedSet, "|")
+		if f.Req {
+			_, _ = fmt.Fprintf(w, ".RI %s [ =%s ]%s\n", name, values, repeat)
+		} else {
+			_, _ = fmt.Fprintf(w, ".RI [ %s [ =%s ] ]%s\n", name, values, repeat)
+		}
+		return
 	}
 	if value == "" && f.Req && !f.Bool {
 		value = "value"
@@ -293,6 +307,26 @@ func manSynopsisFlag(w io.Writer, f cliFlag) {
 		return
 	}
 	_, _ = fmt.Fprintf(w, ".RB [ %s ]\n", name)
+}
+
+func manFlagSpellings(f cliFlag) []string {
+	names := cliFlagSpellings(f)
+	for i := range names {
+		names[i] = manRoffFlagName(names[i])
+	}
+	return names
+}
+
+func manRoffFlagName(name string) string {
+	return strings.ReplaceAll(name, "-", `\-`)
+}
+
+func writeManFlagHeader(w io.Writer, names []string) {
+	if len(names) > 1 {
+		_, _ = fmt.Fprintf(w, ".B \"%s\"\n", strings.Join(names, ", "))
+		return
+	}
+	_, _ = fmt.Fprintf(w, ".BR %s\n", names[0])
 }
 
 // manHeader writes the page preamble only: .TH title section date source

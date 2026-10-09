@@ -24,6 +24,10 @@ type SetRouteMonitorRequest struct {
 	ExpectedRevision *int64              `json:"expected_revision"`
 	Routes           []RouteMonitorRoute `json:"routes"`
 }
+type PreviewRouteMonitorRequest struct {
+	CustomerGroupBy string              `json:"customer_group_by,omitempty"`
+	Routes          []RouteMonitorRoute `json:"routes"`
+}
 type RouteMonitorWindow struct {
 	Start         time.Time         `json:"start"`
 	End           time.Time         `json:"end"`
@@ -61,6 +65,12 @@ type RouteMonitorReport struct {
 	MinimumLatencyRequests int64                       `json:"minimum_latency_requests"`
 	Routes                 []RouteMonitorFinding       `json:"routes"`
 }
+type RouteMonitorPreview struct {
+	CurrentRevision                     int64              `json:"current_revision"`
+	PreviewOnly                         bool               `json:"preview_only"`
+	ConfigChangeResetsObservationAnchor bool               `json:"config_change_resets_observation_anchor"`
+	Report                              RouteMonitorReport `json:"report"`
+}
 type RouteMonitorEvidenceWindow struct {
 	Start       time.Time                      `json:"start"`
 	End         time.Time                      `json:"end"`
@@ -78,19 +88,60 @@ type RouteMonitorEvidence struct {
 	Signal          string                       `json:"signal"`
 	Windows         []RouteMonitorEvidenceWindow `json:"windows"`
 }
+type RouteMonitorIncidentTimelineRoute struct {
+	CustomerImpact *RouteMonitorCustomerImpact `json:"customer_impact,omitempty"`
+	RouteIndex     int                         `json:"route_index"`
+	Status         string                      `json:"status"`
+	ErrorStatus    string                      `json:"error_status"`
+	LatencyStatus  string                      `json:"latency_status"`
+}
+type RouteMonitorIncidentTimelineEntry struct {
+	CustomerImpact *RouteMonitorCustomerImpact         `json:"customer_impact,omitempty"`
+	CheckedAt      time.Time                           `json:"checked_at"`
+	Coverage       string                              `json:"coverage"`
+	Status         string                              `json:"status"`
+	Reason         string                              `json:"reason"`
+	Routes         []RouteMonitorIncidentTimelineRoute `json:"routes"`
+}
+type RouteMonitorIncidentEscalationSignal struct {
+	RouteIndex int                 `json:"route_index"`
+	Signal     string              `json:"signal"`
+	Finding    RouteMonitorFinding `json:"finding"`
+}
+type RouteMonitorIncidentEscalation struct {
+	TransitionID         string                                 `json:"transition_id"`
+	CheckedAt            time.Time                              `json:"checked_at"`
+	PreviousCheckedAt    time.Time                              `json:"previous_checked_at"`
+	NewlyViolatedRoutes  int                                    `json:"newly_violated_routes"`
+	NewlyViolatedSignals int                                    `json:"newly_violated_signals"`
+	Signals              []RouteMonitorIncidentEscalationSignal `json:"signals"`
+	Evidence             []RouteMonitorEvidence                 `json:"evidence"`
+	EvidenceTruncated    bool                                   `json:"evidence_truncated"`
+}
+type RouteMonitorDeploymentBaseline struct {
+	DeploymentID string `json:"deployment_id"`
+	CommitSHA    string `json:"commit_sha,omitempty"`
+	Repository   string `json:"repository,omitempty"`
+	SourceRoot   string `json:"source_root,omitempty"`
+}
 type RouteMonitorIncident struct {
-	Version           int                    `json:"version"`
-	ID                string                 `json:"id"`
-	AppID             string                 `json:"app_id"`
-	DeploymentID      string                 `json:"deployment_id"`
-	Revision          int64                  `json:"revision"`
-	Status            string                 `json:"status"`
-	OpenedAt          time.Time              `json:"opened_at"`
-	ClosedAt          *time.Time             `json:"closed_at,omitempty"`
-	OpeningReport     RouteMonitorReport     `json:"opening_report"`
-	RecoveryReport    *RouteMonitorReport    `json:"recovery_report,omitempty"`
-	Evidence          []RouteMonitorEvidence `json:"evidence"`
-	EvidenceTruncated bool                   `json:"evidence_truncated"`
+	Version              int                                 `json:"version"`
+	ID                   string                              `json:"id"`
+	AppID                string                              `json:"app_id"`
+	DeploymentID         string                              `json:"deployment_id"`
+	Revision             int64                               `json:"revision"`
+	Status               string                              `json:"status"`
+	OpenedAt             time.Time                           `json:"opened_at"`
+	ClosedAt             *time.Time                          `json:"closed_at,omitempty"`
+	Baseline             *RouteMonitorDeploymentBaseline     `json:"baseline,omitempty"`
+	OpeningReport        RouteMonitorReport                  `json:"opening_report"`
+	RecoveryReport       *RouteMonitorReport                 `json:"recovery_report,omitempty"`
+	Evidence             []RouteMonitorEvidence              `json:"evidence"`
+	EvidenceTruncated    bool                                `json:"evidence_truncated"`
+	Timeline             []RouteMonitorIncidentTimelineEntry `json:"timeline,omitempty"`
+	TimelineTruncated    bool                                `json:"timeline_truncated,omitempty"`
+	Escalations          []RouteMonitorIncidentEscalation    `json:"escalations,omitempty"`
+	EscalationsTruncated bool                                `json:"escalations_truncated,omitempty"`
 }
 type RouteMonitorIncidentPage struct {
 	AppID      string                 `json:"app_id"`
@@ -100,15 +151,23 @@ type RouteMonitorIncidentPage struct {
 
 // Webhooks carry only metadata and an authenticated saved-incident path.
 type RouteMonitorWebhookPayload struct {
-	CustomerImpact *RouteMonitorCustomerImpact `json:"customer_impact,omitempty"`
-	Version        int                         `json:"version"`
-	AppID          string                      `json:"app_id"`
-	DeploymentID   string                      `json:"deployment_id"`
-	IncidentID     string                      `json:"incident_id"`
-	Revision       int64                       `json:"revision"`
-	Status         string                      `json:"status"`
-	CheckedAt      time.Time                   `json:"checked_at"`
-	IncidentPath   string                      `json:"incident_path"`
+	CustomerImpact *RouteMonitorCustomerImpact    `json:"customer_impact,omitempty"`
+	Escalation     *RouteMonitorWebhookEscalation `json:"escalation,omitempty"`
+	Version        int                            `json:"version"`
+	AppID          string                         `json:"app_id"`
+	DeploymentID   string                         `json:"deployment_id"`
+	IncidentID     string                         `json:"incident_id"`
+	TransitionID   string                         `json:"transition_id,omitempty"`
+	Revision       int64                          `json:"revision"`
+	Status         string                         `json:"status"`
+	CheckedAt      time.Time                      `json:"checked_at"`
+	IncidentPath   string                         `json:"incident_path"`
+}
+
+type RouteMonitorWebhookEscalation struct {
+	PreviousCheckedAt    time.Time `json:"previous_checked_at"`
+	NewlyViolatedRoutes  int       `json:"newly_violated_routes"`
+	NewlyViolatedSignals int       `json:"newly_violated_signals"`
 }
 
 // Counts describe distinct recorded identities, not unique people or billing.
@@ -117,6 +176,7 @@ type RouteMonitorCustomerImpact struct {
 	Coverage          string `json:"coverage"`
 	ObservedCustomers int64  `json:"observed_customers"`
 	ViolatedCustomers int64  `json:"violated_customers"`
+	UnknownCustomers  int64  `json:"unknown_customers,omitempty"`
 }
 type RouteMonitorCustomerWindow struct {
 	Start                      time.Time `json:"start"`

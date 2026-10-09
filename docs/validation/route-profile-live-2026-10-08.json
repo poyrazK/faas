@@ -1,0 +1,801 @@
+{
+  "attribution": {
+    "available": true,
+    "total_cpu_seconds": 2.129999999999999,
+    "attributed_cpu_seconds": 2.129999999999999,
+    "unattributed_cpu_seconds": 0,
+    "attributed_percent": 100,
+    "unattributed_percent": 0,
+    "diagnostics_complete": false,
+    "reasons": []
+  },
+  "routes": [
+    {
+      "label_coverage": {
+        "available": true,
+        "reason": "Application-reported labeled entries in retained captures divided by observed requests in the whole window. Uncaptured intervals and boundary captures are not estimated.",
+        "labeled_requests": 1814,
+        "observed_requests": 1814,
+        "percent": 100,
+        "captured_profiles": 2,
+        "boundary_profiles": 0
+      },
+      "route": "GET /hot/{id}",
+      "cpu_seconds": 2.129999999999999,
+      "requests": 1814
+    }
+  ],
+  "route_requests_complete": false,
+  "query": {
+    "deployment_id": "81e4a5d6-2f11-4fe1-9b52-6af5fad3d21d",
+    "start": "2026-10-08T17:43:36.754027699Z",
+    "end": "2026-10-08T17:43:41.368095347Z",
+    "runtime": "go124"
+  },
+  "cpu_seconds": 2.129999999999999,
+  "stack_count": 13,
+  "functions": [
+    {
+      "name": "github.com/onebox-faas/faas/pkg/guestprofiling.TestLiveRouteCollectorPyroscope.func3.1.1",
+      "file": "/workspace/faas/pkg/guestprofiling/route_live_test.go",
+      "line": 82,
+      "self_cpu_seconds": 1.98,
+      "total_cpu_seconds": 2.0699999999999994
+    },
+    {
+      "name": "github.com/onebox-faas/faas/pkg/guestprofiling.cpuHotWork",
+      "file": "/workspace/faas/pkg/guestprofiling/profiling_test.go",
+      "line": 21,
+      "self_cpu_seconds": 0.09,
+      "total_cpu_seconds": 0.09
+    },
+    {
+      "name": "context.(*valueCtx).Value",
+      "file": "/workspace/faas-env/tools/go/src/context/context.go",
+      "line": 769,
+      "self_cpu_seconds": 0.01,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "github.com/onebox-faas/faas/pkg/guestprofiling.TestLiveRouteCollectorPyroscope.func3",
+      "file": "/workspace/faas/pkg/guestprofiling/route_live_test.go",
+      "line": 79,
+      "self_cpu_seconds": 0.01,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime._System",
+      "file": "/workspace/faas-env/tools/go/src/runtime/proc.go",
+      "line": 5580,
+      "self_cpu_seconds": 0.01,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime.futexwakeup",
+      "file": "/workspace/faas-env/tools/go/src/runtime/os_linux.go",
+      "line": 89,
+      "self_cpu_seconds": 0.01,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime/pprof.Do",
+      "file": "/workspace/faas-env/tools/go/src/runtime/pprof/runtime.go",
+      "line": 48,
+      "self_cpu_seconds": 0.01,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "syscall.RawSyscall6",
+      "file": "/workspace/faas-env/tools/go/src/syscall/syscall_linux.go",
+      "line": 65,
+      "self_cpu_seconds": 0.01,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "bufio.(*Reader).Peek",
+      "file": "/workspace/faas-env/tools/go/src/bufio/bufio.go",
+      "line": 152,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "bufio.(*Reader).fill",
+      "file": "/workspace/faas-env/tools/go/src/bufio/bufio.go",
+      "line": 113,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "encoding/json.(*Decoder).Decode",
+      "file": "/workspace/faas-env/tools/go/src/encoding/json/stream.go",
+      "line": 65,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "encoding/json.(*Decoder).readValue",
+      "file": "/workspace/faas-env/tools/go/src/encoding/json/stream.go",
+      "line": 142,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "encoding/json.(*Decoder).refill",
+      "file": "/workspace/faas-env/tools/go/src/encoding/json/stream.go",
+      "line": 167,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "github.com/onebox-faas/faas/pkg/guestprofiling.TestLiveRouteCollectorPyroscope.func2",
+      "file": "/workspace/faas/pkg/guestprofiling/route_live_test.go",
+      "line": 75,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "github.com/onebox-faas/faas/pkg/guestprofiling.TestLiveRouteCollectorPyroscope.func3",
+      "file": "/workspace/faas/pkg/guestprofiling/route_live_test.go",
+      "line": 80,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 2.0899999999999994
+    },
+    {
+      "name": "github.com/onebox-faas/faas/pkg/guestprofiling.TestLiveRouteCollectorPyroscope.func3.1",
+      "file": "/workspace/faas/pkg/guestprofiling/route_live_test.go",
+      "line": 82,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 2.079999999999999
+    },
+    {
+      "name": "github.com/onebox-faas/faas/pkg/guestprofiling.WithRoute",
+      "file": "/workspace/faas/pkg/guestprofiling/routes.go",
+      "line": 20,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 2.0899999999999994
+    },
+    {
+      "name": "github.com/onebox-faas/faas/pkg/guestprofiling.WithRouteRequest",
+      "file": "/workspace/faas/pkg/guestprofiling/route_requests.go",
+      "line": 33,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 2.0899999999999994
+    },
+    {
+      "name": "github.com/onebox-faas/faas/pkg/guestprofiling.readControl",
+      "file": "/workspace/faas/pkg/guestprofiling/profiling.go",
+      "line": 124,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "github.com/onebox-faas/faas/pkg/guestprofiling.run",
+      "file": "/workspace/faas/pkg/guestprofiling/profiling.go",
+      "line": 69,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "internal/poll.(*FD).Read",
+      "file": "/workspace/faas-env/tools/go/src/internal/poll/fd_unix.go",
+      "line": 161,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "internal/poll.ignoringEINTRIO",
+      "file": "/workspace/faas-env/tools/go/src/internal/poll/fd_unix.go",
+      "line": 738,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "io.(*LimitedReader).Read",
+      "file": "/workspace/faas-env/tools/go/src/io/io.go",
+      "line": 479,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "net.(*conn).Read",
+      "file": "/workspace/faas-env/tools/go/src/net/net.go",
+      "line": 196,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "net.(*netFD).Read",
+      "file": "/workspace/faas-env/tools/go/src/net/fd_posix.go",
+      "line": 68,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "net/http.(*bodyEOFSignal).Read",
+      "file": "/workspace/faas-env/tools/go/src/net/http/transport.go",
+      "line": 3007,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "net/http.(*bodyEOFSignal).condfn",
+      "file": "/workspace/faas-env/tools/go/src/net/http/transport.go",
+      "line": 3031,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "net/http.(*cancelTimerBody).Read",
+      "file": "/workspace/faas-env/tools/go/src/net/http/client.go",
+      "line": 973,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "net/http.(*persistConn).Read",
+      "file": "/workspace/faas-env/tools/go/src/net/http/transport.go",
+      "line": 2125,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "net/http.(*persistConn).readLoop",
+      "file": "/workspace/faas-env/tools/go/src/net/http/transport.go",
+      "line": 2278,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "net/http.(*persistConn).readLoop.func4",
+      "file": "/workspace/faas-env/tools/go/src/net/http/transport.go",
+      "line": 2368,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime.chansend",
+      "file": "/workspace/faas-env/tools/go/src/runtime/chan.go",
+      "line": 232,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime.chansend1",
+      "file": "/workspace/faas-env/tools/go/src/runtime/chan.go",
+      "line": 161,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime.goready",
+      "file": "/workspace/faas-env/tools/go/src/runtime/proc.go",
+      "line": 480,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime.notewakeup",
+      "file": "/workspace/faas-env/tools/go/src/runtime/lock_futex.go",
+      "line": 32,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime.ready",
+      "file": "/workspace/faas-env/tools/go/src/runtime/proc.go",
+      "line": 1135,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime.send",
+      "file": "/workspace/faas-env/tools/go/src/runtime/chan.go",
+      "line": 350,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime.send.goready.func1",
+      "file": "/workspace/faas-env/tools/go/src/runtime/proc.go",
+      "line": 481,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime.startm",
+      "file": "/workspace/faas-env/tools/go/src/runtime/proc.go",
+      "line": 3126,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime.systemstack",
+      "file": "/workspace/faas-env/tools/go/src/runtime/asm_amd64.s",
+      "line": 513,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime.wakep",
+      "file": "/workspace/faas-env/tools/go/src/runtime/proc.go",
+      "line": 3248,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime/pprof.Do",
+      "file": "/workspace/faas-env/tools/go/src/runtime/pprof/runtime.go",
+      "line": 51,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 2.079999999999999
+    },
+    {
+      "name": "runtime/pprof.Do",
+      "file": "/workspace/faas-env/tools/go/src/runtime/pprof/runtime.go",
+      "line": 52,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "runtime/pprof.SetGoroutineLabels",
+      "file": "/workspace/faas-env/tools/go/src/runtime/pprof/runtime.go",
+      "line": 36,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "syscall.Read",
+      "file": "/workspace/faas-env/tools/go/src/syscall/syscall_unix.go",
+      "line": 183,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "syscall.Syscall",
+      "file": "/workspace/faas-env/tools/go/src/syscall/syscall_linux.go",
+      "line": 87,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    },
+    {
+      "name": "syscall.read",
+      "file": "/workspace/faas-env/tools/go/src/syscall/zsyscall_linux_amd64.go",
+      "line": 736,
+      "self_cpu_seconds": 0,
+      "total_cpu_seconds": 0.01
+    }
+  ],
+  "flamegraph": {
+    "name": "all",
+    "cpu_seconds": 2.129999999999999,
+    "children": [
+      {
+        "name": "github.com/onebox-faas/faas/pkg/guestprofiling.TestLiveRouteCollectorPyroscope.func2",
+        "file": "/workspace/faas/pkg/guestprofiling/route_live_test.go",
+        "line": 75,
+        "cpu_seconds": 0.01,
+        "children": [
+          {
+            "name": "github.com/onebox-faas/faas/pkg/guestprofiling.run",
+            "file": "/workspace/faas/pkg/guestprofiling/profiling.go",
+            "line": 69,
+            "cpu_seconds": 0.01,
+            "children": [
+              {
+                "name": "github.com/onebox-faas/faas/pkg/guestprofiling.readControl",
+                "file": "/workspace/faas/pkg/guestprofiling/profiling.go",
+                "line": 124,
+                "cpu_seconds": 0.01,
+                "children": [
+                  {
+                    "name": "encoding/json.(*Decoder).Decode",
+                    "file": "/workspace/faas-env/tools/go/src/encoding/json/stream.go",
+                    "line": 65,
+                    "cpu_seconds": 0.01,
+                    "children": [
+                      {
+                        "name": "encoding/json.(*Decoder).readValue",
+                        "file": "/workspace/faas-env/tools/go/src/encoding/json/stream.go",
+                        "line": 142,
+                        "cpu_seconds": 0.01,
+                        "children": [
+                          {
+                            "name": "encoding/json.(*Decoder).refill",
+                            "file": "/workspace/faas-env/tools/go/src/encoding/json/stream.go",
+                            "line": 167,
+                            "cpu_seconds": 0.01,
+                            "children": [
+                              {
+                                "name": "io.(*LimitedReader).Read",
+                                "file": "/workspace/faas-env/tools/go/src/io/io.go",
+                                "line": 479,
+                                "cpu_seconds": 0.01,
+                                "children": [
+                                  {
+                                    "name": "net/http.(*cancelTimerBody).Read",
+                                    "file": "/workspace/faas-env/tools/go/src/net/http/client.go",
+                                    "line": 973,
+                                    "cpu_seconds": 0.01,
+                                    "children": [
+                                      {
+                                        "name": "net/http.(*bodyEOFSignal).Read",
+                                        "file": "/workspace/faas-env/tools/go/src/net/http/transport.go",
+                                        "line": 3007,
+                                        "cpu_seconds": 0.01,
+                                        "children": [
+                                          {
+                                            "name": "net/http.(*bodyEOFSignal).condfn",
+                                            "file": "/workspace/faas-env/tools/go/src/net/http/transport.go",
+                                            "line": 3031,
+                                            "cpu_seconds": 0.01,
+                                            "children": [
+                                              {
+                                                "name": "net/http.(*persistConn).readLoop.func4",
+                                                "file": "/workspace/faas-env/tools/go/src/net/http/transport.go",
+                                                "line": 2368,
+                                                "cpu_seconds": 0.01,
+                                                "children": [
+                                                  {
+                                                    "name": "runtime.chansend1",
+                                                    "file": "/workspace/faas-env/tools/go/src/runtime/chan.go",
+                                                    "line": 161,
+                                                    "cpu_seconds": 0.01,
+                                                    "children": [
+                                                      {
+                                                        "name": "runtime.chansend",
+                                                        "file": "/workspace/faas-env/tools/go/src/runtime/chan.go",
+                                                        "line": 232,
+                                                        "cpu_seconds": 0.01,
+                                                        "children": [
+                                                          {
+                                                            "name": "runtime.send",
+                                                            "file": "/workspace/faas-env/tools/go/src/runtime/chan.go",
+                                                            "line": 350,
+                                                            "cpu_seconds": 0.01,
+                                                            "children": [
+                                                              {
+                                                                "name": "runtime.goready",
+                                                                "file": "/workspace/faas-env/tools/go/src/runtime/proc.go",
+                                                                "line": 480,
+                                                                "cpu_seconds": 0.01,
+                                                                "children": [
+                                                                  {
+                                                                    "name": "runtime.systemstack",
+                                                                    "file": "/workspace/faas-env/tools/go/src/runtime/asm_amd64.s",
+                                                                    "line": 513,
+                                                                    "cpu_seconds": 0.01,
+                                                                    "children": [
+                                                                      {
+                                                                        "name": "runtime.send.goready.func1",
+                                                                        "file": "/workspace/faas-env/tools/go/src/runtime/proc.go",
+                                                                        "line": 481,
+                                                                        "cpu_seconds": 0.01,
+                                                                        "children": [
+                                                                          {
+                                                                            "name": "runtime.ready",
+                                                                            "file": "/workspace/faas-env/tools/go/src/runtime/proc.go",
+                                                                            "line": 1135,
+                                                                            "cpu_seconds": 0.01,
+                                                                            "children": [
+                                                                              {
+                                                                                "name": "runtime.wakep",
+                                                                                "file": "/workspace/faas-env/tools/go/src/runtime/proc.go",
+                                                                                "line": 3248,
+                                                                                "cpu_seconds": 0.01,
+                                                                                "children": [
+                                                                                  {
+                                                                                    "name": "runtime.startm",
+                                                                                    "file": "/workspace/faas-env/tools/go/src/runtime/proc.go",
+                                                                                    "line": 3126,
+                                                                                    "cpu_seconds": 0.01,
+                                                                                    "children": [
+                                                                                      {
+                                                                                        "name": "runtime.notewakeup",
+                                                                                        "file": "/workspace/faas-env/tools/go/src/runtime/lock_futex.go",
+                                                                                        "line": 32,
+                                                                                        "cpu_seconds": 0.01,
+                                                                                        "children": [
+                                                                                          {
+                                                                                            "name": "runtime.futexwakeup",
+                                                                                            "file": "/workspace/faas-env/tools/go/src/runtime/os_linux.go",
+                                                                                            "line": 89,
+                                                                                            "cpu_seconds": 0.01,
+                                                                                            "children": []
+                                                                                          }
+                                                                                        ]
+                                                                                      }
+                                                                                    ]
+                                                                                  }
+                                                                                ]
+                                                                              }
+                                                                            ]
+                                                                          }
+                                                                        ]
+                                                                      }
+                                                                    ]
+                                                                  }
+                                                                ]
+                                                              }
+                                                            ]
+                                                          }
+                                                        ]
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "github.com/onebox-faas/faas/pkg/guestprofiling.TestLiveRouteCollectorPyroscope.func3",
+        "file": "/workspace/faas/pkg/guestprofiling/route_live_test.go",
+        "line": 80,
+        "cpu_seconds": 2.0899999999999994,
+        "children": [
+          {
+            "name": "github.com/onebox-faas/faas/pkg/guestprofiling.WithRouteRequest",
+            "file": "/workspace/faas/pkg/guestprofiling/route_requests.go",
+            "line": 33,
+            "cpu_seconds": 2.0899999999999994,
+            "children": [
+              {
+                "name": "github.com/onebox-faas/faas/pkg/guestprofiling.WithRoute",
+                "file": "/workspace/faas/pkg/guestprofiling/routes.go",
+                "line": 20,
+                "cpu_seconds": 2.0899999999999994,
+                "children": [
+                  {
+                    "name": "runtime/pprof.Do",
+                    "file": "/workspace/faas-env/tools/go/src/runtime/pprof/runtime.go",
+                    "line": 51,
+                    "cpu_seconds": 2.079999999999999,
+                    "children": [
+                      {
+                        "name": "github.com/onebox-faas/faas/pkg/guestprofiling.TestLiveRouteCollectorPyroscope.func3.1",
+                        "file": "/workspace/faas/pkg/guestprofiling/route_live_test.go",
+                        "line": 82,
+                        "cpu_seconds": 2.079999999999999,
+                        "children": [
+                          {
+                            "name": "github.com/onebox-faas/faas/pkg/guestprofiling.WithRouteRequest",
+                            "file": "/workspace/faas/pkg/guestprofiling/route_requests.go",
+                            "line": 33,
+                            "cpu_seconds": 2.079999999999999,
+                            "children": [
+                              {
+                                "name": "github.com/onebox-faas/faas/pkg/guestprofiling.WithRoute",
+                                "file": "/workspace/faas/pkg/guestprofiling/routes.go",
+                                "line": 20,
+                                "cpu_seconds": 2.079999999999999,
+                                "children": [
+                                  {
+                                    "name": "runtime/pprof.Do",
+                                    "file": "/workspace/faas-env/tools/go/src/runtime/pprof/runtime.go",
+                                    "line": 51,
+                                    "cpu_seconds": 2.0699999999999994,
+                                    "children": [
+                                      {
+                                        "name": "github.com/onebox-faas/faas/pkg/guestprofiling.TestLiveRouteCollectorPyroscope.func3.1.1",
+                                        "file": "/workspace/faas/pkg/guestprofiling/route_live_test.go",
+                                        "line": 82,
+                                        "cpu_seconds": 2.0699999999999994,
+                                        "children": [
+                                          {
+                                            "name": "github.com/onebox-faas/faas/pkg/guestprofiling.cpuHotWork",
+                                            "file": "/workspace/faas/pkg/guestprofiling/profiling_test.go",
+                                            "line": 21,
+                                            "cpu_seconds": 0.09,
+                                            "children": []
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "name": "runtime/pprof.Do",
+                                    "file": "/workspace/faas-env/tools/go/src/runtime/pprof/runtime.go",
+                                    "line": 52,
+                                    "cpu_seconds": 0.01,
+                                    "children": [
+                                      {
+                                        "name": "runtime/pprof.SetGoroutineLabels",
+                                        "file": "/workspace/faas-env/tools/go/src/runtime/pprof/runtime.go",
+                                        "line": 36,
+                                        "cpu_seconds": 0.01,
+                                        "children": [
+                                          {
+                                            "name": "context.(*valueCtx).Value",
+                                            "file": "/workspace/faas-env/tools/go/src/context/context.go",
+                                            "line": 769,
+                                            "cpu_seconds": 0.01,
+                                            "children": []
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "name": "runtime/pprof.Do",
+                    "file": "/workspace/faas-env/tools/go/src/runtime/pprof/runtime.go",
+                    "line": 48,
+                    "cpu_seconds": 0.01,
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "github.com/onebox-faas/faas/pkg/guestprofiling.TestLiveRouteCollectorPyroscope.func3",
+        "file": "/workspace/faas/pkg/guestprofiling/route_live_test.go",
+        "line": 79,
+        "cpu_seconds": 0.01,
+        "children": []
+      },
+      {
+        "name": "net/http.(*persistConn).readLoop",
+        "file": "/workspace/faas-env/tools/go/src/net/http/transport.go",
+        "line": 2278,
+        "cpu_seconds": 0.01,
+        "children": [
+          {
+            "name": "bufio.(*Reader).Peek",
+            "file": "/workspace/faas-env/tools/go/src/bufio/bufio.go",
+            "line": 152,
+            "cpu_seconds": 0.01,
+            "children": [
+              {
+                "name": "bufio.(*Reader).fill",
+                "file": "/workspace/faas-env/tools/go/src/bufio/bufio.go",
+                "line": 113,
+                "cpu_seconds": 0.01,
+                "children": [
+                  {
+                    "name": "net/http.(*persistConn).Read",
+                    "file": "/workspace/faas-env/tools/go/src/net/http/transport.go",
+                    "line": 2125,
+                    "cpu_seconds": 0.01,
+                    "children": [
+                      {
+                        "name": "net.(*conn).Read",
+                        "file": "/workspace/faas-env/tools/go/src/net/net.go",
+                        "line": 196,
+                        "cpu_seconds": 0.01,
+                        "children": [
+                          {
+                            "name": "net.(*netFD).Read",
+                            "file": "/workspace/faas-env/tools/go/src/net/fd_posix.go",
+                            "line": 68,
+                            "cpu_seconds": 0.01,
+                            "children": [
+                              {
+                                "name": "internal/poll.(*FD).Read",
+                                "file": "/workspace/faas-env/tools/go/src/internal/poll/fd_unix.go",
+                                "line": 161,
+                                "cpu_seconds": 0.01,
+                                "children": [
+                                  {
+                                    "name": "internal/poll.ignoringEINTRIO",
+                                    "file": "/workspace/faas-env/tools/go/src/internal/poll/fd_unix.go",
+                                    "line": 738,
+                                    "cpu_seconds": 0.01,
+                                    "children": [
+                                      {
+                                        "name": "syscall.Read",
+                                        "file": "/workspace/faas-env/tools/go/src/syscall/syscall_unix.go",
+                                        "line": 183,
+                                        "cpu_seconds": 0.01,
+                                        "children": [
+                                          {
+                                            "name": "syscall.read",
+                                            "file": "/workspace/faas-env/tools/go/src/syscall/zsyscall_linux_amd64.go",
+                                            "line": 736,
+                                            "cpu_seconds": 0.01,
+                                            "children": [
+                                              {
+                                                "name": "syscall.Syscall",
+                                                "file": "/workspace/faas-env/tools/go/src/syscall/syscall_linux.go",
+                                                "line": 87,
+                                                "cpu_seconds": 0.01,
+                                                "children": [
+                                                  {
+                                                    "name": "syscall.RawSyscall6",
+                                                    "file": "/workspace/faas-env/tools/go/src/syscall/syscall_linux.go",
+                                                    "line": 65,
+                                                    "cpu_seconds": 0.01,
+                                                    "children": []
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "runtime._System",
+        "file": "/workspace/faas-env/tools/go/src/runtime/proc.go",
+        "line": 5580,
+        "cpu_seconds": 0.01,
+        "children": []
+      }
+    ]
+  },
+  "empty": false,
+  "coverage": {
+    "attribution_reasons": [
+      {
+        "reason": "attributed",
+        "cpu_seconds": 2.0900000000000016
+      },
+      {
+        "reason": "unlabeled",
+        "cpu_seconds": 0.04
+      },
+      {
+        "reason": "invalid_label",
+        "cpu_seconds": 0
+      },
+      {
+        "reason": "route_not_admitted",
+        "cpu_seconds": 0
+      },
+      {
+        "reason": "encoding_limit",
+        "cpu_seconds": 0
+      }
+    ],
+    "available": true,
+    "received_profiles": 2,
+    "contributing_collectors": 1,
+    "last_received_at": "2026-10-08T17:43:40.35601453Z",
+    "window_seconds": 4.614067652,
+    "covered_seconds": 2.418152814,
+    "gap_seconds": 2.195914838,
+    "recorded_failed_uploads": 0,
+    "failures_complete": false
+  }
+}

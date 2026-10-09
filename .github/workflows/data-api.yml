@@ -1,6 +1,7 @@
 name: Data API acceptance
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "cmd/gregale/**"
       - "cmd/apid/managed_postgres_credentials*"
@@ -13,12 +14,51 @@ on:
       - "sdk/data/**"
       - "tests/data-api/**"
       - "scripts/test-data-api.sh"
+      - "scripts/*data-api*bundle*"
+      - "scripts/test-data-api-packaging.sh"
+      - "scripts/archive-cli-binary.sh"
+      - "scripts/ci/run-data-api-staging-canary.sh"
+      - ".github/workflows/data-api-staging.yml"
       - ".github/workflows/data-api.yml"
   workflow_dispatch:
+# Only the newest push to a pull request is interesting; without a group every
+# superseded push kept its runners until completion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
+env:
+  GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+
 jobs:
+  packaging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOGC: 30
+      GOMEMLIMIT: 2GiB
+      GOMAXPROCS: 2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Verify reproducible artifacts and clean starter installation
+        run: bash scripts/test-data-api-packaging.sh --out-dir "$RUNNER_TEMP/data-api-bundle"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gregale-data-api-${{ github.sha }}
+          path: ${{ runner.temp }}/data-api-bundle/
+          if-no-files-found: error
   acceptance:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -39,11 +79,28 @@ jobs:
       DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
       DATA_API_TEST_DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
       DATA_API_POSTGREST_BIN: /tmp/gregale-postgrest
+      DATA_API_BROWSER_REQUIRED: "1"
     steps:
       - uses: actions/checkout@v7
+      # Restore-only: read main's non-race `checks` Go cache instead of letting
+      # setup-go save a ~0.8 GB entry per pull-request ref, which evicted main's
+      # CI cache families from the 10 GB repository budget.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + module cache from main
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-checks-${{ runner.os }}-
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false  # restored from main above
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -54,8 +111,14 @@ jobs:
           trap 'docker rm "$container_id"' EXIT
           docker cp "$container_id:/bin/postgrest" "$DATA_API_POSTGREST_BIN"
           chmod +x "$DATA_API_POSTGREST_BIN"
+      - name: Locate Chromium for real browser acceptance
+        run: echo "DATA_API_CHROMIUM_BIN=$(command -v google-chrome)" >> "$GITHUB_ENV"
       - name: Verify generated API, JWT RLS and client contract
         run: make data-api-acceptance
+      - name: Enable TLS for durable SQL credential acceptance
+        env:
+          POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
+        run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
       - name: Verify credential qualification, lifecycle and CLI integration
         env:
           FAAS_PGTEST_TEMPLATE_DATABASE: "1"

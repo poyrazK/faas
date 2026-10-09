@@ -150,6 +150,40 @@ func TestPreviewReportRouteChangesAndRequestReview(t *testing.T) {
 	}
 }
 
+func TestPreviewReportSurfacesUnsupportedResponseUnion(t *testing.T) {
+	before := previewReportSpec(t, `{"openapi":"3.1.0","paths":{"/users":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"oneOf":[{"type":"string","enum":["alpha"]},{"type":"integer"}]}}}}}}}}}`)
+	after := previewReportSpec(t, `{"openapi":"3.1.0","paths":{"/users":{"get":{"responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"oneOf":[{"type":"string","enum":["beta"]},{"type":"integer"}]}}}}}}}}}`)
+	rows := comparePreviewReportContracts(before, after)
+	var route previewReportRoute
+	for _, row := range rows {
+		if previewReportRouteKey(row.Method, row.Path) == "GET /users" {
+			route = row
+			break
+		}
+	}
+	if len(route.Breaks) != 0 || len(route.Unknowns) != 1 || route.Unknowns[0].Code != string(openapidiff.SchemaUnknownUnsupportedUnionChange) {
+		t.Fatalf("route = %+v, want one unknown response-schema finding", route)
+	}
+
+	report := previewRouteReport{Routes: rows}
+	finishPreviewRouteReport(&report)
+	if report.Outcome != "incomplete" {
+		t.Fatalf("outcome = %q, want incomplete for unknown response schema", report.Outcome)
+	}
+	body, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "alpha") || strings.Contains(string(body), "beta") {
+		t.Fatalf("route report leaked raw enum values: %s", body)
+	}
+	var rendered bytes.Buffer
+	renderPreviewRouteReport(&rendered, report, false)
+	if !strings.Contains(rendered.String(), "unknown response schema unsupported_union_change") {
+		t.Fatalf("rendered report omitted unknown schema finding: %s", rendered.String())
+	}
+}
+
 func TestPreviewReportRejectsMixedOrUnattributedTraffic(t *testing.T) {
 	for _, mutate := range []func(*api.RequestAnalyticsRoute){
 		func(row *api.RequestAnalyticsRoute) { row.DeploymentObservations = nil },

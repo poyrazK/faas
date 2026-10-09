@@ -16,19 +16,19 @@
 // on these files — the new cliCommand entry in cli_meta.go shows
 // up in every backend at compile time.
 //
-// Slug completion for the per-account positional paths (e.g.
-// `<slug>` in `gregale app <slug> ...`) is sourced from the
-// completion cache file written by the c.do middleware on every
-// successful list response (pkg/api/completion_cache.go). The
-// path is computed lazily inside CompletionCache.Path(); the
-// script embeds a runtime expression that calls back into the
-// binary for the cache reader so the install path stays static.
+// App, org, and project environment values are sourced from the
+// completion cache file written by the c.do middleware on successful
+// list responses (pkg/api/completion_cache.go). The path is computed
+// lazily inside CompletionCache.Path(); scripts call back into the
+// binary to find the cache so the install path stays static.
 
 package main
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -43,8 +43,8 @@ const completionDocsTopic = "completion"
 //   - completion-cache-path: prints the absolute path of the
 //     completion cache file (read by every shell's completion
 //     function at TAB time).
-//   - completion-cache-list <kind>: prints the cached slugs of
-//     <kind> ("apps" or "orgs"), one per line, to stdout.
+//   - completion-cache-list <kind>: prints cached values of <kind>
+//     ("apps", "orgs", or "environments"), one per line, to stdout.
 //
 // These two are internal — they don't show in the usage block
 // and never take --json. Operators don't call them by hand; the
@@ -58,6 +58,8 @@ func cmdCompletion(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "profile-names":
+		return cmdCompletionProfileNames()
 	case "bash":
 		return cmdCompletionBash()
 	case "zsh":
@@ -100,14 +102,40 @@ func cmdCompletionCacheList(kind string) int {
 
 // cachePathForScripts returns the absolute path the completion
 // scripts should read for the slug cache. The path matches the
-// one CompletionCache writes to; computed via NewCompletionCache
-// so a SetPath override (tests, env var) propagates here.
+// credential-bound cache used by API requests. Resolving the active
+// token here keeps the path in sync with stored and environment tokens;
+// FAAS_COMPLETION_CACHE_PATH still overrides it for isolated setups.
 //
 // The completion scripts embed a shell expression that invokes
 // `gregale completion completion-cache-path` to recover this same path at
 // TAB time. This avoids embedding the UserConfigDir computation
 // in four different shell dialects.
 func cachePathForScripts() string {
-	c := api.NewCompletionCache()
-	return c.Path()
+	return NewClient(apiBase(), loadToken()).CompletionCache().Path()
+}
+
+// clearCompletionCaches drops cached suggestions when local credentials are
+// saved or removed. Cache cleanup is best-effort, like cache refresh itself.
+func clearCompletionCaches() {
+	if currentProfile() != "default" && os.Getenv("FAAS_COMPLETION_CACHE_PATH") == "" {
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			return
+		}
+		entries, err := os.ReadDir(filepath.Join(dir, "gregale", "profiles", currentProfile()))
+		if err != nil {
+			return
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasPrefix(entry.Name(), "completion-cache") {
+				if err := os.Remove(filepath.Join(dir, "gregale", "profiles", currentProfile(), entry.Name())); err != nil {
+					PrintWarn(osStderr, "Could not clear the local completion cache: %v", err)
+				}
+			}
+		}
+		return
+	}
+	if err := api.NewCompletionCache().ClearAll(); err != nil {
+		PrintWarn(os.Stderr, "Could not clear the local completion cache: %v", err)
+	}
 }

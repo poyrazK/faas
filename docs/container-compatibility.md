@@ -95,7 +95,7 @@ call is always safe: `/dev/urandom`, `getrandom(2)`, Go `crypto/rand`, Python
 `secrets`, `os.urandom` and `uuid.uuid4`, and Node `crypto.webcrypto`.
 
 For Node and Python, Gregale also reseeds the process itself before a woken
-instance serves traffic (ADR-680). It covers Node `crypto` (and the OpenSSL
+instance serves traffic (ADR-687). It covers Node `crypto` (and the OpenSSL
 state behind TLS), `crypto.randomUUID`, `crypto.randomInt` and `Math.random`,
 and Python `random`, `ssl`, and numpy's global `numpy.random` functions. If a
 process cannot confirm the reseed, the instance cold-boots instead of waking
@@ -128,7 +128,7 @@ After CI pushes an image, the [image-published trigger](image-published-deployme
 deploys its exact digest with durable per-workload and scope deduplication.
 New project image deployments also capture their accepted Compose CMD contract;
 queued images and retries retain it after app configuration changes. See
-[ADR-680](adr/680-frozen-project-image-commands.md). Historical deployments without
+[ADR-686](adr/686-frozen-project-image-commands.md). Historical deployments without
 that record keep their existing command behavior.
 
 Compose `depends_on: {backend: {condition: service_healthy}}` now holds the

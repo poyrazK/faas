@@ -17,6 +17,8 @@ import (
 // this replay generation; TotalAttempts preserves the lifetime attempt count.
 // Invocation identity remains independent of both the lease and generation.
 type PublishedEventRecipientWork struct {
+	AcceptedAt                  time.Time
+	PreviousProgress            PublishedEventRecipientProgress
 	OutboxID                    int64
 	Recipient                   PublishedEventRecipient
 	BackfillJobID               string
@@ -34,7 +36,7 @@ type PublishedEventRecipientWork struct {
 
 type PublishedEventRecipientWorkStore interface {
 	InitializePublishedEventRecipients(context.Context, *PublishedEventWork, time.Time) error
-	ClaimDuePublishedEventRecipient(context.Context, time.Time) (*PublishedEventRecipientWork, error)
+	ClaimDuePublishedEventRecipient(context.Context, time.Time, ...bool) (*PublishedEventRecipientWork, error)
 	FinishPublishedEventRecipient(context.Context, *PublishedEventRecipientWork, PublishedEventRecipientProgress, time.Time) error
 }
 
@@ -79,8 +81,12 @@ func (s *PgStore) InitializePublishedEventRecipients(ctx context.Context, work *
 	return tx.Commit(ctx)
 }
 
-func (s *PgStore) ClaimDuePublishedEventRecipient(ctx context.Context, now time.Time) (*PublishedEventRecipientWork, error) {
-	row, err := sqlc.New().EventRecipientClaim(ctx, s.pool, pgtypeFromTime(now))
+// includeWorkflows defaults to true. Schedulers pass false while the workflow
+// runtime is disabled so waiting workflows do not spend routing attempts.
+func (s *PgStore) ClaimDuePublishedEventRecipient(ctx context.Context, now time.Time, includeWorkflows ...bool) (*PublishedEventRecipientWork, error) {
+	row, err := sqlc.New().EventRecipientClaim(ctx, s.pool, sqlc.EventRecipientClaimParams{
+		NowAt: pgtypeFromTime(now), IncludeWorkflows: len(includeWorkflows) == 0 || includeWorkflows[0],
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -88,11 +94,16 @@ func (s *PgStore) ClaimDuePublishedEventRecipient(ctx context.Context, now time.
 		return nil, fmt.Errorf("claim event recipient: %w", err)
 	}
 	work := &PublishedEventRecipientWork{
-		OutboxID: row.OutboxID, Payload: row.Payload, State: "processing",
+		AcceptedAt: timeFromPgtype(row.AcceptedAt), OutboxID: row.OutboxID, Payload: row.Payload, State: "processing",
 		ClaimToken: uuidFromPgtype(row.ClaimToken).String(), Generation: row.Generation,
 		Attempts: int(row.Attempts), TotalAttempts: int(row.TotalAttempts),
 		CapacityDeferrals: int(row.CapacityDeferrals), GenerationCapacityDeferrals: int(row.GenerationCapacityDeferrals),
 		AvailableAt: timeFromPgtype(row.AvailableAt), LeaseUntil: timeFromPgtype(row.LeaseUntil),
+	}
+	if len(row.PreviousProgress) > 0 {
+		if err := json.Unmarshal(row.PreviousProgress, &work.PreviousProgress); err != nil {
+			return nil, err
+		}
 	}
 	if row.BackfillJobID.Valid {
 		work.BackfillJobID = uuidFromPgtype(row.BackfillJobID).String()
@@ -104,7 +115,15 @@ func (s *PgStore) ClaimDuePublishedEventRecipient(ctx context.Context, now time.
 }
 
 func (s *PgStore) FinishPublishedEventRecipient(ctx context.Context, work *PublishedEventRecipientWork, progress PublishedEventRecipientProgress, next time.Time) error {
-	if work == nil || progress.Attempts != work.TotalAttempts {
+	controlDeferred := progress.State == PublishedEventRecipientPending && progress.DeliveryControlReason != "" || progress.State == PublishedEventRecipientFiltered && progress.FilterReason == "schema_version_mismatch" || progress.FailureCode == EventFanoutFailureCodeDeliveryExpired
+	expected := 0
+	if work != nil {
+		expected = work.TotalAttempts
+		if controlDeferred {
+			expected--
+		}
+	}
+	if work == nil || progress.Attempts != expected {
 		return ErrConflict
 	}
 	if err := validatePublishedEventRecipientProgress(progress); err != nil {
@@ -129,7 +148,7 @@ func (s *PgStore) FinishPublishedEventRecipient(ctx context.Context, work *Publi
 	n, err := q.EventRecipientFinish(ctx, tx, sqlc.EventRecipientFinishParams{
 		OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
 		ClaimToken: mustPgUUID(work.ClaimToken), Generation: work.Generation,
-		State: progress.State, AvailableAt: pgtypeFromTime(next),
+		State: progress.State, AvailableAt: pgtypeFromTime(next), ControlDeferred: controlDeferred,
 	})
 	if err != nil {
 		return err
@@ -214,7 +233,7 @@ func (m *MemStore) InitializePublishedEventRecipients(_ context.Context, claimed
 				progress.State = PublishedEventRecipientPending
 			}
 			work.routingRecipients[recipient.ID] = &PublishedEventRecipientWork{
-				OutboxID: work.ID, Recipient: recipient, Payload: work.Payload, State: progress.State,
+				AcceptedAt: work.CreatedAt, OutboxID: work.ID, Recipient: recipient, Payload: work.Payload, State: progress.State,
 				Generation: 1, TotalAttempts: progress.Attempts, CapacityDeferrals: progress.CapacityDeferrals, AvailableAt: eventAdoptionAvailableAt(progress, now),
 			}
 		}
@@ -227,14 +246,30 @@ func (m *MemStore) InitializePublishedEventRecipients(_ context.Context, claimed
 	return ErrNotFound
 }
 
-func (m *MemStore) ClaimDuePublishedEventRecipient(_ context.Context, now time.Time) (*PublishedEventRecipientWork, error) {
+func (m *MemStore) ClaimDuePublishedEventRecipient(_ context.Context, now time.Time, includeWorkflows ...bool) (*PublishedEventRecipientWork, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var chosen *PublishedEventRecipientWork
 	for _, receipt := range m.eventFanout {
 		for _, work := range receipt.routingRecipients {
-			if (work.State != PublishedEventRecipientPending || work.AvailableAt.After(now)) &&
+			if len(includeWorkflows) != 0 && !includeWorkflows[0] && len(work.Recipient.Workflow) != 0 {
+				continue
+			}
+			if (work.State != PublishedEventRecipientPending || work.AvailableAt.After(now) && !EventSchemaVersionMismatch(work.Recipient, receipt.Payload) && !EventDeliveryExpired(work.Recipient, receipt.CreatedAt, receipt.RecipientProgress[work.Recipient.ID], now)) &&
 				(work.State != "processing" || work.LeaseUntil.After(now)) {
+				continue
+			}
+			if !EventSchemaVersionMismatch(work.Recipient, receipt.Payload) && !EventDeliveryExpired(work.Recipient, receipt.CreatedAt, receipt.RecipientProgress[work.Recipient.ID], now) && m.eventSubscriptionWaitingReasonLocked(eventRoutingAccount(receipt), work.Recipient.AppID, work.Recipient.ID, now) != "" {
+				continue
+			}
+			recipientIndex := -1
+			for index, recipient := range receipt.RecipientSnapshot {
+				if recipient.ID == work.Recipient.ID {
+					recipientIndex = index
+					break
+				}
+			}
+			if !EventSchemaVersionMismatch(work.Recipient, receipt.Payload) && !EventDeliveryExpired(work.Recipient, receipt.CreatedAt, receipt.RecipientProgress[work.Recipient.ID], now) && m.orderedEventRecipientBlockedLocked(receipt, recipientIndex, true) {
 				continue
 			}
 			account := canonicalMemUUID(work.Recipient.AccountID)
@@ -260,11 +295,20 @@ func (m *MemStore) ClaimDuePublishedEventRecipient(_ context.Context, now time.T
 	chosen.LeaseUntil = now.Add(PublishedEventLease)
 	chosen.Attempts++
 	chosen.TotalAttempts++
+	chosen.PreviousProgress = m.routingReceiptLocked(chosen.OutboxID).RecipientProgress[chosen.Recipient.ID]
 	return cloneEventRecipientWork(chosen), nil
 }
 
 func (m *MemStore) FinishPublishedEventRecipient(_ context.Context, claimed *PublishedEventRecipientWork, progress PublishedEventRecipientProgress, next time.Time) error {
-	if claimed == nil || progress.Attempts != claimed.TotalAttempts {
+	controlDeferred := progress.State == PublishedEventRecipientPending && progress.DeliveryControlReason != "" || progress.State == PublishedEventRecipientFiltered && progress.FilterReason == "schema_version_mismatch" || progress.FailureCode == EventFanoutFailureCodeDeliveryExpired
+	expected := 0
+	if claimed != nil {
+		expected = claimed.TotalAttempts
+		if controlDeferred {
+			expected--
+		}
+	}
+	if claimed == nil || progress.Attempts != expected {
 		return ErrConflict
 	}
 	if err := validatePublishedEventRecipientProgress(progress); err != nil {
@@ -280,6 +324,10 @@ func (m *MemStore) FinishPublishedEventRecipient(_ context.Context, claimed *Pub
 		if work == nil || work.State != "processing" || work.ClaimToken != claimed.ClaimToken ||
 			work.Generation != claimed.Generation || !work.LeaseUntil.After(progress.UpdatedAt) {
 			return ErrConflict
+		}
+		if controlDeferred {
+			work.Attempts--
+			work.TotalAttempts--
 		}
 		work.State = progress.State
 		work.AvailableAt = next
@@ -319,7 +367,17 @@ func resetEventRecipientForReplay(receipt *PublishedEventWork, subscriptionID st
 	work.LeaseUntil = time.Time{}
 }
 
-func (s *PgStore) replayClaimedEventRecipient(ctx context.Context, accountID, appID, source, eventID, subscriptionID string) (bool, error) {
+func (s *PgStore) replayClaimedEventRecipient(ctx context.Context, accountID, appID, source, eventID, subscriptionID string, override ...bool) (bool, error) {
+	jobID, err := sqlc.New().EventReplayBackfillRecipientJob(ctx, s.pool, sqlc.EventReplayBackfillRecipientJobParams{
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), EventSource: source, EventID: eventID, SubscriptionID: subscriptionID,
+	})
+	if err == nil {
+		_, err = s.retryFailedEventReplayBackfill(ctx, accountID, uuidString(jobID), 1, backfillRetryTarget{AppID: appID, Source: source, EventID: eventID, SubscriptionID: subscriptionID, AllowExpired: len(override) > 0 && override[0]})
+		return true, err
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return true, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return true, err
@@ -339,13 +397,13 @@ func (s *PgStore) replayClaimedEventRecipient(ctx context.Context, accountID, ap
 	if !row.RecipientClaims {
 		return false, nil
 	}
-	if err := replayEventRecipientTx(ctx, q, tx, row.ID, appID, subscriptionID, row.Progress, true, time.Now().UTC()); err != nil {
+	if err := replayEventRecipientTx(ctx, q, tx, row.ID, appID, subscriptionID, row.Progress, true, time.Now().UTC(), override...); err != nil {
 		return true, err
 	}
 	return true, tx.Commit(ctx)
 }
 
-func replayEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, outboxID int64, appID, subscriptionID string, encoded []byte, recipientClaims bool, now time.Time) error {
+func replayEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, outboxID int64, appID, subscriptionID string, encoded []byte, recipientClaims bool, now time.Time, override ...bool) error {
 	var prior PublishedEventRecipientProgress
 	if err := json.Unmarshal(encoded, &prior); err != nil {
 		return ErrNotFound
@@ -353,11 +411,22 @@ func replayEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, out
 	if prior.State != PublishedEventRecipientFailed {
 		return ErrNotFound
 	}
+	allowExpired := len(override) > 0 && override[0]
+	target, err := q.EventAgeReplayTarget(ctx, tx, sqlc.EventAgeReplayTargetParams{OutboxID: outboxID, SubscriptionID: subscriptionID})
+	if err != nil {
+		return err
+	}
+	var recipient PublishedEventRecipient
+	if err := json.Unmarshal(target.Recipient, &recipient); err != nil {
+		return err
+	}
+	if !allowExpired && EventDeliveryExpired(recipient, timeFromPgtype(target.CreatedAt), PublishedEventRecipientProgress{}, now) {
+		return ErrEventDeliveryExpired
+	}
 	var n int64
-	var err error
 	if recipientClaims {
 		n, err = q.EventRecipientReplay(ctx, tx, sqlc.EventRecipientReplayParams{
-			OutboxID: outboxID, SubscriptionID: subscriptionID, NowAt: pgtypeFromTime(now),
+			OutboxID: outboxID, SubscriptionID: subscriptionID, NowAt: pgtypeFromTime(now), AllowExpired: allowExpired,
 		})
 	} else {
 		n, err = q.EventRecipientReplayLegacy(ctx, tx, sqlc.EventRecipientReplayLegacyParams{
@@ -371,13 +440,17 @@ func replayEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, out
 		return ErrConflict
 	}
 	history := prior
+	history.DeliveryAgeOverride = allowExpired
+	if allowExpired {
+		history.LastError = "operator explicitly overrode delivery age limit"
+	}
 	history.State = PublishedEventRecipientPending
 	history.UpdatedAt = now
 	if err := appendEventRecipientHistory(ctx, q, tx, outboxID, appID, subscriptionID, EventFanoutAttemptActionReplay, history); err != nil {
 		return err
 	}
 	progress, err := json.Marshal(PublishedEventRecipientProgress{
-		State: PublishedEventRecipientPending, Attempts: prior.Attempts, CapacityDeferrals: prior.CapacityDeferrals, UpdatedAt: now,
+		DeliveryAgeOverride: allowExpired, State: PublishedEventRecipientPending, Attempts: prior.Attempts, CapacityDeferrals: prior.CapacityDeferrals, UpdatedAt: now,
 	})
 	if err != nil {
 		return err

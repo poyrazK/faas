@@ -2319,7 +2319,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_daemon_restart_count",
 		Help: "Count of systemd-driven restarts of THIS daemon process (issue #573 / ADR-128), labelled by (daemon, version). Producer is wire.Daemon() reading $SYSTEMD_RESTARTS_ON_FAILURE at boot; alert rules prefer node_exporter's node_systemd_restart_count{name=~'faas-.*\\.service'} when the systemd collector is enabled (commit 6 of the cluster B mega-PR added --collector.systemd to the node_exporter unit). This counter is the backstop for environments where the systemd collector is disabled. Closed daemon set: apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged, meterd, builderd, githubd, outboundd, gregale.",
 	}, []string{"daemon", "version"})
-	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale", "other"} {
+	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale", "other"} {
 		daemonRestartCount.WithLabelValues(daemon, Version)
 	}
 	// Issue #586 / ADR-129: per-daemon build info + uptime + ready.
@@ -2348,7 +2348,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_daemon_ready_reason",
 		Help: "One-hot readiness reason classification (issue #586 / ADR-129), labelled by daemon and a closed reason class. reason ∈ {ready, draining, database, vmmd, grpc, storage, credentials, stale, process, other}; detailed error text remains in /readyz and logs to keep metric cardinality bounded.",
 	}, []string{"daemon", "reason"})
-	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale", "other"} {
+	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale", "other"} {
 		daemonBuildInfo.WithLabelValues(daemon, Version, GitSHA, BuildTime).Set(1)
 		daemonUptimeSeconds.WithLabelValues(daemon).Set(0)
 		daemonReady.WithLabelValues(daemon).Set(0)
@@ -2640,10 +2640,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	evictedPriority.WithLabelValues("reserved", "eviction_ram")
 	evictionFiredTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_eviction_fired_total",
-		Help: "Count of successful instance evictions or parks, labelled by tenant_tier and reason. tenant_tier is one of {free,hobby,pro,scale,unknown}; reason is one of {idle,eviction_aggressive,ram_pressure,unknown}.",
+		Help: "Count of successful instance evictions or parks, labelled by tenant_tier and reason. tenant_tier is one of {free,hobby,pro,scale,unknown}; reason is one of {idle,eviction_aggressive,ram_pressure,wake_pressure,zero_traffic,unknown}.",
 	}, []string{"tenant_tier", "reason"})
 	for _, tier := range []string{"free", "hobby", "pro", "scale", "unknown"} {
-		for _, reason := range []string{"idle", "eviction_aggressive", "ram_pressure", "unknown"} {
+		for _, reason := range []string{"idle", "eviction_aggressive", "ram_pressure", "wake_pressure", "zero_traffic", "unknown"} {
 			evictionFiredTotal.WithLabelValues(tier, reason)
 		}
 	}
@@ -5644,7 +5644,7 @@ func (m *OpsMetrics) SetServiceReplicaStatus(app string, desired, ready, startin
 	values := [...]int{desired, ready, starting, draining, unavailable}
 	app = m.appLabel(app)
 	for i, state := range serviceReplicaMetricStates {
-		m.serviceReplicaStatus.WithLabelValues(app, state).Set(float64(values[i]))
+		m.serviceReplicaStatus.WithLabelValues(app, state).Set(float64(values[i])) // #nosec G602 -- values and serviceReplicaMetricStates are both five-element arrays.
 	}
 }
 
@@ -5693,7 +5693,7 @@ func (m *OpsMetrics) RecordDaemonRestart(daemon, version string, n int) {
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -5717,7 +5717,7 @@ func (m *OpsMetrics) SetDaemonBuildInfo(daemon, version, gitSHA, buildTime strin
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -5740,7 +5740,7 @@ func (m *OpsMetrics) SetDaemonUptime(daemon string, seconds float64) {
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -5766,7 +5766,7 @@ func (m *OpsMetrics) MarkReady(daemon string, ready bool, reason string) {
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -6454,7 +6454,7 @@ func (m *OpsMetrics) EvictionFired(tenantTier, reason string) prometheus.Counter
 		tenantTier = "unknown"
 	}
 	switch reason {
-	case "idle", "eviction_aggressive", "ram_pressure":
+	case "idle", "eviction_aggressive", "ram_pressure", "wake_pressure", "zero_traffic":
 	default:
 		reason = "unknown"
 	}

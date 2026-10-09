@@ -78,6 +78,12 @@ func (c *Client) GetPlatformTenantSelfOperation(ctx context.Context, id string) 
 func (c *Client) ListPlatformTenantSelfOperations(ctx context.Context, opts OperationListOptions) (OperationListResponse, error) {
 	var out OperationListResponse
 	query := url.Values{"app_id": {opts.AppID}, "scope": {opts.Scope}}
+	if opts.SubjectType != "" {
+		query.Set("subject_type", opts.SubjectType)
+	}
+	if opts.SubjectID != "" {
+		query.Set("subject_id", opts.SubjectID)
+	}
 	if opts.Name != "" {
 		query.Set("name", opts.Name)
 	}
@@ -183,6 +189,12 @@ func (c *Client) ReportOperationProgress(ctx context.Context, id string, proof O
 	err := c.doOperationWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/progress", req, &out, proof.headers())
 	return out, err
 }
+func (c *Client) GetOperationExecutionControl(ctx context.Context, id string, proof OperationRuntimeProof) (OperationExecutionControlResponse, error) {
+	var out OperationExecutionControlResponse
+	err := c.doOperationWithHeaders(ctx, http.MethodGet, "/v1/runtime/operations/"+url.PathEscape(id)+"/control", nil, &out, proof.headers())
+	return out, err
+}
+
 func (c *Client) AttachOperationArtifact(ctx context.Context, id string, proof OperationRuntimeProof, req OperationArtifactRequest) (OperationResponse, error) {
 	var out OperationResponse
 	err := c.doOperationWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/artifacts", req, &out, proof.headers())
@@ -194,6 +206,12 @@ func (c *Client) ListAccountOperations(ctx context.Context, slug string, opts Op
 	query := url.Values{"scope": {opts.Scope}}
 	if opts.TenantID != "" {
 		query.Set("tenant_id", opts.TenantID)
+	}
+	if opts.SubjectType != "" {
+		query.Set("subject_type", opts.SubjectType)
+	}
+	if opts.SubjectID != "" {
+		query.Set("subject_id", opts.SubjectID)
 	}
 	if opts.Name != "" {
 		query.Set("name", opts.Name)
@@ -257,5 +275,205 @@ func (c *Client) GetOperationDeliveryAttempts(ctx context.Context, slug, id stri
 func (c *Client) RetryOperationDeliveryWithReceipt(ctx context.Context, slug, id string, req OperationDeliveryRetryRequest) (OperationDeliveryRetryResponse, error) {
 	var out OperationDeliveryRetryResponse
 	err := c.doOperation(ctx, http.MethodPost, operationAppPath(slug, id)+"/delivery-retries", req, &out)
+	return out, err
+}
+
+// ReportOperationMilestone publishes a fact already committed by the application.
+func (c *Client) ReportOperationMilestone(ctx context.Context, id string, proof OperationRuntimeProof, req OperationMilestoneRequest) (OperationMilestone, error) {
+	var out OperationMilestone
+	err := c.doOperationWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/milestones", req, &out, proof.headers())
+	return out, err
+}
+
+func (c *Client) ValidateOperationMilestones(ctx context.Context, id string, proof OperationRuntimeProof, req OperationMilestoneValidationRequest) (OperationMilestoneValidationResponse, error) {
+	var out OperationMilestoneValidationResponse
+	err := c.doOperationWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/milestones/validate", req, &out, proof.headers())
+	return out, err
+}
+
+func (c *Client) ReportOperationWorkflowState(ctx context.Context, id string, proof OperationRuntimeProof, req OperationWorkflowStateReport) (OperationWorkflowStateReportResponse, error) {
+	var out OperationWorkflowStateReportResponse
+	err := c.doOperationWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/workflow-states", req, &out, proof.headers())
+	return out, err
+}
+
+func (c *Client) ValidateOperationWorkflowStates(ctx context.Context, id string, proof OperationRuntimeProof, req OperationWorkflowStateValidationRequest) (OperationWorkflowStateValidationResponse, error) {
+	var out OperationWorkflowStateValidationResponse
+	err := c.doOperationWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/workflow-states/validate", req, &out, proof.headers())
+	return out, err
+}
+
+func operationMilestoneQuery(opts OperationMilestoneListOptions, reference, customer bool) string {
+	query := url.Values{}
+	if opts.Limit != 0 {
+		query.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if opts.Cursor != "" {
+		query.Set("cursor", opts.Cursor)
+	}
+	if opts.Workflow != "" || opts.WorkflowInstanceID != "" {
+		query.Set("workflow", opts.Workflow)
+		query.Set("workflow_instance_id", opts.WorkflowInstanceID)
+	}
+	if opts.WorkflowStateCursor != "" {
+		query.Set("workflow_state_cursor", opts.WorkflowStateCursor)
+	}
+	if reference {
+		if opts.WorkflowStaleOnly {
+			query.Set("stale_only", "true")
+		}
+		query.Set("scope", opts.Scope)
+		query.Set("subject_type", opts.SubjectType)
+		query.Set("subject_id", opts.SubjectID)
+		if customer {
+			query.Set("app_id", opts.AppID)
+		} else if opts.TenantID != "" {
+			query.Set("tenant_id", opts.TenantID)
+		}
+	}
+	return "?" + query.Encode()
+}
+
+func (c *Client) GetAccountOperationMilestones(ctx context.Context, slug, id string, opts OperationMilestoneListOptions) (OperationMilestonesResponse, error) {
+	var out OperationMilestonesResponse
+	err := c.doOperation(ctx, http.MethodGet, operationAppPath(slug, id)+"/milestones"+operationMilestoneQuery(opts, false, false), nil, &out)
+	return out, err
+}
+
+func (c *Client) GetPlatformTenantSelfOperationMilestones(ctx context.Context, id string, opts OperationMilestoneListOptions) (OperationMilestonesResponse, error) {
+	var out OperationMilestonesResponse
+	err := c.doOperation(ctx, http.MethodGet, operationSelfPath(id)+"/milestones"+operationMilestoneQuery(opts, false, true), nil, &out)
+	return out, err
+}
+
+func (c *Client) ListAccountBusinessMilestones(ctx context.Context, slug string, opts OperationMilestoneListOptions) (OperationMilestonesResponse, error) {
+	var out OperationMilestonesResponse
+	err := c.doOperation(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/operation-milestones"+operationMilestoneQuery(opts, true, false), nil, &out)
+	return out, err
+}
+
+func (c *Client) ListPlatformTenantSelfBusinessMilestones(ctx context.Context, opts OperationMilestoneListOptions) (OperationMilestonesResponse, error) {
+	var out OperationMilestonesResponse
+	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/customer-operation-milestones"+operationMilestoneQuery(opts, true, true), nil, &out)
+	return out, err
+}
+
+func operationWorkflowAttentionQuery(opts OperationWorkflowAttentionOptions, customer bool) string {
+	query := url.Values{"scope": {opts.Scope}}
+	for key, value := range map[string]string{"dependency_status": opts.DependencyStatus, "required_outcome_code": opts.RequiredOutcomeCode, "blocker_code": opts.BlockerCode, "workflow": opts.Workflow, "target_operation": opts.TargetOperation, "reason": opts.Reason, "cursor": opts.Cursor} {
+		if value != "" {
+			query.Set(key, value)
+		}
+	}
+	if customer {
+		query.Set("app_id", opts.AppID)
+	} else if opts.TenantID != "" {
+		query.Set("tenant_id", opts.TenantID)
+	}
+	if opts.Limit != 0 {
+		query.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	return "?" + query.Encode()
+}
+func (c *Client) ListAccountWorkflowAttention(ctx context.Context, slug string, opts OperationWorkflowAttentionOptions) (OperationWorkflowAttentionResponse, error) {
+	var out OperationWorkflowAttentionResponse
+	err := c.doOperation(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-attention"+operationWorkflowAttentionQuery(opts, false), nil, &out)
+	return out, err
+}
+func (c *Client) ListPlatformTenantSelfWorkflowAttention(ctx context.Context, opts OperationWorkflowAttentionOptions) (OperationWorkflowAttentionResponse, error) {
+	var out OperationWorkflowAttentionResponse
+	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-attention"+operationWorkflowAttentionQuery(opts, true), nil, &out)
+	return out, err
+}
+
+func operationWorkflowAttentionSummaryQuery(opts OperationWorkflowAttentionSummaryOptions, customer bool) string {
+	q := operationWorkflowAttentionQuery(opts.OperationWorkflowAttentionOptions, customer)
+	if opts.GroupBy != "" {
+		q += "&group_by=" + url.QueryEscape(opts.GroupBy)
+	}
+	return q
+}
+func (c *Client) SummarizeAccountWorkflowAttention(ctx context.Context, slug string, opts OperationWorkflowAttentionSummaryOptions) (OperationWorkflowAttentionSummary, error) {
+	var out OperationWorkflowAttentionSummary
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-attention/summary"+operationWorkflowAttentionSummaryQuery(opts, false), nil, &out)
+	return out, err
+}
+func (c *Client) SummarizePlatformTenantSelfWorkflowAttention(ctx context.Context, opts OperationWorkflowAttentionSummaryOptions) (OperationWorkflowAttentionSummary, error) {
+	var out OperationWorkflowAttentionSummary
+	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-attention/summary"+operationWorkflowAttentionSummaryQuery(opts, true), nil, &out)
+	return out, err
+}
+
+func operationWorkflowOutcomeQuery(opts OperationWorkflowOutcomeOptions, customer bool) string {
+	query := url.Values{"scope": {opts.Scope}}
+	for key, value := range map[string]string{"workflow": opts.Workflow, "code": opts.Code, "cursor": opts.Cursor} {
+		if value != "" {
+			query.Set(key, value)
+		}
+	}
+	if customer {
+		query.Set("app_id", opts.AppID)
+	} else if opts.TenantID != "" {
+		query.Set("tenant_id", opts.TenantID)
+	}
+	if opts.Limit != 0 {
+		query.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	return "?" + query.Encode()
+}
+func (c *Client) ListAccountWorkflowOutcomes(ctx context.Context, slug string, opts OperationWorkflowOutcomeOptions) (OperationWorkflowOutcomesResponse, error) {
+	query := operationWorkflowOutcomeQuery(opts, false)
+	var out OperationWorkflowOutcomesResponse
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-outcomes"+query, nil, &out)
+	return out, err
+}
+func (c *Client) SummarizeAccountWorkflowOutcomes(ctx context.Context, slug string, opts OperationWorkflowOutcomeSummaryOptions) (OperationWorkflowOutcomeSummary, error) {
+	query := operationWorkflowOutcomeQuery(opts.OperationWorkflowOutcomeOptions, false)
+	if opts.GroupBy != "" {
+		query += "&group_by=" + url.QueryEscape(opts.GroupBy)
+	}
+	var out OperationWorkflowOutcomeSummary
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-outcomes/summary"+query, nil, &out)
+	return out, err
+}
+func (c *Client) ListPlatformTenantSelfWorkflowOutcomes(ctx context.Context, opts OperationWorkflowOutcomeOptions) (OperationWorkflowOutcomesResponse, error) {
+	query := operationWorkflowOutcomeQuery(opts, true)
+	var out OperationWorkflowOutcomesResponse
+	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-outcomes"+query, nil, &out)
+	return out, err
+}
+func (c *Client) SummarizePlatformTenantSelfWorkflowOutcomes(ctx context.Context, opts OperationWorkflowOutcomeSummaryOptions) (OperationWorkflowOutcomeSummary, error) {
+	query := operationWorkflowOutcomeQuery(opts.OperationWorkflowOutcomeOptions, true)
+	if opts.GroupBy != "" {
+		query += "&group_by=" + url.QueryEscape(opts.GroupBy)
+	}
+	var out OperationWorkflowOutcomeSummary
+	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-outcomes/summary"+query, nil, &out)
+	return out, err
+}
+
+// CheckAccountWorkflowReadiness observes retained requirements; tenant_id is mandatory.
+func (c *Client) CheckAccountWorkflowReadiness(ctx context.Context, slug string, req OperationWorkflowReadinessRequest) (OperationWorkflowReadinessResponse, error) {
+	var out OperationWorkflowReadinessResponse
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness", req, &out)
+	return out, err
+}
+
+// CheckPlatformTenantSelfWorkflowReadiness uses the authenticated customer boundary.
+func (c *Client) CheckPlatformTenantSelfWorkflowReadiness(ctx context.Context, req OperationWorkflowReadinessRequest) (OperationWorkflowReadinessResponse, error) {
+	var out OperationWorkflowReadinessResponse
+	err := c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-readiness", req, &out)
+	return out, err
+}
+
+func (c *Client) PreviewAccountWorkflowActions(ctx context.Context, slug string, req OperationWorkflowActionPreviewRequest) (OperationWorkflowActionPreviewResponse, error) {
+	var out OperationWorkflowActionPreviewResponse
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/workflow-actions/preview", req, &out)
+	return out, err
+}
+
+func (c *Client) PreviewPlatformTenantSelfWorkflowActions(ctx context.Context, req OperationWorkflowActionPreviewRequest) (OperationWorkflowActionPreviewResponse, error) {
+	var out OperationWorkflowActionPreviewResponse
+	err := c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-actions/preview", req, &out)
 	return out, err
 }

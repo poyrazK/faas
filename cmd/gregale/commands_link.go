@@ -22,7 +22,8 @@ func cmdLink(args []string) int {
 	noGitignore := fs.Bool("no-gitignore", false, "do not add .gregale/ to the repository .gitignore")
 	flags, positional := splitArgsForFlags(args, "no-gitignore")
 	if err := fs.Parse(flags); err != nil {
-		PrintUsage(os.Stderr, linkUsage, "link")
+		// FlagSet has already emitted the parse failure (as one Problem in
+		// --json mode), so adding PrintUsage here would produce a second error.
 		return 1
 	}
 	if len(positional) != 1 || !api.ValidProjectSlug(positional[0]) {
@@ -148,14 +149,20 @@ func cmdContext(args []string) int {
 	context, path, err := linkedProjectContext(cwd)
 	if err != nil {
 		if errors.Is(err, errProjectContextNotFound) {
-			return printErr("No linked project", errors.New("run `gregale link <project-slug>` in a project checkout"))
+			if jsonOutput {
+				return jsonOut(writeJSON(map[string]any{"connection": effectiveConnectionContext()}))
+			}
+			renderConnectionContext()
+			_, _ = fmt.Fprintln(osStdout, "No linked project. Run gregale link <project-slug> to link this checkout.")
+			return 0
 		}
 		return printErr("Could not read project context", err)
 	}
-	receipt := projectContextReceipt{Context: context, Path: displayProjectContextPath(cwd, path)}
+	receipt := projectContextReceipt{Context: context, Path: displayProjectContextPath(cwd, path), Connection: effectiveConnectionContext()}
 	if jsonOutput {
 		return jsonOut(writeJSON(receipt))
 	}
+	renderConnectionContext()
 	PrintOK(osStdout, "Linked project context")
 	renderProjectContext(osStdout, receipt)
 	return 0

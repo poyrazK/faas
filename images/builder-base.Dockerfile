@@ -43,7 +43,7 @@ ARG RUNC_CGROUPS_VERSION=0.1.0
 
 # The latest upstream runc release still embeds golang.org/x/net v0.50.0 and
 # Go 1.25.12, which leaves this image exposed to fixed HIGH advisories. Build
-# the same release from checksum-pinned source with the image's Go 1.26.6
+# the same release from checksum-pinned source with the image's Go 1.26.9
 # toolchain and an explicit dependency floor. The static-pie result runs on
 # Alpine without inheriting the host libc.
 ARG RUNC_VERSION=1.5.1
@@ -59,12 +59,12 @@ ARG RUNC_SOURCE_SHA256=32286f18899a644ec7c1589688a9600ba54cc65264f23f1f5877ba214
 # workflow) also keeps each published architecture self-contained without
 # per-arch files in the build context.
 # Note: the version is intentionally baked into the FROM line (no ARG)
-# so images/Dockerfile.lock has a literal "golang:1.26.6" alias to
+# so images/Dockerfile.lock has a literal "golang:1.26.9" alias to
 # match against. Bumping the Go version is a two-step: change this
 # line, run `make images-lock-update` to refresh the lock and digest.
-# BuildKit v0.32.x requires Go 1.26.3 or newer. Use 1.26.6 so the
-# builder itself is not shipped with the Go standard-library advisories
-# fixed after 1.25.9; the repo's `tool` directive also rejects older
+# BuildKit v0.32.x requires Go 1.26.3 or newer. Use 1.26.9 so the
+# builder includes the standard-library security fixes released after
+# 1.25.9; the repo's `tool` directive also rejects older
 # toolchains with `unknown directive: tool` (verified during PR #940
 # review).
 
@@ -77,7 +77,7 @@ ARG RUNC_SOURCE_SHA256=32286f18899a644ec7c1589688a9600ba54cc65264f23f1f5877ba214
 # stable across re-pulls, but the manifest-list digest is). Use the native
 # build platform for the toolchain and cross-compile the target artifact; this
 # avoids emulating the Go compiler for arm64 multi-arch builds.
-FROM --platform=$BUILDPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS guest-init-build
+FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS guest-init-build
 WORKDIR /src
 # guest-init is a pure-Go binary; no submodule vendoring needed. The
 # repository is the build context, so COPY . picks up the whole tree.
@@ -95,7 +95,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # pinned release from source instead. We build on TARGETPLATFORM because runc
 # enables cgo for seccomp; buildx's QEMU path is bounded to this small binary
 # and keeps the cross-compiled BuildKit stages native and fast.
-FROM --platform=$TARGETPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS runc-build
+FROM --platform=$TARGETPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS runc-build
 WORKDIR /src/runc
 ARG RUNC_VERSION
 ARG RUNC_SOURCE_SHA256
@@ -109,9 +109,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       echo "${RUNC_SOURCE_SHA256}  /tmp/runc-source.tgz" | sha256sum -c - && \
       tar -xzf /tmp/runc-source.tgz --strip-components=1 -C /src/runc && \
       rm /tmp/runc-source.tgz && \
+      go mod edit -go=1.26.9 && \
       go mod edit -require=github.com/opencontainers/cgroups@v${RUNC_CGROUPS_VERSION} && \
       go mod edit -require=github.com/cilium/ebpf@v${RUNC_EBPF_VERSION} && \
-      go mod edit -require=golang.org/x/net@v0.57.0 && \
+      go mod edit -require=golang.org/x/net@v0.60.0 && \
       go mod download && \
       CGO_ENABLED=1 GOOS=linux GOARCH=${TARGETARCH} \
         go build -mod=mod -trimpath -buildmode=pie \
@@ -119,15 +120,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
           -ldflags "-linkmode external -extldflags -static-pie -X main.gitCommit=v${RUNC_VERSION}" \
           -o /out/runc . && \
       go version -m /out/runc | tee /tmp/runc-build-info && \
-      grep -q 'golang.org/x/net.*v0.57.0' /tmp/runc-build-info && \
-      ! grep -Eq 'v0.50.0|go1.25.12' /tmp/runc-build-info
+      grep -q 'golang.org/x/net.*v0.60.0' /tmp/runc-build-info && \
+      ! grep -Eq 'v0.50.0|go1.25.12|go1.26.6' /tmp/runc-build-info
 
 # BuildKit's server has a deliberately strict session liveness check. The
 # stock buildctl release has no flag for its per-session timeout header, while
 # slow bare-metal builders can spend several minutes importing a remote layer.
 # Build both upstream binaries from the same source tree so the repository
 # patch and the dependency floors apply consistently to buildctl and buildkitd.
-FROM --platform=$BUILDPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS buildkit-client-build
+FROM --platform=$BUILDPLATFORM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS buildkit-client-build
 WORKDIR /src/buildkit
 ARG BUILDKIT_VERSION
 ARG BUILDKIT_REVISION
@@ -140,11 +141,9 @@ COPY images/buildkit-session-health.patch /tmp/buildkit-session-health.patch
 COPY images/buildkit-frontend-startup.patch /tmp/buildkit-frontend-startup.patch
 # BuildKit 0.32.2 still selects the vulnerable go-archive v0.2.0 and gRPC
 # v1.82.1. Keep the source release's vendored dependency graph for a fast,
-# reproducible build, but replace the source's vulnerable modules with fixed
-# releases, including the Go crypto fix, before compiling. x/net is already
-# fixed in this source release; pin it explicitly so a future source change
-# cannot lower the builder's dependency floor
-# unnoticed.
+# reproducible build, with fixed module floors. Pin x/net and x/crypto to
+# patched versions, then regenerate the vendor tree from the selected graph
+# so the modules and their transitive source match module metadata.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git && \
       rm -rf /var/lib/apt/lists/* && \
       curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
@@ -155,24 +154,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       rm /tmp/buildkit-source.tgz && \
       git apply /tmp/buildkit-session-health.patch /tmp/buildkit-frontend-startup.patch && \
       go mod edit -require=github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} && \
-      go mod edit -require=golang.org/x/net@v0.57.0 && \
-      go mod edit -require=golang.org/x/crypto@v0.56.0 && \
+      go mod edit -require=golang.org/x/net@v0.60.0 && \
+      go mod edit -require=golang.org/x/crypto@v0.57.0 && \
       go mod edit -require=google.golang.org/grpc@v${BUILDKIT_GRPC_VERSION} && \
-      go mod download github.com/moby/go-archive@v${GO_ARCHIVE_VERSION} google.golang.org/grpc@v${BUILDKIT_GRPC_VERSION} golang.org/x/crypto@v0.56.0 && \
-      archive_module="$(go env GOMODCACHE)/github.com/moby/go-archive@v${GO_ARCHIVE_VERSION}" && \
-      grpc_module="$(go env GOMODCACHE)/google.golang.org/grpc@v${BUILDKIT_GRPC_VERSION}" && \
-      crypto_module="$(go env GOMODCACHE)/golang.org/x/crypto@v0.56.0" && \
-      rm -rf vendor/github.com/moby/go-archive && \
-      rm -rf vendor/google.golang.org/grpc && \
-      rm -rf vendor/golang.org/x/crypto && \
-      cp -a "${archive_module}" vendor/github.com/moby/go-archive && \
-      cp -a "${grpc_module}" vendor/google.golang.org/grpc && \
-      cp -a "${crypto_module}" vendor/golang.org/x/crypto && \
-      sed -i \
-        -e "s#github.com/moby/go-archive v0.2.0#github.com/moby/go-archive v${GO_ARCHIVE_VERSION}#" \
-        -e "s#golang.org/x/crypto v0.54.0#golang.org/x/crypto v0.56.0#" \
-        -e "s#google.golang.org/grpc v1.82.1#google.golang.org/grpc v${BUILDKIT_GRPC_VERSION}#" \
-        vendor/modules.txt && \
+      go mod tidy && \
+      go mod vendor && \
       go test -mod=vendor ./frontend/gateway -run '^TestServeWaitsForColdFrontend$' -count=1 && \
       BUILDKIT_LDFLAGS="-X github.com/moby/buildkit/version.Version=v${BUILDKIT_VERSION} -X github.com/moby/buildkit/version.Revision=${BUILDKIT_REVISION} -X github.com/moby/buildkit/version.Package=github.com/moby/buildkit" && \
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \

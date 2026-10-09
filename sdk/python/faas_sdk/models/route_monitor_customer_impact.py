@@ -14,6 +14,7 @@ from ..models.route_monitor_customer_impact_group_by import (
     RouteMonitorCustomerImpactGroupBy,
     check_route_monitor_customer_impact_group_by,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="RouteMonitorCustomerImpact")
 
@@ -26,6 +27,8 @@ class RouteMonitorCustomerImpact:
     coverage: RouteMonitorCustomerImpactCoverage
     observed_customers: int
     violated_customers: int
+    unknown_customers: int | Unset = UNSET
+    """Distinct observed cohorts whose status cannot be established from retained evidence."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +40,8 @@ class RouteMonitorCustomerImpact:
 
         violated_customers = self.violated_customers
 
+        unknown_customers = self.unknown_customers
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -47,6 +52,8 @@ class RouteMonitorCustomerImpact:
                 "violated_customers": violated_customers,
             }
         )
+        if unknown_customers is not UNSET:
+            field_dict["unknown_customers"] = unknown_customers
 
         return field_dict
 
@@ -61,11 +68,14 @@ class RouteMonitorCustomerImpact:
 
         violated_customers = d.pop("violated_customers")
 
+        unknown_customers = d.pop("unknown_customers", UNSET)
+
         route_monitor_customer_impact = cls(
             group_by=group_by,
             coverage=coverage,
             observed_customers=observed_customers,
             violated_customers=violated_customers,
+            unknown_customers=unknown_customers,
         )
 
         route_monitor_customer_impact.additional_properties = d

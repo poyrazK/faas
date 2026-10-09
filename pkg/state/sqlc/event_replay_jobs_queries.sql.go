@@ -90,7 +90,9 @@ SELECT o.id, o.created_at, o.payload, o.recipient_snapshot, o.state,
                            AND s.recipient->>'app_id'=$2::text)
             THEN 'captured' ELSE 'not_captured' END::text AS original_recipient,
        EXISTS (SELECT 1 FROM event_fanout_recipients r
-               WHERE r.outbox_id=o.id AND r.subscription_id=$1::text) AS recipient_exists
+               WHERE r.outbox_id=o.id AND r.subscription_id=$1::text) AS recipient_exists,
+       EXISTS (SELECT 1 FROM workflow_event_receipts wr
+               WHERE wr.outbox_id=o.id AND wr.recipient_id=$1::uuid) AS workflow_admission_exists
 FROM event_fanout_outbox o
 WHERE o.account_id=$3::uuid
   AND o.created_at >= $4::timestamptz
@@ -112,17 +114,18 @@ type EventReplayBackfillCandidatesParams struct {
 }
 
 type EventReplayBackfillCandidatesRow struct {
-	ID                int64
-	CreatedAt         pgtype.Timestamptz
-	Payload           []byte
-	RecipientSnapshot []byte
-	State             string
-	Source            string
-	EventID           string
-	EventType         string
-	SchemaVersion     string
-	OriginalRecipient string
-	RecipientExists   bool
+	ID                      int64
+	CreatedAt               pgtype.Timestamptz
+	Payload                 []byte
+	RecipientSnapshot       []byte
+	State                   string
+	Source                  string
+	EventID                 string
+	EventType               string
+	SchemaVersion           string
+	OriginalRecipient       string
+	RecipientExists         bool
+	WorkflowAdmissionExists bool
 }
 
 func (q *Queries) EventReplayBackfillCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillCandidatesParams) ([]EventReplayBackfillCandidatesRow, error) {
@@ -155,6 +158,7 @@ func (q *Queries) EventReplayBackfillCandidates(ctx context.Context, db DBTX, ar
 			&i.SchemaVersion,
 			&i.OriginalRecipient,
 			&i.RecipientExists,
+			&i.WorkflowAdmissionExists,
 		); err != nil {
 			return nil, err
 		}
@@ -231,7 +235,9 @@ func (q *Queries) EventReplayBackfillClaimValid(ctx context.Context, db DBTX, ar
 const eventReplayBackfillCountRetryableFailed = `-- name: EventReplayBackfillCountRetryableFailed :one
 SELECT count(*)::bigint FROM event_replay_job_items i
 JOIN event_fanout_recipients r ON r.outbox_id=i.outbox_id AND r.backfill_job_id=i.job_id
-WHERE i.job_id=$1::uuid AND i.state='failed' AND i.retryable AND r.state='failed'
+JOIN event_fanout_outbox o ON o.id=r.outbox_id
+ WHERE i.job_id=$1::uuid AND i.state='failed' AND i.retryable AND r.state='failed'
+ AND (event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb) IS NULL OR event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb)>clock_timestamp())
 `
 
 func (q *Queries) EventReplayBackfillCountRetryableFailed(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error) {
@@ -243,13 +249,14 @@ func (q *Queries) EventReplayBackfillCountRetryableFailed(ctx context.Context, d
 
 const eventReplayBackfillCreate = `-- name: EventReplayBackfillCreate :one
 INSERT INTO event_replay_jobs
-    (account_id, app_id, subscription_id, subscription_revision, recipient,
+    (account_id, app_id, subscription_id, subscription_revision, recipient, consumer_kind, workflow_name,
      from_at, until_at, cutoff_at, earliest_retained_at, cursor_at)
 VALUES ($1::uuid, $2::uuid, $3::uuid,
         $4::text, $5::jsonb,
-        $6::timestamptz, $7::timestamptz,
+        $6::text, $7::text,
         $8::timestamptz, $9::timestamptz,
-        $10::timestamptz)
+        $10::timestamptz, $11::timestamptz,
+        $12::timestamptz)
 RETURNING id
 `
 
@@ -259,6 +266,8 @@ type EventReplayBackfillCreateParams struct {
 	SubscriptionID       pgtype.UUID
 	SubscriptionRevision string
 	Recipient            []byte
+	ConsumerKind         string
+	WorkflowName         string
 	FromAt               pgtype.Timestamptz
 	UntilAt              pgtype.Timestamptz
 	CutoffAt             pgtype.Timestamptz
@@ -273,6 +282,8 @@ func (q *Queries) EventReplayBackfillCreate(ctx context.Context, db DBTX, arg Ev
 		arg.SubscriptionID,
 		arg.SubscriptionRevision,
 		arg.Recipient,
+		arg.ConsumerKind,
+		arg.WorkflowName,
 		arg.FromAt,
 		arg.UntilAt,
 		arg.CutoffAt,
@@ -353,7 +364,7 @@ func (q *Queries) EventReplayBackfillFinishItem(ctx context.Context, db DBTX, ar
 
 const eventReplayBackfillGet = `-- name: EventReplayBackfillGet :one
 SELECT j.id, j.account_id, j.app_id, a.slug AS app_slug, j.subscription_id,
-       j.subscription_revision, j.from_at, j.until_at, j.cutoff_at,
+       j.subscription_revision, j.consumer_kind, j.workflow_name, j.from_at, j.until_at, j.cutoff_at,
        j.earliest_retained_at, j.duplicate_policy, j.state, j.scan_complete,
        j.scanned_count, j.matched_count, j.filtered_count,
        j.created_at, j.updated_at, j.completed_at,
@@ -385,6 +396,8 @@ type EventReplayBackfillGetRow struct {
 	AppSlug               string
 	SubscriptionID        pgtype.UUID
 	SubscriptionRevision  string
+	ConsumerKind          string
+	WorkflowName          string
 	FromAt                pgtype.Timestamptz
 	UntilAt               pgtype.Timestamptz
 	CutoffAt              pgtype.Timestamptz
@@ -419,6 +432,8 @@ func (q *Queries) EventReplayBackfillGet(ctx context.Context, db DBTX, arg Event
 		&i.AppSlug,
 		&i.SubscriptionID,
 		&i.SubscriptionRevision,
+		&i.ConsumerKind,
+		&i.WorkflowName,
 		&i.FromAt,
 		&i.UntilAt,
 		&i.CutoffAt,
@@ -501,9 +516,13 @@ func (q *Queries) EventReplayBackfillInsertItem(ctx context.Context, db DBTX, ar
 
 const eventReplayBackfillInsertRecipient = `-- name: EventReplayBackfillInsertRecipient :execrows
 INSERT INTO event_fanout_recipients
-    (outbox_id,subscription_id,app_id,recipient,state,total_attempts,available_at,backfill_job_id)
+    (outbox_id,subscription_id,app_id,recipient,state,total_attempts,available_at,backfill_job_id,receipt_position,delivery_deadline_at)
 VALUES ($1::bigint,$2::text,$3::uuid,
-        $4::jsonb,'pending',0,$5::timestamptz,$6::uuid)
+        $4::jsonb,'pending',0,$5::timestamptz,$6::uuid,
+        (SELECT greatest(jsonb_array_length(coalesce(o.recipient_snapshot,'[]'::jsonb)),
+                         coalesce((SELECT max(r.receipt_position) FROM event_fanout_recipients r WHERE r.outbox_id=o.id),0))+1
+         FROM event_fanout_outbox o WHERE o.id=$1::bigint),
+ (SELECT event_recipient_delivery_deadline($4::jsonb,o.created_at,'{}'::jsonb) FROM event_fanout_outbox o WHERE o.id=$1::bigint))
 ON CONFLICT (outbox_id,subscription_id) DO NOTHING
 `
 
@@ -531,11 +550,65 @@ func (q *Queries) EventReplayBackfillInsertRecipient(ctx context.Context, db DBT
 	return result.RowsAffected(), nil
 }
 
+const eventReplayBackfillInsertWorkflowFailure = `-- name: EventReplayBackfillInsertWorkflowFailure :execrows
+INSERT INTO event_replay_job_items(job_id,outbox_id,accepted_at,event_source,event_id,event_type,schema_version,
+                                   state,attempts,failure_code,last_error,retryable)
+VALUES ($1::uuid,$2::bigint,$3::timestamptz,
+        $4::text,$5::text,$6::text,$7::text,
+        'failed',1,$8::text,$9::text,$10::boolean)
+ON CONFLICT (job_id,outbox_id) DO NOTHING
+`
+
+type EventReplayBackfillInsertWorkflowFailureParams struct {
+	JobID         pgtype.UUID
+	OutboxID      int64
+	AcceptedAt    pgtype.Timestamptz
+	EventSource   string
+	EventID       string
+	EventType     string
+	SchemaVersion string
+	FailureCode   string
+	LastError     string
+	Retryable     bool
+}
+
+func (q *Queries) EventReplayBackfillInsertWorkflowFailure(ctx context.Context, db DBTX, arg EventReplayBackfillInsertWorkflowFailureParams) (int64, error) {
+	result, err := db.Exec(ctx, eventReplayBackfillInsertWorkflowFailure,
+		arg.JobID,
+		arg.OutboxID,
+		arg.AcceptedAt,
+		arg.EventSource,
+		arg.EventID,
+		arg.EventType,
+		arg.SchemaVersion,
+		arg.FailureCode,
+		arg.LastError,
+		arg.Retryable,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const eventReplayBackfillItems = `-- name: EventReplayBackfillItems :many
 SELECT i.outbox_id, i.accepted_at, i.event_source, i.event_id, i.event_type,
        i.schema_version, i.state, i.attempts, i.failure_code, i.last_error,
-       i.retryable, i.updated_at
+       i.retryable, i.updated_at, j.subscription_id, j.consumer_kind, j.workflow_name,
+       coalesce(wr.id::text,'')::text AS workflow_run_id, coalesce(wr.status,'')::text AS workflow_run_status,
+       (o.id IS NOT NULL)::boolean AS receipt_available,
+       (o.id IS NOT NULL AND a.id IS NOT NULL AND (r.subscription_id IS NOT NULL OR EXISTS (
+           SELECT 1 FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) s(recipient)
+           WHERE s.recipient->>'id'=j.subscription_id::text AND s.recipient->>'app_id'=j.app_id::text
+       )))::boolean AS execution_history_available
 FROM event_replay_job_items i
+JOIN event_replay_jobs j ON j.id=i.job_id
+LEFT JOIN event_fanout_outbox o ON o.id=i.outbox_id AND o.account_id=j.account_id
+    AND o.source=i.event_source AND o.event_id=i.event_id AND o.created_at=i.accepted_at
+LEFT JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
+LEFT JOIN event_fanout_recipients r ON r.outbox_id=o.id AND r.subscription_id=j.subscription_id::text AND r.app_id=j.app_id
+LEFT JOIN workflow_event_receipts wer ON wer.outbox_id=o.id AND wer.recipient_id=j.subscription_id
+LEFT JOIN workflow_runs wr ON wr.id=wer.run_id
 WHERE i.job_id=$1::uuid
   AND ($2::text = '' OR i.state=$2::text)
   AND (i.accepted_at,i.outbox_id) > ($3::timestamptz,$4::bigint)
@@ -552,18 +625,25 @@ type EventReplayBackfillItemsParams struct {
 }
 
 type EventReplayBackfillItemsRow struct {
-	OutboxID      int64
-	AcceptedAt    pgtype.Timestamptz
-	EventSource   string
-	EventID       string
-	EventType     string
-	SchemaVersion string
-	State         string
-	Attempts      int32
-	FailureCode   string
-	LastError     string
-	Retryable     bool
-	UpdatedAt     pgtype.Timestamptz
+	OutboxID                  int64
+	AcceptedAt                pgtype.Timestamptz
+	EventSource               string
+	EventID                   string
+	EventType                 string
+	SchemaVersion             string
+	State                     string
+	Attempts                  int32
+	FailureCode               string
+	LastError                 string
+	Retryable                 bool
+	UpdatedAt                 pgtype.Timestamptz
+	SubscriptionID            pgtype.UUID
+	ConsumerKind              string
+	WorkflowName              string
+	WorkflowRunID             string
+	WorkflowRunStatus         string
+	ReceiptAvailable          bool
+	ExecutionHistoryAvailable bool
 }
 
 func (q *Queries) EventReplayBackfillItems(ctx context.Context, db DBTX, arg EventReplayBackfillItemsParams) ([]EventReplayBackfillItemsRow, error) {
@@ -594,6 +674,13 @@ func (q *Queries) EventReplayBackfillItems(ctx context.Context, db DBTX, arg Eve
 			&i.LastError,
 			&i.Retryable,
 			&i.UpdatedAt,
+			&i.SubscriptionID,
+			&i.ConsumerKind,
+			&i.WorkflowName,
+			&i.WorkflowRunID,
+			&i.WorkflowRunStatus,
+			&i.ReceiptAvailable,
+			&i.ExecutionHistoryAvailable,
 		); err != nil {
 			return nil, err
 		}
@@ -705,7 +792,7 @@ func (q *Queries) EventReplayBackfillMaterializeSnapshot(ctx context.Context, db
 }
 
 const eventReplayBackfillNextJob = `-- name: EventReplayBackfillNextJob :one
-SELECT id, account_id, app_id, subscription_id, subscription_revision, recipient, from_at, until_at, cutoff_at, earliest_retained_at, cursor_at, cursor_outbox_id, duplicate_policy, state, scan_complete, scanned_count, matched_count, filtered_count, skipped_captured_count, skipped_unknown_count, skipped_existing_count, skipped_unsettled_count, created_at, updated_at, completed_at FROM event_replay_jobs WHERE state='running' AND NOT scan_complete
+SELECT id, account_id, app_id, subscription_id, subscription_revision, recipient, from_at, until_at, cutoff_at, earliest_retained_at, cursor_at, cursor_outbox_id, duplicate_policy, state, scan_complete, scanned_count, matched_count, filtered_count, skipped_captured_count, skipped_unknown_count, skipped_existing_count, skipped_unsettled_count, created_at, updated_at, completed_at, consumer_kind, workflow_name FROM event_replay_jobs WHERE state='running' AND NOT scan_complete
   AND (SELECT count(*) FROM event_replay_job_items i
        WHERE i.job_id=event_replay_jobs.id AND i.state IN ('pending','processing')) < $1::bigint
 ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
@@ -740,6 +827,8 @@ func (q *Queries) EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFli
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.ConsumerKind,
+		&i.WorkflowName,
 	)
 	return i, err
 }
@@ -796,6 +885,39 @@ func (q *Queries) EventReplayBackfillPruneJobs(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const eventReplayBackfillRecipientJob = `-- name: EventReplayBackfillRecipientJob :one
+SELECT j.id FROM event_fanout_outbox o
+JOIN event_fanout_recipients r ON r.outbox_id=o.id
+JOIN event_replay_jobs j ON j.id=r.backfill_job_id AND j.account_id=o.account_id
+    AND j.app_id=r.app_id AND j.subscription_id::text=r.subscription_id
+JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
+WHERE o.account_id=$1::uuid AND o.source=$2::text
+  AND o.event_id=$3::text AND r.app_id=$4::uuid
+  AND r.subscription_id=$5::text AND r.receipt_position IS NOT NULL
+`
+
+type EventReplayBackfillRecipientJobParams struct {
+	AccountID      pgtype.UUID
+	EventSource    string
+	EventID        string
+	AppID          pgtype.UUID
+	SubscriptionID string
+}
+
+// Read provenance before taking the job lock, preserving job -> parent order.
+func (q *Queries) EventReplayBackfillRecipientJob(ctx context.Context, db DBTX, arg EventReplayBackfillRecipientJobParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, eventReplayBackfillRecipientJob,
+		arg.AccountID,
+		arg.EventSource,
+		arg.EventID,
+		arg.AppID,
+		arg.SubscriptionID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const eventReplayBackfillResetItem = `-- name: EventReplayBackfillResetItem :execrows
 UPDATE event_replay_job_items SET state='pending',failure_code='',last_error='',retryable=false,updated_at=clock_timestamp()
 WHERE job_id=$1::uuid AND outbox_id=$2::bigint AND state='failed'
@@ -820,15 +942,24 @@ FROM event_replay_job_items i
 JOIN event_replay_jobs j ON j.id=i.job_id
 JOIN event_fanout_recipients r ON r.outbox_id=i.outbox_id AND r.subscription_id=j.subscription_id::text AND r.backfill_job_id=j.id
 JOIN event_fanout_outbox o ON o.id=i.outbox_id AND o.account_id=j.account_id
+JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
 WHERE i.job_id=$1::uuid AND j.account_id=$2::uuid
-  AND i.state='failed' AND i.retryable AND r.state='failed'
-ORDER BY i.accepted_at,i.outbox_id LIMIT $3::integer
+  AND i.state='failed' AND (i.retryable OR $3::boolean AND i.failure_code='delivery_expired') AND r.state='failed'
+ AND ($3::boolean OR event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb) IS NULL OR event_recipient_delivery_deadline(r.recipient,o.created_at,'{}'::jsonb)>clock_timestamp())
+  AND ($4::text='' OR o.source=$4::text)
+  AND ($5::text='' OR o.event_id=$5::text)
+  AND ($6::text='' OR j.app_id::text=$6::text)
+ORDER BY i.accepted_at,i.outbox_id LIMIT $7::integer
 `
 
 type EventReplayBackfillRetryCandidatesParams struct {
-	JobID     pgtype.UUID
-	AccountID pgtype.UUID
-	PageLimit int32
+	JobID        pgtype.UUID
+	AccountID    pgtype.UUID
+	AllowExpired bool
+	EventSource  string
+	EventID      string
+	AppID        string
+	PageLimit    int32
 }
 
 type EventReplayBackfillRetryCandidatesRow struct {
@@ -839,7 +970,15 @@ type EventReplayBackfillRetryCandidatesRow struct {
 }
 
 func (q *Queries) EventReplayBackfillRetryCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillRetryCandidatesParams) ([]EventReplayBackfillRetryCandidatesRow, error) {
-	rows, err := db.Query(ctx, eventReplayBackfillRetryCandidates, arg.JobID, arg.AccountID, arg.PageLimit)
+	rows, err := db.Query(ctx, eventReplayBackfillRetryCandidates,
+		arg.JobID,
+		arg.AccountID,
+		arg.AllowExpired,
+		arg.EventSource,
+		arg.EventID,
+		arg.AppID,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -871,4 +1010,251 @@ WHERE id=$1::uuid AND state='completed_with_failures'
 func (q *Queries) EventReplayBackfillSetRunning(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, eventReplayBackfillSetRunning, id)
 	return err
+}
+
+const eventReplayBackfillTargetSnapshot = `-- name: EventReplayBackfillTargetSnapshot :one
+SELECT recipient, app_id, account_id, consumer_kind, workflow_name FROM event_replay_jobs
+WHERE id=$1::uuid AND account_id=$2::uuid
+`
+
+type EventReplayBackfillTargetSnapshotParams struct {
+	JobID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type EventReplayBackfillTargetSnapshotRow struct {
+	Recipient    []byte
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	ConsumerKind string
+	WorkflowName string
+}
+
+func (q *Queries) EventReplayBackfillTargetSnapshot(ctx context.Context, db DBTX, arg EventReplayBackfillTargetSnapshotParams) (EventReplayBackfillTargetSnapshotRow, error) {
+	row := db.QueryRow(ctx, eventReplayBackfillTargetSnapshot, arg.JobID, arg.AccountID)
+	var i EventReplayBackfillTargetSnapshotRow
+	err := row.Scan(
+		&i.Recipient,
+		&i.AppID,
+		&i.AccountID,
+		&i.ConsumerKind,
+		&i.WorkflowName,
+	)
+	return i, err
+}
+
+const eventReplayBackfillWorkflowExpireRetry = `-- name: EventReplayBackfillWorkflowExpireRetry :execrows
+UPDATE event_replay_job_items i SET failure_code='target_unavailable',
+       last_error='source event is no longer retained',retryable=false,updated_at=clock_timestamp()
+FROM event_replay_jobs j
+WHERE i.job_id=j.id AND i.job_id=$1::uuid
+  AND j.account_id=$2::uuid AND j.consumer_kind='workflow'
+  AND i.state='failed' AND i.retryable
+  AND NOT EXISTS (SELECT 1 FROM event_fanout_outbox o
+                  WHERE o.id=i.outbox_id AND o.account_id=j.account_id
+                    AND o.source=i.event_source AND o.event_id=i.event_id AND o.created_at=i.accepted_at)
+`
+
+type EventReplayBackfillWorkflowExpireRetryParams struct {
+	JobID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) EventReplayBackfillWorkflowExpireRetry(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowExpireRetryParams) (int64, error) {
+	result, err := db.Exec(ctx, eventReplayBackfillWorkflowExpireRetry, arg.JobID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const eventReplayBackfillWorkflowFinishRetry = `-- name: EventReplayBackfillWorkflowFinishRetry :execrows
+UPDATE event_replay_job_items SET state=$1::text, attempts=attempts+1,
+       failure_code=$2::text,last_error=$3::text,
+       retryable=$4::boolean,updated_at=clock_timestamp()
+WHERE job_id=$5::uuid AND outbox_id=$6::bigint
+  AND state='failed' AND retryable
+`
+
+type EventReplayBackfillWorkflowFinishRetryParams struct {
+	State       string
+	FailureCode string
+	LastError   string
+	Retryable   bool
+	JobID       pgtype.UUID
+	OutboxID    int64
+}
+
+func (q *Queries) EventReplayBackfillWorkflowFinishRetry(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowFinishRetryParams) (int64, error) {
+	result, err := db.Exec(ctx, eventReplayBackfillWorkflowFinishRetry,
+		arg.State,
+		arg.FailureCode,
+		arg.LastError,
+		arg.Retryable,
+		arg.JobID,
+		arg.OutboxID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const eventReplayBackfillWorkflowRetryCandidates = `-- name: EventReplayBackfillWorkflowRetryCandidates :many
+SELECT i.outbox_id, i.accepted_at, i.event_source, i.event_id, i.event_type, i.schema_version,
+       i.attempts, o.payload, o.recipient_snapshot, o.state,
+       CASE WHEN o.recipient_snapshot IS NULL THEN 'unknown'
+            WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) s(recipient)
+                         WHERE s.recipient->>'id'=j.subscription_id::text
+                           AND s.recipient->>'app_id'=j.app_id::text)
+            THEN 'captured' ELSE 'not_captured' END::text AS original_recipient,
+       EXISTS (SELECT 1 FROM event_fanout_recipients r
+               WHERE r.outbox_id=o.id AND r.subscription_id=j.subscription_id::text) AS recipient_exists,
+       EXISTS (SELECT 1 FROM workflow_event_receipts wr
+               WHERE wr.outbox_id=o.id AND wr.recipient_id=j.subscription_id) AS workflow_admission_exists
+FROM event_replay_job_items i
+JOIN event_replay_jobs j ON j.id=i.job_id
+JOIN event_fanout_outbox o ON o.id=i.outbox_id AND o.account_id=j.account_id
+    AND o.source=i.event_source AND o.event_id=i.event_id AND o.created_at=i.accepted_at
+WHERE i.job_id=$1::uuid AND j.account_id=$2::uuid
+  AND j.consumer_kind='workflow' AND i.state='failed' AND i.retryable
+ORDER BY i.accepted_at,i.outbox_id LIMIT $3::integer
+`
+
+type EventReplayBackfillWorkflowRetryCandidatesParams struct {
+	JobID     pgtype.UUID
+	AccountID pgtype.UUID
+	PageLimit int32
+}
+
+type EventReplayBackfillWorkflowRetryCandidatesRow struct {
+	OutboxID                int64
+	AcceptedAt              pgtype.Timestamptz
+	EventSource             string
+	EventID                 string
+	EventType               string
+	SchemaVersion           string
+	Attempts                int32
+	Payload                 []byte
+	RecipientSnapshot       []byte
+	State                   string
+	OriginalRecipient       string
+	RecipientExists         bool
+	WorkflowAdmissionExists bool
+}
+
+func (q *Queries) EventReplayBackfillWorkflowRetryCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowRetryCandidatesParams) ([]EventReplayBackfillWorkflowRetryCandidatesRow, error) {
+	rows, err := db.Query(ctx, eventReplayBackfillWorkflowRetryCandidates, arg.JobID, arg.AccountID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventReplayBackfillWorkflowRetryCandidatesRow{}
+	for rows.Next() {
+		var i EventReplayBackfillWorkflowRetryCandidatesRow
+		if err := rows.Scan(
+			&i.OutboxID,
+			&i.AcceptedAt,
+			&i.EventSource,
+			&i.EventID,
+			&i.EventType,
+			&i.SchemaVersion,
+			&i.Attempts,
+			&i.Payload,
+			&i.RecipientSnapshot,
+			&i.State,
+			&i.OriginalRecipient,
+			&i.RecipientExists,
+			&i.WorkflowAdmissionExists,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventReplayBackfillWorkflowRetryableCount = `-- name: EventReplayBackfillWorkflowRetryableCount :one
+SELECT count(*)::bigint FROM event_replay_job_items i
+JOIN event_replay_jobs j ON j.id=i.job_id
+WHERE i.job_id=$1::uuid AND j.account_id=$2::uuid
+  AND j.consumer_kind='workflow' AND i.state='failed' AND i.retryable
+`
+
+type EventReplayBackfillWorkflowRetryableCountParams struct {
+	JobID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) EventReplayBackfillWorkflowRetryableCount(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowRetryableCountParams) (int64, error) {
+	row := db.QueryRow(ctx, eventReplayBackfillWorkflowRetryableCount, arg.JobID, arg.AccountID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const eventReplayBackfillWorkflowTarget = `-- name: EventReplayBackfillWorkflowTarget :many
+SELECT a.id AS app_id, a.account_id, a.slug AS app_slug, d.id AS deployment_id,
+       definition.value AS workflow, ac.plan
+FROM apps a
+JOIN accounts ac ON ac.id=a.account_id
+JOIN LATERAL (
+    SELECT dep.id, dep.workflows FROM deployments dep
+    WHERE dep.app_id=a.id AND dep.status='live' AND dep.scope='default'
+    ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC
+    LIMIT 1
+) d ON true
+CROSS JOIN LATERAL jsonb_array_elements(app_workflow_definitions(a.id,d.workflows)) definition(value)
+WHERE a.id=$1::uuid AND a.account_id=$2::uuid
+  AND a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+  AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan <> 'free'
+  AND definition.value->>'name'=$3::text
+  AND definition.value->'trigger'->>'type'='event'
+  AND coalesce(definition.value->'trigger'->>'enabled','true')='true'
+LIMIT 2
+`
+
+type EventReplayBackfillWorkflowTargetParams struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	WorkflowName string
+}
+
+type EventReplayBackfillWorkflowTargetRow struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	AppSlug      string
+	DeploymentID pgtype.UUID
+	Workflow     interface{}
+	Plan         string
+}
+
+func (q *Queries) EventReplayBackfillWorkflowTarget(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowTargetParams) ([]EventReplayBackfillWorkflowTargetRow, error) {
+	rows, err := db.Query(ctx, eventReplayBackfillWorkflowTarget, arg.AppID, arg.AccountID, arg.WorkflowName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventReplayBackfillWorkflowTargetRow{}
+	for rows.Next() {
+		var i EventReplayBackfillWorkflowTargetRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.AccountID,
+			&i.AppSlug,
+			&i.DeploymentID,
+			&i.Workflow,
+			&i.Plan,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

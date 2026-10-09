@@ -38,6 +38,78 @@ def snapshot(operation=OP):
     }
 
 
+def test_runtime_control_refreshes_identity_and_preserves_separate_cancel_intent():
+    async def exercise():
+        identities, reads = [], []
+
+        def transport(request):
+            if request.url.host == "127.0.0.1":
+                identities.append(request)
+                return httpx.Response(200, json={"access_token": f"workload-{len(identities)}"})
+            reads.append(request)
+            assert request.method == "GET" and not request.content
+            assert request.url.path == f"/v1/runtime/operations/{OP}/control"
+            assert request.headers["Authorization"] == f"Bearer workload-{len(identities)}"
+            assert request.headers["X-Faas-Invocation-Id"] == INV
+            assert request.headers["X-Gregale-Operation-Attempt"] == "2"
+            assert request.headers["X-Gregale-Operation-Capability"] == "a" * 64
+            return httpx.Response(
+                200,
+                json={
+                    "operation_id": OP,
+                    "invocation_id": INV,
+                    "attempt": 2,
+                    "cancellation_requested": True,
+                    "observed_at": "2026-10-05T11:58:00Z",
+                    "lease_expires_at": "2026-10-05T11:59:00Z",
+                    "deadline_at": "2026-10-05T12:00:00Z",
+                    "poll_after_ms": 1000,
+                    "private_extra": "discard",
+                },
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+            runtime = GregaleOperations("https://api.gregale.test", "http://127.0.0.1/identity", client)
+            with runtime.bind_request(headers()):
+                for _ in range(2):
+                    value = await runtime.control()
+                    assert value.cancellation_requested and value.lease_expires_at < value.deadline_at
+                    assert value.additional_properties == {}
+            assert len(identities) == len(reads) == 2
+            with pytest.raises(ValueError, match="requires an operation"):
+                await runtime.control()
+
+    asyncio.run(exercise())
+
+
+def test_runtime_control_rejects_replacement_attempt():
+    async def exercise():
+        def transport(request):
+            if request.url.host == "127.0.0.1":
+                return httpx.Response(200, json={"access_token": "workload"})
+            return httpx.Response(
+                200,
+                json={
+                    "operation_id": OP,
+                    "invocation_id": INV,
+                    "attempt": 3,
+                    "cancellation_requested": False,
+                    "observed_at": "2026-10-05T11:58:00Z",
+                    "lease_expires_at": "2026-10-05T11:59:00Z",
+                    "deadline_at": "2026-10-05T12:00:00Z",
+                    "poll_after_ms": 1000,
+                },
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+            runtime = GregaleOperations("https://api.gregale.test", "http://127.0.0.1/identity", client)
+            with runtime.bind_request(headers()):
+                with pytest.raises(ValueError, match="Invalid operation control"):
+                    await runtime.control()
+
+    asyncio.run(exercise())
+
+
 def test_runtime_refresh_and_receipt_replay():
     async def exercise():
         identities, reports = [], []
@@ -134,5 +206,45 @@ def test_problem_does_not_turn_delivery_into_business_failure():
                 with pytest.raises(OperationHTTPError) as error:
                     await runtime.progress(OperationReportRequest("stable-report", "generating", 1, 1))
                 assert error.value.code == "operation_state_conflict"
+
+    asyncio.run(exercise())
+
+
+def test_runtime_milestone_uses_current_proof_and_saved_identity():
+    from datetime import datetime, timezone
+    from uuid import UUID
+
+    from faas_sdk.models.operation_milestone_request import OperationMilestoneRequest
+
+    async def exercise():
+        seen = []
+
+        def transport(request):
+            if request.url.host == "127.0.0.1":
+                return httpx.Response(200, json={"access_token": "fresh"})
+            seen.append(request)
+            body = json.loads(request.content)
+            return httpx.Response(
+                200, json={**body, "operation_id": OP, "created_at": "2026-10-07T12:05:00Z", "sequence": 3}
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+            runtime = GregaleOperations(
+                api_url="https://api.gregale.test", identity_endpoint="http://127.0.0.1/identity", client=client
+            )
+            with runtime.bind_request(headers()):
+                fact = await runtime.milestone(
+                    OperationMilestoneRequest(
+                        id=UUID(OP),
+                        name="paid",
+                        payload={"total": 1},
+                        occurred_at=datetime(2026, 10, 7, 12, tzinfo=timezone.utc),
+                    )
+                )
+            assert fact.id == UUID(OP)
+            assert str(seen[0].url).endswith("/milestones")
+            assert seen[0].headers["X-Gregale-Operation-Attempt"] == "2"
+            assert seen[0].headers["X-Gregale-Operation-Capability"] == "a" * 64
+            assert seen[0].headers["Authorization"] == "Bearer fresh"
 
     asyncio.run(exercise())

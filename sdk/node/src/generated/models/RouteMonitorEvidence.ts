@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { RouteMonitorEvidenceWindow } from './RouteMonitorEvidenceWindow.js';
 /**
- * One violated route and selected signal captured in the opening evaluation. Customer-only violations are scoped to the affected request-time identity. At most three route/signal entries are saved; aggregate violations precede customer-scoped entries.
+ * One violated route and selected signal captured at incident opening or escalation. Customer-only opening violations are scoped to the affected request-time identity; escalation evidence is aggregate and contains no customer identity.
  */
 export type RouteMonitorEvidence = {
   customer_group_by?: 'tenant' | 'consumer';

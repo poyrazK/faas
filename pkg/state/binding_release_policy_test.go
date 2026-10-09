@@ -137,7 +137,9 @@ func TestBindingReleasePolicyPGLockRaces(t *testing.T) {
 			}()
 			for {
 				var waiting bool
-				if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND (query LIKE '%AuthorizeBindingReleaseTraffic%' OR query LIKE '%update deployments set traffic_percent%'))`).Scan(&waiting); err != nil {
+				// Lifecycle authorization takes account and app locks before the
+				// binding-policy query, so policy writes may block either fence.
+				if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND (query LIKE '%LockRoutePolicyAccount%' OR query LIKE '%LockRoutePolicyApp%' OR query LIKE '%LockDeploymentTrafficApp%' OR query LIKE '%AuthorizeBindingReleaseTraffic%' OR query LIKE '%update deployments set traffic_percent%'))`).Scan(&waiting); err != nil {
 					t.Fatal(err)
 				}
 				if waiting {

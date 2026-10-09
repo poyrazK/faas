@@ -220,6 +220,7 @@ func (f *statusAwareSynthDispatcher) InvokeWithStatus(_ context.Context, _ strin
 	f.invs = append(f.invs, inv)
 	inv.State = state.InvocationDispatching
 	inv.Result = json.RawMessage(`{"ok":true}`)
+	inv.ResponseRetryAfter = "120"
 	return inv, http.StatusCreated, nil
 }
 
@@ -392,10 +393,14 @@ func TestHandleInvocationDispatch_UsesOptionalDownstreamStatus(t *testing.T) {
 		t.Fatalf("code = %d, want 200 transport response", w.Code)
 	}
 	var response struct {
-		StatusCode int `json:"status_code"`
+		StatusCode int    `json:"status_code"`
+		RetryAfter string `json:"retry_after"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
+	}
+	if response.RetryAfter != "120" {
+		t.Fatalf("retry_after = %q", response.RetryAfter)
 	}
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("status_code = %d, want 201", response.StatusCode)

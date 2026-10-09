@@ -2,7 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,5 +45,37 @@ func TestRolloutHeldNotice(t *testing.T) {
 	n.maybeWarn(&out, d, now.Add(time.Hour))
 	if out.Len() != before {
 		t.Fatal("notice for a completed rollout")
+	}
+}
+
+// production-us hunt #6 (H5-60): `gregale deploy --safe` printed nothing for
+// 30 minutes while meterd held a scale-to-zero app's canary at its first step
+// for lack of request samples, then reported the automatic abort. The deploy
+// wait now prints the same held notice as `deployment wait --rollout`.
+func TestWaitForDeploymentRolloutReportsAHeldStep(t *testing.T) {
+	started := time.Now().Add(-6 * time.Minute)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		d := api.DeploymentResponse{ID: "dep-1", Status: statusLive, RolloutState: "progressing",
+			CanaryTotalSteps: 4, TrafficPercent: 5, CanaryStepStartedAt: &started}
+		if calls.Add(1) > 1 {
+			d.RolloutState, d.RolloutAbortedReason = rolloutStateAborted, "automatic abort: rollout stuck"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(d)
+	}))
+	defer srv.Close()
+	var stderr bytes.Buffer
+	oldErr := osStderr
+	osStderr = &stderr
+	defer func() { osStderr = oldErr }()
+
+	pending := api.DeploymentResponse{ID: "dep-1", Status: statusLive, RolloutState: "progressing", CanaryTotalSteps: 4, CanaryStepStartedAt: &started}
+	got, ok := waitForDeploymentRollout(t.Context(), NewClient(srv.URL, "fp_test"), pending)
+	if !ok || got.RolloutState != rolloutStateAborted {
+		t.Fatalf("wait = %+v, %v; want the aborted rollout", got, ok)
+	}
+	if out := stderr.String(); strings.Count(out, "Rollout held at 5% traffic (step 1/4)") != 1 || !strings.Contains(out, "Send traffic to the app") {
+		t.Fatalf("deploy wait printed no held notice:\n%s", out)
 	}
 }

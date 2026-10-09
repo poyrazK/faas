@@ -117,7 +117,7 @@ func runHTTPLogsQuery(ctx context.Context, slug, deploymentID, requestID, traceI
 		}
 		if result.Partial {
 			for _, item := range result.Errors {
-				_, _ = fmt.Fprintf(osStderr, "trace %s: %s\n", item.App, item.Detail)
+				_, _ = fmt.Fprintln(osStderr, traceLookupErrorLine(item))
 			}
 			return 3
 		}
@@ -285,7 +285,7 @@ func httpLogQueryEvent(row api.DebugTelemetryRequestItem) api.LogQueryEvent {
 		Route:        row.Route,
 		Method:       row.Method,
 		Status:       row.Status,
-		Message:      fmt.Sprintf("%s %s returned %d in %dms", row.Method, row.Route, row.Status, row.LatencyMS),
+		Message:      fmt.Sprintf("%s returned %d in %dms", requestLine(row.Method, row.Route), row.Status, row.LatencyMS),
 		LatencyMS:    row.LatencyMS,
 		Count:        row.Count,
 		ColdBoot:     row.ColdBoot,

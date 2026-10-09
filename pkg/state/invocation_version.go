@@ -82,6 +82,16 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
+	// Workflow calls have synthetic correlation IDs, not invocation UUIDs.
+	// Validate their separate durable run authority before reading an HTTP
+	// invocation's environment owner. Unsupported workflow calls keep the
+	// ordinary resolution path and receive no private operation authority.
+	if inv.Source == InvocationSource("workflow") && !ingress {
+		resolved, version, linked, err := resolveWorkflowOperationInvocationVersion(ctx, store, app, inv, headers)
+		if err != nil || linked {
+			return resolved, version, err
+		}
+	}
 	// Durable private work must retain its original marker and explicit pin.
 	// Never repair a damaged envelope by resolving today's active release.
 	if reader, ok := store.(InvocationEnvironmentOwnerReader); ok && inv.ID != "" && !syntheticTriggerInvocation(inv) {
@@ -98,6 +108,12 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	}
 	if InvocationHasOperation(inv) {
 		return resolveOperationInvocationVersion(ctx, store, app, inv)
+	}
+	if inv.WorkflowRunID != "" {
+		pinned, version, handled, err := resolveWorkflowInvocationVersion(ctx, store, app, inv, revision, release)
+		if handled || err != nil {
+			return pinned, version, err
+		}
 	}
 	capturedScope := inv.DeploymentScope != ""
 	projectApp := app.ProjectID != "" && app.PreviewOfSlug == ""

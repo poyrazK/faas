@@ -15,11 +15,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -118,12 +118,12 @@ type Loop struct {
 	// without Run (tests) still dispatches.
 	work                        *workPool
 	workOnce                    sync.Once
-	workflowDispatchCursor      atomic.Uint32
 	eventFanoutLastPrune        time.Time
 	eventFanoutHistoryLastPrune time.Time
 	eventRecipientClaims        bool
 	now                         func() time.Time
 	flowCounts                  FlowCounter
+	flowReaderUnavailable       sync.Once
 	ops                         *wire.OpsMetrics                        // issue #171 shared registry; nil safe
 	audit                       *audit.Auditor                          // cron-fired audit row writer; nil opts out (no row written)
 	watchdog                    *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
@@ -224,8 +224,9 @@ type Loop struct {
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 	l := &Loop{
 		pool: pool, engine: engine, log: log,
-		now:        time.Now,
-		flowCounts: noopFlowCounter{},
+		now:                  time.Now,
+		flowCounts:           noopFlowCounter{},
+		eventRecipientClaims: true,
 	}
 	if engine != nil {
 		engine.SetBrokerLagReader(l)
@@ -810,8 +811,7 @@ func (l *Loop) Run(ctx context.Context) error {
 
 	reaperT := time.NewTicker(10 * time.Second)
 	defer reaperT.Stop()
-	cronT := time.NewTicker(60 * time.Second)
-	defer cronT.Stop()
+	cronTicks := minuteTicks(ctx, time.Now)
 	// Fire-now safety ticker (PR-D / issue #791). 60s cadence
 	// mirrors pkg/sched/fire_now.go::fireNowSafetyTick: when a
 	// NotifyCronRunNow delivery is dropped (Postgres bounce, network
@@ -872,7 +872,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		retentionFirst = delay.C
 	}
 	// ADR-134 PR-B: invocations retention + deadline-breach sweep.
-	// 60s cadence matches the cron sweep (cronT below); both
+	// 60s cadence matches the cron sweep (cronTicks below); both
 	// sweeps are read-only SELECTs over partial indexes and cost
 	// single-digit ms each. nil = no ticker fires the case.
 	var invocationsRetentionT *time.Ticker
@@ -1185,7 +1185,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-reaperT.C:
 			l.dispatchReaper(ctx)
-		case <-cronT.C:
+		case <-cronTicks:
 			l.runCronTick(ctx)
 		case <-watchdogTick(watchdogT):
 			l.runWatchdog(ctx)
@@ -1773,7 +1773,7 @@ func (l *Loop) runScalingPolicyObservation(ctx context.Context) {
 		return
 	}
 	for _, app := range apps {
-		if app.ScalingPolicyRevision <= 0 {
+		if app.ScalingPolicyRevision <= 0 || !l.engine.ownsAppDecision(app) {
 			continue
 		}
 		if err := observer.RecordAppScalingPolicyObserved(ctx, app.ID, ownerNodeID, app.ScalingPolicyRevision); err != nil && !errors.Is(err, context.Canceled) {
@@ -1800,7 +1800,13 @@ func (l *Loop) observeAppScalingPolicy(ctx context.Context, appID string) {
 	if app.ScalingPolicyRevision <= 0 {
 		return
 	}
-	if err := observer.RecordAppScalingPolicyObserved(ctx, app.ID, l.engine.OwnerNodeID(), app.ScalingPolicyRevision); err != nil && !errors.Is(err, context.Canceled) {
+	// Every schedd hears app_changed, but only the owner may acknowledge
+	// the revision; the others warned on every change (H5-17).
+	owner := l.engine.OwnerNodeID()
+	if owner != "" && app.NodeID != owner {
+		return
+	}
+	if err := observer.RecordAppScalingPolicyObserved(ctx, app.ID, owner, app.ScalingPolicyRevision); err != nil && !errors.Is(err, context.Canceled) {
 		l.log.Warn("scaling policy observation: record changed app", "app", app.ID, "revision", app.ScalingPolicyRevision, "err", err)
 	}
 }
@@ -2093,7 +2099,15 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 	if p.AppID == "" || p.WakeID == "" {
 		return errors.New("sched: app_wake payload requires app_id and wake_id")
 	}
-	out, err := l.engine.EnsureWake(withRequestedWakeID(context.WithoutCancel(ctx), p.WakeID), p.AppID, TriggerAppWake)
+	wakeCtx := withRequestedWakeID(context.WithoutCancel(ctx), p.WakeID)
+	if handled, err := l.engine.WakeWorkerApp(wakeCtx, p.AppID); handled {
+		if err != nil {
+			return fmt.Errorf("sched: explicit app wake %s: %w", p.WakeID, err)
+		}
+		l.log.Info("sched: explicit worker app wake reconciled", "app", p.AppID, "wake_id", p.WakeID)
+		return nil
+	}
+	out, err := l.engine.EnsureWake(wakeCtx, p.AppID, TriggerAppWake)
 	if err != nil {
 		return fmt.Errorf("sched: explicit app wake %s: %w", p.WakeID, err)
 	}
@@ -2425,7 +2439,13 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 		if err != nil {
 			l.log.Warn("reaper: list all instances for warm", "err", err)
-		} else if warmErr := warmer.Warm(ctx, all); warmErr != nil {
+		} else if warmErr := warmer.Warm(ctx, all); errors.Is(warmErr, flowcount.ErrUnavailable) {
+			// A host without conntrack (the split-box control plane) can
+			// never count flows; say so once instead of every tick.
+			l.flowReaderUnavailable.Do(func() {
+				l.log.Info("reaper: conntrack unavailable; idle reaping uses compute telemetry and last request", "err", warmErr)
+			})
+		} else if warmErr != nil {
 			l.log.Warn("reaper: warm flow reader", "err", warmErr)
 		}
 	}
@@ -2577,10 +2597,12 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// Select immutable workload settings and original lifetime once per
 	// deployment. Floors are shared within that lifetime, never across stages.
 	appDeploymentFloor := l.enrichReaperEnvironmentPolicies(ctx, apps, snapshot, appPrewarmFloor)
+	snapshot = l.drainSupersededReaperRows(ctx, snapshot)
 	// Capture the causal snapshot before any park/eviction mutates the
 	// instance set. The observation is best-effort and never changes the
 	// lifecycle decision if the audit write is unavailable.
 	l.recordRunningReasonObservations(ctx, apps, snapshot, now)
+	l.engine.publishPressureParkCandidates(SelectPressureParkCandidates(now, snapshot), now)
 	resident := l.engine.Ledger().ResidentRAM()
 	// instanceToApp (PR-C review fix): O(N) instance→app map shared
 	// between the idle and aggressive reaper branches. The pre-PR-C
@@ -2812,6 +2834,37 @@ func (l *Loop) stopInstanceFromReaper(ctx context.Context, instanceID string) er
 // reaperInstanceState mirrors the SQL partial-index predicate used by
 // ListAllInstances. Keeping the filter at the per-app expansion site is
 // necessary because ListInstancesForApp deliberately has a broader contract.
+// drainSupersededReaperRows repairs a superseded deployment's drain when the
+// deployment_changed notification was missed or its park failed (production-us
+// hunt #8: superseded instances stayed resident and billed until the idle
+// timeout). The rows leave the snapshot so the idle and pressure selectors do
+// not act on the same instances in this tick.
+func (l *Loop) drainSupersededReaperRows(ctx context.Context, snapshot []InstanceInfo) []InstanceInfo {
+	kept := snapshot[:0]
+	drained := map[string]struct{}{}
+	for _, row := range snapshot {
+		switch {
+		case !row.DeploymentSuperseded:
+			kept = append(kept, row)
+			continue
+		case row.State != state.StateRunning && row.State != state.StateWaking && row.State != state.StateColdBooting:
+			// drainDeploymentInstances leaves snapshotting and warm rows to
+			// their own lifecycle paths; keep them selectable.
+			kept = append(kept, row)
+			continue
+		}
+		if _, done := drained[row.DeploymentID]; done {
+			continue
+		}
+		drained[row.DeploymentID] = struct{}{}
+		l.log.Info("reaper: drain superseded deployment", "app", row.AppID, "deployment", row.DeploymentID)
+		drainCtx, cancel := context.WithTimeout(ctx, reaperParkTimeout)
+		l.engine.drainDeploymentInstances(drainCtx, row.DeploymentID, true)
+		cancel()
+	}
+	return kept
+}
+
 func reaperInstanceState(s state.State) bool {
 	switch s {
 	case state.StateRunning, state.StateWaking, state.StateColdBooting, state.StateSnapshotting, state.StateWarm:
@@ -3473,15 +3526,21 @@ func (h *httpGatewaySynth) Invoke(ctx context.Context, appID string, inv state.I
 // executor seam. Unlike the legacy Invoke method it returns the downstream
 // HTTP status, which is required for durable retry classification.
 func (h *httpGatewaySynth) ExecuteStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration) (int, []byte, error) {
-	return h.executeStep(ctx, appID, path, method, headers, body, timeout, "", 0, WorkflowStepIdentity{})
+	status, body, _, err := h.executeStep(ctx, appID, path, method, headers, body, timeout, "", 0, WorkflowStepIdentity{})
+	return status, body, err
 }
 
 func (h *httpGatewaySynth) ExecuteWorkflowStep(ctx context.Context, appID string, identity WorkflowStepIdentity, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, error) {
+	status, body, _, err := h.ExecuteWorkflowStepWithRetryAfter(ctx, appID, identity, path, method, headers, body, timeout, operationID, generation)
+	return status, body, err
+}
+
+func (h *httpGatewaySynth) ExecuteWorkflowStepWithRetryAfter(ctx context.Context, appID string, identity WorkflowStepIdentity, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, time.Time, error) {
 	if identity.RunID == "" || strings.TrimSpace(headers["X-Faas-Workflow-Run-Id"]) != identity.RunID {
-		return 0, nil, errors.New("sched: workflow run metadata does not match persisted identity")
+		return 0, nil, time.Time{}, errors.New("sched: workflow run metadata does not match persisted identity")
 	}
 	if operationID == "" && generation != 0 || operationID != "" && generation < 1 {
-		return 0, nil, errors.New("sched: invalid managed workflow operation context")
+		return 0, nil, time.Time{}, errors.New("sched: invalid managed workflow operation context")
 	}
 	return h.executeStep(ctx, appID, path, method, headers, body, timeout, operationID, generation, identity)
 }
@@ -3490,18 +3549,28 @@ func (h *httpGatewaySynth) ExecuteManagedOperationStep(ctx context.Context, appI
 	if operationID == "" || generation < 1 {
 		return 0, nil, errors.New("sched: invalid managed workflow operation context")
 	}
-	return h.executeStep(ctx, appID, path, method, headers, body, timeout, operationID, generation, WorkflowStepIdentity{})
+	status, body, _, err := h.executeStep(ctx, appID, path, method, headers, body, timeout, operationID, generation, WorkflowStepIdentity{})
+	return status, body, err
 }
 
-func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64, identity WorkflowStepIdentity) (int, []byte, error) {
+func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64, identity WorkflowStepIdentity) (int, []byte, time.Time, error) {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
+	if identity.DeploymentID != "" {
+		// An older gateway understands exact revision selection and either
+		// executes that code or rejects it. It cannot silently select latest.
+		headers = maps.Clone(headers)
+		if headers == nil {
+			headers = map[string]string{}
+		}
+		headers[api.RevisionHeader] = identity.DeploymentID
+	}
 	headerBytes, err := json.Marshal(headers)
 	if err != nil {
-		return 0, nil, fmt.Errorf("sched: workflow headers: %w", err)
+		return 0, nil, time.Time{}, fmt.Errorf("sched: workflow headers: %w", err)
 	}
 	inv := state.Invocation{
 		ID:                         "workflow-" + middleware.NewRequestID(),
@@ -3518,9 +3587,9 @@ func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method 
 	}
 	out, statusCode, err := h.invokeWithStatus(ctx, appID, inv, nil)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, time.Time{}, err
 	}
-	return statusCode, out.Result, nil
+	return statusCode, out.Result, api.WorkflowRetryAfter(out.ResponseRetryAfter, time.Now().UTC()), nil
 }
 
 func boolToProtocolVersion(enabled bool) int {
@@ -3659,9 +3728,10 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		Result      json.RawMessage `json:"result"`
 		StatusCode  int             `json:"status_code"`
 		OutcomeCode string          `json:"outcome_code"`
+		RetryAfter  string          `json:"retry_after"`
 	}
 	responseLimit := int64(gatewayInvocationResponseMaxBytes)
-	if inv.ExclusiveClaim != nil || inv.ManagedOperationID != "" {
+	if inv.ExclusiveClaim != nil || inv.ManagedOperationID != "" || state.InvocationHasOperation(inv) {
 		responseLimit = api.MaxExclusiveGatewayResponseBytes
 	}
 	if err := httpjson.Decode(resp.Body, responseLimit, &out); err != nil {
@@ -3676,6 +3746,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		inv.Result = append(json.RawMessage(nil), out.Result...)
 	}
 	inv.OutcomeCode = out.OutcomeCode
+	inv.ResponseRetryAfter = out.RetryAfter
 	if out.StatusCode == 0 {
 		out.StatusCode = http.StatusOK
 	}
@@ -3942,16 +4013,17 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 			l.log.Warn("schedd: workflow schedule tick failed", "error_type", fmt.Sprintf("%T", err))
 		}
 	})
-	key := fmt.Sprintf("%d", l.workflowDispatchCursor.Add(1)%4)
-	l.submitWork(workWorkflowDispatch, key, func() {
-		orch := l.workflowOrch
-		if orch == nil {
-			orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
-		}
-		if err := orch.DispatchTick(ctx); err != nil && l.log != nil {
-			l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
-		}
-	})
+	for slot := range api.WorkflowDispatchSlots {
+		l.submitWork(workWorkflowDispatch, fmt.Sprintf("%d", slot), func() {
+			orch := l.workflowOrch
+			if orch == nil {
+				orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
+			}
+			if err := orch.DispatchBatch(ctx); err != nil && l.log != nil {
+				l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
+			}
+		})
+	}
 }
 
 func (l *Loop) dispatchTriggerTick(ctx context.Context) {
@@ -4726,10 +4798,15 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 			// Fall through to legacy wake-only shape so this
 			// doesn't silently drop. tests may rely on the
 			// SynthesizeRequest call for back-compat assertions.
-			if err := l.gateway.SynthesizeRequest(ctx, c.AppID, "POST", c.Path); err != nil {
-				l.log.Warn("cron: synthesize (legacy)", "cron_id", c.ID, "err", err)
-				// status="err" via defer; fireSucceeded stays false.
-				return CronRun{InvocationID: enq.ID}, true
+			// A permanent error means the app answered: nothing was
+			// dropped, and a wake-only retry only asks for another
+			// instance (production-us H5-19: scale-out cooldown 500s).
+			if !errors.Is(ierr, ErrPermanentInvoke) {
+				if err := l.gateway.SynthesizeRequest(ctx, c.AppID, "POST", c.Path); err != nil {
+					l.log.Warn("cron: synthesize (legacy)", "cron_id", c.ID, "err", err)
+					// status="err" via defer; fireSucceeded stays false.
+					return CronRun{InvocationID: enq.ID}, true
+				}
 			}
 		} else if enq.ID != "" {
 			// Stamp the live instance handle + complete the row

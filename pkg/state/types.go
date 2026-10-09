@@ -1724,6 +1724,7 @@ type AppManifest struct {
 	RestartPolicy    string                    `json:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Profiling        *api.ProfilingConfig      `json:"profiling,omitempty"`
 	StartupDeadlineS int                       `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int                       `json:"max_retries,omitempty"`
 	StopGracePeriodS int                       `json:"stop_grace_period_s,omitempty"`
@@ -1787,7 +1788,7 @@ func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
 		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
-		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil &&
+		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Profiling == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
@@ -2870,6 +2871,8 @@ type Build struct {
 // nullable columns. sbom_storage_key is empty in this PR — Phase 3's
 // syft populator fills it.
 type BuildProvenance struct {
+	// RuntimeBaseRef is the host-resolved deploy base used by this build.
+	RuntimeBaseRef string
 	ID             string
 	BuildID        string
 	BuildkitVer    string
@@ -3164,24 +3167,43 @@ type OperatorIntent struct {
 type AlertMetric string
 
 const (
-	AlertMetricErrorRate                 AlertMetric = "error_rate_pct"
-	AlertMetricLatencyP50                AlertMetric = "latency_p50_ms"
-	AlertMetricLatencyP95                AlertMetric = "latency_p95_ms"
-	AlertMetricLatencyP99                AlertMetric = "latency_p99_ms"
-	AlertMetricColdStartPct              AlertMetric = "cold_start_pct"
-	AlertMetricRequestCount              AlertMetric = "request_count"
-	AlertMetricFailedInvocs              AlertMetric = "failed_invocations"
-	AlertMetricAPIUp                     AlertMetric = "api_up"
-	AlertMetricAccountSpendEUR           AlertMetric = "account_spend_eur"
-	AlertMetricFailedDeployments         AlertMetric = "deployment_failed"
-	AlertMetricCertExpirySeconds         AlertMetric = "cert_expiry_seconds"
-	AlertMetricCertIssuanceFailed        AlertMetric = "cert_issuance_failed"
-	AlertMetricQueueDepth                AlertMetric = "queue_depth"
-	AlertMetricPreAuthTargetThreshold    AlertMetric = "pre_auth_target_threshold"
-	AlertMetricPreAuthTargetSignalGapPct AlertMetric = "pre_auth_target_signal_gap_pct"
-	AlertMetricNewErrorFingerprint       AlertMetric = "new_error_fingerprint"
-	AlertMetricColdWakeRatePct           AlertMetric = "cold_wake_rate_pct"
-	AlertMetricDailyCostCents            AlertMetric = "daily_cost_cents"
+	AlertMetricEventExecutionDeadLetters             AlertMetric = "event_execution_dead_letters"
+	AlertMetricEventExecutionDeadLetterRatePerSecond AlertMetric = "event_execution_dead_letter_rate_per_second"
+	AlertMetricEventHandlerFailurePct                AlertMetric = "event_handler_failure_pct"
+	AlertMetricEventCompletionLatencyP95Seconds      AlertMetric = "event_completion_latency_p95_seconds"
+	AlertMetricEventRecoveryCapacityWaitJobs         AlertMetric = "event_recovery_capacity_wait_jobs"
+	AlertMetricEventRecoveryStalledJobs              AlertMetric = "event_recovery_stalled_jobs"
+	AlertMetricEventRecoveryExpiringJobs             AlertMetric = "event_recovery_expiring_jobs"
+	AlertMetricEventPendingRecipients                AlertMetric = "event_pending_recipients"
+	AlertMetricEventOldestPendingSeconds             AlertMetric = "event_oldest_pending_seconds"
+	AlertMetricEventRetryRatePerSecond               AlertMetric = "event_retry_rate_per_second"
+	AlertMetricEventTerminalFailurePct               AlertMetric = "event_terminal_failure_pct"
+	AlertMetricEventRoutingLatencyP95Seconds         AlertMetric = "event_routing_latency_p95_seconds"
+	AlertMetricEventPausedSeconds                    AlertMetric = "event_paused_seconds"
+	AlertMetricEventDrainRatePerSecond               AlertMetric = "event_drain_rate_per_second"
+	AlertMetricErrorRate                             AlertMetric = "error_rate_pct"
+	AlertMetricLatencyP50                            AlertMetric = "latency_p50_ms"
+	AlertMetricLatencyP95                            AlertMetric = "latency_p95_ms"
+	AlertMetricLatencyP99                            AlertMetric = "latency_p99_ms"
+	AlertMetricColdStartPct                          AlertMetric = "cold_start_pct"
+	AlertMetricRequestCount                          AlertMetric = "request_count"
+	AlertMetricFailedInvocs                          AlertMetric = "failed_invocations"
+	AlertMetricAPIUp                                 AlertMetric = "api_up"
+	AlertMetricAccountSpendEUR                       AlertMetric = "account_spend_eur"
+	AlertMetricFailedDeployments                     AlertMetric = "deployment_failed"
+	AlertMetricCertExpirySeconds                     AlertMetric = "cert_expiry_seconds"
+	AlertMetricCertIssuanceFailed                    AlertMetric = "cert_issuance_failed"
+	AlertMetricQueueDepth                            AlertMetric = "queue_depth"
+	AlertMetricPreAuthTargetThreshold                AlertMetric = "pre_auth_target_threshold"
+	AlertMetricPreAuthTargetSignalGapPct             AlertMetric = "pre_auth_target_signal_gap_pct"
+	AlertMetricNewErrorFingerprint                   AlertMetric = "new_error_fingerprint"
+	AlertMetricColdWakeRatePct                       AlertMetric = "cold_wake_rate_pct"
+	AlertMetricDailyCostCents                        AlertMetric = "daily_cost_cents"
+	AlertMetricWorkflowFailures                      AlertMetric = "workflow_failures"
+	AlertMetricWorkflowQuotaSkips                    AlertMetric = "workflow_schedule_quota_skips"
+	AlertMetricWorkflowPendingAge                    AlertMetric = "workflow_pending_age_seconds"
+	AlertMetricWorkflowWaitingAge                    AlertMetric = "workflow_waiting_age_seconds"
+	AlertMetricWorkflowDueAge                        AlertMetric = "workflow_due_age_seconds"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3362,6 +3384,7 @@ type UpdateAlertRuleParams struct {
 // never surfaced on a read — the apid response carries a masked
 // constant.
 type AlertRule struct {
+	EventSubscriptionID             string
 	PostDeployRollbackWindowSeconds int
 	ID                              string
 	AccountID                       string
@@ -3464,7 +3487,8 @@ func (e *AlertRuleQuotaError) Error() string {
 // ----------------------------------------------------------------------------
 
 // AppWebhookEvent is the closed vocabulary on app_webhooks.event_filter.
-// An empty filter ([]) means all eligible events for that subscription scope;
+// An empty filter ([]) means standard eligible events for that subscription scope;
+// app.health.changed requires an explicit filter.
 // non-empty filters accept events whose name appears in the array. The delivery
 // ledger also stores bounded custom event names from explicitly addressed
 // application-outbox calls; those names never participate in subscription
@@ -3480,6 +3504,7 @@ const (
 	AppWebhookEventAppScaled                        AppWebhookEvent = "app.scaled"
 	AppWebhookEventAppParked                        AppWebhookEvent = "app.parked"
 	AppWebhookEventAppWoken                         AppWebhookEvent = "app.woken"
+	AppWebhookEventAppHealthChanged                 AppWebhookEvent = "app.health.changed"
 	AppWebhookEventBuildSucceeded                   AppWebhookEvent = "build.succeeded"
 	AppWebhookEventBuildFailed                      AppWebhookEvent = "build.failed"
 	AppWebhookEventDeploymentLive                   AppWebhookEvent = "deployment.live"
@@ -3496,10 +3521,13 @@ const (
 	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
 	AppWebhookEventRouteMonitorViolated             AppWebhookEvent = "routes.monitor.violated"
+	AppWebhookEventRouteMonitorEscalated            AppWebhookEvent = "routes.monitor.escalated"
 	AppWebhookEventRouteMonitorRecovered            AppWebhookEvent = "routes.monitor.recovered"
 	AppWebhookEventRouteHealthAborted               AppWebhookEvent = "routes.health.aborted"
 	AppWebhookEventRouteHealthBlocked               AppWebhookEvent = "routes.health.blocked"
 	AppWebhookEventRouteHealthResumed               AppWebhookEvent = "routes.health.resumed"
+	AppWebhookEventProfileRouteRegressed            AppWebhookEvent = "profile.route_regressed"
+	AppWebhookEventProfileRouteRecovered            AppWebhookEvent = "profile.route_recovered"
 	AppWebhookEventRouteRequirementsChanged         AppWebhookEvent = "routes.requirements.changed"
 	AppWebhookEventRouteRequirementsViolated        AppWebhookEvent = "routes.requirements.violated"
 	AppWebhookEventRouteRequirementsRecovered       AppWebhookEvent = "routes.requirements.recovered"
@@ -3510,6 +3538,9 @@ const (
 	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
 	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
 	AppWebhookEventIssueImpactThresholdReached      AppWebhookEvent = "issue.impact_threshold_reached"
+	AppWebhookEventRecoveryCompleted                AppWebhookEvent = "event_recovery.completed"
+	AppWebhookEventRecoveryCancelled                AppWebhookEvent = "event_recovery.cancelled"
+	AppWebhookEventRecoveryExpired                  AppWebhookEvent = "event_recovery.expired"
 	AppWebhookEventWorkflowFinished                 AppWebhookEvent = "workflow.finished"
 )
 
@@ -3517,6 +3548,7 @@ const (
 // emitters, tests, and adapters. Keep the order stable: it is also the
 // order used in validation error messages and generated documentation.
 var AllAppWebhookEvents = []AppWebhookEvent{
+	AppWebhookEventProfileRouteRegressed, AppWebhookEventProfileRouteRecovered,
 	AppWebhookEventCronFired,
 	AppWebhookEventCronFiredManually,
 	AppWebhookEventAppCreated,
@@ -3525,6 +3557,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventAppScaled,
 	AppWebhookEventAppParked,
 	AppWebhookEventAppWoken,
+	AppWebhookEventAppHealthChanged,
 	AppWebhookEventBuildSucceeded,
 	AppWebhookEventBuildFailed,
 	AppWebhookEventDeploymentLive,
@@ -3541,6 +3574,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
 	AppWebhookEventRouteMonitorViolated,
+	AppWebhookEventRouteMonitorEscalated,
 	AppWebhookEventRouteMonitorRecovered,
 	AppWebhookEventRouteRequirementsChanged,
 	AppWebhookEventRouteRequirementsViolated,
@@ -3552,6 +3586,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
+	AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired,
 	AppWebhookEventWorkflowFinished,
 }
 
@@ -3989,6 +4024,12 @@ const (
 // meter reads it via CountInstanceInvocationsInMinute to set
 // usage_minutes.requests.
 type Invocation struct {
+	// WorkflowRunID is set only after authenticated durable workflow admission.
+	// It authorizes private code routing and is never guest-authored or persisted.
+	WorkflowRunID string `json:"-"`
+	// ResponseRetryAfter is transient gateway response metadata, never persisted
+	// or accepted from the customer invocation envelope.
+	ResponseRetryAfter string `json:"-"`
 	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
 	// is never stored in the invocation ledger or exposed by the customer API.
 	ExclusiveClaim *exclusivework.Claim `json:"-"`

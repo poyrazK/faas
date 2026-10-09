@@ -15,7 +15,6 @@ import (
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/browser"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/safetext"
 )
@@ -48,7 +47,7 @@ func cmdStart(args []string) (code int) {
 	if !stdinIsTTY() {
 		return printErr("Interactive session required", errors.New("run gregale start in a terminal; use gregale deploy for scripts"))
 	}
-	scope, err := filepath.Abs(".")
+	scope, err := canonicalStartScope(".")
 	if err != nil {
 		return printErr("Could not resolve session directory", err)
 	}
@@ -83,7 +82,7 @@ func cmdStart(args []string) (code int) {
 	if found && saved.APIBase != apiBase() {
 		return printErr("Session belongs to another API", fmt.Errorf("restore the API configuration for %s before continuing", saved.APIBase))
 	}
-	if found && saved.ScopePath != scope {
+	if savedScope, scopeErr := canonicalStartScope(saved.ScopePath); found && (scopeErr != nil || savedScope != scope) {
 		return printErr("Session directory does not match", errors.New("the saved session belongs to another directory"))
 	}
 	if code := runner.authenticate(); code != 0 {
@@ -158,7 +157,7 @@ func (r *startRunner) authenticate() int {
 		return printErr("Could not start login", err)
 	}
 	_, _ = fmt.Fprintf(osStdout, "Approve this session in your browser:\n  %s\n", code.URL)
-	if err := browser.Open(code.URL); err != nil {
+	if err := openBrowser(code.URL); err != nil {
 		PrintWarn(osStdout, "Open the link above manually: %v", err)
 	}
 	if result := waitForApproval(r.ctx, client, code); result != 0 {

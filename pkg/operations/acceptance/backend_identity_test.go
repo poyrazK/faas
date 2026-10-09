@@ -339,20 +339,34 @@ func backendRunFixture(t *testing.T, ctx context.Context, s *state.PgStore, kind
 
 func insertBackendOperation(t *testing.T, ctx context.Context, db sqlc.DBTX, id, run, kind, account, app, definition, tenant string) {
 	t.Helper()
-	record, err := json.Marshal(map[string]any{"id": id, "account_id": account, "app_id": app,
+	if err := sqlc.New().InsertCustomerOperation(ctx, db, backendOperationParams(t, id, run, kind, account, app, definition, tenant)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func backendOperationParams(t *testing.T, id, run, kind, account, app, definition, tenant string) sqlc.InsertCustomerOperationParams {
+	t.Helper()
+	fields := map[string]any{"id": id, "account_id": account, "app_id": app,
 		"definition_id": definition, "platform_tenant_id": tenant, "state": "accepted", "generation": 1,
-		"current_execution_id": run, "execution_kind": kind})
+		"current_execution_id": run, "execution_kind": kind}
+	params := sqlc.InsertCustomerOperationParams{ID: backendUUID(id),
+		AccountID: backendUUID(account), AppID: backendUUID(app), TenantID: backendUUID(tenant), DefinitionID: backendUUID(definition),
+		State: "accepted", CreatedAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}}
+	if kind == "workflow" {
+		fields["workflow_run_id"] = run
+		params.WorkflowRunID = backendUUID(run)
+	} else {
+		fields["job_run_id"] = run
+		params.JobRunID = backendUUID(run)
+	}
+	record, err := json.Marshal(fields)
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	err = sqlc.New().InsertCustomerOperation(ctx, db, sqlc.InsertCustomerOperationParams{ID: backendUUID(id),
-		AccountID: backendUUID(account), AppID: backendUUID(app), TenantID: backendUUID(tenant), DefinitionID: backendUUID(definition),
-		State: "accepted", Record: record, CreatedAt: pgtype.Timestamptz{Time: now, Valid: true},
-		ExpiresAt: pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	params.Record = record
+	params.ExpiresAt = pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true}
+	return params
 }
 
 func markBackend(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, kind, operation, run string) (int64, error) {
@@ -410,8 +424,15 @@ func assertBackendGenerationFence(t *testing.T, ctx context.Context, db interfac
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = q.UpdateCustomerOperation(ctx, wrongGeneration, sqlc.UpdateCustomerOperationParams{ID: backendUUID(operation), State: "accepted",
-		Record: raw, ExpiresAt: pgtype.Timestamptz{Time: time.Now().UTC().Add(time.Hour), Valid: true}})
+	update := sqlc.UpdateCustomerOperationParams{ID: backendUUID(operation), State: "accepted",
+		Record: raw, ExpiresAt: pgtype.Timestamptz{Time: time.Now().UTC().Add(time.Hour), Valid: true}}
+	switch kind {
+	case "workflow":
+		update.WorkflowRunID = backendUUID(run)
+	case "job":
+		update.JobRunID = backendUUID(run)
+	}
+	err = q.UpdateCustomerOperation(ctx, wrongGeneration, update)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,18 +443,20 @@ func assertBackendGenerationFence(t *testing.T, ctx context.Context, db interfac
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	other := uuid.NewString()
-	insertBackendOperation(t, ctx, tx, other, run, kind, account, app, definition, tenant)
-	if n, err := markBackend(ctx, sqlc.New(), tx, kind, other, run); err != nil || n != 0 {
-		t.Fatalf("backend marker was reassigned to a second operation: %d %v", n, err)
-	}
-	assertBackendForeignKey(t, tx.Commit(ctx), "customer_operations_current_execution_fkey")
+	err = sqlc.New().InsertCustomerOperation(ctx, tx, backendOperationParams(t, other, run, kind, account, app, definition, tenant))
+	assertBackendPostgresError(t, err, "23505", "customer_operations_"+kind+"_run_id_key")
 }
 
 func assertBackendForeignKey(t *testing.T, err error, constraint string) {
 	t.Helper()
+	assertBackendPostgresError(t, err, "23503", constraint)
+}
+
+func assertBackendPostgresError(t *testing.T, err error, code, constraint string) {
+	t.Helper()
 	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != "23503" || pgErr.ConstraintName != constraint {
-		t.Fatalf("expected owned backend fence %s, got %v", constraint, err)
+	if !errors.As(err, &pgErr) || pgErr.Code != code || pgErr.ConstraintName != constraint {
+		t.Fatalf("expected owned backend fence %s (%s), got %v", constraint, code, err)
 	}
 }
 
@@ -457,8 +480,15 @@ func assertBackendMarkerSurvivesGC(t *testing.T, ctx context.Context, db interfa
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	err = q.UpdateCustomerOperation(ctx, db, sqlc.UpdateCustomerOperationParams{ID: backendUUID(operation), State: "succeeded",
-		Record: raw, ExpiresAt: pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true}})
+	update := sqlc.UpdateCustomerOperationParams{ID: backendUUID(operation), State: "succeeded",
+		Record: raw, ExpiresAt: pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true}}
+	switch kind {
+	case "workflow":
+		update.WorkflowRunID = backendUUID(run)
+	case "job":
+		update.JobRunID = backendUUID(run)
+	}
+	err = q.UpdateCustomerOperation(ctx, db, update)
 	if err != nil {
 		t.Fatal(err)
 	}

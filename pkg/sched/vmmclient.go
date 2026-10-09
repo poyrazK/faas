@@ -505,6 +505,9 @@ type AppSpec struct {
 	// readiness policy. It is separate from HealthcheckPath/GRPC, which
 	// only gate startup admission.
 	ReadinessProbeJSON string
+	// LivenessProbeJSON carries the deployment's primary-app liveness_probe
+	// override (ADR-078). Empty keeps the plan defaults.
+	LivenessProbeJSON string
 	// Runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312"). vmmd stamps it on
 	// the live Instance so the framework_ready DGRAM receipt
@@ -1425,6 +1428,18 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 	if app.migrationRuntime != nil {
 		fields.WakeID = app.migrationRuntime.WakeID
 	}
+	// The destination's boot emits wake timeline events, which vmmd rejects
+	// without the app identity (H5-18: every migration lost its readiness and
+	// boot breakdown rows).
+	if fields.AppID == "" {
+		fields.AppID = app.AppID
+	}
+	if fields.DeploymentID == "" {
+		fields.DeploymentID = app.DeploymentID
+	}
+	if fields.InstanceID == "" {
+		fields.InstanceID = instanceID
+	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.AdoptMigratedInstance(ctx, &vmmdpb.AdoptMigratedInstanceRequest{
 		InstanceId:        instanceID,
@@ -1704,6 +1719,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		HealthcheckGrpcService:   a.HealthcheckGRPCService,
 		ImageHealthcheckRequired: a.ImageHealthcheckRequired,
 		ReadinessProbeJson:       a.ReadinessProbeJSON,
+		LivenessProbeJson:        a.LivenessProbeJSON,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). vmmd stamps it on the live Instance
 		// so the framework_ready DGRAM receipt path can label

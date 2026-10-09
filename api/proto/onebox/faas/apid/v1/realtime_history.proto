@@ -5,10 +5,12 @@ package onebox.faas.apid.v1;
 option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpb";
 
 // RealtimeHistory is private to trusted daemons. Endpoint authentication and
-// channel authorization are enforced by realtimed before a client can cause
-// this read; the RPC must never be forwarded to a public HTTP route.
+// channel authorization are enforced by realtimed before a client can cause a
+// history read or route update; these RPCs must never be forwarded to a public
+// HTTP route.
 service RealtimeHistory {
   rpc ReadChannelHistory(ReadChannelHistoryRequest) returns (ReadChannelHistoryResponse);
+  rpc ReportChannelRoute(ReportChannelRouteRequest) returns (ReportChannelRouteResponse);
 }
 
 message ReadChannelHistoryRequest {
@@ -31,4 +33,15 @@ message RetainedChannelMessage {
   bytes data = 2;
   bool binary = 3;
   int64 created_at_unix_nano = 4;
+}
+
+message ReportChannelRouteRequest {
+  string endpoint_id = 1;
+  string channel = 2;
+  string node_name = 3;
+  bool subscribed = 4;
+}
+
+message ReportChannelRouteResponse {
+  bool applied = 1;
 }

@@ -1,6 +1,7 @@
 /** Browser credential carrier for managed realtime v2 handshakes. */
 
 import {
+  RealtimeConfigurationError,
   REALTIME_RESUME_SUBPROTOCOL,
   type RealtimeSocket,
 } from './realtime-resume.js';
@@ -28,7 +29,7 @@ export function createBrowserRealtimeSocketFactory(
     const token = await getOIDCToken();
     if (typeof token !== 'string' || token.length > 3072 ||
         !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
-      throw new TypeError('browser realtime requires a bounded signed OIDC JWT');
+      throw new RealtimeConfigurationError('browser realtime requires a bounded signed OIDC JWT');
     }
     return openSocket(url, [...protocols, `${REALTIME_RESUME_BEARER_SUBPROTOCOL_PREFIX}${token}`]);
   };

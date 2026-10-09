@@ -134,6 +134,10 @@ type InstanceInfo struct {
 	EnvironmentID string
 	// Unavailable policy or original ownership never authorizes scale-in.
 	PolicyUnavailable bool
+	// DeploymentSuperseded marks an instance whose deployment no longer
+	// serves. The reaper drains its live rows directly instead of selecting
+	// them by idleness, and its deployment floor never raises the app's floor.
+	DeploymentSuperseded bool
 	// WorkloadClass is the apps-row workload class
 	// (ADR-051 PR-D). Workers (background jobs / cron workers /
 	// long-running consumers) are reaper-exempt: they have no

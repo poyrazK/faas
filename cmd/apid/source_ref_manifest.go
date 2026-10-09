@@ -46,6 +46,8 @@ type sourceRefManifestStaged struct {
 	triggerWorkChanges    []sourceRefTriggerWorkBindingChange
 	eventSubscriptionIDs  []string
 	eventWorkChanges      []sourceRefEventWorkBindingChange
+	eventRetryChanges     []sourceRefEventRetryChange
+	eventVersionChanges   []sourceRefEventVersionsChange
 	workPolicyChanges     []sourceRefWorkPolicyChange
 	bindingIDs            []string
 	scalingChanged        bool
@@ -74,7 +76,7 @@ type sourceRefWorkPolicyChange struct {
 func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
 	return staged.scalingChanged || staged.retryPolicyChanged || len(staged.edgeRuleChanges) > 0 ||
 		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 || len(staged.triggerWorkChanges) > 0 ||
-		len(staged.eventSubscriptionIDs) > 0 || len(staged.eventWorkChanges) > 0 ||
+		len(staged.eventSubscriptionIDs) > 0 || len(staged.eventWorkChanges) > 0 || len(staged.eventRetryChanges) > 0 || len(staged.eventVersionChanges) > 0 ||
 		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0
 }
 
@@ -302,7 +304,7 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	if m == nil {
 		return staged, nil
 	}
-	if len(sourceOperationSpecs(m)) > 0 && !s.operationDefinitionAdmission(acct.ID, app.ID, deploymentScope) {
+	if !s.operationDefinitionsAdmission(acct.ID, app.ID, deploymentScope, sourceOperationSpecs(m)) {
 		return staged, api.ErrCapacity("new operation admission is disabled for this preview cohort")
 	}
 	resolved, problem := s.resolveManifestPostgresBindings(ctx, acct, m, []string{app.Slug}, deploymentScope)
@@ -583,6 +585,10 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				if err != nil {
 					return staged, sourceRefEventSubscriptionProblem(err)
 				}
+				if problem := s.applySourceRefEventVersions(ctx, acct.ID, app.ID, row, declaration, createdHere, &staged); problem != nil {
+					return staged, problem
+				}
+				row.SchemaVersions, _ = api.NormalizeEventSchemaVersions(declaration.SchemaVersions)
 				subscriptionKeys[key] = row
 				if inserted {
 					createdHere = true
@@ -595,6 +601,19 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 					})
 				}
 			}
+			if problem := s.applySourceRefEventRetry(ctx, acct.ID, app.ID, row, declaration, createdHere, &staged); problem != nil {
+				return staged, problem
+			}
+			if policy, _ := declaration.RoutingRetryPolicy(); policy != nil {
+				row.RoutingRetryPolicy = policy
+			} else {
+				row.RoutingRetryPolicy = nil
+			}
+			if problem := s.applySourceRefEventVersions(ctx, acct.ID, app.ID, row, declaration, createdHere, &staged); problem != nil {
+				return staged, problem
+			}
+			row.SchemaVersions, _ = api.NormalizeEventSchemaVersions(declaration.SchemaVersions)
+			subscriptionKeys[key] = row
 			previous := bindingByID[row.ID]
 			previousAction := previous.Action
 			if previousAction == "" {
@@ -602,12 +621,12 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			}
 			if previous.PolicyName == declaration.WorkPolicy && previous.KeySelector == declaration.WorkKey &&
 				previous.FairnessSelector == declaration.WorkFairnessKey &&
-				previousAction == declaration.EffectiveWorkAction() {
+				previousAction == declaration.EffectiveWorkAction() && previous.Ordered == declaration.Ordered {
 				continue
 			}
 			old, bindingErr := workBindings.SetEventWorkBinding(ctx, app.ID, row.ID, declaration.WorkPolicy,
 				declaration.WorkKey, state.EventWorkBindingOptions{
-					Action: declaration.EffectiveWorkAction(), FairnessSelector: declaration.WorkFairnessKey})
+					Action: declaration.EffectiveWorkAction(), FairnessSelector: declaration.WorkFairnessKey, Ordered: declaration.Ordered})
 			if bindingErr != nil {
 				return staged, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
 					"Invalid manifest", "event work policy must exist on the target app")
@@ -619,7 +638,7 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			bindingByID[row.ID] = state.EventWorkBinding{SubscriptionID: row.ID,
 				AppID: app.ID, PolicyName: declaration.WorkPolicy, KeySelector: declaration.WorkKey,
 				FairnessSelector: declaration.WorkFairnessKey,
-				Action:           declaration.EffectiveWorkAction()}
+				Action:           declaration.EffectiveWorkAction(), Ordered: declaration.Ordered}
 		}
 	}
 	if m.AsyncRoutes != nil {
@@ -809,6 +828,12 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 			errs = append(errs, errors.New("trigger work bindings unavailable during rollback"))
 		}
 	}
+	if err := s.rollbackSourceRefEventVersions(ctx, staged); err != nil {
+		errs = append(errs, err)
+	}
+	if err := s.rollbackSourceRefEventRetry(ctx, staged); err != nil {
+		errs = append(errs, err)
+	}
 	if len(staged.eventWorkChanges) > 0 {
 		if bindings, ok := s.store.(state.EventWorkBindingStore); ok {
 			for i := len(staged.eventWorkChanges) - 1; i >= 0; i-- {
@@ -820,7 +845,7 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 				}
 				if _, err := bindings.SetEventWorkBinding(ctx, staged.appID,
 					change.subscriptionID, policy, selector,
-					state.EventWorkBindingOptions{Action: action, FairnessSelector: fairness}); err != nil {
+					state.EventWorkBindingOptions{Action: action, FairnessSelector: fairness, Ordered: change.previous != nil && change.previous.Ordered}); err != nil {
 					errs = append(errs, err)
 				}
 			}

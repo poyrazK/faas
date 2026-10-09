@@ -33,10 +33,12 @@ import (
 // the per-app target set (issue #168) so tests can assert fan-out
 // behavior end-to-end without a real cluster.
 type fakeBackend struct {
-	mu       sync.Mutex
-	app      App
-	host     string
-	upstream string // address the proxy connects to (the "node id" on the legacy path)
+	mu  sync.Mutex
+	app App
+	// preparedRouteTargets records PrepareRouteTarget calls (H5-63).
+	preparedRouteTargets []string
+	host                 string
+	upstream             string // address the proxy connects to (the "node id" on the legacy path)
 	// preservePublicAuthMode lets public-auth tests exercise an empty mode;
 	// ordinary gateway fixtures model the database default ('open').
 	preservePublicAuthMode bool
@@ -654,6 +656,7 @@ func TestRateLimitReturns429(t *testing.T) {
 			if rec.Header().Get("x-faas-rate-limit-scope") != "app" {
 				t.Error("app-scope 429 should carry x-faas-rate-limit-scope: app")
 			}
+			assertRateLimitedProblem(t, rec, 20)
 			break
 		}
 	}
@@ -734,6 +737,7 @@ func TestEdgeRuleThrottleReturns429(t *testing.T) {
 	if got := rec2.Header().Get("X-RouteRateLimit-Policy"); got != "route" {
 		t.Errorf("route-scope 429 should carry X-RouteRateLimit-Policy=route (back-compat default); got %q", got)
 	}
+	assertRateLimitedProblem(t, rec2, 1)
 }
 
 type stubCountryReader struct {
@@ -959,6 +963,7 @@ func TestAccountRateLimitReturns429(t *testing.T) {
 				t.Errorf("account-scope 429 should carry x-faas-rate-limit-scope: account; got %q",
 					rec.Header().Get("x-faas-rate-limit-scope"))
 			}
+			assertRateLimitedProblem(t, rec, 300)
 			break
 		}
 	}
@@ -4388,6 +4393,33 @@ func TestCORSDefaultWildcardEchoesRequestOrigin(t *testing.T) {
 		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
 			t.Fatalf("Access-Control-Allow-Origin for %s = %q, want the request origin", origin, got)
 		}
+	}
+}
+
+func (b *fakeBackend) PrepareRouteTarget(_ context.Context, app App) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.preparedRouteTargets = append(b.preparedRouteTargets, app.ID)
+	return true
+}
+
+// production-us hunt #7 (H5-63): a kind=route target resolved by slug never
+// got the routing state Backend.Lookup hydrates, so every routed request
+// woke a fresh target instance and still answered 503. The route path now
+// prepares the target before substituting it.
+func TestRouteRulePreparesItsTarget(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	target := App{ID: "app-target", AccountID: "acct-1", Slug: "target", Plan: api.PlanPro}
+	h.WithEdgeRules(routeRuleMatcher{route: &EdgeRuleResolved{
+		ID: "rule-route", AccountID: "acct-1", TargetAppSlug: "target",
+	}}, func(context.Context, string) (App, bool) { return target, true }, &captureAuditor{})
+	req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+	req.Header.Set("X-Forwarded-For", "192.0.2.1")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.preparedRouteTargets) != 1 || b.preparedRouteTargets[0] != "app-target" {
+		t.Fatalf("prepared route targets = %v, want [app-target]", b.preparedRouteTargets)
 	}
 }
 

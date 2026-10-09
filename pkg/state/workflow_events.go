@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -70,7 +71,7 @@ func eventWorkflowRun(recipient PublishedEventRecipient, payload []byte, plan ap
 	if int64(len(payload)) > api.WorkflowRunInputMaxBytes {
 		return nil, fmt.Errorf("workflow: event envelope exceeds workflow input limit")
 	}
-	run := &WorkflowRun{AppID: recipient.AppID, PlatformTenantID: recipient.PlatformTenantID, WorkflowName: definition.Name,
+	run := &WorkflowRun{AppID: recipient.AppID, DeploymentID: recipient.DeploymentID, PlatformTenantID: recipient.PlatformTenantID, WorkflowName: definition.Name,
 		Input: cloneWorkflowJSON(payload), DefinitionSnapshot: cloneWorkflowJSON(recipient.Workflow)}
 	if err := prepareWorkflowRun(run); err != nil {
 		return nil, err
@@ -183,7 +184,7 @@ func (m *MemStore) AdmitEventWorkflow(_ context.Context, outboxID int64, token, 
 			break
 		}
 	}
-	if work == nil || token == "" || work.ClaimToken != token || work.Delivered {
+	if work == nil || token == "" || work.ClaimToken != token || work.Delivered || !work.LeaseUntil.After(time.Now().UTC()) {
 		return "", ErrConflict
 	}
 	var recipient PublishedEventRecipient
@@ -196,29 +197,35 @@ func (m *MemStore) AdmitEventWorkflow(_ context.Context, outboxID int64, token, 
 	if recipient.ID == "" {
 		return "", ErrNotFound
 	}
-	key := eventWorkflowReceiptKey(outboxID, recipientID)
+	runID, _, err := m.admitEventWorkflowLocked(work, recipient)
+	return runID, err
+}
+
+func (m *MemStore) admitEventWorkflowLocked(work *PublishedEventWork, recipient PublishedEventRecipient) (string, bool, error) {
+	key := eventWorkflowReceiptKey(work.ID, recipient.ID)
 	if runID, exists := m.eventWorkflowReceipts[key]; exists {
 		if _, retained := m.workflowRuns[runID]; !retained {
-			return "", nil
+			return "", false, nil
 		}
-		return runID, nil
+		return runID, false, nil
 	}
-	app, exists := m.apps[recipient.AppID]
+	app, exists := m.eventSubscriptionAppLocked(recipient.AppID)
 	if !exists || app.Status == AppDeleted || !sameMemUUID(app.AccountID, recipient.AccountID) {
-		return "", ErrNotFound
+		return "", false, ErrNotFound
 	}
 	account, exists := m.accounts[app.AccountID]
 	if !exists || !account.Active() || !account.Plan.WorkflowsAllowed() || app.MaintenanceMode ||
 		(app.PlatformTenantRequired && recipient.PlatformTenantID == "") {
-		return "", ErrWorkflowEventTargetUnavailable
+		return "", false, ErrWorkflowEventTargetUnavailable
 	}
 	if recipient.PlatformTenantID != "" && (!app.PlatformTenantRequired || !m.workflowOutboundTenantLinkActiveLocked(app.AccountID, recipient.PlatformTenantID, app.ID)) {
-		return "", ErrWorkflowEventTargetUnavailable
+		return "", false, ErrWorkflowEventTargetUnavailable
 	}
 	run, err := eventWorkflowRun(recipient, work.Payload, account.Plan)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrWorkflowEventDefinitionInvalid, err)
+		return "", false, fmt.Errorf("%w: %w", ErrWorkflowEventDefinitionInvalid, err)
 	}
+	run.AppID = app.ID
 	active := 0
 	for _, candidate := range m.workflowRuns {
 		if candidate.AppID == app.ID && (candidate.Status == WorkflowRunStatusPending || candidate.Status == WorkflowRunStatusRunning || candidate.Status == WorkflowRunStatusAwaitingEvent) {
@@ -226,14 +233,14 @@ func (m *MemStore) AdmitEventWorkflow(_ context.Context, outboxID int64, token, 
 		}
 	}
 	if active >= account.Plan.WorkflowMaxConcurrentRuns() {
-		return "", ErrWorkflowRunQuotaExceeded
+		return "", false, ErrWorkflowRunQuotaExceeded
 	}
 	if err := m.insertWorkflowRunLocked(run); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if m.eventWorkflowReceipts == nil {
 		m.eventWorkflowReceipts = make(map[string]string)
 	}
 	m.eventWorkflowReceipts[key] = run.ID
-	return run.ID, nil
+	return run.ID, true, nil
 }

@@ -34,8 +34,8 @@ func ServeLocal(ctx context.Context, socket net.Conn, target *url.URL, maxConcur
 		return errors.New("dev bridge target must be an HTTP loopback origin")
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	original := proxy.Director
-	proxy.Director = func(r *http.Request) {
+	original := proxy.Director               //nolint:staticcheck // SA1019: retain the qualified loopback forwarding contract during the compiler patch.
+	proxy.Director = func(r *http.Request) { //nolint:staticcheck // SA1019: supported API; Rewrite migration needs tunnel-contract qualification.
 		original(r)
 		r.Host = target.Host
 		ClearCredentials(r.Header)

@@ -84,12 +84,15 @@ func recordBoundedEventHistory(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, 
 		return err
 	}
 	if coalesced {
-		return nil
+		if action == EventFanoutAttemptActionReplay {
+			return nil
+		}
+		return observeCircuitTx(ctx, q, tx, id, app, sub, p)
 	}
 	bounded, truncated := boundedEventHistoryProgress(p)
 	historyID, err := q.EventRecipientAppendHistory(ctx, tx, sqlc.EventRecipientAppendHistoryParams{
 		OutboxID: id, AppID: mustPgUUID(app), SubscriptionID: sub, Action: action, State: p.State, Attempts: int32(p.Attempts),
-		FailureCode: bounded.FailureCode, Retryable: p.Retryable, LastError: bounded.LastError, OccurredAt: pgtypeFromTime(p.UpdatedAt),
+		FilterReason: p.FilterReason, RetryStopReason: p.RetryStopReason, FailureCode: bounded.FailureCode, Retryable: p.Retryable, LastError: bounded.LastError, OccurredAt: pgtypeFromTime(p.UpdatedAt),
 		CapacityScope: scope, CapacityDeferrals: int64(p.CapacityDeferrals), DetailsTruncated: truncated,
 	})
 	if err != nil {
@@ -100,7 +103,13 @@ func recordBoundedEventHistory(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, 
 	}); err != nil {
 		return err
 	}
-	return compactEventHistoryTx(ctx, q, tx, id, sub, time.Now().UTC())
+	if err := compactEventHistoryTx(ctx, q, tx, id, sub, time.Now().UTC()); err != nil {
+		return err
+	}
+	if action == EventFanoutAttemptActionReplay {
+		return nil
+	}
+	return observeCircuitTx(ctx, q, tx, id, app, sub, p)
 }
 func compactEventHistoryTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, id int64, sub string, now time.Time) error {
 	if _, err := q.EventHistoryCompact(ctx, tx, sqlc.EventHistoryCompactParams{
@@ -166,7 +175,7 @@ func (s *PgStore) listEventHistory(ctx context.Context, app string, limit int, b
 		out = append(out, EventFanoutAttempt{
 			ID: r.ID, OutboxID: r.OutboxID, AppID: uuidString(r.AppID), EventID: r.EventID, EventSource: r.EventSource, EventType: r.EventType,
 			SubscriptionID: r.SubscriptionID, Action: r.Action, State: r.State, Attempts: int(r.Attempts), FailureCode: r.FailureCode, Retryable: r.Retryable,
-			LastError: r.LastError, OccurredAt: timeFromPgtype(r.OccurredAt), CapacityScope: r.CapacityScope, CapacityDeferrals: r.CapacityDeferrals,
+			FilterReason: r.FilterReason, RetryStopReason: r.RetryStopReason, LastError: r.LastError, OccurredAt: timeFromPgtype(r.OccurredAt), CapacityScope: r.CapacityScope, CapacityDeferrals: r.CapacityDeferrals,
 			DetailsTruncated: r.DetailsTruncated, HistoryBytes: r.HistoryBytes,
 		})
 	}
@@ -215,6 +224,9 @@ func (m *MemStore) recordEventFanoutHistoryLocked(work *PublishedEventWork, app 
 	summary.lastOutcomeCapacityScope = scope
 	if coalesced {
 		summary.CoalescedOutcomes++
+		if action != EventFanoutAttemptActionReplay {
+			m.observeCircuitLocked(work, sub, p)
+		}
 		return
 	}
 	p, truncated := boundedEventHistoryProgress(p)
@@ -222,8 +234,8 @@ func (m *MemStore) recordEventFanoutHistoryLocked(work *PublishedEventWork, app 
 	id := m.eventFanoutAttemptNextID
 	a := EventFanoutAttempt{ID: id, OutboxID: work.ID, AppID: app, EventID: event.ID, EventSource: event.Source, EventType: event.Type,
 		SubscriptionID: sub, Action: action, State: p.State, Attempts: p.Attempts, FailureCode: p.FailureCode, Retryable: p.Retryable,
-		LastError: p.LastError, OccurredAt: p.UpdatedAt, CapacityScope: scope, CapacityDeferrals: int64(p.CapacityDeferrals), DetailsTruncated: truncated}
-	a.HistoryBytes = int64(api.EventRoutingHistoryRowOverheadBytes + len(sub) + len(action) + len(p.State) + len(p.FailureCode) + len(p.LastError) + len(scope))
+		FilterReason: p.FilterReason, RetryStopReason: p.RetryStopReason, LastError: p.LastError, OccurredAt: p.UpdatedAt, CapacityScope: scope, CapacityDeferrals: int64(p.CapacityDeferrals), DetailsTruncated: truncated}
+	a.HistoryBytes = int64(api.EventRoutingHistoryRowOverheadBytes + len(sub) + len(action) + len(p.State) + len(p.FailureCode) + len(p.LastError) + len(scope) + len(p.RetryStopReason) + len(p.FilterReason))
 	m.eventFanoutAttempts = append(m.eventFanoutAttempts, a)
 	summary.latestID = id
 	if eventHistoryFailure(action, p) {
@@ -233,6 +245,9 @@ func (m *MemStore) recordEventFanoutHistoryLocked(work *PublishedEventWork, app 
 		summary.latestReplayID = id
 	}
 	m.compactEventHistoryLocked(key, summary, time.Now().UTC())
+	if action != EventFanoutAttemptActionReplay {
+		m.observeCircuitLocked(work, sub, p)
+	}
 }
 func eventHistoryProtected(s *eventHistorySummary, id int64) bool {
 	return id == s.latestID || id == s.latestFailureID || id == s.latestReplayID
