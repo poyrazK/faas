@@ -239,7 +239,7 @@ func provision(ctx context.Context, c *api.Client, root, out, apiURL string) err
 
 func cleanup(ctx context.Context, c *api.Client, out string) error {
 	path := filepath.Join(out, "fixtures.json")
-	body, err := sourceRoot.ReadFile(relative)
+	body, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return save(filepath.Join(out, "cleanup.json"), map[string]string{"status": "no_fixtures"})
 	}
