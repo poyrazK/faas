@@ -341,7 +341,9 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Compile all affected race-test binaries before running them. Broad PRs can
+    # need more than 20 minutes for the cold compile plus the 16-minute test cap.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
