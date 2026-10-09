@@ -190,7 +190,8 @@ jobs:
     # GitHub's job-lifecycle guarantees.
     services:
       registry:
-        image: registry:2
+        # Avoid Docker Hub's shared-runner anonymous pull limit.
+        image: mirror.gcr.io/library/registry:2
         ports:
           - 5000:5000
     env:
