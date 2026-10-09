@@ -1,4 +1,4 @@
-# ADR-725: Approved route removal exceptions in the contract gate
+# ADR-825: Approved route removal exceptions in the contract gate
 
 ## Status
 

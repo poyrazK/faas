@@ -1,4 +1,4 @@
-# ADR-726: Telemetry coverage for route removal approvals
+# ADR-826: Telemetry coverage for route removal approvals
 
 ## Status
 

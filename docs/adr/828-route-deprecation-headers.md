@@ -1,4 +1,4 @@
-# ADR-728: Operation deprecation and sunset headers
+# ADR-828: Operation deprecation and sunset headers
 
 Status: Accepted
 

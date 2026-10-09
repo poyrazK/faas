@@ -15,7 +15,7 @@ func TestAlertRollbackSelectionFailsClosed(t *testing.T) {
 	base.AppAccountID = base.AccountID
 	candidate := alertRollbackDeployment{ID: uuid.NewString(), AppID: base.AppID, Status: DeployLive, Scope: "default", TrafficPercent: 25, CanaryTotalSteps: 4, CanaryStep: 1, RolloutState: "rolling_out", CreatedAt: now}
 	predecessor := alertRollbackDeployment{ID: uuid.NewString(), AppID: base.AppID, Status: DeployLive, Scope: "default", TrafficPercent: 75, CreatedAt: now.Add(-time.Minute)}
-	for _, scenario := range []string{"exact pair", "multiple canaries", "multiple recipients", "newer recipient", "completed candidate", "account wide", "foreign account", "service", "pre-auth"} {
+	for _, scenario := range []string{"exact pair", "multiple canaries", "multiple recipients", "newer recipient", "completed candidate", "account wide", "foreign account", "service", "pre-auth", "automation backlog"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := base
 			f.Deployments = []alertRollbackDeployment{candidate, predecessor}
@@ -40,6 +40,8 @@ func TestAlertRollbackSelectionFailsClosed(t *testing.T) {
 				f.AppAccountID = uuid.NewString()
 			case "service":
 				f.Service = true
+			case "automation backlog":
+				f.Metric = AlertMetricWorkflowDueAge
 			case "pre-auth":
 				f.Metric = AlertMetricPreAuthTargetThreshold
 			}

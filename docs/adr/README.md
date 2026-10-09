@@ -77,6 +77,20 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 816 | [Fresh cold-boot readiness receipts for runtime upgrade candidates](816-runtime-upgrade-candidate-acceptance.md) | accepted | Requires exact candidate identity, unrevoked qualification and a fresh cold-boot readiness receipt before activation |
 | 817 | [Trusted import of exact runtime native qualification evidence](817-trusted-runtime-qualification-import.md) | accepted | Verifies trusted signatures, native test/leak evidence, published artifact bindings and durable readback before recording receipts |
 | 644 | [Verified MCP promotion and resource policy](644-mcp-verified-promotion-and-resource-policy.md) | accepted | Verify zero-traffic candidates, gate caller catalogs, and reuse gateway JWT resource authorization |
+| 646 | [Unified backfill delivery inspection](646-unified-backfill-delivery-inspection.md) | accepted | Complete source/consumer inspection across webhook and workflow backfills |
+| 647 | [Independent event routing by default](647-independent-event-routing-default.md) | accepted | Default independent routing for captured event recipients |
+| 648 | [Independent workflow event routing](648-independent-workflow-event-routing.md) | accepted | Workflow event recipient routing with lease-bound recovery |
+| 725 | [Fair workflow admission, history, and transient retries](725-workflow-admission-history-and-transient-retries.md) | accepted | Durable tenant/workflow fairness, atomic occurrence history, throttling retries, and workflow alert signals |
+| 726 | [Bounded workflow schedule catch-up](726-bounded-workflow-schedule-catch-up.md) | accepted | Opt-in latest-fire recovery with a bounded window and tenant parity |
+| 727 | [Workflow handler deployment pins](727-workflow-handler-deployment-pins.md) | accepted | Immutable handler code per run, private retention from event acceptance, and exact deployment routing |
+| 649 | [Fair bounded workflow dispatch](649-fair-bounded-workflow-dispatch.md) | accepted | Fill bounded execution slots and persist app/tenant service order with lease-aware dispatch caps |
+| 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Restricted customer SQL through schema-bound, generated application clients |
+| 730 | [Automation queue health](730-automation-queue-health.md) | accepted | Current dispatch capacity and bounded aggregate waiting reasons, independent of the historical health window |
+| 651 | [Due automation backlog alerts](651-due-automation-backlog-alerts.md) | accepted | Opt-in webhook alerts for aged due work, including overdue parked wakes and expired leases |
+| 652 | [Workflow run diagnostics and resume preview](652-workflow-run-diagnostics-and-resume-preview.md) | accepted | Read-only queue and step diagnostics with precise recovery blockers and the existing continuation plan |
+| 653 | [Read-only workflow schedule preview](653-workflow-schedule-preview.md) | accepted | Timezone-aware upcoming fires and a what-if catch-up decision using the durable schedule cursor |
+| 654 | [Controlled workflow schedule replay](654-controlled-workflow-schedule-replay.md) | accepted | Explicit replay of selected skipped occurrences with definition pins, idempotency, and normal admission checks |
+| 655 | [Selected unstarted workflow cancellation](655-selected-unstarted-workflow-cancellation.md) | accepted | Preview and atomically cancel selected pending runs that have never started |
 | 678 | [Compose prebuilt image workloads](678-compose-prebuilt-image-workloads.md) | accepted | Deploy stateless image services through imaged with immutable resolution and existing project dependency policies |
 | 679 | [Image-published deployment trigger](679-image-published-deployment-trigger.md) | accepted | CI publishes an immutable image, then hands it to existing deployment admission with durable workload/scope/digest deduplication |
 | 686 | [Freeze Compose commands per image deployment](686-frozen-project-image-commands.md) | accepted | Capture Compose CMD in the deployment profile and preserve it through app edits, image processing, retries, and runtime port updates |
@@ -653,14 +667,14 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-647: Independent event routing by default](647-independent-event-routing-default.md)
 - [ADR-648: Independent workflow event routing](648-independent-workflow-event-routing.md)
 
-- [ADR-725: Approved route removal exceptions in the contract gate](725-approved-route-removal-contract-exceptions.md)
+- [ADR-825: Approved route removal exceptions in the contract gate](825-approved-route-removal-contract-exceptions.md)
 
-- [ADR-726: Telemetry coverage for route removal approvals](726-route-removal-telemetry-coverage.md)
+- [ADR-826: Telemetry coverage for route removal approvals](826-route-removal-telemetry-coverage.md)
 
-- [ADR-727: App-scoped route removal coverage](727-app-scoped-route-removal-coverage.md)
-- [ADR-728: Operation deprecation and sunset headers](728-route-deprecation-headers.md)
-- [ADR-729: Gregale route sunset report](729-route-sunset-report.md)
-- [ADR-730: Saved sunset report comparisons](730-route-sunset-regression-tracking.md)
+- [ADR-827: App-scoped route removal coverage](827-app-scoped-route-removal-coverage.md)
+- [ADR-828: Operation deprecation and sunset headers](828-route-deprecation-headers.md)
+- [ADR-829: Gregale route sunset report](829-route-sunset-report.md)
+- [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
 - [ADR-792: Deployment-specific route lifecycle metadata](792-deployment-route-lifecycle.md)
 - [ADR-818: Lifecycle guidance on cached responses](818-cached-route-lifecycle.md)
 - [ADR-819: Lifecycle declaration reviews and canary gate](819-route-lifecycle-declaration-gate.md)

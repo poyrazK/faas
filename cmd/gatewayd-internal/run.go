@@ -902,6 +902,16 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 		rec.Code = http.StatusOK
 	}
 	inv.OutcomeCode = scheduledInvocationOutcomeCode(rec.Header())
+	inv.ResponseRetryAfter = ""
+	if retryAt := api.WorkflowRetryAfter(rec.Header().Get("Retry-After"), time.Now().UTC()); !retryAt.IsZero() {
+		// HTTP dates have whole-second precision. Round up so serializing a
+		// delta-seconds hint never brings the retry deadline forward.
+		rounded := retryAt.Truncate(time.Second)
+		if rounded.Before(retryAt) {
+			rounded = rounded.Add(time.Second)
+		}
+		inv.ResponseRetryAfter = rounded.Format(http.TimeFormat)
+	}
 	body := rec.Body.Bytes()
 	if len(body) > 0 {
 		// Function handlers conventionally return JSON. Preserve valid JSON

@@ -67,6 +67,42 @@ func TestLoginTargetPresetTestAlertLinksToObservations(t *testing.T) {
 	}
 }
 
+func TestAutomationBacklogPresetAndRuleAreNotificationOnly(t *testing.T) {
+	e := setupAlerts(t, api.PlanHobby)
+	appID := mustSeedApp(t, e, "backlog-alert")
+	e.store.SeedAlertPresetForTest(state.AlertPreset{Name: "automation_backlog", DisplayName: "Automation backlog exceeds five minutes", Category: "reliability",
+		Metric: string(state.AlertMetricWorkflowDueAge), Comparison: "gte", Threshold: api.WorkflowBacklogAlertThresholdSeconds, WindowSpec: "5m",
+		DefaultCooldownMinutes: api.WorkflowBacklogAlertCooldownMinutes, EnabledInCatalog: true, MinimumPlan: "hobby"})
+	base := "/v1/apps/backlog-alert"
+	req := api.EnableAlertPresetRequest{WebhookURL: "https://example.com/hook", WebhookSecret: "backlog-webhook-secret"}
+	response := e.do(t, "POST", base+"/alert-presets/automation_backlog/enable", req, nil)
+	var rule api.AlertRuleResponse
+	if response.Code != 201 || json.Unmarshal(response.Body.Bytes(), &rule) != nil || rule.AppID != appID || rule.Metric != string(state.AlertMetricWorkflowDueAge) || rule.Threshold != api.WorkflowBacklogAlertThresholdSeconds || rule.CooldownMinutes != api.WorkflowBacklogAlertCooldownMinutes || rule.Action != "webhook" {
+		t.Fatalf("enable backlog preset: %d %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), req.WebhookSecret) {
+		t.Fatal("backlog preset response exposed webhook secret")
+	}
+	for _, action := range []string{"rollback", "demote", "promote"} {
+		bad := req
+		bad.Action = &action
+		response = e.do(t, "POST", base+"/alert-presets/automation_backlog/enable", bad, nil)
+		if response.Code != 400 {
+			t.Fatalf("preset accepted %s: %d %s", action, response.Code, response.Body.String())
+		}
+		custom := alertRuleReq()
+		custom.Metric, custom.Action = string(state.AlertMetricWorkflowDueAge), &action
+		response = e.do(t, "POST", base+"/alerts", custom, nil)
+		if response.Code != 400 {
+			t.Fatalf("custom rule accepted %s: %d %s", action, response.Code, response.Body.String())
+		}
+		response = e.do(t, "PATCH", base+"/alerts/"+rule.ID, map[string]any{"action": action}, nil)
+		if response.Code != 400 {
+			t.Fatalf("rule update accepted %s: %d %s", action, response.Code, response.Body.String())
+		}
+	}
+}
+
 // TestBuildTestAlertEvent_PayloadDiscriminator pins the
 // load-bearing shape of the test-alert payload:
 //   - payload.test == true on EVERY event (the discriminator the

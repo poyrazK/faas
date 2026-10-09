@@ -37,24 +37,25 @@ func lockWebhookAutomationTarget(ctx context.Context, tx pgx.Tx, opts WebhookAut
 func webhookAutomationTargetEligible(target sqlc.LockEventWorkflowTargetRow) bool {
 	return (target.AccountStatus == "active" || target.AccountStatus == "past_due") && !target.AbuseHoldAt.Valid && api.Plan(target.Plan).WorkflowsAllowed() && !target.MaintenanceMode && !target.PlatformTenantRequired
 }
-func webhookAutomationDefinitionTx(ctx context.Context, tx pgx.Tx, appID, name string) (*api.WorkflowSpec, string, error) {
+func webhookAutomationDefinitionTx(ctx context.Context, tx pgx.Tx, appID, name string) (*api.WorkflowSpec, string, string, error) {
 	q := sqlc.New()
 	live, err := q.LockWorkflowScheduleTarget(ctx, tx, mustPgUUID(appID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, "", ErrWebhookAutomationUnavailable
+		return nil, "", "", ErrWebhookAutomationUnavailable
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	rows, err := q.ListAutomations(ctx, tx, mustPgUUID(appID))
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	records := make([]Automation, 0, len(rows))
 	for _, row := range rows {
 		records = append(records, automationFromSQL(row))
 	}
-	return webhookAutomationDefinition(live.Workflows, records, name, api.Plan(live.Plan))
+	spec, reason, err := webhookAutomationDefinition(live.Workflows, records, name, api.Plan(live.Plan))
+	return spec, reason, pgUUIDString(live.DeploymentID), err
 }
 func (s *PgStore) SaveWebhookAutomationBinding(ctx context.Context, opts WebhookAutomationBindingOptions) (WebhookAutomationBinding, error) {
 	if err := validateWebhookAutomationBinding(opts); err != nil {
@@ -80,7 +81,7 @@ func (s *PgStore) SaveWebhookAutomationBinding(ctx context.Context, opts Webhook
 	if prior.Version != opts.ExpectedVersion {
 		return WebhookAutomationBinding{}, ErrWebhookAutomationConflict
 	}
-	spec, _, err := webhookAutomationDefinitionTx(ctx, tx, endpoint.AppID, opts.WorkflowName)
+	spec, _, _, err := webhookAutomationDefinitionTx(ctx, tx, endpoint.AppID, opts.WorkflowName)
 	if err != nil {
 		return WebhookAutomationBinding{}, err
 	}
@@ -213,7 +214,7 @@ func (s *PgStore) AcceptVerifiedWebhookAutomation(ctx context.Context, verified 
 	if !runtimeEnabled || !webhookAutomationTargetEligible(target) {
 		return WebhookAutomationReceipt{}, true, ErrWebhookAutomationUnavailable
 	}
-	spec, reason, err := webhookAutomationDefinitionTx(ctx, tx, endpoint.AppID, bindingRow.WorkflowName)
+	spec, reason, deploymentID, err := webhookAutomationDefinitionTx(ctx, tx, endpoint.AppID, bindingRow.WorkflowName)
 	if err != nil {
 		if errors.Is(err, ErrAutomationInvalid) {
 			err = ErrWebhookAutomationUnavailable
@@ -235,6 +236,9 @@ func (s *PgStore) AcceptVerifiedWebhookAutomation(ctx context.Context, verified 
 		if err := validateWorkflowOutboundTx(ctx, tx, endpoint.AppID, endpoint.AccountID, *spec); err != nil {
 			return receipt, true, ErrWebhookAutomationUnavailable
 		}
+	}
+	for i := range recipients {
+		recipients[i].DeploymentID = deploymentID
 	}
 	payload, err := json.Marshal(envelope)
 	if err != nil {

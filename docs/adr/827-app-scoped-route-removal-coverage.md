@@ -1,4 +1,4 @@
-# ADR-727: App-scoped route removal coverage
+# ADR-827: App-scoped route removal coverage
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-ADR-726 conservatively resets fleet-wide coverage whenever any app drops
+ADR-826 conservatively resets fleet-wide coverage whenever any app drops
 telemetry or has a backlog. Unrelated traffic can therefore invalidate a
 healthy app's removal approval. Treating a mixed delivery batch as entirely
 failed has the same effect even when the receiver acknowledged healthy rows.
@@ -58,4 +58,4 @@ No public HTTP request or response shape changes.
 - Shared availability and unknown delivery failures continue to fail closed.
 - Per-node process memory is bounded; durable app gaps follow app/node lifetime.
 - The two-minute aggregation delay, retention margin, receipt fences, and
-  observed-only limits from ADR-726 still apply.
+  observed-only limits from ADR-826 still apply.

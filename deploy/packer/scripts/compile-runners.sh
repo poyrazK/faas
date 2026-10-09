@@ -10,7 +10,7 @@
 set -euo pipefail
 
 SRC_ROOT="${SRC_ROOT:-/tmp/src}"
-GO_VERSION="${GO_VERSION:-1.25.13}"
+GO_VERSION="${GO_VERSION:-1.26.9}"
 
 # guest/init's build matrix — see guest/runners/{node22,python312,…}/main.go
 RUNNERS=(node22 python312 go124 go124-alpine node24 python313)

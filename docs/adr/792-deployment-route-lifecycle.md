@@ -4,7 +4,7 @@ Status: Accepted
 
 ## Context
 
-ADR-728 attached app-import metadata before routing and omitted pinned URLs.
+ADR-828 attached app-import metadata before routing and omitted pinned URLs.
 Production splits and canaries can serve different lifecycle contracts.
 
 ## Decision
@@ -36,5 +36,5 @@ accept deployment capture provenance and flag changed source/hash evidence.
 
 Pinned, production and canary live responses share a deployment-based metadata
 authority. Gateway-generated early responses and cached bodies omit headers.
-This supersedes ADR-728's publication timing and app-hostname-only behavior and
-ADR-729's default import source. Removal approval remains independent.
+This supersedes ADR-828's publication timing and app-hostname-only behavior and
+ADR-829's default import source. Removal approval remains independent.

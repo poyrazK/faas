@@ -1,10 +1,10 @@
-# ADR-729: Gregale route sunset report
+# ADR-829: Gregale route sunset report
 
 Status: Accepted
 
 ## Context
 
-ADR-728 publishes lifecycle dates to clients. Owners need a migration queue
+ADR-828 publishes lifecycle dates to clients. Owners need a migration queue
 that combines those dates with retained callers and reviewed successors.
 
 ## Decision

@@ -840,6 +840,9 @@ func printAutomationHealth(result api.AutomationHealthResponse) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Automation health: %s/%s\nWindow: %s to %s\nRuns: %d (%d completed)\n", result.AppSlug, result.AutomationName, result.WindowStart.Format(time.RFC3339), result.WindowEnd.Format(time.RFC3339), result.RunCount, result.CompletedRunCount)
 	_, _ = fmt.Fprintf(osStdout, "Active now: %d, queued: %d\n", result.ActiveRunCount, result.QueuedRunCount)
+	if err := writeAutomationQueueHealth(osStdout, result.Queue); err != nil {
+		return printErr("Output failed", err)
+	}
 	if result.CompletedRunCount == 0 {
 		_, _ = fmt.Fprintln(osStdout, "Success rate: n/a (no completed runs)")
 	} else {
@@ -861,6 +864,34 @@ func printAutomationHealth(result api.AutomationHealthResponse) int {
 		return printErr("Output failed", err)
 	}
 	return 0
+}
+
+func writeAutomationQueueHealth(w io.Writer, queue *api.AutomationQueueHealth) error {
+	if queue == nil {
+		_, err := fmt.Fprintln(w, "Queue diagnostics: unavailable")
+		return err
+	}
+	capacity := "available"
+	if queue.AppAtCapacity {
+		capacity = "full"
+	}
+	if _, err := fmt.Fprintf(w, "Queue observed: %s\nApp dispatch capacity: %d/%d (%s), tenant limit: %d\nWaiting now: %d, due: %d, stale: %d, oldest due: %.1fs\n",
+		queue.ObservedAt.Format(time.RFC3339Nano), queue.AppRunningCount, queue.AppDispatchLimit, capacity, queue.TenantDispatchLimit,
+		queue.WaitingRunCount, queue.DueRunCount, queue.StaleRunCount, queue.OldestDueAgeSeconds); err != nil {
+		return err
+	}
+	var reasons []string
+	for _, reason := range []string{api.AutomationQueueReady, api.AutomationQueueScheduled, api.AutomationQueueRetryBackoff, api.AutomationQueueParkedWait,
+		api.AutomationQueueAppCapacity, api.AutomationQueueTenantCapacity, api.AutomationQueueWorkflowCapacity} {
+		if count := queue.ReasonCounts[reason]; count > 0 {
+			reasons = append(reasons, fmt.Sprintf("%s=%d", strings.ReplaceAll(reason, "_", " "), count))
+		}
+	}
+	if len(reasons) == 0 {
+		reasons = append(reasons, "none")
+	}
+	_, err := fmt.Fprintf(w, "Waiting reasons: %s\n", strings.Join(reasons, ", "))
+	return err
 }
 
 func formatAutomationDuration(milliseconds *int64) string {
