@@ -10,8 +10,12 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 type fakeForkRuntime struct {
@@ -117,6 +121,29 @@ func TestForkCoordinator_RestoreFailureFailsTheForkWithACode(t *testing.T) {
 	got := f.fork(t, fork.ID)
 	if got.Status != state.AppForkFailed || got.FailureCode == nil || *got.FailureCode != "no_capture" || c.Held() != 0 {
 		t.Fatalf("fork = %+v held=%d, want failed no_capture", got, c.Held())
+	}
+}
+
+func TestForkCoordinator_RecordsRestoreMetrics(t *testing.T) {
+	f := newForkCoordinatorFixture(t)
+	metrics := wire.NewCrashForkMetrics(prometheus.NewRegistry())
+	c := NewForkCoordinator(f.store, f.runtime, ForkCoordinatorConfig{Owner: "schedd-a", Lease: time.Minute, MaxConcurrent: 4, Metrics: metrics}, nil)
+	c.now = func() time.Time { return f.clock }
+	f.createFork(t, 600)
+	f.clock = f.clock.Add(3 * time.Second)
+	c.Tick(context.Background())
+	if n := testutil.ToFloat64(metrics.ForkRestoresTotal.WithLabelValues("deployment", "running")); n != 1 {
+		t.Fatalf("schedd_fork_restores_total{deployment,running} = %v, want 1", n)
+	}
+	if n := testutil.CollectAndCount(metrics.ForkClaimWait); n != 1 {
+		t.Fatalf("claim wait series = %d, want 1", n)
+	}
+
+	f.runtime.restoreErr = ErrForkNoCapture
+	f.createFork(t, 600)
+	c.Tick(context.Background())
+	if n := testutil.ToFloat64(metrics.ForkRestoresTotal.WithLabelValues("deployment", "no_capture")); n != 1 {
+		t.Fatalf("schedd_fork_restores_total{deployment,no_capture} = %v, want 1", n)
 	}
 }
 

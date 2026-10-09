@@ -7,8 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func requestCapture(t *testing.T, store *state.MemStore, ins state.Instance) state.CrashCapture {
@@ -97,7 +101,7 @@ func TestCrashCaptureCoordinator_ReadyAndFailed(t *testing.T) {
 		want     state.CrashCaptureStatus
 		wantCode string
 	}{
-		{"captured", nil, state.CrashCaptureReady, ""},
+		{"captured", nil, state.CrashCaptureReady, "ready"},
 		{"instance gone", ErrCrashInstanceGone, state.CrashCaptureFailed, "instance_gone"},
 		{"vmm error", errors.New("boom"), state.CrashCaptureFailed, "capture_failed"},
 		{"remote storage", ErrCrashStorageRemote, state.CrashCaptureFailed, "storage_unsupported"},
@@ -112,10 +116,14 @@ func TestCrashCaptureCoordinator_ReadyAndFailed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			NewCrashCaptureCoordinator(store, fakeCrashRuntime{err: tc.err}, time.Second, nil).Tick(context.Background())
+			metrics := wire.NewCrashForkMetrics(prometheus.NewRegistry())
+			NewCrashCaptureCoordinator(store, fakeCrashRuntime{err: tc.err}, time.Second, nil).WithMetrics(metrics).Tick(context.Background())
 			got, err := store.CrashCaptureByID(context.Background(), acct.ID, app.ID, c.ID)
-			if err != nil || got.Status != tc.want || (tc.wantCode != "" && (got.FailureCode == nil || *got.FailureCode != tc.wantCode)) {
+			if err != nil || got.Status != tc.want || (tc.want == state.CrashCaptureFailed && (got.FailureCode == nil || *got.FailureCode != tc.wantCode)) {
 				t.Fatalf("capture = %+v, %v; want %s %s", got, err, tc.want, tc.wantCode)
+			}
+			if n := testutil.ToFloat64(metrics.CapturesTotal.WithLabelValues(state.CrashTriggerManual, tc.wantCode)); n != 1 {
+				t.Fatalf("schedd_crash_captures_total{manual,%s} = %v, want 1", tc.wantCode, n)
 			}
 		})
 	}

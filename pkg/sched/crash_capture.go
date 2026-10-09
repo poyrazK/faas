@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // ErrCrashInstanceGone means the instance a crash capture targeted is no
@@ -79,6 +80,13 @@ type CrashCaptureCoordinator struct {
 	poll    time.Duration
 	log     *slog.Logger
 	now     func() time.Time
+	metrics *wire.CrashForkMetrics
+}
+
+// WithMetrics records capture outcomes on m.
+func (c *CrashCaptureCoordinator) WithMetrics(m *wire.CrashForkMetrics) *CrashCaptureCoordinator {
+	c.metrics = m
+	return c
 }
 
 // NewCrashCaptureCoordinator builds a coordinator polling every poll.
@@ -110,8 +118,12 @@ func (c *CrashCaptureCoordinator) Run(ctx context.Context) {
 // one.
 func (c *CrashCaptureCoordinator) Tick(ctx context.Context) {
 	now := c.now().UTC()
-	if _, err := c.store.FailStaleCrashCaptures(ctx, now.Add(-api.CrashCaptureTimeout), now); err != nil {
+	stale, err := c.store.FailStaleCrashCaptures(ctx, now.Add(-api.CrashCaptureTimeout), now)
+	if err != nil {
 		c.log.Warn("crash capture coordinator: fail stale", "err", err)
+	}
+	for _, capture := range stale {
+		c.metrics.CrashCaptureFinished(capture.Trigger, "capture_timeout", 0)
 	}
 	for ctx.Err() == nil {
 		capture, err := c.store.ClaimNextCrashCapture(ctx, c.now().UTC())
@@ -127,6 +139,7 @@ func (c *CrashCaptureCoordinator) Tick(ctx context.Context) {
 }
 
 func (c *CrashCaptureCoordinator) capture(ctx context.Context, capture state.CrashCapture) {
+	started := c.now()
 	done, err := c.runtime.CaptureCrash(ctx, capture)
 	if err != nil {
 		code, message := "capture_failed", "the instance could not be captured"
@@ -137,6 +150,7 @@ func (c *CrashCaptureCoordinator) capture(ctx context.Context, capture state.Cra
 			code, message = "storage_unsupported", "crash snapshots are not available on this node's storage yet"
 		}
 		c.log.Warn("crash capture coordinator: capture failed", "capture", capture.ID, "code", code, "err", err)
+		c.metrics.CrashCaptureFinished(capture.Trigger, code, 0)
 		if _, ferr := c.store.FailCrashCapture(ctx, capture.ID, code, message, c.now().UTC()); ferr != nil {
 			c.log.Warn("crash capture coordinator: record failure", "capture", capture.ID, "err", ferr)
 		}
@@ -144,5 +158,7 @@ func (c *CrashCaptureCoordinator) capture(ctx context.Context, capture state.Cra
 	}
 	if _, err := c.store.CompleteCrashCapture(ctx, done); err != nil {
 		c.log.Warn("crash capture coordinator: complete", "capture", capture.ID, "err", err)
+		return
 	}
+	c.metrics.CrashCaptureFinished(capture.Trigger, "ready", c.now().Sub(started))
 }
