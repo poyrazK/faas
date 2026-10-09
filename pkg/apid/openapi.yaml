@@ -10463,7 +10463,7 @@ paths:
       - name: run_id
         in: path
         required: true
-        description: Random lowercase hexadecimal identity shared by the run's developer sessions.
+        description: Lowercase hexadecimal ID shared by all developer sessions in this scenario run.
         schema: { type: string, pattern: '^[a-f0-9]{32}$' }
     get:
       tags: [dev]
@@ -46074,6 +46074,7 @@ components:
           items: { $ref: '#/components/schemas/ScenarioTestChaosMatch' }
 
     ScenarioTestChaosMatch:
+      description: Count of matches for one fault rule in the scenario run.
       type: object
       required: [rule_id, count]
       properties:
