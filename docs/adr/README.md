@@ -608,7 +608,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-484: resumable image preparation](484-resumable-image-preparation.md) — resume layer publication, scanning and snapshot handoff across imaged restarts
 - [ADR-485: renewable notification ownership](485-renewable-notification-ownership.md) — share fenced delivery claims between imaged LISTEN and replay, with renewal during long work
 - [ADR-486: recover interrupted snapshot primes](486-recover-interrupted-snapshot-primes.md) — keep graceful schedd shutdown from terminally failing snapshot preparation and clean up its specific VM before recovery
-- [ADR-487: pre-promotion API route checks](487-pre-promotion-api-route-checks.md) — probe explicitly selected read-only OpenAPI operations against the exact candidate and persist per-route evidence before promotion
+- [ADR-843: pre-promotion API route checks](843-pre-promotion-api-route-checks.md) — probe explicitly selected read-only OpenAPI operations against the exact candidate and persist per-route evidence before promotion
 
 ## Route review and release protection
 
@@ -636,6 +636,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-456: Saved canary route health decisions and explanations](456-saved-canary-route-health-decisions.md)
 - [ADR-457: Critical route health hold and resume notifications](457-route-health-transition-notifications.md)
 - [ADR-458: Opt-in automatic recovery for critical route error regressions](458-critical-route-automatic-rollback.md)
+- [ADR-844: Default report-mode route health selectors](844-default-report-mode-route-health.md) — seed observed critical routes for unconfigured apps on their first canary advance
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
 - [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
 - [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage
