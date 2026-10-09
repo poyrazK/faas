@@ -378,10 +378,18 @@ func TestCreateAppWebhook_EventWithoutProducerIsUnavailable(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want 400: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "app_webhook_invalid") ||
-		!strings.Contains(rec.Body.String(), "app.parked, app.woken, deployment.live, deployment.failed, rollout.completed, rollout.aborted, job.finished, operation.finished, usage_statement.finalized") ||
-		!strings.Contains(rec.Body.String(), "workflow.finished") {
-		t.Fatalf("body does not expose the producer-backed vocabulary: %s", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, "app_webhook_invalid") {
+		t.Fatalf("body missing app_webhook_invalid code: %s", body)
+	}
+	for _, event := range []string{
+		"app.parked", "app.woken", "app.health.changed", "deployment.live", "deployment.failed",
+		"rollout.completed", "rollout.aborted", "job.finished", "operation.finished",
+		"usage_statement.finalized", "workflow.finished",
+	} {
+		if !strings.Contains(body, event) {
+			t.Errorf("producer-backed event %q is absent from the vocabulary: %s", event, body)
+		}
 	}
 }
 

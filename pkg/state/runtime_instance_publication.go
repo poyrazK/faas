@@ -17,6 +17,7 @@ type RuntimeInstancePublication struct {
 	Fence                                        RuntimeAppSecretFence
 	ConfigFence                                  RuntimeAppConfigFence
 	Inputs                                       *RuntimeConfigInputs
+	RuntimeUpgradeColdBoot                       *RuntimeUpgradeColdBoot
 }
 
 type RuntimeInstancePublicationStore interface {
