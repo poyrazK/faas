@@ -13,12 +13,12 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import httpx
 
 from .models.operation_artifact_request import OperationArtifactRequest
-from .models.operation_report_request import OperationReportRequest
-from .models.operation_response import OperationResponse
 from .models.operation_milestone import OperationMilestone
 from .models.operation_milestone_request import OperationMilestoneRequest
 from .models.operation_milestone_validation_request import OperationMilestoneValidationRequest
 from .models.operation_milestone_validation_response import OperationMilestoneValidationResponse
+from .models.operation_report_request import OperationReportRequest
+from .models.operation_response import OperationResponse
 
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 
@@ -128,8 +128,12 @@ class GregaleOperations:
         """Publish an already committed fact using its saved ID and occurrence time."""
         return OperationMilestone.from_dict(await self._report_json("milestones", report.to_dict()))
 
-    async def validate_milestones(self, batch: OperationMilestoneValidationRequest) -> OperationMilestoneValidationResponse:
-        return OperationMilestoneValidationResponse.from_dict(await self._report_json("milestones/validate", batch.to_dict()))
+    async def validate_milestones(
+        self, batch: OperationMilestoneValidationRequest
+    ) -> OperationMilestoneValidationResponse:
+        return OperationMilestoneValidationResponse.from_dict(
+            await self._report_json("milestones/validate", batch.to_dict())
+        )
 
     async def _report(self, suffix: str, body: dict) -> OperationResponse:
         return OperationResponse.from_dict(await self._report_json(suffix, body))

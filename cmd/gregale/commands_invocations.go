@@ -125,8 +125,18 @@ func cmdInvocationsWait(args []string) int {
 			}
 			// The CLI wait deadline keeps its conventional exit status; it
 			// does not cancel the durable invocation on the server.
-			_ = printErr(problem.Title, &APIError{Problem: problem})
+			_ = renderInvocationWaitProblem(problem, 124)
 			return 124
+		}
+		var remote *APIError
+		if errors.As(err, &remote) {
+			code := 1
+			if remote.Problem.Status == 401 {
+				code = 2
+			} else if remote.Problem.Status >= 500 {
+				code = 3
+			}
+			return renderInvocationWaitProblem(remote.Problem, code)
 		}
 		return printErr("Could not wait for invocation", err)
 	}
@@ -190,39 +200,51 @@ func renderInvocationWaitResult(inv api.Invocation) int {
 // audit-event rows, so the renderer shape is different.
 func cmdInvocationsList(args []string) int {
 	fs := newFlagSet("invocations list", flag.ContinueOnError)
-	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
+	before := fs.String("before", "", "opaque pagination cursor (alias for --cursor)")
+	fs.StringVar(before, "cursor", "", "start after the cursor from a prior page")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	limit := fs.Int("limit", 50, "max rows (1..100; server caps at 100)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		printCommandValidation(os.Stderr, "usage: gregale invocations list [--before C] [--limit N]\n")
+		printCommandValidation(os.Stderr, "usage: gregale invocations list [--cursor C] [--limit N] [--all]\n")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale invocations list [--before C] [--limit N] (1 <= N <= 100)", "invocations")
+		PrintUsage(os.Stderr, "usage: gregale invocations list [--cursor C] [--limit N] [--all] (1 <= N <= 100)", "invocations")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListInvocations(context.Background(), *before, *limit)
+	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.Invocation, string, error) {
+		page, err := client.ListInvocations(ctx, cursor, *limit)
+		return page.Invocations, page.NextBefore, err
+	})
+	resp := api.ListInvocationsResponse{Invocations: items, NextBefore: next}
 	if err != nil {
 		return printErr("Could not list invocations", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(resp))
+		return jsonOut(writeJSON(struct {
+			api.ListInvocationsResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{resp, next}))
 	}
 	if len(resp.Invocations) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no invocations)")
+		if next != "" {
+			_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", next)
+		}
 		return 0
 	}
 	for _, inv := range resp.Invocations {
 		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\n", inv.ID, inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), inv.State, inv.Method, inv.Path)
 	}
 	if resp.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "... more — pass --before %s\n", resp.NextBefore)
+		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", resp.NextBefore)
 	}
 	return 0
 }
@@ -387,4 +409,16 @@ func oneLine(s string) string {
 	}
 	b.WriteString("…")
 	return b.String()
+}
+
+// Invocation wait retains its dedicated exit contract instead of the shared
+// HTTP mapping. Encode the actual returned status in machine diagnostics.
+func renderInvocationWaitProblem(problem api.Problem, code int) int {
+	problem = diagnosticProblem(problem)
+	if jsonOutput {
+		_ = writeJSONProblemWithExit(osStderr, problem, code)
+	} else {
+		renderAPIError(osStderr, &APIError{Problem: problem})
+	}
+	return code
 }

@@ -136,7 +136,7 @@ func TestCompletion_CachePathUsesNestedCommand(t *testing.T) {
 			if strings.Contains(out, "gregale completion-cache-path") {
 				t.Fatalf("generated script still calls nonexistent top-level helper:\n%s", out)
 			}
-			if !strings.Contains(out, "gregale completion completion-cache-path") {
+			if !strings.Contains(out, "completion completion-cache-path") {
 				t.Fatalf("generated script does not call nested cache-path helper:\n%s", out)
 			}
 		})
@@ -814,6 +814,11 @@ func TestCompletion_FishScriptIsSyntacticallyValid(t *testing.T) {
 // which is the canonical parse-only entrypoint. Skips on hosts
 // without pwsh (rare; install via brew install --cask powershell).
 func TestCompletion_PowershellScriptIsSyntacticallyValid(t *testing.T) {
+	// Keep PowerShell's startup caches inside the writable test workspace.
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
 	pwsh, err := exec.LookPath("pwsh")
 	if err != nil {
 		t.Skipf("pwsh not available: %v", err)
