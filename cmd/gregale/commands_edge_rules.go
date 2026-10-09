@@ -840,9 +840,7 @@ func cmdEdgeRulesRm(args []string) int {
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules rm", flag.ContinueOnError)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
-	// hunt #8: other destructive commands confirm with --yes, and --help
-	// listed no flag at all, so a scripted delete stopped at the prompt.
-	yes := fs.Bool("yes", false, "skip the typed confirmation (alias of --quiet)")
+	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -850,8 +848,11 @@ func cmdEdgeRulesRm(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale edge-rules rm <id> [--yes]", "edge-rules")
 		return 1
 	}
+	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+		return code
+	}
 	id := fs.Arg(0)
-	if !*quiet && !*yes {
+	if !*quiet {
 		_, _ = fmt.Fprintf(osStderr, "About to delete edge rule %s.\n", id)
 		if !requireTyped("delete edge rule") {
 			return 1

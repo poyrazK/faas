@@ -204,6 +204,11 @@ func cmdDLQPurge(args []string) int {
 		PrintUsage(os.Stderr, usage, "dlq")
 		return 1
 	}
+	if *all {
+		if code := requireAutomationConfirmation(*yes || *quiet, "--yes"); code != 0 {
+			return code
+		}
+	}
 	if *all && !*yes && !*quiet {
 		_, _ = fmt.Fprintf(osStderr, "About to permanently delete every dead-letter event for %s; they cannot be replayed afterwards.\n", pos[0])
 		if !requireTyped("purge dead letters") {

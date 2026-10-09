@@ -131,6 +131,10 @@ func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(
 // executable selected by its image config; this makes both Go runtimes
 // independent of the builder VM's base chain.
 func (h *Handler) functionBuildArtifact(ctx context.Context, runtime, archivePath string) ([]io.Reader, string, func(), error) {
+	return h.functionBuildArtifactForRef(ctx, runtime, archivePath, "")
+}
+
+func (h *Handler) functionBuildArtifactForRef(ctx context.Context, runtime, archivePath, recordedRef string) ([]io.Reader, string, func(), error) {
 	config, layers, cleanup, err := loadLocalOCIArchive(archivePath)
 	if err != nil {
 		return nil, "", func() {}, fmt.Errorf("load built OCI image: %w", err)
@@ -162,7 +166,10 @@ func (h *Handler) functionBuildArtifact(ctx context.Context, runtime, archivePat
 		cleanup()
 		return nil, "", func() {}, errors.New("builder OCI function artifact requires a manifest-capable runtime base puller")
 	}
-	baseRef := h.deployBaseRefOverride
+	baseRef := recordedRef
+	if baseRef == "" {
+		baseRef = h.deployBaseRefOverride
+	}
 	if baseRef == "" {
 		baseRef, err = resolveDeployBaseRef(runtime, os.Getenv)
 		if err != nil {

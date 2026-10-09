@@ -397,6 +397,17 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_RETENTION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RUNTIME_KIND` | guest | `guest` |  |  | `` |  |
+| `FAAS_RUNTIME_UPGRADE_DRAIN_CONFIRMATION` | gatewayd-internal | `default` |  |  | `` | default-off private forwarding drain receipt; requires reviewed runtime routing confirmation (ADR-697) |
+| `FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID` | gatewayd-internal | `default` |  |  | `` | reviewed private gateway slot identity; required only when runtime routing confirmation is enabled (ADR-695) |
+| `FAAS_RUNTIME_UPGRADE_INGRESS_CONFIRMATION` | gatewayd-internal, gatewayd-public | `default` |  |  | `` | default-off private ingress identity proof; requires reviewed routing and drain confirmations (ADR-698) |
+| `FAAS_RUNTIME_UPGRADE_INGRESS_TOKEN` | gatewayd-internal, gatewayd-public | `default` |  |  | `` | private ingress secret; leave unset until the reviewed gateway deployment enables ingress confirmation (ADR-698) |
+| `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_ACTIVITY` | gatewayd-public | `default` |  |  | `` | default-off public ingress activity proof; requires reviewed public edge confirmation (ADR-700) |
+| `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_CONFIRMATION` | gatewayd-public | `default` |  |  | `` | default-off public edge confirmation; requires the installed connection guard and reviewed slot identity (ADR-699) |
+| `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_IDENTITY` | gatewayd-public | `default` |  |  | `` | default-off selected public edge identity endpoint; keep disabled until public edge withdrawal and activity are qualified (ADR-702) |
+| `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_NATIVE_IDENTITY` | gatewayd-public | `default` |  |  | `` | default-off boot-bound native public identity endpoint; requires all reviewed public edge controls (ADR-710) |
+| `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_SLOT_ID` | gatewayd-public | `default` |  |  | `` | reviewed public gateway slot identity; required only when public edge confirmation is enabled (ADR-699) |
+| `FAAS_RUNTIME_UPGRADE_PUBLIC_EDGE_WITHDRAWAL` | gatewayd-public | `default` |  |  | `` | default-off public edge withdrawal barrier; requires reviewed confirmation and activity controls (ADR-701) |
+| `FAAS_RUNTIME_UPGRADE_ROUTING_CONFIRMATION` | gatewayd-internal | `default` |  |  | `` | default-off private runtime routing receipt; enable only with a reviewed gateway slot identity (ADR-695) |
 | `FAAS_S3_GATEWAY_CONTROL_ADDR` | s3-gatewayd | `unit` |  | 127.0.0.1:9096 | `` |  |
 | `FAAS_S3_GATEWAY_LISTEN_ADDR` | s3-gatewayd | `unit` |  | 127.0.0.1:8084 | `` |  |
 | `FAAS_S3_GATEWAY_ROLE` | s3-gatewayd | `dropin` |  | single-box | `` | production control-plane service must set control-plane explicitly |

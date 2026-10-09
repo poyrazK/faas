@@ -34,7 +34,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/browser"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -1019,6 +1018,8 @@ func cmdAppDispatch(args []string) int {
 	slug := args[0]
 	if len(args) >= 2 {
 		switch args[1] {
+		case subHealth:
+			return cmdAppHealth(slug, args[2:])
 		case subScale:
 			return cmdAppScale(slug, args[2:])
 		case "costs":
@@ -1074,6 +1075,12 @@ var planRank = map[api.Plan]int{
 // 4 known constants, then asks Whoami to check the current plan and
 // prompts for y/N on paid→downgrade transitions.
 func cmdPlan(args []string) int {
+	fs := newFlagSet("plan", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "confirm a plan downgrade without prompting")
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
+	}
+	args = fs.Args()
 	if len(args) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale plan <free|hobby|pro|scale>", "plan")
 		return 1
@@ -1091,7 +1098,10 @@ func cmdPlan(args []string) int {
 	if err != nil {
 		return printErr("Could not fetch account", err)
 	}
-	if acct.Plan != "" && planRank[api.Plan(acct.Plan)] > planRank[target] {
+	if acct.Plan != "" && planRank[api.Plan(acct.Plan)] > planRank[target] && !*yes {
+		if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
+			return code
+		}
 		fmt.Fprintf(os.Stderr,
 			"Downgrade from %s to %s: existing apps may exceed the new plan's limits. "+
 				"Continue? [y/N] ", acct.Plan, target)
@@ -1176,7 +1186,7 @@ func cmdDashboard(args []string) int {
 		}{target, *stateless}))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", target)
-	if err := browser.Open(target); err != nil {
+	if err := openBrowser(target); err != nil {
 		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", target)
 		return 0
@@ -1526,12 +1536,14 @@ func cmdQueuePeek(args []string) int {
 	fs := newFlagSet("queue peek", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "max rows (1..100)")
 	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
-	flags, pos := splitArgsForFlags(args)
+	fs.StringVar(before, "cursor", "", "alias for --before")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
+	flags, pos := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue peek <slug> [--limit N] [--before C]", "queue")
+	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
+		PrintUsage(os.Stderr, "usage: gregale queue peek <slug> [--limit N] [--cursor C] [--all]", "queue")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
@@ -1543,19 +1555,30 @@ func cmdQueuePeek(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.QueuePeek(context.Background(), slug, *limit, *before)
+	var resp api.QueuePeekResponse
+	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.QueuePeekMessage, string, error) {
+		page, err := client.QueuePeek(ctx, slug, *limit, cursor)
+		resp = page
+		return page.Messages, page.NextBefore, err
+	})
+	resp.Messages, resp.NextBefore = items, next
 	if err != nil {
 		return printErr("Queue peek failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(resp))
+		return jsonOut(writeJSON(struct {
+			api.QueuePeekResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{resp, next}))
 	}
 	if len(resp.Messages) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no rows peekable)")
-		return 0
 	}
 	for _, m := range resp.Messages {
-		fmt.Printf("%-32s %d attempts  %s\n", m.ID, m.Attempts, m.CreatedAt.Format("2006-01-02T15:04:05Z07:00"))
+		_, _ = fmt.Fprintf(osStdout, "%-32s %d attempts  %s\n", m.ID, m.Attempts, m.CreatedAt.Format("2006-01-02T15:04:05Z07:00"))
+	}
+	if next != "" {
+		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", next)
 	}
 	return 0
 }
@@ -1566,12 +1589,18 @@ func cmdQueueDeadLetter(args []string) int {
 	fs := newFlagSet("queue dead-letter", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "max rows (1..100)")
 	before := fs.String("before", "", "pagination cursor")
-	flags, pos := splitArgsForFlags(args)
+	fs.StringVar(before, "cursor", "", "alias for --before")
+	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
+	flags, pos := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> [--limit N] [--before C]", "queue")
+	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
+		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> [--limit N] [--cursor C] [--all]", "queue")
+		return 1
+	}
+	if err := validateCLILimit("limit", *limit, 100); err != nil {
+		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> --limit N (1 <= N <= 100)", "queue")
 		return 1
 	}
 	slug := pos[0]
@@ -1579,19 +1608,30 @@ func cmdQueueDeadLetter(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.QueueDeadLetter(context.Background(), slug, *limit, *before)
+	var resp api.QueueDeadLetterResponse
+	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.QueueDeadLetterMessage, string, error) {
+		page, err := client.QueueDeadLetter(ctx, slug, *limit, cursor)
+		resp = page
+		return page.Messages, page.NextBefore, err
+	})
+	resp.Messages, resp.NextBefore = items, next
 	if err != nil {
 		return printErr("Queue dead-letter failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(resp))
+		return jsonOut(writeJSON(struct {
+			api.QueueDeadLetterResponse
+			NextCursor string `json:"next_cursor,omitempty"`
+		}{resp, next}))
 	}
 	if len(resp.Messages) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no dead-letter rows)")
-		return 0
 	}
 	for _, m := range resp.Messages {
-		fmt.Printf("%-32s %d attempts  failed %s  err=%q\n", m.ID, m.Attempts, m.FailedAt.Format("2006-01-02T15:04:05Z07:00"), m.LastError)
+		_, _ = fmt.Fprintf(osStdout, "%-32s %d attempts  failed %s  err=%q\n", m.ID, m.Attempts, m.FailedAt.Format("2006-01-02T15:04:05Z07:00"), m.LastError)
+	}
+	if next != "" {
+		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", next)
 	}
 	return 0
 }

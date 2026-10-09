@@ -1079,6 +1079,35 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
 END $$;
 
+--
+-- Name: capture_runtime_upgrade_public_edge_withdrawals(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_runtime_upgrade_public_edge_withdrawals() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE added bigint;
+BEGIN
+ INSERT INTO runtime_upgrade_public_edge_withdrawals(id,slot_id,public_session_id,config_sha256,roster_revision)
+ SELECT gen_random_uuid(),prior.slot_ids[i],prior.public_sessions[i],prior.config_sha256s[i],prior.revision
+ FROM runtime_upgrade_public_edge_rosters prior, generate_subscripts(prior.public_sessions,1) i
+ WHERE prior.revision=OLD.revision AND NOT EXISTS
+  (SELECT 1 FROM runtime_upgrade_public_edge_rosters next WHERE next.revision=NEW.revision AND prior.public_sessions[i]=ANY(next.public_sessions))
+ ON CONFLICT (public_session_id) DO NOTHING;
+ GET DIAGNOSTICS added=ROW_COUNT;
+ IF added > 0 AND (SELECT count(*) FROM (SELECT 1 FROM runtime_upgrade_public_edge_withdrawals w
+  WHERE NOT EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts r WHERE r.withdrawal_id=w.id)
+   AND NOT EXISTS (SELECT 1 FROM runtime_upgrade_external_fence_receipts r WHERE r.withdrawal_id=w.id)
+  LIMIT 65) pending) > 64 THEN
+  RAISE EXCEPTION 'public edge withdrawal capacity exceeded' USING ERRCODE='23514';
+ END IF;
+ IF NEW.revision IS DISTINCT FROM OLD.revision THEN
+  DELETE FROM runtime_upgrade_public_edge_guards;
+  DELETE FROM runtime_upgrade_public_edge_activity;
+ END IF;
+ RETURN NEW;
+END $$;
+
 
 --
 -- Name: capture_sidecar_binding_promotion_revision(); Type: FUNCTION; Schema: public; Owner: -
@@ -1965,6 +1994,49 @@ BEGIN
         NEW.rollout_aborted_reason := COALESCE(NULLIF(NEW.rollout_aborted_reason, ''), NULLIF(NEW.error, ''), 'deployment failed');
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enforce_runtime_upgrade_pin_traffic_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_runtime_upgrade_pin_traffic_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE candidate deployments;
+BEGIN
+ SELECT * INTO candidate FROM deployments WHERE id=NEW.deployment_id FOR SHARE;
+ IF candidate.status='live' AND candidate.traffic_percent>0 THEN
+  RAISE EXCEPTION 'serving deployment cannot acquire runtime upgrade preparation'
+   USING ERRCODE='23514',CONSTRAINT='runtime_upgrade_traffic_fenced';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enforce_runtime_upgrade_traffic_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_runtime_upgrade_traffic_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status='live' AND NEW.traffic_percent>0
+  AND EXISTS(SELECT 1 FROM deployment_runtime_upgrade_targets WHERE deployment_id=NEW.id)
+  AND NOT EXISTS (
+   SELECT 1 FROM deployment_runtime_upgrade_cutovers c
+   JOIN deployment_runtime_upgrade_acceptances a ON a.deployment_id=c.deployment_id
+   JOIN deployment_runtime_upgrade_targets t ON t.deployment_id=c.deployment_id
+   WHERE c.deployment_id=NEW.id AND c.target_release_id=t.release_id AND c.target_release_id=a.target_release_id
+    AND c.wake_id=a.wake_id AND c.qualification_report_sha256=a.qualification_report_sha256 AND a.rootfs_key=NEW.rootfs_key
+  ) THEN
+  RAISE EXCEPTION 'runtime upgrade requires atomic qualified cutover' USING ERRCODE='23514',CONSTRAINT='runtime_upgrade_traffic_fenced';
+ END IF;
+ RETURN NEW;
 END;
 $$;
 
@@ -3098,6 +3170,7 @@ CREATE TABLE public.deployments (
     github_installation_id bigint,
     environment_workload_runtime jsonb,
     serving_ended_at timestamp with time zone,
+    runtime_upgrade_routing_token uuid DEFAULT gen_random_uuid() NOT NULL,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -3122,6 +3195,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_release_command_chk CHECK ((((cardinality(release_command) = 0) AND (NOT release_command_shell)) OR (((cardinality(release_command) >= 1) AND (cardinality(release_command) <= 64)) AND (array_position(release_command, NULL::text) IS NULL) AND ((octet_length(btrim(release_command[1])) >= 1) AND (octet_length(btrim(release_command[1])) <= 4096)) AND ((octet_length(array_to_string(release_command, ''::text)) >= 1) AND (octet_length(array_to_string(release_command, ''::text)) <= 16384)) AND ((NOT release_command_shell) OR (cardinality(release_command) = 1))))),
     CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
     CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
+    CONSTRAINT deployments_runtime_upgrade_routing_token_check CHECK ((runtime_upgrade_routing_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
     CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployments_secret_reload_signal_chk CHECK (((secret_reload_signal IS NULL) OR (secret_reload_signal = ANY (ARRAY[''::text, 'SIGHUP'::text, 'SIGUSR1'::text, 'SIGUSR2'::text])))),
@@ -4175,6 +4249,17 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_lock_admission_fenced',MESSAGE='Object Lock requires a tracked protection-aware write';
  END IF;
  RETURN NEW;
+END $$;
+
+--
+-- Name: forbid_runtime_upgrade_native_public_startup_truncate(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.forbid_runtime_upgrade_native_public_startup_truncate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ RAISE EXCEPTION 'native startup provenance cannot be truncated' USING ERRCODE='23514';
 END $$;
 
 
@@ -6287,6 +6372,453 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: guard_runtime_release_qualification(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_release_qualification() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP = 'INSERT' THEN
+  IF NOT EXISTS (SELECT 1 FROM runtime_releases WHERE id=NEW.release_id AND architecture=NEW.architecture) THEN
+   RAISE EXCEPTION 'runtime qualification architecture differs from release' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP = 'DELETE' THEN
+  RAISE EXCEPTION 'runtime qualification evidence is retained' USING ERRCODE = '23514';
+ END IF;
+ IF ROW(NEW.release_id,NEW.profile,NEW.architecture,NEW.host_id,NEW.kernel_boot_id,NEW.source_commit,
+  NEW.kernel_sha256,NEW.firecracker_sha256,NEW.report_sha256,NEW.test_metal_sha256,NEW.leakcheck_sha256,
+  NEW.started_at,NEW.completed_at,NEW.recorded_at) IS DISTINCT FROM
+  ROW(OLD.release_id,OLD.profile,OLD.architecture,OLD.host_id,OLD.kernel_boot_id,OLD.source_commit,
+  OLD.kernel_sha256,OLD.firecracker_sha256,OLD.report_sha256,OLD.test_metal_sha256,OLD.leakcheck_sha256,
+  OLD.started_at,OLD.completed_at,OLD.recorded_at) OR
+  (OLD.revoked_at IS NOT NULL AND ROW(NEW.revoked_at,NEW.revocation_sha256) IS DISTINCT FROM ROW(OLD.revoked_at,OLD.revocation_sha256)) THEN
+  RAISE EXCEPTION 'runtime qualification evidence and revocation are immutable' USING ERRCODE = '23514';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_runtime_upgrade_external_fence_authority(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_external_fence_authority() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' OR (TG_OP='INSERT' AND (NEW.revoked_at IS NOT NULL OR NEW.created_at>clock_timestamp())) THEN
+  RAISE EXCEPTION 'external authority history cannot be erased or pre-revoked' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='UPDATE' AND (OLD.revoked_at IS NOT NULL OR NEW.revoked_at IS NULL OR NEW.revoked_at>clock_timestamp()
+  OR (to_jsonb(NEW)-'revoked_at') IS DISTINCT FROM (to_jsonb(OLD)-'revoked_at')) THEN
+  RAISE EXCEPTION 'authority key is immutable and revocation is irreversible' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_external_fence_intent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_external_fence_intent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE withdrawn runtime_upgrade_public_edge_withdrawals;
+BEGIN
+ IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'external fence intent is immutable' USING ERRCODE='23514'; END IF;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton AND revision=NEW.gateway_revision FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'external fence internal head changed' USING ERRCODE='23514'; END IF;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton AND revision=NEW.public_revision FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'external fence public head changed' USING ERRCODE='23514'; END IF;
+ SELECT * INTO withdrawn FROM runtime_upgrade_public_edge_withdrawals WHERE id=NEW.withdrawal_id FOR UPDATE;
+ IF NOT FOUND OR NEW.created_at<withdrawn.created_at OR NEW.created_at>clock_timestamp()
+  OR EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts WHERE withdrawal_id=NEW.withdrawal_id)
+  OR EXISTS(SELECT 1 FROM runtime_upgrade_external_fence_receipts WHERE withdrawal_id=NEW.withdrawal_id) THEN
+  RAISE EXCEPTION 'external fence requires unresolved exact withdrawal' USING ERRCODE='23514';
+ END IF;
+ PERFORM 1 FROM runtime_upgrade_external_fence_authorities WHERE id=NEW.authority_id AND revoked_at IS NULL FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'external fence authority unavailable' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_external_fence_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_external_fence_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE reviewed runtime_upgrade_external_fence_intents;
+BEGIN
+ IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'external fence receipt is immutable' USING ERRCODE='23514'; END IF;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;
+ SELECT * INTO reviewed FROM runtime_upgrade_external_fence_intents WHERE id=NEW.intent_id FOR SHARE;
+ IF NOT FOUND OR reviewed.withdrawal_id<>NEW.withdrawal_id THEN
+  RAISE EXCEPTION 'external receipt intent mismatch' USING ERRCODE='23514';
+ END IF;
+ PERFORM 1 FROM runtime_upgrade_public_edge_withdrawals WHERE id=NEW.withdrawal_id FOR UPDATE;
+ IF EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts WHERE withdrawal_id=NEW.withdrawal_id)
+  OR NOT EXISTS(SELECT 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton AND revision=reviewed.gateway_revision)
+  OR NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton AND revision=reviewed.public_revision) THEN
+  RAISE EXCEPTION 'external receipt resolved elsewhere or head changed' USING ERRCODE='23514';
+ END IF;
+ PERFORM 1 FROM runtime_upgrade_external_fence_authorities WHERE id=reviewed.authority_id AND revoked_at IS NULL FOR SHARE;
+ IF NOT FOUND OR NEW.enforced_at<reviewed.created_at OR NEW.observed_at>clock_timestamp()
+  OR clock_timestamp()-NEW.issued_at>interval '60 seconds'
+  OR encode(sha256(NEW.envelope),'hex')<>NEW.envelope_sha256 THEN
+  RAISE EXCEPTION 'external receipt authority, clock or bytes invalid' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_gateway_roster(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_gateway_roster() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE canonical uuid[]; unique_sessions integer;
+BEGIN
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'immutable runtime upgrade gateway roster' USING ERRCODE='23514';
+ END IF;
+ SELECT array_agg(DISTINCT s ORDER BY s) INTO canonical FROM unnest(NEW.slot_ids) s;
+ SELECT count(DISTINCT s) INTO unique_sessions FROM unnest(NEW.gateway_sessions) s;
+ IF NEW.slot_ids IS DISTINCT FROM canonical OR unique_sessions<>cardinality(NEW.gateway_sessions)
+  OR array_position(NEW.slot_ids,NULL::uuid) IS NOT NULL OR array_position(NEW.gateway_sessions,NULL::uuid) IS NOT NULL
+  OR array_position(NEW.slot_ids,'00000000-0000-0000-0000-000000000000'::uuid) IS NOT NULL
+  OR array_position(NEW.gateway_sessions,'00000000-0000-0000-0000-000000000000'::uuid) IS NOT NULL THEN
+  RAISE EXCEPTION 'invalid runtime upgrade gateway roster' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_native_public_startup(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_native_public_startup() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE roster runtime_upgrade_public_edge_rosters; body jsonb; selected jsonb; epoch jsonb;
+BEGIN
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'native startup provenance is immutable' USING ERRCODE='23514';
+ END IF;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton AND revision=NEW.gateway_revision FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'native startup internal head changed' USING ERRCODE='23514'; END IF;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton AND revision=NEW.public_revision FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'native startup public head changed' USING ERRCODE='23514'; END IF;
+ SELECT * INTO roster FROM runtime_upgrade_public_edge_rosters WHERE revision=NEW.public_revision;
+ IF roster.gateway_roster_revision IS DISTINCT FROM NEW.gateway_revision
+  OR roster.public_sessions[array_position(roster.slot_ids,NEW.slot_id)] IS DISTINCT FROM NEW.public_session_id
+  OR roster.config_sha256s[array_position(roster.slot_ids,NEW.slot_id)] IS DISTINCT FROM NEW.config_sha256
+  OR NEW.observed_at<roster.created_at OR NEW.recorded_at>clock_timestamp()
+  OR EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_withdrawals WHERE public_session_id=NEW.public_session_id)
+  OR NOT EXISTS(SELECT 1 FROM runtime_upgrade_public_edge_guards WHERE slot_id=NEW.slot_id AND public_session_id=NEW.public_session_id
+    AND public_roster_revision=NEW.public_revision AND config_sha256=NEW.config_sha256 AND guard_enabled
+    AND observed_at<=clock_timestamp() AND expires_at>clock_timestamp()) THEN
+  RAISE EXCEPTION 'native startup requires exact current guarded member before withdrawal' USING ERRCODE='23514';
+ END IF;
+ IF encode(sha256(NEW.review),'hex')<>NEW.review_sha256 OR encode(sha256(NEW.envelope),'hex')<>NEW.envelope_sha256 THEN
+  RAISE EXCEPTION 'native startup evidence digest mismatch' USING ERRCODE='23514';
+ END IF;
+ selected:=convert_from(NEW.review,'UTF8')::jsonb;
+ body:=convert_from(NEW.envelope,'UTF8')::jsonb;
+ epoch:=body#>'{proof,startup,epoch}';
+ IF body->'review' IS DISTINCT FROM selected OR jsonb_array_length(body->'native') IS DISTINCT FROM 2
+  OR body#>>'{proof,startup,slot_id}' IS DISTINCT FROM NEW.slot_id::text
+  OR body#>>'{proof,startup,session_id}' IS DISTINCT FROM NEW.public_session_id::text
+  OR body#>>'{proof,startup,config_sha256}' IS DISTINCT FROM NEW.config_sha256
+  OR epoch->>'machine_id' IS DISTINCT FROM NEW.machine_id OR epoch->>'boot_id' IS DISTINCT FROM NEW.boot_id::text
+  OR epoch->>'pid' IS DISTINCT FROM NEW.pid::text OR epoch->>'start_ticks' IS DISTINCT FROM NEW.start_ticks
+  OR epoch->>'pid_namespace' IS DISTINCT FROM NEW.pid_namespace OR epoch->>'net_namespace' IS DISTINCT FROM NEW.net_namespace THEN
+  RAISE EXCEPTION 'native startup evidence identity mismatch' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_operation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_operation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF (NEW.id,NEW.account_id,NEW.app_id,NEW.deployment_id,NEW.serving_deployment_id,NEW.target_release_id,
+      NEW.source_sha256,NEW.qualification_report_sha256,NEW.created_at,NEW.deadline_at,NEW.source_path)
+   IS DISTINCT FROM
+     (OLD.id,OLD.account_id,OLD.app_id,OLD.deployment_id,OLD.serving_deployment_id,OLD.target_release_id,
+      OLD.source_sha256,OLD.qualification_report_sha256,OLD.created_at,OLD.deadline_at,OLD.source_path)
+   OR OLD.phase IN ('complete','blocked','cancelled')
+   OR (OLD.phase='waiting' AND NEW.phase IN ('reserved','prepared'))
+   OR (OLD.phase='prepared' AND NEW.phase='reserved')
+   OR (OLD.phase='reserved' AND NEW.phase IN ('waiting','complete')) THEN
+   RAISE EXCEPTION 'immutable runtime upgrade intent or terminal operation' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ IF NEW.phase='complete' AND NOT EXISTS (
+  SELECT 1 FROM deployment_runtime_upgrade_cutovers c WHERE c.deployment_id=NEW.deployment_id
+   AND c.serving_deployment_id=NEW.serving_deployment_id AND c.target_release_id=NEW.target_release_id
+   AND c.qualification_report_sha256=NEW.qualification_report_sha256 AND c.wake_id=NEW.wake_id
+ ) THEN
+  RAISE EXCEPTION 'runtime upgrade completion requires retained cutover' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_operation_effect(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_operation_effect() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE operation_phase text;
+BEGIN
+ PERFORM 1 FROM apps a JOIN deployments d ON d.app_id=a.id WHERE d.id=NEW.deployment_id FOR UPDATE OF a;
+ SELECT phase INTO operation_phase FROM runtime_upgrade_operations WHERE deployment_id=NEW.deployment_id;
+ IF (TG_TABLE_NAME='builds' AND operation_phase IN ('reserved','blocked','cancelled','complete'))
+  OR (TG_TABLE_NAME='deployment_runtime_upgrade_cutovers' AND operation_phase IS NOT NULL AND operation_phase<>'waiting') THEN
+  RAISE EXCEPTION 'runtime upgrade operation cannot publish this effect' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_public_edge_activity_version(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_public_edge_activity_version() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.public_session_id=NEW.public_session_id AND OLD.public_roster_revision=NEW.public_roster_revision AND (
+  NEW.activity_version < OLD.activity_version
+  OR (NOT OLD.coverage_known AND NEW.coverage_known)
+  OR (NEW.activity_version=OLD.activity_version AND
+   (NEW.coverage_known,NEW.pending_forwards,NEW.current_forwards,NEW.previous_forwards)
+   IS DISTINCT FROM (OLD.coverage_known,OLD.pending_forwards,OLD.current_forwards,OLD.previous_forwards))) THEN
+  RAISE EXCEPTION 'public ingress activity cannot rewind or restore unknown coverage' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_public_edge_fact(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_public_edge_fact() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;
+ IF NOT EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_rosters r
+  JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=r.revision
+  JOIN runtime_upgrade_gateway_roster_head g ON g.revision=r.gateway_roster_revision
+  WHERE r.revision=NEW.public_roster_revision
+   AND r.public_sessions[array_position(r.slot_ids,NEW.slot_id)]=NEW.public_session_id
+   AND r.config_sha256s[array_position(r.slot_ids,NEW.slot_id)]=NEW.config_sha256) THEN
+  RAISE EXCEPTION 'public guard fact requires exact current reviewed process and config' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_public_edge_head_withdrawals(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_public_edge_head_withdrawals() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE next_roster runtime_upgrade_public_edge_rosters;
+BEGIN
+ IF TG_OP='DELETE' OR NEW.revision IS NULL THEN
+  RAISE EXCEPTION 'public edge head cannot erase withdrawal history' USING ERRCODE='23514';
+ END IF;
+ SELECT * INTO next_roster FROM runtime_upgrade_public_edge_rosters WHERE revision=NEW.revision;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton AND revision=next_roster.gateway_roster_revision FOR SHARE;
+ IF NOT FOUND OR EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_withdrawals w WHERE w.public_session_id=ANY(next_roster.public_sessions)) THEN
+  RAISE EXCEPTION 'public review cannot resurrect a withdrawn process or bind an old internal review' USING ERRCODE='23514';
+ END IF;
+ IF EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_rosters prior, generate_subscripts(prior.public_sessions,1) i
+  WHERE prior.revision=OLD.revision AND prior.public_sessions[i]=ANY(next_roster.public_sessions)
+   AND (prior.slot_ids[i],prior.config_sha256s[i]) IS DISTINCT FROM
+    (next_roster.slot_ids[array_position(next_roster.public_sessions,prior.public_sessions[i])],next_roster.config_sha256s[array_position(next_roster.public_sessions,prior.public_sessions[i])])) THEN
+  RAISE EXCEPTION 'startup session cannot change public slot or configuration' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_public_edge_roster(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_public_edge_roster() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE canonical uuid[];
+BEGIN
+ IF TG_OP <> 'INSERT' THEN
+  RAISE EXCEPTION 'immutable public edge roster' USING ERRCODE='23514';
+ END IF;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton AND revision=NEW.gateway_roster_revision FOR SHARE;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'public edge roster requires current internal roster' USING ERRCODE='23514';
+ END IF;
+ SELECT array_agg(DISTINCT s ORDER BY s) INTO canonical FROM unnest(NEW.slot_ids) s;
+ IF NEW.slot_ids IS DISTINCT FROM canonical
+  OR (SELECT count(DISTINCT s) FROM unnest(NEW.public_sessions) s) <> cardinality(NEW.public_sessions)
+  OR array_position(NEW.slot_ids,NULL::uuid) IS NOT NULL OR array_position(NEW.public_sessions,NULL::uuid) IS NOT NULL
+  OR array_position(NEW.slot_ids,'00000000-0000-0000-0000-000000000000'::uuid) IS NOT NULL
+  OR array_position(NEW.public_sessions,'00000000-0000-0000-0000-000000000000'::uuid) IS NOT NULL
+  OR EXISTS (SELECT 1 FROM unnest(NEW.config_sha256s) s WHERE s IS NULL OR s !~ '^[0-9a-f]{64}$') THEN
+  RAISE EXCEPTION 'invalid public edge roster' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $_$;
+
+
+--
+-- Name: guard_runtime_upgrade_public_edge_withdrawal(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_public_edge_withdrawal() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP <> 'INSERT' THEN
+  RAISE EXCEPTION 'immutable public edge withdrawal' USING ERRCODE='23514';
+ END IF;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;
+ IF EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_rosters r JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=r.revision WHERE NEW.public_session_id=ANY(r.public_sessions))
+  OR NOT EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_rosters r WHERE r.revision=NEW.roster_revision
+   AND r.public_sessions[array_position(r.slot_ids,NEW.slot_id)]=NEW.public_session_id
+   AND r.config_sha256s[array_position(r.slot_ids,NEW.slot_id)]=NEW.config_sha256) THEN
+  RAISE EXCEPTION 'withdrawal requires exact previously reviewed absent process' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_public_edge_withdrawal_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_public_edge_withdrawal_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE withdrawn runtime_upgrade_public_edge_withdrawals;
+BEGIN
+ IF TG_OP <> 'INSERT' THEN RAISE EXCEPTION 'immutable public edge withdrawal receipt' USING ERRCODE='23514'; END IF;
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;
+ SELECT * INTO withdrawn FROM runtime_upgrade_public_edge_withdrawals WHERE id=NEW.withdrawal_id FOR UPDATE;
+ IF NOT FOUND OR NEW.observed_at < withdrawn.created_at OR NEW.observed_at > clock_timestamp()
+  OR EXISTS(SELECT 1 FROM runtime_upgrade_external_fence_receipts WHERE withdrawal_id=NEW.withdrawal_id)
+  OR EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_rosters r JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=r.revision WHERE withdrawn.public_session_id=ANY(r.public_sessions)) THEN
+  RAISE EXCEPTION 'withdrawal receipt requires an absent unresolved process and current clock' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_runtime_upgrade_source(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_source() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM deployment_runtime_upgrade_targets WHERE deployment_id = OLD.id) AND
+  ROW(NEW.app_id, NEW.source_sha256, NEW.source_root, NEW.source_bytes, NEW.kind, NEW.handler)
+  IS DISTINCT FROM ROW(OLD.app_id, OLD.source_sha256, OLD.source_root, OLD.source_bytes, OLD.kind, OLD.handler) THEN
+  RAISE EXCEPTION 'runtime upgrade source is immutable' USING ERRCODE = '23514';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_runtime_upgrade_target(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_target() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP = 'DELETE' THEN
+  IF EXISTS(SELECT 1 FROM deployments WHERE id = OLD.deployment_id) THEN
+   RAISE EXCEPTION 'runtime upgrade target is immutable' USING ERRCODE = '23514';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF NEW IS DISTINCT FROM OLD THEN
+  RAISE EXCEPTION 'runtime upgrade target is immutable' USING ERRCODE = '23514';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_runtime_upgrade_verification(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_runtime_upgrade_verification() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE canonical uuid[];
+BEGIN
+ SELECT array_agg(DISTINCT s ORDER BY s) INTO canonical FROM unnest(NEW.gateway_sessions) s;
+ IF NEW.gateway_sessions IS DISTINCT FROM canonical OR array_position(NEW.gateway_sessions,NULL::uuid) IS NOT NULL
+  OR array_position(NEW.gateway_sessions,'00000000-0000-0000-0000-000000000000'::uuid) IS NOT NULL THEN
+  RAISE EXCEPTION 'invalid runtime upgrade verification participants' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
+  IF NEW.gateway_roster_revision IS NULL OR NOT EXISTS (
+   SELECT 1 FROM runtime_upgrade_gateway_rosters r JOIN runtime_upgrade_gateway_roster_head h ON h.revision=r.revision
+   WHERE r.revision=NEW.gateway_roster_revision AND NEW.gateway_sessions=(SELECT array_agg(s ORDER BY s) FROM unnest(r.gateway_sessions) s)) THEN
+   RAISE EXCEPTION 'runtime upgrade verification requires full current gateway roster' USING ERRCODE='23514';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM runtime_upgrade_operations o JOIN deployment_runtime_upgrade_cutovers c ON c.deployment_id=o.deployment_id
+   WHERE o.id=NEW.operation_id AND o.phase='complete' AND c.cutover_at=NEW.cutover_at AND c.serving_deployment_id=o.serving_deployment_id
+   AND c.target_release_id=o.target_release_id AND c.wake_id=o.wake_id AND c.qualification_report_sha256=o.qualification_report_sha256) THEN
+   RAISE EXCEPTION 'runtime upgrade verification requires matching activation' USING ERRCODE='23514';
+  END IF;
+ ELSIF (NEW.operation_id,NEW.gateway_sessions,NEW.gateway_roster_revision,NEW.cutover_at,NEW.created_at,NEW.deadline_at)
+   IS DISTINCT FROM (OLD.operation_id,OLD.gateway_sessions,OLD.gateway_roster_revision,OLD.cutover_at,OLD.created_at,OLD.deadline_at)
+   OR (OLD.phase<>'pending' AND NEW IS DISTINCT FROM OLD) THEN
+  RAISE EXCEPTION 'immutable runtime upgrade verification' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -8778,6 +9310,19 @@ $$;
 
 
 --
+-- Name: renew_runtime_upgrade_routing_token(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.renew_runtime_upgrade_routing_token() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ NEW.runtime_upgrade_routing_token:=gen_random_uuid();
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: require_deployment_layer_artifacts(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9184,6 +9729,26 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: seed_runtime_upgrade_public_edge_withdrawals(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.seed_runtime_upgrade_public_edge_withdrawals() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM 1 FROM runtime_upgrade_gateway_roster_head WHERE singleton FOR SHARE;
+ PERFORM 1 FROM runtime_upgrade_public_edge_roster_head WHERE singleton FOR SHARE;
+ INSERT INTO runtime_upgrade_public_edge_withdrawals(id,slot_id,public_session_id,config_sha256,roster_revision)
+ SELECT gen_random_uuid(),slot_id,public_session_id,config_sha256,revision FROM (
+  SELECT DISTINCT ON (r.public_sessions[i]) r.slot_ids[i] AS slot_id,r.public_sessions[i] AS public_session_id,r.config_sha256s[i] AS config_sha256,r.revision
+  FROM runtime_upgrade_public_edge_rosters r, generate_subscripts(r.public_sessions,1) i
+  WHERE NOT EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_rosters live JOIN runtime_upgrade_public_edge_roster_head h ON h.revision=live.revision WHERE r.public_sessions[i]=ANY(live.public_sessions))
+  ORDER BY r.public_sessions[i],r.created_at DESC,r.revision DESC
+ ) historical ON CONFLICT (public_session_id) DO NOTHING;
+END $$;
 
 
 --
@@ -10902,6 +11467,51 @@ CREATE TABLE public.app_errors (
 
 
 --
+-- Name: app_health_collection_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_health_collection_state (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    next_check_at timestamp with time zone NOT NULL,
+    lease_token text,
+    lease_started_at timestamp with time zone,
+    lease_until timestamp with time zone,
+    checked_at timestamp with time zone,
+    assessment_key text,
+    assessment jsonb,
+    notification_state jsonb,
+    CONSTRAINT app_health_collection_state_assessment_key_check CHECK ((assessment_key ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT app_health_collection_state_check CHECK (((jsonb_typeof(assessment) = 'object'::text) AND ((assessment ->> 'app_id'::text) = (app_id)::text) AND ((assessment ->> 'scope'::text) = 'default'::text) AND (octet_length((assessment)::text) <= 131072))),
+    CONSTRAINT app_health_collection_state_check1 CHECK ((((lease_token IS NULL) = (lease_until IS NULL)) AND ((lease_token IS NULL) = (lease_started_at IS NULL)))),
+    CONSTRAINT app_health_collection_state_check2 CHECK (((lease_token IS NULL) OR ((length(lease_token) > 0) AND isfinite(lease_started_at) AND isfinite(lease_until) AND (lease_until > lease_started_at)))),
+    CONSTRAINT app_health_collection_state_check3 CHECK ((((checked_at IS NULL) = (assessment IS NULL)) AND ((assessment_key IS NULL) = (assessment IS NULL)))),
+    CONSTRAINT app_health_collection_state_checked_at_check CHECK (((checked_at IS NULL) OR isfinite(checked_at))),
+    CONSTRAINT app_health_collection_state_next_check_at_check CHECK (isfinite(next_check_at)),
+    CONSTRAINT app_health_collection_state_notification_state_check CHECK (((jsonb_typeof(notification_state) = 'object'::text) AND (octet_length((notification_state)::text) <= 8192)))
+);
+
+
+--
+-- Name: app_health_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_health_history (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    kind text NOT NULL,
+    encoded_bytes integer NOT NULL,
+    entry jsonb NOT NULL,
+    CONSTRAINT app_health_history_check CHECK (((jsonb_typeof(entry) = 'object'::text) AND ((entry ->> 'id'::text) = (id)::text) AND ((entry ->> 'kind'::text) = kind) AND (((entry -> 'assessment'::text) ->> 'app_id'::text) = (app_id)::text) AND (((entry -> 'assessment'::text) ->> 'scope'::text) = 'default'::text) AND (octet_length((entry)::text) <= 131072))),
+    CONSTRAINT app_health_history_encoded_bytes_check CHECK (((encoded_bytes >= 1) AND (encoded_bytes <= 65536))),
+    CONSTRAINT app_health_history_kind_check CHECK ((kind = ANY (ARRAY['baseline'::text, 'transition'::text, 'gap'::text]))),
+    CONSTRAINT app_health_history_observed_at_check CHECK (isfinite(observed_at))
+);
+
+
+--
 -- Name: app_issue_impact_alert_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11582,7 +12192,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'routes.monitor.escalated'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -11985,7 +12595,8 @@ CREATE TABLE public.build_provenance (
     started_at timestamp with time zone NOT NULL,
     finished_at timestamp with time zone NOT NULL,
     sbom_storage_key text,
-    framework_version text
+    framework_version text,
+    runtime_base_ref text DEFAULT ''::text NOT NULL
 );
 
 
@@ -13446,6 +14057,98 @@ CREATE TABLE public.deployment_runtime_environment_owners (
     deployment_id uuid NOT NULL,
     environment_id uuid NOT NULL,
     CONSTRAINT deployment_runtime_environment_owners_environment_id_check CHECK ((environment_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: deployment_runtime_upgrade_acceptances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_upgrade_acceptances (
+    deployment_id uuid NOT NULL,
+    target_release_id text NOT NULL,
+    rootfs_key text NOT NULL,
+    instance_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    wake_id uuid NOT NULL,
+    profile text NOT NULL,
+    configuration_fingerprint text NOT NULL,
+    secret_fingerprint text NOT NULL,
+    qualification_report_sha256 text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    ready_at timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_runtime_upgrade_ac_qualification_report_sha256_check CHECK ((qualification_report_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_acce_configuration_fingerprint_check CHECK ((configuration_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_check CHECK ((isfinite(ready_at) AND (ready_at >= started_at))),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_instance_id_check CHECK ((instance_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_node_id_check CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_profile_check CHECK ((profile = 'runtime-upgrade-prime-v1'::text)),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_rootfs_key_check CHECK (((octet_length(rootfs_key) >= 1) AND (octet_length(rootfs_key) <= 1024))),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_secret_fingerprint_check CHECK ((secret_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_started_at_check CHECK (isfinite(started_at)),
+    CONSTRAINT deployment_runtime_upgrade_acceptances_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_upgrade_baselines (
+    deployment_id uuid NOT NULL,
+    serving_deployment_id uuid NOT NULL,
+    serving_rootfs_key text NOT NULL,
+    serving_runtime_release_id text NOT NULL,
+    target_release_id text NOT NULL,
+    configuration_fingerprint text NOT NULL,
+    secret_fingerprint text NOT NULL,
+    input_fingerprint text NOT NULL,
+    input_secret_fingerprint text NOT NULL,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_runtime_upgrade_base_configuration_fingerprint_check CHECK ((configuration_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_basel_input_secret_fingerprint_check CHECK ((input_secret_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_baselines_check CHECK ((deployment_id <> serving_deployment_id)),
+    CONSTRAINT deployment_runtime_upgrade_baselines_input_fingerprint_check CHECK ((input_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_baselines_secret_fingerprint_check CHECK ((secret_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_baselines_serving_rootfs_key_check CHECK (((octet_length(serving_rootfs_key) >= 1) AND (octet_length(serving_rootfs_key) <= 1024)))
+);
+
+
+--
+-- Name: deployment_runtime_upgrade_cutovers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_upgrade_cutovers (
+    deployment_id uuid NOT NULL,
+    serving_deployment_id uuid NOT NULL,
+    target_release_id text NOT NULL,
+    wake_id uuid NOT NULL,
+    qualification_report_sha256 text NOT NULL,
+    cutover_at timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_runtime_upgrade_cu_qualification_report_sha256_check CHECK ((qualification_report_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_upgrade_cutovers_check CHECK ((deployment_id <> serving_deployment_id)),
+    CONSTRAINT deployment_runtime_upgrade_cutovers_cutover_at_check CHECK (isfinite(cutover_at)),
+    CONSTRAINT deployment_runtime_upgrade_cutovers_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: deployment_runtime_upgrade_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_upgrade_targets (
+    deployment_id uuid NOT NULL,
+    release_id text NOT NULL,
+    source_sha256 text NOT NULL,
+    source_root text NOT NULL,
+    source_bytes bigint NOT NULL,
+    kind text NOT NULL,
+    handler text NOT NULL,
+    CONSTRAINT deployment_runtime_upgrade_targets_handler_check CHECK ((octet_length(handler) <= 4096)),
+    CONSTRAINT deployment_runtime_upgrade_targets_kind_check CHECK ((kind = ANY (ARRAY['tarball'::text, 'github'::text, 'preview'::text]))),
+    CONSTRAINT deployment_runtime_upgrade_targets_source_bytes_check CHECK ((source_bytes > 0)),
+    CONSTRAINT deployment_runtime_upgrade_targets_source_root_check CHECK ((octet_length(source_root) <= 4096)),
+    CONSTRAINT deployment_runtime_upgrade_targets_source_sha256_check CHECK ((source_sha256 ~ '^[a-f0-9]{64}$'::text))
 );
 
 
@@ -21009,6 +21712,18 @@ CREATE TABLE public.route_policy_receipts (
 
 
 --
+-- Name: runtime_artifact_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_artifact_bindings (
+    account_id uuid NOT NULL,
+    rootfs_key text NOT NULL,
+    release_id text NOT NULL,
+    CONSTRAINT runtime_artifact_bindings_rootfs_key_check CHECK (((length(rootfs_key) >= 1) AND (length(rootfs_key) <= 1024)))
+);
+
+
+--
 -- Name: runtime_config_entries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21149,6 +21864,69 @@ CREATE TABLE public.runtime_instance_config_proofs (
 
 
 --
+-- Name: runtime_release_qualifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_release_qualifications (
+    release_id text NOT NULL,
+    profile text NOT NULL,
+    architecture text NOT NULL,
+    host_id uuid NOT NULL,
+    kernel_boot_id uuid NOT NULL,
+    source_commit text NOT NULL,
+    kernel_sha256 text NOT NULL,
+    firecracker_sha256 text NOT NULL,
+    report_sha256 text NOT NULL,
+    test_metal_sha256 text NOT NULL,
+    leakcheck_sha256 text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    completed_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    revoked_at timestamp with time zone,
+    revocation_sha256 text,
+    CONSTRAINT runtime_release_qualifications_architecture_check CHECK ((architecture = ANY (ARRAY['amd64'::text, 'arm64'::text]))),
+    CONSTRAINT runtime_release_qualifications_check CHECK ((isfinite(completed_at) AND (completed_at > started_at))),
+    CONSTRAINT runtime_release_qualifications_check1 CHECK ((isfinite(recorded_at) AND (recorded_at >= completed_at))),
+    CONSTRAINT runtime_release_qualifications_check2 CHECK (((revoked_at IS NULL) OR (isfinite(revoked_at) AND (revoked_at >= recorded_at)))),
+    CONSTRAINT runtime_release_qualifications_check3 CHECK (((revoked_at IS NULL) = (revocation_sha256 IS NULL))),
+    CONSTRAINT runtime_release_qualifications_firecracker_sha256_check CHECK ((firecracker_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_release_qualifications_host_id_check CHECK ((host_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_release_qualifications_kernel_boot_id_check CHECK ((kernel_boot_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_release_qualifications_kernel_sha256_check CHECK ((kernel_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_release_qualifications_leakcheck_sha256_check CHECK ((leakcheck_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_release_qualifications_profile_check CHECK ((profile = 'runtime-upgrade-native-v1'::text)),
+    CONSTRAINT runtime_release_qualifications_report_sha256_check CHECK ((report_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_release_qualifications_revocation_sha256_check CHECK (((revocation_sha256 IS NULL) OR (revocation_sha256 ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT runtime_release_qualifications_source_commit_check CHECK ((source_commit ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text)),
+    CONSTRAINT runtime_release_qualifications_started_at_check CHECK (isfinite(started_at)),
+    CONSTRAINT runtime_release_qualifications_test_metal_sha256_check CHECK ((test_metal_sha256 ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: runtime_releases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_releases (
+    id text NOT NULL,
+    runtime text NOT NULL,
+    architecture text NOT NULL,
+    source_ref text NOT NULL,
+    guest_init_sha256 text NOT NULL,
+    layout_version text NOT NULL,
+    base_sha256 text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT runtime_releases_architecture_check CHECK ((architecture = ANY (ARRAY['amd64'::text, 'arm64'::text]))),
+    CONSTRAINT runtime_releases_base_sha256_check CHECK ((base_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_releases_guest_init_sha256_check CHECK ((guest_init_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_releases_id_check CHECK ((id ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_releases_layout_version_check CHECK (((length(layout_version) >= 1) AND (length(layout_version) <= 64))),
+    CONSTRAINT runtime_releases_runtime_check CHECK ((runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'go124-alpine'::text]))),
+    CONSTRAINT runtime_releases_source_ref_check CHECK ((source_ref ~ '@sha256:[a-f0-9]{64}$'::text))
+);
+
+
+--
 -- Name: runtime_snapshots; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21189,6 +21967,401 @@ CREATE TABLE public.runtime_snapshots (
     CONSTRAINT runtime_snapshots_sanitized_check CHECK ((sanitized AND payload_free)),
     CONSTRAINT runtime_snapshots_sizes_check CHECK (((mem_bytes > 0) AND (vm_state_bytes > 0))),
     CONSTRAINT runtime_snapshots_state_check CHECK ((state = ANY (ARRAY['ready'::text, 'retired'::text])))
+);
+
+
+--
+-- Name: runtime_upgrade_external_fence_authorities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_external_fence_authorities (
+    id uuid NOT NULL,
+    public_key bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    revoked_at timestamp with time zone,
+    CONSTRAINT runtime_upgrade_external_fence_authorities_check CHECK (((revoked_at IS NULL) OR (isfinite(revoked_at) AND (revoked_at >= created_at)))),
+    CONSTRAINT runtime_upgrade_external_fence_authorities_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_external_fence_authorities_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_external_fence_authorities_public_key_check CHECK (((octet_length(public_key) = 32) AND (public_key <> decode(repeat('00'::text, 32), 'hex'::text))))
+);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_external_fence_intents (
+    id uuid NOT NULL,
+    withdrawal_id uuid NOT NULL,
+    authority_id uuid NOT NULL,
+    challenge uuid NOT NULL,
+    gateway_revision uuid NOT NULL,
+    public_revision uuid NOT NULL,
+    machine_id text NOT NULL,
+    boot_id uuid NOT NULL,
+    resource_id text NOT NULL,
+    scope_sha256 text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT runtime_upgrade_external_fence_intents_boot_id_check CHECK ((boot_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_external_fence_intents_challenge_check CHECK ((challenge <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_external_fence_intents_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_external_fence_intents_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_external_fence_intents_machine_id_check CHECK (((machine_id ~ '^[0-9a-f]{32}$'::text) AND (machine_id <> repeat('0'::text, 32)))),
+    CONSTRAINT runtime_upgrade_external_fence_intents_resource_id_check CHECK ((((octet_length(resource_id) >= 1) AND (octet_length(resource_id) <= 256)) AND (resource_id ~ '^[A-Za-z0-9._:/@-]+$'::text))),
+    CONSTRAINT runtime_upgrade_external_fence_intents_scope_sha256_check CHECK ((scope_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_external_fence_receipts (
+    withdrawal_id uuid NOT NULL,
+    intent_id uuid NOT NULL,
+    receipt_id uuid NOT NULL,
+    envelope bytea NOT NULL,
+    envelope_sha256 text NOT NULL,
+    enforced_at timestamp with time zone NOT NULL,
+    issued_at timestamp with time zone NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_external_fence_receipts_check CHECK ((isfinite(issued_at) AND (issued_at >= enforced_at))),
+    CONSTRAINT runtime_upgrade_external_fence_receipts_check1 CHECK ((isfinite(observed_at) AND (observed_at >= issued_at))),
+    CONSTRAINT runtime_upgrade_external_fence_receipts_enforced_at_check CHECK (isfinite(enforced_at)),
+    CONSTRAINT runtime_upgrade_external_fence_receipts_envelope_check CHECK (((octet_length(envelope) >= 1) AND (octet_length(envelope) <= 16384))),
+    CONSTRAINT runtime_upgrade_external_fence_receipts_envelope_sha256_check CHECK ((envelope_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_external_fence_receipts_receipt_id_check CHECK ((receipt_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: runtime_upgrade_gateway_drains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_gateway_drains (
+    app_id uuid NOT NULL,
+    gateway_session_id uuid NOT NULL,
+    slot_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    serving_deployment_id uuid NOT NULL,
+    gateway_roster_revision uuid NOT NULL,
+    routing_revision text NOT NULL,
+    fence_id uuid NOT NULL,
+    activity_version text NOT NULL,
+    active_forwards integer DEFAULT 0 NOT NULL,
+    cutover_at timestamp with time zone NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_gateway_drains_active_forwards_check CHECK ((active_forwards = 0)),
+    CONSTRAINT runtime_upgrade_gateway_drains_activity_version_check CHECK (((activity_version ~ '^[1-9][0-9]{0,19}$'::text) AND ((activity_version)::numeric <= '18446744073709551615'::numeric))),
+    CONSTRAINT runtime_upgrade_gateway_drains_check CHECK ((serving_deployment_id <> deployment_id)),
+    CONSTRAINT runtime_upgrade_gateway_drains_check1 CHECK ((isfinite(expires_at) AND (expires_at = (observed_at + '00:01:00'::interval)))),
+    CONSTRAINT runtime_upgrade_gateway_drains_cutover_at_check CHECK (isfinite(cutover_at)),
+    CONSTRAINT runtime_upgrade_gateway_drains_fence_id_check CHECK ((fence_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_gateway_drains_gateway_session_id_check CHECK ((gateway_session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_gateway_drains_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT runtime_upgrade_gateway_drains_routing_revision_check CHECK ((routing_revision ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_gateway_drains_slot_id_check CHECK ((slot_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: runtime_upgrade_gateway_heartbeats; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_gateway_heartbeats (
+    slot_id uuid NOT NULL,
+    gateway_session_id uuid NOT NULL,
+    roster_revision uuid NOT NULL,
+    seen_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_gateway_heartbeats_check CHECK ((isfinite(expires_at) AND (expires_at = (seen_at + '00:01:00'::interval)))),
+    CONSTRAINT runtime_upgrade_gateway_heartbeats_gateway_session_id_check CHECK ((gateway_session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_gateway_heartbeats_seen_at_check CHECK (isfinite(seen_at)),
+    CONSTRAINT runtime_upgrade_gateway_heartbeats_slot_id_check CHECK ((slot_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: runtime_upgrade_gateway_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_gateway_receipts (
+    app_id uuid NOT NULL,
+    gateway_session_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    cutover_at timestamp with time zone NOT NULL,
+    installed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT runtime_upgrade_gateway_receipts_check CHECK ((installed_at >= cutover_at))
+);
+
+
+--
+-- Name: runtime_upgrade_gateway_roster_head; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_gateway_roster_head (
+    singleton boolean DEFAULT true NOT NULL,
+    revision uuid,
+    CONSTRAINT runtime_upgrade_gateway_roster_head_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: runtime_upgrade_gateway_rosters; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_gateway_rosters (
+    revision uuid NOT NULL,
+    slot_ids uuid[] NOT NULL,
+    gateway_sessions uuid[] NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT runtime_upgrade_gateway_rosters_check CHECK (((cardinality(gateway_sessions) = cardinality(slot_ids)) AND (array_ndims(gateway_sessions) = 1) AND (array_lower(gateway_sessions, 1) = 1))),
+    CONSTRAINT runtime_upgrade_gateway_rosters_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_gateway_rosters_revision_check CHECK ((revision <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_gateway_rosters_slot_ids_check CHECK ((((cardinality(slot_ids) >= 1) AND (cardinality(slot_ids) <= 64)) AND (array_ndims(slot_ids) = 1) AND (array_lower(slot_ids, 1) = 1)))
+);
+
+
+--
+-- Name: runtime_upgrade_native_public_startups; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_native_public_startups (
+    public_session_id uuid NOT NULL,
+    slot_id uuid NOT NULL,
+    gateway_revision uuid NOT NULL,
+    public_revision uuid NOT NULL,
+    config_sha256 text NOT NULL,
+    machine_id text NOT NULL,
+    boot_id uuid NOT NULL,
+    pid integer NOT NULL,
+    start_ticks text NOT NULL,
+    pid_namespace text NOT NULL,
+    net_namespace text NOT NULL,
+    review bytea NOT NULL,
+    review_sha256 text NOT NULL,
+    envelope bytea NOT NULL,
+    envelope_sha256 text NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_native_public_startups_boot_id_check CHECK ((boot_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_native_public_startups_check CHECK ((isfinite(recorded_at) AND (recorded_at >= observed_at) AND ((recorded_at - observed_at) <= '00:01:30'::interval))),
+    CONSTRAINT runtime_upgrade_native_public_startups_config_sha256_check CHECK ((config_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_native_public_startups_envelope_check CHECK (((octet_length(envelope) >= 1) AND (octet_length(envelope) <= 1048576))),
+    CONSTRAINT runtime_upgrade_native_public_startups_envelope_sha256_check CHECK ((envelope_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_native_public_startups_machine_id_check CHECK (((machine_id ~ '^[0-9a-f]{32}$'::text) AND (machine_id <> repeat('0'::text, 32)))),
+    CONSTRAINT runtime_upgrade_native_public_startups_net_namespace_check CHECK (((net_namespace ~ '^net:\[[1-9][0-9]{0,19}\]$'::text) AND ((SUBSTRING(net_namespace FROM 6 FOR (length(net_namespace) - 6)))::numeric <= '18446744073709551615'::numeric))),
+    CONSTRAINT runtime_upgrade_native_public_startups_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT runtime_upgrade_native_public_startups_pid_check CHECK ((pid >= 2)),
+    CONSTRAINT runtime_upgrade_native_public_startups_pid_namespace_check CHECK (((pid_namespace ~ '^pid:\[[1-9][0-9]{0,19}\]$'::text) AND ((SUBSTRING(pid_namespace FROM 6 FOR (length(pid_namespace) - 6)))::numeric <= '18446744073709551615'::numeric))),
+    CONSTRAINT runtime_upgrade_native_public_startups_public_session_id_check CHECK ((public_session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_native_public_startups_review_check CHECK (((octet_length(review) >= 1) AND (octet_length(review) <= 1048576))),
+    CONSTRAINT runtime_upgrade_native_public_startups_review_sha256_check CHECK ((review_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_native_public_startups_slot_id_check CHECK ((slot_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_native_public_startups_start_ticks_check CHECK (((start_ticks ~ '^[1-9][0-9]{0,19}$'::text) AND ((start_ticks)::numeric <= '18446744073709551615'::numeric)))
+);
+
+
+--
+-- Name: runtime_upgrade_operations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_operations (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    serving_deployment_id uuid NOT NULL,
+    target_release_id text NOT NULL,
+    source_sha256 text NOT NULL,
+    qualification_report_sha256 text NOT NULL,
+    phase text DEFAULT 'prepared'::text NOT NULL,
+    blocker text DEFAULT ''::text NOT NULL,
+    wake_id uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    deadline_at timestamp with time zone NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    finished_at timestamp with time zone,
+    source_path text DEFAULT ''::text NOT NULL,
+    CONSTRAINT runtime_upgrade_operations_blocker_check CHECK ((blocker = ANY (ARRAY[''::text, 'deadline_exceeded'::text, 'candidate_changed'::text, 'baseline_changed'::text, 'qualification_changed'::text, 'readiness_changed'::text, 'intent_changed'::text]))),
+    CONSTRAINT runtime_upgrade_operations_check CHECK ((isfinite(deadline_at) AND (deadline_at > created_at))),
+    CONSTRAINT runtime_upgrade_operations_check1 CHECK ((deployment_id <> serving_deployment_id)),
+    CONSTRAINT runtime_upgrade_operations_check2 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT runtime_upgrade_operations_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_operations_finished_at_check CHECK (isfinite(finished_at)),
+    CONSTRAINT runtime_upgrade_operations_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_operations_lease_token_check CHECK ((lease_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_operations_lease_until_check CHECK (isfinite(lease_until)),
+    CONSTRAINT runtime_upgrade_operations_next_attempt_at_check CHECK (isfinite(next_attempt_at)),
+    CONSTRAINT runtime_upgrade_operations_phase_check CHECK ((phase = ANY (ARRAY['reserved'::text, 'prepared'::text, 'waiting'::text, 'complete'::text, 'blocked'::text, 'cancelled'::text]))),
+    CONSTRAINT runtime_upgrade_operations_qualification_report_sha256_check CHECK ((qualification_report_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_operations_reservation_path_check CHECK (((phase <> 'reserved'::text) OR ((source_path ~~ '/%'::text) AND (length(source_path) > 1)))),
+    CONSTRAINT runtime_upgrade_operations_source_sha256_check CHECK ((source_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_operations_state_check CHECK ((((phase = ANY (ARRAY['reserved'::text, 'prepared'::text, 'waiting'::text])) AND (blocker = ''::text) AND (wake_id IS NULL) AND (finished_at IS NULL)) OR ((phase = 'complete'::text) AND (blocker = ''::text) AND (wake_id IS NOT NULL) AND (finished_at IS NOT NULL) AND (lease_token IS NULL)) OR ((phase = 'blocked'::text) AND (blocker <> ''::text) AND (wake_id IS NULL) AND (finished_at IS NOT NULL) AND (lease_token IS NULL)) OR ((phase = 'cancelled'::text) AND (blocker = ''::text) AND (wake_id IS NULL) AND (finished_at IS NOT NULL) AND (lease_token IS NULL)))),
+    CONSTRAINT runtime_upgrade_operations_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: runtime_upgrade_public_edge_activity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_public_edge_activity (
+    slot_id uuid NOT NULL,
+    public_session_id uuid NOT NULL,
+    public_roster_revision uuid NOT NULL,
+    config_sha256 text NOT NULL,
+    guard_enabled boolean NOT NULL,
+    activity_version bigint NOT NULL,
+    coverage_known boolean NOT NULL,
+    pending_forwards integer NOT NULL,
+    current_forwards integer NOT NULL,
+    previous_forwards integer NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_public_edge_activity_activity_version_check CHECK ((activity_version > 0)),
+    CONSTRAINT runtime_upgrade_public_edge_activity_check CHECK ((isfinite(expires_at) AND (expires_at = (observed_at + '00:01:00'::interval)))),
+    CONSTRAINT runtime_upgrade_public_edge_activity_check1 CHECK ((((pending_forwards + current_forwards) + previous_forwards) <= 65536)),
+    CONSTRAINT runtime_upgrade_public_edge_activity_config_sha256_check CHECK ((config_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_public_edge_activity_current_forwards_check CHECK (((current_forwards >= 0) AND (current_forwards <= 65536))),
+    CONSTRAINT runtime_upgrade_public_edge_activity_guard_enabled_check CHECK (guard_enabled),
+    CONSTRAINT runtime_upgrade_public_edge_activity_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT runtime_upgrade_public_edge_activity_pending_forwards_check CHECK (((pending_forwards >= 0) AND (pending_forwards <= 65536))),
+    CONSTRAINT runtime_upgrade_public_edge_activity_previous_forwards_check CHECK (((previous_forwards >= 0) AND (previous_forwards <= 65536))),
+    CONSTRAINT runtime_upgrade_public_edge_activity_public_session_id_check CHECK ((public_session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_public_edge_activity_slot_id_check CHECK ((slot_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: runtime_upgrade_public_edge_guards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_public_edge_guards (
+    slot_id uuid NOT NULL,
+    public_session_id uuid NOT NULL,
+    public_roster_revision uuid NOT NULL,
+    config_sha256 text NOT NULL,
+    guard_enabled boolean NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_public_edge_guards_check CHECK ((isfinite(expires_at) AND (expires_at = (observed_at + '00:01:00'::interval)))),
+    CONSTRAINT runtime_upgrade_public_edge_guards_config_sha256_check CHECK ((config_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_public_edge_guards_guard_enabled_check CHECK (guard_enabled),
+    CONSTRAINT runtime_upgrade_public_edge_guards_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT runtime_upgrade_public_edge_guards_public_session_id_check CHECK ((public_session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_public_edge_guards_slot_id_check CHECK ((slot_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: runtime_upgrade_public_edge_roster_head; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_public_edge_roster_head (
+    singleton boolean DEFAULT true NOT NULL,
+    revision uuid,
+    CONSTRAINT runtime_upgrade_public_edge_roster_head_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: runtime_upgrade_public_edge_rosters; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_public_edge_rosters (
+    revision uuid NOT NULL,
+    gateway_roster_revision uuid NOT NULL,
+    topology_sha256 text NOT NULL,
+    slot_ids uuid[] NOT NULL,
+    public_sessions uuid[] NOT NULL,
+    config_sha256s text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT runtime_upgrade_public_edge_rosters_check CHECK (((cardinality(public_sessions) = cardinality(slot_ids)) AND (array_ndims(public_sessions) = 1) AND (array_lower(public_sessions, 1) = 1))),
+    CONSTRAINT runtime_upgrade_public_edge_rosters_check1 CHECK (((cardinality(config_sha256s) = cardinality(slot_ids)) AND (array_ndims(config_sha256s) = 1) AND (array_lower(config_sha256s, 1) = 1))),
+    CONSTRAINT runtime_upgrade_public_edge_rosters_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_public_edge_rosters_revision_check CHECK ((revision <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_public_edge_rosters_slot_ids_check CHECK ((((cardinality(slot_ids) >= 1) AND (cardinality(slot_ids) <= 64)) AND (array_ndims(slot_ids) = 1) AND (array_lower(slot_ids, 1) = 1))),
+    CONSTRAINT runtime_upgrade_public_edge_rosters_topology_sha256_check CHECK ((topology_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawal_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_public_edge_withdrawal_receipts (
+    withdrawal_id uuid NOT NULL,
+    fence_id uuid NOT NULL,
+    activity_version bigint NOT NULL,
+    admission_closed boolean NOT NULL,
+    coverage_known boolean NOT NULL,
+    active_forwards integer NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT runtime_upgrade_public_edge_withdrawal_r_activity_version_check CHECK ((activity_version > 0)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawal_r_admission_closed_check CHECK (admission_closed),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawal_re_active_forwards_check CHECK ((active_forwards = 0)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawal_rec_coverage_known_check CHECK (coverage_known),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawal_receip_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawal_receipts_fence_id_check CHECK ((fence_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_public_edge_withdrawals (
+    id uuid NOT NULL,
+    slot_id uuid NOT NULL,
+    public_session_id uuid NOT NULL,
+    config_sha256 text NOT NULL,
+    roster_revision uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT runtime_upgrade_public_edge_withdrawals_config_sha256_check CHECK ((config_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawals_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawals_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawals_public_session_id_check CHECK ((public_session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_public_edge_withdrawals_slot_id_check CHECK ((slot_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: runtime_upgrade_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_upgrade_verifications (
+    operation_id uuid NOT NULL,
+    gateway_sessions uuid[] NOT NULL,
+    cutover_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    deadline_at timestamp with time zone NOT NULL,
+    phase text DEFAULT 'pending'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    last_observation jsonb,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    finished_at timestamp with time zone,
+    gateway_roster_revision uuid,
+    CONSTRAINT runtime_upgrade_verifications_check CHECK ((isfinite(deadline_at) AND (deadline_at = (cutover_at + '00:30:00'::interval)))),
+    CONSTRAINT runtime_upgrade_verifications_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT runtime_upgrade_verifications_check2 CHECK ((((phase = 'pending'::text) AND (finished_at IS NULL)) OR ((phase <> 'pending'::text) AND (finished_at IS NOT NULL) AND (lease_token IS NULL)))),
+    CONSTRAINT runtime_upgrade_verifications_check3 CHECK (((phase <> 'verified'::text) OR ((reason = ''::text) AND (last_observation IS NOT NULL) AND (NOT ((last_observation ->> 'status'::text) IS DISTINCT FROM 'verified'::text))))),
+    CONSTRAINT runtime_upgrade_verifications_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_upgrade_verifications_cutover_at_check CHECK (isfinite(cutover_at)),
+    CONSTRAINT runtime_upgrade_verifications_finished_at_check CHECK (isfinite(finished_at)),
+    CONSTRAINT runtime_upgrade_verifications_gateway_sessions_check CHECK (((cardinality(gateway_sessions) >= 1) AND (cardinality(gateway_sessions) <= 64))),
+    CONSTRAINT runtime_upgrade_verifications_last_observation_check CHECK (((jsonb_typeof(last_observation) = 'object'::text) AND (octet_length((last_observation)::text) <= 8192))),
+    CONSTRAINT runtime_upgrade_verifications_lease_token_check CHECK ((lease_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_upgrade_verifications_lease_until_check CHECK (isfinite(lease_until)),
+    CONSTRAINT runtime_upgrade_verifications_next_attempt_at_check CHECK (isfinite(next_attempt_at)),
+    CONSTRAINT runtime_upgrade_verifications_phase_check CHECK ((phase = ANY (ARRAY['pending'::text, 'verified'::text, 'blocked'::text, 'expired'::text]))),
+    CONSTRAINT runtime_upgrade_verifications_reason_check CHECK ((reason ~ '^[a-z_]{0,64}$'::text))
 );
 
 
@@ -22734,6 +23907,22 @@ ALTER TABLE ONLY public.app_errors
 
 
 --
+-- Name: app_health_collection_state app_health_collection_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_collection_state
+    ADD CONSTRAINT app_health_collection_state_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_health_history app_health_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_history
+    ADD CONSTRAINT app_health_history_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: app_issue_impact_alert_policies app_issue_impact_alert_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23683,6 +24872,38 @@ ALTER TABLE ONLY public.deployment_route_policy_snapshots
 
 ALTER TABLE ONLY public.deployment_runtime_environment_owners
     ADD CONSTRAINT deployment_runtime_environment_owners_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_runtime_upgrade_acceptances deployment_runtime_upgrade_acceptances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_acceptances
+    ADD CONSTRAINT deployment_runtime_upgrade_acceptances_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines deployment_runtime_upgrade_baselines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_baselines
+    ADD CONSTRAINT deployment_runtime_upgrade_baselines_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_runtime_upgrade_cutovers deployment_runtime_upgrade_cutovers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_cutovers
+    ADD CONSTRAINT deployment_runtime_upgrade_cutovers_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_runtime_upgrade_targets deployment_runtime_upgrade_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_targets
+    ADD CONSTRAINT deployment_runtime_upgrade_targets_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -27110,6 +28331,14 @@ ALTER TABLE ONLY public.route_policy_receipts
 
 
 --
+-- Name: runtime_artifact_bindings runtime_artifact_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_artifact_bindings
+    ADD CONSTRAINT runtime_artifact_bindings_pkey PRIMARY KEY (account_id, rootfs_key);
+
+
+--
 -- Name: runtime_config_entries runtime_config_entries_config_key_scope_scope_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27166,6 +28395,30 @@ ALTER TABLE ONLY public.runtime_instance_config_proofs
 
 
 --
+-- Name: runtime_release_qualifications runtime_release_qualifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_release_qualifications
+    ADD CONSTRAINT runtime_release_qualifications_pkey PRIMARY KEY (release_id);
+
+
+--
+-- Name: runtime_releases runtime_releases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_releases
+    ADD CONSTRAINT runtime_releases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_releases runtime_releases_runtime_architecture_source_ref_guest_init_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_releases
+    ADD CONSTRAINT runtime_releases_runtime_architecture_source_ref_guest_init_key UNIQUE (runtime, architecture, source_ref, guest_init_sha256, layout_version);
+
+
+--
 -- Name: runtime_snapshots runtime_snapshots_catalog_key_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27179,6 +28432,190 @@ ALTER TABLE ONLY public.runtime_snapshots
 
 ALTER TABLE ONLY public.runtime_snapshots
     ADD CONSTRAINT runtime_snapshots_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_authorities runtime_upgrade_external_fence_authorities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_authorities
+    ADD CONSTRAINT runtime_upgrade_external_fence_authorities_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_authorities runtime_upgrade_external_fence_authorities_public_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_authorities
+    ADD CONSTRAINT runtime_upgrade_external_fence_authorities_public_key_key UNIQUE (public_key);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intents_challenge_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_intents
+    ADD CONSTRAINT runtime_upgrade_external_fence_intents_challenge_key UNIQUE (challenge);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_intents
+    ADD CONSTRAINT runtime_upgrade_external_fence_intents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts runtime_upgrade_external_fence_receipts_intent_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_receipts
+    ADD CONSTRAINT runtime_upgrade_external_fence_receipts_intent_id_key UNIQUE (intent_id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts runtime_upgrade_external_fence_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_receipts
+    ADD CONSTRAINT runtime_upgrade_external_fence_receipts_pkey PRIMARY KEY (withdrawal_id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts runtime_upgrade_external_fence_receipts_receipt_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_receipts
+    ADD CONSTRAINT runtime_upgrade_external_fence_receipts_receipt_id_key UNIQUE (receipt_id);
+
+
+--
+-- Name: runtime_upgrade_gateway_drains runtime_upgrade_gateway_drains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_drains
+    ADD CONSTRAINT runtime_upgrade_gateway_drains_pkey PRIMARY KEY (app_id, gateway_session_id);
+
+
+--
+-- Name: runtime_upgrade_gateway_heartbeats runtime_upgrade_gateway_heartbeats_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_heartbeats
+    ADD CONSTRAINT runtime_upgrade_gateway_heartbeats_pkey PRIMARY KEY (slot_id);
+
+
+--
+-- Name: runtime_upgrade_gateway_receipts runtime_upgrade_gateway_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_receipts
+    ADD CONSTRAINT runtime_upgrade_gateway_receipts_pkey PRIMARY KEY (app_id, gateway_session_id);
+
+
+--
+-- Name: runtime_upgrade_gateway_roster_head runtime_upgrade_gateway_roster_head_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_roster_head
+    ADD CONSTRAINT runtime_upgrade_gateway_roster_head_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: runtime_upgrade_gateway_rosters runtime_upgrade_gateway_rosters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_rosters
+    ADD CONSTRAINT runtime_upgrade_gateway_rosters_pkey PRIMARY KEY (revision);
+
+
+--
+-- Name: runtime_upgrade_native_public_startups runtime_upgrade_native_public_startups_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_native_public_startups
+    ADD CONSTRAINT runtime_upgrade_native_public_startups_pkey PRIMARY KEY (public_session_id);
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_deployment_id_key UNIQUE (deployment_id);
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_activity runtime_upgrade_public_edge_activity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_activity
+    ADD CONSTRAINT runtime_upgrade_public_edge_activity_pkey PRIMARY KEY (slot_id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_guards runtime_upgrade_public_edge_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_guards
+    ADD CONSTRAINT runtime_upgrade_public_edge_guards_pkey PRIMARY KEY (slot_id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_roster_head runtime_upgrade_public_edge_roster_head_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_roster_head
+    ADD CONSTRAINT runtime_upgrade_public_edge_roster_head_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: runtime_upgrade_public_edge_rosters runtime_upgrade_public_edge_rosters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_rosters
+    ADD CONSTRAINT runtime_upgrade_public_edge_rosters_pkey PRIMARY KEY (revision);
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawal_receipts runtime_upgrade_public_edge_withdrawal_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_withdrawal_receipts
+    ADD CONSTRAINT runtime_upgrade_public_edge_withdrawal_receipts_pkey PRIMARY KEY (withdrawal_id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawals runtime_upgrade_public_edge_withdrawals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_withdrawals
+    ADD CONSTRAINT runtime_upgrade_public_edge_withdrawals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawals runtime_upgrade_public_edge_withdrawals_public_session_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_withdrawals
+    ADD CONSTRAINT runtime_upgrade_public_edge_withdrawals_public_session_id_key UNIQUE (public_session_id);
+
+
+--
+-- Name: runtime_upgrade_verifications runtime_upgrade_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_verifications
+    ADD CONSTRAINT runtime_upgrade_verifications_pkey PRIMARY KEY (operation_id);
 
 
 --
@@ -27967,6 +29404,27 @@ CREATE INDEX app_errors_account_app_last_seen_idx ON public.app_errors USING btr
 --
 
 CREATE UNIQUE INDEX app_errors_dedupe_uniq ON public.app_errors USING btree (account_id, app_id, fingerprint);
+
+
+--
+-- Name: app_health_collection_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_health_collection_due_idx ON public.app_health_collection_state USING btree (next_check_at, app_id);
+
+
+--
+-- Name: app_health_history_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_health_history_app_idx ON public.app_health_history USING btree (app_id, observed_at DESC, id DESC);
+
+
+--
+-- Name: app_health_history_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_health_history_retention_idx ON public.app_health_history USING btree (observed_at, id);
 
 
 --
@@ -32716,10 +34174,59 @@ CREATE INDEX runtime_config_revisions_lookup_idx ON public.runtime_config_revisi
 
 
 --
+-- Name: runtime_releases_catalog_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_releases_catalog_idx ON public.runtime_releases USING btree (runtime, architecture, created_at DESC, id);
+
+
+--
 -- Name: runtime_snapshots_state_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX runtime_snapshots_state_created_idx ON public.runtime_snapshots USING btree (state, created_at DESC, id DESC);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents_withdrawal; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_upgrade_external_fence_intents_withdrawal ON public.runtime_upgrade_external_fence_intents USING btree (withdrawal_id);
+
+
+--
+-- Name: runtime_upgrade_gateway_drains_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_upgrade_gateway_drains_expiry ON public.runtime_upgrade_gateway_drains USING btree (expires_at);
+
+
+--
+-- Name: runtime_upgrade_gateway_receipts_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_upgrade_gateway_receipts_expiry ON public.runtime_upgrade_gateway_receipts USING btree (installed_at);
+
+
+--
+-- Name: runtime_upgrade_operations_active_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX runtime_upgrade_operations_active_app ON public.runtime_upgrade_operations USING btree (app_id) WHERE (phase = ANY (ARRAY['reserved'::text, 'prepared'::text, 'waiting'::text]));
+
+
+--
+-- Name: runtime_upgrade_operations_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_upgrade_operations_due ON public.runtime_upgrade_operations USING btree (next_attempt_at, created_at, id) WHERE (phase = ANY (ARRAY['reserved'::text, 'prepared'::text, 'waiting'::text]));
+
+
+--
+-- Name: runtime_upgrade_verifications_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_upgrade_verifications_due ON public.runtime_upgrade_verifications USING btree (next_attempt_at, created_at, operation_id) WHERE (phase = 'pending'::text);
 
 
 --
@@ -34669,6 +36176,20 @@ CREATE TRIGGER deployments_rollout_outcome_webhooks AFTER UPDATE OF rollout_stat
 
 
 --
+-- Name: deployments deployments_runtime_upgrade_routing_token; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_runtime_upgrade_routing_token BEFORE INSERT OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.renew_runtime_upgrade_routing_token();
+
+
+--
+-- Name: deployments deployments_runtime_upgrade_traffic_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_runtime_upgrade_traffic_fence BEFORE INSERT OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enforce_runtime_upgrade_traffic_fence();
+
+
+--
 -- Name: edge_rules edge_rules_record_change_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -36272,6 +37793,13 @@ CREATE TRIGGER runtime_environment_owners_configuration_fence BEFORE INSERT OR D
 
 
 --
+-- Name: runtime_release_qualifications runtime_release_qualification_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_release_qualification_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_release_qualifications FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_release_qualification();
+
+
+--
 -- Name: deployment_sidecar_layers runtime_sidecar_layers_configuration_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -36311,6 +37839,172 @@ CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON publ
 --
 
 CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.scenario_test_members FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('account_id,run_id,workload_name,app_id');
+
+-- Name: deployment_runtime_upgrade_acceptances runtime_upgrade_acceptance_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_acceptance_immutable BEFORE DELETE OR UPDATE ON public.deployment_runtime_upgrade_acceptances FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_target();
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines runtime_upgrade_baseline_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_baseline_immutable BEFORE DELETE OR UPDATE ON public.deployment_runtime_upgrade_baselines FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_target();
+
+
+--
+-- Name: builds runtime_upgrade_build_admission_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_build_admission_guard BEFORE INSERT ON public.builds FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_operation_effect();
+
+
+--
+-- Name: deployment_runtime_upgrade_cutovers runtime_upgrade_cutover_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_cutover_immutable BEFORE DELETE OR UPDATE ON public.deployment_runtime_upgrade_cutovers FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_target();
+
+
+--
+-- Name: deployment_runtime_upgrade_cutovers runtime_upgrade_cutover_operation_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_cutover_operation_guard BEFORE INSERT ON public.deployment_runtime_upgrade_cutovers FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_operation_effect();
+
+
+--
+-- Name: runtime_upgrade_external_fence_authorities runtime_upgrade_external_fence_authority_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_external_fence_authority_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_external_fence_authorities FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_external_fence_authority();
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intent_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_external_fence_intent_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_external_fence_intents FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_external_fence_intent();
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts runtime_upgrade_external_fence_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_external_fence_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_external_fence_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_external_fence_receipt();
+
+
+--
+-- Name: runtime_upgrade_gateway_rosters runtime_upgrade_gateway_roster_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_gateway_roster_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_gateway_rosters FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_gateway_roster();
+
+
+--
+-- Name: runtime_upgrade_native_public_startups runtime_upgrade_native_public_startup_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_native_public_startup_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_native_public_startups FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_native_public_startup();
+
+
+--
+-- Name: runtime_upgrade_native_public_startups runtime_upgrade_native_public_startup_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_native_public_startup_truncate BEFORE TRUNCATE ON public.runtime_upgrade_native_public_startups FOR EACH STATEMENT EXECUTE FUNCTION public.forbid_runtime_upgrade_native_public_startup_truncate();
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operation_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_operation_guard BEFORE INSERT OR UPDATE ON public.runtime_upgrade_operations FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_operation();
+
+
+--
+-- Name: deployment_runtime_upgrade_targets runtime_upgrade_pin_traffic_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_pin_traffic_fence BEFORE INSERT ON public.deployment_runtime_upgrade_targets FOR EACH ROW EXECUTE FUNCTION public.enforce_runtime_upgrade_pin_traffic_fence();
+
+
+--
+-- Name: runtime_upgrade_public_edge_activity runtime_upgrade_public_edge_activity_membership_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_activity_membership_guard BEFORE INSERT OR UPDATE ON public.runtime_upgrade_public_edge_activity FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_fact();
+
+
+--
+-- Name: runtime_upgrade_public_edge_activity runtime_upgrade_public_edge_activity_version_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_activity_version_guard BEFORE UPDATE ON public.runtime_upgrade_public_edge_activity FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_activity_version();
+
+
+--
+-- Name: runtime_upgrade_public_edge_guards runtime_upgrade_public_edge_fact_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_fact_guard BEFORE INSERT OR UPDATE ON public.runtime_upgrade_public_edge_guards FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_fact();
+
+
+--
+-- Name: runtime_upgrade_public_edge_roster_head runtime_upgrade_public_edge_head_withdrawal_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_head_withdrawal_guard BEFORE DELETE OR UPDATE ON public.runtime_upgrade_public_edge_roster_head FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_head_withdrawals();
+
+
+--
+-- Name: runtime_upgrade_public_edge_rosters runtime_upgrade_public_edge_roster_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_roster_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_public_edge_rosters FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_roster();
+
+
+--
+-- Name: runtime_upgrade_public_edge_roster_head runtime_upgrade_public_edge_withdrawal_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_withdrawal_capture AFTER UPDATE ON public.runtime_upgrade_public_edge_roster_head FOR EACH ROW EXECUTE FUNCTION public.capture_runtime_upgrade_public_edge_withdrawals();
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawals runtime_upgrade_public_edge_withdrawal_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_withdrawal_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_public_edge_withdrawals FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_withdrawal();
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawal_receipts runtime_upgrade_public_edge_withdrawal_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_public_edge_withdrawal_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_upgrade_public_edge_withdrawal_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_public_edge_withdrawal_receipt();
+
+
+--
+-- Name: deployments runtime_upgrade_source_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_source_immutable BEFORE UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_source();
+
+
+--
+-- Name: deployment_runtime_upgrade_targets runtime_upgrade_target_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_target_immutable BEFORE DELETE OR UPDATE ON public.deployment_runtime_upgrade_targets FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_target();
+
+
+--
+-- Name: runtime_upgrade_verifications runtime_upgrade_verification_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_upgrade_verification_guard BEFORE INSERT OR UPDATE ON public.runtime_upgrade_verifications FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_verification();
 
 
 --
@@ -37174,6 +38868,38 @@ ALTER TABLE ONLY public.app_errors
 
 ALTER TABLE ONLY public.app_errors
     ADD CONSTRAINT app_errors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_health_collection_state app_health_collection_state_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_collection_state
+    ADD CONSTRAINT app_health_collection_state_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_health_collection_state app_health_collection_state_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_collection_state
+    ADD CONSTRAINT app_health_collection_state_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_health_history app_health_history_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_history
+    ADD CONSTRAINT app_health_history_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_health_history app_health_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_history
+    ADD CONSTRAINT app_health_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -38534,6 +40260,94 @@ ALTER TABLE ONLY public.deployment_route_policy_snapshots
 
 ALTER TABLE ONLY public.deployment_runtime_environment_owners
     ADD CONSTRAINT deployment_runtime_environment_owners_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_upgrade_acceptances deployment_runtime_upgrade_acceptances_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_acceptances
+    ADD CONSTRAINT deployment_runtime_upgrade_acceptances_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_runtime_upgrade_baselines(deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_upgrade_acceptances deployment_runtime_upgrade_acceptances_target_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_acceptances
+    ADD CONSTRAINT deployment_runtime_upgrade_acceptances_target_release_id_fkey FOREIGN KEY (target_release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines deployment_runtime_upgrade_base_serving_runtime_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_baselines
+    ADD CONSTRAINT deployment_runtime_upgrade_base_serving_runtime_release_id_fkey FOREIGN KEY (serving_runtime_release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines deployment_runtime_upgrade_baselines_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_baselines
+    ADD CONSTRAINT deployment_runtime_upgrade_baselines_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_runtime_upgrade_targets(deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines deployment_runtime_upgrade_baselines_serving_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_baselines
+    ADD CONSTRAINT deployment_runtime_upgrade_baselines_serving_deployment_id_fkey FOREIGN KEY (serving_deployment_id) REFERENCES public.deployments(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: deployment_runtime_upgrade_baselines deployment_runtime_upgrade_baselines_target_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_baselines
+    ADD CONSTRAINT deployment_runtime_upgrade_baselines_target_release_id_fkey FOREIGN KEY (target_release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: deployment_runtime_upgrade_cutovers deployment_runtime_upgrade_cutovers_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_cutovers
+    ADD CONSTRAINT deployment_runtime_upgrade_cutovers_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_runtime_upgrade_acceptances(deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_upgrade_cutovers deployment_runtime_upgrade_cutovers_serving_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_cutovers
+    ADD CONSTRAINT deployment_runtime_upgrade_cutovers_serving_deployment_id_fkey FOREIGN KEY (serving_deployment_id) REFERENCES public.deployments(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: deployment_runtime_upgrade_cutovers deployment_runtime_upgrade_cutovers_target_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_cutovers
+    ADD CONSTRAINT deployment_runtime_upgrade_cutovers_target_release_id_fkey FOREIGN KEY (target_release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: deployment_runtime_upgrade_targets deployment_runtime_upgrade_targets_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_targets
+    ADD CONSTRAINT deployment_runtime_upgrade_targets_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_upgrade_targets deployment_runtime_upgrade_targets_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_upgrade_targets
+    ADD CONSTRAINT deployment_runtime_upgrade_targets_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.runtime_releases(id);
 
 
 --
@@ -42825,6 +44639,22 @@ ALTER TABLE ONLY public.route_policy_receipts
 
 
 --
+-- Name: runtime_artifact_bindings runtime_artifact_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_artifact_bindings
+    ADD CONSTRAINT runtime_artifact_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_artifact_bindings runtime_artifact_bindings_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_artifact_bindings
+    ADD CONSTRAINT runtime_artifact_bindings_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.runtime_releases(id);
+
+
+--
 -- Name: runtime_config_revisions runtime_config_revisions_entry_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -42862,6 +44692,254 @@ ALTER TABLE ONLY public.runtime_instance_config_proofs
 
 ALTER TABLE ONLY public.runtime_instance_config_proofs
     ADD CONSTRAINT runtime_instance_config_proofs_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_release_qualifications runtime_release_qualifications_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_release_qualifications
+    ADD CONSTRAINT runtime_release_qualifications_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intents_authority_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_intents
+    ADD CONSTRAINT runtime_upgrade_external_fence_intents_authority_id_fkey FOREIGN KEY (authority_id) REFERENCES public.runtime_upgrade_external_fence_authorities(id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intents_gateway_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_intents
+    ADD CONSTRAINT runtime_upgrade_external_fence_intents_gateway_revision_fkey FOREIGN KEY (gateway_revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intents_public_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_intents
+    ADD CONSTRAINT runtime_upgrade_external_fence_intents_public_revision_fkey FOREIGN KEY (public_revision) REFERENCES public.runtime_upgrade_public_edge_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_external_fence_intents runtime_upgrade_external_fence_intents_withdrawal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_intents
+    ADD CONSTRAINT runtime_upgrade_external_fence_intents_withdrawal_id_fkey FOREIGN KEY (withdrawal_id) REFERENCES public.runtime_upgrade_public_edge_withdrawals(id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts runtime_upgrade_external_fence_receipts_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_receipts
+    ADD CONSTRAINT runtime_upgrade_external_fence_receipts_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.runtime_upgrade_external_fence_intents(id);
+
+
+--
+-- Name: runtime_upgrade_external_fence_receipts runtime_upgrade_external_fence_receipts_withdrawal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_external_fence_receipts
+    ADD CONSTRAINT runtime_upgrade_external_fence_receipts_withdrawal_id_fkey FOREIGN KEY (withdrawal_id) REFERENCES public.runtime_upgrade_public_edge_withdrawals(id);
+
+
+--
+-- Name: runtime_upgrade_gateway_drains runtime_upgrade_gateway_drains_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_drains
+    ADD CONSTRAINT runtime_upgrade_gateway_drains_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_gateway_drains runtime_upgrade_gateway_drains_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_drains
+    ADD CONSTRAINT runtime_upgrade_gateway_drains_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_runtime_upgrade_cutovers(deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_gateway_drains runtime_upgrade_gateway_drains_gateway_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_drains
+    ADD CONSTRAINT runtime_upgrade_gateway_drains_gateway_roster_revision_fkey FOREIGN KEY (gateway_roster_revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_gateway_drains runtime_upgrade_gateway_drains_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_drains
+    ADD CONSTRAINT runtime_upgrade_gateway_drains_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.runtime_upgrade_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_gateway_drains runtime_upgrade_gateway_drains_serving_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_drains
+    ADD CONSTRAINT runtime_upgrade_gateway_drains_serving_deployment_id_fkey FOREIGN KEY (serving_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_gateway_heartbeats runtime_upgrade_gateway_heartbeats_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_heartbeats
+    ADD CONSTRAINT runtime_upgrade_gateway_heartbeats_roster_revision_fkey FOREIGN KEY (roster_revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_gateway_receipts runtime_upgrade_gateway_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_receipts
+    ADD CONSTRAINT runtime_upgrade_gateway_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_gateway_receipts runtime_upgrade_gateway_receipts_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_receipts
+    ADD CONSTRAINT runtime_upgrade_gateway_receipts_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_runtime_upgrade_cutovers(deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_gateway_roster_head runtime_upgrade_gateway_roster_head_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_gateway_roster_head
+    ADD CONSTRAINT runtime_upgrade_gateway_roster_head_revision_fkey FOREIGN KEY (revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_native_public_startups runtime_upgrade_native_public_startups_gateway_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_native_public_startups
+    ADD CONSTRAINT runtime_upgrade_native_public_startups_gateway_revision_fkey FOREIGN KEY (gateway_revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_native_public_startups runtime_upgrade_native_public_startups_public_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_native_public_startups
+    ADD CONSTRAINT runtime_upgrade_native_public_startups_public_revision_fkey FOREIGN KEY (public_revision) REFERENCES public.runtime_upgrade_public_edge_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_serving_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_serving_deployment_id_fkey FOREIGN KEY (serving_deployment_id) REFERENCES public.deployments(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: runtime_upgrade_operations runtime_upgrade_operations_target_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_operations
+    ADD CONSTRAINT runtime_upgrade_operations_target_release_id_fkey FOREIGN KEY (target_release_id) REFERENCES public.runtime_releases(id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_activity runtime_upgrade_public_edge_activit_public_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_activity
+    ADD CONSTRAINT runtime_upgrade_public_edge_activit_public_roster_revision_fkey FOREIGN KEY (public_roster_revision) REFERENCES public.runtime_upgrade_public_edge_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_public_edge_guards runtime_upgrade_public_edge_guards_public_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_guards
+    ADD CONSTRAINT runtime_upgrade_public_edge_guards_public_roster_revision_fkey FOREIGN KEY (public_roster_revision) REFERENCES public.runtime_upgrade_public_edge_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_public_edge_rosters runtime_upgrade_public_edge_roster_gateway_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_rosters
+    ADD CONSTRAINT runtime_upgrade_public_edge_roster_gateway_roster_revision_fkey FOREIGN KEY (gateway_roster_revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_public_edge_roster_head runtime_upgrade_public_edge_roster_head_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_roster_head
+    ADD CONSTRAINT runtime_upgrade_public_edge_roster_head_revision_fkey FOREIGN KEY (revision) REFERENCES public.runtime_upgrade_public_edge_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawal_receipts runtime_upgrade_public_edge_withdrawal_recei_withdrawal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_withdrawal_receipts
+    ADD CONSTRAINT runtime_upgrade_public_edge_withdrawal_recei_withdrawal_id_fkey FOREIGN KEY (withdrawal_id) REFERENCES public.runtime_upgrade_public_edge_withdrawals(id);
+
+
+--
+-- Name: runtime_upgrade_public_edge_withdrawals runtime_upgrade_public_edge_withdrawals_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_public_edge_withdrawals
+    ADD CONSTRAINT runtime_upgrade_public_edge_withdrawals_roster_revision_fkey FOREIGN KEY (roster_revision) REFERENCES public.runtime_upgrade_public_edge_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_verifications runtime_upgrade_verifications_gateway_roster_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_verifications
+    ADD CONSTRAINT runtime_upgrade_verifications_gateway_roster_revision_fkey FOREIGN KEY (gateway_roster_revision) REFERENCES public.runtime_upgrade_gateway_rosters(revision);
+
+
+--
+-- Name: runtime_upgrade_verifications runtime_upgrade_verifications_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_upgrade_verifications
+    ADD CONSTRAINT runtime_upgrade_verifications_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.runtime_upgrade_operations(id) ON DELETE CASCADE;
 
 
 --

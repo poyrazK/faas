@@ -1901,7 +1901,7 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 	}
 	// Runtime bases are staged on demand so a fresh bare-metal node can
 	// become ready without building every supported runtime at startup.
-	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
+	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
 
@@ -2940,12 +2940,29 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		SBOMRun:        h.syftRun,
 		SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
 	}
+	var pinnedRelease *state.RuntimeRelease
 	if h.runtimeBaseStagingEnabled {
+		release, pinErr := h.prepareFunctionRuntimeRelease(ctx, app, dep, runtime, appsKey)
+		if pinErr != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, pinErr, "pin function runtime")
+			return fmt.Errorf("imaged: pin function runtime: %w", pinErr)
+		}
+		pinnedRelease = release
+		if release != nil {
+			if err := h.replicateRuntimeRelease(ctx, *release); err != nil {
+				_ = h.markDeployFailed(ctx, dep.ID, err, "replicate function runtime")
+				return err
+			}
+		}
 		// Production source builds consume builderd's dependency-complete
 		// OCI export. Re-applying dep.SourcePath here would silently throw
 		// away Railpack's installed dependencies and, for Go, leave the
 		// runner looking for /app/handler while Railpack emits /app/server.
-		layers, sourcePath, cleanup, artifactErr := h.functionBuildArtifact(ctx, runtime, dep.RootfsPath)
+		recordedRef := ""
+		if pinnedRelease != nil {
+			recordedRef = pinnedRelease.SourceRef
+		}
+		layers, sourcePath, cleanup, artifactErr := h.functionBuildArtifactForRef(ctx, runtime, dep.RootfsPath, recordedRef)
 		if artifactErr != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, artifactErr, "select function build artifact")
 			return fmt.Errorf("imaged: select function build artifact: %w", artifactErr)
@@ -2956,6 +2973,13 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	} else {
 		// Keep the hermetic legacy/test seam. Production handlers always
 		// enable runtime-base staging and therefore take the artifact path.
+		target, err := h.explicitRuntimeUpgradeTarget(ctx, app, dep, runtime)
+		if err != nil {
+			return err
+		}
+		if target != nil {
+			return errors.New("runtime update requires immutable base staging")
+		}
 		buildInput.Layers = builtLayers
 		buildInput.TarballPath = dep.SourcePath
 	}
@@ -2977,6 +3001,12 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 		return fmt.Errorf("imaged: stamp rootfs: %w", err)
+	}
+	if pinnedRelease != nil {
+		if err := h.store.(state.RuntimeReleaseStore).BindDeploymentRuntimeRelease(ctx, dep.ID, appsKey, pinnedRelease.ID); err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "bind function runtime")
+			return fmt.Errorf("imaged: bind function runtime: %w", err)
+		}
 	}
 	if err := h.replicateLayer(ctx, appsKey); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "replicate app layer")
@@ -3863,7 +3893,7 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 	default:
 		return fmt.Errorf("imaged: snapshot_boot: unknown deployment kind %q", dep.Kind)
 	}
-	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
+	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
 	if err := h.transitionWithStage(ctx, dep.ID, state.StageImageBuild, state.StageSecurityScan, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {

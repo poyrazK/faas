@@ -340,7 +340,7 @@ func cmdMCPRemote(command string, args []string) int {
 	if (command == "task-get" || command == "task-wait" || command == "task-cancel") && (*taskID == "" || *legacy) {
 		return printErr("Invalid MCP task flags", errors.New("modern task-get, task-wait and task-cancel require --task-id"))
 	}
-	if *interactive && !mcpInputIsTerminal(osStdin) {
+	if *interactive && (nonInteractive || !mcpInputIsTerminal(osStdin)) {
 		return printErr("MCP interactive input", errors.New("--interactive requires terminal stdin; use --input-responses-file for non-interactive calls"))
 	}
 	responses := map[string]mcphosting.InputResponse(nil)
