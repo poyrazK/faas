@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
+	"sync"
 	"time"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
@@ -36,6 +38,28 @@ type traceBroker struct {
 
 func newTraceBroker(identities traceIdentityResolver, apps traceAppReader, client apidgrpc.GuestSpansClient) *traceBroker {
 	return &traceBroker{identities: identities, apps: apps, client: client, slots: make(chan struct{}, api.TraceMaxConcurrentUploads), timeout: api.TraceTransportTimeout}
+}
+
+// newTraceProblemLogger logs refused or failed guest trace frames at most
+// once per reason per 30 seconds; accepted frames are counted by the guest
+// vsock transport metric instead.
+func newTraceProblemLogger(log *slog.Logger, now func() time.Time) func(instance, reason string, err error) {
+	var mu sync.Mutex
+	last := map[string]time.Time{}
+	return func(instance, reason string, err error) {
+		if err == nil && reason == api.TraceIngestAccepted {
+			return
+		}
+		mu.Lock()
+		at, seen := last[reason]
+		if seen && now().Sub(at) < 30*time.Second {
+			mu.Unlock()
+			return
+		}
+		last[reason] = now()
+		mu.Unlock()
+		log.Warn("guest trace frame not ingested", "instance", instance, "reason", reason, "err", err)
+	}
 }
 
 // handle serves one frame and always writes exactly one ack byte. The

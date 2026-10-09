@@ -9,7 +9,7 @@
 //
 //	guest-init env stamping → 127.0.0.1:4318 bridge → vsock 1041 → vmmd
 //	broker (host-owned identity) → apid IngestGuestSpans → accumulator flush
-//	→ request_telemetry.spans_summary → GET /v1/apps/{slug}/debug/requests/{id}
+//	→ request_telemetry.spans_summary → GET /v1/apps/{slug}/debug/requests/{id}/evidence
 //
 // The inbound traceparent is deliberately unsampled: guest-init's default
 // sampler must not let the gateway's head sampling suppress the app's spans.
@@ -107,22 +107,39 @@ func TestGuestTracingMetal(t *testing.T) {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
 	depID := parseImageDeployment(t, body)
-	deployCtx, deployCancel := context.WithTimeout(context.Background(), 120*time.Second)
+	// The fixture is a 14 MB full-rootfs image; imaging plus the layer scan
+	// takes well over a minute on a small acceptance host.
+	deployCtx, deployCancel := context.WithTimeout(context.Background(), 320*time.Second)
 	defer deployCancel()
-	if _, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, depID, 110*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, depID, 300*time.Second); err != nil {
 		t.Fatalf("tracing deployment did not reach live: %v", err)
 	}
-	runCtx, runCancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer runCancel()
-	if _, err := e2etest.WaitForInstanceState(runCtx, t, pool, appID, state.StateRunning, 40*time.Second); err != nil {
-		t.Fatalf("tracing instance did not reach running: %v", err)
+	// Image deployments cold-boot once for the init snapshot and park. The
+	// traced request then wakes the app from that snapshot, so the spans also
+	// prove the bridge and SDK exporter survive restore.
+	parkCtx, parkCancel := context.WithTimeout(context.Background(), 125*time.Second)
+	defer parkCancel()
+	if _, err := e2etest.WaitForInstanceState(parkCtx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {
+		t.Fatalf("tracing init snapshot did not park: %v", err)
 	}
 
 	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
-	headers, respBody, respStatus := doReqHeaders(t, h, slug+".apps.test.example", http.MethodGet, "/checkout", nil,
-		map[string]string{"Traceparent": "00-" + traceID + "-00f067aa0ba902b7-00"})
-	if respStatus != http.StatusOK || !strings.HasPrefix(string(respBody), "traced ") {
-		t.Fatalf("traced request: status=%d body=%q", respStatus, respBody)
+	var (
+		headers    http.Header
+		respBody   []byte
+		respStatus int
+	)
+	wakeDeadline := time.Now().Add(120 * time.Second)
+	for {
+		headers, respBody, respStatus = doReqHeaders(t, h, slug+".apps.test.example", http.MethodGet, "/checkout", nil,
+			map[string]string{"Authorization": "Bearer " + key, "Traceparent": "00-" + traceID + "-00f067aa0ba902b7-00"})
+		if respStatus == http.StatusOK && strings.HasPrefix(string(respBody), "traced ") {
+			break
+		}
+		if time.Now().After(wakeDeadline) {
+			t.Fatalf("traced request: status=%d body=%q", respStatus, respBody)
+		}
+		time.Sleep(2 * time.Second)
 	}
 	gotTrace := headers.Get(api.TraceIDHeader)
 	if gotTrace == "" {
@@ -131,6 +148,20 @@ func TestGuestTracingMetal(t *testing.T) {
 	if gotTrace != traceID {
 		t.Logf("gateway continued trace %q (sent %q); matching on the gateway trace", gotTrace, traceID)
 	}
+	// The request woke a live instance. Park it before the harness stops so
+	// no Firecracker process outlives the test (cleanups run in LIFO order,
+	// ahead of the harness teardown registered by Start).
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cleanupCancel()
+		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
+			t.Errorf("cleanup park: status=%d", status)
+			return
+		}
+		if _, err := e2etest.WaitForInstanceState(cleanupCtx, t, pool, appID, state.StateParked, 45*time.Second); err != nil {
+			t.Errorf("guest tracing cleanup park: %v", err)
+		}
+	})
 
 	deadline := time.Now().Add(90 * time.Second)
 	var lastDetail string
@@ -145,7 +176,7 @@ func TestGuestTracingMetal(t *testing.T) {
 				if item.TraceID == nil || *item.TraceID != gotTrace {
 					continue
 				}
-				detail, detailStatus := doReq(t, h, key, http.MethodGet, "/v1/apps/"+slug+"/debug/requests/"+item.ID, nil)
+				detail, detailStatus := doReq(t, h, key, http.MethodGet, "/v1/apps/"+slug+"/debug/requests/"+item.ID+"/evidence", nil)
 				lastDetail = string(detail)
 				if detailStatus == http.StatusOK && strings.Contains(lastDetail, "SELECT orders") {
 					return

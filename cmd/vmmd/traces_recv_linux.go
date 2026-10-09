@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
@@ -33,8 +34,11 @@ func startTraceReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager
 		return nil, err
 	}
 	broker := newTraceBroker(mgr, store, client)
+	logProblem := newTraceProblemLogger(log, time.Now)
 	if err := jailer.RegisterGuestVsockStreamHandler(api.TraceVsockPort, func(instance string, conn net.Conn) (string, error) {
-		return broker.handle(ctx, instance, conn)
+		reason, err := broker.handle(ctx, instance, conn)
+		logProblem(instance, reason, err)
+		return reason, err
 	}); err != nil {
 		_ = client.Close()
 		return nil, fmt.Errorf("register trace receiver port %d: %w", api.TraceVsockPort, err)

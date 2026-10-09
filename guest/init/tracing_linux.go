@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -26,6 +27,7 @@ func startTraceBridge(cfg *api.TracingConfig, log *slog.Logger) error {
 		return fmt.Errorf("trace bridge listen: %w", err)
 	}
 	bridge := newTraceBridge(sendTraceFrame)
+	bridge.observe = newTraceOutcomeLogger(log)
 	srv := &http.Server{
 		Handler:           bridge.handler(),
 		ReadHeaderTimeout: time.Second,
@@ -66,4 +68,29 @@ func sendTraceFrame(ctx context.Context, frame []byte) (byte, error) {
 		return 0, err
 	}
 	return ack[0], nil
+}
+
+// newTraceOutcomeLogger logs the first delivered export once and any
+// delivery problem at most every 30 seconds, so a broken host path is visible
+// on the console without flooding it.
+func newTraceOutcomeLogger(log *slog.Logger) func(string, error) {
+	var mu sync.Mutex
+	var delivered bool
+	var lastProblem time.Time
+	return func(outcome string, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if outcome == "accepted" {
+			if !delivered {
+				delivered = true
+				log.Info("trace bridge delivered first export")
+			}
+			return
+		}
+		if time.Since(lastProblem) < 30*time.Second {
+			return
+		}
+		lastProblem = time.Now()
+		log.Warn("trace bridge export not delivered", "outcome", outcome, "err", err)
+	}
 }

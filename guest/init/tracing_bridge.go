@@ -20,6 +20,9 @@ import (
 type traceBridge struct {
 	slots chan struct{}
 	send  func(context.Context, []byte) (byte, error)
+	// observe, when set, receives each forwarded export's outcome so the
+	// platform side can log delivery problems (diagnostics only).
+	observe func(outcome string, err error)
 }
 
 func newTraceBridge(send func(context.Context, []byte) (byte, error)) *traceBridge {
@@ -62,6 +65,7 @@ func (b *traceBridge) exportHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ack, err := b.send(r.Context(), encodeTraceFrame(codec, body))
+	b.report(ack, err)
 	if err != nil {
 		w.Header().Set("Retry-After", "1")
 		http.Error(w, "trace host unavailable", http.StatusServiceUnavailable)
@@ -81,6 +85,24 @@ func (b *traceBridge) exportHandler(w http.ResponseWriter, r *http.Request) {
 		// be retried by the SDK; 400 is non-retryable in OTLP/HTTP.
 		http.Error(w, "trace export rejected", http.StatusBadRequest)
 	}
+}
+
+func (b *traceBridge) report(ack byte, err error) {
+	if b.observe == nil {
+		return
+	}
+	outcome := "rejected"
+	switch {
+	case err != nil:
+		outcome = "transport"
+	case ack == api.TraceAckAccepted:
+		outcome = "accepted"
+	case ack == api.TraceAckLimited:
+		outcome = "limited"
+	case ack == api.TraceAckUnavailable:
+		outcome = "unavailable"
+	}
+	b.observe(outcome, err)
 }
 
 // traceFrameCodec maps OTLP/HTTP headers to the one-byte frame codec. A

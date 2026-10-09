@@ -177,6 +177,15 @@ an unsampled inbound `traceparent`, export server and client spans carrying
 the gateway's trace ID; the Python run also passes with an older
 `opentelemetry-api` already on the path.
 
-Native acceptance (pending): a Node and a Python app with `tracing.enabled`
-serving a request that queries PostgreSQL shows the client span under
-`gregale debug requests get`.
+Native (2026-10-09, `gregale-internal-test-1`, nested KVM — a functional
+check, not a CLAUDE.md acceptance host): `TestGuestTracingMetal` passed twice.
+A scratch image whose server carries an OTel SDK but no tracing configuration
+was deployed with `tracing.enabled`, woken from its init snapshot by one
+request with an unsampled `traceparent`, and its `SELECT orders` client span
+appeared on `GET /v1/apps/{slug}/debug/requests/{id}/evidence`. This covers
+guest-init env stamping, the bridge across snapshot restore, vsock 1041, the
+vmmd broker, apid ingest and the flush into `spans_summary`. During the init
+cold boot, before the instance is serving, the broker refuses exports
+(`identity`); that is by design. Still pending: the same check on a dedicated
+native host, the Node/Python runner-image preloads inside a VM (validated
+outside a VM only), and the split-box mTLS path on a two-node layout.
