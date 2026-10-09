@@ -86,11 +86,20 @@ func TestQueuePushLaneAllowanceRampsAndBacksOff(t *testing.T) {
 
 // countingPoller records concurrent lane polls and returns no records, so a
 // lane is observable without a gateway.
-type countingPoller struct{ polls atomic.Int32 }
+type countingPoller struct {
+	polls    atomic.Int32
+	maxBatch atomic.Int32
+}
 
 func (c *countingPoller) Kind() string { return "queue" }
-func (c *countingPoller) Poll(context.Context, sqlc.Trigger) PollResult {
+func (c *countingPoller) Poll(_ context.Context, t sqlc.Trigger) PollResult {
 	c.polls.Add(1)
+	for {
+		seen := c.maxBatch.Load()
+		if t.BatchSizeMax <= seen || c.maxBatch.CompareAndSwap(seen, t.BatchSizeMax) {
+			break
+		}
+	}
 	return PollResult{}
 }
 func (c *countingPoller) Ack(context.Context, sqlc.Trigger, []string) error          { return nil }
@@ -121,7 +130,7 @@ func TestTriggerTickRunsQueuePushLanesForBacklog(t *testing.T) {
 	}
 	trigger := sqlc.Trigger{
 		ID: pgtypeUUIDFromString(t, "00000000-0000-0000-0000-0000000000a1"), AccountID: pgtypeUUIDFromString(t, acct.ID),
-		AppID: pgtypeUUIDFromString(t, app.ID), Kind: string(api.TriggerKindQueue), Slug: "jobs", BatchSizeMax: 1,
+		AppID: pgtypeUUIDFromString(t, app.ID), Kind: string(api.TriggerKindQueue), Slug: "jobs", BatchSizeMax: 4, // the binding projection sizes batches at max_concurrency
 		Source: pgtype.Text{String: string(state.InvocationQueue), Valid: true}, QueueBindingID: pgtypeUUIDFromString(t, binding.ID),
 	}
 	poller := &countingPoller{}
@@ -149,6 +158,9 @@ func TestTriggerTickRunsQueuePushLanesForBacklog(t *testing.T) {
 	l.workPool().drain()
 	if got := poller.polls.Load(); got != 4 {
 		t.Fatalf("ramped tick ran %d lanes, want binding max_concurrency 4", got)
+	}
+	if got := poller.maxBatch.Load(); got != 1 {
+		t.Fatalf("lanes polled batches of %d; one lane must carry one record or it claims the whole cap", got)
 	}
 }
 

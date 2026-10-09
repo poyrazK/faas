@@ -30,7 +30,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -78,13 +77,6 @@ func HelloImage(repo, helloBody string) (fakeImage, string) {
 // Its optimized base prefix matches BaseLayerImage, as in HelloImageAboveBase.
 func DurableCounterImageAboveBase(repo string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, "durable-counter", true, 8080, []string{"/hello-server", "-durable-counter"})
-}
-
-// HelloImageWithDelay returns HelloImage whose / handler holds each response
-// for delay, so a push queue consumer stays busy long enough for a backlog
-// to build and for scale-in to find workers mid-delivery.
-func HelloImageWithDelay(repo, helloBody string, delay time.Duration) (fakeImage, string) {
-	return layeredHelloImageOnPortWithCmd(repo, helloBody, false, 8080, []string{"/hello-server", "-delay=" + delay.String()})
 }
 
 // HelloImageOnPort returns the same scratch-style image as HelloImage, but

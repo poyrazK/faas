@@ -100,11 +100,18 @@ func (l *Loop) scheduleQueuePushLanes(ctx context.Context, t sqlc.Trigger, store
 			depth = stats.Depth
 		}
 	}
+	// A lane carries one record. The binding projection sizes batches at
+	// max_concurrency, and the gateway invokes a batch's records serially,
+	// so one lane would otherwise claim the binding's whole in-flight cap and
+	// deliver it one record at a time. Handlers receive one record per
+	// invocation either way.
+	laneTrigger := t
+	laneTrigger.BatchSizeMax = 1
 	ceiling := min(maxConcurrency, api.QueuePushDispatchSlotsPerNode)
-	lanes := queuePushLaneCount(maxConcurrency, l.queuePushLanes.current(triggerID), depth, int(t.BatchSizeMax))
+	lanes := queuePushLaneCount(maxConcurrency, l.queuePushLanes.current(triggerID), depth, 1)
 	for lane := range lanes {
 		l.submitWork(workQueuePushDispatch, fmt.Sprintf("%s#%d", triggerID, lane), func() {
-			err := l.dispatchOneTrigger(ctx, t, store, l.triggerPlanResolver(ctx))
+			err := l.dispatchOneTrigger(ctx, laneTrigger, store, l.triggerPlanResolver(ctx))
 			gatewayFailed := errors.Is(err, errTriggerGatewayDispatch)
 			l.queuePushLanes.observe(triggerID, ceiling, gatewayFailed)
 			if err != nil && !gatewayFailed {

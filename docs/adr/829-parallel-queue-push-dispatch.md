@@ -28,9 +28,14 @@
      `ClaimQueueTriggerInvocation` already enforces the binding's
      `max_concurrency` across all concurrent claimers, so lanes never deliver
      more records at once than the binding allows, and keyed rows keep their
-     lane and fairness locks.
+     lane and fairness locks. A lane carries exactly one record: the binding
+     projection sizes trigger batches at `max_concurrency`, so a lane using
+     that batch size would claim the binding's whole in-flight cap and the
+     gateway would invoke it serially, leaving every other lane idle. The
+     handler sees one record per invocation either way, because the gateway
+     already invokes batches record by record.
   3. *Backlog-driven concurrency.* N = min(binding `max_concurrency`, the
-     trigger's current allowance, ⌈depth ÷ batch size⌉), and at least one
+     trigger's current allowance, depth), and at least one
      lane while the binding is enabled so an empty queue is still polled.
      Depth is the binding's pending plus in-flight count
      (`QueueStateForBinding`). The allowance starts at one lane and grows by
@@ -50,10 +55,8 @@
 - **Consequences:** Throughput for a slow push handler scales with the
   binding's `max_concurrency` and the app's instances instead of being fixed
   at one record at a time, and one slow trigger no longer delays the rest of
-  the node's triggers. Records inside a single batch are still invoked
-  serially by the gateway, so parallelism comes from lanes; a binding that
-  wants per-record parallelism should use a batch size of one, as the
-  `queue-worker` starter already does. Ordering across records of one
+  the node's triggers. Parallelism comes from lanes of one record each; the
+  gateway's batch handler is unchanged. Ordering across records of one
   binding is no longer serial; keyed work policies keep per-key ordering
   through their lane locks. Each lane polls the database, so an idle binding
   costs one candidate query per tick, the same as before, and a busy one at
