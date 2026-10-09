@@ -129,6 +129,20 @@ these staging checks against an app with a known-good predecessor:
   `canary_progression_circuit_breaker_total{event="hold_insufficient_samples"}`
   increases. Send enough requests to both revisions; after the next stage
   boundary, confirm progression resumes.
+- **Bounded low-traffic hold (ADR-911):** repeat the low-traffic check without
+  sending requests. Once the stage duration plus `CanaryLowTrafficMaxHold`
+  (5 minutes) has passed with zero candidate 5xx and a readable zero OOM
+  signal, confirm the stage advances and
+  `canary_progression_circuit_breaker_total{event="advance_low_traffic"}`
+  increases. Send a single candidate 5xx in a fresh rollout and confirm it
+  keeps holding instead.
+- **Default policy fallback (ADR-911):** with meterd stopped and its lease
+  expired, deploy a flag-free release of a live app. Confirm the deploy
+  succeeds with an immediate cutover and `rollback_on_5xx=true`, and apid
+  logs `default release policy: canary worker unavailable`. To disable the
+  default fleet-wide, set `FAAS_SAFE_RELEASE_DEFAULT_ENABLED=false` on apid
+  and restart it; explicit `--safe` and `--canary-preset` deploys are
+  unaffected.
 - **Bad candidate:** deploy a revision that returns controlled 5xx responses
   on a test route. Once the candidate has enough samples, confirm it is
   aborted, its exact predecessor returns to 100%, and the audit reason names

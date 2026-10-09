@@ -158,6 +158,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	applyDefaultReleasePolicy(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return

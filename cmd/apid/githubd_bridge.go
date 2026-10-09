@@ -373,7 +373,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	}
 	kind := eventKindToDeploymentKind(req.EventKind)
 	activity := g.newDeploymentActivity(ctx, acct, app, req)
-	res, err := apidsource.Enqueue(ctx, g.store, g.notif, apidsource.EnqueueParams{
+	params := apidsource.EnqueueParams{
 		OperationDefinitions: sourceOperationSpecs(manifest),
 		Activity:             activity,
 		AppID:                app.ID,
@@ -424,7 +424,11 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		DeployedBy: deployedBy,
 		PRNumber:   int(req.PullRequestNumber),
 		Tag:        req.Tag,
-	})
+	}
+	if kind == state.DeploymentKindGitHub {
+		applyDefaultReleaseToEnqueue(ctx, g.store, g.log, app, acct.Plan, req.DeploymentScope, &params)
+	}
+	res, err := apidsource.Enqueue(ctx, g.store, g.notif, params)
 	if err != nil {
 		return nil, g.asGRPC("enqueue", err)
 	}

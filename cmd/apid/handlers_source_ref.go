@@ -117,6 +117,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, p)
 		return
 	}
+	applyDefaultReleasePolicy(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
 	if p := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return

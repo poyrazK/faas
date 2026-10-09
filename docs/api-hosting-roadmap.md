@@ -151,9 +151,11 @@ comparison uses the gateway's full request latency for requests marked as a
 cold boot; it is not a standalone VM wake-time measurement. Broader dependency
 instrumentation and richer startup signals remain follow-up work because
 customer OTLP spans are sampled and slowest-span-truncated, not a safe
-deployment-scoped denominator for automatic aborts. Promote the behavior to the
-normal production deploy default after the rollback and low-traffic drills
-pass.
+deployment-scoped denominator for automatic aborts.
+[ADR-911](adr/911-safe-releases-by-default.md) makes this the production
+deploy default, bounds the low-traffic hold, and adds an operator kill switch;
+the rollback and low-traffic drills it lists remain the gate for claiming the
+behavior beyond `preview`.
 
 Feature presence in a handler or schema is not availability. Every capability
 must have one maturity state: `internal`, `preview`, `beta`, or `ga`. The public

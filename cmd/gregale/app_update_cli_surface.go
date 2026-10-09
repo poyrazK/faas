@@ -45,6 +45,7 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"robots_txt":                      {KnownGap: "no customer CLI setter; API-only today"},
 	"head_wakes":                      {Path: "gregale app <slug> --head-wakes", AppFlags: []string{"head-wakes"}},
 	"crawler_policy":                  {Path: "gregale app <slug> --crawler-policy", AppFlags: []string{"crawler-policy"}},
+	"release_policy":                  {Path: "gregale app <slug> --release-policy", AppFlags: []string{"release-policy"}},
 	"pre_auth_rate_limit":             {KnownGap: "no customer CLI setter for pre-auth ingress throttling; API-only today"},
 	"health_path":                     {Path: "gregale app <slug> --health-path", AppFlags: []string{"health-path"}},
 	"health_path_wakes":               {Path: "gregale app <slug> --health-path-wakes / --no-health-path-wakes", AppFlags: []string{"health-path-wakes", "no-health-path-wakes"}},

@@ -500,6 +500,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_S3_GATEWAY_SPOOL_DIR", Owners: []string{"s3-gatewayd"}, Source: EnvSourceUnit, Note: "production unit stages bounded single-PUT bodies under /var/spool/faas/s3-gatewayd"},
 	{Name: "FAAS_SAFEDEPLOY_STUCK_AFTER", Owners: []string{"apid", "meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SAFEDEPLOY_TOKEN", Owners: []string{"apid", "meterd"}, Source: EnvSourceSecretsEnv, Note: "distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_CANARY_PROGRESSION_TOKEN"},
+	{Name: "FAAS_SAFE_RELEASE_DEFAULT_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Default: "true", Note: "ADR-911 kill switch for the default health-gated rollout of production releases; explicit false restores immediate cutover for deploys that name no rollout policy"},
 	{Name: "FAAS_SAMPLE_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SBOM_ROOT", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SCAN_SPOOL_ROOT", Owners: []string{"apid"}, Source: EnvSourceDefault},

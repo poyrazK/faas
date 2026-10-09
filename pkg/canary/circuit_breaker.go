@@ -3,6 +3,7 @@ package canary
 import (
 	"fmt"
 	"math"
+	"strings"
 )
 
 const (
@@ -179,6 +180,22 @@ func EvaluateCircuitBreaker(o CircuitBreakerObservation) CircuitBreakerDecision 
 		}
 	}
 	return CircuitBreakerDecision{Action: CircuitBreakerAdvance}
+}
+
+// LowTrafficAdvanceAllowed reports whether an inconclusive hold is only a
+// sample-size hold with no negative evidence (ADR-911). A scale-to-zero app
+// may never send twenty requests to a 1% candidate, so an unbounded hold
+// would strand it there. Any candidate 5xx, OOM kill, or unreadable OOM
+// signal keeps the hold; regressions with enough samples abort before this.
+func LowTrafficAdvanceAllowed(d CircuitBreakerDecision, o CircuitBreakerObservation) bool {
+	if d.Action != CircuitBreakerHold {
+		return false
+	}
+	if !strings.HasPrefix(d.Reason, "insufficient request samples") &&
+		!strings.HasPrefix(d.Reason, "insufficient CPU/request samples") {
+		return false
+	}
+	return o.Candidate.ServerErrors == 0 && o.OOMSignalAvailable && o.OOMKills == 0
 }
 
 // cpuLoadComparable reports whether the candidate carried enough of the

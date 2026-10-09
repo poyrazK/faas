@@ -454,7 +454,18 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 		// current weight and retry the same safe decision on the next tick.
 		return false
 	default:
-		if now.Sub(row.CanaryStepStarted) < stageDuration {
+		held := now.Sub(row.CanaryStepStarted) - stageDuration
+		if held < 0 {
+			return true
+		}
+		if held >= api.CanaryLowTrafficMaxHold && LowTrafficAdvanceAllowed(decision, observation) {
+			p.Log.Info("canary: advancing low-traffic stage on clean evidence",
+				"deployment_id", row.ID,
+				"stable_deployment_id", observation.StableDeploymentID,
+				"reason", decision.Reason,
+				"held", held.Round(time.Second).String())
+			stats.LowTrafficAdvanced++
+			p.recordCircuitBreakerEvent("advance_low_traffic")
 			return true
 		}
 		p.Log.Warn("canary: circuit breaker is inconclusive; holding promotion",
@@ -613,6 +624,7 @@ type Stats struct {
 	Aborted                int
 	CircuitBreakerAborted  int
 	SkippedCircuitBreaker  int
+	LowTrafficAdvanced     int
 	SkippedUnknownPreset   int
 	SkippedOutOfBounds     int
 	SkippedAlreadyTerminal int

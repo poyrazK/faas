@@ -267,9 +267,37 @@ type AppManifest struct {
 	// RevisionPinTTLSeconds opts into retaining replaced revisions for exact
 	// client pins. Zero disables skew protection.
 	RevisionPinTTLSeconds int `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy selects how a production release with a serving
+	// predecessor rolls out when the deploy names no rollout policy
+	// (ADR-911). Empty or "safe" is the balanced health-gated canary with
+	// first-wake 5xx rollback; "immediate" moves all traffic at once.
+	ReleasePolicy string `json:"release_policy,omitempty"`
 }
 
 const ManagedVersionAffinityCookieName = "__Host-gregale_version"
+
+// Release policies (ADR-911). The empty string reads as ReleasePolicySafe.
+const (
+	ReleasePolicySafe      = "safe"
+	ReleasePolicyImmediate = "immediate"
+	// DefaultReleaseCanaryPreset is the ladder a safe release uses when the
+	// deploy names none; it is the same ladder `gregale deploy --safe` uses.
+	DefaultReleaseCanaryPreset = "balanced"
+)
+
+// ValidReleasePolicy reports whether p is an accepted release_policy value.
+func ValidReleasePolicy(p string) bool {
+	return p == "" || p == ReleasePolicySafe || p == ReleasePolicyImmediate
+}
+
+// EffectiveReleasePolicy returns the policy a deploy uses, mapping the
+// unset value to the safe default.
+func EffectiveReleasePolicy(p string) string {
+	if p == ReleasePolicyImmediate {
+		return ReleasePolicyImmediate
+	}
+	return ReleasePolicySafe
+}
 
 // ManagedReleaseContextCookieName stores the immutable project release
 // selected for a browser document navigation. Unlike the rollout cookie, the
@@ -706,6 +734,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if m.RevisionPinTTLSeconds < 0 || m.RevisionPinTTLSeconds > RevisionPinMaxTTLSeconds {
 		return fmt.Errorf("app manifest: revision_pin_ttl_seconds must be between 0 and %d", RevisionPinMaxTTLSeconds)
+	}
+	if !ValidReleasePolicy(m.ReleasePolicy) {
+		return fmt.Errorf("app manifest: release_policy must be %q or %q", ReleasePolicySafe, ReleasePolicyImmediate)
 	}
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("app manifest: port %d out of range", m.Port)

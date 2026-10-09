@@ -420,6 +420,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_S3_GATEWAY_SPOOL_DIR` | s3-gatewayd | `unit` |  |  | `` | production unit stages bounded single-PUT bodies under /var/spool/faas/s3-gatewayd |
 | `FAAS_SAFEDEPLOY_STUCK_AFTER` | apid, meterd | `default` |  |  | `` |  |
 | `FAAS_SAFEDEPLOY_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_CANARY_PROGRESSION_TOKEN |
+| `FAAS_SAFE_RELEASE_DEFAULT_ENABLED` | apid | `default` |  | true | `` | ADR-911 kill switch for the default health-gated rollout of production releases; explicit false restores immediate cutover for deploys that name no rollout policy |
 | `FAAS_SAMPLE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_SBOM_ROOT` | apid | `default` |  |  | `` |  |
 | `FAAS_SCAN_SPOOL_ROOT` | apid | `default` |  |  | `` |  |

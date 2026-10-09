@@ -44,9 +44,9 @@ func buildCanarySpec(preset, stages string) (*api.CanaryPresetSpec, error) {
 		if strings.TrimSpace(stages) != "" {
 			return nil, fmt.Errorf("--canary-stages requires --canary-preset=custom")
 		}
-		// Fast path: no flag → no canary. Mirrors the pre-PR
-		// behaviour (nil Canary on the request → server stamps
-		// canary_preset='none', canary_total_steps=0).
+		// Fast path: no flag → no canary on the request. The server
+		// applies the app's release policy (ADR-911): the balanced
+		// canary for a live app unless release_policy=immediate.
 		return nil, nil
 	}
 	if !canary.AllowedCanaryPreset(preset) {

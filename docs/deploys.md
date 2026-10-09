@@ -68,7 +68,8 @@ rollback or a completed canary restores the release that was just replaced.
 A rollback that fails its readiness or hosting check leaves the current
 release serving. The target returns to `superseded` with the error recorded,
 so it remains available for another rollback.
-See [deployment history](deployments.md) for annotations and receipts.
+See [`gregale deployments`](cli-reference.md#deployments) for deployment
+history and annotations.
 
 ## Revisions
 
@@ -151,6 +152,35 @@ and those are at least half its requests, Gregale rolls back to the release it
 replaced. The check runs every 15 seconds, and the release keeps serving until
 the previous one is ready again. If a rollout wedges,
 `gregale rollouts recover my-api` is the manual escape hatch.
+
+### Safe by default
+
+A production release of an app that already serves traffic rolls out on the
+`balanced` ladder with first-wake 5xx rollback even when the deploy names no
+rollout policy ([ADR-911](adr/911-safe-releases-by-default.md)). This covers
+`gregale deploy`, GitHub App pushes, the API, and Terraform. It does not
+apply to an app's first deploy, PR previews, named project environments, or
+service, worker, and job apps, which keep their own rollout behavior.
+
+`gregale deploy` returns once the candidate is live at 1% and prints how to
+follow the rollout. Use `--safe` to wait for 100% instead.
+
+A quiet app may not send enough requests to compare the two revisions. If a
+stage's only problem is too few samples, Gregale waits up to 5 minutes past
+the stage duration and then advances, provided the new revision returned no
+5xx responses and no OOM kills. The first-wake 5xx rollback still protects
+the release once real traffic arrives.
+
+Opt out when you need an immediate cutover:
+
+```bash
+gregale deploy --canary-preset none            # this deploy only
+gregale deploy --rollback-on-5xx=false         # skip the automatic rollback
+gregale app my-api --release-policy immediate  # every future deploy
+```
+
+Any explicit `--canary-preset`, `--traffic-percent`, or `--rollback-on-5xx`
+always wins over the default.
 
 ### Keep one user on one revision
 

@@ -360,6 +360,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
+	applyDefaultReleasePolicy(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return

@@ -43948,6 +43948,10 @@ components:
           minimum: 0
           maximum: 604800
           default: 0
+        release_policy:
+          description: "Default rollout for production releases that name no rollout policy (ADR-911). safe (or unset) uses the balanced health-gated canary with first-wake 5xx rollback; immediate moves all traffic at once."
+          type: string
+          enum: [safe, immediate]
         # ADR-093: per-route observability opt-in. Default-on for
         # Hobby/Pro/Scale; Free customers always see this as false.
         # PATCH-true on Free is rejected with 403
@@ -45751,6 +45755,10 @@ components:
           minimum: 0
           maximum: 604800
           default: 0
+        release_policy:
+          description: "Default rollout for production releases that name no rollout policy (ADR-911). Omit for safe."
+          type: string
+          enum: [safe, immediate]
         # Issue #471 / ADR-047 (PR-A): optional at create-time.
         # Omitted → apid applies the plan default (Hobby/Pro/Scale
         # default to true; Free defaults to false). Spec
@@ -46283,6 +46291,10 @@ components:
           type: [integer, "null"]
           minimum: 0
           maximum: 604800
+        release_policy:
+          description: "Set the default rollout for production releases (ADR-911). Omit for no change."
+          type: [string, "null"]
+          enum: [safe, immediate, null]
         min_instances: { type: [integer, "null"], minimum: 0 }
         # ADR-031 (tier-2 of the network roadmap): per-app
         # outbound CIDR allowlist. Replace-mode semantics:
@@ -46963,6 +46975,10 @@ components:
           minimum: 0
           maximum: 604800
           default: 0
+        release_policy:
+          description: "Effective default rollout for production releases (ADR-911)."
+          type: string
+          enum: [safe, immediate]
 
     WorkloadPort:
       description: "One protocol-aware listener in a container workload (ADR-165)."

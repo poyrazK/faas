@@ -649,6 +649,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
+	applyDefaultReleasePolicy(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
 	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return

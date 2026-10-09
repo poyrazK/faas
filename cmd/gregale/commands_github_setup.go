@@ -66,7 +66,7 @@ func cmdGithubSetup(args []string) int {
 	previewServicePolicy := fs.String("preview-service-policy", "", "preview-to-production service calls: deny|allow_marked")
 	rootDir := fs.String("root-dir", "", "repository-relative source root for the root workload")
 	ignore := fs.String("ignore", "", "comma-separated ignored change paths")
-	rollout := fs.String("rollout", githubSetupRolloutStandard, "production rollout mode: standard|safe (safe requires Pro/Scale)")
+	rollout := fs.String("rollout", githubSetupRolloutStandard, "production rollout mode: standard|safe")
 	dryRun := fs.Bool("dry-run", false, "show generated files without writing or changing remote state")
 	force := fs.Bool("force", false, "overwrite an existing workflow file")
 
@@ -534,7 +534,7 @@ func renderGithubSetupWorkflow(app, repo, branch, rollout string, deployBranches
 	}
 	rolloutInput := ""
 	if rollout == githubSetupRolloutSafe {
-		rolloutInput = "          # Balanced health-gated rollout; available on Pro/Scale.\n          rollout: \"safe\"\n"
+		rolloutInput = "          # Balanced health-gated rollout; available on every plan.\n          rollout: \"safe\"\n"
 	}
 	branches := githubSetupWorkflowBranches(branch, deployBranches)
 	var branchFilters strings.Builder
