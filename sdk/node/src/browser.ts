@@ -32,4 +32,10 @@ export {
   type BrowserRealtimeSocketFactory,
 } from './browser-realtime.js';
 
-export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationSubject, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport, type OperationMilestoneReport, type OperationMilestone, type OperationMilestones, type OperationMilestonePageOptions, type OperationBusinessMilestoneOptions } from './customer-operations.js';
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationSubject, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport, type OperationMilestoneReport, type OperationMilestone, type OperationWorkflowState, type OperationWorkflowStateHistoryEntry, type OperationMilestones, type OperationMilestonePageOptions, type OperationBusinessMilestoneOptions } from './customer-operations.js';
+export { GregaleOperationSession, type OperationSessionOptions, type OperationSessionClient, type OperationSessionUpdate } from './operation-session.js';
+export { CustomerOperationAuth, type CustomerOperationAuthOptions, type CustomerOperationAuthProvider } from './operation-auth.js';
+export { CustomerOperationFeature, type CustomerOperationFeatureConnection, type CustomerOperationFeatureOptions } from './operation-feature.js';
+
+export { createBrowserOperationReceiptStore, type OperationReceiptStore, type OperationReceiptAccess, type SavedOperationSubmission, type OperationReceiptScope, type BrowserOperationReceiptStoreOptions, type OperationSubmissionResume } from './operation-submission.js';
+export type { OperationTenantIdentity, OperationSubmissionScope, OperationSubmissionFence, OperationSubmissionLookup, OperationSubmissionLookupOptions } from './customer-operations.js';

@@ -147,6 +147,14 @@ call `Next`. `Cursor` exposes the latest replay position for checkpointing;
 
 ## Transactional operation handlers
 
+Customer Operations HTTP definitions explicitly enable
+`transaction_receipt: postgres_v1` with reconciliation recovery. Use
+`CustomerOperationRequestFromHTTP` and `WithCustomerOperationTransaction`;
+the callback returns ordinary `json.RawMessage`, without managed effects.
+Approved recovery checks a scoped receipt before business code. The existing
+`CustomerOperationReceiptSchema` is installed and retained by the application owner.
+See [Customer Operations transaction adapter](../../docs/operation-transactions.md#customer-operations-http-adapter).
+
 For managed HTTP operations, use `OperationRequestFromHTTP(r, originalBody)` and
 `WithOperationTransaction(ctx, db, operation, callback)`. The callback receives an
 `OperationSQLTransaction` and returns an `OperationOutcome`. The wrapper commits
@@ -331,11 +339,22 @@ and resumable streams. Submission requires a caller-owned stable idempotency key
 `DownloadPlatformTenantSelfOperationArtifact` and `DownloadOperationArtifact`
 verify the retained length and SHA-256 and reject credential-bearing redirects.
 Account `RecoverOperation` requires the current generation and recovery evidence.
+Account `InspectOperationRecovery` and `PreviewOperationRecovery` read confirmed
+steps, uncertain attempts, retained file metadata and the proposed recovery plan.
+Preview consumes no recovery or execution quota and grants no permission to repeat
+external effects. Apply can supply `ExpectedInspectionRevision` to reject changed
+execution evidence while preserving identical accepted receipt replay.
 
 HTTP runtimes can call `ReportOperationProgress` and `AttachOperationArtifact`
 with a fresh workload bearer and the invocation's `OperationRuntimeProof`.
 The proof redacts its capability from formatted output and JSON. Do not persist
 or share it between requests. See [Operations](../../docs/operations.md).
+
+`GetOperationExecutionControl` uses the same fresh workload bearer and proof to
+read cancellation intent, the admitted deadline and current lease. It creates
+no report, event or renewal. Use the server's observation duration minus request
+latency to bound application I/O and cooperate with cancellation. This read does
+not fence external effects atomically or certify that stopped work can be retried.
 
 Completion delivery inspection, attempt history, and immutable retry decisions
 are exposed through the Operations APIs (`getOperationDelivery`,
@@ -357,3 +376,36 @@ and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
 holds are supported. Event-hold changes and governance bypass are unsupported.
 See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
+
+Workflow final actions use the separate `OperationWorkflowRuntimeProof` with a
+fresh Operations workload bearer. `UploadWorkflowOperationArtifact` streams an
+`io.Reader` with an `OperationArtifactUploadRequest` containing the report ID,
+filename, exact byte count and SHA-256. It needs no source URI or bucket writer.
+Before retrying a lost transfer response, call `ReuseWorkflowOperationUpload`
+with the same declaration. Only an authorized `Available == false` permits a new
+transfer; errors do not. These low-level methods do not retry business work.
+Keep the report ID and declaration stable across approved resumes: fresh native
+proof rebinds the retained receipt without another transfer. Cancellation,
+deadline expiry and stale proof deny both upload and receipt reuse. Files stay
+private until confirmed final-step success or operator success reconciliation
+publishes them through the existing download API.
+
+For managed sources, `ReuseWorkflowOperationArtifact` and
+`PrepareWorkflowOperationArtifact` remain available with a stable `obj://`
+reference. Reconcile uncertain provider writes before authorizing another write.
+
+Recovery decisions: `RecoverOperationWithReceipt` returns the public `OperationRecoveryDecision`. It acknowledges the original explicit
+account-authorized decision, independently of current operation and delivery
+status. Retrying the same decision ID and request never records a second
+recovery. See [receipt-backed operator recovery](../../docs/ops/customer-operations-cli.md#resume-a-recovery-decision-after-losing-its-response).
+
+Native Job Operation reporting uses a tokenless client and the scheduler's `OperationJobRuntimeProof`: `GetJobOperationExecutionControl`, `ReportJobOperationProgress`, and `PrepareJobOperationResult`. Control returns the verified account, app, customer identity and current task bounds. Preparing a result does not settle business success; the host confirms it on task exit. Direct Job retry/replay cannot replace account reconciliation. Native qualification is pending.
+
+Job files use `ReuseJobOperationArtifact` and `PrepareJobOperationArtifact` on
+the tokenless runtime client with `OperationJobRuntimeProof` and a stable
+`OperationArtifactRequest`. Only an authorized `Available: false` response
+permits a new source upload. Preparation verifies the owned private object and
+retains its immutable copy; replay the same declaration after response loss.
+A private receipt is published on host-confirmed success with a typed result
+or explicit account success recovery. Approved Job retry clears file receipts.
+Published files use the existing customer-scoped artifact download methods.

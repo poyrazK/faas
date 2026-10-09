@@ -63,8 +63,8 @@ ARG RUNC_SOURCE_SHA256=32286f18899a644ec7c1589688a9600ba54cc65264f23f1f5877ba214
 # match against. Bumping the Go version is a two-step: change this
 # line, run `make images-lock-update` to refresh the lock and digest.
 # BuildKit v0.32.x requires Go 1.26.3 or newer. Use 1.26.9 so the
-# builder itself is not shipped with the Go standard-library advisories
-# fixed after 1.25.9; the repo's `tool` directive also rejects older
+# builder includes the standard-library security fixes released after
+# 1.25.9; the repo's `tool` directive also rejects older
 # toolchains with `unknown directive: tool` (verified during PR #940
 # review).
 
@@ -121,7 +121,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
           -o /out/runc . && \
       go version -m /out/runc | tee /tmp/runc-build-info && \
       grep -q 'golang.org/x/net.*v0.60.0' /tmp/runc-build-info && \
-      ! grep -Eq 'v0.50.0|go1.25.12' /tmp/runc-build-info
+      ! grep -Eq 'v0.50.0|go1.25.12|go1.26.6' /tmp/runc-build-info
 
 # BuildKit's server has a deliberately strict session liveness check. The
 # stock buildctl release has no flag for its per-session timeout header, while
@@ -141,9 +141,9 @@ COPY images/buildkit-session-health.patch /tmp/buildkit-session-health.patch
 COPY images/buildkit-frontend-startup.patch /tmp/buildkit-frontend-startup.patch
 # BuildKit 0.32.2 still selects the vulnerable go-archive v0.2.0 and gRPC
 # v1.82.1. Keep the source release's vendored dependency graph for a fast,
-# reproducible build, with fixed module floors. Regenerate the vendor tree
-# from the selected graph so x/net, crypto and their transitive source match
-# the module metadata before compiling.
+# reproducible build, with fixed module floors. Pin x/net and x/crypto to
+# patched versions, then regenerate the vendor tree from the selected graph
+# so the modules and their transitive source match module metadata.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git && \
       rm -rf /var/lib/apt/lists/* && \
       curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \

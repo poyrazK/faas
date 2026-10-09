@@ -125,6 +125,15 @@ Things to know:
 
 ## Transactional operation handlers
 
+Customer Operations HTTP definitions explicitly enable
+`transaction_receipt: postgres_v1` with reconciliation recovery. Use
+`customer_operation_request_from_headers` and
+`with_customer_operation_transaction` / `awith_customer_operation_transaction`;
+the callback returns the ordinary JSON result, without managed effects.
+Approved recovery checks a scoped receipt before business code. Install and
+retain `customer_operation_receipt_schema` as the application database owner.
+See [Customer Operations transaction adapter](../../docs/operation-transactions.md#customer-operations-http-adapter).
+
 For managed HTTP operations, build the context with
 `operation_request_from_headers(headers, method, raw_target, raw_body)`, preserving
 repeated headers. Use `with_operation_transaction(connection, operation, callback)`
@@ -301,15 +310,27 @@ If you want to install this client into another project without publishing it (e
 Production Operations submission remains disabled. Generated
 `faas_sdk.api.operations` modules expose typed submission, status, event,
 cancellation, runtime reporting, artifact download and account recovery routes.
+Account `inspect_operation_recovery` and `preview_operation_recovery` expose
+retained execution evidence and a read-only recovery proposal. Preview starts no
+work or file publication; eligibility does not establish that external effects
+can safely repeat. A separate `recover_operation` request can provide the returned
+`inspection_revision` as `expected_inspection_revision` to fence changed evidence.
 
 HTTP handlers can import `GregaleOperations` from
-`faas_sdk.operations_runtime` and use its `run_request(headers)` async context
+`faas_sdk.operations_runtime` and use its `bind_request(headers)` context
 manager around a trusted Gregale guest request. Call `progress(report)` or
 `artifact(report)` with the generated request models and a stable `report_id`.
 The helper fetches fresh workload identity for each report, rejects native
 execution context and isolates authority between concurrent requests. Its public
 `context()` omits the ephemeral capability. The caller owns the injected
 `httpx.AsyncClient` and closes it during shutdown.
+
+`await runtime.control()` reads current cancellation intent, deadline and lease
+with fresh workload identity and the same attempt proof. It creates no report,
+event or renewal. Applications manage their own cooperative scope: subtract read
+latency from the server's observed duration, stop at the earlier lease/deadline,
+and pass cancellation to I/O. Stopping does not undo external effects or certify
+a safe retry; dispatched uncertainty retains its pinned recovery policy.
 
 See [Operations](../../docs/operations.md) for the separate business and webhook
 outcomes, retained result bytes, scoped credentials and rollout status.
@@ -334,3 +355,37 @@ and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
 holds are supported. Event-hold changes and governance bypass are unsupported.
 See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
+
+Workflow final actions expose `upload_workflow_operation_artifact` and
+`reuse_workflow_operation_upload` under `faas_sdk.api.operations`. Supply a current
+workload bearer and the trusted run/step/generation/attempt/capability headers.
+Uploads take a binary `File` plus report ID, filename, exact byte count and SHA-256;
+receipt lookup takes `OperationArtifactUploadRequest`. No source URI or bucket
+writer is needed. Before retrying a lost transfer response, look up the same
+declaration. Only an authorized `available=False` permits another transfer;
+errors never authorize writing. These low-level endpoints do not retry business
+work. Keep report ID and declaration stable across approved resumes: fresh proof
+rebinds a verified receipt without another transfer. Cancellation, deadline expiry
+and stale proof deny upload and reuse. Publication waits for confirmed final-step
+success or operator success reconciliation.
+
+The managed-source `reuse_workflow_operation_artifact` and
+`prepare_workflow_operation_artifact` endpoints remain available with a stable
+`obj://` reference. Reconcile uncertain provider writes before writing again.
+
+Recovery decisions: Generated `faas_sdk.api.operations.recover_operation_with_receipt` returns `OperationRecoveryDecision`. It acknowledges the original explicit
+account-authorized decision, independently of current operation and delivery
+status. Retrying the same decision ID and request never records a second
+recovery. See [receipt-backed operator recovery](../../docs/ops/customer-operations-cli.md#resume-a-recovery-decision-after-losing-its-response).
+
+For native batch Job Operations, construct `GregaleJobOperations(api_url, tokenless_async_client)` inside the scheduler-provided task environment. `context.platform_tenant_id` is verified against the control response. Call `await control()` before business entry and between units, `await progress(report)`, and `await prepare_result(result, report_id)` before normal exit. Retrying a lost report acknowledgement must reuse its report ID; never repeat business work automatically. Result preparation requires host-confirmed task exit for business success. Native qualification is pending.
+
+Job file helpers: `await reuse_artifact(declaration)` checks an existing private
+copy before your application bucket writer. Only `available=False` permits a
+new upload; errors do not. After uploading an owned private managed object,
+`await prepare_artifact(declaration)` verifies its exact size and SHA-256 and
+retains an immutable copy. Use `OperationArtifactRequest` with a stable report
+ID and source URI; replay that declaration after a lost acknowledgement.
+Preparation does not publish the file. Host-confirmed success with the typed
+result or explicit account success recovery publishes it. An approved Job
+retry clears old receipts; reconcile uncertain uploads before writing again.

@@ -159,6 +159,10 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 			tpl, strings.Join(templates.Names, ", "))
 		return 1
 	}
+	if deploy && templates.CategoryFor(tpl) == "operations" {
+		PrintFail(stderr, "%s requires a local SDK bundle; initialize without --deploy, follow README.md, then deploy the prepared source", tpl)
+		return 1
+	}
 
 	// Step 2: resolve --path to an absolute path. Customers pass
 	// relative paths in 95% of cases; absolute resolution here makes
@@ -268,6 +272,8 @@ func docsURLForTemplate(name string) string {
 		return "https://gregale.dev/docs/data-api"
 	case "mcp-node":
 		return "https://gregale.dev/docs/mcp"
+	case "customer-operation-export", "customer-operation-job-export", "customer-operation-workflow-export":
+		return "https://gregale.dev/docs/operations"
 	default:
 		return cliDocsURL
 	}
@@ -355,6 +361,38 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 // the template README so the README and CLI hint stay in lockstep.
 func nextStepsFor(tpl string) []string {
 	switch tpl {
+	case "customer-operation-workflow-export":
+		return []string{
+			"Read <dest>/README.md and place the local SDK package at <dest>/packages/gregale-sdk.tgz.",
+			"cd <dest> && npm install --ignore-scripts && npm test",
+			"gregale customer-operations validate --dir . --app <slug> --plan hobby",
+			"gregale customer-operations types --dir . --app <slug> --plan hobby",
+			"Add `types --check` and `cd <dest> && npm run typecheck` to CI.",
+			"Configure public selectors and the customer login as described in README.md.",
+			"Read RECOVERY.md before approving a workflow resume; confirmed prefixes and files are retained.",
+			"Workflow admission remains closed pending native qualification; the starter does not enable it.",
+		}
+	case "customer-operation-job-export":
+		return []string{
+			"Read <dest>/README.md and place the local SDK package at <dest>/packages/gregale-sdk.tgz.",
+			"cd <dest> && npm install --ignore-scripts && npm test",
+			"Build and register Dockerfile.job as customer-export-job; wait for its image to become ready.",
+			"gregale customer-operations validate --dir . --app <slug> --plan pro",
+			"gregale customer-operations types --dir . --app <slug> --plan pro",
+			"Add `types --check` and `cd <dest> && npm run typecheck` to CI.",
+			"Configure the public API and app selectors as described in README.md.",
+			"Customer admission remains closed pending native qualification; the starter does not enable it.",
+		}
+	case "customer-operation-export":
+		return []string{
+			"Read <dest>/README.md and place the local SDK package at <dest>/packages/gregale-sdk.tgz.",
+			"cd <dest> && npm install --ignore-scripts && npm test",
+			"gregale customer-operations validate --dir . --app <slug> --plan hobby",
+			"gregale customer-operations types --dir . --app <slug> --plan hobby",
+			"Add `types --check` and `cd <dest> && npm run typecheck` to CI.",
+			"Configure a qualified preview deployment and customer credentials as described in README.md.",
+			"Customer admission remains closed by default; the starter does not enable it.",
+		}
 	case "mcp-node":
 		return []string{"cd <dest> && npm ci && npm test", "Review gregale-mcp.json: the starter explicitly allows public tool access.", "gregale mcp deploy --path <dest> --name <slug>", "gregale mcp doctor --app <slug> --legacy --stream-tool stream_demo"}
 	case "customer-platform":

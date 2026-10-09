@@ -2,6 +2,9 @@
 package faas
 
 const (
+	operationUploadDefaultBytes    = 8388608
+	operationReportIdBytes         = 128
+	operationArtifactNameBytes     = 128
 	operationMilestonePayloadBytes = 8192
 	operationMilestoneBatchBytes   = 65536
 	operationMilestones            = 64

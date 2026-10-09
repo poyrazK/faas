@@ -64,7 +64,8 @@ env:
   # has a `make sqlc` guard for local devs; CI uses the binary download
   # because the `go install` path cross-compiles sqlc (with its cgo
   # pganalyze/pg_query_go tree) from source on every cold runner (~30 s).
-  # Its go.mod requires Go >= 1.26, so keep this toolchain pin at Go 1.26+.
+  # Its cgo dependency tree is expensive to rebuild on every hosted runner,
+  # and its go.mod requires Go >= 1.26.
   # Same supply-chain pin pattern as vacuum above and every binary in the
   # EX44 ansible roles.
   SQLC_VERSION: "1.31.1"
@@ -187,7 +188,7 @@ jobs:
         run: make regression-pin-check
       - name: regression-pin checker tests
         run: make regression-pin-check-test
-      - name: lint (golangci-lint v8)
+      - name: lint (golangci-lint v2.14.0)
         uses: golangci/golangci-lint-action@v9
         env:
           # Lint constructs its own SSA from source. Its export-data compile
@@ -1806,6 +1807,62 @@ jobs:
       - name: Gregale Issues staging smoke contract
         run: node --test tests/issues-smoke/run.test.mjs
 
+  workflow-operation-starter-browser:
+    name: customer Operations starters (Chromium + packed SDK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: 'npm'
+          cache-dependency-path: sdk/node/package-lock.json
+      - name: install SDK development dependencies
+        working-directory: sdk/node
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: install pinned Chromium for browser acceptance
+        working-directory: sdk/node
+        run: npx playwright-core install --with-deps chromium
+      - name: HTTP, Job, and Workflow starter flows in real browsers
+        working-directory: sdk/node
+        run: npm run test:operations-starter-browser
+
+  customer-operation-starters:
+    name: customer Operations starters (generated types + packed SDK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: 'npm'
+          cache-dependency-path: sdk/node/package-lock.json
+      - name: install SDK development dependencies
+        working-directory: sdk/node
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: build and pack the SDK
+        working-directory: sdk/node
+        run: |
+          npm run build
+          mkdir -p "$RUNNER_TEMP/operations-sdk"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/operations-sdk"
+      - name: build Gregale CLI
+        run: go build -o "$RUNNER_TEMP/gregale" ./cmd/gregale
+      - name: generate and type-check every starter against the packed SDK
+        env:
+          GREGALE_BIN: ${{ runner.temp }}/gregale
+          SDK_PACK_DIR: ${{ runner.temp }}/operations-sdk
+        run: scripts/ci/check-customer-operation-starters.sh
+
   # ADR-484: real customer PostgreSQL transactions and HTTP process recovery.
   # Required database tests must run; unit-only SDK jobs skip these fixtures.
   operation-sdk-acceptance:
@@ -1852,7 +1909,7 @@ jobs:
         run: |
           npm ci --prefix sdk/node --ignore-scripts --no-audit --no-fund
           python -m pip install -e sdk/python -r sdk/commit-tests/requirements.txt
-      - name: producer and handler transaction acceptance
+      - name: producer, handler and Customer Operations recovery acceptance
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit test debug metadata and serialize its backend; keep optimization.
         env:
@@ -1860,7 +1917,11 @@ jobs:
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
-        run: make test-commit-sdk test-operation-sdk
+        run: make test-commit-sdk test-customer-operation-sdk
+      - name: Customer Job and Workflow Operations guest fixture contracts (portable)
+        # testdata is intentionally excluded by go test ./.... Run its
+        # reporting, workload identity, cancellation and lost-ack contracts explicitly.
+        run: go test -race -count=1 -timeout=2m ./pkg/e2etest/testdata/jobfixture
 
   # ADR-377: exercise the actual runtime SDK, control plane, gateway and
   # telemetry persistence together; the small fakeapid fixture cannot prove
@@ -1937,7 +1998,7 @@ jobs:
         working-directory: sdk/python
         run: |
           python scripts/gen.py
-          git diff --exit-code -- sdk/python/faas_sdk/ || {
+          git diff --exit-code -- faas_sdk/ || {
             echo "::error::sdk/python/faas_sdk is out of sync with api/openapi.yaml."
             echo "::error::Run 'make sdk-gen-python-check' locally and commit the result."
             exit 1
@@ -1954,7 +2015,7 @@ jobs:
       - name: regen determinism (twice)
         working-directory: sdk/python
         run: |
-          python scripts/gen.py && python scripts/gen.py && git diff --exit-code -- sdk/python/faas_sdk/
+          python scripts/gen.py && python scripts/gen.py && git diff --exit-code -- faas_sdk/
       - name: smoke + unit
         working-directory: sdk/python
         run: python -m pytest tests/ --ignore=tests/debug_chain.py -v

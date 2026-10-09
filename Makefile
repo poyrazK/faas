@@ -367,11 +367,11 @@ RNG_ADDON_ZIG_VERSION := 0.16.0
 RNG_ADDON_FLAGS := -target x86_64-linux-gnu -shared -fPIC -nostdlib -fno-stack-protector -O2 -Wl,--build-id=none -s
 
 .PHONY: rng-addon rng-addon-check
-rng-addon: ## Rebuild guest-init's restore reseed addon from reseed.c (ADR-680; needs zig $(RNG_ADDON_ZIG_VERSION))
+rng-addon: ## Rebuild guest-init's restore reseed addon from reseed.c (ADR-687; needs zig $(RNG_ADDON_ZIG_VERSION))
 	@test "$$(zig version 2>/dev/null)" = "$(RNG_ADDON_ZIG_VERSION)" || { echo "rng-addon: need zig $(RNG_ADDON_ZIG_VERSION), have '$$(zig version 2>/dev/null)'"; exit 1; }
 	zig cc $(RNG_ADDON_FLAGS) -o guest/init/rngpreload/reseed.node guest/init/rngpreload/reseed.c
 
-rng-addon-check: ## Verify the committed reseed.node is the reproducible build of reseed.c (ADR-680)
+rng-addon-check: ## Verify the committed reseed.node is the reproducible build of reseed.c (ADR-687)
 	@test "$$(zig version 2>/dev/null)" = "$(RNG_ADDON_ZIG_VERSION)" || { echo "rng-addon-check: need zig $(RNG_ADDON_ZIG_VERSION), have '$$(zig version 2>/dev/null)'"; exit 1; }
 	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
 	  zig cc $(RNG_ADDON_FLAGS) -o "$$tmp/reseed.node" guest/init/rngpreload/reseed.c && \
@@ -1493,9 +1493,12 @@ issues-smoke: ## Send controlled Gregale Issues failures to an explicitly confir
 test-commit-sdk:
 	sh scripts/test-commit-sdk.sh
 
-.PHONY: test-operation-sdk check-operation-sdk-schema
+.PHONY: test-operation-sdk test-customer-operation-sdk check-operation-sdk-schema
 test-operation-sdk:
 	sh scripts/test-operation-sdk.sh
+
+test-customer-operation-sdk: test-operation-sdk
+	sh scripts/test-customer-operation-sdk.sh
 
 check-operation-sdk-schema:
 	python3 scripts/gen-operation-inbox-schema.py --check

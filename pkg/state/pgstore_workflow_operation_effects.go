@@ -22,7 +22,6 @@ func (s *PgStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedWo
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 	q := sqlc.New()
-
 	// Preserve the workflow-wide lock order used by cancel, callback, and wait
 	// transitions: run first, then step and attempt.
 	run, err := q.ReadManagedWorkflowRunForUpdate(ctx, tx, commit.RunID)
@@ -31,6 +30,9 @@ func (s *PgStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedWo
 	}
 	if err != nil {
 		return fmt.Errorf("pgstore: lock managed workflow run: %w", err)
+	}
+	if err := checkWorkflowGenerationTx(ctx, tx, commit.RunID); err != nil {
+		return err
 	}
 	if run.Status != WorkflowRunStatusRunning {
 		return ErrWorkflowNotRunning
@@ -48,6 +50,9 @@ func (s *PgStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedWo
 		return workflowEffectConflict("workflow step attempt is no longer active")
 	}
 
+	if err := checkWorkflowOutboundCompletionTx(ctx, tx, commit.RunID, commit.StepName, commit.Attempt); err != nil {
+		return err
+	}
 	if len(commit.Effects) > 0 {
 		appScope, err := q.ManagedWorkflowEffectAppScope(ctx, tx, run.AppID)
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && appScope.AccountStatus != string(AccountActive)) {
@@ -122,6 +127,9 @@ func (s *PgStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedWo
 	}
 	if runRows != 1 {
 		return ErrWorkflowNotRunning
+	}
+	if err := syncOperationWorkflowTx(ctx, tx, commit.RunID); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("pgstore: commit managed workflow step: %w", err)

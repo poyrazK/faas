@@ -318,6 +318,15 @@ Regenerate via `npm run gen` (committed per ADR-013; CI's
 
 ## Transactional operation handlers
 
+Customer Operations HTTP definitions explicitly enable
+`transaction_receipt: postgres_v1` with reconciliation recovery. Use
+`customerOperationReceiptRequestFromHeaders` and
+`withCustomerOperationReceiptTransaction`;
+the callback returns the ordinary JSON result, without managed effects.
+Approved recovery checks a scoped receipt before business code. Install and
+retain `customerOperationReceiptSchema` as the application database owner.
+See [Customer Operations transaction adapter](../../docs/operation-transactions.md#customer-operations-http-adapter).
+
 For managed HTTP operations, `operationRequestFromHeaders` verifies negotiated
 support and captures the trusted identity with original request bytes.
 `withOperationTransaction(pool, operation, callback)` commits the callback's
@@ -695,6 +704,221 @@ when repeating a report. Workload metadata is fetched for every report, while
 the current invocation capability stays private to its request context.
 See [Operations](../../docs/operations.md) for ownership, retention and recovery.
 
+Account operators can call `OperationsService.inspectOperationRecovery` and
+`previewOperationRecovery` to inspect retained execution evidence and a proposed
+resolution. Preview starts no work or file publication. Its `eligible` field
+describes platform checks; operator evidence must still establish external effects.
+Pass the returned `inspection_revision` as `expected_inspection_revision` in a
+separate `recoverOperation` request to reject changed execution evidence.
+
+For direct private HTTP files, use a stable report ID inside the original request:
+
+```ts
+const output = await runtime.runCancellableRequest(req.headers, async () => {
+  const artifact = await runtime.uploadArtifact({
+    report_id: 'export-file', name: 'export.csv', data: csv, maxBytes: 32768,
+  });
+  return {artifact_id: artifact.id, rows: count};
+});
+```
+
+No bucket writer or storage credential is needed. The helper snapshots text or
+bytes, computes size/SHA-256 and coalesces matching calls. It checks a retained
+receipt before each of at most three private transport attempts, fetching fresh
+workload identity each time. Conflicting declarations and invalid receipts stop
+without retrying business code. The default SDK memory bound is 8 MiB; the API
+also enforces captured quotas. Cooperative cancellation aborts I/O, and uploads
+cannot outlive their original request. Retaining a file never completes HTTP
+work; downloads require a successful operation or explicit success recovery.
+The [HTTP export starter](../../examples/customer-operation-export/README.md)
+uses the exact `artifact_id` from its typed result for the private download.
+
+Managed source files remain supported. For file results, `prepareArtifact` snapshots bounded text or bytes, computes the
+exact UTF-8 byte count and `sha256:` digest, and keeps one immutable report ID:
+
+```ts
+import { GregaleOperations } from '@gregale/sdk-node/operations/runtime';
+
+await runtime.runRequest(req.headers, async () => {
+  const context = runtime.context()!;
+  const file = runtime.prepareArtifact({
+    report_id: 'export-file', name: 'export.csv', data: csv,
+    uri: `obj://${appID}/${bucketID}/exports/${context.id}/${context.attempt}.csv`,
+    maxBytes: 8 * 1024 * 1024,
+  });
+  await file.uploadAndAttach(async ({ report, bytes }) => {
+    await resultStore.write(report.uri, bytes); // Your existing bucket writer.
+  });
+});
+```
+
+For cooperative cancellation and deadlines, opt into a request scope:
+
+```ts
+const output = await runtime.runCancellableRequest(req.headers, async scope => {
+  await scope.checkpoint();
+  const csv = await generateCSV({ signal: scope.signal, checkpoint: scope.checkpoint });
+  scope.throwIfStopped();
+  const context = runtime.context()!;
+  const file = runtime.prepareArtifact({
+    name: 'export.csv', data: csv, maxBytes: 8 * 1024 * 1024,
+    uri: `obj://${appID}/${bucketID}/exports/${context.id}/${context.attempt}.csv`,
+  });
+  await scope.checkpoint();
+  const attached = await file.uploadAndAttach(({ report, bytes }) =>
+    resultStore.write(report.uri, bytes, { signal: scope.signal }));
+  return { artifact_id: attached.artifacts![0]!.id };
+});
+res.json(output); // Send the response after the final control check.
+```
+
+The scope provides a signal, the admitted `deadlineAt`, a fresh-control
+`checkpoint()` and a synchronous `throwIfStopped()` for CPU work. Yield between
+chunks so polling can run. It reads control before business code and again before
+returning output, fetches fresh workload identity on every poll, and aborts on
+cancellation, deadline, lease expiry or lost control. Polls do not consume report
+quota or renew authority. Cleanup aborts pending control I/O and clears timers.
+`OperationStoppedError.code` identifies the local stop reason without exposing
+remote errors. `runtime.control()` also supports a manual typed observation.
+
+This is cooperative: ignoring the signal can leave work running. Server time
+durations and request latency bound the local budget without trusting the
+client's absolute clock; forward clock steps shorten it and backward steps
+cannot extend it. An observation cannot fence an external effect atomically.
+Stopping preserves uncertainty under the definition's existing recovery policy;
+it does not undo an upload, mark the operation safely cancelled or retry work.
+
+The writer uses the application's existing bucket binding and credentials. Use
+an operation/attempt-specific source key in a private bucket belonging to this
+app and environment. The helper preserves opaque object keys and accepts managed
+`obj://` references, never signed URLs. `maxBytes` bounds the application's memory
+copy; server plan quotas, ownership checks and private retention still apply.
+An attachment report alone does not complete the business operation.
+
+Keep the prepared object inside its original `runRequest` callback. Concurrent
+calls share one transfer. It invokes the writer at most once, even if the write
+response is lost. Call `file.attach()` or repeat `file.uploadAndAttach(writer)` to
+replay the same report without another write. Gregale verifies an existing source
+or returns its prior retained receipt. If the source is absent or mismatched,
+the error remains unresolved; inspect storage before explicitly authorizing any
+new write. Successfully attached receipts are cached within this prepared object.
+There is no cross-process receipt persistence or automatic handler retry.
+
+For a complete feature, initialize the CLI starter:
+
+```sh
+gregale init --template customer-operation-export --path customer-operation-export
+```
+
+Its README explains installing an internal SDK tarball and running the generated
+tests without relying on a public registry. The starter uses the dedicated
+browser-safe `@gregale/sdk-node/operations` entry point; handlers can import
+`GregaleOperations` from `@gregale/sdk-node/operations/runtime`.
+
+`GregaleOperationSession<TOutput, TInput>` supplies framework-neutral feature
+state. Its first type is the result; its second types explicit submissions:
+
+```ts
+import { GregaleOperationClient, GregaleOperationSession, createBrowserOperationReceiptStore } from '@gregale/sdk-node/operations';
+
+type ExportInput = { count: number };
+type ExportResult = { csv: string };
+
+const feature = new GregaleOperationSession<ExportResult, ExportInput>({
+  client: new GregaleOperationClient({ apiURL, credential: () => session.currentTenantToken() }),
+  appID, scope, definitionID, name: 'customer-export',
+  receiptStore: createBrowserOperationReceiptStore(), // optional durable metadata
+  onChange: update => renderExport(update),
+});
+await feature.history();
+const restored = await feature.resume(); // lookup only; never submits work
+// If unresolved, ask for the same input before an explicit retry.
+submitButton.onclick = () => feature.start({ count: 100 });
+// Close before signout or a customer switch; late responses cannot select work.
+signOutButton.onclick = () => feature.close();
+```
+
+The session coalesces duplicate clicks, snapshots input, preserves its key across
+uncertain in-session retries, resumes progress and fences late responses after
+selection changes. `result()` refreshes confirmed business success independently
+of delivery; `download(artifactID?)` retrieves an attached retained file. An
+accepted submission remains accepted if a follow-up read fails. History is live
+and deduplicates overlapping pages. The controller never persists credentials or
+input. Without a receipt store, pending identity lives only in memory.
+
+Opt into `createBrowserOperationReceiptStore()` to save submission metadata before
+POST. It requires localStorage and Web Locks in a secure browser context and
+fails before submission if unavailable. Storage contains verified API/account/customer,
+app/environment/name, frozen definition, key, a local input fingerprint and an
+acceptance acknowledgement; it contains no bearer token, raw input, results or
+progress. Signout keeps this metadata for the same customer. Shared Web Locks
+coordinate tabs, including concurrent starts and resumes.
+
+`resume()` returns `empty`, `unresolved` or `accepted` and restores current
+status/progress on acceptance. It never automatically submits work. For
+`unresolved`, re-enter identical input and explicitly call `start`; the saved
+key and immutable definition are reused across releases. Explicit browser submission
+keys must be bounded ASCII and match their HTTP header exactly (no edge whitespace).
+The fingerprint compares local retry input; server canonical idempotency remains authoritative.
+Unconfirmed retries stop after one day. Known expired or missing acknowledged
+acceptance also remains blocked for history inspection; do not clear saved
+metadata as a network-error retry. A new explicit start can replace an accepted
+receipt already resolved by that session. Close the session before changing
+customers. Applications with equivalent transactional persistence can inject an
+`OperationReceiptStore`; its exclusive lock must span awaited requests and its
+`save` must finish durably before returning.
+
+For applications that embed a customer Operations feature,
+`CustomerOperationFeature` owns authentication, session setup, history loading,
+receipt resumption and identity-change teardown. The host login adapter remains
+responsible for returning the current tenant-bound token and reporting account
+changes:
+
+```ts
+import { CustomerOperationFeature, createBrowserOperationReceiptStore } from '@gregale/sdk-node/operations';
+
+type ExportInput = { count: number };
+type ExportResult = { artifact_id: string; rows: number };
+
+const feature = new CustomerOperationFeature<ExportInput, ExportResult>({
+  apiURL, appID, scope, definitionID, name: 'customer-export',
+  provider: {
+    getCredential: () => appAuth.getCustomerOperationsToken(),
+    onIdentityChange: callback => appAuth.onIdentityChange(callback),
+  },
+  receiptStore: createBrowserOperationReceiptStore(),
+  onChange: update => render(update),
+  onIdentityChange: () => clearOperationUI(),
+});
+
+const connection = await feature.connect();
+if (connection) {
+  renderRestoredReceipt(connection.restored);
+  const input: ExportInput = { count: 100 };
+  await connection.session.start(input);
+}
+// Disconnect keeps the host login listener active; dispose it with the page.
+feature.close();
+feature.dispose();
+```
+
+`connect()` preflights a fresh credential, creates the client and session, loads
+history, then resumes any retained submission receipt. It returns `undefined`
+if a newer connect or identity change supersedes it. `close()` invalidates the
+active session but keeps listening for identity changes; `dispose()` also
+unsubscribes. The separate `CustomerOperationAuth` helper remains available for
+applications that need to compose credentials into a custom lifecycle. A
+fallback credential callback supports local token-form demos. The input generic
+types the explicit `start()` payload and the output generic types operation
+snapshots; server-side JSON Schema validation remains authoritative at runtime.
+Keep account keys and bearer tokens in the host auth system.
+
+`GregaleOperationClient.lookupSubmission({app_id, scope, name, idempotency_key,
+expected_identity?})` reads a customer-scoped retained receipt. It returns
+`accepted` with original `accepted_at` and read routes, `expired`, or `unresolved`.
+Unresolved is not proof of rejection. Optional `expected_identity` and
+`expected_scope` on start fence principal and feature changes without granting
+ownership. Lookup is available with read scope while admission is closed.
 For an immutable definition with `http_transaction_version: 1`, explicitly
 install `customerOperationReceiptSchema` in the application PostgreSQL database.
 Call `operations.transaction({ headers, method, path, body }, pool, async tx => result)`
@@ -733,6 +957,75 @@ holds are supported. Event-hold changes and governance bypass are unsupported.
 See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
 
+Workflow-backed Operations use `GregaleWorkflowOperations` from
+`@gregale/sdk-node/operations/runtime` and their own trusted request proof.
+Use `runCancellableRequest(req.headers, async scope => ...)` in each action.
+Pass `scope.signal` to I/O and checkpoint between work units. The scope reads
+current native control before work and before accepting a successful result,
+and stops at cancellation, lost authority or the fixed attempt deadline/lease.
+Control reads never renew the native lease. In the final action, call
+`runtime.uploadArtifact({report_id: 'export-csv', name: 'export.csv', data, maxBytes})`.
+The helper snapshots and hashes bounded bytes, checks for a durable receipt before
+every transfer retry and observes the scope's abort signal. It needs no bucket,
+source URI or provider credential. Keep the report ID, name and bytes stable across
+approved resumes: the same workflow run and final step retain the file identity,
+while fresh native authority rebinds the receipt to the current attempt. Receipt
+reuse does not consume another report or transfer the bytes again. Files remain
+private until the final step succeeds or explicit success recovery supplies typed
+output and evidence. Cancellation fences uploads and receipt binding; an already
+verified private copy remains available for approved recovery. See the
+[workflow export example](../../examples/customer-operation-workflow-export/README.md).
+`runRequest` remains available for manual cooperative control.
+
+For managed sources, `prepareArtifact({report_id, name, uri, data, maxBytes})`
+and `uploadAndAttach(existingBucketWriter)` remain available. Keep the `obj://`
+source key stable across resumes and observe the writer's optional `signal`.
+An uncertain external write without a verified copy still requires provider
+reconciliation; cancellation cannot prove that the external write was undone.
+
+Recovery decisions: Generated `OperationsService.recoverOperationWithReceipt` returns `OperationRecoveryDecision`. It acknowledges the original explicit
+account-authorized decision, independently of current operation and delivery
+status. Retrying the same decision ID and request never records a second
+recovery. See [receipt-backed operator recovery](../../docs/ops/customer-operations-cli.md#resume-a-recovery-decision-after-losing-its-response).
+
+Native batch Job Operations use `runJobOperation({ apiURL }, async (input, scope) => result)` from `@gregale/sdk-node/job-operations-runtime`. The scheduler supplies a task capability and customer identity. Use `scope.operation.platformTenantID` for business ownership, `scope.progress(...)` to report stages, and `scope.signal`/`scope.checkpoint()` during work. The helper never retries business code. It prepares a typed result receipt; the host confirms success on task exit. Production admission remains closed pending native qualification.
+
+Initialize the complete Job export feature with `gregale init --template
+customer-operation-job-export --path exports`. Its
+[README](../../cmd/gregale/templates/customer-operation-job-export/README.md)
+connects the installed SDK, Job image, direct private file uploads, typed result
+and browser session. The Job uses its scheduler capability for uploads.
+
+```ts
+const result = await runJobOperation({ apiURL }, async (input, scope) => {
+  const file = await scope.uploadArtifact({
+    report_id: 'customer-export-csv', name: 'export.csv',
+    data: csvBytes, maxBytes: 1024 * 1024,
+  });
+  return { file: file.id };
+});
+```
+
+`uploadArtifact` accepts text or `Uint8Array` and snapshots the bytes before I/O.
+Its default application memory bound is 8 MiB; `maxBytes` can override it. The
+API independently enforces the operation's captured plan quotas. A stable report
+ID binds name, size and SHA-256; changed declarations conflict. Matching calls
+share a receipt. Before retrying an interrupted platform transfer, the SDK checks
+for a durable receipt, including after a lost acknowledgement. The handler runs
+once. An opaque `operation://.../artifacts/...` reference contains no physical
+storage key; use the customer's scoped download API.
+
+Files stay private until the host confirms successful exit with typed output,
+or account-authorized success recovery supplies valid output and evidence.
+An uncertain native outcome requires reconciliation. An approved retry uses a
+fresh Job run and fresh file receipts. Escaped scopes stop after handler exit.
+Completion delivery remains independent of the business result.
+
+`scope.prepareArtifact({report_id, name, uri, data, maxBytes})` and
+`uploadAndAttach(writer)` remain available for existing private managed sources.
+They check for a retained receipt before calling the bucket writer and do not
+repeat an uncertain external write. `attach()` can reconcile an existing source.
+Production admission remains closed pending native qualification.
 Customer HTTP transactions can declare business milestone schemas in their source manifest. Install the current `customerOperationReceiptSchema`, then call `tx.milestone('order-fulfilled', {order_id, status: 'fulfilled'})` inside `GregaleOperations.transaction`. The SDK validates before commit and saves a durable outbox with the business write and result receipt. It publishes after commit; `OperationMilestonePublicationError.committed` identifies a pending publication that recovery of the same Operation can replay without repeating business work.
 
 To report the current state of a workflow instance, declare its accepted values under `operation_workflows[].states` and call `tx.workflowState('order-lifecycle', workflowRunID, 'completed')` in that same transaction. Optionally list terminal values under `operation_workflows[].terminal_states`; each must be a declared state and cannot have an outgoing transition. The workflow read API returns `terminal: true` for a reported state in that list and `false` otherwise. If the workflow declares `transitions`, call `tx.workflowTransition('order-lifecycle', workflowRunID, 'fulfillment-in-progress', 'completed')`; check the source value against the locked business row first. The SDK validates that the edge is declared and, when a prior state report exists, checks that `from_state` matches it before commit. A mismatch aborts the business transaction. The first report can establish history, so the application still checks the business row. The SDK allocates an increasing revision per workflow instance and stores the report in the app-side outbox. It publishes after commit, and recovery retries pending reports. A committed publication failure is reported as `OperationWorkflowStatePublicationError` with `committed = true`. Business-reference reads expose the newest revision and update time; a delayed older report cannot replace it. States are explicit application reports.
