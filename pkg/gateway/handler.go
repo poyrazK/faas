@@ -5825,6 +5825,19 @@ haveApp:
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	rec.deploymentSmoke = deploymentSmoke
+	// ADR-847: a route probe pins one live deployment and keeps every customer
+	// auth gate; it is never combined with the smoke bypass.
+	probeDeploymentID, probeToken, routeProbe, probeHeaders := h.authorizedRouteProbe(r, app)
+	if deploymentSmoke {
+		probeDeploymentID, probeToken, routeProbe = "", "", false
+	} else if probeHeaders && !routeProbe {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Route probe not authorized", "the probe challenge is unknown or expired on this gateway"))
+		return
+	}
+	if routeProbe {
+		r = r.WithContext(withRouteProbe(r.Context(), probeDeploymentID, probeToken))
+	}
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
 	fields, _ := wire.FromContext(r.Context())
@@ -6635,6 +6648,13 @@ haveApp:
 		exactUnavailableTitle = "Project release unavailable"
 		exactUnavailableDetail = "the selected release member has no routable target"
 	}
+	if routeProbe {
+		exactDeploymentID = probeDeploymentID
+		exactDeploymentScope = app.Scope
+		exactDeploymentTrigger = sched.TriggerGateway
+		exactUnavailableTitle = "Route probe unavailable"
+		exactUnavailableDetail = "the probed deployment has no routable target"
+	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
 	if exactDeployment {
@@ -6987,6 +7007,10 @@ haveApp:
 	if h.authorizedDeploymentSmoke(r, app) {
 		w.Header().Set(api.DeploymentIDHeader, target.DeploymentID)
 		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), target.DeploymentID, r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader)))
+	} else if routeProbe && target.DeploymentID == probeDeploymentID {
+		// The same upstream-only proof lets the prober attribute a response
+		// to the probed deployment (ADR-847).
+		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), probeDeploymentID, probeToken))
 	}
 	// A selected target proves the app is live, including a newly completed
 	// wake. Health probes can reuse this state while the app later parks.
@@ -7637,7 +7661,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// legacy single-targetSet behavior (Target.DeploymentID ""
 	// — see handler.go:407-410). The Publisher's dedupe
 	// (request_telemetry_publisher.go) collapses the burst later.
-	if h.requestTelemetry != nil || h.usageOutbox != nil {
+	// Route probes (ADR-847) record their own results; they never become
+	// customer telemetry or usage.
+	if (h.requestTelemetry != nil || h.usageOutbox != nil) && !isRouteProbe(r.Context()) {
 		acctUUID := accountIDFromContext(r.Context())
 		appUUID := appIDFromContext(r.Context())
 		if acctUUID != uuid.Nil && appUUID != uuid.Nil {
