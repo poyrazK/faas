@@ -42,6 +42,10 @@ class EventRecoveryJob:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     expires_at: datetime.datetime
+    execution_finished_at: datetime.datetime | Unset = UNSET
+    """Time the scheduler captured confirmed terminal results for all queued deliveries of an eligible new
+    execution recovery. Omitted while unresolved or for historical jobs; does not imply success or webhook
+    acknowledgement."""
     paused_at: datetime.datetime | Unset = UNSET
     """Start time of the current pause; present only while paused."""
     execution: EventRecoveryExecutionSummary | Unset = UNSET
@@ -79,6 +83,10 @@ class EventRecoveryJob:
 
         expires_at = self.expires_at.isoformat()
 
+        execution_finished_at: str | Unset = UNSET
+        if not isinstance(self.execution_finished_at, Unset):
+            execution_finished_at = self.execution_finished_at.isoformat()
+
         paused_at: str | Unset = UNSET
         if not isinstance(self.paused_at, Unset):
             paused_at = self.paused_at.isoformat()
@@ -111,6 +119,8 @@ class EventRecoveryJob:
                 "expires_at": expires_at,
             }
         )
+        if execution_finished_at is not UNSET:
+            field_dict["execution_finished_at"] = execution_finished_at
         if paused_at is not UNSET:
             field_dict["paused_at"] = paused_at
         if execution is not UNSET:
@@ -154,6 +164,13 @@ class EventRecoveryJob:
 
         expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
 
+        _execution_finished_at = d.pop("execution_finished_at", UNSET)
+        execution_finished_at: datetime.datetime | Unset
+        if isinstance(_execution_finished_at, Unset):
+            execution_finished_at = UNSET
+        else:
+            execution_finished_at = datetime.datetime.fromisoformat(_execution_finished_at)
+
         _paused_at = d.pop("paused_at", UNSET)
         paused_at: datetime.datetime | Unset
         if isinstance(_paused_at, Unset):
@@ -190,6 +207,7 @@ class EventRecoveryJob:
             created_at=created_at,
             updated_at=updated_at,
             expires_at=expires_at,
+            execution_finished_at=execution_finished_at,
             paused_at=paused_at,
             execution=execution,
             completed_at=completed_at,

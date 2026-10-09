@@ -20,6 +20,9 @@ type memEventRecoveryItem struct {
 	SnapshotPosition int
 }
 type memEventRecoveryJob struct {
+	ExecutionNotificationCaptured bool
+	NextExecutionNotificationAt   time.Time
+
 	CapacityScope          string
 	CapacityWaitStartedAt  *time.Time
 	CapacityWaitObservedAt *time.Time
@@ -197,6 +200,7 @@ func memEventRecoveryResponse(job *memEventRecoveryJob) api.EventRecoveryJob {
 		t := *out.PausedAt
 		out.PausedAt = &t
 	}
+	out.ExecutionFinishedAt = cloneEventReceiptTime(out.ExecutionFinishedAt)
 	if out.CompletedAt != nil {
 		t := *out.CompletedAt
 		out.CompletedAt = &t

@@ -997,6 +997,18 @@ from .event_recovery_capacity_wait_scope import EventRecoveryCapacityWaitScope
 from .event_recovery_control_request import EventRecoveryControlRequest
 from .event_recovery_execution import EventRecoveryExecution
 from .event_recovery_execution_evidence_source import EventRecoveryExecutionEvidenceSource
+from .event_recovery_execution_finished_webhook_payload import EventRecoveryExecutionFinishedWebhookPayload
+from .event_recovery_execution_finished_webhook_payload_mode import EventRecoveryExecutionFinishedWebhookPayloadMode
+from .event_recovery_execution_finished_webhook_payload_outcome import (
+    EventRecoveryExecutionFinishedWebhookPayloadOutcome,
+)
+from .event_recovery_execution_finished_webhook_payload_pending_count import (
+    EventRecoveryExecutionFinishedWebhookPayloadPendingCount,
+)
+from .event_recovery_execution_finished_webhook_payload_state import EventRecoveryExecutionFinishedWebhookPayloadState
+from .event_recovery_execution_finished_webhook_payload_unresolved_count import (
+    EventRecoveryExecutionFinishedWebhookPayloadUnresolvedCount,
+)
 from .event_recovery_execution_source import EventRecoveryExecutionSource
 from .event_recovery_execution_state import EventRecoveryExecutionState
 from .event_recovery_execution_summary import EventRecoveryExecutionSummary
@@ -4006,6 +4018,12 @@ __all__ = (
     "EventRecoveryControlRequest",
     "EventRecoveryExecution",
     "EventRecoveryExecutionEvidenceSource",
+    "EventRecoveryExecutionFinishedWebhookPayload",
+    "EventRecoveryExecutionFinishedWebhookPayloadMode",
+    "EventRecoveryExecutionFinishedWebhookPayloadOutcome",
+    "EventRecoveryExecutionFinishedWebhookPayloadPendingCount",
+    "EventRecoveryExecutionFinishedWebhookPayloadState",
+    "EventRecoveryExecutionFinishedWebhookPayloadUnresolvedCount",
     "EventRecoveryExecutionSource",
     "EventRecoveryExecutionState",
     "EventRecoveryExecutionSummary",

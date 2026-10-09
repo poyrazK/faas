@@ -506,6 +506,7 @@ export type { EventReceiptRoutingResponse } from './models/EventReceiptRoutingRe
 export type { EventRecoveryCapacityWait } from './models/EventRecoveryCapacityWait.js';
 export type { EventRecoveryControlRequest } from './models/EventRecoveryControlRequest.js';
 export type { EventRecoveryExecution } from './models/EventRecoveryExecution.js';
+export type { EventRecoveryExecutionFinishedWebhookPayload } from './models/EventRecoveryExecutionFinishedWebhookPayload.js';
 export type { EventRecoveryExecutionSummary } from './models/EventRecoveryExecutionSummary.js';
 export type { EventRecoveryFinishedWebhookPayload } from './models/EventRecoveryFinishedWebhookPayload.js';
 export type { EventRecoveryHealth } from './models/EventRecoveryHealth.js';

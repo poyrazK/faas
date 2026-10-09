@@ -2546,25 +2546,28 @@ type EventRecoveryItem struct {
 }
 
 type EventRecoveryJob struct {
-	ID                     pgtype.UUID
-	AccountID              pgtype.UUID
-	AppID                  pgtype.UUID
-	Selection              []byte
-	RatePerSecond          int32
-	WindowStartedAt        pgtype.Timestamptz
-	WindowCount            int32
-	State                  string
-	NextAttemptAt          pgtype.Timestamptz
-	CreatedAt              pgtype.Timestamptz
-	UpdatedAt              pgtype.Timestamptz
-	ExpiresAt              pgtype.Timestamptz
-	CompletedAt            pgtype.Timestamptz
-	PausedAt               pgtype.Timestamptz
-	LastProgressAt         pgtype.Timestamptz
-	WaitReason             string
-	CapacityScope          string
-	CapacityWaitStartedAt  pgtype.Timestamptz
-	CapacityWaitObservedAt pgtype.Timestamptz
+	ID                            pgtype.UUID
+	AccountID                     pgtype.UUID
+	AppID                         pgtype.UUID
+	Selection                     []byte
+	RatePerSecond                 int32
+	WindowStartedAt               pgtype.Timestamptz
+	WindowCount                   int32
+	State                         string
+	NextAttemptAt                 pgtype.Timestamptz
+	CreatedAt                     pgtype.Timestamptz
+	UpdatedAt                     pgtype.Timestamptz
+	ExpiresAt                     pgtype.Timestamptz
+	CompletedAt                   pgtype.Timestamptz
+	PausedAt                      pgtype.Timestamptz
+	LastProgressAt                pgtype.Timestamptz
+	WaitReason                    string
+	CapacityScope                 string
+	CapacityWaitStartedAt         pgtype.Timestamptz
+	CapacityWaitObservedAt        pgtype.Timestamptz
+	ExecutionNotificationCaptured bool
+	ExecutionFinishedAt           pgtype.Timestamptz
+	ExecutionNotificationNextAt   pgtype.Timestamptz
 }
 
 type EventReplayJob struct {

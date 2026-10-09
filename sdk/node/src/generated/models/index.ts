@@ -500,6 +500,7 @@ export type { EventReceiptRoutingResponse } from './EventReceiptRoutingResponse.
 export type { EventRecoveryCapacityWait } from './EventRecoveryCapacityWait.js';
 export type { EventRecoveryControlRequest } from './EventRecoveryControlRequest.js';
 export type { EventRecoveryExecution } from './EventRecoveryExecution.js';
+export type { EventRecoveryExecutionFinishedWebhookPayload } from './EventRecoveryExecutionFinishedWebhookPayload.js';
 export type { EventRecoveryExecutionSummary } from './EventRecoveryExecutionSummary.js';
 export type { EventRecoveryFinishedWebhookPayload } from './EventRecoveryFinishedWebhookPayload.js';
 export type { EventRecoveryHealth } from './EventRecoveryHealth.js';

@@ -2522,3 +2522,53 @@ scope and MFA. SDK clients expose Go `GetEventRecoveryPreflight`, Node
 `faas_sdk.api.events.get_event_recovery_preflight`. No progress, pacing, audit,
 expiry or notification state changes during the read. See
 [ADR-814](adr/814-recovery-preflight.md).
+
+### Recovery execution completion notifications
+
+Subscribe separately when you need to know that admitted recovery handlers
+have reached confirmed terminal outcomes:
+
+```bash
+gregale webhooks add --app APP --target-url https://example.com/hooks/recovery \
+  --event event_recovery.execution_finished --retry-policy default
+gregale events recovery-status JOB_ID --json
+```
+
+For execution recovery jobs created after this migration, the scheduler captures
+`event_recovery.execution_finished` after admission finishes and every queued
+item has an exact saved terminal result. The original
+`event_recovery.completed` still means admission completion. Cancellation or
+expiry of admission does not stop handlers already queued; their final results
+can later produce the execution event. Routing recovery, historical jobs and
+jobs with no queued items do not produce it. Unknown, uncertain, running or
+retrying results block notification; they are never counted as success.
+
+The metadata-only payload includes admission counts, an `execution` summary,
+`unresolved_count=0` and `execution_finished_at`. `outcome=all_succeeded` means
+all queued executions succeeded; admission skips/cancellations remain separate.
+`finished_with_non_success` means at least one queued execution failed, reached
+a dead letter, expired, was cancelled or was superseded. Summary
+`tracked_count` and `saved_results` equal the admission `queued_count`.
+`completed_at` is admission completion; `execution_finished_at` is the scheduler
+capture time, also shown in recovery status and list responses and status CLI
+output. It does not prove webhook acknowledgement.
+
+The scheduler checks a bounded batch of due jobs and defers unresolved jobs for
+ten seconds. Capture and webhook recipient selection commit atomically. Even
+when no receiver matches, capture is final: adding a receiver later does not
+backfill this event. Job retention remains thirty days from admission completion
+or cancellation; if evidence is unresolved until pruning, no completion event is
+promised. Read-only status calls do not capture notifications.
+
+JSON delivery nests the payload under `payload.data`; CloudEvents uses `data`.
+The UUIDv5 `event_id` is stable across receivers and retries. Verify signatures
+and deduplicate effects before acknowledgement. Each receiver has independent
+retries and dead-letter recovery. Admission and execution notifications have no
+relative delivery-order guarantee. Existing wildcard app webhook receivers also
+receive this event for eligible jobs.
+
+Apply the migration before API and scheduler upgrades. Update SDK consumers
+that strictly validate webhook event names to accept
+`event_recovery.execution_finished` first. Go exposes
+`EventRecoveryExecutionFinishedWebhookPayload`; Node and Python generate the
+same model. See [ADR-833](adr/833-recovery-execution-completion-notifications.md).

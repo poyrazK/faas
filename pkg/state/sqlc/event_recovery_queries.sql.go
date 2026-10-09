@@ -155,6 +155,41 @@ func (q *Queries) EventRecoveryCandidates(ctx context.Context, db DBTX, arg Even
 	return items, nil
 }
 
+const eventRecoveryCaptureExecutionNotification = `-- name: EventRecoveryCaptureExecutionNotification :exec
+UPDATE event_recovery_jobs SET execution_notification_captured=true,execution_finished_at=$1::timestamptz
+WHERE id=$2::uuid AND NOT execution_notification_captured
+`
+
+type EventRecoveryCaptureExecutionNotificationParams struct {
+	FinishedAt pgtype.Timestamptz
+	JobID      pgtype.UUID
+}
+
+func (q *Queries) EventRecoveryCaptureExecutionNotification(ctx context.Context, db DBTX, arg EventRecoveryCaptureExecutionNotificationParams) error {
+	_, err := db.Exec(ctx, eventRecoveryCaptureExecutionNotification, arg.FinishedAt, arg.JobID)
+	return err
+}
+
+const eventRecoveryClaimExecutionNotification = `-- name: EventRecoveryClaimExecutionNotification :one
+SELECT j.id,j.account_id FROM event_recovery_jobs j
+WHERE NOT j.execution_notification_captured AND j.selection->>'mode'='execution'
+ AND j.state IN ('completed','cancelled') AND j.completed_at<=$1::timestamptz
+ AND j.execution_notification_next_at<=$1::timestamptz
+ORDER BY j.execution_notification_next_at,j.id LIMIT 1 FOR UPDATE OF j SKIP LOCKED
+`
+
+type EventRecoveryClaimExecutionNotificationRow struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) EventRecoveryClaimExecutionNotification(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRecoveryClaimExecutionNotificationRow, error) {
+	row := db.QueryRow(ctx, eventRecoveryClaimExecutionNotification, nowAt)
+	var i EventRecoveryClaimExecutionNotificationRow
+	err := row.Scan(&i.ID, &i.AccountID)
+	return i, err
+}
+
 const eventRecoveryCreate = `-- name: EventRecoveryCreate :one
 INSERT INTO event_recovery_jobs(account_id,app_id,selection,rate_per_second,window_started_at,created_at,updated_at,next_attempt_at,expires_at)
 VALUES ($1::uuid,$2::uuid,$3::jsonb,$4::integer,$5::timestamptz,$5::timestamptz,$5::timestamptz,$5::timestamptz,$6::timestamptz) RETURNING id
@@ -183,6 +218,21 @@ func (q *Queries) EventRecoveryCreate(ctx context.Context, db DBTX, arg EventRec
 	return id, err
 }
 
+const eventRecoveryDeferExecutionNotification = `-- name: EventRecoveryDeferExecutionNotification :exec
+UPDATE event_recovery_jobs SET execution_notification_next_at=$1::timestamptz
+WHERE id=$2::uuid AND NOT execution_notification_captured
+`
+
+type EventRecoveryDeferExecutionNotificationParams struct {
+	NextAt pgtype.Timestamptz
+	JobID  pgtype.UUID
+}
+
+func (q *Queries) EventRecoveryDeferExecutionNotification(ctx context.Context, db DBTX, arg EventRecoveryDeferExecutionNotificationParams) error {
+	_, err := db.Exec(ctx, eventRecoveryDeferExecutionNotification, arg.NextAt, arg.JobID)
+	return err
+}
+
 const eventRecoveryEnqueueNotification = `-- name: EventRecoveryEnqueueNotification :exec
 WITH recipients AS (
  SELECT array_agg(h.id ORDER BY h.id) AS ids FROM app_webhooks h
@@ -190,7 +240,7 @@ WITH recipients AS (
  WHERE h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR $2::text=ANY(h.event_filter))
 )
 INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids,created_at)
-SELECT $1::uuid,j.account_id,j.app_id,$2::text,j.id,$3::jsonb,r.ids,j.completed_at
+SELECT $1::uuid,j.account_id,j.app_id,$2::text,j.id,$3::jsonb,r.ids,CASE WHEN $2::text='event_recovery.execution_finished' THEN j.execution_finished_at ELSE j.completed_at END
 FROM event_recovery_jobs j CROSS JOIN recipients r
 WHERE j.id=$4::uuid AND j.state IN ('completed','cancelled') AND cardinality(r.ids)>0
 ON CONFLICT (event,source_id) DO NOTHING
@@ -315,7 +365,7 @@ func (q *Queries) EventRecoveryExecutionObservations(ctx context.Context, db DBT
 }
 
 const eventRecoveryGet = `-- name: EventRecoveryGet :one
-SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at,
+SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id)::bigint AS selected_count,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='pending')::bigint AS pending_count,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='queued')::bigint AS queued_count,
@@ -331,30 +381,33 @@ type EventRecoveryGetParams struct {
 }
 
 type EventRecoveryGetRow struct {
-	ID                     pgtype.UUID
-	AccountID              pgtype.UUID
-	AppID                  pgtype.UUID
-	Selection              []byte
-	RatePerSecond          int32
-	WindowStartedAt        pgtype.Timestamptz
-	WindowCount            int32
-	State                  string
-	NextAttemptAt          pgtype.Timestamptz
-	CreatedAt              pgtype.Timestamptz
-	UpdatedAt              pgtype.Timestamptz
-	ExpiresAt              pgtype.Timestamptz
-	CompletedAt            pgtype.Timestamptz
-	PausedAt               pgtype.Timestamptz
-	LastProgressAt         pgtype.Timestamptz
-	WaitReason             string
-	CapacityScope          string
-	CapacityWaitStartedAt  pgtype.Timestamptz
-	CapacityWaitObservedAt pgtype.Timestamptz
-	SelectedCount          int64
-	PendingCount           int64
-	QueuedCount            int64
-	SkippedCount           int64
-	CancelledCount         int64
+	ID                            pgtype.UUID
+	AccountID                     pgtype.UUID
+	AppID                         pgtype.UUID
+	Selection                     []byte
+	RatePerSecond                 int32
+	WindowStartedAt               pgtype.Timestamptz
+	WindowCount                   int32
+	State                         string
+	NextAttemptAt                 pgtype.Timestamptz
+	CreatedAt                     pgtype.Timestamptz
+	UpdatedAt                     pgtype.Timestamptz
+	ExpiresAt                     pgtype.Timestamptz
+	CompletedAt                   pgtype.Timestamptz
+	PausedAt                      pgtype.Timestamptz
+	LastProgressAt                pgtype.Timestamptz
+	WaitReason                    string
+	CapacityScope                 string
+	CapacityWaitStartedAt         pgtype.Timestamptz
+	CapacityWaitObservedAt        pgtype.Timestamptz
+	ExecutionNotificationCaptured bool
+	ExecutionFinishedAt           pgtype.Timestamptz
+	ExecutionNotificationNextAt   pgtype.Timestamptz
+	SelectedCount                 int64
+	PendingCount                  int64
+	QueuedCount                   int64
+	SkippedCount                  int64
+	CancelledCount                int64
 }
 
 func (q *Queries) EventRecoveryGet(ctx context.Context, db DBTX, arg EventRecoveryGetParams) (EventRecoveryGetRow, error) {
@@ -380,6 +433,9 @@ func (q *Queries) EventRecoveryGet(ctx context.Context, db DBTX, arg EventRecove
 		&i.CapacityScope,
 		&i.CapacityWaitStartedAt,
 		&i.CapacityWaitObservedAt,
+		&i.ExecutionNotificationCaptured,
+		&i.ExecutionFinishedAt,
+		&i.ExecutionNotificationNextAt,
 		&i.SelectedCount,
 		&i.PendingCount,
 		&i.QueuedCount,
@@ -390,7 +446,7 @@ func (q *Queries) EventRecoveryGet(ctx context.Context, db DBTX, arg EventRecove
 }
 
 const eventRecoveryHealth = `-- name: EventRecoveryHealth :many
-SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='pending')::bigint AS pending_count
+SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at, (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='pending')::bigint AS pending_count
 FROM event_recovery_jobs j WHERE j.account_id=$1::uuid AND j.app_id=$2::uuid AND j.state IN ('running','paused')
 ORDER BY j.created_at,j.id
 `
@@ -401,26 +457,29 @@ type EventRecoveryHealthParams struct {
 }
 
 type EventRecoveryHealthRow struct {
-	ID                     pgtype.UUID
-	AccountID              pgtype.UUID
-	AppID                  pgtype.UUID
-	Selection              []byte
-	RatePerSecond          int32
-	WindowStartedAt        pgtype.Timestamptz
-	WindowCount            int32
-	State                  string
-	NextAttemptAt          pgtype.Timestamptz
-	CreatedAt              pgtype.Timestamptz
-	UpdatedAt              pgtype.Timestamptz
-	ExpiresAt              pgtype.Timestamptz
-	CompletedAt            pgtype.Timestamptz
-	PausedAt               pgtype.Timestamptz
-	LastProgressAt         pgtype.Timestamptz
-	WaitReason             string
-	CapacityScope          string
-	CapacityWaitStartedAt  pgtype.Timestamptz
-	CapacityWaitObservedAt pgtype.Timestamptz
-	PendingCount           int64
+	ID                            pgtype.UUID
+	AccountID                     pgtype.UUID
+	AppID                         pgtype.UUID
+	Selection                     []byte
+	RatePerSecond                 int32
+	WindowStartedAt               pgtype.Timestamptz
+	WindowCount                   int32
+	State                         string
+	NextAttemptAt                 pgtype.Timestamptz
+	CreatedAt                     pgtype.Timestamptz
+	UpdatedAt                     pgtype.Timestamptz
+	ExpiresAt                     pgtype.Timestamptz
+	CompletedAt                   pgtype.Timestamptz
+	PausedAt                      pgtype.Timestamptz
+	LastProgressAt                pgtype.Timestamptz
+	WaitReason                    string
+	CapacityScope                 string
+	CapacityWaitStartedAt         pgtype.Timestamptz
+	CapacityWaitObservedAt        pgtype.Timestamptz
+	ExecutionNotificationCaptured bool
+	ExecutionFinishedAt           pgtype.Timestamptz
+	ExecutionNotificationNextAt   pgtype.Timestamptz
+	PendingCount                  int64
 }
 
 func (q *Queries) EventRecoveryHealth(ctx context.Context, db DBTX, arg EventRecoveryHealthParams) ([]EventRecoveryHealthRow, error) {
@@ -452,6 +511,9 @@ func (q *Queries) EventRecoveryHealth(ctx context.Context, db DBTX, arg EventRec
 			&i.CapacityScope,
 			&i.CapacityWaitStartedAt,
 			&i.CapacityWaitObservedAt,
+			&i.ExecutionNotificationCaptured,
+			&i.ExecutionFinishedAt,
+			&i.ExecutionNotificationNextAt,
 			&i.PendingCount,
 		); err != nil {
 			return nil, err
@@ -657,7 +719,7 @@ func (q *Queries) EventRecoveryItems(ctx context.Context, db DBTX, arg EventReco
 
 const eventRecoveryList = `-- name: EventRecoveryList :many
 WITH page AS MATERIALIZED (
- SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at FROM event_recovery_jobs j
+ SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at FROM event_recovery_jobs j
  WHERE j.account_id=$1::uuid AND j.app_id=$2::uuid
  AND ($3::text='' OR j.state=$3::text)
  AND ($4::text='' OR coalesce(nullif(j.selection->>'mode',''),'routing')=$4::text)
@@ -667,7 +729,7 @@ WITH page AS MATERIALIZED (
  AND (NOT $8::boolean OR (j.created_at,j.id)<($9::timestamptz,$10::uuid))
 ORDER BY j.created_at DESC,j.id DESC LIMIT $11::integer
 )
-SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at,
+SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id)::bigint AS selected_count,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='pending')::bigint AS pending_count,
  (SELECT count(*) FROM event_recovery_items i WHERE i.job_id=j.id AND i.state='queued')::bigint AS queued_count,
@@ -691,30 +753,33 @@ type EventRecoveryListParams struct {
 }
 
 type EventRecoveryListRow struct {
-	ID                     pgtype.UUID
-	AccountID              pgtype.UUID
-	AppID                  pgtype.UUID
-	Selection              []byte
-	RatePerSecond          int32
-	WindowStartedAt        pgtype.Timestamptz
-	WindowCount            int32
-	State                  string
-	NextAttemptAt          pgtype.Timestamptz
-	CreatedAt              pgtype.Timestamptz
-	UpdatedAt              pgtype.Timestamptz
-	ExpiresAt              pgtype.Timestamptz
-	CompletedAt            pgtype.Timestamptz
-	PausedAt               pgtype.Timestamptz
-	LastProgressAt         pgtype.Timestamptz
-	WaitReason             string
-	CapacityScope          string
-	CapacityWaitStartedAt  pgtype.Timestamptz
-	CapacityWaitObservedAt pgtype.Timestamptz
-	SelectedCount          int64
-	PendingCount           int64
-	QueuedCount            int64
-	SkippedCount           int64
-	CancelledCount         int64
+	ID                            pgtype.UUID
+	AccountID                     pgtype.UUID
+	AppID                         pgtype.UUID
+	Selection                     []byte
+	RatePerSecond                 int32
+	WindowStartedAt               pgtype.Timestamptz
+	WindowCount                   int32
+	State                         string
+	NextAttemptAt                 pgtype.Timestamptz
+	CreatedAt                     pgtype.Timestamptz
+	UpdatedAt                     pgtype.Timestamptz
+	ExpiresAt                     pgtype.Timestamptz
+	CompletedAt                   pgtype.Timestamptz
+	PausedAt                      pgtype.Timestamptz
+	LastProgressAt                pgtype.Timestamptz
+	WaitReason                    string
+	CapacityScope                 string
+	CapacityWaitStartedAt         pgtype.Timestamptz
+	CapacityWaitObservedAt        pgtype.Timestamptz
+	ExecutionNotificationCaptured bool
+	ExecutionFinishedAt           pgtype.Timestamptz
+	ExecutionNotificationNextAt   pgtype.Timestamptz
+	SelectedCount                 int64
+	PendingCount                  int64
+	QueuedCount                   int64
+	SkippedCount                  int64
+	CancelledCount                int64
 }
 
 func (q *Queries) EventRecoveryList(ctx context.Context, db DBTX, arg EventRecoveryListParams) ([]EventRecoveryListRow, error) {
@@ -758,6 +823,9 @@ func (q *Queries) EventRecoveryList(ctx context.Context, db DBTX, arg EventRecov
 			&i.CapacityScope,
 			&i.CapacityWaitStartedAt,
 			&i.CapacityWaitObservedAt,
+			&i.ExecutionNotificationCaptured,
+			&i.ExecutionFinishedAt,
+			&i.ExecutionNotificationNextAt,
 			&i.SelectedCount,
 			&i.PendingCount,
 			&i.QueuedCount,
@@ -791,7 +859,7 @@ func (q *Queries) EventRecoveryListApp(ctx context.Context, db DBTX, arg EventRe
 }
 
 const eventRecoveryLock = `-- name: EventRecoveryLock :one
-SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at FROM event_recovery_jobs j WHERE j.id=$1::uuid AND j.account_id=$2::uuid FOR UPDATE
+SELECT j.id, j.account_id, j.app_id, j.selection, j.rate_per_second, j.window_started_at, j.window_count, j.state, j.next_attempt_at, j.created_at, j.updated_at, j.expires_at, j.completed_at, j.paused_at, j.last_progress_at, j.wait_reason, j.capacity_scope, j.capacity_wait_started_at, j.capacity_wait_observed_at, j.execution_notification_captured, j.execution_finished_at, j.execution_notification_next_at FROM event_recovery_jobs j WHERE j.id=$1::uuid AND j.account_id=$2::uuid FOR UPDATE
 `
 
 type EventRecoveryLockParams struct {
@@ -822,6 +890,9 @@ func (q *Queries) EventRecoveryLock(ctx context.Context, db DBTX, arg EventRecov
 		&i.CapacityScope,
 		&i.CapacityWaitStartedAt,
 		&i.CapacityWaitObservedAt,
+		&i.ExecutionNotificationCaptured,
+		&i.ExecutionFinishedAt,
+		&i.ExecutionNotificationNextAt,
 	)
 	return i, err
 }
@@ -855,7 +926,7 @@ func (q *Queries) EventRecoveryNextItem(ctx context.Context, db DBTX, jobID pgty
 }
 
 const eventRecoveryNextJob = `-- name: EventRecoveryNextJob :one
-SELECT id, account_id, app_id, selection, rate_per_second, window_started_at, window_count, state, next_attempt_at, created_at, updated_at, expires_at, completed_at, paused_at, last_progress_at, wait_reason, capacity_scope, capacity_wait_started_at, capacity_wait_observed_at FROM event_recovery_jobs WHERE state IN ('running','paused')
+SELECT id, account_id, app_id, selection, rate_per_second, window_started_at, window_count, state, next_attempt_at, created_at, updated_at, expires_at, completed_at, paused_at, last_progress_at, wait_reason, capacity_scope, capacity_wait_started_at, capacity_wait_observed_at, execution_notification_captured, execution_finished_at, execution_notification_next_at FROM event_recovery_jobs WHERE state IN ('running','paused')
  AND (expires_at<=$1::timestamptz OR (state='running' AND next_attempt_at<=$1::timestamptz
  AND (window_started_at+interval '1 second'<=$1::timestamptz OR window_count<rate_per_second)))
 ORDER BY CASE WHEN expires_at<=$1::timestamptz THEN expires_at ELSE next_attempt_at END,id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -884,6 +955,9 @@ func (q *Queries) EventRecoveryNextJob(ctx context.Context, db DBTX, nowAt pgtyp
 		&i.CapacityScope,
 		&i.CapacityWaitStartedAt,
 		&i.CapacityWaitObservedAt,
+		&i.ExecutionNotificationCaptured,
+		&i.ExecutionFinishedAt,
+		&i.ExecutionNotificationNextAt,
 	)
 	return i, err
 }
@@ -1027,7 +1101,7 @@ func (q *Queries) EventRecoveryPreflight(ctx context.Context, db DBTX, arg Event
 }
 
 const eventRecoveryPreflightJob = `-- name: EventRecoveryPreflightJob :one
-SELECT id, account_id, app_id, selection, rate_per_second, window_started_at, window_count, state, next_attempt_at, created_at, updated_at, expires_at, completed_at, paused_at, last_progress_at, wait_reason, capacity_scope, capacity_wait_started_at, capacity_wait_observed_at FROM event_recovery_jobs WHERE id=$1::uuid AND account_id=$2::uuid
+SELECT id, account_id, app_id, selection, rate_per_second, window_started_at, window_count, state, next_attempt_at, created_at, updated_at, expires_at, completed_at, paused_at, last_progress_at, wait_reason, capacity_scope, capacity_wait_started_at, capacity_wait_observed_at, execution_notification_captured, execution_finished_at, execution_notification_next_at FROM event_recovery_jobs WHERE id=$1::uuid AND account_id=$2::uuid
 `
 
 type EventRecoveryPreflightJobParams struct {
@@ -1058,6 +1132,9 @@ func (q *Queries) EventRecoveryPreflightJob(ctx context.Context, db DBTX, arg Ev
 		&i.CapacityScope,
 		&i.CapacityWaitStartedAt,
 		&i.CapacityWaitObservedAt,
+		&i.ExecutionNotificationCaptured,
+		&i.ExecutionFinishedAt,
+		&i.ExecutionNotificationNextAt,
 	)
 	return i, err
 }

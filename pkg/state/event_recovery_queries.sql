@@ -228,7 +228,7 @@ WITH recipients AS (
  WHERE h.scope='app' AND h.enabled AND (cardinality(h.event_filter)=0 OR sqlc.arg(event)::text=ANY(h.event_filter))
 )
 INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids,created_at)
-SELECT sqlc.arg(event_id)::uuid,j.account_id,j.app_id,sqlc.arg(event)::text,j.id,sqlc.arg(payload)::jsonb,r.ids,j.completed_at
+SELECT sqlc.arg(event_id)::uuid,j.account_id,j.app_id,sqlc.arg(event)::text,j.id,sqlc.arg(payload)::jsonb,r.ids,CASE WHEN sqlc.arg(event)::text='event_recovery.execution_finished' THEN j.execution_finished_at ELSE j.completed_at END
 FROM event_recovery_jobs j CROSS JOIN recipients r
 WHERE j.id=sqlc.arg(job_id)::uuid AND j.state IN ('completed','cancelled') AND cardinality(r.ids)>0
 ON CONFLICT (event,source_id) DO NOTHING;
@@ -295,3 +295,18 @@ ORDER BY item.position LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: EventRecoveryPreflightJob :one
 SELECT * FROM event_recovery_jobs WHERE id=sqlc.arg(job_id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: EventRecoveryClaimExecutionNotification :one
+SELECT j.id,j.account_id FROM event_recovery_jobs j
+WHERE NOT j.execution_notification_captured AND j.selection->>'mode'='execution'
+ AND j.state IN ('completed','cancelled') AND j.completed_at<=sqlc.arg(now_at)::timestamptz
+ AND j.execution_notification_next_at<=sqlc.arg(now_at)::timestamptz
+ORDER BY j.execution_notification_next_at,j.id LIMIT 1 FOR UPDATE OF j SKIP LOCKED;
+
+-- name: EventRecoveryCaptureExecutionNotification :exec
+UPDATE event_recovery_jobs SET execution_notification_captured=true,execution_finished_at=sqlc.narg(finished_at)::timestamptz
+WHERE id=sqlc.arg(job_id)::uuid AND NOT execution_notification_captured;
+
+-- name: EventRecoveryDeferExecutionNotification :exec
+UPDATE event_recovery_jobs SET execution_notification_next_at=sqlc.arg(next_at)::timestamptz
+WHERE id=sqlc.arg(job_id)::uuid AND NOT execution_notification_captured;

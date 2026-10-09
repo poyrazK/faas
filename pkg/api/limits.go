@@ -9412,3 +9412,6 @@ const (
 	EventRetentionSourceMaxBytes = 256
 	EventRetentionRequestTimeout = 15 * time.Second
 )
+
+// Recheck unresolved execution recovery jobs without scanning retained history on every tick.
+const EventRecoveryExecutionNotificationPollInterval = 10 * time.Second

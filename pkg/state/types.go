@@ -3543,6 +3543,7 @@ const (
 	AppWebhookEventRecoveryCompleted                AppWebhookEvent = "event_recovery.completed"
 	AppWebhookEventRecoveryCancelled                AppWebhookEvent = "event_recovery.cancelled"
 	AppWebhookEventRecoveryExpired                  AppWebhookEvent = "event_recovery.expired"
+	AppWebhookEventRecoveryExecutionFinished        AppWebhookEvent = "event_recovery.execution_finished"
 	AppWebhookEventWorkflowFinished                 AppWebhookEvent = "workflow.finished"
 )
 
@@ -3588,7 +3589,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
-	AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired,
+	AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished,
 	AppWebhookEventWorkflowFinished,
 }
 

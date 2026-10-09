@@ -192,7 +192,7 @@ func getEventRecoveryMetadata(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX
 	return eventRecoveryMetadata(row)
 }
 func eventRecoveryMetadata(row sqlc.EventRecoveryGetRow) (api.EventRecoveryJob, error) {
-	out := api.EventRecoveryJob{RatePerSecond: int(row.RatePerSecond), PausedAt: timestamptzToTimePtr(row.PausedAt), ID: uuidString(row.ID), AppID: uuidString(row.AppID), Coverage: EventRecoveryCoverage, State: row.State, SelectedCount: row.SelectedCount, PendingCount: row.PendingCount, QueuedCount: row.QueuedCount, SkippedCount: row.SkippedCount, CancelledCount: row.CancelledCount, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt), ExpiresAt: timeFromPgtype(row.ExpiresAt), CompletedAt: timestamptzToTimePtr(row.CompletedAt)}
+	out := api.EventRecoveryJob{ExecutionFinishedAt: timestamptzToTimePtr(row.ExecutionFinishedAt), RatePerSecond: int(row.RatePerSecond), PausedAt: timestamptzToTimePtr(row.PausedAt), ID: uuidString(row.ID), AppID: uuidString(row.AppID), Coverage: EventRecoveryCoverage, State: row.State, SelectedCount: row.SelectedCount, PendingCount: row.PendingCount, QueuedCount: row.QueuedCount, SkippedCount: row.SkippedCount, CancelledCount: row.CancelledCount, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt), ExpiresAt: timeFromPgtype(row.ExpiresAt), CompletedAt: timestamptzToTimePtr(row.CompletedAt)}
 	if err := json.Unmarshal(row.Selection, &out.Selection); err != nil {
 		return api.EventRecoveryJob{}, err
 	}

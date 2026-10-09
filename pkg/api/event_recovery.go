@@ -103,6 +103,8 @@ type EventRecoveryPreview struct {
 	Sample          []EventRecoveryItem `json:"sample"`
 }
 type EventRecoveryJob struct {
+	ExecutionFinishedAt *time.Time `json:"execution_finished_at,omitempty"`
+
 	RatePerSecond  int                            `json:"rate_per_second"`
 	PausedAt       *time.Time                     `json:"paused_at,omitempty"`
 	Execution      *EventRecoveryExecutionSummary `json:"execution,omitempty"`

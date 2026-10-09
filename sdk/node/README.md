@@ -773,3 +773,12 @@ exact admitted replay generation. `execution.source` is `recovery_result`, with
 `saved_results`. These results survive execution-history pruning until the
 recovery job is pruned. Uncertain outcomes remain unknown. See
 [terminal recovery results](../../docs/event-driven.md#durable-terminal-recovery-results).
+
+Recovery webhook filters support `event_recovery.execution_finished`, separately
+from admission completion. Its `EventRecoveryExecutionFinishedWebhookPayload`
+contains saved terminal execution counts and `unresolved_count=0`; `all_succeeded`
+refers only to queued executions. Recovery job `execution_finished_at` is capture
+time, not webhook acknowledgement. Unknown evidence blocks capture. Only newly
+created execution jobs with queued deliveries qualify. Update strict webhook
+event-enum consumers before API rollout; existing webhook delivery retries and
+dead-letter tools apply. See [ADR-833](../../docs/adr/833-recovery-execution-completion-notifications.md).

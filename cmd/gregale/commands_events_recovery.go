@@ -148,6 +148,9 @@ func writeEventRecoveryJob(out api.EventRecoveryJob) {
 	if out.PausedAt != nil {
 		_, _ = fmt.Fprintf(osStdout, "Paused at: %s\n", out.PausedAt.Format(time.RFC3339))
 	}
+	if out.ExecutionFinishedAt != nil {
+		_, _ = fmt.Fprintf(osStdout, "Execution finished at: %s\n", out.ExecutionFinishedAt.Format(time.RFC3339))
+	}
 	if e := out.Execution; e != nil {
 		_, _ = fmt.Fprintf(osStdout, "Execution: tracked %d | saved results %d | queued %d | running %d | retrying %d | succeeded %d | failed %d | dead letters %d | expired %d | cancelled %d | superseded %d | unknown %d\n", e.TrackedCount, e.SavedResults, e.Queued, e.Running, e.Retrying, e.Succeeded, e.Failed, e.DeadLettered, e.Expired, e.Cancelled, e.Superseded, e.Unknown)
 	}

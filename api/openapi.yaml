@@ -47347,6 +47347,7 @@ components:
       additionalProperties: false
       required: [id, rate_per_second, app_id, coverage, selection, state, selected_count, pending_count, queued_count, skipped_count, cancelled_count, created_at, updated_at, expires_at]
       properties:
+        execution_finished_at: { type: string, format: date-time, description: Time the scheduler captured confirmed terminal results for all queued deliveries of an eligible new execution recovery. Omitted while unresolved or for historical jobs; does not imply success or webhook acknowledgement. }
         rate_per_second: { type: integer, minimum: 1, maximum: 100, description: Current admission rate; selection.rate_per_second retains the original requested rate. }
         paused_at: { type: string, format: date-time, description: Start time of the current pause; present only while paused. }
         id: { type: string, format: uuid }
@@ -47514,6 +47515,29 @@ components:
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
+    EventRecoveryExecutionFinishedWebhookPayload:
+      type: object
+      additionalProperties: false
+      description: Frozen confirmed terminal execution results for all queued deliveries after admission finishes. Unknown outcomes block capture. Separate from event_recovery.completed; does not imply every execution succeeded or any receiver acknowledged.
+      required: [event_id, job_id, app_id, mode, state, outcome, selected_count, pending_count, queued_count, skipped_count, cancelled_count, created_at, expires_at, completed_at, execution, execution_finished_at, unresolved_count]
+      properties:
+        event_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        mode: { type: string, enum: [execution] }
+        state: { type: string, enum: [completed, cancelled] }
+        outcome: { type: string, enum: [all_succeeded, finished_with_non_success] }
+        selected_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
+        pending_count: { type: integer, format: int64, enum: [0] }
+        queued_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
+        skipped_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
+        cancelled_count: { type: integer, format: int64, minimum: 0, maximum: 10000 }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        execution: { $ref: '#/components/schemas/EventRecoveryExecutionSummary' }
+        execution_finished_at: { type: string, format: date-time }
+        unresolved_count: { type: integer, format: int64, enum: [0], description: Unknown or nonterminal queued deliveries; capture requires zero. }
     EventRecoveryControlRequest:
       description: "Optional audit reason attached to a recovery pause, resume or cancellation."
       type: object
@@ -61242,7 +61266,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished", "profile.route_regressed", "profile.route_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -61731,7 +61755,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished", "profile.route_regressed", "profile.route_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -61813,7 +61837,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished", "profile.route_regressed", "profile.route_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
