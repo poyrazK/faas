@@ -6166,10 +6166,14 @@ func validateRepoSlug(s string) error {
 // (e.g. `logs list` for batch tail of all app's deployments) without
 // a wire-format break.
 func cmdLogs(args []string) int {
+	if len(args) > 0 && args[0] == "views" {
+		return cmdLogViews(args[1:])
+	}
 	if len(args) > 0 && args[0] == subLogsTail {
 		return cmdLogsTail(args[1:])
 	}
 	fs := newFlagSet("logs", flag.ContinueOnError)
+	viewName := fs.String("view", "", "reuse a named local log view")
 	interactive := fs.Bool("interactive", false, "choose log source, time window, and filters interactively")
 	follow := fs.Bool("follow", false, "follow new lines")
 	deployment := fs.String("deployment", "", "deployment id or vN revision (default: latest)")
@@ -6199,6 +6203,30 @@ func cmdLogs(args []string) int {
 	if err := parseAppLogFlags(fs, args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
 		return 1
+	}
+	if logsFlagWasSet(fs, "view") {
+		invalid := *viewName == "" || fs.NArg() > 1
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "view" && f.Name != "app" {
+				invalid = true
+			}
+		})
+		if invalid {
+			return printErr("Invalid log view flags", errors.New("--view NAME accepts only an app target; inspect the saved filters with logs views show NAME"))
+		}
+		views, err := loadLogViews()
+		if err != nil {
+			return printErr("Could not read log views", err)
+		}
+		view, exists := views.Views[*viewName]
+		if !exists {
+			return printErr("Unknown log view", errors.New("run gregale logs views list to see saved views"))
+		}
+		pos, err := mergeAppFlag(fs.Args(), *app, 1)
+		if err != nil {
+			return printErr("Invalid app target", err)
+		}
+		return cmdLogs(append(pos, view.args()...))
 	}
 	if *interactive {
 		invalid := false

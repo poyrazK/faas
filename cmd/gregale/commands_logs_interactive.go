@@ -104,6 +104,28 @@ func cmdLogsInteractive(slug string) int {
 		command = append(command, quoteLogCommandArg(arg))
 	}
 	_, _ = fmt.Fprintln(osStdout, "Equivalent command (POSIX shells):\n"+strings.Join(command, " "))
+	if view, _, viewErr := parseLogViewFlags(args[1:]); viewErr == nil {
+		for {
+			name, err := prompt.text(ctx, "Save as view (optional name; empty skips)", "")
+			if err != nil {
+				return startInputExit(err)
+			}
+			if name == "" {
+				break
+			}
+			if err := validateProfileName(name); err != nil {
+				_, _ = fmt.Fprintln(prompt.writer, err)
+				continue
+			}
+			if err := saveLogView(name, view, false); err != nil {
+				return printErr("Could not save log view", err)
+			}
+			PrintOK(osStdout, "Saved log view %s", name)
+			break
+		}
+	} else {
+		_, _ = fmt.Fprintln(prompt.writer, "Saving a view requires a relative time window; this timestamp query can still run.")
+	}
 	run, err := prompt.confirm(ctx, "Run this log query now?")
 	if err != nil {
 		return startInputExit(err)

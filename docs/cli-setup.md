@@ -148,6 +148,30 @@ This mode requires terminal input and output and accepts only an app target
 alongside `--interactive`. Scripts and JSON output retain the existing source,
 time-window, and filter flags.
 
+## Saved log views
+
+Save frequently used filters and reuse them for any explicit or linked app:
+
+```sh
+gregale logs views save runtime-errors --since 1h --level error
+gregale logs my-api --view runtime-errors
+gregale logs --view runtime-errors
+gregale logs views list
+gregale logs views show runtime-errors
+gregale logs views delete runtime-errors
+```
+
+The guided `logs --interactive` flow also offers to save the chosen filters.
+Names use 1–64 lowercase letters, digits, underscores, or hyphens. Use
+`--replace` when saving over an existing name. Views require relative windows
+such as `15m`, `1h`, or `3d`, recalculated each time you run them.
+
+Views store filter text in `log-views.json` beside the CLI configuration, with
+file permissions restricted to the owner. They do not store app targets,
+credentials, or log output. Runtime views support level, text, and follow;
+HTTP views support status, route, and page size. Supply only an app target
+alongside `--view`; inspect or replace the saved view to change its filters.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

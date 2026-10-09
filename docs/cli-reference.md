@@ -7642,10 +7642,11 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 Query runtime logs and HTTP request events (linked app or interactive picker)
 
-`gregale logs [<slug>] [--interactive] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
+`gregale logs [<subcommand>] [<slug>] [--view <NAME>] [--interactive] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--view <NAME>` | reuse a named local log view (only app target may be supplied alongside) |  |
 | `--interactive` | choose source, time window, and filters and show the equivalent command |  |
 | `--follow` | stream logs until interrupted |  |
 | `--deployment <ID>` | deployment id or vN revision (default: latest) |  |
@@ -7671,7 +7672,49 @@ Examples:
 gregale logs my-api --interactive
 gregale logs my-api --follow
 gregale logs my-api --since 1h --level error
+gregale logs views save runtime-errors --since 1h --level error
+gregale logs my-api --view runtime-errors
 ```
+
+### logs views
+
+Manage reusable local log filters
+
+#### logs views list
+
+List saved log views
+
+`gregale logs views list`
+
+#### logs views show
+
+Show saved filters
+
+`gregale logs views show <name>`
+
+#### logs views delete
+
+Delete a local log view
+
+`gregale logs views delete <name>`
+
+#### logs views save
+
+Save filters as a named view
+
+`gregale logs views save [--source <SOURCE>] [--since <DURATION>] [--level <LEVEL>] [--grep <TEXT>] [--follow] [--status <100..599>] [--route <PATH>] [--limit <1..200>] [--replace] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--source <SOURCE>` | runtime (default) or http | one of `runtime` · `http` |
+| `--since <DURATION>` | relative window (default 15m) |  |
+| `--level <LEVEL>` | runtime log level |  |
+| `--grep <TEXT>` | runtime text filter |  |
+| `--follow` | follow runtime output |  |
+| `--status <100..599>` | exact HTTP status |  |
+| `--route <PATH>` | HTTP route filter |  |
+| `--limit <1..200>` | HTTP page size (default 100) |  |
+| `--replace` | replace an existing view |  |
 
 
 ## metrics

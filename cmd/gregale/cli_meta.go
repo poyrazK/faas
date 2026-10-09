@@ -3027,9 +3027,10 @@ var cliCommands = []cliCommand{
 		Name:        "logs",
 		DocSlug:     "logs",
 		Short:       "Query runtime logs and HTTP request events (linked app or interactive picker)",
-		Examples:    []string{"gregale logs my-api --interactive", "gregale logs my-api --follow", "gregale logs my-api --since 1h --level error"},
+		Examples:    []string{"gregale logs my-api --interactive", "gregale logs my-api --follow", "gregale logs my-api --since 1h --level error", "gregale logs views save runtime-errors --since 1h --level error", "gregale logs my-api --view runtime-errors"},
 		Positionals: []string{"[<slug>]"},
 		Flags: []cliFlag{
+			{Name: "view", Short: "reuse a named local log view (only app target may be supplied alongside)", Value: "NAME"},
 			{Name: "interactive", Short: "choose source, time window, and filters and show the equivalent command", Bool: true},
 			{Name: "follow", Short: "stream logs until interrupted"},
 			{Name: "deployment", Short: "deployment id or vN revision (default: latest)", Value: "ID"},
@@ -3048,6 +3049,24 @@ var cliCommands = []cliCommand{
 			{Name: "archive", Short: "read durable logs for one instance and UTC day"},
 			{Name: "instance", Short: "instance id for --archive", Value: "ID"},
 			{Name: "date", Short: "UTC day for --archive", Value: "YYYY-MM-DD"},
+		},
+		Subcommands: []cliSub{
+			{Name: "views", Short: "Manage reusable local log filters", Subcommands: []cliSub{
+				{Name: "list", Short: "List saved log views"},
+				{Name: "show", Short: "Show saved filters", Positionals: []string{"<name>"}},
+				{Name: "delete", Short: "Delete a local log view", Positionals: []string{"<name>"}},
+				{Name: "save", Short: "Save filters as a named view", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "source", Short: "runtime (default) or http", Value: "SOURCE", ClosedSet: []string{"runtime", "http"}},
+					{Name: "since", Short: "relative window (default 15m)", Value: "DURATION"},
+					{Name: "level", Short: "runtime log level", Value: "LEVEL"},
+					{Name: "grep", Short: "runtime text filter", Value: "TEXT"},
+					{Name: "follow", Short: "follow runtime output", Bool: true},
+					{Name: "status", Short: "exact HTTP status", Value: "100..599"},
+					{Name: "route", Short: "HTTP route filter", Value: "PATH"},
+					{Name: "limit", Short: "HTTP page size (default 100)", Value: "1..200"},
+					{Name: "replace", Short: "replace an existing view", Bool: true},
+				}},
+			}},
 		},
 	},
 	{
