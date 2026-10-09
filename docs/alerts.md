@@ -63,6 +63,12 @@ is being rejected or would be:
   (503) are not counted. Break the total down by gate with
   `gateway_edge_rejections_total{app="APP_ID"}`, whose `kind` and `status`
   labels name the gate and response.
+- `edge_waf_detections` (Pro and above) fires when `kind=waf` edge rules detect
+  more than 25 likely attacks in 15 minutes. The WAF observes only, so these
+  requests were not blocked and are not counted by `edge_rejection_pressure`.
+  `gregale edge-rules summary` lists detections by attack category and the
+  CRS rule IDs that scored most; add a rule ID to the rule's
+  `exclude_rule_ids` when it fires on legitimate traffic.
 
 ```bash
 printf '%s\n' "$ALERT_SECRET" | gregale alerts preset enable pre_auth_pressure \

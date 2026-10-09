@@ -132,3 +132,40 @@ numbers, as required for leaving `preview`.
   set with less coverage and no community review.
 - **Ship all three at once.** Too much new surface before the first one has
   production evidence.
+
+## Amendment 1: step 1 as built on `feat/edge-waf-observe` (2026-10-09)
+
+Step 1 was implemented ahead of acceptance, as an observe-only preview for
+review. This ADR is still `proposed`: the branch must not merge until the
+product owner accepts it, including the plan gating below. Where the build
+differs from the proposal:
+
+- **Inspection is off the request path.** The gateway records the body
+  prefix while the proxy streams it upstream, and hands headers and prefix to
+  a node-wide pool of `EdgeWAFWorkers` (2) after the request finishes. Observe
+  mode therefore adds no request latency; the cost to gate on is worker CPU
+  and queue pressure (`gateway_waf_inspection_seconds`, the `dropped` and
+  `sampled_out` outcomes). The p95 ≤ 2 ms latency gate still applies, to the
+  in-path evaluation that `block` and `warn` will need; that needs its own
+  amendment and measurement on the reference node.
+- **Body cap: default 8 KiB, maximum 64 KiB** (`inspect_body_bytes`), not a
+  64 KiB default. Profiling on a development machine put CRS at about 3 µs of
+  CPU per body byte, so 64 KiB is roughly 200 ms per inspection, enough for a
+  few apps to saturate the workers. Each sample is charged against its app's
+  inspection budget at one token plus one per 8 KiB of body, so a larger cap
+  buys fewer inspections, not more CPU. Both numbers must be re-measured on
+  the reference node before leaving preview.
+- **Signals.** `gateway_waf_inspections_total{app,outcome}`,
+  `gateway_waf_detections_total{app,category}` and
+  `gateway_waf_rule_matches_total{app,rule_id}`. `rule_id` is limited to CRS
+  detection rules (911000–948999); the vendored CRS has 391, pinned by a
+  test. The edge-protection summary gains a `waf` section (inspected,
+  detected, not inspected, categories, top 10 rule IDs).
+- **Alerting is a separate preset.** Observe-only detections are not
+  rejections, so they are not added to `edge_rejection_pressure`. A new
+  opt-in, webhook-only `edge_waf_detections` preset (more than 25 in 15
+  minutes, Pro and above) covers them. Once `block` ships, its rejections go
+  to `gateway_edge_rejections_total{kind="waf"}` and the existing preset
+  counts them without changes.
+- **Plan gating (still to decide):** built as Pro 5 rules per app, Scale 20,
+  Free and Hobby 0, in `pkg/api/limits.go`.

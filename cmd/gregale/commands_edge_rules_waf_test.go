@@ -10,9 +10,9 @@ func TestBuildEdgeRuleActionWAF(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "defaults", in: edgeRuleActionInputs{},
-			want: `{"mode":"observe","paranoia_level":1,"anomaly_threshold":5}`},
-		{name: "flags", in: edgeRuleActionInputs{WAFParanoiaLevel: 2, WAFAnomalyThreshold: 10, WAFExcludeRules: " 942100, 920350 ,"},
-			want: `{"mode":"observe","paranoia_level":2,"anomaly_threshold":10,"exclude_rule_ids":[920350,942100]}`},
+			want: `{"mode":"observe","paranoia_level":1,"anomaly_threshold":5,"inspect_body_bytes":8192}`},
+		{name: "flags", in: edgeRuleActionInputs{WAFParanoiaLevel: 2, WAFAnomalyThreshold: 10, WAFExcludeRules: " 942100, 920350 ,", WAFInspectBodyBytes: 16384},
+			want: `{"mode":"observe","paranoia_level":2,"anomaly_threshold":10,"exclude_rule_ids":[920350,942100],"inspect_body_bytes":16384}`},
 		{name: "non-numeric exclusion", in: edgeRuleActionInputs{WAFExcludeRules: "942100,sqli"}, wantErr: true},
 		{name: "paranoia level 3", in: edgeRuleActionInputs{WAFParanoiaLevel: 3}, wantErr: true},
 	} {

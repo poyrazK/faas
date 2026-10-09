@@ -1688,6 +1688,7 @@ func compileWAFRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleWAFResolved
 			ParanoiaLevel:    rule.Action.WAF.ParanoiaLevel,
 			AnomalyThreshold: rule.Action.WAF.AnomalyThreshold,
 			ExcludeRuleIDs:   slices.Clone(rule.Action.WAF.ExcludeRuleIDs),
+			InspectBodyBytes: rule.Action.WAF.InspectBodyBytes,
 		}
 		if action.Validate() != nil {
 			continue
@@ -1704,6 +1705,7 @@ func compileWAFRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleWAFResolved
 			ParanoiaLevel:    action.ParanoiaLevel,
 			AnomalyThreshold: action.AnomalyThreshold,
 			ExcludeRuleIDs:   action.ExcludeRuleIDs,
+			InspectBodyBytes: action.InspectBodyBytes,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

@@ -12,9 +12,11 @@ func TestEdgeRuleWAFActionValidate(t *testing.T) {
 		wantErr bool
 		want    EdgeRuleWAFAction
 	}{
-		{name: "defaults", in: EdgeRuleWAFAction{}, want: EdgeRuleWAFAction{Mode: "observe", ParanoiaLevel: 1, AnomalyThreshold: 5}},
-		{name: "explicit", in: EdgeRuleWAFAction{Mode: "observe", ParanoiaLevel: 2, AnomalyThreshold: 10, ExcludeRuleIDs: []int{942100, 920350, 942100}},
-			want: EdgeRuleWAFAction{Mode: "observe", ParanoiaLevel: 2, AnomalyThreshold: 10, ExcludeRuleIDs: []int{920350, 942100}}},
+		{name: "defaults", in: EdgeRuleWAFAction{}, want: EdgeRuleWAFAction{Mode: "observe", ParanoiaLevel: 1, AnomalyThreshold: 5, InspectBodyBytes: EdgeWAFDefaultInspectBodyBytes}},
+		{name: "explicit", in: EdgeRuleWAFAction{Mode: "observe", ParanoiaLevel: 2, AnomalyThreshold: 10, ExcludeRuleIDs: []int{942100, 920350, 942100}, InspectBodyBytes: MaxEdgeWAFInspectBodyBytes},
+			want: EdgeRuleWAFAction{Mode: "observe", ParanoiaLevel: 2, AnomalyThreshold: 10, ExcludeRuleIDs: []int{920350, 942100}, InspectBodyBytes: MaxEdgeWAFInspectBodyBytes}},
+		{name: "body cap too large", in: EdgeRuleWAFAction{InspectBodyBytes: MaxEdgeWAFInspectBodyBytes + 1}, wantErr: true},
+		{name: "negative body cap", in: EdgeRuleWAFAction{InspectBodyBytes: -1}, wantErr: true},
 		{name: "block mode not available", in: EdgeRuleWAFAction{Mode: "block"}, wantErr: true},
 		{name: "paranoia level 3", in: EdgeRuleWAFAction{ParanoiaLevel: 3}, wantErr: true},
 		{name: "negative threshold", in: EdgeRuleWAFAction{AnomalyThreshold: -1}, wantErr: true},
@@ -32,7 +34,7 @@ func TestEdgeRuleWAFActionValidate(t *testing.T) {
 				return
 			}
 			if got.Mode != tc.want.Mode || got.ParanoiaLevel != tc.want.ParanoiaLevel ||
-				got.AnomalyThreshold != tc.want.AnomalyThreshold || !slices.Equal(got.ExcludeRuleIDs, tc.want.ExcludeRuleIDs) {
+				got.AnomalyThreshold != tc.want.AnomalyThreshold || got.InspectBodyBytes != tc.want.InspectBodyBytes || !slices.Equal(got.ExcludeRuleIDs, tc.want.ExcludeRuleIDs) {
 				t.Errorf("Validate() = %+v, want %+v", got, tc.want)
 			}
 		})

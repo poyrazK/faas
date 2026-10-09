@@ -16,6 +16,7 @@ type edgeRuleWAFFlags struct {
 	paranoiaLevel    *int
 	anomalyThreshold *int
 	excludeRules     *string
+	inspectBodyBytes *int
 }
 
 func addEdgeRuleWAFFlags(fs *flag.FlagSet) edgeRuleWAFFlags {
@@ -26,6 +27,8 @@ func addEdgeRuleWAFFlags(fs *flag.FlagSet) edgeRuleWAFFlags {
 			fmt.Sprintf("kind=waf: anomaly score that counts as a detection, 1..%d (default %d)", api.MaxEdgeWAFAnomalyThreshold, api.EdgeWAFDefaultAnomalyThreshold)),
 		excludeRules: fs.String("waf-exclude-rules", "",
 			"kind=waf: comma-separated CRS rule IDs to leave out of scoring, e.g. 942100,920350"),
+		inspectBodyBytes: fs.Int("waf-inspect-body-bytes", 0,
+			fmt.Sprintf("kind=waf: request body bytes to inspect, 1..%d (default %d)", api.MaxEdgeWAFInspectBodyBytes, api.EdgeWAFDefaultInspectBodyBytes)),
 	}
 }
 
@@ -33,6 +36,7 @@ func buildEdgeRuleWAFAction(in edgeRuleActionInputs) (json.RawMessage, error) {
 	a := api.EdgeRuleWAFAction{
 		ParanoiaLevel:    in.WAFParanoiaLevel,
 		AnomalyThreshold: in.WAFAnomalyThreshold,
+		InspectBodyBytes: in.WAFInspectBodyBytes,
 	}
 	for _, field := range strings.Split(in.WAFExcludeRules, ",") {
 		field = strings.TrimSpace(field)

@@ -1,11 +1,16 @@
 package edgewaf
 
 import (
+	"io/fs"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
+
+	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -106,4 +111,35 @@ func TestEvaluateExclusionsAndThreshold(t *testing.T) {
 	if res.Detected || res.Score != base.Score {
 		t.Errorf("threshold above score: detected=%v score=%d, want not detected at score %d", res.Detected, res.Score, base.Score)
 	}
+}
+
+// TestRuleIDLabelIsBounded pins how many distinct values the rule_id label of
+// gateway_waf_rule_matches_total can take: the CRS detection rules in the
+// vendored rule set. A CRS upgrade that changes the count should be a
+// reviewed change to the metric's cardinality, not a surprise.
+func TestRuleIDLabelIsBounded(t *testing.T) {
+	ids := map[int]bool{}
+	re := regexp.MustCompile(`id:(9[0-9]{5})`)
+	err := fs.WalkDir(coreruleset.FS, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".conf") {
+			return err
+		}
+		b, err := fs.ReadFile(coreruleset.FS, path)
+		if err != nil {
+			return err
+		}
+		for _, m := range re.FindAllSubmatch(b, -1) {
+			if id, _ := strconv.Atoi(string(m[1])); id >= crsDetectionMin && id <= crsDetectionMax {
+				ids[id] = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk CRS: %v", err)
+	}
+	if len(ids) == 0 || len(ids) > maxCRSDetectionRules {
+		t.Fatalf("CRS detection rules = %d, want 1..%d", len(ids), maxCRSDetectionRules)
+	}
+	t.Logf("CRS detection rules: %d", len(ids))
 }

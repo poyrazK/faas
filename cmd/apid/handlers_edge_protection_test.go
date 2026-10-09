@@ -28,6 +28,23 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 			return `{"status":"success","data":{"resultType":"vector","result":[
 				{"metric":{"outcome":"blocked"},"value":[0,"3"]},
 				{"metric":{"outcome":"route_would_block"},"value":[0,"7"]}]}}`
+		case strings.Contains(query, "gateway_waf_inspections_total"):
+			return `{"status":"success","data":{"resultType":"vector","result":[
+				{"metric":{"outcome":"clean"},"value":[0,"90"]},
+				{"metric":{"outcome":"detected"},"value":[0,"6"]},
+				{"metric":{"outcome":"sampled_out"},"value":[0,"3"]},
+				{"metric":{"outcome":"dropped"},"value":[0,"1"]}]}}`
+		case strings.Contains(query, "gateway_waf_detections_total"):
+			return `{"status":"success","data":{"resultType":"vector","result":[
+				{"metric":{"category":"xss"},"value":[0,"2"]},
+				{"metric":{"category":"sqli"},"value":[0,"5"]}]}}`
+		case strings.Contains(query, "gateway_waf_rule_matches_total"):
+			if !strings.HasPrefix(query, "topk(10,") {
+				t.Errorf("rule query is not bounded: %s", query)
+			}
+			return `{"status":"success","data":{"resultType":"vector","result":[
+				{"metric":{"rule_id":"941100"},"value":[0,"2"]},
+				{"metric":{"rule_id":"942100"},"value":[0,"5"]}]}}`
 		case strings.Contains(query, "gateway_validate_failures_total"):
 			return `{"status":"success","data":{"resultType":"vector","result":[
 				{"metric":{"mode":"observe"},"value":[0,"4"]},
@@ -55,6 +72,13 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 	if len(out.Rejections) != 2 || out.Rejections[0].Gate != "throttle" || out.Rejections[0].Count != 9 {
 		t.Fatalf("rejections = %+v, want largest first", out.Rejections)
 	}
+	if out.WAF.Inspected != 96 || out.WAF.Detected != 6 || out.WAF.NotInspected != 4 {
+		t.Fatalf("waf = %+v, want 96 inspected / 6 detected / 4 not inspected", out.WAF)
+	}
+	if len(out.WAF.Categories) != 2 || out.WAF.Categories[0].Name != "sqli" ||
+		len(out.WAF.TopRules) != 2 || out.WAF.TopRules[0] != (api.EdgeProtectionCount{Name: "942100", Count: 5}) {
+		t.Fatalf("waf breakdown = %+v, want largest first", out.WAF)
+	}
 	if rec := e.do(t, "GET", "/v1/apps/shielded/edge-protection?range=30d", nil, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid range = %d", rec.Code)
 	}
@@ -67,7 +91,7 @@ func TestAppEdgeProtectionDegradedWithoutPrometheus(t *testing.T) {
 	}
 	rec := e.do(t, "GET", "/v1/apps/shielded/edge-protection", nil, nil)
 	var out api.EdgeProtectionResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || !strings.HasPrefix(out.Source, "degraded:") || out.Rejections == nil {
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || !strings.HasPrefix(out.Source, "degraded:") || out.Rejections == nil || out.WAF.TopRules == nil {
 		t.Fatalf("degraded summary = %d %+v (err=%v)", rec.Code, out, err)
 	}
 }

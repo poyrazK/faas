@@ -228,6 +228,15 @@ var catalog = map[string]row{
 			DocsURL: "/docs/alerts",
 		},
 	},
+	"edge_waf_detections": {
+		Explanation: Explanation{
+			Title:   "Edge WAF detections",
+			Hint:    "kind=waf rules detected likely attacks; nothing was blocked",
+			Why:     "the OWASP Core Rule Set scored more requests at or above a kind=waf rule's anomaly threshold than the alert threshold during the alert window. The WAF observes only, so these requests reached the app. A burst usually means a scanner or an injection attempt; a constant level from normal clients usually means a false positive",
+			Fix:     "• see detections by category and the top CRS rule IDs with `gregale edge-rules summary --app <slug>` or the Edge protection panel\n• if one rule fires on legitimate traffic, add its ID to the rule's exclude_rule_ids with `gregale edge-rules update <id> --kind waf --waf-exclude-rules <ids>`\n• if the traffic is abusive, limit the source with a throttle or ip edge rule",
+			DocsURL: "/docs/alerts",
+		},
+	},
 	"login_target_signal_health": {
 		Explanation: Explanation{
 			Title:   "Login target signal coverage is low",

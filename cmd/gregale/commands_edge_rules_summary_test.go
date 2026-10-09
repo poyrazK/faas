@@ -31,7 +31,18 @@ func TestRenderEdgeProtection(t *testing.T) {
 
 	buf.Reset()
 	renderEdgeProtection(&buf, "shop", api.EdgeProtectionResponse{Range: "1h", Source: "prometheus"})
-	if strings.Count(buf.String(), "none") != 2 {
-		t.Fatalf("empty output = %q, want explicit none lines", buf.String())
+	if strings.Count(buf.String(), "none") != 2 || strings.Contains(buf.String(), "waf") {
+		t.Fatalf("empty output = %q, want explicit none lines and no waf section", buf.String())
+	}
+
+	buf.Reset()
+	renderEdgeProtection(&buf, "shop", api.EdgeProtectionResponse{Range: "1h", Source: "prometheus",
+		WAF: api.EdgeProtectionWAF{Inspected: 96, Detected: 6, NotInspected: 4,
+			Categories: []api.EdgeProtectionCount{{Name: "sqli", Count: 5}},
+			TopRules:   []api.EdgeProtectionCount{{Name: "942100", Count: 5}}}})
+	for _, want := range []string{"96 inspected, 6 detected, 4 not inspected", "sqli 5", "942100 5"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("waf output missing %q:\n%s", want, buf.String())
+		}
 	}
 }

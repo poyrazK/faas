@@ -4707,12 +4707,22 @@ const (
 
 	// --- ADR-831 step 1: kind=waf observe-only inspection ---------------
 
-	// EdgeWAFInspectBodyBytes is how much of a request body the WAF
-	// sees. The gateway records this prefix while the proxy streams the
-	// body upstream, so inspection never delays forwarding. CRS costs
-	// about 3 µs of CPU per body byte, so 8 KiB bounds one inspection
-	// near 30 ms of worker CPU.
-	EdgeWAFInspectBodyBytes = 8 * 1024
+	// EdgeWAFDefaultInspectBodyBytes is how much of a request body the
+	// WAF sees when a rule does not set inspect_body_bytes. The gateway
+	// records this prefix while the proxy streams the body upstream, so
+	// inspection never delays forwarding. CRS costs about 3 µs of CPU per
+	// body byte, so 8 KiB bounds one inspection near 30 ms of worker CPU.
+	// ADR-831 proposed a 64 KiB default; that is the ceiling instead,
+	// because at ~200 ms per inspection it would let a few apps saturate
+	// the node's workers.
+	EdgeWAFDefaultInspectBodyBytes = 8 * 1024
+	// MaxEdgeWAFInspectBodyBytes bounds a rule's inspect_body_bytes.
+	MaxEdgeWAFInspectBodyBytes = 64 * 1024
+	// EdgeWAFBodyBytesPerBudgetToken prices body inspection against the
+	// per-app budget: a sample costs one token plus one per this many
+	// body bytes, so a rule inspecting 64 KiB bodies gets fewer
+	// inspections per second than one inspecting 8 KiB bodies.
+	EdgeWAFBodyBytesPerBudgetToken = 8 * 1024
 	// EdgeWAFWorkers is the node-wide number of inspection goroutines,
 	// which is the WAF's hard CPU ceiling on a gateway node.
 	EdgeWAFWorkers = 2

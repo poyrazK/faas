@@ -161,7 +161,12 @@
           {{else}}
             <p>No edge gate rejected a request in this window.</p>
           {{end}}
-          <p class="muted">Get alerted on bursts with the <code>pre_auth_pressure</code>, <code>edge_validation_failures</code>, and <code>edge_rejection_pressure</code> alert presets. CLI: <code>gregale edge-rules summary --app {{$.Data.App.Slug}} --range 24h</code>.</p>
+          {{with .WAF}}{{if or .Inspected .NotInspected}}
+            <p>WAF (observe only, nothing blocked): <strong>{{.Inspected}}</strong> inspected, <strong>{{.Detected}}</strong> detected, <strong>{{.NotInspected}}</strong> not inspected (budget or queue).</p>
+            {{if .Categories}}<p>Detections by category: {{range $i, $c := .Categories}}{{if $i}}, {{end}}{{$c.Name}} <strong>{{$c.Count}}</strong>{{end}}.</p>{{end}}
+            {{if .TopRules}}<p>Top CRS rules: {{range $i, $c := .TopRules}}{{if $i}}, {{end}}<code>{{$c.Name}}</code> <strong>{{$c.Count}}</strong>{{end}}. Exclude a false positive with <code>exclude_rule_ids</code>.</p>{{end}}
+          {{end}}{{end}}
+          <p class="muted">Get alerted on bursts with the <code>pre_auth_pressure</code>, <code>edge_validation_failures</code>, <code>edge_rejection_pressure</code>, and <code>edge_waf_detections</code> alert presets. CLI: <code>gregale edge-rules summary --app {{$.Data.App.Slug}} --range 24h</code>.</p>
         {{end}}
       {{end}}
     </section>

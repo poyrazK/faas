@@ -22,6 +22,7 @@ type EdgeRuleWAFResolved struct {
 	ParanoiaLevel    int
 	AnomalyThreshold int
 	ExcludeRuleIDs   []int
+	InspectBodyBytes int
 }
 
 // PickFirstWAFMatch returns the first priority-ordered WAF rule matching the
@@ -52,8 +53,8 @@ type WAFEdgeRuleMatcher interface {
 }
 
 // WAFSample is one request handed to the inspector after the gateway has
-// finished with it. Header is a clone and Body is at most
-// api.EdgeWAFInspectBodyBytes; neither aliases live request state.
+// finished with it. Header is a clone and Body is at most the rule's
+// InspectBodyBytes; neither aliases live request state.
 type WAFSample struct {
 	AppID            string
 	AccountID        string
@@ -124,7 +125,11 @@ func (h *Handler) beginEdgeRuleWAF(r *http.Request, app App) func() {
 	}
 	var recorder *wafBodyRecorder
 	if r.Body != nil && r.Body != http.NoBody && !isUpgradeRequest(r) {
-		recorder = &wafBodyRecorder{ReadCloser: r.Body, limit: api.EdgeWAFInspectBodyBytes}
+		limit := rule.InspectBodyBytes
+		if limit < 1 || limit > api.MaxEdgeWAFInspectBodyBytes {
+			limit = api.EdgeWAFDefaultInspectBodyBytes
+		}
+		recorder = &wafBodyRecorder{ReadCloser: r.Body, limit: limit}
 		r.Body = recorder
 	}
 	inspector := h.wafInspector

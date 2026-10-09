@@ -448,6 +448,7 @@ func cmdEdgeRulesCreate(args []string) int {
 		WAFParanoiaLevel:                  *wafFlags.paranoiaLevel,
 		WAFAnomalyThreshold:               *wafFlags.anomalyThreshold,
 		WAFExcludeRules:                   *wafFlags.excludeRules,
+		WAFInspectBodyBytes:               *wafFlags.inspectBodyBytes,
 		MaintenanceRetryAfter:             *maintenanceRetryAfter,
 		MaintenanceMessage:                *maintenanceMessage,
 		RespondStatus:                     *respondStatus,
@@ -826,6 +827,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 			WAFParanoiaLevel:                  *wafFlags.paranoiaLevel,
 			WAFAnomalyThreshold:               *wafFlags.anomalyThreshold,
 			WAFExcludeRules:                   *wafFlags.excludeRules,
+			WAFInspectBodyBytes:               *wafFlags.inspectBodyBytes,
 			MaintenanceRetryAfter:             *maintenanceRetryAfter,
 			MaintenanceMessage:                *maintenanceMessage,
 			RespondStatus:                     *respondStatus,
@@ -924,6 +926,7 @@ type edgeRuleActionInputs struct {
 	WAFParanoiaLevel    int
 	WAFAnomalyThreshold int
 	WAFExcludeRules     string
+	WAFInspectBodyBytes int
 	// rewrite
 	RewriteFrom, RewriteTo string
 	// redirect
@@ -1634,7 +1637,7 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"on-success-webhook", "on-failure-webhook",
 		"async-max-attempts", "async-retry-base-seconds", "async-retry-max-seconds",
 		"async-retry-jitter-seconds", "async-max-age-seconds",
-		"waf-paranoia-level", "waf-anomaly-threshold", "waf-exclude-rules",
+		"waf-paranoia-level", "waf-anomaly-threshold", "waf-exclude-rules", "waf-inspect-body-bytes",
 		"rewrite-from", "rewrite-to",
 		"redirect-status", "redirect-to", "redirect-header",
 		"headers-request-add", "headers-request-set", "headers-request-remove",

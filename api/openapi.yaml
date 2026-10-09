@@ -42628,7 +42628,7 @@ components:
     EdgeProtectionResponse:
       description: Edge rejection counts for one app over a range.
       type: object
-      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections]
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf]
       properties:
         app_id: { type: string }
         range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
@@ -42659,6 +42659,33 @@ components:
               gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle] }
               status: { type: string, enum: ['401', '403', '413', '429', '503', other] }
               count: { type: integer, format: int64, minimum: 0 }
+        waf:
+          type: object
+          description: kind=waf inspections (observe-only, ADR-831 step 1). Detections are not rejections.
+          required: [inspected, detected, not_inspected, categories, top_rules]
+          properties:
+            inspected: { type: integer, format: int64, minimum: 0, description: "Requests scored by the OWASP CRS." }
+            detected: { type: integer, format: int64, minimum: 0, description: "Inspected requests at or above the rule's anomaly threshold." }
+            not_inspected: { type: integer, format: int64, minimum: 0, description: "Matched requests skipped to protect the node (budget, full queue, or error)." }
+            categories:
+              type: array
+              description: Detections by CRS attack category, largest first; one detection may count several.
+              items:
+                type: object
+                required: [name, count]
+                properties:
+                  name: { type: string }
+                  count: { type: integer, format: int64, minimum: 0 }
+            top_rules:
+              type: array
+              maxItems: 10
+              description: CRS rule IDs that scored most, largest first, for tuning exclude_rule_ids.
+              items:
+                type: object
+                required: [name, count]
+                properties:
+                  name: { type: string, description: CRS rule ID. }
+                  count: { type: integer, format: int64, minimum: 0 }
 
     PreAuthEnforcementSuggestion:
       description: |
@@ -52649,6 +52676,7 @@ components:
             - pre_auth_pressure
             - edge_validation_failures
             - edge_rejections
+            - edge_waf_detections
             - event_pending_recipients
             - event_oldest_pending_seconds
             - event_retry_rate_per_second
@@ -52722,7 +52750,7 @@ components:
         enabled: { type: boolean, example: true }
         metric:
           type: string
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -52762,7 +52790,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -53003,7 +53031,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -53032,6 +53060,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
+            - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -53069,7 +53098,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -53097,6 +53126,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
+            - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -53140,6 +53170,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
+            - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
 
     EdgeRuleRouteAction:
       description: 'Re-targets the matched request to another app owned by the same account.'
@@ -54022,6 +54053,43 @@ components:
           # An unconstrained schema intentionally accepts any JSON value:
           # object, array, scalar, or null.
 
+    EdgeRuleWAFAction:
+      description: |
+        Inspects matched requests with the OWASP Core Rule Set (ADR-831 step
+        1). Observe-only: requests are scored off the request path and never
+        blocked; detections appear in the edge-protection summary and the
+        edge_waf_detections alert preset. Pro and above. Omitted values are
+        stored as their defaults.
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [observe]
+          default: observe
+          description: Only observe is available; blocking modes need a later ADR-831 step.
+        paranoia_level:
+          type: integer
+          minimum: 1
+          maximum: 2
+          default: 1
+          description: CRS paranoia level. Level 2 detects more and produces more false positives.
+        anomaly_threshold:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 5
+          description: Inbound anomaly score at which a request counts as a detection (one critical match scores 5).
+        exclude_rule_ids:
+          type: array
+          maxItems: 50
+          description: CRS rule IDs left out of scoring on this route, for known false positives.
+          items: { type: integer, minimum: 900000, maximum: 999999 }
+        inspect_body_bytes:
+          type: integer
+          minimum: 1
+          maximum: 65536
+          default: 8192
+          description: Request body prefix inspected. Larger and streaming bodies are inspected up to this size only; larger values use more of the app's inspection budget.
     EdgeRuleAsyncAction:
       description: |
         Marks the matched route for durable asynchronous execution (ADR-215).

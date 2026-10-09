@@ -28,6 +28,10 @@ import (
 const (
 	crsDetectionMin = 911000
 	crsDetectionMax = 948999
+	// maxCRSDetectionRules caps the rule_id label of
+	// gateway_waf_rule_matches_total per app; TestRuleIDLabelIsBounded
+	// checks the vendored CRS stays under it.
+	maxCRSDetectionRules = 600
 )
 
 // Result is the scored outcome of one sample.
@@ -40,7 +44,8 @@ type Result struct {
 
 // compile builds the Coraza WAF for one paranoia level. The directives keep
 // CRS in detection-only mode, turn off audit logging and response
-// inspection, and cap the request body at the gateway's sample size.
+// inspection, and cap the request body at the largest sample a rule can ask
+// for; the gateway has already cut each sample to its rule's size.
 func compile(paranoiaLevel int) (coraza.WAF, error) {
 	directives := fmt.Sprintf(`Include @coraza.conf-recommended
 Include @crs-setup.conf.example
@@ -52,7 +57,7 @@ SecResponseBodyAccess Off
 SecRequestBodyLimit %d
 SecRequestBodyInMemoryLimit %d
 SecRequestBodyLimitAction ProcessPartial`,
-		paranoiaLevel, api.EdgeWAFInspectBodyBytes, api.EdgeWAFInspectBodyBytes)
+		paranoiaLevel, api.MaxEdgeWAFInspectBodyBytes, api.MaxEdgeWAFInspectBodyBytes)
 	waf, err := coraza.NewWAF(coraza.NewWAFConfig().WithRootFS(coreruleset.FS).WithDirectives(directives))
 	if err != nil {
 		return nil, fmt.Errorf("compile OWASP CRS at paranoia level %d: %w", paranoiaLevel, err)

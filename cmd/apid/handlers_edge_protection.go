@@ -44,6 +44,7 @@ func (s *server) appEdgeProtection(ctx context.Context, app state.App, rng strin
 		AsOf:               time.Now().UTC().Format(time.RFC3339Nano),
 		ValidationFailures: []api.EdgeProtectionCount{},
 		Rejections:         []api.EdgeProtectionRejection{},
+		WAF:                api.NewEdgeProtectionWAF(),
 	}
 	if s.promqlClient == nil {
 		resp.Source = appmetrics.SourceDegradedPrefix + "prometheus not configured"
@@ -58,7 +59,8 @@ func (s *server) appEdgeProtection(ctx context.Context, app state.App, rng strin
 		if err != nil {
 			degraded := api.EdgeProtectionResponse{AppID: resp.AppID, Range: rng, AsOf: resp.AsOf,
 				Source:             appmetrics.SourceDegradedPrefix + "prometheus unavailable",
-				ValidationFailures: []api.EdgeProtectionCount{}, Rejections: []api.EdgeProtectionRejection{}}
+				ValidationFailures: []api.EdgeProtectionCount{}, Rejections: []api.EdgeProtectionRejection{},
+				WAF: api.NewEdgeProtectionWAF()}
 			return degraded
 		}
 		for _, sample := range samples {
@@ -105,12 +107,48 @@ func edgeProtectionQueries(resp *api.EdgeProtectionResponse, appID, rng string) 
 				resp.Rejections = append(resp.Rejections, api.EdgeProtectionRejection{Gate: labels["kind"], Status: labels["status"], Count: count})
 			},
 		},
+		{
+			fmt.Sprintf(`sum by (outcome) (increase(gateway_waf_inspections_total{app=%q}[%s]))`, appID, rng),
+			func(labels map[string]string, count int64) {
+				switch labels["outcome"] {
+				case "detected":
+					resp.WAF.Detected += count
+					resp.WAF.Inspected += count
+				case "clean":
+					resp.WAF.Inspected += count
+				default:
+					resp.WAF.NotInspected += count
+				}
+			},
+		},
+		{
+			fmt.Sprintf(`sum by (category) (increase(gateway_waf_detections_total{app=%q}[%s]))`, appID, rng),
+			func(labels map[string]string, count int64) {
+				resp.WAF.Categories = append(resp.WAF.Categories, api.EdgeProtectionCount{Name: labels["category"], Count: count})
+			},
+		},
+		{
+			fmt.Sprintf(`topk(%d, sum by (rule_id) (increase(gateway_waf_rule_matches_total{app=%q}[%s])))`, api.EdgeProtectionWAFTopRules, appID, rng),
+			func(labels map[string]string, count int64) {
+				resp.WAF.TopRules = append(resp.WAF.TopRules, api.EdgeProtectionCount{Name: labels["rule_id"], Count: count})
+			},
+		},
 	}
 }
 
-// sortEdgeProtection orders modes by name and rejections by count (largest
-// first) so output is deterministic.
+// sortEdgeProtection orders modes by name and rejections and WAF counts by
+// count (largest first) so output is deterministic.
 func sortEdgeProtection(resp *api.EdgeProtectionResponse) {
+	byCount := func(c []api.EdgeProtectionCount) {
+		sort.Slice(c, func(i, j int) bool {
+			if c[i].Count != c[j].Count {
+				return c[i].Count > c[j].Count
+			}
+			return c[i].Name < c[j].Name
+		})
+	}
+	byCount(resp.WAF.Categories)
+	byCount(resp.WAF.TopRules)
 	sort.Slice(resp.ValidationFailures, func(i, j int) bool { return resp.ValidationFailures[i].Name < resp.ValidationFailures[j].Name })
 	sort.Slice(resp.Rejections, func(i, j int) bool {
 		a, b := resp.Rejections[i], resp.Rejections[j]

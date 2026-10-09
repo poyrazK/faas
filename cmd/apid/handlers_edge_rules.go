@@ -814,6 +814,7 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				ParanoiaLevel:    a.ParanoiaLevel,
 				AnomalyThreshold: a.AnomalyThreshold,
 				ExcludeRuleIDs:   a.ExcludeRuleIDs,
+				InspectBodyBytes: a.InspectBodyBytes,
 			}
 		}
 	}

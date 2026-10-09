@@ -30,7 +30,7 @@ func TestCreateEdgeRuleWAFStoresEffectiveDefaults(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	want := `{"kind":"waf","waf":{"mode":"observe","paranoia_level":1,"anomaly_threshold":5,"exclude_rule_ids":[920350,942100]}}`
+	want := `{"kind":"waf","waf":{"mode":"observe","paranoia_level":1,"anomaly_threshold":5,"exclude_rule_ids":[920350,942100],"inspect_body_bytes":8192}}`
 	if string(response.Action) != want {
 		t.Errorf("action = %s, want %s", response.Action, want)
 	}
@@ -48,6 +48,7 @@ func TestCreateEdgeRuleWAFRejections(t *testing.T) {
 		{name: "block mode", plan: api.PlanPro, action: `{"mode":"block"}`, wantCode: api.CodeValidation},
 		{name: "paranoia level 3", plan: api.PlanPro, action: `{"paranoia_level":3}`, wantCode: api.CodeValidation},
 		{name: "non-CRS exclusion", plan: api.PlanPro, action: `{"exclude_rule_ids":[42]}`, wantCode: api.CodeValidation},
+		{name: "body cap too large", plan: api.PlanPro, action: `{"inspect_body_bytes":65537}`, wantCode: api.CodeValidation},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := setup(t, tc.plan)

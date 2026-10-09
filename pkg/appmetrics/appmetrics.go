@@ -191,6 +191,11 @@ func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 	case "edge_validation_failures":
 		query = fmt.Sprintf(`sum(increase(gateway_validate_failures_total{app_id=%q}[%s])) or vector(0)`, appID, rng)
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	case "edge_waf_detections":
+		// Observe-only kind=waf detections (ADR-831 step 1). Requests the
+		// node skipped (sampled_out, dropped) are not detections.
+		query = fmt.Sprintf(`sum(increase(gateway_waf_inspections_total{app=%q,outcome="detected"}[%s])) or vector(0)`, appID, rng)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
 	case "pre_auth_target_signal_gap_pct":
 		// Evaluate the worst eligible route so a healthy, high-volume route
 		// cannot hide a broken integration on another route. The -1 sentinel

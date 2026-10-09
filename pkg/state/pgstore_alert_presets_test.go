@@ -45,6 +45,7 @@ func TestPGLoginTargetAlertPresetIsNotificationOnly(t *testing.T) {
 		{"pre_auth_pressure", "pre_auth_pressure"},
 		{"edge_validation_failures", "edge_validation_failures"},
 		{"edge_rejection_pressure", "edge_rejections"},
+		{"edge_waf_detections", "edge_waf_detections"},
 	} {
 		preset, err := store.AlertPresetByName(ctx, tc.name)
 		if err != nil || preset.Metric != tc.metric || preset.Category != "security" || !preset.EnabledInCatalog {
@@ -328,6 +329,7 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 		"pre_auth_pressure":             true,
 		"edge_validation_failures":      true,
 		"edge_rejection_pressure":       true,
+		"edge_waf_detections":           true,
 	}
 	got := make(map[string]bool)
 	for rows.Next() {

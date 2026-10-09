@@ -69,10 +69,34 @@ func renderEdgeProtection(w io.Writer, slug string, s api.EdgeProtectionResponse
 	}
 	if len(s.Rejections) == 0 {
 		_, _ = fmt.Fprintf(w, "  %-28s none\n", "edge gate rejections:")
+	} else {
+		_, _ = fmt.Fprintln(w, "  edge gate rejections:")
+		for _, r := range s.Rejections {
+			_, _ = fmt.Fprintf(w, "    %-16s %-6s %d\n", r.Gate, r.Status, r.Count)
+		}
+	}
+	renderEdgeProtectionWAF(w, s.WAF)
+}
+
+// renderEdgeProtectionWAF prints the kind=waf section only when a WAF rule
+// saw traffic, so apps without one are not shown an empty row.
+func renderEdgeProtectionWAF(w io.Writer, waf api.EdgeProtectionWAF) {
+	if waf.Inspected == 0 && waf.NotInspected == 0 {
 		return
 	}
-	_, _ = fmt.Fprintln(w, "  edge gate rejections:")
-	for _, r := range s.Rejections {
-		_, _ = fmt.Fprintf(w, "    %-16s %-6s %d\n", r.Gate, r.Status, r.Count)
+	_, _ = fmt.Fprintf(w, "  %-28s %d inspected, %d detected, %d not inspected (budget or queue)\n",
+		"waf (observe only):", waf.Inspected, waf.Detected, waf.NotInspected)
+	for _, list := range []struct {
+		label  string
+		counts []api.EdgeProtectionCount
+	}{{"categories", waf.Categories}, {"top CRS rules", waf.TopRules}} {
+		if len(list.counts) == 0 {
+			continue
+		}
+		parts := make([]string, 0, len(list.counts))
+		for _, c := range list.counts {
+			parts = append(parts, fmt.Sprintf("%s %d", c.Name, c.Count))
+		}
+		_, _ = fmt.Fprintf(w, "    %-26s %s\n", list.label+":", strings.Join(parts, ", "))
 	}
 }

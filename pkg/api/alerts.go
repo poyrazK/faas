@@ -136,6 +136,7 @@ var AllowedAlertRuleMetrics = []string{
 	"pre_auth_pressure",
 	"edge_validation_failures",
 	"edge_rejections",
+	"edge_waf_detections",
 	"workflow_failures",
 	"workflow_schedule_quota_skips",
 	"workflow_pending_age_seconds",
@@ -200,7 +201,7 @@ func AllowedAlertRuleAction(v string) bool {
 // deployment, or an attacker could trigger a rollback.
 func IsEdgeSecurityAlertMetric(metric string) bool {
 	switch metric {
-	case "pre_auth_target_threshold", "pre_auth_target_signal_gap_pct", "pre_auth_pressure", "edge_validation_failures", "edge_rejections":
+	case "pre_auth_target_threshold", "pre_auth_target_signal_gap_pct", "pre_auth_pressure", "edge_validation_failures", "edge_rejections", "edge_waf_detections":
 		return true
 	}
 	return false

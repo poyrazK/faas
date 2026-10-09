@@ -31,6 +31,10 @@ type EdgeRuleWAFAction struct {
 	// ExcludeRuleIDs lists CRS rule IDs whose matches do not count
 	// toward the score, for known false positives on this route.
 	ExcludeRuleIDs []int `json:"exclude_rule_ids,omitempty"`
+	// InspectBodyBytes is how much of the request body is inspected.
+	// Larger and streaming bodies are inspected up to this prefix only.
+	// Zero applies EdgeWAFDefaultInspectBodyBytes.
+	InspectBodyBytes int `json:"inspect_body_bytes,omitempty"`
 }
 
 // Validate applies the ADR-831 defaults and bounds, mutating the receiver so
@@ -62,6 +66,14 @@ func (a *EdgeRuleWAFAction) Validate() *Problem {
 		return ErrValidation(fmt.Sprintf(
 			"waf action: anomaly_threshold must be in 1..%d (got %d)",
 			MaxEdgeWAFAnomalyThreshold, a.AnomalyThreshold))
+	}
+	if a.InspectBodyBytes == 0 {
+		a.InspectBodyBytes = EdgeWAFDefaultInspectBodyBytes
+	}
+	if a.InspectBodyBytes < 1 || a.InspectBodyBytes > MaxEdgeWAFInspectBodyBytes {
+		return ErrValidation(fmt.Sprintf(
+			"waf action: inspect_body_bytes must be in 1..%d (got %d)",
+			MaxEdgeWAFInspectBodyBytes, a.InspectBodyBytes))
 	}
 	return a.validateExclusions()
 }

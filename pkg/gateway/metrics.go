@@ -228,6 +228,7 @@ type Metrics struct {
 	edgeRejections        *prometheus.CounterVec
 	wafInspections        *prometheus.CounterVec
 	wafDetections         *prometheus.CounterVec
+	wafRuleMatches        *prometheus.CounterVec
 	wafInspectionSeconds  prometheus.Histogram
 	preAuthPolicyShadow   *prometheus.CounterVec
 	// rateLimitDegraded counts every central-counter error that caused a
@@ -1318,6 +1319,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_waf_detections_total",
 			Help: "kind=waf detections by app and OWASP CRS attack category (sqli|xss|rce|lfi|rfi|ssrf|ssti|php|java|generic|protocol|multipart|scanner|session_fixation|other). One detection may count several categories.",
 		}, []string{"app", "category"}),
+		wafRuleMatches: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_waf_rule_matches_total",
+			Help: "OWASP CRS rules that scored in a kind=waf detection, by app and rule_id, for tuning exclude_rule_ids. rule_id is bounded to CRS detection rules (911000-948999) in the vendored rule set; excluded rules and clean requests are not counted.",
+		}, []string{"app", "rule_id"}),
 		wafInspectionSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_waf_inspection_seconds",
 			Help:    "Worker CPU-bound time to evaluate one kind=waf sample, off the request path.",
@@ -1932,7 +1937,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
-	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafInspectionSeconds)
+	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
@@ -2516,6 +2521,14 @@ func (m *Metrics) ObserveWAFDetection(appID, category string) {
 		return
 	}
 	m.wafDetections.WithLabelValues(appID, category).Inc()
+}
+
+// ObserveWAFRuleMatch counts one CRS rule that scored in a detection.
+func (m *Metrics) ObserveWAFRuleMatch(appID string, ruleID int) {
+	if m == nil || m.wafRuleMatches == nil {
+		return
+	}
+	m.wafRuleMatches.WithLabelValues(appID, strconv.Itoa(ruleID)).Inc()
 }
 
 func (m *Metrics) ObservePreAuthRateLimit(appID, outcome string) {

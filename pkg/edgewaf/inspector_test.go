@@ -3,6 +3,7 @@ package edgewaf
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ type recordingObserver struct {
 	mu         sync.Mutex
 	outcomes   map[string]int
 	categories map[string]int
+	rules      map[int]int
 }
 
 func (o *recordingObserver) ObserveWAFInspection(_, outcome string, _ float64) {
@@ -32,6 +34,15 @@ func (o *recordingObserver) ObserveWAFDetection(_, category string) {
 		o.categories = map[string]int{}
 	}
 	o.categories[category]++
+}
+
+func (o *recordingObserver) ObserveWAFRuleMatch(_ string, ruleID int) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.rules == nil {
+		o.rules = map[int]int{}
+	}
+	o.rules[ruleID]++
 }
 
 func (o *recordingObserver) count(outcome string) int {
@@ -98,5 +109,31 @@ func TestRunReportsDetection(t *testing.T) {
 	}
 	if obs.categories["sqli"] != 1 {
 		t.Errorf("categories = %v, want sqli", obs.categories)
+	}
+	if obs.rules[942100] != 1 {
+		t.Errorf("rule matches = %v, want 942100", obs.rules)
+	}
+}
+
+func TestSubmitChargesBudgetByBodySize(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		bodySize int
+	}{
+		{name: "no body", bodySize: 0},
+		{name: "8 KiB body", bodySize: api.EdgeWAFDefaultInspectBodyBytes},
+		{name: "64 KiB body", bodySize: api.MaxEdgeWAFInspectBodyBytes},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			i := New(&recordingObserver{}, nil)
+			s := sample(http.MethodPost, "/", nil, strings.Repeat("x", tc.bodySize))
+			for range api.EdgeWAFInspectionsPerAppBurst {
+				i.Submit(s)
+			}
+			want := api.EdgeWAFInspectionsPerAppBurst / budgetTokens(tc.bodySize)
+			if got := len(i.queue); got != want {
+				t.Errorf("queued %d samples within one burst, want %d", got, want)
+			}
+		})
 	}
 }

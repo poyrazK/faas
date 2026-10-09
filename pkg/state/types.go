@@ -3199,10 +3199,13 @@ const (
 	// AlertMetricPreAuthPressure counts pre-auth source-limit blocks and
 	// observe-mode would-blocks; AlertMetricEdgeValidationFailures counts
 	// kind=validate mismatches in any mode; AlertMetricEdgeRejections counts
-	// 401/403/413/429 answers from the other edge gates. All are webhook-only.
+	// 401/403/413/429 answers from the other edge gates;
+	// AlertMetricEdgeWAFDetections counts observe-only kind=waf detections
+	// (ADR-831 step 1). All are webhook-only.
 	AlertMetricPreAuthPressure        AlertMetric = "pre_auth_pressure"
 	AlertMetricEdgeValidationFailures AlertMetric = "edge_validation_failures"
 	AlertMetricEdgeRejections         AlertMetric = "edge_rejections"
+	AlertMetricEdgeWAFDetections      AlertMetric = "edge_waf_detections"
 	AlertMetricNewErrorFingerprint    AlertMetric = "new_error_fingerprint"
 	AlertMetricColdWakeRatePct        AlertMetric = "cold_wake_rate_pct"
 	AlertMetricDailyCostCents         AlertMetric = "daily_cost_cents"
@@ -7886,6 +7889,7 @@ type EdgeRuleWAFAction struct {
 	ParanoiaLevel    int    `json:"paranoia_level,omitempty"`
 	AnomalyThreshold int    `json:"anomaly_threshold,omitempty"`
 	ExcludeRuleIDs   []int  `json:"exclude_rule_ids,omitempty"`
+	InspectBodyBytes int    `json:"inspect_body_bytes,omitempty"`
 }
 
 // EdgeRuleRetryAction is the kind=retry payload (ADR-201 §1).

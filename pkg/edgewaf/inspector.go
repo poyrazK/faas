@@ -18,6 +18,7 @@ import (
 type Observer interface {
 	ObserveWAFInspection(appID, outcome string, seconds float64)
 	ObserveWAFDetection(appID, category string)
+	ObserveWAFRuleMatch(appID string, ruleID int)
 }
 
 // Outcome labels for gateway_waf_inspections_total.
@@ -89,7 +90,7 @@ func (i *Inspector) Run(ctx context.Context) {
 
 // Submit implements gateway.WAFInspector.
 func (i *Inspector) Submit(s gateway.WAFSample) {
-	if !i.allow(s.AppID) {
+	if !i.allow(s.AppID, budgetTokens(len(s.Body))) {
 		i.obs.ObserveWAFInspection(s.AppID, OutcomeSampledOut, 0)
 		return
 	}
@@ -100,7 +101,14 @@ func (i *Inspector) Submit(s gateway.WAFSample) {
 	}
 }
 
-func (i *Inspector) allow(appID string) bool {
+// budgetTokens prices one sample against its app's budget by body size, so
+// a rule inspecting large bodies cannot buy more worker CPU than one
+// inspecting small ones.
+func budgetTokens(bodyBytes int) int {
+	return 1 + bodyBytes/api.EdgeWAFBodyBytesPerBudgetToken
+}
+
+func (i *Inspector) allow(appID string, tokens int) bool {
 	i.budgetMu.Lock()
 	defer i.budgetMu.Unlock()
 	lim, ok := i.budgets[appID]
@@ -111,7 +119,7 @@ func (i *Inspector) allow(appID string) bool {
 		lim = rate.NewLimiter(rate.Limit(api.EdgeWAFInspectionsPerAppPerSecond), api.EdgeWAFInspectionsPerAppBurst)
 		i.budgets[appID] = lim
 	}
-	return lim.Allow()
+	return lim.AllowN(time.Now(), tokens)
 }
 
 func (i *Inspector) engine(paranoiaLevel int) (coraza.WAF, error) {
@@ -149,6 +157,9 @@ func (i *Inspector) inspect(s gateway.WAFSample) {
 	i.obs.ObserveWAFInspection(s.AppID, OutcomeDetected, elapsed)
 	for _, c := range res.Categories {
 		i.obs.ObserveWAFDetection(s.AppID, c)
+	}
+	for _, id := range res.RuleIDs {
+		i.obs.ObserveWAFRuleMatch(s.AppID, id)
 	}
 	// Never log header values, the query string, or matched data: they can
 	// carry customer secrets. Rule IDs and categories are enough to tune.

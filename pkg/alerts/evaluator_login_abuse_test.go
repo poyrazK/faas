@@ -67,6 +67,7 @@ func TestEdgeSecurityAlertsAreWebhookOnly(t *testing.T) {
 		{state.AlertMetricPreAuthPressure, "gateway_pre_auth_rate_limit_total", true},
 		{state.AlertMetricEdgeValidationFailures, "gateway_validate_failures_total", false},
 		{state.AlertMetricEdgeRejections, "gateway_edge_rejections_total", false},
+		{state.AlertMetricEdgeWAFDetections, "gateway_waf_inspections_total", false},
 	} {
 		t.Run(string(tc.metric), func(t *testing.T) {
 			store := state.NewMemStore()

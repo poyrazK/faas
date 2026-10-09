@@ -52,7 +52,7 @@ func TestPickFirstWAFMatch(t *testing.T) {
 func TestBeginEdgeRuleWAF(t *testing.T) {
 	rule := &EdgeRuleWAFResolved{ID: "rule-1", AccountID: "acct-1", ParanoiaLevel: 2, AnomalyThreshold: 7, ExcludeRuleIDs: []int{920350}}
 	app := App{ID: "app-1", AccountID: "acct-1"}
-	long := strings.Repeat("x", api.EdgeWAFInspectBodyBytes+100)
+	long := strings.Repeat("x", api.EdgeWAFDefaultInspectBodyBytes+100)
 	for _, tc := range []struct {
 		name          string
 		rule          *EdgeRuleWAFResolved
@@ -64,7 +64,9 @@ func TestBeginEdgeRuleWAF(t *testing.T) {
 		wantTruncated bool
 	}{
 		{name: "records body read downstream", rule: rule, app: app, body: `{"q":"1' OR 1=1--"}`, wantSample: true, wantBody: `{"q":"1' OR 1=1--"}`},
-		{name: "truncates at sample size", rule: rule, app: app, body: long, wantSample: true, wantBody: long[:api.EdgeWAFInspectBodyBytes], wantTruncated: true},
+		{name: "truncates at sample size", rule: rule, app: app, body: long, wantSample: true, wantBody: long[:api.EdgeWAFDefaultInspectBodyBytes], wantTruncated: true},
+		{name: "rule body cap", rule: &EdgeRuleWAFResolved{ID: "rule-1", AccountID: "acct-1", ParanoiaLevel: 2, AnomalyThreshold: 7, ExcludeRuleIDs: []int{920350}, InspectBodyBytes: 16},
+			app: app, body: long, wantSample: true, wantBody: long[:16], wantTruncated: true},
 		{name: "no rule", rule: nil, app: app, body: "x"},
 		{name: "foreign account rule", rule: rule, app: App{ID: "app-2", AccountID: "acct-2"}, body: "x"},
 		{name: "upgrade skips body", rule: rule, app: app, body: "x", upgrade: true, wantSample: true},
