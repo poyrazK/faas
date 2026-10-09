@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 797
+// adr: 801
 func TestProfileCanaryStepRejectsDatabaseIntegerOverflow(t *testing.T) {
 	const deploymentID = "00000000-0000-4000-8000-000000000001"
 	overflow := int64(math.MaxInt32) + 1

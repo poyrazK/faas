@@ -142,11 +142,11 @@ type Querier interface {
 	CancelDeletedOwnerManagedPostgresCutovers(ctx context.Context, db DBTX, now pgtype.Timestamptz) error
 	CancelExpiredAppTasksForClaim(ctx context.Context, db DBTX, claimedAt pgtype.Timestamptz) error
 	CancelManagedPostgresCutover(ctx context.Context, db DBTX, arg CancelManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
+	CancelProfileCanaryChecks(ctx context.Context, db DBTX, appID string) error
+	CancelProfileDeploymentChecks(ctx context.Context, db DBTX, appID string) error
 	CancelRuntimeUpgradeBuilds(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]pgtype.UUID, error)
 	CancelRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg CancelRuntimeUpgradeCandidateParams) error
 	CancelRuntimeUpgradeReleaseTasks(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
-	CancelProfileCanaryChecks(ctx context.Context, db DBTX, appID string) error
-	CancelProfileDeploymentChecks(ctx context.Context, db DBTX, appID string) error
 	// Explicit cancel from DELETE /v1/uploads/{id}. The handler also
 	// removes the .part file via os.Remove AFTER the UPDATE commits —
 	// doing it before would leak a file if the UPDATE rolled back.
