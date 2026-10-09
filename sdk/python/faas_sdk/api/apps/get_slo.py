@@ -67,9 +67,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | SLOResponse]:
-    """Get one customer-defined SLO (ADR-747)
+    """Get one customer-defined SLO and its error budget (ADR-747)
 
-     Returns one SLO definition. An id belonging to another app returns 404.
+     Returns one SLO definition with its status: attainment and budget remaining over the window from
+    hourly history, and live 1h/6h burn rates. An id belonging to another app returns 404.
 
     Args:
         slug (str):
@@ -101,9 +102,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | SLOResponse | None:
-    """Get one customer-defined SLO (ADR-747)
+    """Get one customer-defined SLO and its error budget (ADR-747)
 
-     Returns one SLO definition. An id belonging to another app returns 404.
+     Returns one SLO definition with its status: attainment and budget remaining over the window from
+    hourly history, and live 1h/6h burn rates. An id belonging to another app returns 404.
 
     Args:
         slug (str):
@@ -130,9 +132,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | SLOResponse]:
-    """Get one customer-defined SLO (ADR-747)
+    """Get one customer-defined SLO and its error budget (ADR-747)
 
-     Returns one SLO definition. An id belonging to another app returns 404.
+     Returns one SLO definition with its status: attainment and budget remaining over the window from
+    hourly history, and live 1h/6h burn rates. An id belonging to another app returns 404.
 
     Args:
         slug (str):
@@ -162,9 +165,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | SLOResponse | None:
-    """Get one customer-defined SLO (ADR-747)
+    """Get one customer-defined SLO and its error budget (ADR-747)
 
-     Returns one SLO definition. An id belonging to another app returns 404.
+     Returns one SLO definition with its status: attainment and budget remaining over the window from
+    hourly history, and live 1h/6h burn rates. An id belonging to another app returns 404.
 
     Args:
         slug (str):

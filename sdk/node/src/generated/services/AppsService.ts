@@ -1243,8 +1243,8 @@ export class AppsService {
     });
   }
   /**
-   * Get one customer-defined SLO (ADR-747)
-   * Returns one SLO definition. An id belonging to another app returns 404.
+   * Get one customer-defined SLO and its error budget (ADR-747)
+   * Returns one SLO definition with its status: attainment and budget remaining over the window from hourly history, and live 1h/6h burn rates. An id belonging to another app returns 404.
    * @returns SLOResponse The SLO definition.
    * @throws ApiError
    */

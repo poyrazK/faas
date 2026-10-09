@@ -31,6 +31,34 @@ The API equivalent is `POST /v1/apps/{slug}/slos`; `GET`, `GET .../{id}` and
 | `objective_pct` | 90 to 99.99, at most two decimals. |
 | `window_days` | 7 or 30; the budget is measured over this rolling window. |
 
+## Check the error budget
+
+```sh
+gregale slos status --app shop SLO_ID
+```
+
+```
+checkout — 99.9% available over 30 days
+  Attained:          99.950% (2398800 of 2400000 requests)
+  Budget remaining:  50.000%
+  Burn rate:         0.80× (1h) · 1.10× (6h)
+  History:           720 of 720 hours since 2026-09-09T12:00:00Z
+```
+
+- **Budget remaining** is 100% when nothing failed, 0% when failures have used
+  the whole budget, and negative once the objective is missed for the window.
+- **Burn rate** compares the recent failure rate with the rate that would use
+  exactly the whole budget over the window: 1× is on pace, 14.4× spends a
+  30-day budget in about two days. Burn rates are live; the budget moves in
+  whole hours.
+- **History** counts completed hours Gregale has recorded. A new SLO's window
+  starts at the hour it was created and grows to the full window. Hours missed
+  during a metrics outage are recovered automatically for up to 14 days;
+  fewer recorded than expected hours means a gap older than that, which is
+  left out rather than guessed.
+
+`GET /v1/apps/{slug}/slos/{id}` returns the same figures in `status`.
+
 An app can hold up to 10 SLOs. SLOs are available on Hobby and above, like
 the per-app metrics they are computed from. SLOs cover the whole app; route
 SLOs are a planned follow-up.

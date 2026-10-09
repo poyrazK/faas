@@ -214,6 +214,7 @@ type MemStore struct {
 	// what PgStore's count(*) over (app_id) measures.
 	customMetrics               map[string]map[string]CustomMetric
 	appSLOs                     map[string][]SLO // app id → definitions (ADR-747), lazily made
+	sloHours                    map[string]map[time.Time]memSLOHour
 	objectBuckets               map[string]ObjectBucket
 	objectMutations             map[string]ObjectBucketMutation
 	objectWriteFences           map[string]ObjectBucketWriteFence

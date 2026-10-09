@@ -899,6 +899,13 @@ type AppSlo struct {
 	UpdatedAt          pgtype.Timestamptz
 }
 
+type AppSloHourly struct {
+	SloID pgtype.UUID
+	Hour  pgtype.Timestamptz
+	Good  int64
+	Total int64
+}
+
 type AppTask struct {
 	ID                   pgtype.UUID
 	AccountID            pgtype.UUID

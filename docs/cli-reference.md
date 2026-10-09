@@ -13,7 +13,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
-| [`slos`](#slos) | Customer-defined SLOs and error budgets (slos list\|create\|rm --app &lt;slug&gt;) |
+| [`slos`](#slos) | Customer-defined SLOs and error budgets (slos list\|create\|status\|rm --app &lt;slug&gt;) |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset\|actions --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`commit`](#commit) | Manage transactional PostgreSQL outbox sources (internal) |
@@ -1342,7 +1342,7 @@ Show feature maturity and plan availability
 
 ## slos
 
-Customer-defined SLOs and error budgets (slos list|create|rm --app &lt;slug&gt;)
+Customer-defined SLOs and error budgets (slos list|create|status|rm --app &lt;slug&gt;)
 
 `gregale slos [<subcommand>]`
 
@@ -1370,6 +1370,16 @@ Define an availability or latency SLO
 | `--sli <SLI>` | service level indicator | one of `availability` · `latency` |
 | `--latency-threshold-ms <MS>` | latency threshold (5\|10\|25\|50\|100\|250\|500\|1000\|2000\|5000\|10000) |  |
 | `--window-days <DAYS>` | rolling window | one of `7` · `30` |
+
+### slos status
+
+Show an SLO&#39;s attainment, budget remaining and burn rate
+
+`gregale slos status --app <slug> <slo-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
 
 ### slos rm
 

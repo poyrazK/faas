@@ -90,8 +90,8 @@ func (s *server) createSLO(w http.ResponseWriter, r *http.Request, acct state.Ac
 	writeJSON(w, http.StatusCreated, sloResponse(row))
 }
 
-// getSLO serves GET /v1/apps/{slug}/slos/{id} (ADR-747). Slice 2 adds the
-// budget status to this response.
+// getSLO serves GET /v1/apps/{slug}/slos/{id} (ADR-747): the definition
+// plus its error-budget status.
 func (s *server) getSLO(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, app, ok := s.sloApp(w, r, acct)
 	if !ok {
@@ -102,7 +102,9 @@ func (s *server) getSLO(w http.ResponseWriter, r *http.Request, acct state.Accou
 		s.notFound(w, "no such SLO")
 		return
 	}
-	writeJSON(w, http.StatusOK, sloResponse(row))
+	resp := sloResponse(row)
+	resp.Status = s.sloStatus(r.Context(), row, time.Now())
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // deleteSLO serves DELETE /v1/apps/{slug}/slos/{id} (ADR-747).

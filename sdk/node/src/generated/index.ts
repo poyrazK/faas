@@ -1549,6 +1549,7 @@ export type { SimulateAutomationRequest } from './models/SimulateAutomationReque
 export type { SimulateAutomationResponse } from './models/SimulateAutomationResponse.js';
 export type { SLODuration } from './models/SLODuration.js';
 export type { SLOResponse } from './models/SLOResponse.js';
+export type { SLOStatus } from './models/SLOStatus.js';
 export type { Slug } from './models/Slug.js';
 export type { SourceRefDeployRequest } from './models/SourceRefDeployRequest.js';
 export type { SourceTarballDeployRequest } from './models/SourceTarballDeployRequest.js';

@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const slosUsage = "usage: gregale slos <list|create|rm> --app <slug>"
+const slosUsage = "usage: gregale slos <list|create|status|rm> --app <slug>"
 
 // cmdSLOs implements `gregale slos` (ADR-747): customer-defined SLO
 // definitions. Distinct from `gregale slo <slug>`, ADR-082's fixed panel.
@@ -26,6 +26,8 @@ func cmdSLOs(args []string) int {
 		return cmdSLOsCreate(args[1:])
 	case subRm:
 		return cmdSLOsRm(args[1:])
+	case "status":
+		return cmdSLOsStatus(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown slos subcommand %q\n", args[0])
 	PrintUsage(os.Stderr, slosUsage, "slos")

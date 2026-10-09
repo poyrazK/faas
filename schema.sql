@@ -12242,6 +12242,20 @@ CREATE TABLE public.app_slos (
 
 
 --
+-- Name: app_slo_hourly; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_slo_hourly (
+    slo_id uuid NOT NULL,
+    hour timestamp with time zone NOT NULL,
+    good bigint NOT NULL,
+    total bigint NOT NULL,
+    CONSTRAINT app_slo_hourly_counts_chk CHECK (((good >= 0) AND (total >= good))),
+    CONSTRAINT app_slo_hourly_hour_chk CHECK ((hour = date_trunc('hour'::text, hour)))
+);
+
+
+--
 -- Name: app_default_domains; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25470,6 +25484,21 @@ ALTER TABLE ONLY public.app_slos
 
 ALTER TABLE ONLY public.app_slos
     ADD CONSTRAINT app_slos_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_slo_hourly app_slo_hourly_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_slo_hourly
+    ADD CONSTRAINT app_slo_hourly_pkey PRIMARY KEY (slo_id, hour);
+
+
+--
+-- Name: app_slo_hourly_hour_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_slo_hourly_hour_idx ON public.app_slo_hourly USING btree (hour);
 
 
 --
@@ -40980,6 +41009,14 @@ ALTER TABLE ONLY public.app_custom_metrics
 
 ALTER TABLE ONLY public.app_slos
     ADD CONSTRAINT app_slos_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_slo_hourly app_slo_hourly_slo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_slo_hourly
+    ADD CONSTRAINT app_slo_hourly_slo_id_fkey FOREIGN KEY (slo_id) REFERENCES public.app_slos(id) ON DELETE CASCADE;
 
 
 --

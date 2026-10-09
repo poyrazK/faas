@@ -17302,3 +17302,23 @@ SELECT * FROM app_slos WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(i
 
 -- name: DeleteAppSLO :execrows
 DELETE FROM app_slos WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid;
+
+-- ADR-747 slice 2: hourly SLO budget rows (meterd is the only writer).
+
+-- name: ListAllAppSLOs :many
+SELECT * FROM app_slos ORDER BY id;
+
+-- name: ListSLOHourStarts :many
+SELECT hour FROM app_slo_hourly WHERE slo_id = sqlc.arg(slo_id)::uuid AND hour >= sqlc.arg(since)::timestamptz;
+
+-- name: UpsertSLOHour :exec
+INSERT INTO app_slo_hourly (slo_id, hour, good, total)
+VALUES (sqlc.arg(slo_id)::uuid, sqlc.arg(hour)::timestamptz, sqlc.arg(good)::bigint, sqlc.arg(total)::bigint)
+ON CONFLICT (slo_id, hour) DO UPDATE SET good = EXCLUDED.good, total = EXCLUDED.total;
+
+-- name: SumSLOHours :one
+SELECT coalesce(sum(good), 0)::bigint AS good, coalesce(sum(total), 0)::bigint AS total, count(*)::bigint AS hours
+FROM app_slo_hourly WHERE slo_id = sqlc.arg(slo_id)::uuid AND hour >= sqlc.arg(since)::timestamptz;
+
+-- name: PurgeSLOHoursBefore :execrows
+DELETE FROM app_slo_hourly WHERE hour < sqlc.arg(before)::timestamptz;

@@ -38,6 +38,24 @@ type SLOResponse struct {
 	ObjectivePct       float64 `json:"objective_pct"`
 	WindowDays         int     `json:"window_days"`
 	CreatedAt          string  `json:"created_at"`
+	// Status is present on GET /v1/apps/{slug}/slos/{id} only.
+	Status *SLOStatus `json:"status,omitempty"`
+}
+
+// SLOStatus is an SLO's error-budget position (ADR-747). Window figures come
+// from the hourly rows meterd records; the burn rates are computed live.
+// Percentages are null when the window or range saw no requests.
+type SLOStatus struct {
+	WindowStart        string   `json:"window_start"`
+	HoursRecorded      int      `json:"hours_recorded"`
+	HoursExpected      int      `json:"hours_expected"`
+	Good               int64    `json:"good"`
+	Total              int64    `json:"total"`
+	AttainmentPct      *float64 `json:"attainment_pct"`
+	BudgetRemainingPct *float64 `json:"budget_remaining_pct"`
+	BurnRate1h         *float64 `json:"burn_rate_1h"`
+	BurnRate6h         *float64 `json:"burn_rate_6h"`
+	Source             string   `json:"source"`
 }
 
 // SLOObjectivePct renders basis points (9990) as a percentage (99.9).

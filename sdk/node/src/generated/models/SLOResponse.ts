@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { SLOStatus } from './SLOStatus.js';
 /**
  * One customer-defined SLO (ADR-747).
  */
@@ -16,5 +17,6 @@ export type SLOResponse = {
   objective_pct: number;
   window_days: 7 | 30;
   created_at: string;
+  status?: SLOStatus;
 };
 

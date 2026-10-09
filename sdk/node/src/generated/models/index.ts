@@ -1473,6 +1473,7 @@ export type { RuntimeReleaseResponse } from './RuntimeReleaseResponse.js';
 export type { RuntimeUpgradePreviewResponse } from './RuntimeUpgradePreviewResponse.js';
 export type { SLODuration } from './SLODuration.js';
 export type { SLOResponse } from './SLOResponse.js';
+export type { SLOStatus } from './SLOStatus.js';
 export type { SaveAutomationDraftRequest } from './SaveAutomationDraftRequest.js';
 export type { SaveProfileDeploymentPolicyRequest } from './SaveProfileDeploymentPolicyRequest.js';
 export type { SaveProfileInvestigationRequest } from './SaveProfileInvestigationRequest.js';

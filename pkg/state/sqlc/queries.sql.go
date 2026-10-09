@@ -26346,6 +26346,43 @@ func (q *Queries) ListAlertRollbacks(ctx context.Context, db DBTX, arg ListAlert
 	return items, nil
 }
 
+const listAllAppSLOs = `-- name: ListAllAppSLOs :many
+
+SELECT id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at FROM app_slos ORDER BY id
+`
+
+// ADR-747 slice 2: hourly SLO budget rows (meterd is the only writer).
+func (q *Queries) ListAllAppSLOs(ctx context.Context, db DBTX) ([]AppSlo, error) {
+	rows, err := db.Query(ctx, listAllAppSLOs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSlo{}
+	for rows.Next() {
+		var i AppSlo
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Sli,
+			&i.LatencyThresholdMs,
+			&i.ObjectiveBp,
+			&i.WindowDays,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllEventsPaged = `-- name: ListAllEventsPaged :many
 select id, at, actor, kind, subject, data
 from events
@@ -33443,6 +33480,35 @@ func (q *Queries) ListRuntimeUpgradeGatewayRepairApps(ctx context.Context, db DB
 			return nil, err
 		}
 		items = append(items, d_app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSLOHourStarts = `-- name: ListSLOHourStarts :many
+SELECT hour FROM app_slo_hourly WHERE slo_id = $1::uuid AND hour >= $2::timestamptz
+`
+
+type ListSLOHourStartsParams struct {
+	SloID pgtype.UUID
+	Since pgtype.Timestamptz
+}
+
+func (q *Queries) ListSLOHourStarts(ctx context.Context, db DBTX, arg ListSLOHourStartsParams) ([]pgtype.Timestamptz, error) {
+	rows, err := db.Query(ctx, listSLOHourStarts, arg.SloID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.Timestamptz{}
+	for rows.Next() {
+		var hour pgtype.Timestamptz
+		if err := rows.Scan(&hour); err != nil {
+			return nil, err
+		}
+		items = append(items, hour)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -50174,6 +50240,18 @@ func (q *Queries) PurgeAccountManagedPostgresCreationReceipts(ctx context.Contex
 	return err
 }
 
+const purgeSLOHoursBefore = `-- name: PurgeSLOHoursBefore :execrows
+DELETE FROM app_slo_hourly WHERE hour < $1::timestamptz
+`
+
+func (q *Queries) PurgeSLOHoursBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, purgeSLOHoursBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const putCustomerOperationIdempotency = `-- name: PutCustomerOperationIdempotency :exec
 INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
 VALUES($1::text,$2::uuid,$3::uuid,
@@ -66462,6 +66540,29 @@ func (q *Queries) SumOpenUploadSessionBytesByAccount(ctx context.Context, db DBT
 	return bytes, err
 }
 
+const sumSLOHours = `-- name: SumSLOHours :one
+SELECT coalesce(sum(good), 0)::bigint AS good, coalesce(sum(total), 0)::bigint AS total, count(*)::bigint AS hours
+FROM app_slo_hourly WHERE slo_id = $1::uuid AND hour >= $2::timestamptz
+`
+
+type SumSLOHoursParams struct {
+	SloID pgtype.UUID
+	Since pgtype.Timestamptz
+}
+
+type SumSLOHoursRow struct {
+	Good  int64
+	Total int64
+	Hours int64
+}
+
+func (q *Queries) SumSLOHours(ctx context.Context, db DBTX, arg SumSLOHoursParams) (SumSLOHoursRow, error) {
+	row := db.QueryRow(ctx, sumSLOHours, arg.SloID, arg.Since)
+	var i SumSLOHoursRow
+	err := row.Scan(&i.Good, &i.Total, &i.Hours)
+	return i, err
+}
+
 const summarizeCustomerOperationWorkflowAttention = `-- name: SummarizeCustomerOperationWorkflowAttention :one
 WITH eligible AS (
 SELECT jsonb_build_object(
@@ -68762,6 +68863,29 @@ func (q *Queries) UpsertRegressionObservation(ctx context.Context, db DBTX, arg 
 		arg.P95BaseMs,
 		arg.AffectedCount,
 		arg.RegressionFactor,
+	)
+	return err
+}
+
+const upsertSLOHour = `-- name: UpsertSLOHour :exec
+INSERT INTO app_slo_hourly (slo_id, hour, good, total)
+VALUES ($1::uuid, $2::timestamptz, $3::bigint, $4::bigint)
+ON CONFLICT (slo_id, hour) DO UPDATE SET good = EXCLUDED.good, total = EXCLUDED.total
+`
+
+type UpsertSLOHourParams struct {
+	SloID pgtype.UUID
+	Hour  pgtype.Timestamptz
+	Good  int64
+	Total int64
+}
+
+func (q *Queries) UpsertSLOHour(ctx context.Context, db DBTX, arg UpsertSLOHourParams) error {
+	_, err := db.Exec(ctx, upsertSLOHour,
+		arg.SloID,
+		arg.Hour,
+		arg.Good,
+		arg.Total,
 	)
 	return err
 }

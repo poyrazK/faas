@@ -2884,6 +2884,7 @@ from .slo_duration import SLODuration
 from .slo_response import SLOResponse
 from .slo_response_sli import SLOResponseSli
 from .slo_response_window_days import SLOResponseWindowDays
+from .slo_status import SLOStatus
 from .source_ref_deploy_request import SourceRefDeployRequest
 from .source_ref_deploy_request_format import SourceRefDeployRequestFormat
 from .source_ref_deploy_request_tag import SourceRefDeployRequestTag
@@ -5992,6 +5993,7 @@ __all__ = (
     "SLOResponse",
     "SLOResponseSli",
     "SLOResponseWindowDays",
+    "SLOStatus",
     "SourceRefDeployRequest",
     "SourceRefDeployRequestFormat",
     "SourceRefDeployRequestTag",

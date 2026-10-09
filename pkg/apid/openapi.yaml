@@ -10614,8 +10614,8 @@ paths:
         schema: { type: string, format: uuid }
     get:
       operationId: getSLO
-      summary: Get one customer-defined SLO (ADR-747)
-      description: "Returns one SLO definition. An id belonging to another app returns 404."
+      summary: Get one customer-defined SLO and its error budget (ADR-747)
+      description: "Returns one SLO definition with its status: attainment and budget remaining over the window from hourly history, and live 1h/6h burn rates. An id belonging to another app returns 404."
       tags: [apps]
       responses:
         '200':
@@ -46860,6 +46860,44 @@ components:
         objective_pct: { type: number, format: double, example: 99.9 }
         window_days: { type: integer, enum: [7, 30] }
         created_at: { type: string, format: date-time }
+        status:
+          $ref: '#/components/schemas/SLOStatus'
+    SLOStatus:
+      description: 'Error-budget position of one SLO, returned by GET /v1/apps/{slug}/slos/{id} (ADR-747).'
+      type: object
+      required: [window_start, hours_recorded, hours_expected, good, total, attainment_pct, budget_remaining_pct, burn_rate_1h, burn_rate_6h, source]
+      properties:
+        window_start:
+          type: string
+          format: date-time
+          description: 'Start of the rolling window: the later of window_days ago and the hour the SLO was created.'
+        hours_recorded:
+          type: integer
+          description: 'Completed hours meterd has recorded in the window.'
+        hours_expected:
+          type: integer
+          description: 'Completed hours in the window; fewer recorded hours means history is still being backfilled or was lost.'
+        good: { type: integer, format: int64, description: 'Requests that met the SLI in the recorded hours.' }
+        total: { type: integer, format: int64, description: 'Requests the SLI counted in the recorded hours.' }
+        attainment_pct:
+          type: [number, 'null']
+          format: double
+          description: 'good / total as a percentage; null when the window had no requests.'
+        budget_remaining_pct:
+          type: [number, 'null']
+          format: double
+          description: 'Share of the error budget left: 100 when nothing failed, 0 when it is spent, negative once the objective is missed.'
+        burn_rate_1h:
+          type: [number, 'null']
+          format: double
+          description: 'Budget burn over the last hour, live from Prometheus: 1 spends exactly the budget over the window.'
+        burn_rate_6h:
+          type: [number, 'null']
+          format: double
+          description: 'Budget burn over the last six hours, live from Prometheus.'
+        source:
+          type: string
+          description: 'prometheus, or degraded: <reason> when budget history or burn rates are unavailable.'
     CustomMetricResponse:
       description: "One stored ADR-202 gauge."
       type: object

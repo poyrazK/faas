@@ -746,7 +746,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "slos",
 		DocSlug: "slos",
-		Short:   "Customer-defined SLOs and error budgets (slos list|create|rm --app <slug>)",
+		Short:   "Customer-defined SLOs and error budgets (slos list|create|status|rm --app <slug>)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List the app's SLOs", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
@@ -759,6 +759,9 @@ var cliCommands = []cliCommand{
 				{Name: "latency-threshold-ms", Short: "latency threshold (5|10|25|50|100|250|500|1000|2000|5000|10000)", Value: "MS"},
 				{Name: "window-days", Short: "rolling window", Value: "DAYS", ClosedSet: []string{"7", "30"}},
 			}},
+			{Name: "status", Short: "Show an SLO's attainment, budget remaining and burn rate", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<slo-id>"}},
 			{Name: "rm", Short: "Delete one SLO", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 			}, Positionals: []string{"<slo-id>"}},
