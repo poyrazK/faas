@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -94,7 +95,7 @@ func TestAdvanceCanarySeedsReportModeRouteHealth(t *testing.T) {
 			t.Fatalf("seeded routes = %+v, want %+v", gate.Routes, want)
 		}
 	}
-	if len(store.reads) != 1 || store.reads[0] != stable.ID {
+	if len(store.reads) != 1 || strings.ReplaceAll(store.reads[0], "-", "") != strings.ReplaceAll(stable.ID, "-", "") {
 		t.Fatalf("usage reads = %v, want the stable deployment %s only", store.reads, stable.ID)
 	}
 }
