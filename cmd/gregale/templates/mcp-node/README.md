@@ -68,8 +68,11 @@ by verified scopes. Calls, reads and prompt gets are checked before dispatch and
 again in the callback using the SDK's verified request context. Insufficient
 scopes produce a 403 bearer challenge naming the required scopes. Client headers,
 arguments and annotations cannot grant permission. Check ownership of any
-tenant/object inside the callback using verified identity
-(`ctx.http.authInfo.extra.subject`), never an unverified tenant ID from arguments.
+tenant/object inside the callback using `verifiedCallerIdentity(ctx.http.authInfo)`;
+it returns the verified `subject` and `clientId` without exposing the token. Never
+use a tenant ID from arguments as the caller identity. The sample records are
+owned by `demo-caller-a` (`example-1`, `example-3`) and `demo-caller-b`
+(`example-2`); open mode keeps these synthetic examples public.
 This is application policy, so custom servers must implement their own
 enforcement.
 
@@ -77,7 +80,8 @@ enforcement.
 
 The `summarize` prompt completes its optional `style` argument with `brief`,
 `technical` and `executive`. The customer-record template completes only the
-three harmless sample IDs included in the starter. Try either through the CLI:
+three harmless sample IDs included in the starter, filtered by the verified
+caller's sample-record ownership in external OAuth mode. Try either through the CLI:
 
 ```sh
 gregale mcp complete --url http://127.0.0.1:8080/mcp \
@@ -90,6 +94,8 @@ Use `--context` or `--context-file` to pass other already-resolved string
 arguments for dependent suggestions. MCP completions are not tool calls. Keep
 suggestions bounded and caller-scoped; never return customer IDs or other private
 values unless the current caller is authorized to see them.
+Completion requests pass through the same per-entry prompt and resource scope
+checks as `prompts/get` and `resources/read` before suggestions are computed.
 
 Use a client token via `--token-env MCP_TOKEN`; Gregale CLI account credentials are
 never forwarded to this server. Capture `mcp lock` baselines with the same identity

@@ -117,18 +117,21 @@ Scaffold, deploy and verify stateless MCP servers
 
 ### mcp init
 
-Create the Node MCP starter
+Create a Node, Go, or Python MCP starter
 
-`gregale mcp init --path <DIR>`
+`gregale mcp init --path <DIR> [--language <node|go|python>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--path <DIR>` | empty destination directory | required |
+| `--language <LANGUAGE>` | starter language | `node` |
 
 Examples:
 
 ```sh
 gregale mcp init --path ./my-mcp
+gregale mcp init --language go --path ./my-mcp-go
+gregale mcp init --language python --path ./my-mcp-python
 ```
 
 ### mcp deploy

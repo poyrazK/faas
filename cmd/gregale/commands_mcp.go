@@ -64,13 +64,17 @@ func cmdMCP(args []string) int {
 func cmdMCPInit(args []string) int {
 	fs := newFlagSet("mcp-init", flag.ContinueOnError)
 	dir := fs.String("path", "", "empty destination directory")
+	language := fs.String("language", "node", "starter language: node, go, or python")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 || *dir == "" {
 		return printErr("MCP init", errors.New("--path is required"))
 	}
-	return cmdInit([]string{"--template", "mcp-node", "--path", *dir})
+	if *language != "node" && *language != "go" && *language != "python" {
+		return printErr("MCP init", errors.New("--language must be node, go, or python"))
+	}
+	return cmdInit([]string{"--template", "mcp-" + *language, "--path", *dir})
 }
 
 func mcpToken(env string) (string, error) {

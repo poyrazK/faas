@@ -3,8 +3,14 @@
 The MCP hosting profile is preview for stateless servers that advertise at least
 one MCP catalog: tools, resources (including resource templates), or prompts.
 It uses ordinary HTTP applications and stateless Streamable HTTP, with optional
-stateless legacy compatibility. MCP hosting-enabled builds provide the commands
-below; check `gregale mcp --help`.
+stateless legacy compatibility. `gregale mcp init` defaults to the Node starter;
+`--language go` and `--language python` create compact starters using the
+official SDKs. All three starters share the `/mcp` and `/healthz` hosting
+contract, reject browser origins unless explicitly allowed, and start with
+public open access. Go and Python support external OAuth validation and
+per-entry scopes for tools, resources, resource templates and prompts. Durable
+Tasks and legacy transport remain Node starter features. MCP hosting-enabled
+builds provide the commands below; check `gregale mcp --help`.
 The profile requires a streaming-enabled Hobby, Pro, or Scale account and a
 gateway with streaming enabled.
 
@@ -15,6 +21,11 @@ npm ci
 npm test
 npm start
 ```
+
+Choose another starter language with `gregale mcp init --language go --path
+./my-mcp-go` or `gregale mcp init --language python --path ./my-mcp-python`.
+Both templates use the same zero-traffic `gregale mcp deploy` verification and
+promotion flow.
 
 In another terminal:
 
@@ -53,14 +64,17 @@ Completions help MCP hosts guide users while filling prompt forms or resource
 templates. The CLI caps accepted responses at 100 suggestions. Keep returned
 values bounded and caller-authorized; completion results can reveal information
 just like resource reads.
+The Node starter registers sample completions; the Go and Python starters expose
+the sample prompt and resource template without completion handlers.
 
 The starter binds loopback locally and the guest interface on Gregale.
 `gregale.yaml` controls start, port and health. `gregale-mcp.json` controls the
 MCP endpoint, stateless mode, legacy compatibility, trusted browser origins and
-client authentication. The default starter explicitly allows public access to
-four harmless tools, a welcome resource, a customer-record URI template and a
-summarize prompt. An empty allowed-origins list rejects all browser origins; add
-exact origins for trusted browser clients.
+client authentication. The Node starter explicitly allows public access to four
+harmless tools, a welcome resource, a customer-record URI template and a
+summarize prompt. Go and Python expose two sample tools plus the same resource
+and prompt examples. An empty allowed-origins list rejects all browser origins;
+add exact origins for trusted browser clients.
 
 `mcp deploy` stages the current worktree with zero production traffic, waits for
 readiness and verifies the exact deployment preview. It checks catalog discovery,
@@ -447,8 +461,7 @@ Before adding sensitive catalog entries, change `auth` in `gregale-mcp.json`:
   "scopes": ["mcp:tools"],
   "tool_scopes": {
     "greet": [],
-    "add": ["math:read"],
-    "stream_demo": ["mcp:stream"]
+    "add": ["math:read"]
   },
   "resource_scopes": {
     "greeting://welcome": [],
@@ -466,20 +479,21 @@ challenge. It verifies signed RS256/ES256 JWT access tokens with issuer, audienc
 expiry, subject and all configured scopes. The provider owns login, consent,
 client registration and token issuance. Opaque tokens require an introspection
 adapter. `auth.scopes` are required for every request and are advertised with
-catalog scopes in protected-resource metadata. In the Node starter,
+catalog scopes in protected-resource metadata. In the generated starters,
 `tool_scopes`, `resource_scopes` and `prompt_scopes` add application-owned
 permissions for tools, resource URIs (including URI templates) and prompt names.
 Every listed scope is required in addition to the endpoint scopes. An explicit
 empty scope array permits any authenticated endpoint caller to use that entry. A
 configured map denies entries missing from it; `{}` hides and denies every entry
 of that catalog type. Null maps and scope arrays fail configuration validation.
-Open mode accepts only empty scope arrays. The generated public starter lists its
+Open mode accepts only empty scope arrays. Each generated starter lists its
 harmless entries explicitly.
 
-The starter filters `tools/list`, `resources/list`,
+The Node, Go and Python starters filter `tools/list`, `resources/list`,
 `resources/templates/list` and `prompts/list` using verified JWT scopes for each
-request. It checks `tools/call`, `resources/read` and `prompts/get` before dispatch
-and checks verified request context again inside each registered callback.
+request. They check `tools/call`, `resources/read` and `prompts/get` before
+dispatch and check verified request context again inside each registered
+callback or SDK request middleware.
 Missing entry scopes return HTTP 403 with an `insufficient_scope` bearer
 challenge naming the endpoint and entry scopes; an unlisted entry returns a
 catalog-specific `*_access_denied` error. Resource policy keys are exact resource
