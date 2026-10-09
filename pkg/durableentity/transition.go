@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// Execute serializes local handlers and commits state/result/receipt/alarm in
+// Execute serializes local handlers and commits state/result/receipt/alarm/outbox in
 // one publication. A second process using the same claim can lose CAS and must
 // retry the SAME request. A replay never invokes the callback again.
 func (m *Manager) Execute(ctx context.Context, claim Claim, request Request, handler func(context.Context, View) (Transition, error)) (Result, error) {
@@ -72,12 +72,18 @@ func (m *Manager) commit(ctx context.Context, claim Claim, base manifest, state 
 	state.Version++
 	state.Data = append(json.RawMessage(nil), transition.Data...)
 	state.AlarmAt = copyTime(transition.AlarmAt)
+	if err := appendOutbox(&state, transition.Outbox); err != nil {
+		return Result{}, err
+	}
 	saved := receipt{Fingerprint: fingerprint, Result: append(json.RawMessage(nil), transition.Result...), Version: state.Version}
 	plan := &commitPlan{ObjectStore: m.store}
 	planner := &Manager{store: plan, now: m.now, lease: m.lease}
 	delta, err := planner.journalTransition(ctx, base, &state, requestID, saved)
 	if err != nil {
 		return Result{}, m.restoreFailure(ctx, claim, base, err)
+	}
+	if len(state.Outbox) > 0 {
+		state.Schema = 3
 	}
 	body, err := json.Marshal(state)
 	if err != nil {

@@ -9099,6 +9099,10 @@ const (
 	MaxDurableEntityReceipts             = 1024 // Legacy inline receipts only; journal receipts do not expire.
 	MaxDurableEntityReceiptBytes         = 1 << 20
 	MaxDurableEntityJournalBytes         = 16 << 10
+	MaxDurableEntityOutboxPerTransition  = 16
+	MaxDurableEntityOutboxPending        = 128
+	MaxDurableEntityOutboxPayloadBytes   = 64 << 10
+	MaxDurableEntityOutboxBytes          = 256 << 10 // Encoded pending messages, included in snapshot/cap bytes.
 	DurableEntityCleanupPageSize         = 32
 	DurableEntityCleanupTimeout          = 20 * time.Second
 	DurableEntityInventoryPageSize       = 32
