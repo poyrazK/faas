@@ -23951,6 +23951,54 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/edge-rules/events:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: listEdgeRuleEvents
+      summary: Sampled requests each edge rule matched, newest first.
+      description: |
+        ADR-834. Gateways keep the first 10 matches of each rule per minute
+        as full events (request ID, method, host, path without query string,
+        trusted client IP, country, user agent); hit counts (stats) cover
+        every match. Events are kept 7 days; how far back a plan can read is
+        a plan limit (Free 24 h, Hobby 72 h, Pro and Scale 7 days), and a
+        longer since is clamped (the response reports the effective start).
+      parameters:
+        - name: rule
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: outcome
+          in: query
+          required: false
+          schema: { type: string, enum: [matched, logged] }
+        - name: since
+          in: query
+          required: false
+          description: Duration such as 1h, 24h or 7d.
+          schema: { type: string, default: '24h' }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: next_cursor from the previous page.
+          schema: { type: string }
+      responses:
+        '200':
+          description: One page of events.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleEventsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/edge-rules/stats:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -53445,6 +53493,35 @@ components:
         remove:
           type: array
           items: { type: string, maxLength: 256 }
+
+    EdgeRuleEventsResponse:
+      description: A page of sampled edge-rule matches (ADR-834).
+      type: object
+      required: [since, events]
+      properties:
+        since: { type: string, format: date-time, description: Effective window start after the plan clamp. }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleEventResponse' }
+        next_cursor: { type: string }
+
+    EdgeRuleEventResponse:
+      type: object
+      required: [id, rule_id, outcome, occurred_at]
+      properties:
+        id: { type: string }
+        rule_id: { type: string }
+        rule_name: { type: string, description: Empty once the rule is deleted. }
+        rule_kind: { type: string }
+        outcome: { type: string, enum: [matched, logged] }
+        occurred_at: { type: string, format: date-time }
+        request_id: { type: string }
+        method: { type: string }
+        host: { type: string }
+        path: { type: string, description: Request path without the query string. }
+        client_ip: { type: string, description: Trusted client IP, when known. }
+        country: { type: string }
+        user_agent: { type: string }
 
     EdgeRuleStatsResponse:
       description: Per-rule match counts over a window (ADR-830).

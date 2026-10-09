@@ -2312,7 +2312,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "edge-rules",
 		DocSlug: "edge-rules",
-		Short:   "Per-app edge rules (edge-rules list|trace|create|get|update|history|rollback|stats --app <slug>; edge-rules rm <id>)",
+		Short:   "Per-app edge rules (edge-rules list|trace|create|get|update|history|rollback|stats|events --app <slug>; edge-rules rm <id>)",
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List edge rules", Flags: []cliFlag{
 				{Name: "app", Short: "filter to a single app slug", Value: "slug"},
@@ -2504,6 +2504,16 @@ var cliCommands = []cliCommand{
 			{Name: "stats", Short: "Per-rule match counts (matched for enforced rules, logged for log-mode rules)", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "window", Short: "window", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
+			}},
+			{Name: "events", Short: "Sampled requests rules matched, newest first (up to 10 per rule per minute; kept 7 days)", Examples: []string{
+				"gregale edge-rules events --app my-api --outcome logged --since 7d",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "rule", Short: "only this rule id", Value: "ID"},
+				{Name: "outcome", Short: "outcome filter", Value: "OUTCOME", ClosedSet: []string{"matched", "logged"}},
+				{Name: "since", Short: "how far back, e.g. 1h, 24h, 7d (clamped to the plan window)", Value: "DURATION"},
+				{Name: "limit", Short: "events per page (1..200)", Value: "N"},
+				{Name: "cursor", Short: "continue from a previous page's next cursor", Value: "CURSOR"},
 			}},
 			{Name: "rollback", Short: "Restore an app's edge rules to a recorded version (recorded as a new version)", Examples: []string{
 				"gregale edge-rules rollback --app my-api --to 12",

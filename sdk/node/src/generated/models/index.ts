@@ -424,6 +424,8 @@ export type { EdgeRuleBudgetAction } from './EdgeRuleBudgetAction.js';
 export type { EdgeRuleCORSAction } from './EdgeRuleCORSAction.js';
 export type { EdgeRuleCacheAction } from './EdgeRuleCacheAction.js';
 export type { EdgeRuleCircuitBreakerAction } from './EdgeRuleCircuitBreakerAction.js';
+export type { EdgeRuleEventResponse } from './EdgeRuleEventResponse.js';
+export type { EdgeRuleEventsResponse } from './EdgeRuleEventsResponse.js';
 export type { EdgeRuleGeoAction } from './EdgeRuleGeoAction.js';
 export type { EdgeRuleHeaderOp } from './EdgeRuleHeaderOp.js';
 export type { EdgeRuleHeadersAction } from './EdgeRuleHeadersAction.js';

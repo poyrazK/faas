@@ -430,6 +430,8 @@ export type { EdgeRuleBudgetAction } from './models/EdgeRuleBudgetAction.js';
 export type { EdgeRuleCacheAction } from './models/EdgeRuleCacheAction.js';
 export type { EdgeRuleCircuitBreakerAction } from './models/EdgeRuleCircuitBreakerAction.js';
 export type { EdgeRuleCORSAction } from './models/EdgeRuleCORSAction.js';
+export type { EdgeRuleEventResponse } from './models/EdgeRuleEventResponse.js';
+export type { EdgeRuleEventsResponse } from './models/EdgeRuleEventsResponse.js';
 export type { EdgeRuleGeoAction } from './models/EdgeRuleGeoAction.js';
 export type { EdgeRuleHeaderOp } from './models/EdgeRuleHeaderOp.js';
 export type { EdgeRuleHeadersAction } from './models/EdgeRuleHeadersAction.js';

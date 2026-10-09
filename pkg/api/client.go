@@ -3268,6 +3268,26 @@ func (c *Client) GetEdgeRuleStats(ctx context.Context, slug, window string) (Edg
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ListEdgeRuleEvents returns sampled edge-rule matches for an app, newest
+// first (ADR-834). Pass the response's NextCursor to continue.
+func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRuleEventsQuery) (EdgeRuleEventsResponse, error) {
+	v := url.Values{}
+	for k, val := range map[string]string{"rule": q.RuleID, "outcome": q.Outcome, "since": q.Since, "cursor": q.Cursor} {
+		if val != "" {
+			v.Set(k, val)
+		}
+	}
+	if q.Limit > 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	path := "/v1/apps/" + slug + "/edge-rules/events"
+	if len(v) > 0 {
+		path += "?" + v.Encode()
+	}
+	var out EdgeRuleEventsResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // ListEdgeRuleLists returns the account's reusable edge-rule lists, without
 // items (ADR-833).
 func (c *Client) ListEdgeRuleLists(ctx context.Context) (ListEdgeRuleListsResponse, error) {

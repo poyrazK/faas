@@ -49,7 +49,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`flags`](#flags) | Release application behavior to selected customers |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rule-lists`](#edge-rule-lists) | Reusable IP/country/host/string lists for edge-rule match conditions (edge-rule-lists list\|get\|create\|update\|rm) |
-| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|history\|rollback\|stats --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
+| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|history\|rollback\|stats\|events --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`routes`](#routes) | Analyze route changes, migrations, lifecycle and production policies |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
@@ -5539,7 +5539,7 @@ Delete a list no rule references
 
 ## edge-rules
 
-Per-app edge rules (edge-rules list|trace|create|get|update|history|rollback|stats --app &lt;slug&gt;; edge-rules rm &lt;id&gt;)
+Per-app edge rules (edge-rules list|trace|create|get|update|history|rollback|stats|events --app &lt;slug&gt;; edge-rules rm &lt;id&gt;)
 
 `gregale edge-rules [<subcommand>] --app <slug> [--kind <value>]`
 
@@ -5802,6 +5802,27 @@ Per-rule match counts (matched for enforced rules, logged for log-mode rules)
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--window <WINDOW>` | window | one of `1h` · `24h` · `7d` |
+
+### edge-rules events
+
+Sampled requests rules matched, newest first (up to 10 per rule per minute; kept 7 days)
+
+`gregale edge-rules events --app <slug> [--rule <ID>] [--outcome <OUTCOME>] [--since <DURATION>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--rule <ID>` | only this rule id |  |
+| `--outcome <OUTCOME>` | outcome filter | one of `matched` · `logged` |
+| `--since <DURATION>` | how far back, e.g. 1h, 24h, 7d (clamped to the plan window) |  |
+| `--limit <N>` | events per page (1..200) |  |
+| `--cursor <CURSOR>` | continue from a previous page&#39;s next cursor |  |
+
+Examples:
+
+```sh
+gregale edge-rules events --app my-api --outcome logged --since 7d
+```
 
 ### edge-rules rollback
 

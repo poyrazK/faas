@@ -9755,6 +9755,43 @@ type EdgeRuleStatsResponse struct {
 	Rules  []EdgeRuleHitStatsResponse `json:"rules"`
 }
 
+// EdgeRuleEventResponse (ADR-834) is one sampled rule match. RuleName and
+// RuleKind are empty once the rule has been deleted.
+type EdgeRuleEventResponse struct {
+	ID         string    `json:"id"`
+	RuleID     string    `json:"rule_id"`
+	RuleName   string    `json:"rule_name,omitempty"`
+	RuleKind   string    `json:"rule_kind,omitempty"`
+	Outcome    string    `json:"outcome"`
+	OccurredAt time.Time `json:"occurred_at"`
+	RequestID  string    `json:"request_id,omitempty"`
+	Method     string    `json:"method,omitempty"`
+	Host       string    `json:"host,omitempty"`
+	Path       string    `json:"path,omitempty"`
+	ClientIP   string    `json:"client_ip,omitempty"`
+	Country    string    `json:"country,omitempty"`
+	UserAgent  string    `json:"user_agent,omitempty"`
+}
+
+// EdgeRuleEventsResponse is GET /v1/apps/{slug}/edge-rules/events. Since is
+// the effective window start after the plan clamp; NextCursor continues the
+// listing when more events match.
+type EdgeRuleEventsResponse struct {
+	Since      time.Time               `json:"since"`
+	Events     []EdgeRuleEventResponse `json:"events"`
+	NextCursor string                  `json:"next_cursor,omitempty"`
+}
+
+// EdgeRuleEventsQuery filters GET /v1/apps/{slug}/edge-rules/events. Since
+// is a duration such as 1h, 24h or 7d (default 24h).
+type EdgeRuleEventsQuery struct {
+	RuleID  string
+	Outcome string
+	Since   string
+	Limit   int
+	Cursor  string
+}
+
 // EdgeRuleListResponse (ADR-833) is one account-level list. Items is
 // returned only when a single list is fetched; ReferencedBy names the rules
 // whose match conditions use the list.

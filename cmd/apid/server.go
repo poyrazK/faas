@@ -2558,6 +2558,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEdgeRuleSetVersions))))
 	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/versions/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleSetVersion))))
 	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/stats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEdgeRuleStats))))
+	mux.HandleFunc("GET /v1/apps/{slug}/edge-rules/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEdgeRuleEvents))))
 	// ADR-833 reusable edge-rule lists (account scope).
 	mux.HandleFunc("GET /v1/edge-rule-lists", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEdgeRuleLists))))
 	mux.HandleFunc("POST /v1/edge-rule-lists", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createEdgeRuleList)))))

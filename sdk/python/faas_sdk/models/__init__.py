@@ -846,6 +846,9 @@ from .edge_rule_cache_action_methods_item import EdgeRuleCacheActionMethodsItem
 from .edge_rule_cache_action_vary_on_item import EdgeRuleCacheActionVaryOnItem
 from .edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
 from .edge_rule_cors_action import EdgeRuleCORSAction
+from .edge_rule_event_response import EdgeRuleEventResponse
+from .edge_rule_event_response_outcome import EdgeRuleEventResponseOutcome
+from .edge_rule_events_response import EdgeRuleEventsResponse
 from .edge_rule_geo_action import EdgeRuleGeoAction
 from .edge_rule_header_op import EdgeRuleHeaderOp
 from .edge_rule_header_op_action import EdgeRuleHeaderOpAction
@@ -1413,6 +1416,7 @@ from .list_delayed_tasks_response import ListDelayedTasksResponse
 from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
 from .list_dev_bridges_response import ListDevBridgesResponse
+from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
 from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_event_recoveries_mode import ListEventRecoveriesMode
@@ -3865,6 +3869,9 @@ __all__ = (
     "EdgeRuleCacheActionVaryOnItem",
     "EdgeRuleCircuitBreakerAction",
     "EdgeRuleCORSAction",
+    "EdgeRuleEventResponse",
+    "EdgeRuleEventResponseOutcome",
+    "EdgeRuleEventsResponse",
     "EdgeRuleGeoAction",
     "EdgeRuleHeaderOp",
     "EdgeRuleHeaderOpAction",
@@ -4428,6 +4435,7 @@ __all__ = (
     "ListDeploymentAuditResponse",
     "ListDeployTokensResponse",
     "ListDevBridgesResponse",
+    "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
     "ListEventDeliveriesState",
     "ListEventRecoveriesMode",

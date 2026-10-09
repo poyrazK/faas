@@ -5,6 +5,7 @@
 import type { CreateEdgeRuleListRequest } from '../models/CreateEdgeRuleListRequest.js';
 import type { CreateEdgeRuleRequest } from '../models/CreateEdgeRuleRequest.js';
 import type { DeploymentRoutePolicySnapshotResponse } from '../models/DeploymentRoutePolicySnapshotResponse.js';
+import type { EdgeRuleEventsResponse } from '../models/EdgeRuleEventsResponse.js';
 import type { EdgeRuleListResponse } from '../models/EdgeRuleListResponse.js';
 import type { EdgeRuleResponse } from '../models/EdgeRuleResponse.js';
 import type { EdgeRuleSetVersionResponse } from '../models/EdgeRuleSetVersionResponse.js';
@@ -484,6 +485,67 @@ export class EdgeRulesService {
       path: {
         'slug': slug,
         'version': version,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Sampled requests each edge rule matched, newest first.
+   * ADR-834. Gateways keep the first 10 matches of each rule per minute
+   * as full events (request ID, method, host, path without query string,
+   * trusted client IP, country, user agent); hit counts (stats) cover
+   * every match. Events are kept 7 days; how far back a plan can read is
+   * a plan limit (Free 24 h, Hobby 72 h, Pro and Scale 7 days), and a
+   * longer since is clamped (the response reports the effective start).
+   *
+   * @returns EdgeRuleEventsResponse One page of events.
+   * @throws ApiError
+   */
+  public static listEdgeRuleEvents({
+    slug,
+    rule,
+    outcome,
+    since = '24h',
+    limit = 50,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    rule?: string,
+    outcome?: 'matched' | 'logged',
+    /**
+     * Duration such as 1h, 24h or 7d.
+     */
+    since?: string,
+    limit?: number,
+    /**
+     * next_cursor from the previous page.
+     */
+    cursor?: string,
+  }): CancelablePromise<EdgeRuleEventsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/edge-rules/events',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'rule': rule,
+        'outcome': outcome,
+        'since': since,
+        'limit': limit,
+        'cursor': cursor,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
