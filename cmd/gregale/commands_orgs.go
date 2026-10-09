@@ -537,6 +537,12 @@ func cmdOrgsInvitationsLs(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeNDJSON(resp.Invitations))
 	}
+	// hunt #8: an org with no pending invitations printed nothing at all;
+	// list-all already says so.
+	if len(resp.Invitations) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "(no invitations)")
+		return 0
+	}
 	for _, inv := range resp.Invitations {
 		fmt.Printf("%-36s %-30s %-12s %-10s %s\n", inv.ID, inv.Email, inv.Role, inv.Status, inv.ExpiresAt)
 	}
