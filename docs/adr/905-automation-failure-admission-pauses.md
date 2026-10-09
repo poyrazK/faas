@@ -1,8 +1,8 @@
-# ADR-830: Automation failure admission pauses
+# ADR-905: Automation failure admission pauses
 
 - **Status:** accepted
 - **Date:** 2026-10-10
-- **Extends:** ADR-725 workflow alert signals, ADR-829 failure notifications,
+- **Extends:** ADR-725 workflow alert signals, ADR-904 failure notifications,
   and dashboard automation publication and enabled intent
 - **Decision:** Add an opt-in failure policy per published YAML or dashboard
   automation. Pause automatic admission when terminal failures meet the

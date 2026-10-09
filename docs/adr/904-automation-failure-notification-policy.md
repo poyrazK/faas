@@ -1,4 +1,4 @@
-# ADR-829: Automation failure notification policy
+# ADR-904: Automation failure notification policy
 
 - **Status:** accepted
 - **Date:** 2026-10-09

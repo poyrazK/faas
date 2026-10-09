@@ -14,7 +14,7 @@ func TestAutomationPublishChecksMigration(t *testing.T) {
 	if _, err := pool.Exec(ctx, `CREATE TABLE apps(id uuid PRIMARY KEY); CREATE TABLE accounts(id uuid PRIMARY KEY);`); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261009100000000_automation_publish_checks.sql")
+	raw, err := migrations.FS.ReadFile("20261009221742112_automation_publish_checks.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

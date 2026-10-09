@@ -1413,7 +1413,7 @@ migration `20261009212606155_automation_failure_pauses.sql` and update all
 scheduler, admission and API replicas before enabling policies. Rollback
 requires explicitly resuming every failure pause and removes policies, guard
 state and guard history. Committed webhook events remain deliverable.
-See [ADR-830](adr/830-automation-failure-admission-pauses.md).
+See [ADR-905](adr/905-automation-failure-admission-pauses.md).
 
 For terminal failures, enable the opt-in `automation_failures` preset for an
 app on Hobby or higher. It sends a signed webhook when at least one run has

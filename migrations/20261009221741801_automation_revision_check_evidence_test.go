@@ -14,7 +14,7 @@ func TestAutomationRevisionCheckEvidenceMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261009090000000_automation_revision_check_evidence.sql")
+	raw, err := migrations.FS.ReadFile("20261009221741801_automation_revision_check_evidence.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

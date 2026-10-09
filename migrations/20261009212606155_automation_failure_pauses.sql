@@ -1,4 +1,4 @@
--- ADR-830: opt-in runtime failure pauses.
+-- ADR-905: opt-in runtime failure pauses.
 -- +goose Up
 CREATE TABLE IF NOT EXISTS workflow_automation_failure_policies (
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
