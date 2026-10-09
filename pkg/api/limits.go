@@ -9437,3 +9437,9 @@ const (
 	EventRecoveryNotificationRetryReceiptsMax  = 100
 	EventRecoveryNotificationRetryBodyMaxBytes = 64 << 10
 )
+
+// CLI polling for the immutable requested notification retry generations (ADR-841).
+const (
+	EventRecoveryNotificationRetryWaitTimeout      = 5 * time.Minute
+	EventRecoveryNotificationRetryWaitPollInterval = 5 * time.Second
+)

@@ -2834,3 +2834,24 @@ Go, Node, and Python expose list and detail methods. See
 Request-specific notification retry history also reports `retry_outcome` for the originally queued `replay_generation`: `pending`, `succeeded`, `failed`, or `unknown`. Skipped decisions report `not_applicable`. Retained terminal attempts establish success/failure and `completed_at`; a later delivery generation cannot establish the earlier generation's outcome. Removed evidence reports unknown.
 
 `retained_attempt_count` counts completed attempts from that generation only. `attempt_count_complete` indicates whether the retained sequence is complete for the known outcome; unknown outcomes always report false. Attempts still in flight are excluded. Read these fields using `gregale events recovery-notification-retry-history JOB_ID --request-id REQUEST_ID --json` or the existing request detail API/SDK method.
+
+### Wait for a saved notification retry
+
+```bash
+gregale events recovery-notification-retry-history JOB_ID \
+  --request-id REQUEST_ID --wait --timeout 5m --json
+```
+
+Waiting uses the original queued generations, polls immediately and then every five seconds after a pending response, and defaults to a five-minute deadline. `--wait` requires `--request-id`; `--timeout` requires `--wait` and a positive duration. Each API read has at most five seconds, bounded by the remaining wait deadline. Skipped receivers do not count as delivered.
+
+The command stops on success for all queued targets, the first known failed target, or unknown evidence. A failed/inconclusive receipt can still contain other pending receivers. All-skipped requests are inconclusive. Progress counts go to stderr. JSON stdout contains one receipt with `job_id`, `request_id`, `status`, optional `reason`, `counts`, and optional `last_observation`. Without `--wait`, the existing history response remains unchanged.
+
+| Exit code | Result |
+| --- | --- |
+| 0 | Every queued retry succeeded; at least one was queued |
+| 1 | A receiver failed, a read/protocol error occurred, or arguments were invalid |
+| 2 | Evidence is unknown or no receivers were queued |
+| 3 | The wait deadline expired |
+| 130 | Interrupted |
+
+Timeouts, interrupts, and later read errors preserve the last valid observation and request identity; an initial read failure has no observation. A pruned job/request stops with a read error. Waiting does not cancel or create deliveries. Resume inspection with the same job and request IDs.

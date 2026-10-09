@@ -105,27 +105,42 @@ func cmdEventsRecoveryNotificationRetry(args []string) int {
 }
 
 func cmdEventsRecoveryNotificationRetryHistory(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "wait")
 	fs := newFlagSet("events recovery-notification-retry-history", flag.ContinueOnError)
 	requestID := fs.String("request-id", "", "show one saved retry request in detail")
+	wait := fs.Bool("wait", false, "wait for the requested retry generations to finish")
+	timeout := fs.Duration("timeout", api.EventRecoveryNotificationRetryWaitTimeout, "maximum wait duration (default 5m)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events recovery-notification-retry-history <job-id> [--request-id UUID]", "events")
+	timeoutSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "timeout" {
+			timeoutSet = true
+		}
+	})
+	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || *timeout <= 0 || (*wait && *requestID == "") || (timeoutSet && !*wait) {
+		PrintUsage(os.Stderr, "usage: gregale events recovery-notification-retry-history <job-id> [--request-id UUID [--wait [--timeout 5m]]]", "events")
 		return 1
 	}
-	if _, err := uuid.Parse(positional[0]); err != nil {
-		return printErr("Invalid recovery job ID", err)
+	job, err := uuid.Parse(positional[0])
+	if err != nil || job == uuid.Nil {
+		return printErr("Invalid recovery job ID", fmt.Errorf("expected a nonzero UUID"))
 	}
+	positional[0] = job.String()
 	if *requestID != "" {
-		if _, err := uuid.Parse(*requestID); err != nil {
-			return printErr("Invalid request ID", err)
+		request, err := uuid.Parse(*requestID)
+		if err != nil || request == uuid.Nil {
+			return printErr("Invalid request ID", fmt.Errorf("expected a nonzero UUID"))
 		}
+		*requestID = request.String()
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if *wait {
+		return cmdWaitRecoveryNotificationRetry(client, positional[0], *requestID, *timeout)
 	}
 	if jsonOutput {
 		if *requestID != "" {
@@ -146,23 +161,7 @@ func cmdEventsRecoveryNotificationRetryHistory(args []string) int {
 		if err != nil {
 			return printErr("Notification retry history failed", err)
 		}
-		_, _ = fmt.Fprintf(osStdout, "Recovery %s | request: %s | decided: %s | current status observed: %s\n", oneLine(out.JobID), oneLine(out.RequestID), out.DecidedAt.Format(time.RFC3339), out.CurrentStatusObservedAt.Format(time.RFC3339))
-		_, _ = fmt.Fprintln(osStdout, "KIND\tWEBHOOK\tDELIVERY\tORIGINAL\tREASON\tCURRENT\tCURRENT GENERATION\tREQUESTED GENERATION\tRETRY OUTCOME\tRETAINED ATTEMPTS\tCOUNT COMPLETE\tCOMPLETED")
-		for _, d := range out.Decisions {
-			generation := "unavailable"
-			if d.CurrentReplayGeneration != nil {
-				generation = fmt.Sprint(*d.CurrentReplayGeneration)
-			}
-			requestedGeneration := "-"
-			if d.ReplayGeneration != nil {
-				requestedGeneration = fmt.Sprint(*d.ReplayGeneration)
-			}
-			completed := "-"
-			if d.CompletedAt != nil {
-				completed = d.CompletedAt.Format(time.RFC3339)
-			}
-			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%t\t%s\n", oneLine(d.Target.Kind), oneLine(d.Target.WebhookID), oneLine(d.Target.DeliveryID), oneLine(d.State), oneLine(d.Reason), oneLine(d.CurrentDeliveryStatus), generation, requestedGeneration, oneLine(d.RetryOutcome), d.RetainedAttemptCount, d.AttemptCountComplete, completed)
-		}
+		outputRecoveryNotificationRetryDecision(out)
 		return 0
 	}
 	out, err := client.ListEventRecoveryNotificationRetryHistory(context.Background(), positional[0])
@@ -175,4 +174,24 @@ func cmdEventsRecoveryNotificationRetryHistory(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%d\t%d\t%d\n", oneLine(d.RequestID), d.DecidedAt.Format(time.RFC3339), d.TargetCount, d.QueuedCount, d.SkippedCount)
 	}
 	return 0
+}
+
+func outputRecoveryNotificationRetryDecision(out api.EventRecoveryNotificationRetryDecisionDetail) {
+	_, _ = fmt.Fprintf(osStdout, "Recovery %s | request: %s | decided: %s | current status observed: %s\n", oneLine(out.JobID), oneLine(out.RequestID), out.DecidedAt.Format(time.RFC3339), out.CurrentStatusObservedAt.Format(time.RFC3339))
+	_, _ = fmt.Fprintln(osStdout, "KIND\tWEBHOOK\tDELIVERY\tORIGINAL\tREASON\tCURRENT\tCURRENT GENERATION\tREQUESTED GENERATION\tRETRY OUTCOME\tRETAINED ATTEMPTS\tCOUNT COMPLETE\tCOMPLETED")
+	for _, d := range out.Decisions {
+		generation := "unavailable"
+		if d.CurrentReplayGeneration != nil {
+			generation = fmt.Sprint(*d.CurrentReplayGeneration)
+		}
+		requestedGeneration := "-"
+		if d.ReplayGeneration != nil {
+			requestedGeneration = fmt.Sprint(*d.ReplayGeneration)
+		}
+		completed := "-"
+		if d.CompletedAt != nil {
+			completed = d.CompletedAt.Format(time.RFC3339)
+		}
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%t\t%s\n", oneLine(d.Target.Kind), oneLine(d.Target.WebhookID), oneLine(d.Target.DeliveryID), oneLine(d.State), oneLine(d.Reason), oneLine(d.CurrentDeliveryStatus), generation, requestedGeneration, oneLine(d.RetryOutcome), d.RetainedAttemptCount, d.AttemptCountComplete, completed)
+	}
 }
