@@ -47,37 +47,15 @@ func cmdIssuesResolveInteractive(args []string) int {
 		return printErr("Could not read app", err)
 	}
 	prompt := &startPrompt{reader: bufio.NewReader(osStdin), writer: osStderr}
-	var issues []api.Issue
-	cursors := map[int]string{0: ""}
-	seen := map[string]bool{}
-	choice, err := chooseJobLogPage(ctx, prompt, "Choose an open issue.", func(ctx context.Context, offset int) ([]string, int, error) {
-		page, err := client.ListIssues(ctx, slug, "open", "", cursors[offset])
-		issues = page.Items
-		labels := []string{}
-		for _, issue := range issues {
-			if issue.AppID != app.ID || !alertIDPattern.MatchString(issue.ID) || issue.State != "open" {
-				return nil, -1, errors.New("issue does not match selected app and open state")
-			}
-			labels = append(labels, oneLine(issue.Title)+" · "+issue.LastSeenAt.Format(time.RFC3339))
-		}
-		next := -1
-		if page.NextCursor != "" {
-			if seen[page.NextCursor] || page.NextCursor == cursors[offset] {
-				return nil, -1, errors.New("repeated issue cursor")
-			}
-			seen[page.NextCursor] = true
-			next = offset + 1
-			cursors[next] = page.NextCursor
-		}
-		return labels, next, err
-	})
+	issue, selected, err := chooseOpenIssue(ctx, client, prompt, slug, app.ID)
 	if err != nil {
 		return printErr("Could not select issue", err)
 	}
-	if choice < 0 {
+	if !selected {
 		return 0
 	}
-	issue := issues[choice]
+	var choice int
+	seen := map[string]bool{}
 	var releases []api.DeploymentResponse
 	releaseCursors := map[int]string{0: ""}
 	seen = map[string]bool{}
@@ -160,4 +138,39 @@ func cmdIssuesResolveInteractive(args []string) int {
 	}
 	PrintOK(osStdout, "Issue %s resolved in %s.", resolved.ID, deploymentLabel(currentRelease))
 	return 0
+}
+
+func chooseOpenIssue(ctx context.Context, client *api.Client, prompt *startPrompt, slug, appID string) (api.Issue, bool, error) {
+	var issues []api.Issue
+	cursors := map[int]string{0: ""}
+	seen := map[string]bool{}
+	choice, err := chooseJobLogPage(ctx, prompt, "Choose an open issue.", func(ctx context.Context, offset int) ([]string, int, error) {
+		page, err := client.ListIssues(ctx, slug, "open", "", cursors[offset])
+		issues = page.Items
+		labels := []string{}
+		for _, issue := range issues {
+			if issue.AppID != appID || !alertIDPattern.MatchString(issue.ID) || issue.State != "open" {
+				return nil, -1, errors.New("issue does not match selected app and open state")
+			}
+			labels = append(labels, oneLine(issue.Title)+" · "+issue.LastSeenAt.Format(time.RFC3339))
+		}
+		next := -1
+		if page.NextCursor != "" {
+			if seen[page.NextCursor] || page.NextCursor == cursors[offset] {
+				return nil, -1, errors.New("repeated issue cursor")
+			}
+			seen[page.NextCursor] = true
+			next = offset + 1
+			cursors[next] = page.NextCursor
+		}
+		return labels, next, err
+	})
+	if err != nil {
+		return api.Issue{}, false, err
+	}
+	if choice < 0 {
+		return api.Issue{}, false, nil
+	}
+	issue := issues[choice]
+	return issue, true, nil
 }

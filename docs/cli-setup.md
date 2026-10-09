@@ -894,6 +894,25 @@ rules and the returned receipt is checked against the selected app, issue,
 and fixing deployment. For scripts, use
 `issues resolve ISSUE_ID --app APP --deployment DEPLOYMENT_ID`.
 
+## Temporarily ignore an issue interactively
+
+```sh
+gregale issues ignore --app my-api --interactive
+# Use the linked app, or choose one:
+gregale issues ignore --interactive
+```
+
+Choose an open issue, then select 1 hour, 24 hours, 7 days, or a custom Go-style
+duration (for example `48h`, from 1 second through 90 days). Review the exact
+expiry in UTC and confirm before saving. The expiry is fixed at review time,
+so time spent reviewing reduces the remaining ignore period.
+
+The CLI rereads the issue after confirmation and stops if it changed or if the
+expiry already passed. This client-side check is not an atomic server lock.
+The returned ignored state and expiry are checked against the requested values.
+A profile-aware inspection command is printed after saving. For scripts, use
+`issues ignore ISSUE_ID --app APP --until RFC3339`.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

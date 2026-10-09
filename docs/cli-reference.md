@@ -6969,12 +6969,19 @@ Reopen an issue
 
 Ignore until a timestamp
 
-`gregale issues ignore --app <SLUG> --until <RFC3339> <issue-id>`
+`gregale issues ignore --app <SLUG> [--interactive] [--until <RFC3339>] [<issue-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
-| `--until <RFC3339>` | ignore until (RFC3339) | required |
+| `--interactive` | choose an open issue and duration, then confirm expiry |  |
+| `--until <RFC3339>` | ignore until RFC3339 (required unless interactive) |  |
+
+Examples:
+
+```sh
+gregale issues ignore --app my-api --interactive
+```
 
 ### issues impact-alert
 
