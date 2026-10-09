@@ -85,7 +85,14 @@
     path.
   - **Capturing on OOM or liveness failure.** By then the process is dead
     or the VM is being destroyed; there is nothing useful to capture.
-- **Verification:** `TestCrashSnapshotMetal` passed on 2026-10-09 on the
+- **Verification:** On 2026-10-09 (later run), with encryption at rest,
+  `TestCrashSnapshotMetal` passed again on the internal test node: the ready
+  capture was encrypted and its plaintext deleted from disk (`.age` objects
+  only, memory compressed far below `mem_bytes`), a fork of it waited until
+  imaged staged the plaintext, restored and served a token-bearing request,
+  and the plaintext was purged again after the fork was cancelled. The
+  PgStore state tests for the encryption lifecycle passed on the node's
+  Postgres. Earlier, before encryption: `TestCrashSnapshotMetal` passed on the
   internal test node (nested KVM, Firecracker 1.7.0): a manual capture of
   the running instance completed in place (the instance kept running and no
   `snapshots` row carried the capture), and the capture opened as a fork
