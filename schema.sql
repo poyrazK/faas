@@ -1048,6 +1048,36 @@ $$;
 
 
 --
+-- Name: capture_runtime_upgrade_public_edge_withdrawals(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_runtime_upgrade_public_edge_withdrawals() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE added bigint;
+BEGIN
+ INSERT INTO runtime_upgrade_public_edge_withdrawals(id,slot_id,public_session_id,config_sha256,roster_revision)
+ SELECT gen_random_uuid(),prior.slot_ids[i],prior.public_sessions[i],prior.config_sha256s[i],prior.revision
+ FROM runtime_upgrade_public_edge_rosters prior, generate_subscripts(prior.public_sessions,1) i
+ WHERE prior.revision=OLD.revision AND NOT EXISTS
+  (SELECT 1 FROM runtime_upgrade_public_edge_rosters next WHERE next.revision=NEW.revision AND prior.public_sessions[i]=ANY(next.public_sessions))
+ ON CONFLICT (public_session_id) DO NOTHING;
+ GET DIAGNOSTICS added=ROW_COUNT;
+ IF added > 0 AND (SELECT count(*) FROM (SELECT 1 FROM runtime_upgrade_public_edge_withdrawals w
+  WHERE NOT EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts r WHERE r.withdrawal_id=w.id)
+   AND NOT EXISTS (SELECT 1 FROM runtime_upgrade_external_fence_receipts r WHERE r.withdrawal_id=w.id)
+  LIMIT 65) pending) > 64 THEN
+  RAISE EXCEPTION 'public edge withdrawal capacity exceeded' USING ERRCODE='23514';
+ END IF;
+ IF NEW.revision IS DISTINCT FROM OLD.revision THEN
+  DELETE FROM runtime_upgrade_public_edge_guards;
+  DELETE FROM runtime_upgrade_public_edge_activity;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: capture_service_binding_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1077,35 +1107,6 @@ BEGIN
    service_revision=app_binding_promotion_revisions.service_revision+1;
  END LOOP;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
-END $$;
-
---
--- Name: capture_runtime_upgrade_public_edge_withdrawals(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.capture_runtime_upgrade_public_edge_withdrawals() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-DECLARE added bigint;
-BEGIN
- INSERT INTO runtime_upgrade_public_edge_withdrawals(id,slot_id,public_session_id,config_sha256,roster_revision)
- SELECT gen_random_uuid(),prior.slot_ids[i],prior.public_sessions[i],prior.config_sha256s[i],prior.revision
- FROM runtime_upgrade_public_edge_rosters prior, generate_subscripts(prior.public_sessions,1) i
- WHERE prior.revision=OLD.revision AND NOT EXISTS
-  (SELECT 1 FROM runtime_upgrade_public_edge_rosters next WHERE next.revision=NEW.revision AND prior.public_sessions[i]=ANY(next.public_sessions))
- ON CONFLICT (public_session_id) DO NOTHING;
- GET DIAGNOSTICS added=ROW_COUNT;
- IF added > 0 AND (SELECT count(*) FROM (SELECT 1 FROM runtime_upgrade_public_edge_withdrawals w
-  WHERE NOT EXISTS (SELECT 1 FROM runtime_upgrade_public_edge_withdrawal_receipts r WHERE r.withdrawal_id=w.id)
-   AND NOT EXISTS (SELECT 1 FROM runtime_upgrade_external_fence_receipts r WHERE r.withdrawal_id=w.id)
-  LIMIT 65) pending) > 64 THEN
-  RAISE EXCEPTION 'public edge withdrawal capacity exceeded' USING ERRCODE='23514';
- END IF;
- IF NEW.revision IS DISTINCT FROM OLD.revision THEN
-  DELETE FROM runtime_upgrade_public_edge_guards;
-  DELETE FROM runtime_upgrade_public_edge_activity;
- END IF;
- RETURN NEW;
 END $$;
 
 
@@ -4250,6 +4251,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
 
 --
 -- Name: forbid_runtime_upgrade_native_public_startup_truncate(); Type: FUNCTION; Schema: public; Owner: -
@@ -12210,7 +12212,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'routes.monitor.escalated'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'app.health.changed'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'routes.monitor.escalated'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -37839,25 +37841,6 @@ CREATE TRIGGER runtime_snapshots_profile_identity BEFORE UPDATE ON public.runtim
 
 
 --
--- Name: apps service_binding_revision; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('id,account_id,slug,status,manifest,project_id,preview_of_slug,preview_pr_number,preview_pr_state,preview_expires_at,app_protocol,websocket_enabled');
-
-
---
--- Name: github_deploy_policies service_binding_revision; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.github_deploy_policies FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('project_id,account_id,preview_service_policy');
-
-
---
--- Name: scenario_test_members service_binding_revision; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.scenario_test_members FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('account_id,run_id,workload_name,app_id');
-
 -- Name: deployment_runtime_upgrade_acceptances runtime_upgrade_acceptance_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -38023,6 +38006,27 @@ CREATE TRIGGER runtime_upgrade_target_immutable BEFORE DELETE OR UPDATE ON publi
 --
 
 CREATE TRIGGER runtime_upgrade_verification_guard BEFORE INSERT OR UPDATE ON public.runtime_upgrade_verifications FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_verification();
+
+
+--
+-- Name: apps service_binding_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('id,account_id,slug,status,manifest,project_id,preview_of_slug,preview_pr_number,preview_pr_state,preview_expires_at,app_protocol,websocket_enabled');
+
+
+--
+-- Name: github_deploy_policies service_binding_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.github_deploy_policies FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('project_id,account_id,preview_service_policy');
+
+
+--
+-- Name: scenario_test_members service_binding_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_binding_revision AFTER INSERT OR DELETE OR UPDATE ON public.scenario_test_members FOR EACH ROW EXECUTE FUNCTION public.capture_service_binding_revision('account_id,run_id,workload_name,app_id');
 
 
 --
@@ -45482,3 +45486,5 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
+
+
