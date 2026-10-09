@@ -213,6 +213,30 @@ outcome. The guide requires an interactive terminal. Scripts can continue to
 use `gregale secrets unset --app APP KEY --scope SCOPE` with `--restart`,
 `--wait-for-ack`, and `--timeout` as needed.
 
+## Preview an environment upload
+
+```sh
+gregale env push --app my-api --dry-run
+gregale env push --app my-api --scope staging -f .env.staging --dry-run --restart
+```
+
+The preview uses the same input parsing and secret scan mode as `env push`.
+It shows the resolved app and scope, keys to add or update, scan findings,
+projected app secret usage across all scopes, and how changes would apply.
+Values and scan snippets are hidden in both human and `--json` output.
+Existing keys are marked as updates; sealed values cannot be compared to detect
+unchanged values. Repeated keys are shown in upload order.
+
+The default scan skips detected pairs; strict mode blocks the upload. Invalid
+keys, values above the plan limit, exceeding the secret quota, or an input
+entirely skipped by the scan produce a nonzero exit status. The JSON preview
+includes `can_push`, `changes`, `scan_findings`, and `blockers`.
+
+`--dry-run` reads account and secret metadata but uploads nothing and requests
+no restart, even with `--restart`. Remove `--dry-run` to upload. The preview
+reflects current metadata; the server validates rules again during the upload.
+The `--from-stdin` input option is also supported.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

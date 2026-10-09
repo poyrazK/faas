@@ -6355,10 +6355,11 @@ gregale env pull --app my-api --scope staging
 
 Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)
 
-`gregale env push [--app <slug>] [--scope <SCOPE>] [-f <PATH>] [--from-stdin] [--restart] [--secret-scan <MODE>]`
+`gregale env push [--dry-run] [--app <slug>] [--scope <SCOPE>] [-f <PATH>] [--from-stdin] [--restart] [--secret-scan <MODE>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--dry-run` | preview key changes, scan findings, and quota without uploading or restarting |  |
 | `--app <slug>` | app slug (defaults to linked context) |  |
 | `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
 | `-f <PATH>` | input file (default .env) |  |
@@ -6369,6 +6370,7 @@ Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)
 Examples:
 
 ```sh
+gregale env push --app my-api --dry-run
 printf 'LOG_LEVEL=info\n' | gregale env push --app my-api --from-stdin
 gregale env push --app my-api --restart
 ```

@@ -2713,7 +2713,8 @@ var cliCommands = []cliCommand{
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "o", ShortName: "o", Short: "output file (default .env)", Value: "PATH"},
 			}},
-			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Examples: []string{"printf 'LOG_LEVEL=info\\n' | gregale env push --app my-api --from-stdin", "gregale env push --app my-api --restart"}, Flags: []cliFlag{
+			{Name: "push", Short: "Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)", Examples: []string{"gregale env push --app my-api --dry-run", "printf 'LOG_LEVEL=info\\n' | gregale env push --app my-api --from-stdin", "gregale env push --app my-api --restart"}, Flags: []cliFlag{
+				{Name: "dry-run", Short: "preview key changes, scan findings, and quota without uploading or restarting", Bool: true},
 				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
 				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "f", ShortName: "f", Short: "input file (default .env)", Value: "PATH"},

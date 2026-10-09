@@ -373,6 +373,7 @@ func envPushFailure(receipt envPushReceipt, message string, err error) int {
 
 func envPush(args []string) int {
 	fs := newFlagSet("env push", flag.ContinueOnError)
+	dryRun := fs.Bool("dry-run", false, "preview key changes, scan findings, and quota without uploading")
 	app := fs.String("app", "", "app slug")
 	scope := fs.String("scope", "", "env scope (defaults to linked project environment)")
 	in := fs.String("f", ".env", "input file (default .env)")
@@ -403,7 +404,7 @@ func envPush(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [--scope <name>] [-f .env | --from-stdin] [--restart] (or run `gregale link <project-slug>`)", "env")
+		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [--scope <name>] [-f .env | --from-stdin] [--restart] [--dry-run] (or run `gregale link <project-slug>`)", "env")
 		return 1
 	}
 	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
@@ -477,6 +478,17 @@ func envPush(args []string) int {
 	if len(pairs) == 0 {
 		PrintFail(os.Stderr, "no KEY=VALUE pairs in input")
 		return 1
+	}
+	if *dryRun {
+		previewPairs := make([]secretsPair, len(pairs))
+		for i, p := range pairs {
+			previewPairs[i] = secretsPair{Key: p.k, Value: p.v}
+		}
+		origin := *in
+		if *fromStdin {
+			origin = "<stdin>"
+		}
+		return previewEnvPush(*app, *scope, previewPairs, origin, secretScanMode, *restart)
 	}
 	// Secret-scan pass: scan the parsed pairs (in-memory; no file I/O
 	// because the values are already in hand) for known credential
