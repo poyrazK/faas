@@ -43,7 +43,8 @@ class CreateAppWebhookRequest:
     retry_policy: CreateAppWebhookRequestRetryPolicy | Unset = "default"
     delivery_format: CreateAppWebhookRequestDeliveryFormat | Unset = "json"
     """Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured
-    mode."""
+    mode; datadog (ADR-742) posts Datadog Events API bodies to a Datadog Events endpoint and sends webhook_secret as
+    DD-API-KEY, for deployment and rollout events only."""
     enabled: bool | Unset = True
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

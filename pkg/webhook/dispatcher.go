@@ -69,6 +69,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -632,6 +633,19 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 			"attempt":     row.Attempt,
 			"data":        json.RawMessage(row.Payload),
 		},
+	}
+
+	// ADR-742: a datadog webhook sends its secret as a Datadog API key, so
+	// it must only ever reach a Datadog Events API endpoint. apid enforces
+	// this on write; re-check here so a stored row cannot redirect the key.
+	if hook.DeliveryFormat == state.AppWebhookDeliveryFormat(webhookout.DeliveryFormatDatadog) {
+		if !api.IsDatadogEventsURL(hook.TargetURL) {
+			d.markDead(ctx, row, "webhook: datadog delivery target is not a Datadog Events API endpoint")
+			return
+		}
+		if app, appErr := d.store.AppByID(ctx, row.AppID); appErr == nil {
+			evt.Service = app.Slug
+		}
 	}
 
 	// Per-delivery dispatcher. We construct one per call so the

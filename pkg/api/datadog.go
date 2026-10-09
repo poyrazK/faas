@@ -44,6 +44,25 @@ func DatadogEventsURL(site string) (string, bool) {
 	return "https://api." + domain + "/api/v1/events", true
 }
 
+// IsDatadogEventsURL reports whether target is exactly one of the supported
+// sites' Events API endpoints.
+func IsDatadogEventsURL(target string) bool {
+	for site := range DatadogSites {
+		if u, _ := DatadogEventsURL(site); u == target {
+			return true
+		}
+	}
+	return false
+}
+
+// AppWebhookDeliveryFormatDatadog sends app webhooks to Datadog's Events API
+// with the webhook secret as DD-API-KEY (ADR-742).
+const AppWebhookDeliveryFormatDatadog = "datadog"
+
+// DatadogWebhookEvents are the app webhook events a datadog webhook may
+// subscribe to; each maps to a Datadog event with a fitting alert type.
+var DatadogWebhookEvents = []string{"deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted"}
+
 // IsDatadogLogsIntakeURL reports whether target is exactly one of the
 // supported sites' logs intakes.
 func IsDatadogLogsIntakeURL(target string) bool {

@@ -1,9 +1,10 @@
 from typing import Literal
 
-AppWebhookResponseDeliveryFormat = Literal["cloudevents", "json"]
+AppWebhookResponseDeliveryFormat = Literal["cloudevents", "datadog", "json"]
 
 APP_WEBHOOK_RESPONSE_DELIVERY_FORMAT_VALUES: set[AppWebhookResponseDeliveryFormat] = {
     "cloudevents",
+    "datadog",
     "json",
 }
 

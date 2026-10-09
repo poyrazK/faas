@@ -17,9 +17,9 @@ export type UpdateAppWebhookRequest = {
   event_filter?: Array<'operation.effect' | 'app.parked' | 'app.woken' | 'deployment.live' | 'deployment.failed' | 'rollout.completed' | 'rollout.aborted' | 'job.finished' | 'operation.finished' | 'usage_statement.finalized' | 'issue.created' | 'issue.assigned' | 'issue.resolved' | 'issue.reopened' | 'issue.ignored' | 'issue.regressed' | 'issue.impact_threshold_reached' | 'debug.regression.detected' | 'debug.regression.resolved' | 'routes.requirements.violated' | 'routes.requirements.recovered' | 'routes.requirements.changed' | 'routes.health.blocked' | 'routes.health.resumed' | 'routes.health.aborted' | 'routes.monitor.violated' | 'routes.monitor.escalated' | 'routes.monitor.recovered' | 'workflow.finished' | 'app.health.changed' | 'event_recovery.completed' | 'event_recovery.cancelled' | 'event_recovery.expired' | 'profile.route_regressed' | 'profile.route_recovered'>;
   retry_policy?: 'default' | 'aggressive' | 'none';
   /**
-   * Wire envelope for future deliveries; existing delivery rows are unchanged.
+   * Wire envelope for future deliveries; existing delivery rows are unchanged. Switching to datadog requires a new webhook_secret holding the Datadog API key.
    */
-  delivery_format?: 'json' | 'cloudevents';
+  delivery_format?: 'json' | 'cloudevents' | 'datadog';
   enabled?: boolean;
 };
 

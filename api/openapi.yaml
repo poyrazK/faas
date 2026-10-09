@@ -61049,7 +61049,7 @@ components:
             enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
-        delivery_format: { type: string, enum: [json, cloudevents] }
+        delivery_format: { type: string, enum: [json, cloudevents, datadog] }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -61540,9 +61540,9 @@ components:
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
           type: string
-          enum: [json, cloudevents]
+          enum: [json, cloudevents, datadog]
           default: json
-          description: "Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured mode."
+          description: "Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured mode; datadog (ADR-742) posts Datadog Events API bodies to a Datadog Events endpoint and sends webhook_secret as DD-API-KEY, for deployment and rollout events only."
         enabled: { type: boolean, default: true }
       example:
         target_url: "https://example.com/hook"
@@ -61622,8 +61622,8 @@ components:
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
           type: string
-          enum: [json, cloudevents]
-          description: "Wire envelope for future deliveries; existing delivery rows are unchanged."
+          enum: [json, cloudevents, datadog]
+          description: "Wire envelope for future deliveries; existing delivery rows are unchanged. Switching to datadog requires a new webhook_secret holding the Datadog API key."
         enabled: { type: boolean }
       example:
         target_url: "https://example.com/hook2"

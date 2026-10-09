@@ -123,13 +123,16 @@ type DeliveryFormat string
 const (
 	DeliveryFormatJSON        DeliveryFormat = "json"
 	DeliveryFormatCloudEvents DeliveryFormat = "cloudevents"
+	// DeliveryFormatDatadog posts a Datadog Events API body and sends the
+	// sealed secret as DD-API-KEY instead of signing (ADR-742).
+	DeliveryFormatDatadog DeliveryFormat = "datadog"
 )
 
 // ValidDeliveryFormat reports whether format is one of the supported webhook
 // wire envelopes. The empty value is accepted by callers as the legacy JSON
 // default and is normalised by NewDispatcher.
 func ValidDeliveryFormat(format DeliveryFormat) bool {
-	return format == "" || format == DeliveryFormatJSON || format == DeliveryFormatCloudEvents
+	return format == "" || format == DeliveryFormatJSON || format == DeliveryFormatCloudEvents || format == DeliveryFormatDatadog
 }
 
 // Legacy alert header constants. Kept as exported package consts so
@@ -250,6 +253,9 @@ type Event struct {
 	Subject   string          `json:"-"`
 	AccountID string          `json:"-"`
 	Data      json.RawMessage `json:"-"`
+	// Service is the app slug, used as the Datadog service tag when the
+	// delivery format is datadog (ADR-742).
+	Service string `json:"-"`
 }
 
 // Result is the return value of Dispatch. Err is one of:
@@ -469,8 +475,16 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 		if d.opts.HeaderSet == HeaderSetWebhook {
 			unix = d.opts.Now().Unix()
 		}
-		sig := t.Signer.Sign(unix, evt.ID, body)
-		lastResult = d.attempt(ctx, t.URL, sig, unix, evt.ID, attempt+1, body)
+		// Datadog authenticates with its API key and ignores Gregale
+		// signatures (ADR-742): the sealed secret is the key, sent as a
+		// header instead of an HMAC input.
+		sig, apiKey := "", ""
+		if d.opts.Format == DeliveryFormatDatadog {
+			apiKey = string(t.Signer.secret)
+		} else {
+			sig = t.Signer.Sign(unix, evt.ID, body)
+		}
+		lastResult = d.attempt(ctx, t.URL, sig, apiKey, unix, evt.ID, attempt+1, body)
 		lastResult.Attempts = attempt + 1
 		if lastResult.Err == nil {
 			return lastResult
@@ -546,6 +560,8 @@ func marshalEvent(evt Event, format DeliveryFormat) ([]byte, error) {
 		return json.Marshal(evt)
 	case DeliveryFormatCloudEvents:
 		return marshalCloudEvent(evt)
+	case DeliveryFormatDatadog:
+		return marshalDatadogEvent(evt)
 	default:
 		return nil, fmt.Errorf("webhookout: unsupported delivery format %q", format)
 	}
@@ -630,7 +646,7 @@ func (d *Dispatcher) logExhausted(evt Event, r Result) {
 // a Result whose Err is nil on 2xx/3xx, ErrTerminal on a non-408/429
 // 4xx, ErrBodyTooLarge on a body > MaxBodyBytes, or a wrapped error
 // on retryable failures (5xx, 408, 429, network).
-func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, deliveryID string, attempt int, body []byte) Result {
+func (d *Dispatcher) attempt(ctx context.Context, url, sig, apiKey string, unix int64, deliveryID string, attempt int, body []byte) Result {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		// Malformed URL — permanent.
@@ -640,7 +656,11 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 	if d.opts.Format == DeliveryFormatCloudEvents {
 		req.Header.Set("Content-Type", "application/cloudevents+json")
 	}
-	req.Header.Set(d.headerSig, "sha256="+sig)
+	if apiKey != "" {
+		req.Header.Set(datadogAPIKeyHeader, apiKey)
+	} else {
+		req.Header.Set(d.headerSig, "sha256="+sig)
+	}
 	req.Header.Set(d.headerID, deliveryID)
 	req.Header.Set(d.headerTime, fmt.Sprintf("%d", unix))
 	req.Header.Set(d.headerAttempt, fmt.Sprintf("%d", attempt))
