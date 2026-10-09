@@ -1052,14 +1052,16 @@ jobs:
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard3.out -covermode=atomic $PKGS
 
-      - name: repeat wake admission and first-byte regressions
+      - name: repeat wake admission, first-byte and Redis deadline regressions
         # These assertions previously depended on 10ms/100ms scheduling
         # assumptions. Exercise the synchronised admission barrier and the
         # real proxy timestamp repeatedly, including on cached PR runs.
+        # Exercise Redis contents, invalidation and socket deadline bounds
+        # without assuming the race-test host always responds within 100ms.
         run: >-
           go test -race -cover -covermode=atomic -count=30 -shuffle=on
           -timeout=5m
-          -run '^(TestProperty_EngineWake_RespectsMaxConcurrency|TestProperty_EngineAdmitInstance_RespectsMaxConcurrency|TestMetricsSpec12_FirstByteNotFullBody)$'
+          -run '^(TestProperty_EngineWake_RespectsMaxConcurrency|TestProperty_EngineAdmitInstance_RespectsMaxConcurrency|TestMetricsSpec12_FirstByteNotFullBody|TestRedisResponseCache.*)$'
           ./pkg/sched ./pkg/gateway
 
       - name: coverage floor (ship-blocking packages)

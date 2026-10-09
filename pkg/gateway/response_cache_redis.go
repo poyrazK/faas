@@ -48,6 +48,21 @@ type redisResponseCacheRecord struct {
 // verifies it before the gateway begins serving. The caller may treat an error
 // as a signal to retain local-only caching.
 func NewRedisResponseCache(parentCtx context.Context, rawURL string) (*RedisResponseCache, error) {
+	opts, err := redisResponseCacheOptions(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	client := redis.NewClient(opts)
+	ctx, cancel := context.WithTimeout(parentCtx, redisResponseCacheAdminTimeout)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("ping response-cache Redis: %w", err)
+	}
+	return &RedisResponseCache{client: client}, nil
+}
+
+func redisResponseCacheOptions(rawURL string) (*redis.Options, error) {
 	opts, err := redis.ParseURL(rawURL)
 	if err != nil {
 		// rawURL may contain credentials; do not allow parser details to put
@@ -58,14 +73,10 @@ func NewRedisResponseCache(parentCtx context.Context, rawURL string) (*RedisResp
 	opts.ReadTimeout = redisResponseCacheIOTimeout
 	opts.WriteTimeout = redisResponseCacheIOTimeout
 	opts.PoolSize = 8
-	client := redis.NewClient(opts)
-	ctx, cancel := context.WithTimeout(parentCtx, redisResponseCacheAdminTimeout)
-	defer cancel()
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("ping response-cache Redis: %w", err)
-	}
-	return &RedisResponseCache{client: client}, nil
+	// Bound the whole operation, including connection initialization and
+	// retries, instead of giving each socket operation a fresh IO timeout.
+	opts.ContextTimeoutEnabled = true
+	return opts, nil
 }
 
 func (c *RedisResponseCache) Get(key CacheKey) (*cacheEntry, error) {
