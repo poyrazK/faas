@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppPublishEventRequest } from '../models/AppPublishEventRequest.js';
+import type { AppPublishEventResponse } from '../models/AppPublishEventResponse.js';
 import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
 import type { EventCircuitBreakerPolicy } from '../models/EventCircuitBreakerPolicy.js';
 import type { EventCircuitBreakerResponse } from '../models/EventCircuitBreakerResponse.js';
@@ -98,6 +100,63 @@ export class EventsService {
         \`profile_investigation_limit\`.
         `,
         500: `The router could not read the current subscription set.`,
+      },
+    });
+  }
+  /**
+   * Publish with an application-scoped stable producer key.
+   * Requires an owned app, MFA and events:publish, deploy:write or admin.
+   * Source is app.<canonical-app-UUID>; event ID is key.<SHA-256 hex of key>.
+   * The key is exact, case-sensitive printable ASCII without spaces, 1..256 bytes.
+   * Identical type, schema version and JSON data return the original retained
+   * acceptance with duplicate=true, without extra fanout or storage charge.
+   * Changed content for the same app/key returns 409, including concurrent
+   * requests. Retained duplicate lookup precedes current schema admission.
+   * Occurrence time and trace context are first-publication metadata and do
+   * not change duplicate identity. Fanout uses normal account subscriptions
+   * matching the generated source; the publishing app is not the only consumer.
+   * Deduplication lasts while the normal receipt is retained: settled receipts
+   * become eligible for pruning after 30 days; holds can extend this window.
+   * After pruning the same key may be accepted again. App renames preserve
+   * identity; replacement apps have a new UUID and a new key namespace.
+   * No request-wide Idempotency-Key middleware is used. Retry uncertain outcomes
+   * with the same app, key and content. Acceptance does not mean delivery success.
+   *
+   * @returns AppPublishEventResponse Original or new durable event acceptance.
+   * @throws ApiError
+   */
+  public static publishAppEvent({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Owned producer application slug.
+     */
+    slug: string,
+    requestBody: AppPublishEventRequest,
+  }): CancelablePromise<AppPublishEventResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/events:publish',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        413: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
       },
     });
   }

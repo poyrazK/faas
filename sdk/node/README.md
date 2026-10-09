@@ -858,3 +858,5 @@ Totals have `counts_scope: job_page` and cover scanned jobs before filtering.
 Continue with `next_cursor` even when `requests` is empty, retaining the same
 status selection. Each page is a fresh read-only snapshot. Returned detail and
 retry-preview paths use existing recovery inspection endpoints.
+
+Application-scoped producer keys: `EventsService.publishAppEvent({ slug, requestBody: { key: 'order-123-created', type: 'order.created', data: { order_id: '123' } } })` returns `duplicate` and the durable original receipt. Preserve app/key/content on retry. Subscribe to the returned `app.<UUID>` source. Deduplication lasts while the event receipt is retained; it does not guarantee exactly-once consumer effects.

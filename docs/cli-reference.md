@@ -1695,6 +1695,22 @@ Inspect receipt expiry, backfill holds and account storage
 | `--window <DURATION>` | expiry lookahead (1s..720h; default 24h) |  |
 | `--limit <N>` | maximum sampled receipts (1..100) |  |
 
+### events publish-app
+
+Publish an event using a durable application-scoped producer key
+
+`gregale events publish-app [--file <PATH>] <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | JSON event with a stable key, type and data |  |
+
+Examples:
+
+```sh
+gregale events publish-app my-app --file event.json --json
+```
+
 ### events publish-batch
 
 Publish a bounded JSONL batch with per-event results

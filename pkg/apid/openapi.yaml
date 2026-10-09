@@ -3437,6 +3437,60 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/events:publish:
+    post:
+      tags: [events]
+      operationId: publishAppEvent
+      summary: Publish with an application-scoped stable producer key.
+      description: |
+        Requires an owned app, MFA and events:publish, deploy:write or admin.
+        Source is app.<canonical-app-UUID>; event ID is key.<SHA-256 hex of key>.
+        The key is exact, case-sensitive printable ASCII without spaces, 1..256 bytes.
+        Identical type, schema version and JSON data return the original retained
+        acceptance with duplicate=true, without extra fanout or storage charge.
+        Changed content for the same app/key returns 409, including concurrent
+        requests. Retained duplicate lookup precedes current schema admission.
+        Occurrence time and trace context are first-publication metadata and do
+        not change duplicate identity. Fanout uses normal account subscriptions
+        matching the generated source; the publishing app is not the only consumer.
+        Deduplication lasts while the normal receipt is retained: settled receipts
+        become eligible for pruning after 30 days; holds can extend this window.
+        After pruning the same key may be accepted again. App renames preserve
+        identity; replacement apps have a new UUID and a new key namespace.
+        No request-wide Idempotency-Key middleware is used. Retry uncertain outcomes
+        with the same app, key and content. Acceptance does not mean delivery success.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: Owned producer application slug.
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppPublishEventRequest' }
+      responses:
+        '202':
+          description: Original or new durable event acceptance.
+          headers:
+            Location:
+              schema: { type: string }
+              description: Relative receipt URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppPublishEventResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/ValidationFailed' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
   /v1/events:publish:
     post:
       tags: [events]
@@ -47242,6 +47296,33 @@ components:
           maxItems: 100
           items: { $ref: '#/components/schemas/EventPreviewSubscription' }
         truncated: { type: boolean, description: True when either sample omits additional candidates. }
+
+    AppPublishEventRequest:
+      type: object
+      additionalProperties: false
+      description: Producer-key event publication with a 1 MiB total body limit.
+      required: [key, type, data]
+      properties:
+        key:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^[!-~]+$'
+          description: Stable exact application-scoped producer key; preserve on retry.
+        type: { type: string, minLength: 1, maxLength: 256 }
+        data: { description: Event data associated with this producer key. }
+        time: { type: string, format: date-time, description: Original occurrence time; defaults to ingress time. }
+        schemaversion: { type: string, maxLength: 64 }
+    AppPublishEventResponse:
+      type: object
+      additionalProperties: false
+      description: Durable app producer-key publication decision.
+      required: [app_id, source, duplicate, receipt]
+      properties:
+        app_id: { type: string, format: uuid }
+        source: { type: string, description: Stable app.UUID subscription source. }
+        duplicate: { type: boolean }
+        receipt: { $ref: '#/components/schemas/PublishEventResponse' }
 
     PublishEventRequest:
       description: Caller-authored envelope for the tenant-scoped internal event router.

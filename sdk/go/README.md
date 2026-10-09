@@ -392,3 +392,15 @@ retained child. Changed selections conflict, and the original audit reason wins.
 Items expose historical `parent_job_id`/`parent_position` links. Changed or pruned
 execution evidence is skipped at admission; newer replays are never substituted.
 See [parent-scoped retries](../../docs/event-driven.md#retry-failures-from-one-recovery-job).
+
+Application-scoped producer keys:
+
+```go
+receipt, err := client.PublishAppEvent(ctx, "my-app", faas.AppPublishEventRequest{
+    Key: "order-123-created",
+    Type: "order.created",
+    Data: json.RawMessage(`{"order_id":"123"}`),
+})
+```
+
+The result includes `Duplicate` and the original durable `Receipt`. Preserve app/key/content on retry. Configure subscriptions against the returned `app.<UUID>` source. Deduplication lasts while the receipt is retained; consumer side effects still need deduplication.

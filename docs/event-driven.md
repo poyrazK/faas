@@ -2949,3 +2949,25 @@ The final JSON receipt contains every job's decision state, outcome status, coun
 Without `--wait`, read once. With `--wait`, poll every five seconds while the aggregate is pending, within an overall deadline (default five minutes) and five-second per-read deadlines. Stop on read errors, known failure, missing or unknown evidence, or all-skipped inconclusive requests. Every job remains visible even if another job determines the aggregate status. Queued decisions alone do not mean delivery succeeded.
 
 Exit codes: 0 for succeeded, 1 for failed/error, 2 for pending/inconclusive, 3 for timeout, and 130 for interruption. The receipt is always JSON, including without `--json`. Retained evidence is not extended; a missing request must not trigger an automatic replacement retry.
+
+### Application-scoped producer keys
+
+Use `POST /v1/apps/{slug}/events:publish` or:
+
+```sh
+gregale events publish-app my-app --file event.json --json
+```
+
+```json
+{"key":"order-123-created","type":"order.created","data":{"order_id":"123"}}
+```
+
+The owned application provides a stable namespace. Keys are exact, case-sensitive printable ASCII without spaces (1..256 bytes); the complete request is limited to 1 MiB. Optional `time` and `schemaversion` follow the existing event contract. The server derives `source=app.<canonical app UUID>` and `id=key.<SHA-256 hex of key>`. Configure subscriptions and schemas against this source. Ordinary account subscriptions can distribute it to several consumers; the producer app does not restrict recipient selection.
+
+The response contains `app_id`, `source`, `duplicate`, and an ordinary `receipt`. Repeating the same app/key with identical normalized type, schema version and JSON data returns the original receipt and accepted_at, without another fanout or storage charge. Changed content returns 409. Concurrent submissions use the same atomic publication path, so only one identity is accepted. Occurrence time and trace metadata preserve the first publication and do not change duplicate comparison. Retained matching requests are recognized before current schema rules, including schemas registered after initial publication.
+
+After a lost response or retryable server error, preserve the application, key and content. Do not generate a replacement key. This endpoint requires MFA and events:publish, deploy:write or admin and uses existing app ownership and rate limits; it does not use the short-lived request-wide Idempotency-Key cache. Acceptance means durable storage, not successful consumer delivery or exactly-once side effects. Receivers must still deduplicate side effects.
+
+Deduplication lasts while the receipt remains retained. Settled receipts become eligible for pruning after 30 days; unsettled work and retention holds can extend that period. Repeated publication does not refresh retention. After actual pruning, the same key can create a new acceptance and fanout. Renaming the producer app preserves identity, while deleting and recreating an app creates a new UUID namespace. Legacy account/source/id publication of the derived identity addresses the same event; the namespace is not an isolation boundary between authorized producers in the same account.
+
+The CLI always prints JSON. Go exposes `PublishAppEvent`; Node and Python expose the generated `publishAppEvent` / `publish_app_event` methods. No new storage migration is needed. See [ADR-847](adr/847-application-scoped-producer-key-publication.md).

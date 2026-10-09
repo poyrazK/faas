@@ -453,3 +453,5 @@ Totals have `counts_scope: job_page` and cover scanned jobs before filtering.
 Continue with `next_cursor` even when `requests` is empty, retaining the same
 status selection. Each page is a fresh read-only snapshot. Returned detail and
 retry-preview paths use existing recovery inspection endpoints.
+
+Application-scoped producer keys: use `faas_sdk.api.events.publish_app_event` with `AppPublishEventRequest(key="order-123-created", type_="order.created", data={"order_id": "123"})`. Preserve app/key/content after uncertain responses. The result includes `duplicate`, generated `app.<UUID>` source and the durable original receipt. Deduplication lasts while the receipt is retained; consumers still deduplicate side effects.

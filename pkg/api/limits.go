@@ -9455,3 +9455,9 @@ const (
 	EventRecoveryNotificationRetryBatchJobsMax      = 10
 	EventRecoveryNotificationRetryBatchBodyMaxBytes = 1 << 20
 )
+
+// Application-scoped producer-key publication bounds.
+const (
+	AppEventPublishKeyMaxBytes        = 256
+	AppEventPublishBodyMaxBytes int64 = 1 << 20
+)

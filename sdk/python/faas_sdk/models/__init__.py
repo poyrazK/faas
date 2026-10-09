@@ -209,6 +209,8 @@ from .app_private_network_attachment_status import AppPrivateNetworkAttachmentSt
 from .app_private_network_node_status import AppPrivateNetworkNodeStatus
 from .app_private_network_node_status_fabric_status import AppPrivateNetworkNodeStatusFabricStatus
 from .app_private_network_node_status_route_status import AppPrivateNetworkNodeStatusRouteStatus
+from .app_publish_event_request import AppPublishEventRequest
+from .app_publish_event_response import AppPublishEventResponse
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_response import AppResponse
@@ -3319,6 +3321,8 @@ __all__ = (
     "AppPrivateNetworkNodeStatus",
     "AppPrivateNetworkNodeStatusFabricStatus",
     "AppPrivateNetworkNodeStatusRouteStatus",
+    "AppPublishEventRequest",
+    "AppPublishEventResponse",
     "AppRegistryCredentialListResponse",
     "AppRegistryCredentialResponse",
     "AppResponse",
