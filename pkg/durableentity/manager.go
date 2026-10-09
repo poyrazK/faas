@@ -137,7 +137,7 @@ func (m *Manager) readManifest(ctx context.Context, id ID) (manifest, string, er
 }
 
 func validManifest(id ID, value manifest) bool {
-	if (value.Schema != 1 && value.Schema != 2 && value.Schema != 3 && value.Schema != 4) || value.Schema == 1 && value.Generation != 0 || value.ID != id || value.Epoch == 0 || !validUUID(value.Revision) || !validStorageMetadata(value) || !validAlarmDelivery(value) {
+	if (value.Schema < 1 || value.Schema > 5) || value.Schema == 1 && value.Generation != 0 || value.ID != id || value.Epoch == 0 || !validUUID(value.Revision) || !validStorageMetadata(value) || !validAlarmDelivery(value) {
 		return false
 	}
 	if value.OwnerID == "" {
@@ -162,8 +162,8 @@ func validUUID(value string) bool {
 }
 
 func (m *Manager) putManifest(ctx context.Context, value manifest, etag string) error {
-	// Schema 4 fences older writers that cannot preserve alarm retry reservations.
-	value.Schema = 4
+	// Schema 5 fences older writers that cannot preserve committed outbox intents.
+	value.Schema = 5
 	sealStorageUsage(&value)
 	value.Revision = uuid.NewString()
 	body, err := json.Marshal(value)

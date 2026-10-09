@@ -285,7 +285,7 @@ func httpLogQueryEvent(row api.DebugTelemetryRequestItem) api.LogQueryEvent {
 		Route:        row.Route,
 		Method:       row.Method,
 		Status:       row.Status,
-		Message:      fmt.Sprintf("%s %s returned %d in %dms", row.Method, row.Route, row.Status, row.LatencyMS),
+		Message:      fmt.Sprintf("%s returned %d in %dms", requestLine(row.Method, row.Route), row.Status, row.LatencyMS),
 		LatencyMS:    row.LatencyMS,
 		Count:        row.Count,
 		ColdBoot:     row.ColdBoot,

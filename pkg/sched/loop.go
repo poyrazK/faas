@@ -2100,7 +2100,15 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 	if p.AppID == "" || p.WakeID == "" {
 		return errors.New("sched: app_wake payload requires app_id and wake_id")
 	}
-	out, err := l.engine.EnsureWake(withRequestedWakeID(context.WithoutCancel(ctx), p.WakeID), p.AppID, TriggerAppWake)
+	wakeCtx := withRequestedWakeID(context.WithoutCancel(ctx), p.WakeID)
+	if handled, err := l.engine.WakeWorkerApp(wakeCtx, p.AppID); handled {
+		if err != nil {
+			return fmt.Errorf("sched: explicit app wake %s: %w", p.WakeID, err)
+		}
+		l.log.Info("sched: explicit worker app wake reconciled", "app", p.AppID, "wake_id", p.WakeID)
+		return nil
+	}
+	out, err := l.engine.EnsureWake(wakeCtx, p.AppID, TriggerAppWake)
 	if err != nil {
 		return fmt.Errorf("sched: explicit app wake %s: %w", p.WakeID, err)
 	}
@@ -2590,6 +2598,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// Select immutable workload settings and original lifetime once per
 	// deployment. Floors are shared within that lifetime, never across stages.
 	appDeploymentFloor := l.enrichReaperEnvironmentPolicies(ctx, apps, snapshot, appPrewarmFloor)
+	snapshot = l.drainSupersededReaperRows(ctx, snapshot)
 	// Capture the causal snapshot before any park/eviction mutates the
 	// instance set. The observation is best-effort and never changes the
 	// lifecycle decision if the audit write is unavailable.
@@ -2826,6 +2835,37 @@ func (l *Loop) stopInstanceFromReaper(ctx context.Context, instanceID string) er
 // reaperInstanceState mirrors the SQL partial-index predicate used by
 // ListAllInstances. Keeping the filter at the per-app expansion site is
 // necessary because ListInstancesForApp deliberately has a broader contract.
+// drainSupersededReaperRows repairs a superseded deployment's drain when the
+// deployment_changed notification was missed or its park failed (production-us
+// hunt #8: superseded instances stayed resident and billed until the idle
+// timeout). The rows leave the snapshot so the idle and pressure selectors do
+// not act on the same instances in this tick.
+func (l *Loop) drainSupersededReaperRows(ctx context.Context, snapshot []InstanceInfo) []InstanceInfo {
+	kept := snapshot[:0]
+	drained := map[string]struct{}{}
+	for _, row := range snapshot {
+		switch {
+		case !row.DeploymentSuperseded:
+			kept = append(kept, row)
+			continue
+		case row.State != state.StateRunning && row.State != state.StateWaking && row.State != state.StateColdBooting:
+			// drainDeploymentInstances leaves snapshotting and warm rows to
+			// their own lifecycle paths; keep them selectable.
+			kept = append(kept, row)
+			continue
+		}
+		if _, done := drained[row.DeploymentID]; done {
+			continue
+		}
+		drained[row.DeploymentID] = struct{}{}
+		l.log.Info("reaper: drain superseded deployment", "app", row.AppID, "deployment", row.DeploymentID)
+		drainCtx, cancel := context.WithTimeout(ctx, reaperParkTimeout)
+		l.engine.drainDeploymentInstances(drainCtx, row.DeploymentID, true)
+		cancel()
+	}
+	return kept
+}
+
 func reaperInstanceState(s state.State) bool {
 	switch s {
 	case state.StateRunning, state.StateWaking, state.StateColdBooting, state.StateSnapshotting, state.StateWarm:

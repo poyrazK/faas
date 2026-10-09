@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationMilestone } from './OperationMilestone.js';
+import type { OperationWorkflowInstanceSnapshot } from './OperationWorkflowInstanceSnapshot.js';
 import type { OperationWorkflowState } from './OperationWorkflowState.js';
 import type { OperationWorkflowStateHistoryEntry } from './OperationWorkflowStateHistoryEntry.js';
 /**
@@ -18,6 +19,7 @@ export type OperationMilestonesResponse = {
    * Retained app-reported changes for the exact workflow run when paired workflow selectors are supplied, ordered by app-assigned revision.
    */
   workflow_state_history?: Array<OperationWorkflowStateHistoryEntry>;
+  workflow_instance?: OperationWorkflowInstanceSnapshot;
   /**
    * Opaque continuation bound to the same account
    */

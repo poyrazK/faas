@@ -1,0 +1,44 @@
+# Complete gosec v2.22.7 registry used by golangci-lint v2.4.0 on main.
+# https://github.com/securego/gosec/blob/v2.22.7/rules/rulelist.go
+# https://github.com/securego/gosec/blob/v2.22.7/analyzers/analyzerslist.go
+# The existing eight exclusions are recorded in check_gosec_baseline.py.
+G101
+G102
+G103
+G104
+G106
+G107
+G108
+G109
+G110
+G111
+G112
+G114
+G115
+G201
+G202
+G203
+G204
+G301
+G302
+G303
+G304
+G305
+G306
+G307
+G401
+G402
+G403
+G404
+G405
+G406
+G407
+G501
+G502
+G503
+G504
+G505
+G506
+G507
+G601
+G602

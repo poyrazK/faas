@@ -35,18 +35,18 @@
 //
 // Exit codes:
 //
-//   - 0   — no BREAKING rows; informational rows (if any) still
-//           printed but the gate is clear.
+//   - 0   — no confirmed break or unsupported-schema finding.
 //   - 1   — usage error (wrong arg count, missing file, etc.).
 //   - 2   — BREAKING rows present. CI consumes this as "do not
 //           merge the bump". Surfaces ALL breaking rows before
 //           exiting so a 50-line openapi flip doesn't get a
 //           one-at-a-time fix loop.
+//   - 3   — an unsupported or incomplete response-schema comparison
+//           prevents a compatibility verdict.
 //
-// Output shape: one row per SchemaBreak, path/method/status/kind
-// followed by the before/after values. The same kinds classify
-// as the deploy-diff engine (openapidiff.SchemaKind*) so the
-// prose is uniform across the two surfaces.
+// Output shape: one row per SchemaBreak or SchemaUnknown. Break rows
+// include path/method/status/kind and before/after values; unknown
+// rows identify the unsupported response-schema location.
 
 package main
 
@@ -65,7 +65,7 @@ import (
 // but is the CLI's single source of truth for what blocks a
 // service bump.
 //
-// Property-added, required-removed, and the noise kinds
+// Property-added and the noise kinds
 // (description-whitespace, property-reorder, $ref drift) are
 // absent from this set — they're informational, not blocking.
 // A pinned release-process note explains the rule:
@@ -75,6 +75,7 @@ var breakingKinds = map[openapidiff.SchemaKind]struct{}{
 	openapidiff.SchemaKindTypeChange:        {},
 	openapidiff.SchemaKindFieldRemoved:      {},
 	openapidiff.SchemaKindRequiredAdded:     {},
+	openapidiff.SchemaKindRequiredRemoved:   {},
 	openapidiff.SchemaKindNullabilityChange: {},
 }
 
@@ -113,8 +114,8 @@ func cmdOpenapi(args []string) int {
 // cmdOpenapiDiff is the entry point for `gregale openapi diff`.
 // It loads two openapi documents via openapidiff.LoadBytes
 // (the same parser pkg/openapidiff uses), runs Compare, prints
-// every SchemaBreak in the unified one-row-per-break prose,
-// and exits non-zero iff any BREAKING row is present.
+// every confirmed break and unsupported-schema finding, and exits 2 for a
+// confirmed break or 3 when compatibility is unknown.
 //
 // Flags:
 //
@@ -155,16 +156,25 @@ func cmdOpenapiDiff(args []string) int {
 		return 1
 	}
 
-	breaks := openapidiff.Compare(base, prop)
+	comparison := openapidiff.CompareDetailed(base, prop)
 
 	if jsonOutput {
-		// NDJSON envelope: one record per SchemaBreak. Tests
+		// NDJSON envelope: one record per confirmed break or unknown.
+		// Tests
 		// pin the field set rather than byte-stability (the
 		// encoding/json ordering is the go runtime's, not
 		// ours), so the consumer decodes per record and stays
-		// open to new SchemaBreak fields added in the future.
-		for _, b := range breaks {
+		// open to new comparison fields added in the future.
+		for _, b := range comparison.Breaks {
 			out, err := json.Marshal(b)
+			if err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "marshal: %v\n", err)
+				return 1
+			}
+			_, _ = fmt.Fprintln(osStdout, string(out))
+		}
+		for _, unknown := range comparison.Unknowns {
+			out, err := json.Marshal(unknown)
 			if err != nil {
 				_, _ = fmt.Fprintf(os.Stderr, "marshal: %v\n", err)
 				return 1
@@ -176,7 +186,7 @@ func cmdOpenapiDiff(args []string) int {
 		// Width-sensitive: operators paste the output into PR
 		// reviews; widths matter less than the path/method/
 		// status/kind anchor.
-		for _, b := range breaks {
+		for _, b := range comparison.Breaks {
 			marker := "INFO"
 			if _, ok := breakingKinds[b.Kind]; ok {
 				marker = "BREAKING"
@@ -193,17 +203,28 @@ func cmdOpenapiDiff(args []string) int {
 				_, _ = fmt.Fprintf(osStdout, "    after:  %v\n", b.After)
 			}
 		}
+		for _, unknown := range comparison.Unknowns {
+			anchor := unknown.Path + " " + unknown.Method
+			if unknown.Status != "" {
+				anchor += " " + unknown.Status
+			}
+			_, _ = fmt.Fprintf(osStdout, "UNKNOWN %s %s\n", anchor, unknown.Code)
+			if unknown.PathInSchema != "" {
+				_, _ = fmt.Fprintf(osStdout, "    at: %s\n", unknown.PathInSchema)
+			}
+		}
 	}
 
-	// Exit-code contract: 2 on any BREAKING row, 0 otherwise.
-	// Informational rows do NOT bump the exit — the prose still
-	// prints them, but the gate is clear. Operators reading CI
-	// logs can see all the deltas even when the exit is 0; the
-	// non-zero exit is reserved for "wire shape regression".
-	for _, b := range breaks {
+	// Exit-code contract: 2 on a confirmed break, 3 when a changed
+	// unsupported schema prevents a compatibility verdict, 0 when the
+	// comparison is clear. Confirmed break takes priority if both occur.
+	for _, b := range comparison.Breaks {
 		if _, ok := breakingKinds[b.Kind]; ok {
 			return 2
 		}
+	}
+	if len(comparison.Unknowns) > 0 {
+		return 3
 	}
 	return 0
 }

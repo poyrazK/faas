@@ -110,6 +110,10 @@ func TestProfileCanaryGatePostgresTrafficAndAudit(t *testing.T) {
 				if got.TrafficPercent != 0 || got.RolloutState != "aborted" || prior.TrafficPercent != 100 || decision.Status != "rolled_back" {
 					t.Fatalf("rollback: %+v %+v %+v", got, prior, decision)
 				}
+				history, historyErr := store.ListRouteLifecycleHistory(ctx, account.ID, app.ID, 1, "")
+				if historyErr != nil || len(history.Entries) != 1 || history.Entries[0].DeploymentID != stable.ID || !history.Entries[0].Recovery || history.Entries[0].Outcome != "applied" {
+					t.Fatalf("profiling rollback lifecycle history: %+v %v", history, historyErr)
+				}
 			} else if got.TrafficPercent != 50 || got.CanaryStep != 1 || prior.TrafficPercent != 50 {
 				t.Fatalf("advance: %+v %+v", got, prior)
 			}

@@ -27,11 +27,15 @@ func writeOperationError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Operation not found", "the operation or definition is unavailable"))
+	case errors.Is(err, state.ErrOperationRecoveryReceiptUnavailable):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "operation_recovery_receipt_unavailable", "Recovery acknowledgement unavailable", "this accepted recovery predates immutable decision receipts; inspect current work and preserve the original decision identity"))
 	case errors.Is(err, state.ErrOperationExpired):
 		api.WriteProblem(w, api.NewProblem(http.StatusGone, "operation_expired", "Operation expired", "the retained result expired; its identity remains reserved for the deduplication window"))
+	case errors.Is(err, state.ErrOperationIdentityConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "operation_identity_conflict", "Customer identity changed", "refresh the authenticated customer before resuming this submission"))
 	case errors.Is(err, state.ErrOperationInputConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "operation_input_conflict", "Conflicting submission", "this identity was already used with a different payload"))
-	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrOperationStaleAttempt):
+	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrOperationStaleAttempt), errors.Is(err, state.ErrWorkflowResumeConflict), errors.Is(err, state.ErrWorkflowResumeUnsafe), errors.Is(err, state.ErrWorkflowResumeUnavailable):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "operation_state_conflict", "Operation state changed", "refresh the operation before submitting this change"))
 	case errors.Is(err, state.ErrOperationQuota):
 		api.WriteProblem(w, api.OperationLimitProblem(err))
@@ -96,9 +100,6 @@ func (s *server) putOperationDefinition(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	if !s.operationAdmissionOpen(w, acct.ID, dep.AppID, dep.Scope, "") {
-		return
-	}
 	limits := api.MustLimitsFor(acct.Plan)
 	if !limits.Operations.Allowed {
 		writeOperationError(w, state.NewOperationLimitError("plan_admission", 0, 1))
@@ -106,6 +107,9 @@ func (s *server) putOperationDefinition(w http.ResponseWriter, r *http.Request, 
 	}
 	var spec api.OperationDefinitionSpec
 	if !decodeOperationBody(w, r, &spec, api.OperationDefinitionBodyMaxBytes) {
+		return
+	}
+	if !s.operationAdmissionOpen(w, acct.ID, dep.AppID, dep.Scope, "", spec) {
 		return
 	}
 	if spec.Name == "" {
@@ -233,10 +237,10 @@ func (s *server) startPlatformTenantSelfOperation(w http.ResponseWriter, r *http
 		writeOperationError(w, err)
 		return
 	}
-	if !s.operationAdmissionOpen(w, acct.ID, def.AppID, def.Scope, tenant) {
+	if !s.operationAdmissionOpen(w, acct.ID, def.AppID, def.Scope, tenant, def.Spec) {
 		return
 	}
-	op, _, err := store.AdmitOperation(r.Context(), state.OperationAdmission{AccountID: acct.ID, PlatformTenantID: tenant, DefinitionID: req.DefinitionID, IdempotencyKey: r.Header.Get("Idempotency-Key"), Input: req.Input})
+	op, _, err := store.AdmitOperation(r.Context(), state.OperationAdmission{AccountID: acct.ID, PlatformTenantID: tenant, DefinitionID: req.DefinitionID, ExpectedIdentity: req.ExpectedIdentity, ExpectedScope: req.ExpectedScope, IdempotencyKey: r.Header.Get("Idempotency-Key"), Input: req.Input})
 	if err != nil {
 		writeOperationError(w, err)
 		return

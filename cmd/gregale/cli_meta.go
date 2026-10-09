@@ -439,7 +439,7 @@ func projectsCLICompletionPositions() []cliCompletionPosition {
 
 // templateNames13 is the canonical template catalog. The historical name is
 // retained because tests and completion metadata refer to this package-local
-// symbol; it now contains all 19 embedded templates. Mirrors
+// symbol; it contains all embedded templates. Mirrors
 // cmd/gregale/templates/embed.go::Names verbatim; the ClosedSet literals
 // in deploy/init reference this const so goconst stops flagging the
 // duplicated 13-name lists. Kept in sync with the embed FS by the
@@ -476,7 +476,11 @@ var templateNames13 = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"customer-operation-export",
+	"customer-operation-job-export",
+	"customer-operation-workflow-export",
 	"data-api",
+	"data-api-starter",
 }
 
 // cliCommands is the manifest. One entry per top-level command in
@@ -2139,6 +2143,11 @@ var cliCommands = []cliCommand{
 				{Name: "fail-on-policy-drift", Short: "exit 1 for changed or incomplete route rule policy comparison"},
 				{Name: "fail-on-incomplete", Short: "exit 1 when evidence is missing or needs review"},
 				{Name: "fail-on-requirements", Short: "exit 1 for violated or unknown route requirements"},
+				{Name: "route-removal-mode", Short: "CLI removal gate: report (default) or enforce", Value: "MODE", ClosedSet: []string{"report", "enforce"}},
+				{Name: "route-readiness", Short: "migration readiness JSON for the serving production deployment", Value: "PATH"},
+				{Name: "route-mapping", Short: "reviewed successor mapping JSON", Value: "PATH"},
+				{Name: "route-owner-approval", Short: "owner attestation bound to this exact change and evidence", Value: "PATH"},
+				{Name: "route-evidence-max-age", Short: "maximum route evidence age (default and maximum 72h)", Value: "DURATION"},
 			}},
 			{Name: "review", Short: "Review route risk across multiple app previews in one release", Positionals: []string{"<preview-slug>..."}, Examples: []string{"gregale preview review pr-42-api pr-42-worker --format markdown", "gregale preview review pr-42-api pr-42-worker --source-impact pr-42-api=api-impact.json --source-impact pr-42-worker=worker-impact.json --json", "gregale preview review pr-42-api pr-42-worker --test-report pr-42-api=api-tests.json --fail-on-breaking --fail-on-incomplete"}, Flags: []cliFlag{
 				{Name: "format", Short: "report format: text or markdown (or use --json)", Value: "FORMAT"},
@@ -2474,7 +2483,9 @@ var cliCommands = []cliCommand{
 				{Name: "validate-apply-while-streaming", Short: "also validate streaming requests"},
 				{Name: "validate-reject-unknown-fields", Short: "reject fields not declared by the schema"},
 			}},
-			{Name: subRm, Short: "Delete one edge rule", Positionals: []string{"<id>"}},
+			{Name: subRm, Short: "Delete one edge rule", Positionals: []string{"<id>"}, Flags: []cliFlag{
+				{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)", Bool: true},
+			}},
 		},
 		Flags: []cliFlag{
 			{Name: "app", Short: "app slug", Req: true, Value: "slug"},
@@ -2544,6 +2555,16 @@ var cliCommands = []cliCommand{
 				{Name: "source-impact", Value: "PATH|auto", Short: "correlate source, aggregate customer impact, and candidate-commit CODEOWNERS from the matching local repository"},
 			}},
 		}}, {Name: "lifecycle", Short: "Review deployed routes for carefully evidenced retirement candidates", Subcommands: []cliSub{
+			{Name: "declarations", Positionals: []string{"<slug>"}, Short: "Review lifecycle declarations between captured deployments", Flags: []cliFlag{
+				{Name: "from-deployment", Value: "UUID", Short: "serving baseline deployment", Req: true}, {Name: "to-deployment", Value: "UUID", Short: "candidate deployment", Req: true}, {Name: "out", Value: "PATH", Short: "save JSON to a new file"}, {Name: "fail-on-findings", Short: "fail on lifecycle regressions or incomplete declarations"},
+			}},
+			{Name: "prepare-approval", Positionals: []string{"<slug>"}, Short: "Prepare a pinned successor approval request for review", Flags: []cliFlag{
+				{Name: "from-deployment", Value: "UUID", Short: "serving baseline deployment", Req: true}, {Name: "to-deployment", Value: "UUID", Short: "candidate deployment", Req: true}, {Name: "mappings", Value: "PATH", Short: "explicit successor mappings and optional destination pins", Req: true}, {Name: "out", Value: "PATH", Short: "save request to a new file", Req: true},
+			}},
+			{Name: "approve", Positionals: []string{"<slug>"}, Short: "Submit a reviewed lifecycle successor approval", Flags: []cliFlag{{Name: "request", Value: "PATH", Short: "pinned request JSON", Req: true}}},
+			{Name: "receipt", Positionals: []string{"<slug>"}, Short: "Read a persisted lifecycle approval receipt", Flags: []cliFlag{{Name: "id", Value: "UUID", Short: "approval receipt ID", Req: true}}},
+			{Name: "history", Positionals: []string{"<slug>"}, Short: "Inspect applied and blocked production lifecycle reviews", Examples: []string{"gregale routes lifecycle history api --json"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "reviews per page (default 10; maximum 20)"}, {Name: "before", Value: "ID", Short: "retained review ID from next_cursor"}}},
+
 			{Name: "review", Positionals: []string{"<slug>"}, Short: "Compare captured routes, observed usage, source and requirements", Examples: []string{"gregale routes lifecycle review api --deployment DEPLOYMENT_UUID --since 14d --source-impact impact.json --out lifecycle-review.json"}, Flags: []cliFlag{
 				{Name: "deployment", Value: "ID", Short: "immutable deployed contract UUID", Req: true},
 				{Name: "since", Value: "WINDOW", Short: "route-usage window (default 14d; plan retention may clamp it)"},
@@ -2551,7 +2572,84 @@ var cliCommands = []cliCommand{
 				{Name: "out", Value: "PATH", Short: "save full JSON review to a new file"},
 				{Name: "fail-on-incomplete", Short: "exit nonzero when any route remains inconclusive"},
 			}},
-		}}, {Name: "migration", Short: "Check mapped route successors against immutable deployment contracts", Subcommands: []cliSub{
+		}}, {Name: "sunsets", Positionals: []string{"<slug>"}, Short: "Review upcoming sunsets and remaining callers", Flags: []cliFlag{
+			{Name: "source", Value: "SOURCE", Short: "metadata source (default deployment)", ClosedSet: []string{"deployment", "manual_import"}},
+			{Name: "deployment", Value: "UUID", Short: "baseline deployment ID", Req: true}, {Name: "since", Value: "WINDOW", Short: "retained telemetry window (default 14d)"}, {Name: "within", Value: "DURATION", Short: "upcoming sunset horizon (default 720h)"}, {Name: "mapping", Value: "PATH", Short: "explicit successor mapping JSON"}, {Name: "out", Value: "PATH", Short: "save report JSON to a new file"}, {Name: "fail-on-overdue", Short: "fail on elapsed sunset dates"}, {Name: "fail-on-incomplete", Short: "fail on missing metadata or incomplete evidence"},
+		}, Subcommands: []cliSub{{Name: "diff", Short: "Compare retained sunset evidence and caller regressions", Flags: []cliFlag{
+			{Name: "before", Value: "PATH", Short: "previous saved report", Req: true}, {Name: "after", Value: "PATH", Short: "new saved report", Req: true}, {Name: "out", Value: "PATH", Short: "save diff JSON to a new file"}, {Name: "max-staleness", Value: "DURATION", Short: "maximum report age (default 24h)"}, {Name: "fail-on-regression", Short: "fail on observed regressions"}, {Name: "fail-on-incomplete", Short: "fail on stale, changed or incomplete evidence"},
+		}}}}, {Name: "migration", Short: "Suggest successors, review contracts and assess customer cutover readiness", Subcommands: []cliSub{
+			{Name: "policy", Short: "Read or set the app server policy for production route removal", Flags: []cliFlag{
+				{Name: "app", Value: "APP", Req: true, Short: "production app slug"},
+				{Name: "mode", Value: "MODE", ClosedSet: []string{"report", "enforce"}, Short: "omit to read; set report or enforce to write"},
+				{Name: "expected-revision", Value: "N", Short: "current revision for a write; 0 creates the policy"},
+				{Name: "grace-period", Value: "DURATION", Short: "server-observed quiet period (default 720h, minimum 1h)"},
+				{Name: "max-approval-age", Value: "DURATION", Short: "approval TTL (default 1h, maximum 72h)"},
+			}},
+			{Name: "server-check", Short: "Read authoritative removal blockers for an exact candidate", Flags: []cliFlag{
+				{Name: "app", Value: "APP", Req: true, Short: "production app slug"},
+				{Name: "candidate-deployment", Value: "ID", Req: true, Short: "candidate deployment UUID"},
+				{Name: "fail-on-blocked", Short: "exit 1 if the server check is blocked"},
+			}},
+			{Name: "authorize", Short: "Store an authenticated admin approval after local and server checks", Flags: []cliFlag{
+				{Name: "app", Value: "APP", Req: true, Short: "production app slug"},
+				{Name: "baseline-deployment", Value: "ID", Req: true, Short: "serving baseline UUID"},
+				{Name: "candidate-deployment", Value: "ID", Req: true, Short: "candidate deployment UUID"},
+				{Name: "expected-revision", Value: "N", Req: true, Short: "current server policy revision"},
+				{Name: "readiness", Value: "PATH", Req: true, Short: "reviewed migration readiness JSON"},
+				{Name: "mapping", Value: "PATH", Req: true, Short: "reviewed same-app successor mapping"},
+				{Name: "acknowledge-observed-only", Req: true, Short: "acknowledge the limits of observed telemetry"},
+				{Name: "out", Value: "PATH", Short: "save server approval receipt to a new file"},
+			}},
+
+			{Name: "gate", Short: "Explain removed-route blockers; optionally fail a local CI check", Examples: []string{"gregale routes migration gate --app api --baseline-deployment BASELINE_UUID --candidate-deployment CANDIDATE_UUID --readiness readiness.json --mapping route-successors.json --owner-approval approval.json --mode enforce"}, Flags: []cliFlag{
+				{Name: "app", Short: "production app slug", Value: "APP", Req: true},
+				{Name: "baseline-deployment", Short: "serving deployment UUID", Value: "ID", Req: true},
+				{Name: "candidate-deployment", Short: "candidate deployment UUID", Value: "ID", Req: true},
+				{Name: "candidate-app", Short: "candidate app slug (defaults to --app; may be a preview)", Value: "APP"},
+				{Name: "readiness", Short: "migration readiness JSON for the serving deployment", Value: "PATH"},
+				{Name: "mapping", Short: "reviewed successor mapping JSON", Value: "PATH"},
+				{Name: "owner-approval", Short: "owner attestation JSON for this exact change", Value: "PATH"},
+				{Name: "mode", Short: "report (default) or enforce (exit 1 for blockers)", Value: "MODE", ClosedSet: []string{"report", "enforce"}},
+				{Name: "max-evidence-age", Short: "maximum evidence age (default and maximum 72h)", Value: "DURATION"},
+				{Name: "out", Short: "save gate JSON to a new file", Value: "PATH"},
+			}},
+			{Name: "approve", Short: "Record a local owner attestation after all cutover checks pass", Examples: []string{"gregale routes migration approve --app api --baseline-deployment BASELINE_UUID --candidate-deployment CANDIDATE_UUID --readiness readiness.json --mapping route-successors.json --approved-by owner@example.com --out approval.json"}, Flags: []cliFlag{
+				{Name: "app", Short: "production app slug", Value: "APP", Req: true},
+				{Name: "baseline-deployment", Short: "serving deployment UUID", Value: "ID", Req: true},
+				{Name: "candidate-deployment", Short: "candidate deployment UUID", Value: "ID", Req: true},
+				{Name: "candidate-app", Short: "candidate app slug (defaults to --app; may be a preview)", Value: "APP"},
+				{Name: "readiness", Short: "migration readiness JSON for the serving deployment", Value: "PATH", Req: true},
+				{Name: "mapping", Short: "mapping reviewed with the route owner", Value: "PATH", Req: true},
+				{Name: "approved-by", Short: "owner identity asserted in the local attestation", Value: "OWNER", Req: true},
+				{Name: "mode", Short: "report or enforce; approvals always reject blockers", Value: "MODE", ClosedSet: []string{"report", "enforce"}},
+				{Name: "max-evidence-age", Short: "maximum evidence age (default and maximum 72h)", Value: "DURATION"},
+				{Name: "out", Short: "save the owner attestation to a new file", Value: "PATH", Req: true},
+			}},
+			{Name: "readiness", Short: "Refresh mapped contracts and join customer windows into an owner approval checkpoint", Examples: []string{"gregale routes migration readiness --mapping route-successors.json --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --snapshot migration-week-1.json --snapshot migration-week-2.json --format markdown --out readiness.json"}, Flags: []cliFlag{
+				{Name: "mapping", Short: "version 1 explicit mapping reviewed with the route owner", Value: "PATH", Req: true},
+				{Name: "from-deployment", Short: "baseline deployment as APP=ID; repeat for each app", Value: "APP=ID", Req: true, Repeatable: true},
+				{Name: "to-deployment", Short: "successor deployment as APP=ID; repeat for each app", Value: "APP=ID", Repeatable: true},
+				{Name: "snapshot", Short: "saved customer tracker JSON; at least two observation windows", Value: "PATH", Req: true, Repeatable: true},
+				{Name: "grace-period", Short: "minimum continuous zero-traffic period before owner approval (default 30d)", Value: "DURATION"},
+				{Name: "min-windows", Short: "minimum distinct complete observation windows (default 2)", Value: "COUNT"},
+				{Name: "max-staleness", Short: "maximum age of the latest telemetry watermark (default 72h)", Value: "DURATION"},
+				{Name: "format", Short: "text, Markdown, or prioritized CSV action queue (default text; --json emits JSON)", Value: "FORMAT", ClosedSet: []string{"text", "markdown", "csv"}},
+				{Name: "out", Short: "save the full readiness report to a new JSON file", Value: "PATH"},
+				{Name: "fail-on-breaking", Short: "exit 1 when any successor has a declared breaking change"},
+				{Name: "fail-on-incomplete", Short: "exit 1 when contract or telemetry evidence is incomplete"},
+				{Name: "fail-on-not-ready", Short: "exit 1 unless every route is ready for owner approval"},
+			}},
+			{Name: "suggest", Short: "Rank successor routes and write a draft mapping for owner review", Examples: []string{"gregale routes migration suggest --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --out route-successors.json --report-out suggestions.json"}, Flags: []cliFlag{
+				{Name: "from-deployment", Short: "baseline deployment as APP=ID; repeat for each app", Value: "APP=ID", Req: true, Repeatable: true},
+				{Name: "to-deployment", Short: "successor deployment as APP=ID; repeat for each app", Value: "APP=ID", Req: true, Repeatable: true},
+				{Name: "sources", Short: "optional version 1 mapping selecting sources with empty successors", Value: "PATH"},
+				{Name: "since", Short: "observed usage window (default 14d)", Value: "WINDOW"},
+				{Name: "limit", Short: "candidate rows per source (1–10, default 3)", Value: "N"},
+				{Name: "without-traffic", Short: "read captured contracts without usage"},
+				{Name: "customer-details", Short: "include observed source consumer and tenant UUIDs in the report"},
+				{Name: "out", Short: "save a draft version 1 mapping to a new file for owner review", Value: "PATH"},
+				{Name: "report-out", Short: "save explanations and captured evidence to a new JSON file", Value: "PATH"},
+			}},
 			{Name: "review", Short: "Compare method, path parameters, request, response and security contracts", Examples: []string{"gregale routes migration review --mapping route-successors.json --from-deployment checkout=OLD_DEPLOYMENT --to-deployment checkout=NEW_DEPLOYMENT --format markdown --out migration-review.json"}, Flags: []cliFlag{
 				{Name: "mapping", Short: "version 1 explicit old-to-successor route mapping JSON", Value: "PATH", Req: true},
 				{Name: "from-deployment", Short: "immutable baseline deployment as APP=ID; repeat for each app", Value: "APP=ID", Req: true, Repeatable: true},
@@ -3208,11 +3306,24 @@ var cliCommands = []cliCommand{
 				{Name: "resume", Short: "resume configuration and deployment of an existing app"},
 			}},
 			{Name: "types", Short: "Generate types in an owner-authenticated app task", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "output", Value: "FILE", Short: "generated TypeScript output"},
+				{Name: "output", Value: "FILE", Short: "generated TypeScript or snapshot output"},
 				{Name: "check", Short: "fail if the output file is stale"},
+				{Name: "snapshot", Short: "export a JSON baseline for data-api diff"},
 				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
 			}},
-			{Name: "refresh", Short: "Request a fresh restart to reload the database schema", Positionals: []string{"<name>"}},
+			{Name: "diff", Short: "Compare the current schema with a saved JSON baseline", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "baseline", Value: "FILE", Req: true, Short: "JSON snapshot exported with types --snapshot"},
+				{Name: "check", Short: "fail on breaking contract changes"},
+				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
+			}, Examples: []string{"gregale data-api diff notes-data --baseline schema.json --check"}},
+			{Name: "refresh", Short: "Request a fresh restart to reload the database schema", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "wait", Short: "wait for fresh-restart completion and Data API readiness"},
+				{Name: "timeout", Value: "DURATION", Short: "complete wait deadline (default 5m, maximum 1h; requires --wait)"},
+			}, Examples: []string{"gregale data-api refresh notes-data --wait --timeout 5m"}},
+			{Name: "sync", Short: "Run migrations, refresh the API, export types and check the client", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "config", Value: "FILE", Req: true, Short: "JSON workflow with output, migrate and check argument arrays"},
+				{Name: "timeout", Value: "DURATION", Short: "entire workflow deadline (default 20m, maximum 1h)"},
+			}, Examples: []string{"gregale data-api sync notes-data --config data-api.json"}},
 		},
 	},
 	{
@@ -3365,7 +3476,8 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "maximum events (1..200)", Value: "N"},
 			}},
 			{Name: "purge", Short: "Purge one event or --all", Positionals: []string{"<app>", "[<event-id>]"}, Flags: []cliFlag{
-				{Name: "all", Short: "purge all events"},
+				{Name: "all", Short: "purge all events (asks for typed confirmation)"},
+				{Name: "yes", Short: "skip the --all confirmation (for scripts)", Bool: true},
 				{Name: "limit", Short: "page size (1..200)", Value: "N"},
 			}},
 		},
@@ -3837,9 +3949,15 @@ var cliCommands = []cliCommand{
 		Short:   "Manage deployment traffic split (available on every plan)",
 		Subcommands: []cliSub{
 			{
-				Name:        "set",
-				Short:       "Set the traffic split for a deployment",
-				Positionals: []string{"[<slug>]"},
+				Name:  "set",
+				Short: "Set the traffic split for a deployment",
+				// hunt #8: the slug is accepted only before the flags; listing it
+				// as a positional rendered it after them, an order the parser
+				// rejects.
+				Examples: []string{
+					"gregale traffic set my-api --deployment v7 --percent 30",
+					"gregale traffic set --app my-api --deployment v7 --percent 30",
+				},
 				Flags: []cliFlag{
 					{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
 					{Name: "deployment", Short: "deployment id or vN revision to set the traffic split on", Req: true, Value: "ID"},
@@ -3847,9 +3965,12 @@ var cliCommands = []cliCommand{
 				},
 			},
 			{
-				Name:        "promote",
-				Short:       "Promote a live deployment to 100% production traffic",
-				Positionals: []string{"[<slug>]"},
+				Name:  "promote",
+				Short: "Promote a live deployment to 100% production traffic",
+				Examples: []string{
+					"gregale traffic promote my-api --deployment v7",
+					"gregale traffic promote --app my-api --deployment v7 --if-serving v6",
+				},
 				Flags: []cliFlag{
 					{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
 					{Name: "deployment", Short: "deployment id or vN revision to promote", Req: true, Value: "ID"},
@@ -3858,6 +3979,11 @@ var cliCommands = []cliCommand{
 					{Name: "max-verification-age", Short: "maximum probe age (default 10m); requires --require-bindings", Value: "DURATION"},
 					{Name: "allow-unsupported", Short: "waive unsupported queue/outbound probes; requires --require-bindings"},
 					{Name: "require-application-ack", Short: "require current application acknowledgements; requires --require-bindings"},
+					{Name: "route-removal-mode", Short: "opt-in CLI gate: report or enforce; requires --app and --if-serving", Value: "MODE", ClosedSet: []string{"report", "enforce"}},
+					{Name: "route-readiness", Short: "readiness JSON for the serving deployment", Value: "PATH"},
+					{Name: "route-mapping", Short: "reviewed successor mapping JSON", Value: "PATH"},
+					{Name: "route-owner-approval", Short: "owner attestation bound to this exact change", Value: "PATH"},
+					{Name: "route-evidence-max-age", Short: "maximum evidence age (default and maximum 72h)", Value: "DURATION"},
 				},
 			},
 			{

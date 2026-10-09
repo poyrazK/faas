@@ -272,7 +272,7 @@ func (m *MemStore) MarkWorkflowRunStatus(ctx context.Context, id, status string,
 	}
 
 	m.workflowRuns[id] = r
-	return nil
+	return m.syncOperationWorkflowLocked(id)
 }
 
 // ClaimNextPendingRun finds the oldest pending run ready for dispatch and sets it to running.
@@ -371,7 +371,8 @@ func (m *MemStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, e
 		return a.ID < b.ID
 	})
 	for _, chosen := range candidates {
-		if counts.capacityReason(chosen) != "" {
+		_, operation := m.operationForWorkflowLocked(chosen.ID)
+		if counts.capacityReasonFor(chosen, operation) != "" {
 			continue
 		}
 		priorStatus := chosen.Status
@@ -384,13 +385,20 @@ func (m *MemStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, e
 		}
 		m.workflowRunLeases[chosen.ID] = now.Add(5 * time.Minute)
 		if priorStatus == WorkflowRunStatusRunning {
-			m.recoverWorkflowStepsLocked(chosen, now)
+			if operation {
+				m.interruptOperationWorkflowLocked(chosen.ID, now)
+			} else {
+				m.recoverWorkflowStepsLocked(chosen, now)
+			}
 		}
 		if m.workflowDispatchCursors == nil {
 			m.workflowDispatchCursors = make(map[workflowDispatchScope]time.Time)
 		}
 		m.workflowDispatchCursors[workflowDispatchScope{chosen.AppID, ""}] = now
 		m.workflowDispatchCursors[workflowDispatchRunScope(chosen)] = now
+		if err := m.syncOperationWorkflowLocked(chosen.ID); err != nil {
+			return nil, err
+		}
 		chosen.Input = cloneWorkflowJSON(chosen.Input)
 		chosen.Output = cloneWorkflowJSON(chosen.Output)
 		chosen.DefinitionSnapshot = cloneWorkflowJSON(chosen.DefinitionSnapshot)
@@ -498,16 +506,34 @@ func (m *MemStore) RecoverWorkflowRun(ctx context.Context, id string) error {
 		return nil
 	}
 	now := time.Now().UTC()
-	m.recoverWorkflowStepsLocked(run, now)
+	if _, linked := m.operationForWorkflowLocked(id); linked {
+		m.interruptOperationWorkflowLocked(id, now)
+	} else {
+		m.recoverWorkflowStepsLocked(run, now)
+	}
 	run.Status = WorkflowRunStatusPending
 	run.ScheduledFor = now
 	run.UpdatedAt = now
 	m.workflowRuns[id] = run
-	return nil
+	return m.syncOperationWorkflowLocked(id)
 }
 
-func (m *MemStore) cancelWorkflowRunLocked(id, reason string) *WorkflowRun {
-	run := m.workflowRuns[id]
+func (m *MemStore) cancelWorkflowRunLocked(id, reason string) (*WorkflowRun, error) {
+	run, ok := m.workflowRuns[id]
+	if !ok {
+		return nil, ErrWorkflowRunNotFound
+	}
+	if op, linked := m.operationForWorkflowLocked(id); linked {
+		if _, err := m.cancelOperationWorkflowLocked(op, op.Generation); err != nil {
+			return nil, err
+		}
+		copy := m.workflowRuns[id]
+		copy.Input = cloneWorkflowJSON(copy.Input)
+		copy.Output = cloneWorkflowJSON(copy.Output)
+		copy.DefinitionSnapshot = cloneWorkflowJSON(copy.DefinitionSnapshot)
+		copy.CancelledAt = cloneWorkflowTime(copy.CancelledAt)
+		return &copy, nil
+	}
 	if run.Status != WorkflowRunStatusSucceeded && run.Status != WorkflowRunStatusFailed && run.Status != WorkflowRunStatusDead {
 		now := time.Now().UTC()
 		for key, record := range m.workflowStepAttempts {
@@ -539,16 +565,14 @@ func (m *MemStore) cancelWorkflowRunLocked(id, reason string) *WorkflowRun {
 	cp.Input = cloneWorkflowJSON(run.Input)
 	cp.Output = cloneWorkflowJSON(run.Output)
 	cp.DefinitionSnapshot = cloneWorkflowJSON(run.DefinitionSnapshot)
-	return &cp
+	cp.CancelledAt = cloneWorkflowTime(run.CancelledAt)
+	return &cp, nil
 }
 
 func (m *MemStore) CancelWorkflowRun(_ context.Context, id, reason string) (*WorkflowRun, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.workflowRuns[id]; !ok {
-		return nil, ErrWorkflowRunNotFound
-	}
-	return m.cancelWorkflowRunLocked(id, reason), nil
+	return m.cancelWorkflowRunLocked(id, reason)
 }
 
 // CancelUnstartedWorkflowRuns holds the same mutex as dispatch claims while
@@ -572,7 +596,10 @@ func (m *MemStore) CancelUnstartedWorkflowRuns(ctx context.Context, appID, workf
 		}
 		outcome := ClassifyWorkflowRunForQueuedCancel(&run, workflowName)
 		if outcome == WorkflowQueuedRunCancelEligible {
-			cancelled := m.cancelWorkflowRunLocked(id, reason)
+			cancelled, err := m.cancelWorkflowRunLocked(id, reason)
+			if err != nil {
+				return nil, err
+			}
 			outcome = WorkflowQueuedRunCancelCancelled
 			run = *cancelled
 		}
@@ -593,6 +620,9 @@ func (m *MemStore) RetryWorkflowStep(_ context.Context, runID, stepName string, 
 	run, ok := m.workflowRuns[runID]
 	if !ok {
 		return nil, 0, ErrWorkflowRunNotFound
+	}
+	if _, linked := m.operationForWorkflowLocked(runID); linked {
+		return nil, 0, ErrWorkflowRetryNotAllowed
 	}
 	steps := m.workflowSteps[runID]
 	stepList := make([]*WorkflowStep, 0, len(steps))
@@ -836,7 +866,8 @@ func (m *MemStore) StartWorkflowStep(ctx context.Context, runID, stepName string
 	if _, err := workflowGuardTarget(run.DefinitionSnapshot, stepName); err == nil && (step.WhenMatched == nil || !*step.WhenMatched) {
 		return nil, ErrWorkflowGuardNotReady
 	}
-	if (run.ResumeCount > 0 || workflowOutboundSpec(run.DefinitionSnapshot, stepName) != nil || step.ForEachParent != nil) && (run.Status != WorkflowRunStatusRunning || !m.workflowRunLeases[runID].After(time.Now()) || step.Status != WorkflowStepStatusPending || step.Attempt != attempt-1) {
+	_, linkedOperation := m.operationForWorkflowLocked(runID)
+	if (linkedOperation || run.ResumeCount > 0 || workflowOutboundSpec(run.DefinitionSnapshot, stepName) != nil || step.ForEachParent != nil) && (run.Status != WorkflowRunStatusRunning || !m.workflowRunLeases[runID].After(time.Now()) || step.Status != WorkflowStepStatusPending || step.Attempt != attempt-1) {
 		return nil, ErrWorkflowOutboundAttemptExpired
 	}
 	now := time.Now().UTC()
@@ -921,8 +952,14 @@ func (m *MemStore) markWorkflowStepStatus(ctx context.Context, runID, stepName, 
 	if !ok {
 		return ErrWorkflowStepNotFound
 	}
-	if run := m.workflowRuns[runID]; attemptStatus != nil && (run.ResumeCount > 0 || workflowOutboundSpec(run.DefinitionSnapshot, stepName) != nil || step.ForEachParent != nil) && (run.Status != WorkflowRunStatusRunning || step.Status != WorkflowStepStatusRunning || step.Attempt != attempt || ((run.ResumeCount > 0 || step.ForEachParent != nil) && !m.workflowRunLeases[runID].After(time.Now()))) {
+	_, linkedOperation := m.operationForWorkflowLocked(runID)
+	if run := m.workflowRuns[runID]; attemptStatus != nil && (linkedOperation || run.ResumeCount > 0 || workflowOutboundSpec(run.DefinitionSnapshot, stepName) != nil || step.ForEachParent != nil) && (run.Status != WorkflowRunStatusRunning || step.Status != WorkflowStepStatusRunning || step.Attempt != attempt || ((linkedOperation || run.ResumeCount > 0 || step.ForEachParent != nil) && !m.workflowRunLeases[runID].After(time.Now()))) {
 		return ErrWorkflowOutboundAttemptExpired
+	}
+	if status == WorkflowStepStatusSucceeded && attemptStatus != nil && linkedOperation {
+		if _, deadlineErr := m.workflowOperationWindowLocked(m.workflowRuns[runID], stepName, attempt); deadlineErr != nil {
+			return deadlineErr
+		}
 	}
 	if status == WorkflowStepStatusSucceeded && attemptStatus != nil && step.ForEachParent != nil {
 		parent := stepsMap[*step.ForEachParent]
@@ -982,7 +1019,7 @@ func (m *MemStore) markWorkflowStepStatus(ctx context.Context, runID, stepName, 
 		m.workflowRuns[runID] = r
 	}
 
-	return nil
+	return m.syncOperationWorkflowLocked(runID)
 }
 
 // ScheduleWorkflowStepRetry persists a retry deadline and scheduler wake under
@@ -1455,7 +1492,8 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 	threshold := time.Now().UTC().Add(-olderThan)
 	deleted := 0
 	for id, r := range m.workflowRuns {
-		if r.FinishedAt != nil && !r.FinishedAt.After(threshold) {
+		_, retainedByOperation := m.operationForWorkflowLocked(id)
+		if r.FinishedAt != nil && !r.FinishedAt.After(threshold) && !retainedByOperation {
 			delete(m.workflowRuns, id)
 			delete(m.workflowSteps, id)
 			delete(m.workflowEvents, id)

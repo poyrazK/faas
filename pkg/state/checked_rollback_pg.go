@@ -184,6 +184,9 @@ func (s *PgStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollba
 		return snapshot, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err = pgLockProductionLifecycleApp(ctx, tx, snapshot.AppID); err != nil {
+		return snapshot, err
+	}
 	if err = s.lockRollbackApp(ctx, tx, snapshot.AppID); err != nil {
 		return snapshot, err
 	}
@@ -210,6 +213,9 @@ func (s *PgStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollba
 	}
 	ctx = withCheckedRollback(ctx, r.ID)
 	if _, err = q.AuthorizeCheckedRollback(ctx, tx, r.ID); err != nil {
+		return r, err
+	}
+	if err = s.authorizeProductionLifecycle(ctx, tx, d.ID, false); err != nil {
 		return r, err
 	}
 	if err = pgAuthorizeBindingRelease(ctx, tx); err != nil {

@@ -159,12 +159,23 @@ const guestBootConsoleArgs = "console=ttyS0,115200n8 quiet i8042.nokbd i8042.noa
 // LAPIC timer is programmed in timer ticks rather than TSC deadlines.
 const guestTimerArgs = "clocksource=kvm-clock lapic=notscdeadline "
 
+// guestStallWarningArgs suppresses RCU CPU-stall warnings. A guest restored
+// from a snapshot taken minutes or days earlier sees its RCU grace-period
+// timers expire at once and prints "rcu_preempt self-detected stall on CPU
+// ... kthread starved for 334901 jiffies ... OOM is now expected behavior"
+// into the customer's log stream after every wake (production-us hunt #8).
+// The clock jump is the restore, not a stalled CPU; nmi_watchdog and the
+// hung-task detector are disabled for the same reason. Boot arguments are not
+// part of the snapshot backing identity, so existing snapshots stay valid and
+// new captures inherit the setting.
+const guestStallWarningArgs = "rcupdate.rcu_cpu_stall_suppress=1 "
+
 // guestTimerProfile is guestTimerArgs unless a diagnostic test overrides it;
 // it is recorded in every capture's backing identity.
 var guestTimerProfile = guestTimerArgs
 
 const coldBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
-	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
+	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs +
 	// BuildKit generates a per-VM proxy CA during worker startup. The
 	// Firecracker guest has no boot-time user input, so explicitly allow the
 	// kernel CPU RNG and give virtio-rng maximum credit; otherwise getrandom(2)
@@ -177,7 +188,7 @@ const coldBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
 // dedicated execution VM has no Firecracker network interface, so even the
 // guest kernel receives no tenant route or DNS/gateway hint.
 const executionBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
-	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
+	"nmi_watchdog=0 hung_task_timeout_secs=0 " + guestStallWarningArgs +
 	"random.trust_cpu=on rng_core.default_quality=1000 " +
 	"root=/dev/vda ro init=/sbin/init"
 

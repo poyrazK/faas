@@ -769,6 +769,18 @@ type AppRegistryCredential struct {
 	LastUsedAt        pgtype.Timestamptz
 }
 
+type AppRouteRemovalPolicy struct {
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	Mode                  string
+	Revision              int32
+	GraceSeconds          int64
+	MaxApprovalAgeSeconds int64
+	BaselineDeploymentID  pgtype.UUID
+	BaselineSince         pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
 type AppRuntimeConfigChange struct {
 	AppID     pgtype.UUID
 	ChangedAt pgtype.Timestamptz
@@ -1484,6 +1496,8 @@ type CustomerOperation struct {
 	Record              []byte
 	ExpiresAt           pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
+	WorkflowRunID       pgtype.UUID
+	JobRunID            pgtype.UUID
 	CurrentExecutionID  pgtype.UUID
 	ExecutionKind       string
 	ExecutionGeneration int32
@@ -1549,6 +1563,14 @@ type CustomerOperationIdempotency struct {
 	ExpiresAt   pgtype.Timestamptz
 }
 
+type CustomerOperationJobExecution struct {
+	OperationID pgtype.UUID
+	Generation  int32
+	RunID       pgtype.UUID
+	Record      []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
 type CustomerOperationMilestone struct {
 	OperationID   pgtype.UUID
 	ID            pgtype.UUID
@@ -1566,6 +1588,7 @@ type CustomerOperationRecovery struct {
 	Fingerprint string
 	Request     []byte
 	CreatedAt   pgtype.Timestamptz
+	Decision    []byte
 }
 
 type CustomerOperationReport struct {
@@ -1592,6 +1615,9 @@ type CustomerOperationResultBlob struct {
 	NextAttemptAt pgtype.Timestamptz
 	LeaseToken    string
 	LeaseUntil    pgtype.Timestamptz
+	WorkflowRunID pgtype.UUID
+	WorkflowStep  pgtype.Text
+	JobRunID      pgtype.UUID
 }
 
 type CustomerOperationRetainedDeploymentRef struct {
@@ -1617,6 +1643,15 @@ type CustomerOperationWorkflowClaim struct {
 	Attempt          int32
 	CapabilityDigest string
 	LeaseUntil       pgtype.Timestamptz
+}
+
+type CustomerOperationWorkflowExecution struct {
+	OperationID pgtype.UUID
+	Generation  int32
+	RunID       pgtype.UUID
+	ResumeCount int32
+	Record      []byte
+	CreatedAt   pgtype.Timestamptz
 }
 
 type CustomerOperationWorkflowGuestClaim struct {
@@ -1651,16 +1686,28 @@ type CustomerOperationWorkflowState struct {
 }
 
 type CustomerOperationWorkflowStateReport struct {
-	OperationID pgtype.UUID
-	ID          pgtype.UUID
-	Workflow    string
-	InstanceID  string
-	State       string
-	Revision    int64
-	OccurredAt  pgtype.Timestamptz
-	CreatedAt   pgtype.Timestamptz
-	Fingerprint string
-	FromState   string
+	ContractVersion    int32
+	EvidenceMilestones []byte
+	Blockers           []byte
+	BlockersOnly       bool
+	BlockerResolutions []byte
+	OperationID        pgtype.UUID
+	ID                 pgtype.UUID
+	Workflow           string
+	InstanceID         string
+	State              string
+	Revision           int64
+	OccurredAt         pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	Fingerprint        string
+	FromState          string
+	DeadlineAt         string
+	DeadlineOnly       bool
+	OutcomeCode        string
+	OutcomeDescription string
+	OutcomeOnly        bool
+	DependsOn          []byte
+	DependenciesOnly   bool
 }
 
 type DataUpstream struct {
@@ -5288,6 +5335,17 @@ type ProductionInvocationWork struct {
 	EnvironmentID            pgtype.UUID
 }
 
+type ProductionLifecycleReview struct {
+	ID           int64
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	ReviewedAt   pgtype.Timestamptz
+	Decision     []byte
+	Recovery     bool
+	Scope        pgtype.Text
+	Evidence     []byte
+}
+
 type ProfileCanaryCheck struct {
 	DeploymentID        pgtype.UUID
 	AppID               pgtype.UUID
@@ -6320,6 +6378,31 @@ type RequestTelemetry202612 struct {
 	FlagEvidence                []byte
 }
 
+type RequestTelemetryAppGap struct {
+	NodeName     string
+	AppID        pgtype.UUID
+	LastGapAt    pgtype.Timestamptz
+	PendingCount int32
+	DroppedTotal int64
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type RequestTelemetryCoverage struct {
+	NodeName                 string
+	BootID                   pgtype.UUID
+	Sequence                 int64
+	Enabled                  bool
+	SamplingBasisPoints      int32
+	DroppedTotal             int64
+	PendingCount             int32
+	SourceAt                 pgtype.Timestamptz
+	ReceivedAt               pgtype.Timestamptz
+	HealthySince             pgtype.Timestamptz
+	AppScoped                bool
+	UnattributedDroppedTotal int64
+	UnattributedPendingCount int32
+}
+
 type RequestTelemetryDefault struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID
@@ -6432,6 +6515,20 @@ type RouteHealthNotificationState struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+type RouteLifecycleApproval struct {
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	BaselineDeploymentID  pgtype.UUID
+	CandidateDeploymentID pgtype.UUID
+	Receipt               []byte
+	ApprovedAt            pgtype.Timestamptz
+	ValidUntil            pgtype.Timestamptz
+	InvalidatedAt         pgtype.Timestamptz
+	ConfigurationSnapshot []byte
+	SuccessorSnapshot     []byte
+}
+
 type RouteMonitor struct {
 	AppID                 pgtype.UUID
 	AccountID             pgtype.UUID
@@ -6468,6 +6565,33 @@ type RoutePolicyReceipt struct {
 	RequestSha256  string
 	Receipt        []byte
 	CreatedAt      pgtype.Timestamptz
+}
+
+type RouteRemovalApproval struct {
+	ID                    pgtype.UUID
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	PolicyRevision        int32
+	BaselineDeploymentID  pgtype.UUID
+	CandidateDeploymentID pgtype.UUID
+	BaselineSha256        []byte
+	CandidateSha256       []byte
+	MappingSha256         string
+	Mappings              []byte
+	ApprovedBy            string
+	ApprovedAt            pgtype.Timestamptz
+	ValidUntil            pgtype.Timestamptz
+	ObservationFrom       pgtype.Timestamptz
+	ObservationUntil      pgtype.Timestamptz
+	Receipt               []byte
+}
+
+type RouteRemovalPolicyHistory struct {
+	AppID     pgtype.UUID
+	Revision  int32
+	ChangedBy string
+	ChangedAt pgtype.Timestamptz
+	Policy    []byte
 }
 
 type RuntimeArtifactBinding struct {

@@ -243,7 +243,10 @@ func mergeObservedRoutes(spec *Spec, rows []RouteRow) {
 		}
 		op := &Operation{Responses: map[string]*Response{}}
 		op.Responses["200"] = &Response{Content: map[string]*Schema{
-			"application/json": {Type: "object"},
+			"application/json": {
+				Type:                    "object",
+				UnsupportedFacetsSHA256: emptyUnsupportedFacetsSHA256,
+			},
 		}}
 		pi.Methods[method] = op
 	}

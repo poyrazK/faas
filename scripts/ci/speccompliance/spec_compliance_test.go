@@ -322,6 +322,12 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	// Workflow list options encode URL query parameters, not JSON request bodies.
+	"OperationWorkflowAttentionOptions":        true,
+	"OperationWorkflowAttentionSummaryOptions": true,
+	"OperationWorkflowOutcomeOptions":          true,
+	"OperationWorkflowOutcomeSummaryOptions":   true,
+
 	"EventReplayPreviewOptions":      true, // client-only query options; the wire parameters are declared on the route
 	"EventReplayBackfillItemsQuery":  true, // client-only pagination/filter options; the wire parameters are declared on the route
 	"WorkflowSchedulePreviewInput":   true, // client-side request builder input; the wire parameters are query fields
@@ -1167,14 +1173,31 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "preflight.go"),
 		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
 		filepath.Join(root, "pkg", "api", "operations.go"),
+		filepath.Join(root, "pkg", "api", "operations_job.go"),
+		filepath.Join(root, "pkg", "api", "operations_recovery.go"),
+		filepath.Join(root, "pkg", "api", "operations_submission.go"),
 		filepath.Join(root, "pkg", "api", "operation_subject.go"),
 		filepath.Join(root, "pkg", "api", "operation_workflows.go"),
 		filepath.Join(root, "pkg", "api", "operation_milestones.go"),
+		filepath.Join(root, "pkg", "api", "operation_business_compensation.go"),
+		filepath.Join(root, "pkg", "api", "operation_business_decisions.go"),
+		filepath.Join(root, "pkg", "api", "operation_business_effects.go"),
+		filepath.Join(root, "pkg", "api", "operation_business_invariants.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_action_preview.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_attention.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_invariants.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_outcomes.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_policies.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_readiness.go"),
+		filepath.Join(root, "pkg", "api", "operation_workflow_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),
 		filepath.Join(root, "pkg", "api", "route_gate.go"),
+		filepath.Join(root, "pkg", "api", "route_removal.go"),
+		filepath.Join(root, "pkg", "api", "route_lifecycle_approval.go"),
+		filepath.Join(root, "pkg", "api", "route_lifecycle_history.go"),
 		filepath.Join(root, "pkg", "api", "route_health.go"),
 		filepath.Join(root, "pkg", "api", "route_monitor.go"),
 		filepath.Join(root, "pkg", "api", "route_client_errors.go"),

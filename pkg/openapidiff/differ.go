@@ -1,6 +1,7 @@
 package openapidiff
 
 import (
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -21,9 +22,8 @@ import (
 //     convention), removed properties ARE a break (clients
 //     expecting them will get null/undefined).
 //
-//  3. Required — added. Removing a required field is NOT a break
-//     (clients sending it are tolerant). Adding a required field
-//     IS a break (existing clients omit it, the server 400s).
+//  3. Required response guarantees — adding or removing a guarantee changes
+//     the response shape expected by generated clients.
 //
 //  4. Nullability — flips. `nullable: true` ⇨ false (or vice
 //     versa) on the schema itself, or on a property. The OpenAPI
@@ -42,14 +42,24 @@ import (
 // Property order and description whitespace are noise: the loader
 // normalises both, so the differ never sees them as a difference.
 //
-// OneOf / AnyOf unions are treated as opaque (any non-nil union
-// is a black box). PR-2 deliberately does not walk into them —
-// the customer-visible break surface is the four kinds above.
+// OneOf / AnyOf unions and unsupported raw schema facets are not classified
+// as breaking or additive. Changes emit unknown findings rather than being
+// silently treated as compatible or misreported as confirmed breaks.
+// Compare is the legacy break-only view; callers making compatibility
+// decisions should use [CompareDetailed] so they cannot drop unknowns.
 func Compare(baseline, proposed *Spec) []SchemaBreak {
+	return CompareDetailed(baseline, proposed).Breaks
+}
+
+// CompareDetailed compares the supported response-schema facets and reports
+// changes to unsupported schema features separately from confirmed breaking
+// changes. Callers deciding whether to allow a promotion must inspect both
+// slices.
+func CompareDetailed(baseline, proposed *Spec) SchemaComparison {
 	if baseline == nil || proposed == nil {
-		return nil
+		return SchemaComparison{}
 	}
-	var breaks []SchemaBreak
+	var result SchemaComparison
 	// Sort path keys for deterministic output (the engine sorts
 	// its own emit too, but sorting here keeps Compare pure).
 	pathKeys := unionSortedKeys(baseline.Paths, proposed.Paths)
@@ -70,7 +80,7 @@ func Compare(baseline, proposed *Spec) []SchemaBreak {
 			// are now missing. One break per method.
 			methodKeys := unionSortedKeys(basePI.Methods)
 			for _, method := range methodKeys {
-				breaks = append(breaks, SchemaBreak{
+				result.Breaks = append(result.Breaks, SchemaBreak{
 					Path: pathKey, Method: method, Status: "",
 					Kind:   SchemaKindFieldRemoved,
 					Before: pathKey,
@@ -88,7 +98,7 @@ func Compare(baseline, proposed *Spec) []SchemaBreak {
 				continue
 			}
 			if propOp == nil {
-				breaks = append(breaks, SchemaBreak{
+				result.Breaks = append(result.Breaks, SchemaBreak{
 					Path: pathKey, Method: method, Status: "",
 					Kind:   SchemaKindFieldRemoved,
 					Before: method,
@@ -106,7 +116,7 @@ func Compare(baseline, proposed *Spec) []SchemaBreak {
 				if propResp == nil {
 					// Status removed — every content type's schema
 					// is gone. One break.
-					breaks = append(breaks, SchemaBreak{
+					result.Breaks = append(result.Breaks, SchemaBreak{
 						Path: pathKey, Method: method, Status: status,
 						Kind:   SchemaKindFieldRemoved,
 						Before: status,
@@ -121,7 +131,7 @@ func Compare(baseline, proposed *Spec) []SchemaBreak {
 						continue
 					}
 					if propSch == nil {
-						breaks = append(breaks, SchemaBreak{
+						result.Breaks = append(result.Breaks, SchemaBreak{
 							Path: pathKey, Method: method, Status: status,
 							Kind:         SchemaKindFieldRemoved,
 							PathInSchema: ct,
@@ -129,12 +139,19 @@ func Compare(baseline, proposed *Spec) []SchemaBreak {
 						})
 						continue
 					}
-					breaks = append(breaks, diffSchema(pathKey, method, status, ct, baseSch, propSch, baseline, proposed)...)
+					comparison := diffSchema(pathKey, method, status, ct, baseSch, propSch, baseline, proposed)
+					result.Breaks = append(result.Breaks, comparison.Breaks...)
+					result.Unknowns = append(result.Unknowns, comparison.Unknowns...)
 				}
 			}
 		}
 	}
-	return breaks
+	sort.Slice(result.Unknowns, func(i, j int) bool {
+		a, b := result.Unknowns[i], result.Unknowns[j]
+		return strings.Join([]string{a.Path, a.Method, a.Status, a.PathInSchema, string(a.Code)}, "\x00") <
+			strings.Join([]string{b.Path, b.Method, b.Status, b.PathInSchema, string(b.Code)}, "\x00")
+	})
+	return result
 }
 
 // diffSchema recursively compares two schemas at a known
@@ -146,7 +163,7 @@ func Compare(baseline, proposed *Spec) []SchemaBreak {
 // against the parent Specs (each spec has its own Components
 // map, so a $ref may resolve differently on each side — the
 // differ treats that as a structural break too).
-func diffSchema(path, method, status, ct string, base, prop *Schema, baseSpec, propSpec *Spec) []SchemaBreak {
+func diffSchema(path, method, status, ct string, base, prop *Schema, baseSpec, propSpec *Spec) SchemaComparison {
 	return diffSchemaDepth(path, method, status, ct, base, prop, baseSpec, propSpec, 0)
 }
 
@@ -157,13 +174,13 @@ func diffSchema(path, method, status, ct string, base, prop *Schema, baseSpec, p
 // depth 0 starts at the initial node; depth 8 mirrors resolveRef's
 // maxDepth and any deeper walk returns no further breaks (the
 // already-recorded break at the cycle edge is what the user reads).
-func diffSchemaDepth(path, method, status, ct string, base, prop *Schema, baseSpec, propSpec *Spec, depth int) []SchemaBreak {
+func diffSchemaDepth(path, method, status, ct string, base, prop *Schema, baseSpec, propSpec *Spec, depth int) SchemaComparison {
 	const maxDepth = 8
 	if depth >= maxDepth {
-		return nil
+		return SchemaComparison{}
 	}
 	_ = ct // ct is already encoded in the breaks; kept in the signature for readability.
-	var breaks []SchemaBreak
+	var result SchemaComparison
 	// $ref resolution. baseSpec / propSpec own their own
 	// Components; we resolve each side independently. When
 	// the resolved schemas differ the recursion handles it.
@@ -174,7 +191,7 @@ func diffSchemaDepth(path, method, status, ct string, base, prop *Schema, baseSp
 		// Treat empty (union) as "no type change" — the differ
 		// does not walk unions.
 		if base.Type != "" && prop.Type != "" {
-			breaks = append(breaks, SchemaBreak{
+			result.Breaks = append(result.Breaks, SchemaBreak{
 				Path: path, Method: method, Status: status,
 				Kind:   SchemaKindTypeChange,
 				Before: base.Type, After: prop.Type,
@@ -183,7 +200,7 @@ func diffSchemaDepth(path, method, status, ct string, base, prop *Schema, baseSp
 	}
 	// 2. Nullability change.
 	if base.Nullable != prop.Nullable {
-		breaks = append(breaks, SchemaBreak{
+		result.Breaks = append(result.Breaks, SchemaBreak{
 			Path: path, Method: method, Status: status,
 			Kind:         SchemaKindNullabilityChange,
 			PathInSchema: "",
@@ -193,7 +210,7 @@ func diffSchemaDepth(path, method, status, ct string, base, prop *Schema, baseSp
 	// 3. Removed properties.
 	for name := range base.Properties {
 		if _, ok := prop.Properties[name]; !ok {
-			breaks = append(breaks, SchemaBreak{
+			result.Breaks = append(result.Breaks, SchemaBreak{
 				Path: path, Method: method, Status: status,
 				Kind:         SchemaKindFieldRemoved,
 				PathInSchema: "properties." + name,
@@ -201,12 +218,14 @@ func diffSchemaDepth(path, method, status, ct string, base, prop *Schema, baseSp
 			})
 		}
 	}
-	// 4. Required added.
+	// 4. Required response properties. A field becoming optional removes
+	// a guarantee clients may rely on. Skip missing fields because they
+	// already receive the more specific field_removed finding above.
 	baseReq := keySetString(base.Required)
 	propReq := keySetString(prop.Required)
 	for _, name := range prop.Required {
 		if _, ok := baseReq[name]; !ok {
-			breaks = append(breaks, SchemaBreak{
+			result.Breaks = append(result.Breaks, SchemaBreak{
 				Path: path, Method: method, Status: status,
 				Kind:         SchemaKindRequiredAdded,
 				PathInSchema: "properties." + name,
@@ -214,26 +233,255 @@ func diffSchemaDepth(path, method, status, ct string, base, prop *Schema, baseSp
 			})
 		}
 	}
+	for _, name := range base.Required {
+		if _, stillRequired := propReq[name]; stillRequired {
+			continue
+		}
+		if _, stillPresent := prop.Properties[name]; !stillPresent {
+			continue
+		}
+		result.Breaks = append(result.Breaks, SchemaBreak{
+			Path: path, Method: method, Status: status,
+			Kind:         SchemaKindRequiredRemoved,
+			PathInSchema: "properties." + name,
+			Before:       name,
+		})
+	}
+	// Unsupported union changes cannot yet be classified as breaking or
+	// additive. Other unsupported schema facets (enum, format, constraints,
+	// composition, and so on) receive the same treatment at their own node.
+	baselineIncompleteAtNode := false
+	if hasSchemaUnion(base, prop) {
+		if code := schemaUnionUnknown(base, prop, baseSpec, propSpec); code != "" {
+			result.Unknowns = append(result.Unknowns, SchemaUnknown{
+				Path: path, Method: method, Status: status,
+				Code: code,
+			})
+		}
+	} else if code := schemaUnsupportedFacetUnknown(base, prop); code != "" {
+		baselineIncompleteAtNode = code == SchemaUnknownSchemaBaselineIncomplete
+		result.Unknowns = append(result.Unknowns, SchemaUnknown{
+			Path: path, Method: method, Status: status,
+			Code: code,
+		})
+	}
 	// 5. Recurse into shared properties + Items.
 	for name, baseChild := range base.Properties {
 		if propChild, ok := prop.Properties[name]; ok {
 			childPathInSchema := "properties." + name
-			for _, b := range diffSchemaDepth(path, method, status, ct, baseChild, propChild, baseSpec, propSpec, depth+1) {
+			child := diffSchemaDepth(path, method, status, ct, baseChild, propChild, baseSpec, propSpec, depth+1)
+			for _, b := range child.Breaks {
 				b.PathInSchema = joinPath(b.PathInSchema, childPathInSchema)
-				breaks = append(breaks, b)
+				result.Breaks = append(result.Breaks, b)
+			}
+			for _, unknown := range child.Unknowns {
+				if baselineIncompleteAtNode && unknown.Code == SchemaUnknownSchemaBaselineIncomplete {
+					continue
+				}
+				unknown.PathInSchema = joinPath(unknown.PathInSchema, childPathInSchema)
+				result.Unknowns = append(result.Unknowns, unknown)
 			}
 		}
 	}
 	if base.Items != nil && prop.Items != nil {
-		for _, b := range diffSchemaDepth(path, method, status, ct, base.Items, prop.Items, baseSpec, propSpec, depth+1) {
+		child := diffSchemaDepth(path, method, status, ct, base.Items, prop.Items, baseSpec, propSpec, depth+1)
+		for _, b := range child.Breaks {
 			b.PathInSchema = joinPath(b.PathInSchema, "items")
-			breaks = append(breaks, b)
+			result.Breaks = append(result.Breaks, b)
+		}
+		for _, unknown := range child.Unknowns {
+			if baselineIncompleteAtNode && unknown.Code == SchemaUnknownSchemaBaselineIncomplete {
+				continue
+			}
+			unknown.PathInSchema = joinPath(unknown.PathInSchema, "items")
+			result.Unknowns = append(result.Unknowns, unknown)
 		}
 	}
 	// Avoid an "unused variable" warning when propReq is
 	// only consulted in the loop above.
 	_ = propReq
-	return breaks
+	return result
+}
+
+// schemaUnionUnknown reports whether either union kind or any alternative's
+// observable schema shape changed. Union order is ignored because oneOf and
+// anyOf alternative order has no validation meaning. Raw facets outside the
+// structural differ are compared inside alternatives so an enum, format, or
+// discriminator edit is not presented as a clean comparison. A snapshot
+// without the opaque facet marker is incomplete when it contains a union.
+func schemaUnionUnknown(base, prop *Schema, baseSpec, propSpec *Spec) SchemaUnknownCode {
+	if base == nil || prop == nil {
+		if base != prop {
+			return SchemaUnknownUnsupportedUnionChange
+		}
+		return ""
+	}
+	if !hasSchemaUnion(base, prop) {
+		return ""
+	}
+	seen := make(map[schemaRefPair]bool)
+	if (len(base.OneOf) > 0 || len(prop.OneOf) > 0) && !schemaAlternativesEqual(base.OneOf, prop.OneOf, baseSpec, propSpec, seen) {
+		return SchemaUnknownUnsupportedUnionChange
+	}
+	if (len(base.AnyOf) > 0 || len(prop.AnyOf) > 0) && !schemaAlternativesEqual(base.AnyOf, prop.AnyOf, baseSpec, propSpec, seen) {
+		return SchemaUnknownUnsupportedUnionChange
+	}
+	if !reflect.DeepEqual(schemaUnsupportedFacets(base), schemaUnsupportedFacets(prop)) {
+		return SchemaUnknownUnsupportedUnionChange
+	}
+	if base.UnsupportedFacetsSHA256 != "" && prop.UnsupportedFacetsSHA256 != "" &&
+		base.UnsupportedFacetsSHA256 != prop.UnsupportedFacetsSHA256 {
+		return SchemaUnknownUnsupportedUnionChange
+	}
+	if base.UnsupportedFacetsSHA256 == "" || prop.UnsupportedFacetsSHA256 == "" {
+		return SchemaUnknownUnionBaselineIncomplete
+	}
+	return ""
+}
+
+func hasSchemaUnion(base, prop *Schema) bool {
+	return base != nil && prop != nil &&
+		(len(base.OneOf) > 0 || len(base.AnyOf) > 0 || len(prop.OneOf) > 0 || len(prop.AnyOf) > 0)
+}
+
+func schemaUnsupportedFacetUnknown(base, prop *Schema) SchemaUnknownCode {
+	if base == nil || prop == nil {
+		return ""
+	}
+	// Normal loaded and current snapshots have fingerprints. This is the
+	// reliable path: raw facet values remain absent from persisted reports.
+	if base.UnsupportedFacetsSHA256 != "" && prop.UnsupportedFacetsSHA256 != "" {
+		if base.UnsupportedFacetsSHA256 != prop.UnsupportedFacetsSHA256 {
+			return SchemaUnknownUnsupportedSchemaChange
+		}
+		return ""
+	}
+
+	baseFacets, propFacets := schemaUnsupportedFacets(base), schemaUnsupportedFacets(prop)
+	// Hand-built Specs and live LoadBytes results can still be compared from
+	// their raw maps when both sides retain them.
+	if base.Raw != nil && prop.Raw != nil {
+		if !reflect.DeepEqual(baseFacets, propFacets) {
+			return SchemaUnknownUnsupportedSchemaChange
+		}
+		return ""
+	}
+
+	// A snapshot with neither raw values nor a fingerprint cannot prove that
+	// unsupported facets were absent. Report incompleteness even when the
+	// proposed schema has no such facets, since they may have been removed.
+	return SchemaUnknownSchemaBaselineIncomplete
+}
+
+func schemaAlternativesEqual(base, prop []*Schema, baseSpec, propSpec *Spec, seen map[schemaRefPair]bool) bool {
+	if len(base) != len(prop) {
+		return false
+	}
+	matched := make([]bool, len(prop))
+	for _, baseSchema := range base {
+		found := false
+		for i, propSchema := range prop {
+			if matched[i] || !schemaEquivalent(baseSchema, propSchema, baseSpec, propSpec, 0, cloneSchemaRefPairs(seen)) {
+				continue
+			}
+			matched[i] = true
+			found = true
+			break
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+type schemaRefPair struct{ baseline, proposed string }
+
+func schemaEquivalent(base, prop *Schema, baseSpec, propSpec *Spec, depth int, seen map[schemaRefPair]bool) bool {
+	const maxComparisonDepth = 16
+	if base == nil || prop == nil {
+		return base == prop
+	}
+	if depth >= maxComparisonDepth {
+		return false // uncertainty at the containing union is safer than a clean result.
+	}
+	if base.Ref != "" || prop.Ref != "" {
+		pair := schemaRefPair{baseline: base.Ref, proposed: prop.Ref}
+		if seen[pair] {
+			return true
+		}
+		seen[pair] = true
+	}
+	base = resolveRef(base, baseSpec)
+	prop = resolveRef(prop, propSpec)
+	if base == nil || prop == nil {
+		return base == prop
+	}
+	if base.Type != prop.Type || base.Nullable != prop.Nullable || base.Ref != prop.Ref ||
+		!equalSchemaStrings(base.Required, prop.Required) ||
+		(base.UnsupportedFacetsSHA256 != "" && prop.UnsupportedFacetsSHA256 != "" &&
+			base.UnsupportedFacetsSHA256 != prop.UnsupportedFacetsSHA256) ||
+		!reflect.DeepEqual(schemaUnsupportedFacets(base), schemaUnsupportedFacets(prop)) ||
+		len(base.Properties) != len(prop.Properties) {
+		return false
+	}
+	for name, baseChild := range base.Properties {
+		propChild, ok := prop.Properties[name]
+		if !ok || !schemaEquivalent(baseChild, propChild, baseSpec, propSpec, depth+1, seen) {
+			return false
+		}
+	}
+	if (base.Items == nil) != (prop.Items == nil) ||
+		(base.Items != nil && !schemaEquivalent(base.Items, prop.Items, baseSpec, propSpec, depth+1, seen)) {
+		return false
+	}
+	if !schemaAlternativesEqual(base.OneOf, prop.OneOf, baseSpec, propSpec, seen) ||
+		!schemaAlternativesEqual(base.AnyOf, prop.AnyOf, baseSpec, propSpec, seen) {
+		return false
+	}
+	return true
+}
+
+func cloneSchemaRefPairs(in map[schemaRefPair]bool) map[schemaRefPair]bool {
+	copy := make(map[schemaRefPair]bool, len(in))
+	for pair := range in {
+		copy[pair] = true
+	}
+	return copy
+}
+
+func equalSchemaStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	aCopy, bCopy := append([]string(nil), a...), append([]string(nil), b...)
+	sort.Strings(aCopy)
+	sort.Strings(bCopy)
+	for i := range aCopy {
+		if aCopy[i] != bCopy[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func schemaUnsupportedFacets(schema *Schema) map[string]any {
+	if schema == nil || len(schema.Raw) == 0 {
+		return nil
+	}
+	out := make(map[string]any)
+	for key, value := range schema.Raw {
+		switch key {
+		case "$ref", "type", "nullable", "description", "properties", "required", "items", "oneOf", "anyOf":
+			continue
+		default:
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // resolveRef follows a $ref chain against the parent Spec's

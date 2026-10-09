@@ -1,15 +1,31 @@
+import { businessCompensationPayload, type OperationBusinessCompensation } from './customer-operation-compensation.js';
+import { businessEffectPayload, type OperationBusinessEffect } from './customer-operation-effects.js';
+import { applyBusinessInvariant, businessInvariantPayload, type OperationBusinessInvariant } from './customer-operation-invariants.js';
+import { reconcileWorkflowState, type CustomerOperationReconciliationHelper } from './customer-operation-reconciliation.js';
+import { businessDecisionPayload, type OperationBusinessDecision } from './customer-operation-decisions.js';
 // ADR-715: commit facts with business writes, then publish under a fresh execution fence.
+import { guardedWorkflowTransition, type CustomerOperationReadinessGuard } from './customer-operation-readiness.js';
 import { randomUUID } from 'node:crypto';
 import { OPERATION_MILESTONE_PAYLOAD_BYTES, OPERATION_MILESTONE_BATCH_BYTES, OPERATION_MILESTONES } from './operation-contract.js';
 import { customerOperationRequestDigest, type CustomerOperationTransactionRequest } from './customer-operation-transactions.js';
 import type { OperationConnection, OperationPool, OperationTransaction } from './operation-receipt.js';
 import type { OperationMilestone, OperationMilestoneReport } from './customer-operations.js';
-import { workflowStateTransaction, type OperationWorkflowStateReport } from './customer-operation-workflow-states.js';
+import { workflowStateTransaction, type OperationWorkflowStateReport, type OperationWorkflowDependency, type OperationWorkflowBlocker, type OperationWorkflowBlockerResolution } from './customer-operation-workflow-states.js';
 
 export interface CustomerOperationTransaction extends OperationTransaction {
+  businessCompensation(milestone: string, compensation: OperationBusinessCompensation): void;
+  businessEffect(milestone: string, effect: OperationBusinessEffect): void;
+  reportBusinessInvariant(milestone: string, input: OperationBusinessInvariant, current: OperationWorkflowBlocker[]): OperationWorkflowBlocker[];
+  reconcileWorkflowState: CustomerOperationReconciliationHelper;
+  businessDecision(milestone: string, decision: OperationBusinessDecision): void;
+  guardedWorkflowTransition: CustomerOperationReadinessGuard;
   /** Declared public fact. Queued synchronously and saved before the transaction commits. */
   milestone(name: string, payload: unknown): void;
   /** Explicit business state. Revisions are assigned before commit and published after commit. */
+  workflowDependencies(workflow: string, instanceID: string, state: string, dependencies: OperationWorkflowDependency[]): void;
+  workflowOutcome(workflow: string, instanceID: string, state: string, code: string, description: string): void;
+  workflowDeadline(workflow: string, instanceID: string, state: string, dueAt: string): void;
+  workflowBlockers(workflow: string, instanceID: string, state: string, blockers: OperationWorkflowBlocker[], resolutions?: OperationWorkflowBlockerResolution[]): void;
   workflowState(workflow: string, instanceID: string, state: string): void;
   /** Declared state transition. Check that fromState matches the locked business row. */
   workflowTransition(workflow: string, instanceID: string, fromState: string, toState: string): void;
@@ -32,9 +48,16 @@ export function milestoneJSON(value: unknown): string {
   return encoded;
 }
 
-export function milestoneTransaction(tx: OperationTransaction, request: CustomerOperationTransactionRequest, reports: OperationMilestoneReport[], workflowStates: OperationWorkflowStateReport[], isOpen: () => boolean): CustomerOperationTransaction {
+export function milestoneTransaction(tx: OperationTransaction, request: CustomerOperationTransactionRequest, reports: OperationMilestoneReport[], workflowStates: OperationWorkflowStateReport[], isOpen: () => boolean, failGuard: (error: unknown) => void = () => {}): CustomerOperationTransaction {
   const stateTransaction = workflowStateTransaction(request, workflowStates, isOpen);
-  return {query: tx.query.bind(tx), workflowState: stateTransaction.workflowState, workflowTransition: stateTransaction.workflowTransition, milestone(name, payload) {
+  const transaction: CustomerOperationTransaction = {businessCompensation(name,compensation) {transaction.milestone(name,businessCompensationPayload(compensation));},businessEffect(name,effect) {transaction.milestone(name,businessEffectPayload(effect));},reportBusinessInvariant(name,input,current) {
+    try {
+      const payload=businessInvariantPayload(input), blockers=applyBusinessInvariant(payload.invariant,current);
+      transaction.milestone(name,payload);
+      transaction.workflowBlockers(input.workflow,input.instance_id,input.state,blockers);
+      return blockers;
+    } catch(error){failGuard(error);throw error;}
+  },reconcileWorkflowState: async (...args) => reconcileWorkflowState(transaction, request.appId, reports, workflowStates, isOpen, failGuard, ...args),businessDecision(name, decision) { transaction.milestone(name, businessDecisionPayload(decision)); },guardedWorkflowTransition: async (proposal, facts, check) => guardedWorkflowTransition(transaction, request, reports, workflowStates, isOpen, failGuard, proposal, facts, check), query: tx.query.bind(tx), workflowDependencies: stateTransaction.workflowDependencies, workflowOutcome: stateTransaction.workflowOutcome, workflowDeadline: stateTransaction.workflowDeadline, workflowBlockers: stateTransaction.workflowBlockers, workflowState: stateTransaction.workflowState, workflowTransition: stateTransaction.workflowTransition, milestone(name, payload) {
     if (!isOpen()) throw new TypeError('Milestones must be recorded inside the transaction callback');
     if (!request.milestonesSupported) throw new TypeError('Customer Operation milestones are not negotiated');
     if (typeof name !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(name)) throw new TypeError('Milestone name must be a bounded lowercase slug');
@@ -44,6 +67,7 @@ export function milestoneTransaction(tx: OperationTransaction, request: Customer
     if (Buffer.byteLength(JSON.stringify({milestones: [...reports, report]})) > OPERATION_MILESTONE_BATCH_BYTES) throw new TypeError('Milestone batch exceeds its byte limit');
     reports.push(report);
   }};
+  return transaction;
 }
 
 export async function saveCustomerMilestones(tx: OperationTransaction, operationID: string, reports: OperationMilestoneReport[]): Promise<void> {

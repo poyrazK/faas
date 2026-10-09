@@ -62,6 +62,12 @@ func (m *MemStore) SetBindingReleasePolicy(_ context.Context, accountID, appID, 
 
 // Check the complete proposed distribution before mutating anything.
 func (m *MemStore) checkBindingReleaseTrafficLocked(ctx context.Context, proposed map[string]int) error {
+	if fences, _ := ctx.Value(routeRemovalFencesKey{}).([]RouteRemovalFence); len(fences) > 0 {
+		return &RouteRemovalBlockedError{Reason: "server_telemetry_unavailable"}
+	}
+	if err := m.checkRouteRemovalTrafficLocked(proposed); err != nil {
+		return err
+	}
 	for _, f := range bindingReleaseFences(ctx) {
 		d := m.deployments[f.DeploymentID]
 		if d.ID == "" {
@@ -124,6 +130,9 @@ func (m *MemStore) checkBindingReleaseFailureLocked(d Deployment) error {
 		}
 	}
 	if fallback.ID != "" && fallback.TrafficPercent < 100 {
+		if err := m.checkRouteRemovalTrafficLocked(map[string]int{fallback.ID: 100}); err != nil {
+			return err
+		}
 		return m.rejectUncheckedBindingReleaseLocked(fallback.AppID, fallback.Scope)
 	}
 	return nil
