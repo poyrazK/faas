@@ -1434,13 +1434,21 @@ gregale alerts deliveries --app my-api --interactive
 
 Update one alert rule
 
-`gregale alerts update [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] <alert-id>`
+`gregale alerts update [--interactive] [--app <slug>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [<alert-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | choose a rule, edit current settings, and confirm changes |  |
+| `--app <slug>` | app slug (linked app or picker in interactive mode) |  |
 | `--action <ACTION>` | alert action | one of `webhook` · `rollback` · `demote` · `promote` |
 | `--post-deploy-rollback-window <duration>` | completed-release rollback window (0 off; up to 1h) |  |
 | `--webhook-secret-stdin` | read the replacement webhook secret from stdin |  |
+
+Examples:
+
+```sh
+gregale alerts update --app my-api --interactive
+```
 
 ### alerts rm
 

@@ -778,11 +778,13 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "max deliveries (1..100, default 20)", Value: "N"},
 				{Name: "include-test", Short: "include test deliveries", Bool: true},
 			}, Examples: []string{"gregale alerts deliveries --app my-api --interactive"}},
-			{Name: "update", Short: "Update one alert rule", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{
+			{Name: "update", Short: "Update one alert rule", Positionals: []string{"[<alert-id>]"}, Flags: []cliFlag{
+				{Name: "interactive", Short: "choose a rule, edit current settings, and confirm changes", Bool: true},
+				{Name: "app", Short: "app slug (linked app or picker in interactive mode)", Value: "slug"},
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},
 				{Name: "webhook-secret-stdin", Short: "read the replacement webhook secret from stdin"},
-			}},
+			}, Examples: []string{"gregale alerts update --app my-api --interactive"}},
 			{Name: "rm", Short: "Delete one alert rule", Positionals: []string{"<alert-id>"}},
 			{Name: "rotate-secret", Short: "Rotate the alert's webhook secret", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},

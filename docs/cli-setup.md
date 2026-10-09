@@ -464,6 +464,25 @@ For scripts, use the explicit command with JSON output:
 gregale alerts deliveries ALERT_ID --app my-api --limit 20 --json
 ```
 
+## Edit alert settings interactively
+
+```sh
+gregale alerts update --app my-api --interactive
+# Use the linked app, or choose one:
+gregale alerts update --interactive
+```
+
+Choose a rule by name, then edit its prefilled threshold, window, cooldown,
+and enabled state. The metric and action are shown for context. Review the
+changed values and confirm before saving; unchanged values are omitted from
+the update. Keeping all values unchanged makes no update request.
+
+The CLI rereads the rule before saving and stops if its configuration changed
+while you were editing. This is a client-side check, not an atomic server-side
+lock. Routine evaluation state and timestamps do not block an edit.
+For scripts or other fields, use `alerts update ALERT_ID --app APP` with
+explicit flags.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |

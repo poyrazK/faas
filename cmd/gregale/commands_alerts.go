@@ -386,6 +386,7 @@ func alertDeliverySummary(d api.AlertDeliveryResponse) string {
 // the constraint (alerts.go:118-123).
 func cmdAlertUpdate(args []string) int {
 	fs := newFlagSet("alerts update", flag.ContinueOnError)
+	interactive := fs.Bool("interactive", false, "choose an alert and edit its settings")
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "rule name (3..120 chars)")
 	enabled := fs.Bool(flagNameEnabled, true, "enable/disable the rule")
@@ -404,6 +405,26 @@ func cmdAlertUpdate(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	if *interactive {
+		invalid := fs.NArg() != 0
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "interactive" && f.Name != "app" {
+				invalid = true
+			}
+		})
+		if invalid {
+			return printErr("Invalid interactive update flags", fmt.Errorf("use alerts update --interactive with optional --app; choose settings in the flow"))
+		}
+		if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
+			return printErr("Interactive terminal required", fmt.Errorf("use alerts update ID --app APP with explicit flags for scripts"))
+		}
+		app, err := resolveReadAppTarget(*slug)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		return cmdAlertUpdateInteractive(app)
+	}
+
 	if *slug == "" || fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale alerts update --app <slug> [--name <text>] [--enabled=false] [--metric <v>] [--comparison <op>] [--threshold <num>] [--window-spec <w>] [--action <webhook|rollback|demote|promote>] [--webhook-url <url>] [--webhook-secret-stdin|--webhook-secret <s>] [--cooldown-minutes N] <alert-id>", "alerts")
 		return 1
