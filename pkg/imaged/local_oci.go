@@ -599,7 +599,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	// app layer here and then failed at snapshot prime with "sidecar
 	// \"heartbeat\" has no built layer". Build them here too, with the same
 	// fail-on-secret posture as the image path.
-	scFindings, err := h.buildSidecarLayers(ctx, app, dep, acct)
+	scFindings, err := h.buildSidecarLayers(ctx, app, *dep, acct)
 	if err != nil {
 		return err
 	}
