@@ -7245,6 +7245,55 @@ type WorkflowAutomationDefinition struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type WorkflowAutomationFailureGuard struct {
+	AppID           pgtype.UUID
+	Name            string
+	Generation      int64
+	MonitoringSince pgtype.Timestamptz
+	PausedAt        pgtype.Timestamptz
+}
+
+type WorkflowAutomationFailureHistory struct {
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	Name           string
+	Generation     int64
+	State          string
+	Reason         string
+	RecordedAt     pgtype.Timestamptz
+	Failures       int64
+	CompletedRuns  int64
+	PolicyVersion  int64
+	ActorAccountID pgtype.UUID
+}
+
+type WorkflowAutomationFailurePolicy struct {
+	AppID            pgtype.UUID
+	Name             string
+	Version          int64
+	Enabled          bool
+	FailureThreshold int32
+	MinCompletedRuns int32
+	WindowSeconds    int32
+}
+
+type WorkflowAutomationPublishPolicy struct {
+	AppID   pgtype.UUID
+	Mode    string
+	Version int64
+}
+
+type WorkflowAutomationPublishReceipt struct {
+	AppID         pgtype.UUID
+	Name          string
+	AccountID     pgtype.UUID
+	ApiKeyID      string
+	TokenHash     string
+	PolicyVersion int64
+	ExpiresAt     pgtype.Timestamptz
+	Evidence      []byte
+}
+
 type WorkflowAutomationRevision struct {
 	AppID                pgtype.UUID
 	Name                 string
@@ -7254,6 +7303,7 @@ type WorkflowAutomationRevision struct {
 	LegacySnapshot       bool
 	PublishedByAccountID pgtype.UUID
 	PublishedByApiKeyID  pgtype.UUID
+	CheckEvidence        []byte
 }
 
 type WorkflowCallbackWebhookBinding struct {

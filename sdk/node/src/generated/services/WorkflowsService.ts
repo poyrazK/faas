@@ -2,9 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AutomationFailurePolicyResponse } from '../models/AutomationFailurePolicyResponse.js';
 import type { AutomationHealthResponse } from '../models/AutomationHealthResponse.js';
+import type { AutomationPublishPolicy } from '../models/AutomationPublishPolicy.js';
 import type { AutomationResponse } from '../models/AutomationResponse.js';
 import type { AutomationRevisionResponse } from '../models/AutomationRevisionResponse.js';
+import type { CheckAutomationPublicationRequest } from '../models/CheckAutomationPublicationRequest.js';
+import type { CheckAutomationPublicationResponse } from '../models/CheckAutomationPublicationResponse.js';
 import type { CompleteWorkflowCallbackResponse } from '../models/CompleteWorkflowCallbackResponse.js';
 import type { CreateWorkflowCallbackWebhookBindingRequest } from '../models/CreateWorkflowCallbackWebhookBindingRequest.js';
 import type { InjectWorkflowEventRequest } from '../models/InjectWorkflowEventRequest.js';
@@ -21,9 +25,12 @@ import type { ListWorkflowStepAttemptsResponse } from '../models/ListWorkflowSte
 import type { ListWorkflowStepsResponse } from '../models/ListWorkflowStepsResponse.js';
 import type { PublishAutomationRequest } from '../models/PublishAutomationRequest.js';
 import type { RestoreAutomationRevisionRequest } from '../models/RestoreAutomationRevisionRequest.js';
+import type { ResumeAutomationFailurePauseRequest } from '../models/ResumeAutomationFailurePauseRequest.js';
 import type { ResumeWorkflowRunRequest } from '../models/ResumeWorkflowRunRequest.js';
 import type { SaveAutomationDraftRequest } from '../models/SaveAutomationDraftRequest.js';
 import type { SetAutomationEnabledRequest } from '../models/SetAutomationEnabledRequest.js';
+import type { SetAutomationFailurePolicyRequest } from '../models/SetAutomationFailurePolicyRequest.js';
+import type { SetAutomationPublishPolicyRequest } from '../models/SetAutomationPublishPolicyRequest.js';
 import type { SimulateAutomationRequest } from '../models/SimulateAutomationRequest.js';
 import type { SimulateAutomationResponse } from '../models/SimulateAutomationResponse.js';
 import type { TenantWorkflowScheduleResponse } from '../models/TenantWorkflowScheduleResponse.js';
@@ -473,6 +480,122 @@ export class WorkflowsService {
     });
   }
   /**
+   * Inspect failure pause policy and resume preview.
+   * Returns aggregate terminal outcomes since monitoring began or resumed, current pause generation, active run counts, retained event count and the latest 100 pause/resume transitions. Counts are advisory; no run payloads or error messages are included.
+   * @returns AutomationFailurePolicyResponse Current monitoring policy, failure pause, retained work preview and recent transitions.
+   * @throws ApiError
+   */
+  public static getAutomationFailurePolicy({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Published automation whose failure admission guard is inspected or changed.
+     */
+    name: string,
+  }): CancelablePromise<AutomationFailurePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/automations/{name}/failure-policy',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code automation_failure_policy_conflict; reload failure guard state before a conflicting operation.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+      },
+    });
+  }
+  /**
+   * Configure automatic pausing after repeated failures.
+   * Opt-in policy for a published YAML or dashboard automation; requires deploy write scope. Compare-and-set expected_version starts at zero. Scheduler ticks latch a runtime pause when both failure count and minimum completed-run count are met. Policy edits, disabling monitoring, publishing, and ordinary enabled changes do not clear an existing failure pause.
+   * @returns AutomationFailurePolicyResponse Updated failure monitoring configuration with the current independent admission guard.
+   * @throws ApiError
+   */
+  public static setAutomationFailurePolicy({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Published automation whose failure admission guard is inspected or changed.
+     */
+    name: string,
+    requestBody: SetAutomationFailurePolicyRequest,
+  }): CancelablePromise<AutomationFailurePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/automations/{name}/failure-policy',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code automation_failure_policy_conflict; the expected failure policy version changed.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+      },
+    });
+  }
+  /**
+   * Explicitly clear a failure pause after inspecting retained work.
+   * Requires deploy write scope and the current positive pause generation. Starts a fresh monitoring epoch and re-arms schedules without catch-up for the paused interval. Existing runs continue and captured events remain subject to their routing retention; events received without an eligible recipient are not replayed. This action does not change manual pause intent.
+   * @returns AutomationFailurePolicyResponse Explicitly resumed guard state with fresh monitoring counts and transition history.
+   * @throws ApiError
+   */
+  public static resumeAutomationFailurePause({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Published automation whose current failure pause is explicitly resumed.
+     */
+    name: string,
+    requestBody: ResumeAutomationFailurePauseRequest,
+  }): CancelablePromise<AutomationFailurePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/automations/{name}/failure-policy/resume',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code automation_failure_policy_conflict; the reviewed pause generation is stale or no pause remains.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+      },
+    });
+  }
+  /**
    * Get bounded execution health for one automation.
    * Returns run counts by status, the completed-run success rate, median
    * and p95 duration, recent run identities and the most common failed
@@ -686,6 +809,128 @@ export class WorkflowsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect required publishing checks.
+   * @returns AutomationPublishPolicy Publishing policy currently configured for this app.
+   * @throws ApiError
+   */
+  public static getAutomationPublishPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AutomationPublishPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/automations:publish-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Set required publishing checks using admin scope and the current policy version.
+   * @returns AutomationPublishPolicy Publishing policy after the requested versioned update.
+   * @throws ApiError
+   */
+  public static setAutomationPublishPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetAutomationPublishPolicyRequest,
+  }): CancelablePromise<AutomationPublishPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/automations:publish-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Evaluate scenario assertions and coverage on the server and issue a bound receipt.
+   * @returns CheckAutomationPublicationResponse Server-issued publishing receipt and verified check metadata.
+   * @throws ApiError
+   */
+  public static checkAutomationPublication({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved automation draft to check.
+     */
+    name: string,
+    requestBody: CheckAutomationPublicationRequest,
+  }): CancelablePromise<CheckAutomationPublicationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/automations/{name}/publish-check',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,

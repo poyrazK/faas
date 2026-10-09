@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -87,7 +89,20 @@ func TestAutomationAPI(t *testing.T) {
 	if response.Code != http.StatusConflict {
 		t.Fatalf("CAS=%d %s", response.Code, response.Body.String())
 	}
-	response = e.do(t, "POST", base+"/invoice/publish", api.PublishAutomationRequest{ExpectedVersion: draft.Version}, map[string]string{"Idempotency-Key": "publish-invoice"})
+	checkedSnapshot, _ := json.Marshal(draft.Draft)
+	evidence := &api.AutomationCheckEvidence{DefinitionHash: fmt.Sprintf("%x", sha256.Sum256(checkedSnapshot)), CheckedVersion: draft.Version, CheckedAt: time.Now().UTC(), CoveragePassed: true, Scenarios: []api.AutomationCheckScenario{{Name: "success", Passed: true, DefinitionValid: true, Complete: true}}, Exclusions: []api.AutomationCheckExclusion{}}
+	bad := *evidence
+	bad.DefinitionHash = "mismatch"
+	response = e.do(t, "POST", base+"/invoice/publish", api.PublishAutomationRequest{ExpectedVersion: draft.Version, CheckEvidence: &bad}, nil)
+	if response.Code != http.StatusBadRequest && response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("mismatched checks accepted: %d %s", response.Code, response.Body.String())
+	}
+	response = e.do(t, "POST", base+"/invoice/publish", map[string]any{"expected_version": draft.Version, "check_evidence": map[string]any{"sample_payload": "private"}}, nil)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown evidence payload accepted: %d", response.Code)
+	}
+	publishRequest := api.PublishAutomationRequest{ExpectedVersion: draft.Version, CheckEvidence: evidence}
+	response = e.do(t, "POST", base+"/invoice/publish", publishRequest, map[string]string{"Idempotency-Key": "publish-invoice"})
 	var published api.AutomationResponse
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &published) != nil || published.PublishedVersion == 0 || published.Source != "dashboard" {
 		t.Fatalf("publish=%d %s", response.Code, response.Body.String())
@@ -95,7 +110,7 @@ func TestAutomationAPI(t *testing.T) {
 	if published.Published == nil || published.Published.Steps[0].When == nil || published.Published.Steps[0].When.Ref != "input.invoice_id" {
 		t.Fatal("publication lost guard")
 	}
-	replay := e.do(t, "POST", base+"/invoice/publish", api.PublishAutomationRequest{ExpectedVersion: draft.Version}, map[string]string{"Idempotency-Key": "publish-invoice"})
+	replay := e.do(t, "POST", base+"/invoice/publish", publishRequest, map[string]string{"Idempotency-Key": "publish-invoice"})
 	if replay.Code != http.StatusOK || replay.Body.String() != response.Body.String() {
 		t.Fatalf("publish replay=%d %s", replay.Code, replay.Body.String())
 	}
@@ -105,6 +120,9 @@ func TestAutomationAPI(t *testing.T) {
 		t.Fatalf("revision list=%d %s", response.Code, response.Body.String())
 	}
 	firstRevision := revisionPage.Revisions[0]
+	if firstRevision.CheckEvidence == nil || firstRevision.CheckEvidence.DefinitionHash != firstRevision.DefinitionHash || firstRevision.CheckEvidence.Scenarios[0].Name != "success" {
+		t.Fatalf("evidence not retained: %+v", firstRevision)
+	}
 	if firstRevision.Version != published.PublishedVersion || firstRevision.LegacySnapshot || len(firstRevision.DefinitionHash) != 64 || firstRevision.PublishedByAccountID != app.AccountID {
 		t.Fatalf("revision metadata=%+v", firstRevision)
 	}

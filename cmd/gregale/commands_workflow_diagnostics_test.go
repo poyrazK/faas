@@ -44,3 +44,31 @@ func TestWorkflowDiagnosticsRenderingAndInvalidArguments(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkflowDiagnosticsOffersEligibleResumeCommand(t *testing.T) {
+	id := "00000000-0000-4000-8000-000000000001"
+	result := api.WorkflowRunDiagnosticsResponse{RunID: id, Resume: api.WorkflowResumePreview{Eligible: true, ExpectedResumeCount: 2}}
+	var output bytes.Buffer
+	renderWorkflowRunDiagnostics(&output, result)
+	if !strings.Contains(output.String(), "gregale workflows resume "+id+" --expected-resume-count 2") {
+		t.Fatalf("missing command: %s", output.String())
+	}
+	for _, mode := range []string{"ineligible", "blocked", "bad-id", "bad-count"} {
+		copy := result
+		switch mode {
+		case "ineligible":
+			copy.Resume.Eligible = false
+		case "blocked":
+			copy.Resume.Blockers = []api.WorkflowDiagnosticBlocker{{Code: "unsafe_mutation"}}
+		case "bad-id":
+			copy.RunID = "invalid"
+		case "bad-count":
+			copy.Resume.ExpectedResumeCount = -1
+		}
+		output.Reset()
+		renderWorkflowRunDiagnostics(&output, copy)
+		if strings.Contains(output.String(), "Resume command:") {
+			t.Fatalf("offered unsafe command for %s", mode)
+		}
+	}
+}

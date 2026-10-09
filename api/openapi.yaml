@@ -18265,6 +18265,97 @@ paths:
           default: false
         description: Explicitly return ownership to the current YAML definition after
           deletion.
+  /v1/apps/{slug}/automations/{name}/failure-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 128 }
+        description: Published automation whose failure admission guard is inspected or changed.
+    get:
+      tags: [workflows]
+      operationId: getAutomationFailurePolicy
+      summary: Inspect failure pause policy and resume preview.
+      description: Returns aggregate terminal outcomes since monitoring began or resumed, current pause generation, active run counts, retained event count and the latest 100 pause/resume transitions. Counts are advisory; no run payloads or error messages are included.
+      responses:
+        '200':
+          description: Current monitoring policy, failure pause, retained work preview and recent transitions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationFailurePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 'code automation_failure_policy_conflict; reload failure guard state before a conflicting operation.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/AutomationInvalid' }
+    put:
+      tags: [workflows]
+      operationId: setAutomationFailurePolicy
+      summary: Configure automatic pausing after repeated failures.
+      description: Opt-in policy for a published YAML or dashboard automation; requires deploy write scope. Compare-and-set expected_version starts at zero. Scheduler ticks latch a runtime pause when both failure count and minimum completed-run count are met. Policy edits, disabling monitoring, publishing, and ordinary enabled changes do not clear an existing failure pause.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetAutomationFailurePolicyRequest' }
+      responses:
+        '200':
+          description: Updated failure monitoring configuration with the current independent admission guard.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationFailurePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 'code automation_failure_policy_conflict; the expected failure policy version changed.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/AutomationInvalid' }
+
+  /v1/apps/{slug}/automations/{name}/failure-policy/resume:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 128 }
+        description: Published automation whose current failure pause is explicitly resumed.
+    post:
+      tags: [workflows]
+      operationId: resumeAutomationFailurePause
+      summary: Explicitly clear a failure pause after inspecting retained work.
+      description: Requires deploy write scope and the current positive pause generation. Starts a fresh monitoring epoch and re-arms schedules without catch-up for the paused interval. Existing runs continue and captured events remain subject to their routing retention; events received without an eligible recipient are not replayed. This action does not change manual pause intent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResumeAutomationFailurePauseRequest' }
+      responses:
+        '200':
+          description: Explicitly resumed guard state with fresh monitoring counts and transition history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationFailurePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 'code automation_failure_policy_conflict; the reviewed pause generation is stale or no pause remains.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/AutomationInvalid' }
+
   /v1/apps/{slug}/automations/{name}/health:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -18419,6 +18510,122 @@ paths:
         '422': { $ref: '#/components/responses/AutomationInvalid' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
+  /v1/apps/{slug}/automations:publish-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags:
+        - workflows
+      operationId: getAutomationPublishPolicy
+      summary: Inspect required publishing checks.
+      responses:
+        '200':
+          description: Publishing policy currently configured for this app.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationPublishPolicy'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags:
+        - workflows
+      operationId: setAutomationPublishPolicy
+      summary: Set required publishing checks using admin scope and the current policy version.
+      responses:
+        '200':
+          description: Publishing policy after the requested versioned update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationPublishPolicy'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetAutomationPublishPolicyRequest'
+  /v1/apps/{slug}/automations/{name}/publish-check:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+        description: Saved automation draft to check.
+    post:
+      tags:
+        - workflows
+      operationId: checkAutomationPublication
+      summary: Evaluate scenario assertions and coverage on the server and issue a bound receipt.
+      responses:
+        '200':
+          description: Server-issued publishing receipt and verified check metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckAutomationPublicationResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckAutomationPublicationRequest'
   /v1/apps/{slug}/automations/{name}/publish:
     parameters:
     - $ref: '#/components/parameters/Slug'
@@ -45741,6 +45948,215 @@ components:
           additionalProperties: true
           description: Optional JSON predicate evaluated against the CloudEvents envelope. Event triggers reject schedule, timezone, input, overlap, and catch-up options.
 
+    AutomationFailurePolicy:
+      type: object
+      additionalProperties: false
+      description: Opt-in thresholds for scheduler-enforced failure admission pausing.
+      required:
+      - version
+      - enabled
+      - failure_threshold
+      - min_completed_runs
+      - window_seconds
+      properties:
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Monotonic failure monitoring policy revision; zero means no policy has been configured.
+        enabled:
+          type: boolean
+          description: Whether scheduler evaluation can create a new runtime failure pause.
+        failure_threshold:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Terminal failures required to latch a failure pause.
+          maximum: 10000
+        min_completed_runs:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Minimum terminal non-cancelled sample count before failure pausing.
+          maximum: 10000
+        window_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          description: Lookback in seconds, bounded by the latest monitoring epoch.
+          maximum: 86400
+    SetAutomationFailurePolicyRequest:
+      type: object
+      additionalProperties: false
+      description: Complete failure policy replacement guarded by an expected version.
+      required:
+      - expected_version
+      - enabled
+      - failure_threshold
+      - min_completed_runs
+      - window_seconds
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Failure policy revision the caller intends to replace.
+        enabled:
+          type: boolean
+          description: Requested setting controlling whether scheduler evaluation can create a new runtime failure pause.
+        failure_threshold:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Requested number of terminal failures required to latch a failure pause.
+          maximum: 10000
+        min_completed_runs:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Requested minimum terminal non-cancelled sample count before failure pausing.
+          maximum: 10000
+        window_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          description: Requested lookback in seconds, bounded by the latest monitoring epoch.
+          maximum: 86400
+    ResumeAutomationFailurePauseRequest:
+      type: object
+      additionalProperties: false
+      description: Explicit failure guard resume guarded by its current generation.
+      required:
+      - expected_generation
+      properties:
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Positive pause generation reviewed by the caller.
+    AutomationFailureTransition:
+      type: object
+      additionalProperties: false
+      description: Immutable bounded aggregate evidence for a failure guard transition.
+      required:
+      - generation
+      - state
+      - reason
+      - recorded_at
+      - failures
+      - completed_runs
+      - policy_version
+      properties:
+        generation:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Unique runtime transition generation for this automation.
+        state:
+          type: string
+          enum:
+          - paused
+          - resumed
+          description: Failure guard state resulting from this transition.
+        reason:
+          type: string
+          enum:
+          - failure_threshold
+          - operator_resume
+          description: Closed reason for the recorded transition.
+        recorded_at:
+          type: string
+          format: date-time
+          description: Server timestamp of the pause or operator resume.
+        failures:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Observed failures recorded with this transition.
+        completed_runs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Observed completed sample count recorded with this transition.
+        policy_version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Failure monitoring policy revision used for this transition.
+        actor_account_id:
+          type: string
+          description: Account that explicitly resumed; empty or omitted for an automatic pause.
+    AutomationFailurePolicyResponse:
+      type: object
+      additionalProperties: false
+      description: Failure guard state, monitoring configuration and advisory retained-work preview.
+      required:
+      - policy
+      - paused
+      - generation
+      - observed_failures
+      - observed_completed_runs
+      - pending_runs
+      - running_runs
+      - waiting_runs
+      - retained_events
+      - history
+      properties:
+        policy:
+          $ref: '#/components/schemas/AutomationFailurePolicy'
+        paused:
+          type: boolean
+          description: Whether automatic admissions are blocked by the durable failure guard.
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current guard generation; resume requires this value.
+        monitoring_since:
+          type: string
+          format: date-time
+          description: Start of the fresh monitoring epoch; absent before configuration.
+        paused_at:
+          type: string
+          format: date-time
+          description: Time the current failure pause was latched; absent while unpaused.
+        observed_failures:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Failed and dead runs completed in the current bounded observation window.
+        observed_completed_runs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Succeeded, failed and dead runs completed in the current observation window.
+        pending_runs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Existing pending runs that continue despite a failure admission pause.
+        running_runs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Already running workflows unaffected by admission pausing.
+        waiting_runs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Existing workflows parked on timers or external events.
+        retained_events:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Advisory count of unadmitted retained event recipients for this automation.
+        history:
+          type: array
+          maxItems: 100
+          description: Latest pause and resume transitions in descending generation order.
+          items:
+            $ref: '#/components/schemas/AutomationFailureTransition'
+
     AutomationResponse:
       type: object
       additionalProperties: false
@@ -45751,6 +46167,9 @@ components:
       - draft
       - enabled
       properties:
+        failure_paused:
+          type: boolean
+          description: Runtime failure guard blocks automatic admissions independently of configured enabled intent.
         name:
           type: string
         version:
@@ -45895,11 +46314,265 @@ components:
           maxItems: 10
           items: { $ref: '#/components/schemas/AutomationHealthStepFailure' }
       description: Bounded aggregate automation health. Customer payloads and error strings are never returned.
+    AutomationPublishPolicy:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - version
+      properties:
+        mode:
+          type: string
+          enum:
+            - optional
+            - scenarios
+            - coverage
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+      description: App policy for dashboard publication. YAML deployment is a separate surface. Changes
+        require admin scope and invalidate previously issued receipts.
+    SetAutomationPublishPolicyRequest:
+      description: Versioned app policy change; requires an admin credential.
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - expected_version
+      properties:
+        mode:
+          type: string
+          enum:
+            - optional
+            - scenarios
+            - coverage
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 0
+    AutomationCheckAttempt:
+      description: Expected ordered simulation attempt outcome and optional failure status.
+      type: object
+      additionalProperties: false
+      required:
+        - outcome
+      properties:
+        outcome:
+          type: string
+          enum:
+            - success
+            - failure
+            - timeout
+        http_status:
+          type: integer
+          minimum: 100
+          maximum: 599
+    AutomationCheckExpectation:
+      type: object
+      additionalProperties: false
+      required:
+        - step
+      properties:
+        step:
+          type: string
+          minLength: 1
+          maxLength: 512
+        loop:
+          type: string
+          maxLength: 256
+        item_index:
+          type: integer
+          minimum: 0
+          maximum: 127
+        state:
+          type: string
+          enum:
+            - mocked
+            - would_execute
+            - resolved
+            - expanded
+            - would_wait
+            - would_retry
+            - timed_out
+            - failed
+            - dead
+            - skipped
+            - blocked
+            - error
+        reason:
+          type: string
+        when_matched:
+          type: boolean
+        output:
+          description: Exact JSON assertion; explicit null differs from omitted.
+        attempt_count:
+          type: integer
+          minimum: 0
+          maximum: 25
+        attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationCheckAttempt'
+          maxItems: 25
+      description: Requires at least one assertion. Loop item assertions use step <loop>/action, loop
+        name and canonical zero-based item index.
+    AutomationPublishCheckScenario:
+      description: Named simulation and assertions to evaluate against a saved automation draft.
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - simulation
+        - expectations
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        simulation:
+          $ref: '#/components/schemas/SimulateAutomationRequest'
+        expectations:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationCheckExpectation'
+          minItems: 1
+          maxItems: 4096
+    CheckAutomationPublicationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expected_version
+        - scenarios
+        - exclusions
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+        require_coverage:
+          type: boolean
+          default: false
+        scenarios:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationPublishCheckScenario'
+          minItems: 1
+          maxItems: 32
+        exclusions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationCheckExclusion'
+          maxItems: 256
+      description: Run assertions and coverage on the saved draft on the server; mocks remain
+        hypothetical. At most 24 MiB total and 3 MiB per simulation. Complete, valid traces and passing
+        assertions are required. Coverage policy overrides require_coverage=false.
+    CheckAutomationPublicationResponse:
+      description: Expiring server receipt with safe verified scenario and coverage metadata.
+      type: object
+      additionalProperties: false
+      required:
+        - receipt
+        - expires_at
+        - evidence
+      properties:
+        receipt:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: Opaque 30-minute receipt bound to app, name, draft, actor and policy version. Do
+            not log or expose it.
+        expires_at:
+          type: string
+          format: date-time
+        evidence:
+          $ref: '#/components/schemas/AutomationCheckEvidence'
+    AutomationCheckEvidence:
+      type: object
+      additionalProperties: false
+      description: Simulation check metadata. server_verified is set only for server-issued publishing receipts; legacy or plain client evidence is unverified. Bound to the saved draft hash and version. Contains metadata only; no sample inputs, outputs, or failure text. Checked time must be within the past day (five minutes of future clock skew allowed).
+      required: [definition_hash, checked_version, checked_at, scenarios, coverage_required, coverage_passed, coverage_remaining, exclusions]
+      properties:
+        server_verified:
+          type: boolean
+          readOnly: true
+          description: True only when publication used a stored server-issued receipt. Clients cannot attest to this flag.
+        definition_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        checked_version:
+          type: integer
+          format: int64
+          minimum: 1
+        checked_at:
+          type: string
+          format: date-time
+        scenarios:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AutomationCheckScenario'
+        coverage_required:
+          type: boolean
+        coverage_passed:
+          type: boolean
+          description: True when coverage_remaining is zero; required coverage must pass before publishing.
+        coverage_remaining:
+          type: integer
+          minimum: 0
+          maximum: 4096
+        exclusions:
+          type: array
+          maxItems: 256
+          items:
+            $ref: '#/components/schemas/AutomationCheckExclusion'
+    AutomationCheckScenario:
+      type: object
+      additionalProperties: false
+      description: A named scenario reported as passing, definition valid, and complete by the publishing client.
+      required: [name, passed, definition_valid, complete]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        passed:
+          type: boolean
+          enum: [true]
+        definition_valid:
+          type: boolean
+          enum: [true]
+        complete:
+          type: boolean
+          enum: [true]
+    AutomationCheckExclusion:
+      type: object
+      additionalProperties: false
+      description: An explicitly reviewed coverage exclusion. Reasons are user-authored metadata and should contain no secrets.
+      required: [step, code, reason]
+      properties:
+        step:
+          type: string
+          minLength: 1
+          maxLength: 512
+        loop:
+          type: string
+          minLength: 1
+          maxLength: 256
+        code:
+          type: string
+          enum: [guard_match_missing, guard_skip_missing, failure_route_missing, wait_success_missing, wait_timeout_missing, retry_missing, loop_empty_missing, loop_multiple_items_missing]
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 512
     AutomationRevisionResponse:
       type: object
       additionalProperties: false
       required: [version, definition, definition_hash, recorded_at, legacy_snapshot, published_by_account_id]
       properties:
+        check_evidence:
+          $ref: '#/components/schemas/AutomationCheckEvidence'
         version:
           type: integer
           format: int64
@@ -45971,6 +46644,12 @@ components:
       required:
       - expected_version
       properties:
+        check_receipt:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Server-issued receipt required by scenarios or coverage policy; stale, expired, cross-identity and reused receipts are rejected.
+        check_evidence:
+          $ref: '#/components/schemas/AutomationCheckEvidence'
         expected_version:
           type: integer
           format: int64
@@ -45996,7 +46675,7 @@ components:
           type: boolean
       description: Publication revision and the desired state of automatic starts.
     SimulateAutomationRequest:
-      description: Sample workflow data and mocked action or timeout outcomes for a stateless simulation.
+      description: Sample workflow data and mocked action, event/callback payload or timeout outcomes for a stateless simulation.
       type: object
       additionalProperties: false
       required: [definition]
@@ -46016,8 +46695,21 @@ components:
             type: array
             maxItems: 128
             items: {}
+        mock_item_attempts:
+          description: Per-item attempt outcomes keyed by for_each root name and canonical zero-based item index (0..127). Sparse indexes are allowed but must exist in the materialized collection. Cannot be combined with mock_item_outputs for the same loop. Item timeouts require an action timeout and follow its retry policy. Terminal item failures stop later items unless on_item_failure is continue; the loop remains failed or dead, with null placeholders for failed items when continuing.
+          type: object
+          additionalProperties:
+            type: object
+            minProperties: 1
+            maxProperties: 128
+            additionalProperties:
+              type: array
+              minItems: 1
+              maxItems: 25
+              items:
+                $ref: '#/components/schemas/AutomationSimulationMockAttempt'
         mock_attempts:
-          description: Ordered per-attempt outcomes keyed by action name; waits accept one timeout outcome when they have an on_timeout route. Action timeouts also require on_timeout. Cannot be combined with mock_outputs for the same step.
+          description: Ordered per-attempt outcomes keyed by action or wait name. Event and callback waits accept exactly one success with the received payload as output, or one timeout with a configured timeout and on_timeout route. Other waits accept timeout only. Successful wait payloads cannot be the reserved timeout sentinel. Action timeouts require on_timeout. Cannot be combined with mock_outputs for the same step.
           type: object
           additionalProperties:
             type: array
@@ -46035,7 +46727,7 @@ components:
           type: string
           enum: [success, failure, timeout]
         output:
-          description: Successful result; any JSON value, including null.
+          description: Successful action result or received event/callback payload; any JSON value, including null.
         error:
           type: string
           minLength: 1
@@ -46100,7 +46792,7 @@ components:
           description: Supplied successful mock, timeout sentinel or control output; omitted when no result is known.
         attempts:
           type: array
-          description: Safe summary of supplied action attempt outcomes; mocked error text is exposed only through eligible failure context.
+          description: Safe summary of supplied action or wait outcomes; mocked error text is exposed only through eligible failure context.
           maxItems: 25
           items:
             $ref: '#/components/schemas/AutomationSimulationAttempt'
@@ -46108,6 +46800,10 @@ components:
         path: { type: string }
         method: { type: string }
         integration_id: { type: string }
+        raw_query:
+          type: string
+          maxLength: 4096
+          description: Canonically URL-encoded outbound query after resolving sample input and dependency outputs; omitted when empty or unresolved.
         wait_for: { type: string }
         parent_step: { type: string }
         item_index: { type: integer, minimum: 0 }
@@ -61012,7 +61708,7 @@ components:
         provider_event_id: { type: string }
         workflow_name: { type: string }
         status: { type: string, enum: [accepted, ignored] }
-        ignored_reason: { type: string, enum: [automation_paused, event_filtered, automation_unpublished] }
+        ignored_reason: { type: string, enum: [automation_paused, automation_failure_paused, event_filtered, automation_unpublished] }
         duplicate: { type: boolean }
         accepted_at: { type: string, format: date-time }
         event_source: { type: string }
@@ -61046,7 +61742,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -61535,7 +62231,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -61617,7 +62313,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered", "workflow.finished", "automation.paused", "app.health.changed", "event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "profile.route_regressed", "profile.route_recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:

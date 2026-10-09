@@ -210,7 +210,7 @@ $$;
 CREATE FUNCTION public.app_workflow_definitions(target_app uuid, manifest jsonb) RETURNS jsonb
     LANGUAGE sql STABLE
     AS $$
- SELECT coalesce(jsonb_agg(definition ORDER BY definition->>'name'),'[]'::jsonb)
+ SELECT coalesce(jsonb_agg(CASE WHEN definition->'trigger'->>'type' IN ('schedule','event') AND EXISTS(SELECT 1 FROM workflow_automation_failure_guards g WHERE g.app_id=target_app AND g.name=definition->>'name' AND g.paused_at IS NOT NULL) THEN jsonb_set(definition,'{trigger,enabled}','false'::jsonb,true) ELSE definition END ORDER BY definition->>'name'),'[]'::jsonb)
  FROM (
   SELECT definition FROM jsonb_array_elements(CASE WHEN jsonb_typeof(manifest)='array' THEN manifest ELSE '[]'::jsonb END) definition
   WHERE NOT EXISTS(SELECT 1 FROM workflow_automation_definitions w WHERE w.app_id=target_app
@@ -11373,7 +11373,7 @@ CREATE TABLE public.alert_presets (
     CONSTRAINT alert_presets_cooldown_chk CHECK (((default_cooldown_minutes >= 5) AND (default_cooldown_minutes <= 1440))),
     CONSTRAINT alert_presets_description_len_chk CHECK (((char_length(description) >= 1) AND (char_length(description) <= 512))),
     CONSTRAINT alert_presets_display_name_len_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 128))),
-    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text]))),
+    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text]))),
     CONSTRAINT alert_presets_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_presets_plan_chk CHECK ((minimum_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT alert_presets_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -12601,7 +12601,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'routes.monitor.escalated'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'automation.paused'::text, 'app.health.changed'::text, 'routes.monitor.escalated'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -23904,6 +23904,7 @@ CREATE TABLE public.workflow_automation_revisions (
     legacy_snapshot boolean DEFAULT false NOT NULL,
     published_by_account_id uuid NOT NULL,
     published_by_api_key_id uuid,
+    check_evidence jsonb,
     CONSTRAINT workflow_automation_revisions_check CHECK (((jsonb_typeof(definition) = 'object'::text) AND ((definition ->> 'name'::text) = name))),
     CONSTRAINT workflow_automation_revisions_name_check CHECK ((length(name) > 0)),
     CONSTRAINT workflow_automation_revisions_version_check CHECK ((version > 0))
@@ -24160,7 +24161,7 @@ CREATE TABLE public.workflow_webhook_receipts (
     accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT workflow_webhook_receipts_body_hash_check CHECK ((octet_length(body_hash) = 32)),
     CONSTRAINT workflow_webhook_receipts_check CHECK ((((status = 'accepted'::text) AND (recipient_id IS NOT NULL) AND (ignored_reason IS NULL)) OR ((status = 'ignored'::text) AND (recipient_id IS NULL) AND (ignored_reason IS NOT NULL)))),
-    CONSTRAINT workflow_webhook_receipts_ignored_reason_check CHECK ((ignored_reason = ANY (ARRAY['automation_paused'::text, 'event_filtered'::text, 'automation_unpublished'::text]))),
+    CONSTRAINT workflow_webhook_receipts_ignored_reason_check CHECK ((ignored_reason = ANY (ARRAY['automation_paused'::text, 'automation_failure_paused'::text, 'event_filtered'::text, 'automation_unpublished'::text]))),
     CONSTRAINT workflow_webhook_receipts_provider_event_id_check CHECK (((octet_length(provider_event_id) >= 1) AND (octet_length(provider_event_id) <= 256))),
     CONSTRAINT workflow_webhook_receipts_status_check CHECK ((status = ANY (ARRAY['accepted'::text, 'ignored'::text]))),
     CONSTRAINT workflow_webhook_receipts_workflow_name_check CHECK (((octet_length(workflow_name) >= 1) AND (octet_length(workflow_name) <= 128)))
@@ -46703,3 +46704,55 @@ CREATE INDEX profile_periodic_monitors_app_idx ON public.profile_periodic_monito
 
 CREATE INDEX deployments_profile_completed_idx ON public.deployments (app_id, scope, rollout_completed_at DESC, id DESC)
     WHERE status IN ('live', 'superseded') AND rollout_state = 'complete' AND deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS workflow_automation_publish_policies (
+ app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+ mode text NOT NULL CHECK (mode IN ('optional','scenarios','coverage')),
+ version bigint NOT NULL CHECK (version > 0)
+);
+CREATE TABLE IF NOT EXISTS workflow_automation_publish_receipts (
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ name text NOT NULL CHECK (length(name) BETWEEN 1 AND 128),
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ api_key_id text NOT NULL DEFAULT '',
+ token_hash text NOT NULL CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+ policy_version bigint NOT NULL CHECK (policy_version >= 0),
+ expires_at timestamptz NOT NULL,
+ evidence jsonb NOT NULL CHECK (jsonb_typeof(evidence)='object'),
+ PRIMARY KEY (app_id,name,account_id,api_key_id)
+);
+
+CREATE TABLE IF NOT EXISTS workflow_automation_failure_policies (
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ name text NOT NULL CHECK(length(name) BETWEEN 1 AND 128),
+ version bigint NOT NULL CHECK(version>0),
+ enabled boolean NOT NULL DEFAULT false,
+ failure_threshold integer NOT NULL CHECK(failure_threshold BETWEEN 1 AND 10000),
+ min_completed_runs integer NOT NULL CHECK(min_completed_runs BETWEEN 1 AND 10000),
+ window_seconds integer NOT NULL CHECK(window_seconds BETWEEN 60 AND 86400),
+ PRIMARY KEY(app_id,name)
+);
+CREATE TABLE IF NOT EXISTS workflow_automation_failure_guards (
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ name text NOT NULL CHECK(length(name) BETWEEN 1 AND 128),
+ generation bigint NOT NULL DEFAULT 0 CHECK(generation>=0),
+ monitoring_since timestamptz NOT NULL DEFAULT clock_timestamp(),
+ paused_at timestamptz,
+ PRIMARY KEY(app_id,name)
+);
+CREATE TABLE IF NOT EXISTS workflow_automation_failure_history (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ name text NOT NULL CHECK(length(name) BETWEEN 1 AND 128),
+ generation bigint NOT NULL CHECK(generation>0),
+ state text NOT NULL CHECK(state IN ('paused','resumed')),
+ reason text NOT NULL CHECK(reason IN ('failure_threshold','operator_resume')),
+ recorded_at timestamptz NOT NULL,
+ failures bigint NOT NULL CHECK(failures>=0),
+ completed_runs bigint NOT NULL CHECK(completed_runs>=failures),
+ policy_version bigint NOT NULL CHECK(policy_version>0),
+ actor_account_id uuid REFERENCES accounts(id),
+ UNIQUE(app_id,name,generation)
+);
+CREATE INDEX IF NOT EXISTS workflow_automation_failure_finished_idx ON workflow_runs(app_id,workflow_name,finished_at)
+ WHERE status IN ('succeeded','failed','dead') AND cancelled_at IS NULL AND operation_id IS NULL;

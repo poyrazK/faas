@@ -1,0 +1,5 @@
+{
+  "approval": [
+    {"outcome": "success", "output": {"approved_by": "reviewer-42"}}
+  ]
+}
