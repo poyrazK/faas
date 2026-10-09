@@ -19,7 +19,7 @@ permissions:
   id-token: write
 
 env:
-  GO_VERSION: "1.25.13"
+  GO_VERSION: "1.26.9"
   GCP_PROJECT: project-5ae37259-04cf-4070-bef
   GCP_ZONE: europe-west3-c
   GCP_INSTANCE: faas-compute-node-2
