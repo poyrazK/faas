@@ -1740,8 +1740,9 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "runtime", Positionals: []string{"<ID|vN>"}, Short: "Inspect runtime identity or preview a published runtime change", Examples: []string{"gregale deployment runtime v42 --app my-function", "gregale deployment runtime v42 --app my-function --target RELEASE_ID --json"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug for a vN revision"}, {Name: "target", Value: "RELEASE_ID", Short: "published runtime release to preview without applying"}}},
 			{Name: "advance", Positionals: []string{"<ID|vN>"}, Short: "Advance a canary by one stage with route enforcement", Examples: []string{"gregale deployment advance DEPLOYMENT_UUID --expected-step 1", "gregale deployment advance v42 --app my-api --expected-step 1"}, Flags: []cliFlag{{Name: "expected-step", Value: "N", Short: "observed current canary step (see deployment summary)", Req: true}, {Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
-			{Name: "summary", Short: "Show the release diff and rollback target", Examples: []string{"gregale deployment summary v42 --app my-api", "gregale deployment summary v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
+			{Name: "summary", Short: "Show the release diff and rollback target", Examples: []string{"gregale deployment summary --app my-api --interactive", "gregale deployment summary v42 --app my-api", "gregale deployment summary v42 --app my-api --json"}, Positionals: []string{"[<id|vN>]"}, Flags: []cliFlag{
+				{Name: "interactive", Short: "choose a release from app history and show its summary", Bool: true},
+				{Name: "app", Short: "app slug (defaults to linked context or interactive picker)", Value: "SLUG"},
 			}},
 			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Examples: []string{"gregale deployment wait 00000000000000000000000000000001", "gregale deployment wait 00000000000000000000000000000001 --rollout --progress"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug for a vN revision outside a linked project", Value: "SLUG"},

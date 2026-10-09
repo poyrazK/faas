@@ -4360,15 +4360,17 @@ gregale deployment advance v42 --app my-api --expected-step 1
 
 Show the release diff and rollback target
 
-`gregale deployment summary --app <SLUG> <id|vN>`
+`gregale deployment summary [--interactive] [--app <SLUG>] [<id|vN>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <SLUG>` | app slug | required |
+| `--interactive` | choose a release from app history and show its summary |  |
+| `--app <SLUG>` | app slug (defaults to linked context or interactive picker) |  |
 
 Examples:
 
 ```sh
+gregale deployment summary --app my-api --interactive
 gregale deployment summary v42 --app my-api
 gregale deployment summary v42 --app my-api --json
 ```

@@ -237,6 +237,24 @@ no restart, even with `--restart`. Remove `--dry-run` to upload. The preview
 reflects current metadata; the server validates rules again during the upload.
 The `--from-stdin` input option is also supported.
 
+## Browse deployment summaries
+
+```sh
+gregale deployment summary --app my-api --interactive
+# Use the linked app, or choose an app when no default is linked:
+gregale deployment summary --interactive
+```
+
+Choose a release from recent app history, with revision, status, creation time,
+and scope shown for each entry. Choose **Show older releases** to browse the
+next page or **Cancel** to exit. The summary shows changes relative to the
+preceding release and the reported rollback target. The flow prints an
+equivalent command pinned to the selected release ID for reuse.
+
+The guide requires an interactive terminal. For scripts or JSON output, use
+`gregale deployment summary ID --app APP --json`. The history picker reads
+release data and does not submit a rollback.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
