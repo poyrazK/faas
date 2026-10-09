@@ -8246,6 +8246,34 @@ publication withdrawal, and retained checkpoint cleanup. The individual journals
 implemented so far do not establish that complete terminal condition. Public
 full-stage admission and live provider qualification remain gated.
 
+### Retained common-capture retirement proof contract
+
+Terminal compensation additionally needs authenticated absence of retained
+PostgreSQL snapshots and object manifests. The private capture-retirement plan
+pins the complete original source-compensation journal, including its immutable
+terminal proof. Pending source compensation cannot authorize capture retirement.
+The contract covers unused capture intents, unknown capture outcomes, known
+receipts and original release intents with unknown outcomes.
+
+A native terminal observation must bind the original capture request and complete
+plan digest, permanently fence that request, and cover the exact sorted source
+roster. For each source it must prove absence of all artifacts in the original
+capture owner's namespace, absence of native borrowers, and unchanged source data
+and restored access. Known capture identities must match the original receipt;
+unknown outcomes retain an empty identity and require owner-wide absence rather
+than a fabricated replacement receipt or a single provider not-found result.
+Terminal replay accepts only the saved observation digest. Retirement requires
+no renewed source retention window.
+
+This is a proof contract, not a durable journal, native dispatch coordinator or
+authority to mark the operation compensated. The remaining store must authenticate
+the frozen capture and completed source proof, gate on every original borrower
+and target retirement, claim dispatch once, observe recovery without redispatch,
+and retire retained local catalogue records atomically with the terminal proof.
+Only then can whole-stage reconciliation authenticate this evidence alongside
+publication withdrawal and target cleanup. Public full-stage admission remains
+closed; live R2/OVH qualification remains deferred.
+
 Validation: the targeted PostgreSQL coordinator suite passes connection-value
 preparation, credential retirement/preparation, native restoration, SQL isolation,
 data verification and private runtime readiness. New cases cover original-password
