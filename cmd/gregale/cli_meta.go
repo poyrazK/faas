@@ -1356,7 +1356,10 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug for interactive selection (linked app or picker by default)", Value: "SLUG"},
 				{Name: "timeout", Short: "maximum interactive follow duration (default 2m)", Value: "DURATION"},
 			}},
-			{Name: "fire-now", Short: "Show the status of a manual fire request", Positionals: []string{"<request-id>"}},
+			{Name: "fire-now", Short: "Read or follow an existing manual fire request", Positionals: []string{"<request-id>"}, Examples: []string{"gregale crons fire-now REQUEST_ID --wait --timeout 5m"}, Flags: []cliFlag{
+				{Name: "wait", Short: "follow the existing request until terminal status", Bool: true},
+				{Name: "timeout", Short: "maximum wait duration (default 2m; requires --wait)", Value: "DURATION"},
+			}},
 			{Name: "runs", Short: "Show execution history", Positionals: []string{"[<id>]"}, Examples: []string{"gregale crons runs --app my-api --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Short: "choose a task, browse runs, and inspect command output", Bool: true},
 				{Name: "app", Short: "app slug for interactive selection (linked app or picker by default)", Value: "SLUG"},

@@ -126,21 +126,30 @@ func cmdCronsRun(args []string) int {
 // local branch that could leak existence.
 func cmdCronsFireNowGet(args []string) int {
 	fs := newFlagSet("crons-fire-now", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	wait := fs.Bool("wait", false, "follow this existing request until terminal status")
+	timeout := fs.Duration("timeout", 2*time.Minute, "maximum wait duration")
+	flags, pos := splitArgsForFlags(args, "wait")
+	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if len(pos) != 1 {
 		printCommandValidation(os.Stderr, "usage: gregale crons fire-now <request-id>\n")
 		return 1
 	}
-	requestID := fs.Arg(0)
+	requestID := pos[0]
 	if !fireNowRequestIDPattern.MatchString(requestID) {
 		printCommandValidation(os.Stderr, "usage: gregale crons fire-now <request-id>\n")
 		return 1
 	}
+	if *timeout <= 0 || logsFlagWasSet(fs, "timeout") && !*wait {
+		return printErr("Invalid wait flags", fmt.Errorf("--timeout must be positive and requires --wait"))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if *wait {
+		return followCronFireNowRequest(context.Background(), client, "", requestID, *timeout)
 	}
 	resp, err := client.GetFireCronRequest(context.Background(), requestID)
 	if err != nil {

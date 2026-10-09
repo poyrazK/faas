@@ -111,7 +111,7 @@ func cmdCronsRunInteractive(slug string, timeout time.Duration) int {
 	}
 	_, _ = fmt.Fprintln(osStdout, "Inspect this request (reads only):\n"+cronRunCommand("fire-now", resp.RequestID))
 	printCronHistoryCommand(selected.ID, "", "")
-	return followGuidedCronRequest(ctx, client, selected.ID, resp.RequestID, timeout)
+	return followCronFireNowRequest(ctx, client, selected.ID, resp.RequestID, timeout)
 }
 
 func cronRunCommand(verb, id string) string {
@@ -121,54 +121,4 @@ func cronRunCommand(verb, id string) string {
 	}
 	command = append(command, "crons", verb, quoteLogCommandArg(id))
 	return strings.Join(command, " ")
-}
-
-func followGuidedCronRequest(parent context.Context, client *Client, cronID, requestID string, timeout time.Duration) int {
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	status := ""
-	for {
-		if err := ctx.Err(); err != nil {
-			PrintProgress(osStdout, "Stopped following; the request may still continue. Inspect it with: %s", cronRunCommand("fire-now", requestID))
-			if errors.Is(err, context.Canceled) {
-				return 130
-			}
-			return 3
-		}
-		progress, err := client.GetFireCronRequest(ctx, requestID)
-		if err != nil {
-			if ctx.Err() != nil {
-				continue
-			}
-			PrintProgress(osStdout, "Resume inspection with: %s", cronRunCommand("fire-now", requestID))
-			return printErr("Request was enqueued, but following failed", err)
-		}
-		if !sameBindingDeployment(progress.RequestID, requestID) || !sameBindingDeployment(progress.CronID, cronID) {
-			return printErr("Invalid fire-now status", errors.New("the returned status does not match the submitted task and request"))
-		}
-		if progress.Status != status {
-			renderFireNowStatus(osStdout, progress)
-			status = progress.Status
-		}
-		if progress.OperationID != nil && *progress.OperationID != "" && (status == fireNowStatusSucceeded || status == fireNowStatusFailed || status == fireNowStatusCancelled) {
-			PrintProgress(osStdout, "Operation: %s", oneLine(*progress.OperationID))
-		}
-		switch status {
-		case fireNowStatusSucceeded, fireNowStatusFailed, fireNowStatusCancelled:
-			if progress.TaskID != nil && fireNowRequestIDPattern.MatchString(*progress.TaskID) {
-				printCronHistoryCommand(cronID, "", *progress.TaskID)
-			}
-			if status == fireNowStatusSucceeded {
-				PrintProgress(osStdout, "Fire-now request completed; inspect the resulting run for execution details.")
-				return 0
-			}
-			return 1
-		}
-		select {
-		case <-ctx.Done():
-		case <-ticker.C:
-		}
-	}
 }

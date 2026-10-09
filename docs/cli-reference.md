@@ -3357,9 +3357,20 @@ gregale crons run --app my-api --interactive
 
 ### crons fire-now
 
-Show the status of a manual fire request
+Read or follow an existing manual fire request
 
-`gregale crons fire-now <request-id>`
+`gregale crons fire-now [--wait] [--timeout <DURATION>] <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | follow the existing request until terminal status |  |
+| `--timeout <DURATION>` | maximum wait duration (default 2m; requires --wait) |  |
+
+Examples:
+
+```sh
+gregale crons fire-now REQUEST_ID --wait --timeout 5m
+```
 
 ### crons runs
 

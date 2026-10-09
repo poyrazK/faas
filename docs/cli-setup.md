@@ -396,6 +396,30 @@ The guide requires an interactive terminal. Scripts can continue using
 `gregale crons run ID`, then `gregale crons fire-now REQUEST_ID`. The `--app`
 and `--timeout` flags apply only to interactive mode.
 
+## Resume following a manual task request
+
+```sh
+gregale crons fire-now REQUEST_ID --wait --timeout 5m
+gregale crons fire-now REQUEST_ID --wait --json
+```
+
+Follow an existing fire-now request without submitting another run. The command
+shows status changes and prints history/detail commands when the request reaches
+a terminal state. Without `--wait`, the existing single-status read remains
+available. Waiting defaults to two minutes; `--timeout` requires `--wait` and
+a positive duration.
+
+Exit statuses are 0 for a succeeded fire-now request, 1 for failed/cancelled
+requests or read errors, 3 for timeout, and 130 for interruption. Timeout and
+Ctrl-C stop local following without cancelling the request; the printed resume
+command continues reading that same request. Completion of the request remains
+distinct from the resulting run's execution details.
+
+`--wait --json` emits one receipt with `request_id`, `wait_result`, the latest
+`request` when available, `resume_command`, and an `error` when following fails.
+It also returns the appropriate exit status, so scripts can handle unfinished
+requests without parsing human progress messages.
+
 ## Quick reference
 
 | Shell | Command | Install path (user) | Install path (system) |
