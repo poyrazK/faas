@@ -30,6 +30,7 @@ test('builder rejects output inside its checkout, including symlink aliases, bef
   await mkdir(tools, { recursive: true })
   await mkdir(join(repo, 'scripts'))
   await cp(fileURLToPath(new URL('../../scripts/build-data-api-bundle.mjs', import.meta.url)), join(repo, 'scripts/build-data-api-bundle.mjs'))
+  await cp(fileURLToPath(new URL('../../scripts/data-api-toolchain.mjs', import.meta.url)), join(repo, 'scripts/data-api-toolchain.mjs'))
   await cp(fileURLToPath(new URL('../../cmd/gregale/templates/data-api-starter/tools/artifact-lib.mjs', import.meta.url)), join(tools, 'artifact-lib.mjs'))
   const alias = join(dir, 'source-alias')
   await symlink(repo, alias)
