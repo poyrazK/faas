@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"sync/atomic"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/guestprofiling"
 )
@@ -65,5 +66,6 @@ func main() {
 	if _, err := strconv.Atoi(port); err != nil {
 		log.Fatal("invalid PORT")
 	}
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	server := &http.Server{Addr: ":" + port, Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute}
+	log.Fatal(server.ListenAndServe())
 }

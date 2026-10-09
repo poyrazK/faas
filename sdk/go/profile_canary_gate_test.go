@@ -1,6 +1,7 @@
 package faas_test
 
 import (
+	"context"
 	"encoding/json"
 	faas "github.com/poyrazK/faas/sdk/go"
 	"net/http"
@@ -33,11 +34,11 @@ func TestProfileCanaryGateClientAndOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gate, err := client.GetProfileCanaryGate(t.Context(), "candidate")
+	gate, err := client.GetProfileCanaryGate(context.Background(), "candidate")
 	if err != nil || gate.Status != "regressed" || gate.PolicyRevision != 7 {
 		t.Fatal(gate, err)
 	}
-	out, err := client.AdvanceCanaryWithProfileOverride(t.Context(), "candidate", 1, faas.ProfileGateOverride{ExpectedPolicyRevision: 7, Reason: "Accepted cost after reviewing checkout profiles."})
+	out, err := client.AdvanceCanaryWithProfileOverride(context.Background(), "candidate", 1, faas.ProfileGateOverride{ExpectedPolicyRevision: 7, Reason: "Accepted cost after reviewing checkout profiles."})
 	if err != nil || out.AuditID != "42" || out.ProfileGate == nil || out.ProfileGate.Status != "overridden" {
 		t.Fatal(out, err)
 	}

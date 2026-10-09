@@ -1,6 +1,7 @@
 package faas_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +25,7 @@ func TestProfilePeriodicClientPolicyAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := client.ListProfilePeriodicMonitors(t.Context(), "demo")
+	result, err := client.ListProfilePeriodicMonitors(context.Background(), "demo")
 	if err != nil || len(result.Monitors) != 1 {
 		t.Fatal(result, err)
 	}

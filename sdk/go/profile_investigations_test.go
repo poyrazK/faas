@@ -1,6 +1,7 @@
 package faas_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -77,27 +78,27 @@ func TestSavedProfilingInvestigationClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	list, err := client.ListProfileInvestigations(t.Context(), "demo")
+	list, err := client.ListProfileInvestigations(context.Background(), "demo")
 	if err != nil || len(list.Investigations) != 1 {
 		t.Fatal(list, err)
 	}
-	got, err := client.GetProfileInvestigation(t.Context(), "demo", out.Saved.ID)
+	got, err := client.GetProfileInvestigation(context.Background(), "demo", out.Saved.ID)
 	if err != nil || got.BaselineStatus.Status != "expired" || got.Saved.Investigation.Notes != "Saved notes" {
 		t.Fatal(got, err)
 	}
 	zero := int64(0)
 	req := faas.SaveProfileInvestigationRequest{ExpectedRevision: &zero, Investigation: out.Saved.Investigation}
-	if _, err := client.CreateProfileInvestigation(t.Context(), "demo", req); err != nil {
+	if _, err := client.CreateProfileInvestigation(context.Background(), "demo", req); err != nil {
 		t.Fatal(err)
 	}
 	req.ExpectedRevision = &out.Saved.Revision
-	if _, err := client.UpdateProfileInvestigation(t.Context(), "demo", out.Saved.ID, req); err != nil {
+	if _, err := client.UpdateProfileInvestigation(context.Background(), "demo", out.Saved.ID, req); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.DeleteProfileInvestigation(t.Context(), "demo", out.Saved.ID, 3); err != nil {
+	if err := client.DeleteProfileInvestigation(context.Background(), "demo", out.Saved.ID, 3); err != nil {
 		t.Fatal(err)
 	}
-	assessed, err := client.CheckProfileRegression(t.Context(), "demo", out.Saved.ID, faas.CheckProfileRegressionRequest{ExpectedRevision: &out.Saved.Revision})
+	assessed, err := client.CheckProfileRegression(context.Background(), "demo", out.Saved.ID, faas.CheckProfileRegressionRequest{ExpectedRevision: &out.Saved.Revision})
 	if err != nil || assessed.Saved.Revision != 4 || assessed.Saved.Assessment == nil || assessed.Saved.Assessment.Status != "inconclusive" || assessed.Saved.Assessment.Options.MinimumCoverageRatio != .8 {
 		t.Fatal(assessed, err)
 	}

@@ -67,10 +67,7 @@ func profileAlertEligible(o profileAlertObservation, r api.ProfileRouteRegressio
 			return false
 		}
 	}
-	if math.Abs(*labels.Baseline.Percent-*labels.Candidate.Percent) >= api.ProfileRouteLabelMaxChangePercentagePoints {
-		return false
-	}
-	return true
+	return math.Abs(*labels.Baseline.Percent-*labels.Candidate.Percent) < api.ProfileRouteLabelMaxChangePercentagePoints
 }
 
 // Unknown observations advance the watermark without resolving a confirmed

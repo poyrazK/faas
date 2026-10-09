@@ -23,13 +23,19 @@ func cmdCanaryProfileGate(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
-	fmt.Fprintf(osStdout, "Profiling gate: %s · policy %d · stage %d\n%s\n", out.Status, out.PolicyRevision, out.CanaryStep, out.Reason)
+	if _, err := fmt.Fprintf(osStdout, "Profiling gate: %s · policy %d · stage %d\n%s\n", out.Status, out.PolicyRevision, out.CanaryStep, out.Reason); err != nil {
+		return printErr("Could not write canary result", err)
+	}
 	if out.Deadline != nil {
-		fmt.Fprintf(osStdout, "Deadline: %s · timeout action: %s\n", out.Deadline.UTC().Format("2006-01-02T15:04:05Z"), out.OnTimeout)
+		if _, err := fmt.Fprintf(osStdout, "Deadline: %s · timeout action: %s\n", out.Deadline.UTC().Format("2006-01-02T15:04:05Z"), out.OnTimeout); err != nil {
+			return printErr("Could not write canary result", err)
+		}
 	}
 	if out.Signal != nil && out.Signal.Gate != nil {
 		for _, r := range out.Signal.Gate.Streaks {
-			fmt.Fprintf(osStdout, "%s: %s (%d consecutive windows)\n", r.Route, r.Status, r.Count)
+			if _, err := fmt.Fprintf(osStdout, "%s: %s (%d consecutive windows)\n", r.Route, r.Status, r.Count); err != nil {
+				return printErr("Could not write canary result", err)
+			}
 		}
 	}
 	return 0
@@ -65,6 +71,8 @@ func cmdCanaryAdvance(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
-	fmt.Fprintf(osStdout, "Canary %s: traffic %d%% · audit %s\n", args[0], out.Deployment.TrafficPercent, out.AuditID)
+	if _, err := fmt.Fprintf(osStdout, "Canary %s: traffic %d%% · audit %s\n", args[0], out.Deployment.TrafficPercent, out.AuditID); err != nil {
+		return printErr("Could not write canary result", err)
+	}
 	return 0
 }

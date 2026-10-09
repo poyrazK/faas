@@ -39,7 +39,8 @@ func parseAppProfilesPath(rest string) (string, bool) {
 }
 
 func (s *server) renderAppProfiles(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
-	app, err := s.store.AppBySlug(r.Context(), slug)
+	ctx := r.Context()
+	app, err := s.store.AppBySlug(ctx, slug)
 	if err != nil || app.AccountID != acct.ID {
 		http.NotFound(w, r)
 		return
@@ -56,13 +57,13 @@ func (s *server) renderAppProfiles(w http.ResponseWriter, r *http.Request, log *
 	data.RouteView = dashboard.BuildProfileRoutes(app.Slug, data.Query, data.Baseline, data.Profile, data.Compare)
 	data.Automatic = s.profileDeploymentChecksView(w, r, acct, app)
 	if s.profileBackend != nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled && data.Query.DeploymentID != "" {
-		if _, problem := s.profileQueryScope(r.Context(), acct, app, data.Query); problem == nil {
+		if _, problem := s.profileQueryScope(ctx, acct, app, data.Query); problem == nil {
 			data.CPUChart = s.profileCPUChart(savedRequest, acct, app, data.Query)
 		}
 	}
-	view, _ := AccountFrom(r.Context())
-	count, _ := s.store.CountDeployedApps(r.Context(), acct.ID)
-	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), dashboard.Page{Title: slug + " CPU profiles", Body: "app_profiles", Account: dashboardAccountView(view, count), Data: data}); err != nil {
+	view, _ := AccountFrom(ctx)
+	count, _ := s.store.CountDeployedApps(ctx, acct.ID)
+	if err := dashboard.Render(w, log, httpsec.NonceFromContext(ctx), dashboard.Page{Title: slug + " CPU profiles", Body: "app_profiles", Account: dashboardAccountView(view, count), Data: data}); err != nil {
 		renderProblem(w, log, err)
 	}
 }

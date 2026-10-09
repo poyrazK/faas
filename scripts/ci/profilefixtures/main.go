@@ -53,9 +53,9 @@ func save(path string, data any) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 	if _, err = tmp.Write(body); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err = tmp.Close(); err != nil {
@@ -64,12 +64,12 @@ func save(path string, data any) error {
 	return os.Rename(tmp.Name(), path)
 }
 
-func archive(root, path, mode string) error {
+func archive(root, path, mode string) (resultErr error) {
 	out, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() { resultErr = errors.Join(resultErr, out.Close()) }()
 	gz := gzip.NewWriter(out)
 	tw := tar.NewWriter(gz)
 	add := func(name string, body []byte, perm int64) error {
@@ -185,12 +185,17 @@ func provision(ctx context.Context, c *api.Client, root, out, apiURL string) err
 	cfg := config{APIURL: apiURL, Runtime: "go124", Duration: 120, Settle: 30, Fixtures: map[string]fixture{}}
 	cfgPath := filepath.Join(out, "config.json")
 	cfg.NativeCommand = []string{"python3", filepath.Join(root, "tests/profiling/deployment/native_restore.py"), "--config", cfgPath}
+	archiveDir, err := os.OpenRoot(out)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = archiveDir.Close() }()
 	for _, mode := range []string{"baseline", "regression", "label_loss", "sparse"} {
 		source := filepath.Join(out, mode+".tar.gz")
 		if err := archive(root, source, mode); err != nil {
 			return err
 		}
-		file, err := os.Open(source)
+		file, err := archiveDir.Open(mode + ".tar.gz")
 		if err != nil {
 			return err
 		}
@@ -199,8 +204,8 @@ func provision(ctx context.Context, c *api.Client, root, out, apiURL string) err
 			traffic = 100
 		}
 		dep, err := c.DeployMultipart(ctx, j.Slug, file, mode+".tar.gz", "go124", "", true, api.DeployAnnotations{TrafficPercent: &traffic, Healthcheck: &api.DeploymentHealthcheck{Path: "/healthz"}, NoTriggers: true})
-		file.Close()
-		os.Remove(source)
+		_ = file.Close()
+		_ = os.Remove(source)
 		if err != nil {
 			return err
 		}

@@ -225,7 +225,7 @@ func (m *MemStore) FinishProfileDeploymentCheck(_ context.Context, work ProfileD
 	}
 	observation := profileAlertObservation{AppID: j.check.AppID, AccountID: work.AccountID, Scope: j.check.Scope, Source: "deployment", Revision: j.check.PolicyRevision, Assessment: assessment, EvidencePath: "/v1/apps/" + m.apps[j.check.AppID].Slug + "/profiles/deployment-checks/" + j.check.DeploymentID}
 	var alertPlans []profileAlertPlan
-	if !(retry && j.check.Attempts < api.ProfileAutoMaxAttempts) {
+	if !retry || j.check.Attempts >= api.ProfileAutoMaxAttempts {
 		var err error
 		alertPlans, err = m.prepareProfileAlertsLocked(observation)
 		if err != nil {

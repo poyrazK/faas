@@ -27,7 +27,7 @@ func sanitizeRouteSamples(p *profile.Profile, allowed []string) []string {
 		if values := s.Label[api.ProfileRouteLabel]; len(values) == 1 && labels[values[0]] {
 			route = values[0]
 			reasons[i] = "attributed"
-		} else if len(values) > 0 && !(len(values) == 1 && values[0] == "") {
+		} else if len(values) > 0 && (len(values) != 1 || values[0] != "") {
 			reasons[i] = "invalid_label"
 			if len(values) == 1 && values[0] != "" && api.ValidProfileRoute(values[0]) {
 				reasons[i] = "route_not_admitted"

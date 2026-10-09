@@ -1,6 +1,7 @@
 package faas_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -48,20 +49,20 @@ func TestAutomaticProfileDeploymentClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := client.GetProfileDeploymentPolicy(t.Context(), "demo")
+	p, err := client.GetProfileDeploymentPolicy(context.Background(), "demo")
 	if err != nil || p.Revision != 0 || p.UpdatedAt != nil {
 		t.Fatal(p, err)
 	}
 	zero := int64(0)
-	p, err = client.SaveProfileDeploymentPolicy(t.Context(), "demo", faas.SaveProfileDeploymentPolicyRequest{ExpectedRevision: &zero, Config: config})
+	p, err = client.SaveProfileDeploymentPolicy(context.Background(), "demo", faas.SaveProfileDeploymentPolicyRequest{ExpectedRevision: &zero, Config: config})
 	if err != nil || p.Revision != 1 || !p.UpdatedAt.Equal(at) {
 		t.Fatal(p, err)
 	}
-	list, err := client.ListProfileDeploymentChecks(t.Context(), "demo")
+	list, err := client.ListProfileDeploymentChecks(context.Background(), "demo")
 	if err != nil || len(list.Checks) != 1 {
 		t.Fatal(list, err)
 	}
-	got, err := client.GetProfileDeploymentCheck(t.Context(), "demo", "dep")
+	got, err := client.GetProfileDeploymentCheck(context.Background(), "demo", "dep")
 	if err != nil || got.Baseline != nil || got.Status != "queued" || !got.Candidate.Start.Equal(at) || got.CompletedAt != nil {
 		t.Fatal(got, err)
 	}

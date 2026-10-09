@@ -238,7 +238,7 @@ func (s *PgStore) FinishProfileDeploymentCheck(ctx context.Context, work Profile
 	}
 	observation := profileAlertObservation{AppID: check.AppID, AccountID: work.AccountID, Scope: check.Scope, Source: "deployment", Revision: check.PolicyRevision, Assessment: a}
 	var alertPlans []profileAlertPlan
-	if !(retry && check.Attempts < api.ProfileAutoMaxAttempts) {
+	if !retry || check.Attempts >= api.ProfileAutoMaxAttempts {
 		slug, err := q.ReadProfileAlertOwner(ctx, tx, sqlc.ReadProfileAlertOwnerParams{AppID: check.AppID, AccountID: work.AccountID})
 		if err != nil {
 			return check, err

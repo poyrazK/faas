@@ -205,7 +205,7 @@ func authorizeProfileGate(decision api.ProfileCanaryGateDecision, params *Canary
 		if !params.RequireSafeReleaseLease || decision.Status != "regressed" || !decision.AutoRollback {
 			return &ProfileGateBlockedError{Decision: decision}
 		}
-	} else if decision.Status != "disabled" && decision.Status != "passed" && decision.Status != "overridden" && !(decision.Status == "timed_out" && decision.OnTimeout == "continue") {
+	} else if decision.Status != "disabled" && decision.Status != "passed" && decision.Status != "overridden" && (decision.Status != "timed_out" || decision.OnTimeout != "continue") {
 		return &ProfileGateBlockedError{Decision: decision}
 	}
 	var data map[string]any

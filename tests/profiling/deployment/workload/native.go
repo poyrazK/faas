@@ -63,13 +63,13 @@ func bridgeControl(r *http.Request) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var c struct {
 		Epoch     string `json:"epoch"`
 		Enabled   bool   `json:"enabled"`
 		Suspended bool   `json:"suspended"`
 	}
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("bridge status")
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, api.ProfileControlMaxBytes)).Decode(&c); err != nil {
@@ -86,7 +86,7 @@ func bridgeControl(r *http.Request) (string, error) {
 func nativeProfileState(w http.ResponseWriter, r *http.Request) {
 	epoch, err := bridgeControl(r)
 	if err != nil {
-		http.Error(w, "bridge unavailable", 503)
+		http.Error(w, "bridge unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	nativeProbe.Lock()
@@ -101,7 +101,7 @@ func nativeProfileState(w http.ResponseWriter, r *http.Request) {
 			Sample: []*profile.Sample{{Location: []*profile.Location{l}, Value: []int64{1000000}}}}
 		var body bytes.Buffer
 		if err := p.Write(&body); err != nil {
-			http.Error(w, "probe encoding", 500)
+			http.Error(w, "probe encoding", http.StatusInternalServerError)
 			return
 		}
 		nativeProbe.body, nativeProbe.epoch, nativeProbe.from = body.Bytes(), epoch, now.UnixNano()
@@ -116,25 +116,25 @@ func nativeStaleProfile(w http.ResponseWriter, r *http.Request) {
 		Epoch string `json:"epoch"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, api.ProfileControlMaxBytes)).Decode(&input); err != nil || !epochPattern.MatchString(input.Epoch) {
-		http.Error(w, "invalid epoch", 400)
+		http.Error(w, "invalid epoch", http.StatusBadRequest)
 		return
 	}
 	current, err := bridgeControl(r)
 	if err != nil {
-		http.Error(w, "bridge unavailable", 503)
+		http.Error(w, "bridge unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	nativeProbe.Lock()
 	defer nativeProbe.Unlock()
 	if nativeProbe.body == nil || input.Epoch != nativeProbe.epoch || current == input.Epoch {
-		http.Error(w, "probe requires a retained old epoch", 409)
+		http.Error(w, "probe requires a retained old epoch", http.StatusConflict)
 		return
 	}
 	values := url.Values{"name": {fmt.Sprintf("gregale{gregale_epoch=\"%s\",gregale_process=\"%d\"}", input.Epoch, os.Getpid())},
 		"from": {fmt.Sprint(nativeProbe.from / 1e9)}, "until": {fmt.Sprint((nativeProbe.from + int64(time.Millisecond)) / 1e9)}}
 	req, err := http.NewRequestWithContext(r.Context(), "POST", api.ProfileLocalEndpoint+"/ingest?"+values.Encode(), bytes.NewReader(nativeProbe.body))
 	if err != nil {
-		http.Error(w, "probe request", 500)
+		http.Error(w, "probe request", http.StatusInternalServerError)
 		return
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
@@ -142,10 +142,10 @@ func nativeStaleProfile(w http.ResponseWriter, r *http.Request) {
 	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, "bridge unavailable", 503)
+		http.Error(w, "bridge unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, api.ProfileControlMaxBytes))
 	rejected := err == nil && resp.StatusCode == http.StatusConflict && bytes.Contains(body, []byte("profile belongs to an earlier collection epoch"))
 	digest := sha256.Sum256(nativeProbe.body)
