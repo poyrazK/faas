@@ -45,13 +45,10 @@ permissions:
   security-events: write
 
 env:
-  # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
-  # and the go.mod `go 1.25.13` directive resolve to the same Go runtime.
-  # go1.25.12 carries 7 stdlib vulnerabilities (GO-2026-5026/5972/6088/
-  # 6089/6090/6091/6218) fixed in go1.25.13 — the supply-chain gate fails
-  # closed when the runner resolves "1.25" to a vulnerable patch. Bump
-  # in lock-step with the go.mod `go` directive.
-  GO_VERSION: "1.25.13"
+  # Pin the exact patched toolchain used by go.mod and all built binaries.
+  # Go 1.25.13 has current standard-library advisories; 1.26.9 includes
+  # their fixes. Bump this in lockstep with the go.mod `go` directive.
+  GO_VERSION: "1.26.9"
   # vacuum is the OpenAPI ruleset linter used by `make spec-check`.
   # Both the version and the SHA-256 pin are mirrored from the upstream
   # checksum file at https://github.com/daveshanley/vacuum/releases — never
@@ -67,8 +64,8 @@ env:
   # has a `make sqlc` guard for local devs; CI uses the binary download
   # because the `go install` path cross-compiles sqlc (with its cgo
   # pganalyze/pg_query_go tree) from source on every cold runner (~30 s)
-  # and v1.31.1's go.mod requires Go >= 1.26, which the ubuntu-latest
-  # runner (Go 1.25.13) cannot satisfy under GOTOOLCHAIN=local.
+  # and v1.31.1's cgo dependency tree is expensive to rebuild on every
+  # hosted runner.
   # Same supply-chain pin pattern as vacuum above and every binary in the
   # EX44 ansible roles.
   SQLC_VERSION: "1.31.1"
@@ -174,9 +171,8 @@ jobs:
         run: scripts/ci/cve-monitor_test.sh
 
       # golangci-lint replaces bare gofmt + go vet with a curated set of
-      # checks. v2.4.0+ is built with Go 1.25 and supports a go.mod
-      # targeting Go 1.25 (golangci-lint v1.x is built with Go 1.23 and
-      # refuses go.mod 'go 1.25.0' — see golangci/golangci-lint#5873).
+      # checks. Its version is pinned in go.mod and repeated below for the
+      # action installer.
       # action v8 requires golangci-lint >= v2.1.0; v9 is current.
       # S4 PR-4a advisory: a useful regression pin should fail on the
       # merge-base. This report is intentionally non-blocking while the

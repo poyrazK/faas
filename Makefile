@@ -2,7 +2,7 @@
 # Go >= 1.24. One binary per cmd/ dir.
 # (Bumped from 1.23: cmd/vmmd-stream-bridge uses the Go 1.24+
 # http.Protocols API for H2C — srv.Protocols.SetUnencryptedHTTP2(true).
-# go.mod pins 1.25.13; this comment is the floor for the toolchain
+# go.mod pins 1.26.9; this comment is the floor for the toolchain
 # so a developer on 1.23.x sees a clean compile error rather than
 # a runtime panic.)
 
@@ -988,10 +988,8 @@ clean: ## Remove build artifacts
 # currently fails to compile on macOS SDKs — tracked separately).
 # sqlc install path. CI drops the tarball at $$HOME/.local/sqlc/bin/sqlc
 # (see .github/workflows/ci.yml `install sqlc` step); the same path is
-# the local-dev convention so make sqlc-check works without a `go
-# install` round-trip — which is necessary on Go < 1.26 because
-# sqlc v1.31.1's go.mod requires go >= 1.26.0 and the ubuntu-latest
-# runner is on Go 1.25.12 with GOTOOLCHAIN=local.
+# the local-dev convention so make sqlc-check works without rebuilding
+# sqlc and its cgo dependency tree on every run.
 SQLC         ?= $(HOME)/.local/sqlc/bin/sqlc
 # Bumped from v1.27.0 (IAM-3) — v1.27.0's pg_query_go cgo clashes with
 # the macOS SDK strchrnul declaration and `go install` fails on this
