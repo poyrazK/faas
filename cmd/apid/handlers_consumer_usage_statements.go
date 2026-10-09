@@ -15,7 +15,7 @@ func apiConsumerUsageStatementResponse(statement state.APIConsumerUsageStatement
 	out := api.APIConsumerUsageStatementResponse{
 		ID: statement.ID, ConsumerID: statement.ConsumerID,
 		PeriodStart: statement.PeriodStart.UTC(), PeriodEnd: statement.PeriodEnd.UTC(),
-		Status: string(statement.Status), Currency: statement.Currency,
+		Revision: statement.Revision, Status: string(statement.Status), Currency: statement.Currency,
 		BillableUnits: statement.BillableUnits, UnpricedUnits: statement.UnpricedUnits,
 		AmountMillicents: statement.AmountMillicents, Priced: statement.Priced,
 		AsOf: statement.AsOf.UTC().Format(time.RFC3339Nano), CreatedAt: statement.CreatedAt.UTC(),
@@ -70,91 +70,142 @@ func (s *server) listAPIConsumerUsageStatements(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, out)
 }
 
+// createAPIConsumerUsageStatement plans the period against its existing
+// revisions (ADR-843). Unchanged usage replays the latest revision. A changed
+// draft is superseded by a new draft, and usage that arrives after
+// finalization becomes a new revision holding only the uncovered units.
 func (s *server) createAPIConsumerUsageStatement(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, consumer, store, ok := s.apiConsumerUsageStatementStore(w, r, acct)
 	if !ok {
 		return
 	}
-	var req api.CreateAPIConsumerUsageStatementRequest
-	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
-		return
-	}
-	if req.PeriodStart == nil || req.PeriodEnd == nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid statement period", "period_start and period_end are required"))
-		return
-	}
-	periodStart, periodEnd := req.PeriodStart.UTC(), req.PeriodEnd.UTC()
-	if !periodStart.Equal(periodStart.Truncate(time.Minute)) || !periodEnd.Equal(periodEnd.Truncate(time.Minute)) {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid statement period", "period_start and period_end must be UTC minutes"))
-		return
-	}
-	if !periodEnd.After(periodStart) {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid statement period", "period_end must be after period_start"))
-		return
-	}
-	if periodEnd.Sub(periodStart) > time.Duration(usageMaxWindowDays)*24*time.Hour {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid statement period", "statement periods cannot exceed 90 days"))
-		return
-	}
-	usageStore, ok := s.store.(state.ConsumerUsageStore)
+	periodStart, periodEnd, ok := decodeAPIConsumerUsageStatementPeriod(w, r)
 	if !ok {
-		api.WriteProblem(w, api.ErrInternal("consumer usage ledger is unavailable"))
 		return
 	}
-	cardsStore, ok := s.store.(state.APIConsumerRateCardStore)
-	if !ok {
-		api.WriteProblem(w, api.ErrInternal("API consumer pricing is unavailable"))
-		return
-	}
-	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(r.Context(), acct.ID, app.ID)
+	revisions, err := store.ListAPIConsumerUsageStatementRevisions(r.Context(), acct.ID, app.ID, consumer.ID, periodStart, periodEnd)
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not load API consumer rate cards"))
+		api.WriteProblem(w, api.ErrInternal("could not load API consumer usage statements"))
 		return
 	}
-	usage, err := usageStore.ListAPIConsumerUsage(r.Context(), acct.ID, app.ID, consumer.ID, periodStart, periodEnd)
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not load API consumer usage"))
+	input, unchanged, err := s.planAPIConsumerUsageStatement(r, acct.ID, app.ID, consumer.ID, periodStart, periodEnd, revisions)
+	if errors.Is(err, billing.ErrAPIConsumerUsageRegressed) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Usage coverage conflict", "current usage is below an earlier finalized statement"))
 		return
 	}
-	quote, err := billing.QuoteAPIConsumerUsage(cards, usage)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not calculate API consumer usage quote"))
 		return
 	}
-	buckets := make([]state.APIConsumerUsageStatementBucket, 0, len(quote.Buckets))
+	if unchanged {
+		writeJSON(w, http.StatusOK, apiConsumerUsageStatementResponse(revisions[len(revisions)-1]))
+		return
+	}
+	s.persistAPIConsumerUsageStatement(w, r, acct, store, input)
+}
+
+func decodeAPIConsumerUsageStatementPeriod(w http.ResponseWriter, r *http.Request) (time.Time, time.Time, bool) {
+	var req api.CreateAPIConsumerUsageStatementRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return time.Time{}, time.Time{}, false
+	}
+	invalid := func(detail string) (time.Time, time.Time, bool) {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid statement period", detail))
+		return time.Time{}, time.Time{}, false
+	}
+	if req.PeriodStart == nil || req.PeriodEnd == nil {
+		return invalid("period_start and period_end are required")
+	}
+	periodStart, periodEnd := req.PeriodStart.UTC(), req.PeriodEnd.UTC()
+	if !periodStart.Equal(periodStart.Truncate(time.Minute)) || !periodEnd.Equal(periodEnd.Truncate(time.Minute)) {
+		return invalid("period_start and period_end must be UTC minutes")
+	}
+	if !periodEnd.After(periodStart) {
+		return invalid("period_end must be after period_start")
+	}
+	if periodEnd.Sub(periodStart) > time.Duration(usageMaxWindowDays)*24*time.Hour {
+		return invalid("statement periods cannot exceed 90 days")
+	}
+	return periodStart, periodEnd, true
+}
+
+// planAPIConsumerUsageStatement prices the usage not yet covered by a
+// finalized revision. unchanged is true when there is no such usage and the
+// period already has a revision to replay.
+func (s *server) planAPIConsumerUsageStatement(r *http.Request, accountID, appID, consumerID string, start, end time.Time,
+	revisions []state.APIConsumerUsageStatement) (state.APIConsumerUsageStatementInput, bool, error) {
+	usageStore, ok := s.store.(state.ConsumerUsageStore)
+	if !ok {
+		return state.APIConsumerUsageStatementInput{}, false, errors.New("consumer usage ledger is unavailable")
+	}
+	cardsStore, ok := s.store.(state.APIConsumerRateCardStore)
+	if !ok {
+		return state.APIConsumerUsageStatementInput{}, false, errors.New("API consumer pricing is unavailable")
+	}
+	usage, err := usageStore.ListAPIConsumerUsage(r.Context(), accountID, appID, consumerID, start, end)
+	if err != nil {
+		return state.APIConsumerUsageStatementInput{}, false, err
+	}
+	delta, err := billing.APIConsumerUsageDelta(usage, revisions)
+	if err != nil {
+		return state.APIConsumerUsageStatementInput{}, false, err
+	}
+	if len(delta) == 0 && len(revisions) > 0 {
+		return state.APIConsumerUsageStatementInput{}, true, nil
+	}
+	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(r.Context(), accountID, appID)
+	if err != nil {
+		return state.APIConsumerUsageStatementInput{}, false, err
+	}
+	quote, err := billing.QuoteAPIConsumerUsage(cards, delta)
+	if err != nil {
+		return state.APIConsumerUsageStatementInput{}, false, err
+	}
+	input := state.APIConsumerUsageStatementInput{
+		AccountID: accountID, AppID: appID, ConsumerID: consumerID,
+		PeriodStart: start, PeriodEnd: end, Revision: len(revisions) + 1, Currency: quote.Currency,
+		BillableUnits: quote.BillableUnits, UnpricedUnits: quote.UnpricedUnits,
+		AmountMillicents: quote.AmountMillicents, Priced: quote.Priced,
+		Buckets: make([]state.APIConsumerUsageStatementBucket, 0, len(quote.Buckets)), AsOf: time.Now().UTC(),
+	}
+	if len(revisions) > 0 {
+		input.PriorStatus = revisions[len(revisions)-1].Status
+	}
 	for _, bucket := range quote.Buckets {
-		buckets = append(buckets, state.APIConsumerUsageStatementBucket{
+		input.Buckets = append(input.Buckets, state.APIConsumerUsageStatementBucket{
 			WindowStart: bucket.WindowStart, BillableUnits: bucket.BillableUnits,
 			RateCardID: bucket.RateCardID, Currency: bucket.Currency,
 			PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, AmountMillicents: bucket.AmountMillicents,
 		})
 	}
-	statement, created, err := store.CreateAPIConsumerUsageStatement(r.Context(), state.APIConsumerUsageStatementInput{
-		AccountID: acct.ID, AppID: app.ID, ConsumerID: consumer.ID,
-		PeriodStart: periodStart, PeriodEnd: periodEnd, Currency: quote.Currency,
-		BillableUnits: quote.BillableUnits, UnpricedUnits: quote.UnpricedUnits,
-		AmountMillicents: quote.AmountMillicents, Priced: quote.Priced, Buckets: buckets,
-		AsOf: time.Now().UTC(),
-	})
+	return input, false, nil
+}
+
+func (s *server) persistAPIConsumerUsageStatement(w http.ResponseWriter, r *http.Request, acct state.Account,
+	store state.APIConsumerUsageStatementStore, input state.APIConsumerUsageStatementInput) {
+	statement, created, err := store.CreateAPIConsumerUsageStatement(r.Context(), input)
+	if errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Statement revision conflict", "statement state changed; reload the period and retry"))
+		return
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not create API consumer usage statement"))
 		return
 	}
-	if created {
-		s.audit.Emit(r.Context(), "api_consumer_usage_statement.created", &acct.ID, map[string]any{
-			"app_id": app.ID, "consumer_id": consumer.ID, "statement_id": statement.ID,
-			"period_start": periodStart.Format(time.RFC3339), "period_end": periodEnd.Format(time.RFC3339),
-			"amount_millicents": statement.AmountMillicents, "unpriced_units": statement.UnpricedUnits,
-		})
-		writeJSON(w, http.StatusCreated, apiConsumerUsageStatementResponse(statement))
+	if !created {
+		writeJSON(w, http.StatusOK, apiConsumerUsageStatementResponse(statement))
 		return
 	}
-	writeJSON(w, http.StatusOK, apiConsumerUsageStatementResponse(statement))
+	s.audit.Emit(r.Context(), "api_consumer_usage_statement.created", &acct.ID, map[string]any{
+		"app_id": input.AppID, "consumer_id": input.ConsumerID, "statement_id": statement.ID,
+		"revision":     statement.Revision,
+		"period_start": input.PeriodStart.Format(time.RFC3339), "period_end": input.PeriodEnd.Format(time.RFC3339),
+		"amount_millicents": statement.AmountMillicents, "unpriced_units": statement.UnpricedUnits,
+	})
+	writeJSON(w, http.StatusCreated, apiConsumerUsageStatementResponse(statement))
 }
 
 func (s *server) getAPIConsumerUsageStatement(w http.ResponseWriter, r *http.Request, acct state.Account) {

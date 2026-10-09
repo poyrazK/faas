@@ -131,3 +131,104 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 		t.Fatalf("list statements: %d %s", listed.Code, listed.Body)
 	}
 }
+
+// adr: 843 — app-local statements supersede changed drafts and bill late
+// usage as additive adjustment revisions of the same period.
+func TestAPIConsumerUsageStatementRevisionsAndLateUsage(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	mustSeedApp(t, e, "consumer-revisions")
+	created := e.do(t, http.MethodPost, "/v1/apps/consumer-revisions/consumers", api.CreateAPIConsumerRequest{
+		ExternalRef: "revision-customer", Name: "Revision Customer",
+	}, nil)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create consumer: %d %s", created.Code, created.Body)
+	}
+	var consumer api.APIConsumerResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &consumer); err != nil {
+		t.Fatal(err)
+	}
+	minute := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Minute)
+	if rate := e.do(t, http.MethodPost, "/v1/apps/consumer-revisions/rate-cards", api.CreateAPIConsumerRateCardRequest{
+		Currency: "EUR", PriceMillicentsPerUnit: 10, EffectiveFrom: &minute,
+	}, nil); rate.Code != http.StatusCreated {
+		t.Fatalf("create rate card: %d %s", rate.Code, rate.Body)
+	}
+	recordUsage := func(at time.Time, units int64) {
+		t.Helper()
+		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+			EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID,
+			ConsumerKey: consumer.ID, WindowStart: at, RequestCount: units, BillableUnits: units,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := "/v1/apps/consumer-revisions/consumers/" + consumer.ID + "/usage-statements"
+	end := minute.Add(time.Hour)
+	period := api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &minute, PeriodEnd: &end}
+	snapshot := func(wantCode int) api.APIConsumerUsageStatementResponse {
+		t.Helper()
+		res := e.do(t, http.MethodPost, path, period, nil)
+		if res.Code != wantCode {
+			t.Fatalf("create statement: %d %s, want %d", res.Code, res.Body, wantCode)
+		}
+		var out api.APIConsumerUsageStatementResponse
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	post := func(target string, body any, wantCode int) {
+		t.Helper()
+		if res := e.do(t, http.MethodPost, target, body, nil); res.Code != wantCode {
+			t.Fatalf("POST %s: %d %s, want %d", target, res.Code, res.Body, wantCode)
+		}
+	}
+
+	recordUsage(minute, 2)
+	draft := snapshot(http.StatusCreated)
+	if draft.Revision != 1 || draft.Status != "draft" || draft.BillableUnits != 2 {
+		t.Fatalf("first draft = %+v", draft)
+	}
+	if replay := snapshot(http.StatusOK); replay.ID != draft.ID {
+		t.Fatalf("unchanged draft replay = %+v, want %s", replay, draft.ID)
+	}
+
+	// Usage arriving while the draft is open supersedes it.
+	recordUsage(minute.Add(time.Minute), 3)
+	refreshed := snapshot(http.StatusCreated)
+	if refreshed.Revision != 2 || refreshed.Status != "draft" || refreshed.BillableUnits != 5 || refreshed.AmountMillicents != 50 {
+		t.Fatalf("refreshed draft = %+v", refreshed)
+	}
+	var stale api.APIConsumerUsageStatementResponse
+	if err := json.Unmarshal(e.do(t, http.MethodGet, path+"/"+draft.ID, nil, nil).Body.Bytes(), &stale); err != nil || stale.Status != "superseded" {
+		t.Fatalf("superseded draft = %+v err=%v", stale, err)
+	}
+	post(path+"/"+draft.ID+"/finalize", struct{}{}, http.StatusConflict)
+	post(path+"/"+refreshed.ID+"/finalize", struct{}{}, http.StatusOK)
+	post(path+"/"+refreshed.ID+"/handoff", api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "inv-1"}, http.StatusCreated)
+	if replay := snapshot(http.StatusOK); replay.ID != refreshed.ID {
+		t.Fatalf("finalized replay without new usage = %+v", replay)
+	}
+
+	// Late usage, including more units in an already-billed minute, becomes
+	// an adjustment that carries only the uncovered units.
+	recordUsage(minute, 1)
+	recordUsage(minute.Add(2*time.Minute), 4)
+	adjustment := snapshot(http.StatusCreated)
+	if adjustment.Revision != 3 || adjustment.Status != "draft" || adjustment.BillableUnits != 5 || adjustment.AmountMillicents != 50 || len(adjustment.Buckets) != 2 {
+		t.Fatalf("adjustment = %+v", adjustment)
+	}
+	post(path+"/"+adjustment.ID+"/finalize", struct{}{}, http.StatusOK)
+	post(path+"/"+adjustment.ID+"/handoff", api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "inv-1"}, http.StatusConflict)
+	post(path+"/"+adjustment.ID+"/handoff", api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "inv-2"}, http.StatusCreated)
+
+	// A different period overlapping billed usage still cannot be handed off.
+	overlapStart, overlapEnd := minute.Add(time.Minute), minute.Add(2*time.Hour)
+	res := e.do(t, http.MethodPost, path, api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &overlapStart, PeriodEnd: &overlapEnd}, nil)
+	var overlap api.APIConsumerUsageStatementResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &overlap); err != nil || res.Code != http.StatusCreated {
+		t.Fatalf("overlapping statement: %d %s", res.Code, res.Body)
+	}
+	post(path+"/"+overlap.ID+"/finalize", struct{}{}, http.StatusOK)
+	post(path+"/"+overlap.ID+"/handoff", api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "inv-3"}, http.StatusConflict)
+}

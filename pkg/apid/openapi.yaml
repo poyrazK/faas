@@ -8599,8 +8599,8 @@ paths:
     post:
       tags: [consumers]
       operationId: createAPIConsumerUsageStatement
-      summary: Snapshot an API consumer usage quote.
-      description: Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period returns the original snapshot.
+      summary: Snapshot an API consumer usage quote or create a late-usage adjustment.
+      description: Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged draft replays. If usage or effective prices changed, the open draft becomes superseded and a new draft revision is created. After finalization, new units create the next revision containing only those units; no new units replay the latest revision. Finalized revisions are never rewritten.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -8610,12 +8610,12 @@ paths:
             schema: { $ref: '#/components/schemas/CreateAPIConsumerUsageStatementRequest' }
       responses:
         '200':
-          description: The existing statement for this consumer and period.
+          description: The latest existing revision; the period has no new usage or the draft is unchanged.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
         '201':
-          description: The newly created usage statement snapshot.
+          description: The newly created statement revision.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
@@ -8623,6 +8623,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanLimit' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}:
     parameters:
@@ -42405,15 +42406,16 @@ components:
         amount_millicents: { type: integer, format: int64, minimum: 0 }
 
     APIConsumerUsageStatementResponse:
-      description: "Immutable, auditable API consumer usage snapshot."
+      description: "Immutable, auditable API consumer usage snapshot. One period can hold several revisions: a changed draft is superseded by the next revision, and every revision after a finalized one carries only usage that arrived later."
       type: object
-      required: [id, consumer_id, period_start, period_end, status, billable_units, unpriced_units, amount_millicents, priced, buckets, as_of, created_at]
+      required: [id, consumer_id, period_start, period_end, revision, status, billable_units, unpriced_units, amount_millicents, priced, buckets, as_of, created_at]
       properties:
         id: { type: string, format: uuid }
         consumer_id: { type: string, format: uuid }
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
-        status: { type: string, enum: [draft, finalized] }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [draft, finalized, superseded] }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         billable_units: { type: integer, format: int64, minimum: 0 }
         unpriced_units: { type: integer, format: int64, minimum: 0 }

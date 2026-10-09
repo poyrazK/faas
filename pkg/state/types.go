@@ -854,12 +854,15 @@ type PlatformTenantRateCard struct {
 }
 
 // APIConsumerUsageStatementStatus is the lifecycle of an immutable usage
-// snapshot. Draft statements can be finalized once all usage is priced.
+// snapshot. Draft statements can be finalized once all usage is priced. A
+// draft whose quote changed before finalization is superseded by the next
+// revision and can never be finalized or handed off.
 type APIConsumerUsageStatementStatus string
 
 const (
-	APIConsumerUsageStatementDraft     APIConsumerUsageStatementStatus = "draft"
-	APIConsumerUsageStatementFinalized APIConsumerUsageStatementStatus = "finalized"
+	APIConsumerUsageStatementDraft      APIConsumerUsageStatementStatus = "draft"
+	APIConsumerUsageStatementFinalized  APIConsumerUsageStatementStatus = "finalized"
+	APIConsumerUsageStatementSuperseded APIConsumerUsageStatementStatus = "superseded"
 )
 
 // APIConsumerUsageStatementBucket is the priced snapshot for one UTC minute.
@@ -875,7 +878,9 @@ type APIConsumerUsageStatementBucket struct {
 
 // APIConsumerUsageStatement is a durable, auditable snapshot of a consumer's
 // usage quote for one period. Once created, its buckets and totals never
-// change; finalization only records the payable lifecycle transition.
+// change; finalization only records the payable lifecycle transition. One
+// period can hold several revisions: every revision after a finalized one
+// carries only the usage that arrived later, as an additive adjustment.
 type APIConsumerUsageStatement struct {
 	ID               string
 	AccountID        string
@@ -883,6 +888,7 @@ type APIConsumerUsageStatement struct {
 	ConsumerID       string
 	PeriodStart      time.Time
 	PeriodEnd        time.Time
+	Revision         int
 	Status           APIConsumerUsageStatementStatus
 	Currency         string
 	BillableUnits    int64
@@ -922,13 +928,17 @@ type APIConsumerUsageStatementHandoffInput struct {
 }
 
 // APIConsumerUsageStatementInput contains the quote to persist. The handler
-// builds it from the usage ledger and immutable rate-card versions.
+// builds it from the usage ledger and immutable rate-card versions. Revision
+// and PriorStatus name the latest revision the quote was planned against, so
+// a concurrent change is rejected instead of overwritten.
 type APIConsumerUsageStatementInput struct {
 	AccountID        string
 	AppID            string
 	ConsumerID       string
 	PeriodStart      time.Time
 	PeriodEnd        time.Time
+	Revision         int
+	PriorStatus      APIConsumerUsageStatementStatus
 	Currency         string
 	BillableUnits    int64
 	UnpricedUnits    int64

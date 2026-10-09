@@ -22,7 +22,7 @@ func TestPgAPIConsumerUsageStatementHandoffIsIdempotentAndUnique(t *testing.T) {
 	createStatement := func(periodStart time.Time) state.APIConsumerUsageStatement {
 		t.Helper()
 		statement, created, err := store.CreateAPIConsumerUsageStatement(ctx, state.APIConsumerUsageStatementInput{
-			AccountID: accountID, AppID: appID, ConsumerID: consumer.ID,
+			AccountID: accountID, AppID: appID, ConsumerID: consumer.ID, Revision: 1,
 			PeriodStart: periodStart, PeriodEnd: periodStart.Add(time.Hour), Currency: "EUR",
 			BillableUnits: 4, AmountMillicents: 100, Priced: true, AsOf: time.Now().UTC(),
 			Buckets: []state.APIConsumerUsageStatementBucket{{

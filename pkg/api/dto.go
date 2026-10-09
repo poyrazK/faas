@@ -1343,12 +1343,14 @@ type APIConsumerUsageStatementBucketResponse struct {
 
 // APIConsumerUsageStatementResponse is an immutable, auditable usage
 // snapshot that can be exported to a customer's payment system through the
-// usage_statement.finalized webhook.
+// usage_statement.finalized webhook. Revision orders the snapshots of one
+// period; revisions after a finalized one carry only later usage.
 type APIConsumerUsageStatementResponse struct {
 	ID               string                                    `json:"id"`
 	ConsumerID       string                                    `json:"consumer_id"`
 	PeriodStart      time.Time                                 `json:"period_start"`
 	PeriodEnd        time.Time                                 `json:"period_end"`
+	Revision         int                                       `json:"revision"`
 	Status           string                                    `json:"status"`
 	Currency         string                                    `json:"currency,omitempty"`
 	BillableUnits    int64                                     `json:"billable_units"`

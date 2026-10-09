@@ -18,6 +18,9 @@ type APIConsumerUsageStatementStore interface {
 	CreateAPIConsumerUsageStatement(context.Context, APIConsumerUsageStatementInput) (APIConsumerUsageStatement, bool, error)
 	GetAPIConsumerUsageStatement(context.Context, string, string, string, string) (APIConsumerUsageStatement, error)
 	ListAPIConsumerUsageStatements(context.Context, string, string, string) ([]APIConsumerUsageStatement, error)
+	// ListAPIConsumerUsageStatementRevisions returns every revision of one
+	// exact period, oldest first.
+	ListAPIConsumerUsageStatementRevisions(ctx context.Context, accountID, appID, consumerID string, start, end time.Time) ([]APIConsumerUsageStatement, error)
 	FinalizeAPIConsumerUsageStatement(context.Context, string, string, string, string) (APIConsumerUsageStatement, bool, error)
 }
 
@@ -61,6 +64,12 @@ func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput
 	}
 	if input.PeriodStart.IsZero() || input.PeriodEnd.IsZero() {
 		return fmt.Errorf("consumer usage statement: period_start and period_end are required")
+	}
+	if input.Revision < 1 {
+		return fmt.Errorf("consumer usage statement: revision must be positive")
+	}
+	if (input.Revision == 1) != (input.PriorStatus == "") {
+		return fmt.Errorf("consumer usage statement: only revision 1 has no prior revision")
 	}
 	if !input.PeriodStart.Equal(input.PeriodStart.UTC().Truncate(time.Minute)) ||
 		!input.PeriodEnd.Equal(input.PeriodEnd.UTC().Truncate(time.Minute)) {
@@ -131,6 +140,25 @@ func cloneAPIConsumerUsageStatement(statement APIConsumerUsageStatement) APICons
 
 func cloneAPIConsumerUsageStatementHandoff(handoff APIConsumerUsageStatementHandoff) APIConsumerUsageStatementHandoff {
 	return handoff
+}
+
+// sameAPIConsumerUsageStatementSnapshot reports whether a draft already holds
+// exactly the planned quote. Replaying an unchanged plan is idempotent; only a
+// changed quote supersedes the draft.
+func sameAPIConsumerUsageStatementSnapshot(draft APIConsumerUsageStatement, input APIConsumerUsageStatementInput) bool {
+	if draft.Currency != input.Currency || draft.BillableUnits != input.BillableUnits ||
+		draft.UnpricedUnits != input.UnpricedUnits || draft.AmountMillicents != input.AmountMillicents ||
+		draft.Priced != input.Priced || len(draft.Buckets) != len(input.Buckets) {
+		return false
+	}
+	for i := range draft.Buckets {
+		a, b := draft.Buckets[i], input.Buckets[i]
+		if !a.WindowStart.Equal(b.WindowStart) || a.BillableUnits != b.BillableUnits || a.RateCardID != b.RateCardID ||
+			a.Currency != b.Currency || a.PriceMillicentsPerUnit != b.PriceMillicentsPerUnit || a.AmountMillicents != b.AmountMillicents {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeStatementCurrency(currency string) string {
