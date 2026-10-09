@@ -69,3 +69,23 @@ missing roots, unknown states, or insufficient samples produce `unknown`.
 Failure percentages require 20 retained success/failure attempts, and completion
 latency requires one success. See [consumer execution health](event-driven.md#consumer-execution-health)
 for retention coverage and the distinction between backlog and formation rate.
+
+## Custom metric alerts
+
+Where custom metric history is enabled (preview, ADR-745), you can alert on a
+number you push yourself — orders waiting, failed payments, documents awaiting
+OCR. Name the metric with `custom_metric_name` (`--custom-metric` in the CLI):
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "orders backing up" \
+  --metric custom_metric --custom-metric orders_pending --comparison gt --threshold 1000 \
+  --window-spec 15m --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+A gauge is compared on its average over the window, so `5m` follows the
+current value and `1h` asks whether it stayed there. A counter (an
+OpenTelemetry cumulative sum) is compared on its per-second rate over the
+window. If nothing was pushed in the window, or the metric was deleted, the
+rule is `unknown` and does not fire: a stopped pusher never satisfies a "below"
+rule by silence. These rules are webhook-only and support windows up to `24h`.
+See [custom metrics](scaling-policy.md#custom-metrics) for pushing values.

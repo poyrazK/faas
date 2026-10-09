@@ -56,7 +56,11 @@
     and API rate limiting as the existing push endpoint; bodies are capped at
     `OTLPMetricsMaxBodyBytes`.
   - **Alerts** need one nullable `alert_rules.custom_metric_name` column, set
-    only when `metric = 'custom_metric'`, enforced by a CHECK.
+    only when `metric = 'custom_metric'`, enforced by a CHECK. A gauge rule
+    compares the metric's average over the window; a counter rule compares
+    its per-second rate. Rules are app-scoped, webhook-only, and limited to
+    windows up to 24h. A window with no exported value, or a metric that no
+    longer exists, leaves the rule `unknown` rather than firing.
   - **No DogStatsD in this ADR:** UDP into the control plane is a new network
     path. Apps that already speak StatsD can run the existing OpenTelemetry
     companion preset to convert to OTLP.
@@ -75,7 +79,9 @@
 1. Exporter (`gregale_app_custom_metric`).
 2. Series endpoint, CLI flag, dashboard chart.
 3. OTLP metrics ingestion, with the metric kind column it first needs.
-4. `custom_metric` alerts, including baseline comparisons.
+4. `custom_metric` alerts with absolute thresholds. Baseline comparisons
+   (ADR-744) reuse the same `observeCustomMetric` value and land with
+   whichever of ADR-744 and this ADR merges second.
 
 ## Follow-ups
 

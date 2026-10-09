@@ -154,7 +154,18 @@ var AllowedAlertRuleMetrics = []string{
 	"safedeploy_audit_emit_failing",
 	"deployment_audit_gc_failing",
 	"canary_fleet_in_flight_high",
+	// ADR-745: one pushed custom metric, named by custom_metric_name.
+	AlertRuleMetricCustomMetric,
 }
+
+// AlertRuleMetricCustomMetric is the metric whose rules name one pushed
+// custom metric (ADR-745). The rule is app-scoped and webhook-only.
+const AlertRuleMetricCustomMetric = "custom_metric"
+
+// CustomMetricAlertWindowSpecs are the windows a custom_metric rule may use:
+// longer windows average a pushed gauge over days, which hides the incident
+// the alert exists to catch. Mirrors alert_rules_custom_metric_chk.
+var CustomMetricAlertWindowSpecs = []string{"5m", "15m", "1h", "6h", "24h"}
 
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.
 var AllowedAlertRuleComparisons = []string{"gt", "gte", "lt", "lte"}
@@ -197,7 +208,8 @@ func AllowedAlertRuleAction(v string) bool {
 func AlertRuleActionAllowedForMetric(metric, action string) bool {
 	if IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || metric == "pre_auth_target_threshold" || metric == "pre_auth_target_signal_gap_pct" ||
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
-		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" {
+		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" ||
+		metric == AlertRuleMetricCustomMetric {
 		return action == "" || action == "webhook"
 	}
 	return true
@@ -216,6 +228,7 @@ type CreateAlertRuleRequest struct {
 	Threshold                       float64 `json:"threshold"`
 	WindowSpec                      string  `json:"window_spec"`
 	FailureSource                   string  `json:"failure_source,omitempty"`
+	CustomMetricName                string  `json:"custom_metric_name,omitempty"`
 	Action                          *string `json:"action,omitempty"`
 	WebhookURL                      string  `json:"webhook_url"`
 	WebhookSecret                   string  `json:"webhook_secret"`
@@ -276,6 +289,7 @@ type AlertRuleResponse struct {
 	Threshold                       float64 `json:"threshold"`
 	WindowSpec                      string  `json:"window_spec"`
 	FailureSource                   string  `json:"failure_source,omitempty"`
+	CustomMetricName                string  `json:"custom_metric_name,omitempty"`
 	Action                          string  `json:"action"`
 	WebhookURL                      string  `json:"webhook_url"`
 	WebhookSecretSealedMasked       string  `json:"webhook_secret_sealed_masked"`
@@ -305,6 +319,7 @@ type AlertRuleRow struct {
 	Threshold                       float64
 	WindowSpec                      string
 	FailureSource                   string
+	CustomMetricName                string
 	Action                          string
 	WebhookURL                      string
 	CooldownMinutes                 int
@@ -337,6 +352,7 @@ func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 		Threshold:                       r.Threshold,
 		WindowSpec:                      r.WindowSpec,
 		FailureSource:                   r.FailureSource,
+		CustomMetricName:                r.CustomMetricName,
 		Action:                          r.Action,
 		WebhookURL:                      r.WebhookURL,
 		WebhookSecretSealedMasked:       AlertRuleWebhookSecretMasked,

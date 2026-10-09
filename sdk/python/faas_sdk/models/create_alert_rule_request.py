@@ -53,6 +53,9 @@ class CreateAlertRuleRequest:
     enabled: bool | Unset = UNSET
     failure_source: CreateAlertRuleRequestFailureSource | Unset = UNSET
     """Required when metric == failed_invocations; omit otherwise (xor_chk)."""
+    custom_metric_name: str | Unset = UNSET
+    """Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window
+    and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h."""
     cooldown_minutes: int | Unset = UNSET
     action: CreateAlertRuleRequestAction | Unset = "webhook"
     """What to do when the rule fires. Omit to default to webhook. Pre-auth target and event consumer and workflow
@@ -86,6 +89,8 @@ class CreateAlertRuleRequest:
         if not isinstance(self.failure_source, Unset):
             failure_source = self.failure_source
 
+        custom_metric_name = self.custom_metric_name
+
         cooldown_minutes = self.cooldown_minutes
 
         action: str | Unset = UNSET
@@ -113,6 +118,8 @@ class CreateAlertRuleRequest:
             field_dict["enabled"] = enabled
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
+        if custom_metric_name is not UNSET:
+            field_dict["custom_metric_name"] = custom_metric_name
         if cooldown_minutes is not UNSET:
             field_dict["cooldown_minutes"] = cooldown_minutes
         if action is not UNSET:
@@ -155,6 +162,8 @@ class CreateAlertRuleRequest:
         else:
             failure_source = check_create_alert_rule_request_failure_source(_failure_source)
 
+        custom_metric_name = d.pop("custom_metric_name", UNSET)
+
         cooldown_minutes = d.pop("cooldown_minutes", UNSET)
 
         _action = d.pop("action", UNSET)
@@ -176,6 +185,7 @@ class CreateAlertRuleRequest:
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             enabled=enabled,
             failure_source=failure_source,
+            custom_metric_name=custom_metric_name,
             cooldown_minutes=cooldown_minutes,
             action=action,
         )

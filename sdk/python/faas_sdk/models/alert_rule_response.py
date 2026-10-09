@@ -60,6 +60,8 @@ class AlertRuleResponse:
     deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""
     failure_source: AlertRuleResponseFailureSource | Unset = UNSET
     """Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk)."""
+    custom_metric_name: str | Unset = UNSET
+    """The pushed custom metric a custom_metric rule watches (ADR-745). Present only when metric is custom_metric."""
     last_fired_at: datetime.datetime | Unset = UNSET
     last_evaluated_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -105,6 +107,8 @@ class AlertRuleResponse:
         if not isinstance(self.failure_source, Unset):
             failure_source = self.failure_source
 
+        custom_metric_name = self.custom_metric_name
+
         last_fired_at: str | Unset = UNSET
         if not isinstance(self.last_fired_at, Unset):
             last_fired_at = self.last_fired_at.isoformat()
@@ -140,6 +144,8 @@ class AlertRuleResponse:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
+        if custom_metric_name is not UNSET:
+            field_dict["custom_metric_name"] = custom_metric_name
         if last_fired_at is not UNSET:
             field_dict["last_fired_at"] = last_fired_at
         if last_evaluated_at is not UNSET:
@@ -196,6 +202,8 @@ class AlertRuleResponse:
         else:
             failure_source = check_alert_rule_response_failure_source(_failure_source)
 
+        custom_metric_name = d.pop("custom_metric_name", UNSET)
+
         _last_fired_at = d.pop("last_fired_at", UNSET)
         last_fired_at: datetime.datetime | Unset
         if isinstance(_last_fired_at, Unset):
@@ -229,6 +237,7 @@ class AlertRuleResponse:
             event_subscription_id=event_subscription_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             failure_source=failure_source,
+            custom_metric_name=custom_metric_name,
             last_fired_at=last_fired_at,
             last_evaluated_at=last_evaluated_at,
         )
