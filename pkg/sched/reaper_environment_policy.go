@@ -81,6 +81,10 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 				row.PolicyUnavailable = true
 				continue
 			}
+			if policy.deployment.Status == state.DeploySuperseded {
+				row.DeploymentSuperseded = true
+				continue
+			}
 			app = policy.app
 			row.MinInstances = policy.deployment.EffectiveMinInstances()
 		} else {
