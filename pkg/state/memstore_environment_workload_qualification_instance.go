@@ -23,11 +23,23 @@ func (m *MemStore) CreateEnvironmentWorkloadQualificationInstance(ctx context.Co
 	if err != nil {
 		return EnvironmentWorkloadQualificationAdmission{}, err
 	}
-	if !qualificationLeaseMatches(current, claimed, time.Now()) || current.ExecutionMode == api.ExecutionModeJob || current.ReservedInstanceID == "" {
+	if !qualificationLeaseMatches(current, claimed, time.Now()) || current.ReservedInstanceID == "" {
 		return EnvironmentWorkloadQualificationAdmission{}, ErrConflict
 	}
 	if err := m.qualificationCurrentLocked(memory, current); err != nil {
 		return EnvironmentWorkloadQualificationAdmission{}, err
+	}
+	if current.ExecutionMode == api.ExecutionModeJob {
+		var graph EnvironmentWorkloadGraph
+		for _, candidate := range memory.graphs {
+			if candidate.ID == current.GraphID {
+				graph = candidate
+				break
+			}
+		}
+		if !qualificationGraphJobQueueBindingsSupported(graph, current.Resource) {
+			return EnvironmentWorkloadQualificationAdmission{}, ErrConflict
+		}
 	}
 	app, node := m.apps[current.AppID], m.computeNodes[placement.NodeID]
 	if app.RAMMB != placement.RAMMB || !m.accounts[app.AccountID].MayDeploy() || !node.Active || node.Lifecycle != NodeLifecycleActive {

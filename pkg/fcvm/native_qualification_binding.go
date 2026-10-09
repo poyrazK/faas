@@ -127,6 +127,35 @@ func (j *nativeQualificationJournal) bindNative(ctx context.Context, record nati
 	return record, j.write(record)
 }
 
+// noNativeEffectsRetirement proves the incoming attempt was durably revoked
+// and never acquired a physical owner. The caller separately joins Manager
+// operations and releases any allocator reservation before returning it.
+func (j *nativeQualificationJournal) noNativeEffectsRetirement(ctx context.Context, frame state.EnvironmentQualificationExecution) (proof state.EnvironmentQualificationRetirement, result error) {
+	lock, err := j.lock(ctx, frame.InstanceID)
+	if err != nil {
+		return proof, err
+	}
+	defer func() { result = errors.Join(result, lock.Close()) }()
+	record, err := j.read(frame.InstanceID)
+	if err != nil {
+		return proof, err
+	}
+	if record.Execution != frame || !record.Revoked {
+		return proof, state.ErrConflict
+	}
+	physicalLock, err := j.owner.lock(ctx, frame.InstanceID)
+	if err != nil {
+		return proof, err
+	}
+	defer func() { result = errors.Join(result, physicalLock.Close()) }()
+	if _, err := j.owner.read(frame.InstanceID); !errors.Is(err, os.ErrNotExist) {
+		return proof, errors.Join(err, state.ErrConflict)
+	}
+	proof = state.EnvironmentQualificationRetirement{Kind: state.QualificationNativeEffectsAbsent, ReceiptID: record.Generation,
+		KernelBootID: record.KernelBootID, ProcessesExited: true, ResourcesRemoved: true}
+	return proof, ctx.Err()
+}
+
 // Any existing physical spelling, including a damaged record, prevents a
 // qualification claim from borrowing the instance's previous native owner.
 func (j *nativeQualificationJournal) requireNativeAbsent(instance string) error {

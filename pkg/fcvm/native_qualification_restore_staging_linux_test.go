@@ -36,7 +36,7 @@ func nativeQualificationRestoreStagingFixture(t *testing.T) (nativeRestoreInputF
 	frame.InstanceID, frame.WakeID, frame.CleanupToken, frame.CaptureInstanceID = uuid.NewString(), uuid.NewString(), uuid.NewString(), frame.InstanceID
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	t.Cleanup(cancel)
-	r, err := q.restores().claim(ctx, frame)
+	r, err := q.restores().claim(ctx, frame, "1.7.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,9 +99,7 @@ func TestNativeQualificationRestoreStagingJoinsOriginalTargetAndReceipts(t *test
 			case "capture_changed":
 				completed := f.completed
 				completed.Info.StoredBytes++
-				if err := q.writeCapture(f.capture.incoming, completed); err != nil {
-					t.Fatal(err)
-				}
+				writeTamperedNativeQualificationCapture(t, q, f.capture.incoming, completed)
 			case "canceled":
 				cancelCtx, cancel := context.WithCancel(ctx)
 				cancel()

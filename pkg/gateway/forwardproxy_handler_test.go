@@ -83,6 +83,14 @@ func (s *stubVmmdClient) CaptureEnvironmentQualification(context.Context, *vmmdp
 	return nil, status.Error(codes.Unimplemented, "gateway stub cannot qualify workloads")
 }
 
+func (s *stubVmmdClient) RestoreEnvironmentQualification(context.Context, *vmmdpb.RestoreEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.RestoreEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub cannot restore qualification workloads")
+}
+
+func (s *stubVmmdClient) RetireEnvironmentQualificationArtifacts(context.Context, *vmmdpb.RetireEnvironmentQualificationArtifactsRequest, ...grpc.CallOption) (*vmmdpb.RetireEnvironmentQualificationArtifactsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub cannot retire qualification artifacts")
+}
+
 func (s *stubVmmdClient) ForwardHTTPStream(ctx context.Context, _ ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardHTTPStreamRequest, vmmdpb.ForwardHTTPStreamResponse], error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

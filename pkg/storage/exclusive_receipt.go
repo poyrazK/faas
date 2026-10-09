@@ -123,6 +123,26 @@ type ExclusiveArtifactRetirer interface {
 	RetireExclusiveArtifact(context.Context, ExclusiveArtifactReceipt) error
 }
 
+// ExclusiveArtifactRetirementChecker validates that the backend can condition
+// retirement on this receipt before a caller records an irreversible
+// in-progress marker.
+type ExclusiveArtifactRetirementChecker interface {
+	CheckExclusiveArtifactRetirement(context.Context, ExclusiveArtifactReceipt) error
+}
+
+func CheckExclusiveArtifactRetirement(ctx context.Context, backend StorageBackend, receipt ExclusiveArtifactReceipt) error {
+	if err := errors.Join(receipt.Validate(), ctx.Err()); err != nil {
+		return err
+	}
+	if checker, ok := backend.(ExclusiveArtifactRetirementChecker); ok {
+		return checker.CheckExclusiveArtifactRetirement(ctx, receipt)
+	}
+	if _, ok := backend.(ExclusiveArtifactRetirer); !ok {
+		return ErrExclusiveRetireUnsupported
+	}
+	return nil
+}
+
 // CopyExclusiveArtifact materializes only the acknowledged object into a fresh
 // private regular file owned by the caller. Success includes source EOF, digest,
 // length and Close verification. The caller must seal the output and retain its

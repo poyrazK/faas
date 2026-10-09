@@ -138,6 +138,10 @@ func (g *GCSStorageBackend) RetireExclusiveArtifact(ctx context.Context, r Exclu
 	return errors.Join(normalizeGCSError(err), ctx.Err())
 }
 
+func (g *GCSStorageBackend) CheckExclusiveArtifactRetirement(ctx context.Context, r ExclusiveArtifactReceipt) error {
+	return g.checkArtifactReceipt(ctx, r)
+}
+
 func (s *googleGCSArtifactStore) PutExclusiveReceipt(ctx context.Context, bucket, key string, body io.Reader, metadata map[string]string) (gcsExclusiveObjectReceipt, error) {
 	writeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

@@ -264,17 +264,25 @@ type ColdBootSpec struct {
 // firecracker destroy budget. The ceiling covers every host-accepted
 // task timeout. See pkg/fcvm/job_vmm.go::JobDestroyWaitDefault.
 type JobColdBootSpec struct {
-	KernelKey  string
-	BaseKey    string
-	ImageRef   string
-	Command    []string
-	Env        map[string]string
-	VcpuCount  int
-	MemSizeMiB int
-	Tap        string
+	KernelKey string
+	BaseKey   string
+	ImageRef  string
+	Command   []string
+	Env       map[string]string
+	// SecretsEnvJSON is the vmmd-only plaintext projection of selected sealed
+	// runtime secrets. Manager creates it after opening ciphertext; it is staged
+	// to the task's private drive1 before Firecracker starts and is never copied
+	// into JobManifest or persisted in job state.
+	SecretsEnvJSON []byte
+	VcpuCount      int
+	MemSizeMiB     int
+	Tap            string
 	// TaskTimeoutSec is the per-task wall-clock cap (already
 	// validated against api.JobTaskTimeoutSec[plan]).
 	TaskTimeoutSec int
+	// StartHeld prevents the guest command from executing until the scheduler
+	// has published runtime identity and released the guest's vsock start gate.
+	StartHeld bool
 	// LeaseToken is the (run_id|"\x00"|task_index) lease from
 	// Engine.WakeJob. The guest supervisor embeds it in the
 	// job_exit payload so HandleJobExit can verify ownership.

@@ -44,6 +44,7 @@ func (v *qualificationGraphVMM) RetireEnvironmentQualification(ctx context.Conte
 	// Each VM has its own native producer and immutable retirement receipt.
 	evidence.Retirement.ReceiptID, evidence.Retirement.NativeGeneration = uuid.NewString(), uuid.NewString()
 	if capture, ok := v.captureProofs[frame.InstanceID]; ok {
+		evidence.Retirement.ReceiptID = capture.CaptureID
 		evidence.Retirement.NativeGeneration = capture.NativeGeneration
 		evidence.Retirement.KernelBootID = capture.KernelBootID
 	}
@@ -55,10 +56,10 @@ func (v *qualificationGraphVMM) CaptureEnvironmentQualification(_ context.Contex
 		return EnvironmentQualificationSnapshotEvidence{}, v.captureErr
 	}
 	v.captures = append(v.captures, frame.Resource)
-	capture := uuid.NewString()
+	capture := uuid.NewSHA1(uuid.Nil, []byte(frame.InstanceID+"-retirement")).String()
 	snapshot := state.Snapshot{Tier: state.SnapshotTierWarm, StorageKey: state.SnapshotCaptureMemKey(frame.DeploymentID, state.SnapshotTierWarm, capture)}
 	proof := state.EnvironmentQualificationSnapshot{
-		CaptureID: capture, NativeGeneration: uuid.NewString(), KernelBootID: uuid.NewString(), StorageKey: snapshot.StorageKey,
+		CaptureID: capture, NativeGeneration: uuid.NewString(), KernelBootID: uuid.NewString(), FCVersion: "test-fc", StorageKey: snapshot.StorageKey,
 		VMStateStorageKey: state.SnapshotVMStateKey(snapshot), DriveStorageKey: state.SnapshotDriveKey(snapshot),
 		BackingStorageKey: state.SnapshotBackingKey(snapshot), MemBytes: 1024, VMStateBytes: 128, StoredBytes: 2048,
 	}
@@ -70,9 +71,13 @@ func (v *qualificationGraphVMM) CaptureEnvironmentQualification(_ context.Contex
 }
 
 func claimedQualificationGraphFixture(t *testing.T) (*state.MemStore, []state.EnvironmentWorkloadQualificationRequest) {
+	return claimedQualificationGraphFixtureWithTransport(t, "")
+}
+
+func claimedQualificationGraphFixtureWithTransport(t *testing.T, transport api.ServiceBindingTransport) (*state.MemStore, []state.EnvironmentWorkloadQualificationRequest) {
 	t.Helper()
-	store, _, requests := queuedQualificationExecutionFixtureWithBindings(t,
-		map[string]api.EnvironmentServiceBinding{"backend": {Workload: "api2", EnvKey: "BACKEND_URL"}}, api.ExecutionModeRequest, api.ExecutionModeService)
+	store, _, requests := queuedQualificationExecutionFixtureWithBindingsAndTransport(t,
+		map[string]api.EnvironmentServiceBinding{"backend": {Workload: "api2", EnvKey: "BACKEND_URL"}}, transport, api.ExecutionModeRequest, api.ExecutionModeService)
 	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "test-fc")
 	claimed, err := store.ClaimEnvironmentWorkloadQualificationGraphForNode(t.Context(), requests[0].GraphID, engine.defaultLocalNodeID, "scheduler", time.Minute)
 	if err != nil || len(claimed) != len(requests) {
@@ -124,6 +129,78 @@ func TestEnvironmentQualificationGraphKeepsDependenciesUntilCallerRetires(t *tes
 				if err != nil || ins.State != string(state.StateStopped) || depErr != nil || dep.Status != state.DeploySnapshotting || !dep.EnvironmentWorkloadHeld() {
 					t.Fatal("graph window activated or leaked runtime", ins, dep, err, depErr)
 				}
+			}
+		})
+	}
+}
+
+func TestEnvironmentQualificationGraphSupportsHTTPSScopedBindings(t *testing.T) {
+	store, requests := claimedQualificationGraphFixtureWithTransport(t, api.ServiceBindingTransportHTTPS)
+	v := &qualificationGraphVMM{qualificationRuntimeVMM: newQualificationRuntimeVMM(&fakeVMM{}), callerID: requests[0].AppID}
+	var resolvedTransport api.ServiceBindingTransport
+	e := newEngine(t, store, v, &fakeNotifier{}, "test-fc").WithEnvironmentQualificationServiceProxyForTransport(
+		func(_ context.Context, _ string, transport api.ServiceBindingTransport) (string, error) {
+			resolvedTransport = transport
+			return "https://gateway.internal:443", nil
+		})
+	err := e.WithEnvironmentQualificationGraphRuntimes(t.Context(), requests, func(ctx context.Context, instances map[string]state.Instance) error {
+		caller := instances["workload/api"]
+		route, err := store.ResolveEnvironmentQualificationService(ctx, state.EnvironmentQualificationServiceRequest{
+			NodeID: caller.NodeID, HostIP: caller.HostIP, GraphID: requests[0].GraphID, Binding: "backend"})
+		if err != nil || !route.RequireHTTPS || route.Target.InstanceID != instances["workload/api2"].ID {
+			t.Fatalf("HTTPS private route: %+v %v", route, err)
+		}
+		found := false
+		for _, env := range v.callerSpec.APIEnv {
+			if env.Key == "BACKEND_URL" {
+				found = env.Value == "https://api2.internal"+api.EnvironmentQualificationServicePrefix+requests[0].GraphID+"/backend"
+			}
+		}
+		if !found {
+			t.Fatal("HTTPS scoped binding did not use the target's verified internal alias")
+		}
+		aliases := store
+		if allowed, err := aliases.EnvironmentQualificationServiceAliasAllowed(ctx, caller.AppID, "api2"); err != nil || !allowed {
+			t.Fatalf("declared scoped alias = %v, %v", allowed, err)
+		}
+		if allowed, err := aliases.EnvironmentQualificationServiceAliasAllowed(ctx, caller.AppID, "other"); err != nil || allowed {
+			t.Fatalf("undeclared scoped alias = %v, %v", allowed, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedTransport != api.ServiceBindingTransportHTTPS {
+		t.Fatalf("service proxy transport = %q, want HTTPS", resolvedTransport)
+	}
+	if allowed, err := store.EnvironmentQualificationServiceAliasAllowed(t.Context(), requests[0].AppID, "api2"); err != nil || allowed {
+		t.Fatalf("alias remained discoverable after graph retirement: %v, %v", allowed, err)
+	}
+}
+
+func TestEnvironmentQualificationGraphRejectsInvalidHTTPSListenerBeforeBoot(t *testing.T) {
+	for _, base := range []string{
+		"https://gateway.example.com:443",
+		"https://gateway.internal:444",
+		"http://gateway.internal:443",
+		"https://-gateway.internal:443",
+		"https://gateway..internal:443",
+		"https://gateway.internal:443?unexpected=1",
+		"https://user@gateway.internal:443",
+	} {
+		t.Run(base, func(t *testing.T) {
+			store, requests := claimedQualificationGraphFixtureWithTransport(t, api.ServiceBindingTransportHTTPS)
+			v := &qualificationGraphVMM{qualificationRuntimeVMM: newQualificationRuntimeVMM(&fakeVMM{}), callerID: requests[0].AppID}
+			engine := newEngine(t, store, v, &fakeNotifier{}, "test-fc").WithEnvironmentQualificationServiceProxy(func(context.Context, string) (string, error) {
+				return base, nil
+			})
+			err := engine.WithEnvironmentQualificationGraphRuntimes(t.Context(), requests, func(context.Context, map[string]state.Instance) error {
+				t.Fatal("invalid HTTPS listener reached the graph visitor")
+				return nil
+			})
+			if !errors.Is(err, state.ErrEnvironmentWorkloadPreparationUnavailable) || len(v.boots) != 0 {
+				t.Fatalf("invalid HTTPS listener %q: boots=%v err=%v", base, v.boots, err)
 			}
 		})
 	}

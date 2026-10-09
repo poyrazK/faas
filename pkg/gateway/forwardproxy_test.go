@@ -416,6 +416,14 @@ func (f *fakeVmmdClient) RetireEnvironmentQualification(context.Context, *vmmdpb
 	panic("RetireEnvironmentQualification: not stubbed")
 }
 
+func (f *fakeVmmdClient) RestoreEnvironmentQualification(context.Context, *vmmdpb.RestoreEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.RestoreEnvironmentQualificationResponse, error) {
+	panic("RestoreEnvironmentQualification: not stubbed")
+}
+
+func (f *fakeVmmdClient) RetireEnvironmentQualificationArtifacts(context.Context, *vmmdpb.RetireEnvironmentQualificationArtifactsRequest, ...grpc.CallOption) (*vmmdpb.RetireEnvironmentQualificationArtifactsResponse, error) {
+	panic("RetireEnvironmentQualificationArtifacts: not stubbed")
+}
+
 func (f *fakeVmmdClient) CaptureEnvironmentQualification(context.Context, *vmmdpb.CaptureEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CaptureEnvironmentQualificationResponse, error) {
 	panic("CaptureEnvironmentQualification: not stubbed")
 }

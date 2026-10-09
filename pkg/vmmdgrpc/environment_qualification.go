@@ -31,6 +31,10 @@ type environmentQualificationRestoreVMMAPI interface {
 	RestoreEnvironmentQualification(context.Context, state.EnvironmentQualificationExecution, fcvm.WakeRequest) (*fcvm.Instance, error)
 }
 
+type environmentQualificationJobVMMAPI interface {
+	BootEnvironmentQualificationJob(context.Context, state.EnvironmentQualificationExecution, fcvm.JobBootRequest) (*fcvm.Instance, error)
+}
+
 var _ environmentQualificationVMMAPI = (*fcvm.Manager)(nil)
 
 func (s *Server) qualificationFrame(ctx context.Context, p *vmmdpb.EnvironmentQualificationExecution) (state.EnvironmentQualificationExecution, error) {

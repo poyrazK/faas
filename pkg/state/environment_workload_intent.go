@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // EnvironmentWorkloadIntent is scoped customer intent. Recording it does not
@@ -19,8 +21,11 @@ type EnvironmentWorkloadIntent struct {
 	AccountID       string                                     `json:"account_id"`
 	AppID           string                                     `json:"app_id"`
 	EnvironmentID   string                                     `json:"environment_id"`
+	JobID           string                                     `json:"job_id,omitempty"`
 	Source          *api.EnvironmentWorkloadSource             `json:"source"`
 	SourceRevision  string                                     `json:"source_revision,omitempty"`
+	Schedule        *api.EnvironmentJobSchedule                `json:"schedule,omitempty"`
+	Variables       map[string]string                          `json:"variables"`
 	Runtime         map[string]json.RawMessage                 `json:"runtime"`
 	ServiceBindings map[string]EnvironmentScopedServiceBinding `json:"service_bindings"`
 	CreatedAt       time.Time                                  `json:"created_at"`
@@ -29,19 +34,25 @@ type EnvironmentWorkloadIntent struct {
 
 type EnvironmentWorkloadIntentStore interface {
 	EnvironmentWorkloadIntent(context.Context, string, string, string) (EnvironmentWorkloadIntent, error)
+	EnvironmentWorkloadIntentByJob(context.Context, string, string) (EnvironmentWorkloadIntent, error)
 	PutEnvironmentWorkloadIntent(context.Context, EnvironmentWorkloadIntent) (EnvironmentWorkloadIntent, error)
 }
 
 type environmentWorkloadIntentKey struct{ AppID, EnvironmentID string }
 
 type gitOpsSourceBaseline struct {
-	ID     string                              `json:"id"`
-	Kind   DeploymentKind                      `json:"kind"`
-	Image  string                              `json:"image"`
-	Inputs EnvironmentWorkloadDeploymentInputs `json:"inputs"`
+	ID         string                              `json:"id"`
+	Kind       DeploymentKind                      `json:"kind"`
+	Image      string                              `json:"image"`
+	SourceURL  string                              `json:"source_url"`
+	CommitSHA  string                              `json:"commit_sha"`
+	SourceRoot string                              `json:"source_root"`
+	Inputs     EnvironmentWorkloadDeploymentInputs `json:"inputs"`
+	Managed    bool                                `json:"managed,omitempty"`
 }
 
 func cloneWorkloadIntent(row EnvironmentWorkloadIntent) EnvironmentWorkloadIntent {
+	row.Variables = cloneStringMap(row.Variables)
 	bindings := map[string]EnvironmentScopedServiceBinding{}
 	for key, value := range row.ServiceBindings {
 		bindings[key] = value
@@ -51,6 +62,24 @@ func cloneWorkloadIntent(row EnvironmentWorkloadIntent) EnvironmentWorkloadInten
 		source := *row.Source
 		row.Source = &source
 	}
+	if row.Schedule != nil {
+		schedule := *row.Schedule
+		if schedule.SchedulePolicy != nil {
+			policy := *schedule.SchedulePolicy
+			schedule.SchedulePolicy = &policy
+		}
+		if schedule.FailureRules != nil {
+			rules := *schedule.FailureRules
+			rules.Rules = append([]workpolicy.FailureRule(nil), rules.Rules...)
+			for i := range rules.Rules {
+				rules.Rules[i].ExitCodes = append([]int(nil), rules.Rules[i].ExitCodes...)
+				rules.Rules[i].OutcomeCodes = append([]string(nil), rules.Rules[i].OutcomeCodes...)
+				rules.Rules[i].HTTPStatuses = append([]int(nil), rules.Rules[i].HTTPStatuses...)
+			}
+			schedule.FailureRules = &rules
+		}
+		row.Schedule = &schedule
+	}
 	runtime := map[string]json.RawMessage{}
 	for key, value := range row.Runtime {
 		runtime[key] = append(json.RawMessage(nil), value...)
@@ -59,8 +88,44 @@ func cloneWorkloadIntent(row EnvironmentWorkloadIntent) EnvironmentWorkloadInten
 	return row
 }
 
+func sortedEnvironmentWorkloadNames(workloads map[string]api.EnvironmentWorkload) []string {
+	names := make([]string, 0, len(workloads))
+	for name := range workloads {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func environmentGitOpsAppForWorkload(snapshot gitOpsIntentSnapshot, desired environmentsync.DesiredState, appID string) (string, api.EnvironmentWorkload, gitOpsIntentApp, bool) {
+	resources := make(map[string]string, len(snapshot.Resources))
+	for _, resource := range snapshot.Resources {
+		resources[resource.Resource] = resource.AppID
+	}
+	var app gitOpsIntentApp
+	for _, candidate := range snapshot.Apps {
+		if candidate.ID == appID {
+			app = candidate
+			break
+		}
+	}
+	if app.ID == "" {
+		return "", api.EnvironmentWorkload{}, gitOpsIntentApp{}, false
+	}
+	for _, name := range sortedEnvironmentWorkloadNames(desired.Definition.Workloads) {
+		resource := "workload/" + name
+		if resources[resource] == appID {
+			return resource, desired.Definition.Workloads[name], app, true
+		}
+	}
+	return "", api.EnvironmentWorkload{}, gitOpsIntentApp{}, false
+}
+
 func workloadIntentFields(row EnvironmentWorkloadIntent) map[string]json.RawMessage {
 	fields := map[string]json.RawMessage{}
+	for key, value := range row.Variables {
+		fields["variables/"+key], _ = json.Marshal(value)
+	}
 	for key, value := range row.ServiceBindings {
 		fields["service_bindings/"+key], _ = json.Marshal(value)
 	}
@@ -72,6 +137,9 @@ func workloadIntentFields(row EnvironmentWorkloadIntent) map[string]json.RawMess
 	}
 	if row.SourceRevision != "" {
 		fields["source_revision"], _ = json.Marshal(row.SourceRevision)
+	}
+	if row.Schedule != nil {
+		fields["schedule"], _ = json.Marshal(row.Schedule)
 	}
 	return fields
 }
@@ -124,15 +192,22 @@ func validateWorkloadIntent(row EnvironmentWorkloadIntent, app App, environment 
 		return row, ErrInvalidArgument
 	}
 	raw, _ := json.Marshal(row.Runtime)
-	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: "intent", Environment: environment, Workloads: map[string]api.EnvironmentWorkload{"workload": {Source: row.Source, Runtime: raw}}})
+	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: "intent", Environment: environment, Workloads: map[string]api.EnvironmentWorkload{"workload": {Source: row.Source, Runtime: raw, Variables: row.Variables, Schedule: row.Schedule}}})
 	if err != nil {
 		return row, fmt.Errorf("%w: invalid scoped workload intent", ErrInvalidArgument)
+	}
+	for _, binding := range row.ServiceBindings {
+		if _, exists := row.Variables[binding.EnvKey]; exists {
+			return row, ErrInvalidArgument
+		}
 	}
 	w := desired.Definition.Workloads["workload"]
 	if w.Source != nil && w.Source.Kind == "function" && (app.Type != AppTypeFunction || app.Runtime != w.Source.Runtime) {
 		return row, ErrInvalidArgument
 	}
 	row.Source = w.Source
+	row.Schedule = w.Schedule
+	row.Variables = cloneStringMap(w.Variables)
 	_ = json.Unmarshal(w.Runtime, &row.Runtime)
 	values := runtimeManifestValues(app.Manifest)
 	for key, value := range row.Runtime {
@@ -176,7 +251,19 @@ func validateWorkloadIntentWrite(row, previous EnvironmentWorkloadIntent, app Ap
 }
 
 func gitOpsWorkloadField(path string) bool {
-	return path == "source" || path == "source_revision" || strings.HasPrefix(path, "runtime/") || strings.HasPrefix(path, "service_bindings/")
+	return path == "source" || path == "source_revision" || path == "schedule" || strings.HasPrefix(path, "runtime/") || strings.HasPrefix(path, "service_bindings/") || strings.HasPrefix(path, "variables/")
+}
+
+func gitOpsWorkloadCandidateField(path string) bool {
+	return gitOpsWorkloadField(path) || strings.HasPrefix(path, "queue_bindings/") || strings.HasPrefix(path, "secret_refs/")
+}
+
+// gitOpsWorkloadRequiresQualification mirrors the durable runtime fence in
+// EnvironmentGitOpsUnqualifiedWorkloads. Variable and secret freshness use
+// runtime-config receipts instead of this workload-qualification blocker.
+func gitOpsWorkloadRequiresQualification(path string) bool {
+	return path == "source" || path == "source_revision" || path == "schedule" ||
+		strings.HasPrefix(path, "runtime/") || strings.HasPrefix(path, "service_bindings/") || strings.HasPrefix(path, "queue_bindings/")
 }
 
 func changedWorkloadIntents(snapshot gitOpsIntentSnapshot, plan environmentsync.Plan, ids map[string]string, preserve bool) map[string]EnvironmentWorkloadIntent {
@@ -204,6 +291,23 @@ func changedWorkloadIntents(snapshot gitOpsIntentSnapshot, plan environmentsync.
 			rows[id], changed[id] = row, row
 			continue
 		}
+		if strings.HasPrefix(change.Path, "variables/") {
+			key := strings.TrimPrefix(change.Path, "variables/")
+			if row.Variables == nil {
+				row.Variables = map[string]string{}
+			}
+			if change.Action == "remove" {
+				delete(row.Variables, key)
+			} else {
+				var decoded string
+				if json.Unmarshal(value, &decoded) != nil {
+					continue
+				}
+				row.Variables[key] = decoded
+			}
+			rows[id], changed[id] = row, row
+			continue
+		}
 		switch change.Path {
 		case "source":
 			row.Source = nil
@@ -214,6 +318,11 @@ func changedWorkloadIntents(snapshot gitOpsIntentSnapshot, plan environmentsync.
 			row.SourceRevision = ""
 			if change.Action != "remove" {
 				_ = json.Unmarshal(value, &row.SourceRevision)
+			}
+		case "schedule":
+			row.Schedule = nil
+			if change.Action != "remove" {
+				_ = json.Unmarshal(value, &row.Schedule)
 			}
 		default:
 			key := strings.TrimPrefix(change.Path, "runtime/")

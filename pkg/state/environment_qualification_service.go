@@ -29,6 +29,14 @@ type EnvironmentQualificationServiceStore interface {
 	ResolveEnvironmentQualificationService(context.Context, EnvironmentQualificationServiceRequest) (EnvironmentQualificationServiceRoute, error)
 }
 
+// EnvironmentQualificationServiceAliasStore answers only whether an active,
+// held qualification caller may resolve a scoped workload alias. DNS is
+// discoverability only; ResolveEnvironmentQualificationService remains the
+// authority for every HTTP request.
+type EnvironmentQualificationServiceAliasStore interface {
+	EnvironmentQualificationServiceAliasAllowed(context.Context, string, string) (bool, error)
+}
+
 func qualificationNetworkIdentityValid(nodeID, hostIP string) bool {
 	ip, err := netip.ParseAddr(hostIP)
 	return qualificationRecoveryUUIDValid(nodeID) && err == nil && ip.Is4() && ip.String() == hostIP

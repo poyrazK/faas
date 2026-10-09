@@ -238,14 +238,13 @@ func nativeRestoreLoadSequenceFixture(t *testing.T) *nativeLoadSequenceFixture {
 	if _, err := receipts.RecordObject(ctx, intent, "backing", nativeModeledArtifactReceipt(intent.Keys.Backing, body)); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.writeCapture(f.incoming, completed); err != nil {
-		t.Fatal(err)
-	}
+	writeTamperedNativeQualificationCapture(t, q, f.incoming, completed)
 	target, err = q.restores().read(target.Execution.InstanceID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	target.Capture = qualificationSnapshotProof(f.incoming, completed.Info)
+	target.Capture.FCVersion = completed.FCVersion
 	if err := q.restores().write(target); err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +299,7 @@ func TestNativeQualificationRestoreLoadSequenceRetainsOriginalIntentAndCannotRep
 			if outcome == "hook_lost" {
 				f.hookErr = lost
 			}
-			r, err := f.v.loadNativeQualificationRestore(ctx, f.owner.Lease)
+			r, err := f.v.loadNativeQualificationRestore(ctx, f.owner.Lease, "1.7.0")
 			if (err == nil) != (outcome == "success") {
 				t.Fatal(outcome, err)
 			}
@@ -323,7 +322,7 @@ func TestNativeQualificationRestoreLoadSequenceRetainsOriginalIntentAndCannotRep
 				}
 				f.ctx = nativeQualificationRestoreContext(f.ctx, f.target)
 			}
-			if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease); err == nil || f.calls != calls || f.hooks != hooks {
+			if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0"); err == nil || f.calls != calls || f.hooks != hooks {
 				t.Fatal("uncertain or completed effect was replayed", err)
 			}
 			for _, file := range f.b.opened {
@@ -345,6 +344,20 @@ func TestNativeQualificationRestoreLoadSequenceRetainsOriginalIntentAndCannotRep
 	}
 }
 
+func TestNativeQualificationRestoreLoadRejectsVersionMismatchBeforeEffect(t *testing.T) {
+	f := nativeRestoreLoadSequenceFixture(t)
+	if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.8.0"); err == nil {
+		t.Fatal("load accepted a capture from a different Firecracker version")
+	}
+	permit := f.ctx.Value(nativeQualificationRestoreLoadContextKey{}).(*nativeQualificationRestoreLoadPermit)
+	if f.calls != 0 || f.hooks != 0 || permit.used.Load() || permit.completed.Load() {
+		t.Fatal("version mismatch consumed producer authority or reached guest effects")
+	}
+	if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0"); err != nil {
+		t.Fatal("version refusal consumed valid producer authority:", err)
+	}
+}
+
 func TestNativeQualificationRestoreLoadLostJournalAcknowledgementsStopBeforeNextEffect(t *testing.T) {
 	for faultStep := 0; faultStep < nativeRestorePhaseCount; faultStep++ {
 		t.Run([]string{"load_intent", "load_ack", "resume_intent", "resume_ack", "hook_intent", "hook_ack"}[faultStep], func(t *testing.T) {
@@ -363,7 +376,7 @@ func TestNativeQualificationRestoreLoadLostJournalAcknowledgementsStopBeforeNext
 				}
 				return err
 			}
-			if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease); !errors.Is(err, lost) {
+			if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0"); !errors.Is(err, lost) {
 				t.Fatal(err)
 			}
 			permit := f.ctx.Value(nativeQualificationRestoreLoadContextKey{}).(*nativeQualificationRestoreLoadPermit)
@@ -372,7 +385,7 @@ func TestNativeQualificationRestoreLoadLostJournalAcknowledgementsStopBeforeNext
 			}
 			calls, hooks := f.calls, f.hooks
 			f.v.nativeRecovery.restoreLoadWrite = nil
-			if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease); err == nil || f.calls != calls || f.hooks != hooks {
+			if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0"); err == nil || f.calls != calls || f.hooks != hooks {
 				t.Fatal("lost journal acknowledgement replayed an effect", err)
 			}
 			wantCalls := []int{0, 1, 1, 2, 2, 2}[faultStep]
@@ -444,9 +457,7 @@ func TestNativeQualificationRestoreLoadRefusesUnavailableAuthorityBeforeEffects(
 					t.Fatal(err)
 				}
 				capture.Info.StoredBytes++
-				if err := f.q.writeCapture(source, capture); err != nil {
-					t.Fatal(err)
-				}
+				writeTamperedNativeQualificationCapture(t, f.q, source, capture)
 			case "missing_control":
 				f.v.nativeRecovery.snapshotControl = nil
 			case "missing_hook":
@@ -460,7 +471,7 @@ func TestNativeQualificationRestoreLoadRefusesUnavailableAuthorityBeforeEffects(
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 			}
-			if _, err := f.v.loadNativeQualificationRestore(ctx, f.owner.Lease); err == nil || f.calls != 0 || f.hooks != 0 {
+			if _, err := f.v.loadNativeQualificationRestore(ctx, f.owner.Lease, "1.7.0"); err == nil || f.calls != 0 || f.hooks != 0 {
 				t.Fatal("unavailable authority reached native effect", err)
 			}
 			path, _ := f.loads.path(f.owner.Lease.Instance)

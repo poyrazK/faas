@@ -13,8 +13,9 @@ import (
 var _ ProjectPromotionDeploymentStore = (*PgStore)(nil)
 var _ ProjectPromotionDeploymentStore = (*MemStore)(nil)
 
-// MarkDeploymentLiveDark makes a prepared deployment eligible as a release
-// graph member without changing the workload's weighted route.
+// MarkDeploymentLiveDark makes a prepared non-GitOps deployment eligible as a
+// release graph member without changing the workload's weighted route. GitOps
+// candidates require a graph-scoped activation transaction for their lifecycle.
 func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -43,6 +44,15 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 		`select `+deploymentSelectColumnsWithRootfs+` from deployments where id = $1 for update`, id))
 	if err != nil {
 		return err
+	}
+	// Graph activation owns deployment promotion for every managed workload in
+	// the scope, including after the temporary hold has been lifted.
+	managed, err := environmentGitOpsManagedForScopeTx(ctx, tx, dep.AppID, dep.Scope)
+	if err != nil {
+		return fmt.Errorf("state: check managed workload before dark promotion: %w", err)
+	}
+	if managed {
+		return ErrConflict
 	}
 	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
 		return err
@@ -100,6 +110,9 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 			}
 		}
 	}()
+	if m.environmentGitOpsManagedForScopeLocked(dep.AppID, dep.Scope) {
+		return ErrConflict
+	}
 	if dep.Status == DeployLive && dep.TrafficPercent == 0 && dep.TrafficPercentExplicit {
 		return nil
 	}

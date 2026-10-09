@@ -226,15 +226,39 @@ func (j *nativeQualificationRestoreJournal) requireCapture(ctx context.Context, 
 	}
 	proof := qualificationSnapshotProof(nativeQualificationRecord{Generation: capture.CaptureID, KernelBootID: capture.KernelBootID,
 		NativeGeneration: capture.NativeGeneration, Execution: state.EnvironmentQualificationExecution{DeploymentID: r.Execution.DeploymentID}}, capture.Info)
+	proof.FCVersion = capture.FCVersion
 	if proof != r.Capture {
 		return capture, errors.New("native qualification restore: original capture evidence changed")
 	}
 	return capture, nil
 }
 
-func (j *nativeQualificationRestoreJournal) update(ctx context.Context, frame state.EnvironmentQualificationExecution, create bool) (r nativeQualificationRestoreRecord, result error) {
+func validateNativeQualificationRunningFCVersion(running string) error {
+	if strings.TrimSpace(running) == "" || running != strings.TrimSpace(running) || len(running) > 256 {
+		return fmt.Errorf("native qualification restore: configured running Firecracker version is invalid: %w", state.ErrConflict)
+	}
+	return nil
+}
+
+func validateNativeQualificationRestoreFCVersion(captured, running string) error {
+	if err := validateNativeQualificationRunningFCVersion(running); err != nil {
+		return err
+	}
+	if captured == "" || captured != running {
+		return fmt.Errorf("native qualification restore: captured Firecracker version %q does not match configured running version %q: %w",
+			captured, running, state.ErrConflict)
+	}
+	return nil
+}
+
+func (j *nativeQualificationRestoreJournal) update(ctx context.Context, frame state.EnvironmentQualificationExecution, create bool, runningFCVersion string) (r nativeQualificationRestoreRecord, result error) {
 	if err := validateNativeQualificationRestoreFrame(frame, j.incoming.nodeID); err != nil {
 		return r, err
+	}
+	if create {
+		if err := validateNativeQualificationRunningFCVersion(runningFCVersion); err != nil {
+			return r, err
+		}
 	}
 	lock, err := j.incoming.lock(ctx, frame.InstanceID)
 	if err != nil {
@@ -258,6 +282,11 @@ func (j *nativeQualificationRestoreJournal) update(ctx context.Context, frame st
 		if err != nil {
 			return r, err
 		}
+		if create {
+			if err := validateNativeQualificationRestoreFCVersion(capture.FCVersion, runningFCVersion); err != nil {
+				return r, err
+			}
+		}
 		boot, err := j.incoming.owner.currentBootID()
 		if err != nil {
 			return r, err
@@ -267,11 +296,18 @@ func (j *nativeQualificationRestoreJournal) update(ctx context.Context, frame st
 				return r, err
 			}
 		}
+		captureProof := qualificationSnapshotProof(nativeQualificationRecord{Generation: capture.CaptureID, KernelBootID: capture.KernelBootID,
+			NativeGeneration: capture.NativeGeneration, Execution: frame}, capture.Info)
+		captureProof.FCVersion = capture.FCVersion
 		r = nativeQualificationRestoreRecord{Version: 1, Generation: uuid.NewString(), KernelBootID: boot, Execution: frame,
-			CleanupToken: frame.CleanupToken, AcceptedAt: j.incoming.clock().UTC(), Capture: qualificationSnapshotProof(
-				nativeQualificationRecord{Generation: capture.CaptureID, KernelBootID: capture.KernelBootID, NativeGeneration: capture.NativeGeneration, Execution: frame}, capture.Info)}
+			CleanupToken: frame.CleanupToken, AcceptedAt: j.incoming.clock().UTC(), Capture: captureProof}
 	} else {
 		return r, err
+	}
+	if create {
+		if err := validateNativeQualificationRestoreFCVersion(r.Capture.FCVersion, runningFCVersion); err != nil {
+			return r, err
+		}
 	}
 	if create {
 		deadline, ok := ctx.Deadline()
@@ -294,11 +330,11 @@ func (j *nativeQualificationRestoreJournal) update(ctx context.Context, frame st
 	return r, nil
 }
 
-func (j *nativeQualificationRestoreJournal) claim(ctx context.Context, frame state.EnvironmentQualificationExecution) (nativeQualificationRestoreRecord, error) {
-	return j.update(ctx, frame, true)
+func (j *nativeQualificationRestoreJournal) claim(ctx context.Context, frame state.EnvironmentQualificationExecution, runningFCVersion string) (nativeQualificationRestoreRecord, error) {
+	return j.update(ctx, frame, true, runningFCVersion)
 }
 func (j *nativeQualificationRestoreJournal) revoke(ctx context.Context, frame state.EnvironmentQualificationExecution) (nativeQualificationRestoreRecord, error) {
-	return j.update(ctx, frame, false)
+	return j.update(ctx, frame, false, "")
 }
 
 // Both profiles share the canonical incoming lock. An ambiguous or damaged

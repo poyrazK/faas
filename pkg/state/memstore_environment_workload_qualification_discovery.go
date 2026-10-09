@@ -33,7 +33,8 @@ func (m *MemStore) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.
 		for id, request := range memory.qualifications {
 			graph := memory.graphs[preparationGraphKey(request.FrozenInputs.Generation, request.FrozenInputs.PlanHash)]
 			app := m.apps[request.AppID]
-			if qualificationRecoveryCursor(id) <= qualificationRecoveryCursor(afterRequestID) || request.ExecutionMode == "job" || len(request.FrozenInputs.ServiceBindings) != 0 ||
+			if qualificationRecoveryCursor(id) <= qualificationRecoveryCursor(afterRequestID) || request.ExecutionMode == "job" || request.ExecutionMode == "worker" || len(request.FrozenInputs.ServiceBindings) != 0 ||
+				qualificationSmokeAttemptRecorded(m, request) ||
 				graph.ID != request.GraphID || graph.Phase != "prepared" || graph.EnvironmentID != source.EnvironmentID ||
 				graph.Generation != source.Generation || graph.IntentVersion != source.IntentVersion || graph.RevisionID != source.ApprovedRevisionID ||
 				app.ID == "" || app.AccountID != source.AccountID || app.ProjectID != source.ProjectID ||
@@ -82,7 +83,7 @@ func (m *MemStore) qualificationGraphDispatchMembersLocked(memory *environmentGi
 		}
 	}
 	slices.SortFunc(requests, func(a, b EnvironmentWorkloadQualificationRequest) int { return strings.Compare(a.Resource, b.Resource) })
-	expected, hasBinding := 0, false
+	expected, completeSmokeReceipts := 0, 0
 	for _, member := range graph.Members {
 		if member.CandidateDeploymentID != "" {
 			expected++
@@ -92,29 +93,48 @@ func (m *MemStore) qualificationGraphDispatchMembersLocked(memory *environmentGi
 		return nil, false
 	}
 	for _, request := range requests {
-		hasBinding = hasBinding || len(request.FrozenInputs.ServiceBindings) != 0
-		if request.ExecutionMode == "job" || request.ExecutionMode == "worker" ||
-			(request.Phase != "queued" && (request.Phase != "claimed" || request.LeaseUntil == nil || now.Before(*request.LeaseUntil))) {
+		if request.ExecutionMode == api.ExecutionModeJob && !qualificationGraphJobQueueBindingsSupported(graph, request.Resource) {
 			return nil, false
 		}
-		if len(request.FrozenInputs.ServiceBindings) != 0 && request.FrozenInputs.Baseline.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS {
+		key := qualificationSmokeReceiptKey(request.ID, request.Attempt)
+		if request.ExecutionMode == api.ExecutionModeJob {
+			_, recorded := m.qualificationJobSmokeReceipts[key]
+			if recorded {
+				completeSmokeReceipts++
+			}
+		} else if _, recorded := m.qualificationSmokeReceipts[key]; recorded {
+			completeSmokeReceipts++
+		}
+		if request.Phase != "queued" && (request.Phase != "claimed" || request.LeaseUntil == nil || now.Before(*request.LeaseUntil)) {
 			return nil, false
 		}
 		app := m.apps[request.AppID]
 		if app.ID == "" || app.AccountID != source.AccountID || app.ProjectID != source.ProjectID ||
-			(app.Status != AppActive && app.Status != AppEvictedCold) ||
-			(app.AppProtocol != "" && app.AppProtocol != api.AppProtocolHTTP1) ||
+			(app.Status != AppActive && app.Status != AppEvictedCold) || (app.AppProtocol != "" && app.AppProtocol != api.AppProtocolHTTP1) ||
 			(app.NodeID != "" && qualificationRecoveryCursor(app.NodeID) != qualificationRecoveryCursor(nodeID)) {
+			return nil, false
+		}
+		if !qualificationGraphSmokePolicyValid(request) {
 			return nil, false
 		}
 		if ins, exists := m.instances[request.ReservedInstanceID]; exists && !qualificationInstanceRetired(ins) || m.qualificationRequestUnretiredLocked(request.ID) {
 			return nil, false
 		}
 	}
-	if !hasBinding || m.qualificationCurrentLocked(memory, requests[0]) != nil {
+	if completeSmokeReceipts == len(requests) || m.qualificationCurrentLocked(memory, requests[0]) != nil {
 		return nil, false
 	}
 	return requests, true
+}
+
+func qualificationSmokeAttemptRecorded(m *MemStore, request EnvironmentWorkloadQualificationRequest) bool {
+	if m == nil || request.Attempt < 1 {
+		return false
+	}
+	key := qualificationSmokeReceiptKey(request.ID, request.Attempt)
+	_, smokeExists := m.qualificationSmokeReceipts[key]
+	_, jobSmokeExists := m.qualificationJobSmokeReceipts[key]
+	return smokeExists || jobSmokeExists
 }
 
 func (m *MemStore) ListEnvironmentWorkloadQualificationGraphsForDispatch(ctx context.Context, nodeID, afterGraphID string, limit int) ([]string, error) {

@@ -148,3 +148,32 @@ func (j *nativeQualificationRestoreJournal) retirement(ctx context.Context, fram
 	return state.EnvironmentQualificationRetirement{Kind: state.QualificationNativeRetired, ReceiptID: r.Generation, NativeGeneration: physical.Generation,
 		KernelBootID: physical.KernelBootID, ProcessesExited: true, ResourcesRemoved: true}, nil
 }
+
+// noNativeEffectsRetirement is valid only when the revoked restore target has
+// no physical owner journal. Native Manager code must join in-flight work and
+// release the target allocator reservation before returning this evidence.
+func (j *nativeQualificationRestoreJournal) noNativeEffectsRetirement(ctx context.Context, frame state.EnvironmentQualificationExecution) (proof state.EnvironmentQualificationRetirement, result error) {
+	lock, err := j.incoming.lock(ctx, frame.InstanceID)
+	if err != nil {
+		return proof, err
+	}
+	defer func() { result = errors.Join(result, lock.Close()) }()
+	record, err := j.read(frame.InstanceID)
+	if err != nil {
+		return proof, err
+	}
+	if record.Execution != frame || !record.Revoked {
+		return proof, state.ErrConflict
+	}
+	physicalLock, err := j.incoming.owner.lock(ctx, frame.InstanceID)
+	if err != nil {
+		return proof, err
+	}
+	defer func() { result = errors.Join(result, physicalLock.Close()) }()
+	if _, err := j.incoming.owner.read(frame.InstanceID); !errors.Is(err, os.ErrNotExist) {
+		return proof, errors.Join(err, state.ErrConflict)
+	}
+	proof = state.EnvironmentQualificationRetirement{Kind: state.QualificationNativeEffectsAbsent, ReceiptID: record.Generation,
+		KernelBootID: record.KernelBootID, ProcessesExited: true, ResourcesRemoved: true}
+	return proof, ctx.Err()
+}

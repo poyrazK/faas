@@ -98,7 +98,7 @@ func (s *PgStore) PublishEnvironmentQualificationRestoreRuntime(ctx context.Cont
 			return Instance{}, mapErr(err)
 		}
 		recorded, err := runtimeConfigInputsFromSQL(config.Scope, config.BoundaryAt, config.Variables, config.SecretVersions, config.SecretRefs, config.SidecarSecretVersions, config.AllSecrets)
-		if err != nil || !qualificationRuntimeAlreadyPublished(ins, runtime) || pgUUIDString(config.WakeID) != ins.WakeID || !runtimeConfigInputsEqual(recorded, runtime.Inputs) {
+		if err != nil || !qualificationRuntimeAlreadyPublished(ins, runtime) || pgUUIDString(config.WakeID) != ins.WakeID || !runtimeConfigInputsPostgresEqual(recorded, runtime.Inputs) {
 			return Instance{}, ErrConflict
 		}
 	}

@@ -181,6 +181,25 @@ type ServiceProxyCallerIdentityResolver func(ctx context.Context, remoteAddr str
 
 type ServiceProxyReleaseResolver func(ctx context.Context, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID string) (releaseID, deploymentID string, err error)
 
+// ServiceProxyEnvironmentBinding is a deployment-scoped route produced from
+// an active reviewed environment graph. TargetDeploymentID and ReleaseSetID
+// are selected by the platform store, never by a guest header.
+type ServiceProxyEnvironmentBinding struct {
+	Target             ServiceTarget
+	TargetDeploymentID string
+	ReleaseSetID       string
+	AccountID          string
+	RequireHTTPS       bool
+	CallScope          *api.ServiceCallScope
+	Reliability        *api.ServiceReliabilityPolicy
+}
+
+// ServiceProxyEnvironmentBindingResolver reports whether the caller deployment
+// is GitOps-managed, whether the requested service is bound, and the exact
+// active release route. A managed caller with no matching binding must not
+// fall back to app-slug resolution.
+type ServiceProxyEnvironmentBindingResolver func(ctx context.Context, callerAppID, callerDeploymentID, service string) (binding ServiceProxyEnvironmentBinding, managed, found bool, err error)
+
 // ServiceCallerMintInput is what the proxy knows about a call it has already
 // authorized, handed to the minter so pkg/gateway does not import the token
 // library or care about its key material.
@@ -237,15 +256,16 @@ type ServiceProxyChaosResolver func(ctx context.Context, runID, callerAppID, tar
 // small handler factory so selection and retry behavior can be exercised
 // without a live gRPC server.
 type ServiceProxyConfig struct {
-	Provider              ServiceEndpointProvider
-	Resolve               ServiceProxyResolver
-	Authorize             ServiceProxyAuthorizer
-	AllowAlias            ServiceAliasAllowed
-	ResolveCaller         ServiceProxyCallerResolver
-	ResolveCallerIdentity ServiceProxyCallerIdentityResolver
-	ResolveRelease        ServiceProxyReleaseResolver
-	DevBridge             ServiceProxyDevBridge
-	Forward               func(Target) http.Handler
+	Provider                  ServiceEndpointProvider
+	Resolve                   ServiceProxyResolver
+	Authorize                 ServiceProxyAuthorizer
+	AllowAlias                ServiceAliasAllowed
+	ResolveCaller             ServiceProxyCallerResolver
+	ResolveCallerIdentity     ServiceProxyCallerIdentityResolver
+	ResolveRelease            ServiceProxyReleaseResolver
+	ResolveEnvironmentBinding ServiceProxyEnvironmentBindingResolver
+	DevBridge                 ServiceProxyDevBridge
+	Forward                   func(Target) http.Handler
 	// RawForward is the optional verbatim-bytes bridge used for Upgrade
 	// traffic (ADR-197). nil rejects internal upgrade requests with 501
 	// rather than letting the ordinary forwarder strip the handshake.
@@ -298,27 +318,28 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
-	mintAssertion         ServiceCallerMinter
-	localNodeID           string
-	provider              ServiceEndpointProvider
-	resolve               ServiceProxyResolver
-	authorize             ServiceProxyAuthorizer
-	allowAlias            ServiceAliasAllowed
-	resolveCaller         ServiceProxyCallerResolver
-	resolveCallerIdentity ServiceProxyCallerIdentityResolver
-	resolveRelease        ServiceProxyReleaseResolver
-	devBridge             ServiceProxyDevBridge
-	forward               func(Target) http.Handler
-	rawForward            func(Target) http.Handler
-	wake                  ServiceProxyWaker
-	wakeDeployment        ServiceProxyDeploymentWaker
-	validateDeployment    ServiceProxyDeploymentValidator
-	resolveChaos          ServiceProxyChaosResolver
-	observeRequest        func(*http.Request, ServiceRequestObservation)
-	metrics               *Metrics
-	endpointTTL           time.Duration
-	now                   func() time.Time
-	log                   *slog.Logger
+	mintAssertion             ServiceCallerMinter
+	localNodeID               string
+	provider                  ServiceEndpointProvider
+	resolve                   ServiceProxyResolver
+	authorize                 ServiceProxyAuthorizer
+	allowAlias                ServiceAliasAllowed
+	resolveCaller             ServiceProxyCallerResolver
+	resolveCallerIdentity     ServiceProxyCallerIdentityResolver
+	resolveRelease            ServiceProxyReleaseResolver
+	resolveEnvironmentBinding ServiceProxyEnvironmentBindingResolver
+	devBridge                 ServiceProxyDevBridge
+	forward                   func(Target) http.Handler
+	rawForward                func(Target) http.Handler
+	wake                      ServiceProxyWaker
+	wakeDeployment            ServiceProxyDeploymentWaker
+	validateDeployment        ServiceProxyDeploymentValidator
+	resolveChaos              ServiceProxyChaosResolver
+	observeRequest            func(*http.Request, ServiceRequestObservation)
+	metrics                   *Metrics
+	endpointTTL               time.Duration
+	now                       func() time.Time
+	log                       *slog.Logger
 
 	breaker     *circuit.Group
 	retryPolicy RetryPolicy
@@ -398,33 +419,34 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		retryBudget = NewRetryBudget(0, now)
 	}
 	return &ServiceProxy{
-		mintAssertion:         cfg.MintCallerAssertion,
-		localNodeID:           strings.TrimSpace(cfg.LocalNodeID),
-		provider:              cfg.Provider,
-		resolve:               cfg.Resolve,
-		authorize:             cfg.Authorize,
-		allowAlias:            cfg.AllowAlias,
-		resolveCaller:         cfg.ResolveCaller,
-		resolveCallerIdentity: cfg.ResolveCallerIdentity,
-		resolveRelease:        cfg.ResolveRelease,
-		devBridge:             cfg.DevBridge,
-		forward:               cfg.Forward,
-		rawForward:            cfg.RawForward,
-		wake:                  cfg.Wake,
-		wakeDeployment:        cfg.WakeDeployment,
-		validateDeployment:    cfg.ValidateDeployment,
-		resolveChaos:          cfg.ResolveChaos,
-		observeRequest:        cfg.ObserveRequest,
-		metrics:               cfg.Metrics,
-		endpointTTL:           ttl,
-		now:                   now,
-		log:                   log,
-		breaker:               breaker,
-		retryPolicy:           retryPolicy,
-		retryBudget:           retryBudget,
-		snapshots:             make(map[string]serviceProxySnapshot),
-		next:                  make(map[string]uint64),
-		nextSeen:              make(map[string]time.Time),
+		mintAssertion:             cfg.MintCallerAssertion,
+		localNodeID:               strings.TrimSpace(cfg.LocalNodeID),
+		provider:                  cfg.Provider,
+		resolve:                   cfg.Resolve,
+		authorize:                 cfg.Authorize,
+		allowAlias:                cfg.AllowAlias,
+		resolveCaller:             cfg.ResolveCaller,
+		resolveCallerIdentity:     cfg.ResolveCallerIdentity,
+		resolveRelease:            cfg.ResolveRelease,
+		resolveEnvironmentBinding: cfg.ResolveEnvironmentBinding,
+		devBridge:                 cfg.DevBridge,
+		forward:                   cfg.Forward,
+		rawForward:                cfg.RawForward,
+		wake:                      cfg.Wake,
+		wakeDeployment:            cfg.WakeDeployment,
+		validateDeployment:        cfg.ValidateDeployment,
+		resolveChaos:              cfg.ResolveChaos,
+		observeRequest:            cfg.ObserveRequest,
+		metrics:                   cfg.Metrics,
+		endpointTTL:               ttl,
+		now:                       now,
+		log:                       log,
+		breaker:                   breaker,
+		retryPolicy:               retryPolicy,
+		retryBudget:               retryBudget,
+		snapshots:                 make(map[string]serviceProxySnapshot),
+		next:                      make(map[string]uint64),
+		nextSeen:                  make(map[string]time.Time),
 	}
 }
 
@@ -548,33 +570,69 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
+	var environmentBinding *ServiceProxyEnvironmentBinding
+	if p.resolveEnvironmentBinding != nil {
+		binding, managed, found, err := p.resolveEnvironmentBinding(dependencyCtx, caller, callerDeploymentID, service)
+		if err != nil {
+			if errors.Is(err, ErrServiceProxyBindingDenied) || errors.Is(err, ErrServiceProxyDenied) {
+				p.metrics.IncServiceCall(ServiceCallBindingDenied)
+				serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller has no active GitOps binding for this service")
+				return
+			}
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "GitOps service route is unavailable")
+			return
+		}
+		if managed && !found {
+			p.metrics.IncServiceCall(ServiceCallBindingDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller has no active GitOps binding for this service")
+			return
+		}
+		if found {
+			if !managed || binding.Target.AppID == "" || binding.TargetDeploymentID == "" || binding.ReleaseSetID == "" ||
+				binding.AccountID == "" || callerDeploymentID == "" {
+				serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "GitOps service route is incomplete")
+				return
+			}
+			environmentBinding = &binding
+		}
+	}
 	setProbeStage("binding")
 	if alias {
-		if p.allowAlias == nil {
+		if environmentBinding != nil {
+			// The exact deployment-scoped resolver already proved this alias
+			// against the active reviewed graph.
+		} else if p.allowAlias == nil {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorizer is not wired")
 			return
-		}
-		allowed, err := p.allowAlias(dependencyCtx, caller, service)
-		if err != nil {
-			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorization is unavailable")
-			return
-		}
-		if !allowed {
-			p.metrics.IncServiceCall(ServiceCallBindingDenied)
-			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller has not declared this service binding")
-			return
+		} else {
+			allowed, err := p.allowAlias(dependencyCtx, caller, service)
+			if err != nil {
+				serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorization is unavailable")
+				return
+			}
+			if !allowed {
+				p.metrics.IncServiceCall(ServiceCallBindingDenied)
+				serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller has not declared this service binding")
+				return
+			}
 		}
 	}
 	setProbeStage("discovery")
-	target, err := p.resolveTarget(dependencyCtx, caller, service)
-	if err != nil {
-		if errors.Is(err, ErrServiceProxyNotFound) {
-			p.metrics.IncServiceCall(ServiceCallNotFound)
-			serviceProxyProblem(dispatchWriter, http.StatusNotFound, "service is not registered")
+	var target ServiceTarget
+	var err error
+	if environmentBinding != nil {
+		target = environmentBinding.Target
+	} else {
+		target, err = p.resolveTarget(dependencyCtx, caller, service)
+		if err != nil {
+			if errors.Is(err, ErrServiceProxyNotFound) {
+				p.metrics.IncServiceCall(ServiceCallNotFound)
+				serviceProxyProblem(dispatchWriter, http.StatusNotFound, "service is not registered")
+				return
+			}
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, err.Error())
 			return
 		}
-		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, err.Error())
-		return
 	}
 	dependencyHealthTarget = target
 	setProbeStage("authorization")
@@ -622,6 +680,16 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// The resolver binds this ID to the live source instance. Copy it only
 		// after the tenant authorizer confirms the caller app.
 		callerInfo.DeploymentID = callerDeploymentID
+	}
+	if environmentBinding != nil {
+		if callerInfo.AppID != caller || callerInfo.AccountID != environmentBinding.AccountID {
+			p.metrics.IncServiceCall(ServiceCallDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller is not allowed to reach this GitOps service")
+			return
+		}
+		callerInfo.RequireHTTPS = environmentBinding.RequireHTTPS
+		callerInfo.CallScope = environmentBinding.CallScope
+		callerInfo.Reliability = environmentBinding.Reliability
 	}
 	dependencyHealthCaller = callerInfo
 	if callerInfo.AppID != "" {
@@ -696,11 +764,21 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	releaseDeploymentID := ""
+	if environmentBinding != nil {
+		if releasePresent && releaseID != environmentBinding.ReleaseSetID {
+			serviceProxyProblem(dispatchWriter, http.StatusConflict, "GitOps service bindings only route the active reviewed release")
+			return
+		}
+		releaseID = environmentBinding.ReleaseSetID
+		releaseDeploymentID = environmentBinding.TargetDeploymentID
+		r = r.WithContext(context.WithValue(dependencyCtx, serviceReleaseContextKey{}, releaseID))
+		dispatchWriter.Header().Set(api.ReleaseHeader, releaseID)
+	}
 	if releasePresent && (p.resolveRelease == nil || callerDeploymentID == "") {
 		serviceProxyProblem(dispatchWriter, http.StatusForbidden, "release pin requires verified caller deployment identity")
 		return
 	}
-	if p.resolveRelease != nil && p.resolveCallerIdentity != nil {
+	if environmentBinding == nil && p.resolveRelease != nil && p.resolveCallerIdentity != nil {
 		requested := ""
 		if releasePresent {
 			requested = releaseID

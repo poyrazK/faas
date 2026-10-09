@@ -43,6 +43,24 @@ func TestPgEnvironmentQualificationRestoreRawGuardsAndMigrationReplay(t *testing
 	}
 	basic := state.NewPgStore(pool)
 	claimed, capture := qualificationRestoreFixture(t, basic)
+	// Direct SQL must enforce the same source receipt-to-generation binding as
+	// the typed store methods. A canonical but foreign receipt UUID is not enough.
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), `select set_config('gregale.gitops_qualification_cleanup',$1,true)`, capture.Execution.CleanupToken); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	forgedRetirement := qualificationNativeProof()
+	forgedRetirement.NativeGeneration, forgedRetirement.KernelBootID = capture.Snapshot.NativeGeneration, capture.Snapshot.KernelBootID
+	forgedData, _ := json.Marshal(forgedRetirement)
+	_, err = tx.Exec(t.Context(), `update environment_qualification_executions set retirement=$2,retired_at=clock_timestamp() where instance_id=$1`, capture.Execution.InstanceID, forgedData)
+	_ = tx.Rollback(t.Context())
+	if err == nil {
+		t.Fatal("raw retirement accepted a receipt unrelated to the capture generation")
+	}
 	retireCapturedQualification(t, basic, capture)
 	admission, err := basic.CreateEnvironmentQualificationRestore(t.Context(), claimed, qualificationPlacement(t, basic, 4096))
 	if err != nil {
@@ -86,7 +104,7 @@ func TestPgEnvironmentQualificationRestoreRawGuardsAndMigrationReplay(t *testing
 	if err := basic.MarkEnvironmentQualificationRestoreDispatched(t.Context(), claimed, admission.Execution); err != nil {
 		t.Fatal(err)
 	}
-	tx, err := pool.Begin(t.Context())
+	tx, err = pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +165,7 @@ func TestEnvironmentQualificationRestoreRuntimePublication(t *testing.T) {
 func retireCapturedQualification(t *testing.T, basic gitOpsTestStore, capture state.EnvironmentQualificationSnapshotReceipt) {
 	t.Helper()
 	proof := qualificationNativeProof()
-	proof.NativeGeneration, proof.KernelBootID = capture.Snapshot.NativeGeneration, capture.Snapshot.KernelBootID
+	proof.ReceiptID, proof.NativeGeneration, proof.KernelBootID = capture.Snapshot.CaptureID, capture.Snapshot.NativeGeneration, capture.Snapshot.KernelBootID
 	if err := basic.(state.EnvironmentQualificationExecutionStore).RetireEnvironmentQualificationExecution(t.Context(), capture.Execution, proof); err != nil {
 		t.Fatal(err)
 	}
@@ -256,12 +274,26 @@ func TestEnvironmentQualificationRestoreReservationAndDispatch(t *testing.T) {
 		if err := executor.RetireEnvironmentQualificationExecution(t.Context(), first.Execution, state.EnvironmentQualificationRetirement{Kind: state.QualificationNeverDispatched}); !errors.Is(err, state.ErrConflict) {
 			t.Fatal("dispatched restore released without physical proof", err)
 		}
-		borrowed := qualificationNativeProof()
-		borrowed.NativeGeneration = capture.Snapshot.NativeGeneration
-		if err := executor.RetireEnvironmentQualificationExecution(t.Context(), first.Execution, borrowed); !errors.Is(err, state.ErrConflict) {
-			t.Fatal("restore borrowed producer retirement", err)
+		for name, mutate := range map[string]func(*state.EnvironmentQualificationRetirement){
+			"capture_generation": func(proof *state.EnvironmentQualificationRetirement) {
+				proof.NativeGeneration = capture.Snapshot.NativeGeneration
+			},
+			"foreign_kernel": func(proof *state.EnvironmentQualificationRetirement) {
+				proof.KernelBootID = uuid.NewString()
+			},
+			"capture_receipt": func(proof *state.EnvironmentQualificationRetirement) {
+				proof.ReceiptID = capture.Snapshot.CaptureID
+			},
+		} {
+			borrowed := qualificationNativeProof()
+			borrowed.KernelBootID = capture.Snapshot.KernelBootID
+			mutate(&borrowed)
+			if err := executor.RetireEnvironmentQualificationExecution(t.Context(), first.Execution, borrowed); !errors.Is(err, state.ErrConflict) {
+				t.Fatal("restore accepted mismatched native retirement", name, err)
+			}
 		}
 		proof := qualificationNativeProof()
+		proof.KernelBootID = capture.Snapshot.KernelBootID
 		if err := executor.RetireEnvironmentQualificationExecution(t.Context(), first.Execution, proof); err != nil {
 			t.Fatal(err)
 		}

@@ -21,6 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"net/netip"
 	"strconv"
 	"strings"
 	"syscall"
@@ -281,6 +283,81 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		env["GREGALE_INPUT_ID"] = task.InputID
 		env["GREGALE_INPUT_REF"] = task.InputRef
 	}
+	startHeld := false
+	var sealedEnv []fcvm.SealedEnvEntry
+	var secretCandidates []state.AppSecretDeliveryCandidate
+	var runtimeInputs *state.RuntimeConfigInputs
+	var runtimeInputsAppID string
+	deliveryStatus := state.SecretDeliveryFailed
+	deliveryErrorCode := "runtime_start_failed"
+	var startGateReleaser interface {
+		ReleaseJobStart(context.Context, JobStartSpec) error
+	}
+	intentReader, canReadWorkloadIntent := e.store.(interface {
+		EnvironmentWorkloadIntentByJob(context.Context, string, string) (state.EnvironmentWorkloadIntent, error)
+	})
+	if !canReadWorkloadIntent {
+		if job.Kind == "recurring" {
+			e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
+				effectiveJobRetryMax(job, run), "job_gitops_intent_reader_unavailable",
+				"managed job runtime intent could not be verified; retry after the scheduler is updated")
+			return JobWakeResult{}, fmt.Errorf("sched: WakeJob requires workload intent lookup for recurring jobs")
+		}
+	} else {
+		intent, intentErr := intentReader.EnvironmentWorkloadIntentByJob(ctx, accountID, job.ID)
+		if intentErr != nil && !errors.Is(intentErr, state.ErrNotFound) {
+			e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
+				effectiveJobRetryMax(job, run), "job_gitops_intent_lookup_failed",
+				"managed job runtime intent could not be verified; retry the run")
+			return JobWakeResult{}, fmt.Errorf("sched: WakeJob workload intent: %w", intentErr)
+		}
+		if intentErr == nil {
+			if !environmentGitOpsJobBindingIntentMatches(job, run, accountID, intent) {
+				e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
+					effectiveJobRetryMax(job, run), "job_gitops_binding_contract_mismatch",
+					"managed job service bindings no longer match the reviewed workload; reconcile the environment")
+				return JobWakeResult{}, fmt.Errorf("sched: WakeJob managed service binding contract mismatch")
+			}
+			inputs, sealedDelivery, inputErr := e.prepareEnvironmentGitOpsJobRuntimeInputs(ctx, accountID, intent)
+			if inputErr != nil {
+				e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
+					effectiveJobRetryMax(job, run), "job_gitops_runtime_inputs_invalid",
+					"managed Job configuration or secret references no longer match the reviewed workload")
+				return JobWakeResult{}, fmt.Errorf("sched: WakeJob managed runtime inputs: %w", inputErr)
+			}
+			runtimeInputs, runtimeInputsAppID = &inputs, intent.AppID
+			sealedEnv, secretCandidates = sealedDelivery.Entries, sealedDelivery.Candidates
+			if len(secretCandidates) > 0 {
+				defer func() {
+					e.recordAppSecretDelivery(ctx, bootInput{
+						accountID: accountID, appID: intent.AppID, wakeID: instanceID, insID: instanceID,
+						secretDeliveries: secretCandidates,
+					}, deliveryStatus, deliveryErrorCode)
+				}()
+			}
+			var canRelease bool
+			startGateReleaser, canRelease = e.jobVmmClient.(interface {
+				ReleaseJobStart(context.Context, JobStartSpec) error
+			})
+			if !canRelease {
+				e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
+					effectiveJobRetryMax(job, run), "job_vmm_start_gate_unavailable",
+					"managed Job configuration cannot be verified without a held-start gate")
+				return JobWakeResult{}, fmt.Errorf("sched: WakeJob managed job requires start-gate release capability")
+			}
+			startHeld = true
+			if len(intent.ServiceBindings) != 0 {
+				var bindErr error
+				env, bindErr = appendEnvironmentGitOpsJobServiceBindings(env, intent)
+				if bindErr != nil {
+					e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
+						effectiveJobRetryMax(job, run), "job_gitops_binding_injection_failed",
+						"managed job service bindings conflict with its environment; reconcile the environment")
+					return JobWakeResult{}, fmt.Errorf("sched: WakeJob inject managed service bindings: %w", bindErr)
+				}
+			}
+		}
+	}
 	command := run.Command
 	if command == nil { // existing runs created before command snapshots
 		command = job.Command
@@ -292,17 +369,19 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		InstanceID: instanceID,
 		// vmmd's ImageRef field is a StorageBackend key at this boundary;
 		// the customer-facing OCI source remains in jobs.image_ref.
-		ImageRef:       imageKey,
-		Command:        append([]string(nil), command...),
-		Env:            env,
-		RAMMB:          ramMB,
-		TaskTimeoutSec: taskTimeoutSec,
-		LeaseToken:     string(tok),
-		NodeID:         nodeID,
-		Plan:           plan,
-		KernelKey:      KernelKey(e.fcVer),
-		BaseKey:        BaseKey(""),
-		VcpuCount:      1,
+		ImageRef:         imageKey,
+		Command:          append([]string(nil), command...),
+		Env:              env,
+		RAMMB:            ramMB,
+		TaskTimeoutSec:   taskTimeoutSec,
+		StartHeld:        startHeld,
+		SealedEnvEntries: sealedEnv,
+		LeaseToken:       string(tok),
+		NodeID:           nodeID,
+		Plan:             plan,
+		KernelKey:        KernelKey(e.fcVer),
+		BaseKey:          BaseKey(""),
+		VcpuCount:        1,
 	})
 	if err != nil {
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, effectiveJobRetryMax(job, run), "job_vmm_cold_boot_failed", "job VM failed to boot before execution; verify the image artifact exists and is readable")
@@ -315,15 +394,72 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	if out.NodeID == "" {
 		out.NodeID = nodeID
 	}
+	if out.StartHeld != startHeld {
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
+			"job_vmm_start_gate_mismatch", "job VM did not honor the reviewed service-binding start gate; retry the run")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd held-start mismatch: requested=%t returned=%t", startHeld, out.StartHeld)
+	}
 	if nodeID != "" && out.NodeID != nodeID {
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_vmm_node_mismatch", "vmmd returned a mismatched job node; contact support")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd returned node %q, want %q", out.NodeID, nodeID)
 	}
-	e.transitionWithKind(ctx, instanceID, "", state.StateRunning, "job_boot_completed", "job_vmmd_boot_completed")
+	if out.Netns == "" || out.GuestUID <= 0 {
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_vmm_runtime_identity_missing", "job VM did not return its runtime network identity; retry the run")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd omitted job runtime identity")
+	}
+	hostIP, err := netip.ParseAddr(strings.TrimSpace(out.HostIP))
+	if err != nil || !hostIP.Is4() || hostIP.String() != strings.TrimSpace(out.HostIP) {
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_vmm_runtime_identity_invalid", "job VM returned an invalid runtime network identity; retry the run")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd returned invalid host IP %q", out.HostIP)
+	}
+	if runtimeInputs != nil {
+		receipts, ok := e.store.(interface {
+			RuntimeConfigInputsFresh(context.Context, string, state.RuntimeConfigInputs) (bool, error)
+		})
+		fresh, freshnessErr := false, error(nil)
+		if ok {
+			fresh, freshnessErr = receipts.RuntimeConfigInputsFresh(ctx, runtimeInputsAppID, *runtimeInputs)
+		}
+		if !ok || freshnessErr != nil || !fresh {
+			deliveryErrorCode = "runtime_config_changed_during_boot"
+			e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
+				"job_gitops_runtime_inputs_stale", "managed Job configuration changed during boot; retry the run")
+			if freshnessErr != nil {
+				return JobWakeResult{}, fmt.Errorf("sched: WakeJob verify managed runtime inputs: %w", freshnessErr)
+			}
+			return JobWakeResult{}, fmt.Errorf("sched: WakeJob managed runtime inputs changed during boot")
+		}
+	}
+	published, err := e.store.PublishInstanceRuntime(ctx, instanceID, string(state.StateColdBooting),
+		out.Netns, hostIP.String(), out.GuestUID)
+	if err != nil {
+		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_vmm_runtime_identity_persist_failed", "job VM runtime identity could not be recorded; retry the run")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob publish runtime identity: %w", err)
+	}
+	e.recordCommittedInstanceTransition(ctx, published, state.StateColdBooting, state.StateRunning,
+		"", "job_boot_completed", "job_vmmd_boot_completed")
+	if startHeld {
+		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		err := startGateReleaser.ReleaseJobStart(releaseCtx, JobStartSpec{NodeID: out.NodeID, InstanceID: instanceID})
+		releaseCancel()
+		if err != nil {
+			// The release may have reached the guest even if its ACK was lost.
+			// Keep the attempt claimed and wait for its receipt; the guest's
+			// bounded hold timeout reports infrastructure failure if it stayed shut.
+			e.log.Error("sched: managed job start-gate release failed", "run", runID,
+				"task", taskIndex, "instance", instanceID, "err", err)
+		} else if len(secretCandidates) > 0 {
+			deliveryStatus, deliveryErrorCode = state.SecretDeliveryDelivered, ""
+		}
+	}
+	exitDeadline := fcvm.EffectiveDestroyWait(taskTimeoutSec)
+	if startHeld {
+		exitDeadline += fcvm.JobStartGateTimeout
+	}
 	e.startJobExitWatch(ctx, JobExitSpec{
 		AccountID: accountID, RunID: runID, TaskIndex: taskIndex,
 		InstanceID: instanceID, NodeID: out.NodeID, LeaseToken: string(tok),
-		Deadline: fcvm.EffectiveDestroyWait(taskTimeoutSec),
+		Deadline: exitDeadline,
 	})
 	return JobWakeResult{
 		InstanceID: instanceID,
@@ -333,6 +469,49 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		LeaseToken: tok,
 		Method:     "cold_boot",
 	}, nil
+}
+
+// prepareEnvironmentGitOpsJobRuntimeInputs resolves only the exact scoped
+// variables and secret references captured by a managed Job's environment.
+// Empty secret intent is explicit: it never falls back to the legacy
+// all-secrets deployment behavior.
+func (e *Engine) prepareEnvironmentGitOpsJobRuntimeInputs(ctx context.Context, accountID string, intent state.EnvironmentWorkloadIntent) (state.RuntimeConfigInputs, sealedEnvDelivery, error) {
+	environments, ok := e.store.(interface {
+		ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)
+	})
+	if !ok {
+		return state.RuntimeConfigInputs{}, sealedEnvDelivery{}, fmt.Errorf("project environment lookup is unavailable")
+	}
+	environment, err := environments.ProjectEnvironmentByID(ctx, intent.EnvironmentID)
+	if err != nil {
+		return state.RuntimeConfigInputs{}, sealedEnvDelivery{}, fmt.Errorf("load managed job environment: %w", err)
+	}
+	if environment.AccountID != accountID || environment.ID != intent.EnvironmentID || api.ValidateScope(environment.Slug) != nil {
+		return state.RuntimeConfigInputs{}, sealedEnvDelivery{}, state.ErrConflict
+	}
+	inputs, _, err := e.prepareRuntimeConfigInputs(ctx, accountID, intent.AppID, environment.Slug)
+	if err != nil {
+		return state.RuntimeConfigInputs{}, sealedEnvDelivery{}, fmt.Errorf("load managed job variables: %w", err)
+	}
+	if !maps.Equal(inputs.Variables, intent.Variables) {
+		return state.RuntimeConfigInputs{}, sealedEnvDelivery{}, fmt.Errorf("managed job variables do not match the scoped runtime environment")
+	}
+	secretReferences, ok := e.store.(state.AppEnvironmentSecretReferenceReader)
+	if !ok {
+		return state.RuntimeConfigInputs{}, sealedEnvDelivery{}, fmt.Errorf("scoped secret reference lookup is unavailable")
+	}
+	refs, err := secretReferences.AppEnvironmentSecretReferences(ctx, accountID, intent.AppID, environment.Slug)
+	if err != nil {
+		return state.RuntimeConfigInputs{}, sealedEnvDelivery{}, fmt.Errorf("load managed job secret references: %w", err)
+	}
+	delivery, err := e.resolveSealedEnvDeliveryForRoleWithEmptyAll(ctx, accountID, intent.AppID,
+		environment.Slug, refs, false, false, false)
+	if err != nil {
+		return state.RuntimeConfigInputs{}, sealedEnvDelivery{}, fmt.Errorf("resolve managed job secret references: %w", err)
+	}
+	inputs.SecretRefs = maps.Clone(delivery.References)
+	addRuntimeSecretVersions(&inputs, delivery.Candidates, false)
+	return inputs, delivery, nil
 }
 
 // rollbackJobAdmission makes every post-claim failure reversible. The
@@ -952,29 +1131,48 @@ type jobVmmClient interface {
 // JobVmmSpec is the vmmd-side job boot payload. Mirrors the shape
 // pkg/fcvm.BootMode=ModeJobColdBoot will accept (M7).
 type JobVmmSpec struct {
+	// QualificationExecution selects the isolated GitOps candidate path. It is
+	// nil for customer JobRuns, which keep their existing stateless lifecycle.
+	QualificationExecution *state.EnvironmentQualificationExecution
+	// StartHeld selects the distinct vmmd held-boot RPC. The guest command
+	// remains stopped until runtime identity is persisted and ReleaseJobStart
+	// succeeds; older vmmd servers reject that RPC before starting a VM.
+	StartHeld  bool
 	AccountID  string
 	RunID      string
 	TaskIndex  int
 	InstanceID string
 	// ImageRef is the resolved immutable StorageBackend key for the job image.
 	// The source OCI reference remains in state.Job.ImageRef.
-	ImageRef       string
-	Command        []string
-	Env            map[string]string
-	RAMMB          int
-	TaskTimeoutSec int
-	LeaseToken     string
-	NodeID         string
-	Plan           api.Plan
-	KernelKey      string
-	BaseKey        string
-	VcpuCount      int
+	ImageRef string
+	Command  []string
+	Env      map[string]string
+	// SealedEnvEntries carry selected ciphertext only; vmmd owns unsealing and
+	// writes the resulting process environment to this task's private layer.
+	SealedEnvEntries []fcvm.SealedEnvEntry
+	RAMMB            int
+	TaskTimeoutSec   int
+	LeaseToken       string
+	NodeID           string
+	Plan             api.Plan
+	KernelKey        string
+	BaseKey          string
+	VcpuCount        int
 }
 
 // JobVmmResult is the vmmd-side cold-boot outcome.
 type JobVmmResult struct {
 	InstanceID string
 	NodeID     string
+	Netns      string
+	HostIP     string
+	GuestUID   int
+	StartHeld  bool
+}
+
+type JobStartSpec struct {
+	NodeID     string
+	InstanceID string
 }
 
 // JobExitSpec identifies the claimed task whose guest exit is being awaited.

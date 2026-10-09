@@ -44,7 +44,10 @@ func newEnvironmentWorkloadApp(source EnvironmentGitSource, name string, workloa
 	case api.ExecutionModeWorker:
 		app.WorkloadClass, app.Manifest.ExecutionMode = WorkloadClassWorker, api.ExecutionModeWorker
 	case api.ExecutionModeJob:
-		return App{}, ErrEnvironmentWorkloadPreparationUnavailable // separate job execution adapter
+		// Job candidates may be reserved and built while held. Preparation
+		// must not create a customer JobRun or execute the candidate; isolated
+		// qualification runs through the separate private job adapter.
+		app.WorkloadClass, app.Manifest.ExecutionMode = WorkloadClassJob, api.ExecutionModeJob
 	}
 	if workload.Source.Kind == "function" {
 		if app.WorkloadClass != WorkloadClassHTTP || !api.ValidFunctionRuntime(workload.Source.Runtime) {

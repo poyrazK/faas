@@ -368,7 +368,7 @@ func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, im
 		envOverridesArg, status)
 	job, err := scanJob(row)
 	if err != nil {
-		return Job{}, err
+		return Job{}, mapErr(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Job{}, err
@@ -437,7 +437,7 @@ func (s *PgStore) JobUpdateWithSchedule(ctx context.Context, id string, command 
 		envOverridesArg, status, schedule, timezone, policyJSON(policies.SchedulePolicy), policyJSON(policies.FailureRules))
 	job, err := scanJob(row)
 	if err != nil {
-		return Job{}, err
+		return Job{}, mapErr(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Job{}, err
@@ -770,7 +770,7 @@ func (s *PgStore) JobSoftDelete(ctx context.Context, id string) (deleted bool, h
 	}
 	var flipped bool
 	if err := tx.QueryRow(ctx, `select soft_delete_job_if_no_live_instances($1::uuid)`, id).Scan(&flipped); err != nil {
-		return false, false, err
+		return false, false, mapErr(err)
 	}
 	if !flipped {
 		return false, true, nil

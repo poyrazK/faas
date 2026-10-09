@@ -26,7 +26,10 @@ type nativeQualificationRestoreLoadSession struct {
 // The incoming first-producer context and live original daemon are required.
 // The returned record proves only load/resume/hook acknowledgements. Scoped
 // channels, fresh readiness, graph smoke and activation remain separate gates.
-func (v *JailerVMM) loadNativeQualificationRestore(ctx context.Context, lease Lease) (record nativeQualificationRestoreLoadRecord, result error) {
+func (v *JailerVMM) loadNativeQualificationRestore(ctx context.Context, lease Lease, runningFCVersion string) (record nativeQualificationRestoreLoadRecord, result error) {
+	if err := validateNativeQualificationRunningFCVersion(runningFCVersion); err != nil {
+		return record, err
+	}
 	r := v.nativeRecovery
 	if r == nil || r.journal == nil || r.snapshotControl == nil || r.restoreResume == nil || r.restoreFence == nil {
 		return record, errors.New("native restore load: original startup control adapters are required")
@@ -51,6 +54,9 @@ func (v *JailerVMM) loadNativeQualificationRestore(ctx context.Context, lease Le
 	j := r.journal.qualifications(producer.Execution.NodeID).restores()
 	capture, err := j.requireCapture(ctx, *producer.restore)
 	if err != nil {
+		return record, err
+	}
+	if err := validateNativeQualificationRestoreFCVersion(capture.FCVersion, runningFCVersion); err != nil {
 		return record, err
 	}
 	backings, err := j.incoming.readBackings(capture)

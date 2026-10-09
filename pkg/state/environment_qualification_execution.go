@@ -53,8 +53,9 @@ type EnvironmentQualificationExecutionStatus struct {
 	RetiredAt         *time.Time
 }
 
-// Native evidence must come from the attempt-aware vmmd operation, after all
-// native producers have been revoked and both processes and resources joined.
+// Retirement evidence must come from the attempt-aware vmmd operation after
+// revoking producers and joining native effects. It distinguishes a retired
+// physical owner from a dispatched attempt proven to have no native owner.
 // Generic Destroy success, NotFound, or a terminal instance is not evidence.
 type EnvironmentQualificationRetirement struct {
 	Kind             string `json:"kind"`
@@ -66,8 +67,9 @@ type EnvironmentQualificationRetirement struct {
 }
 
 const (
-	QualificationNeverDispatched = "never_dispatched"
-	QualificationNativeRetired   = "native_retired"
+	QualificationNeverDispatched     = "never_dispatched"
+	QualificationNativeRetired       = "native_retired"
+	QualificationNativeEffectsAbsent = "native_effects_absent"
 )
 
 // Schedd alone consumes this capability. Dispatch is durably marked BEFORE
@@ -122,6 +124,18 @@ func qualificationExecutionMatches(a, b EnvironmentQualificationExecution) bool 
 func qualificationRetirementValid(proof EnvironmentQualificationRetirement, dispatched bool) bool {
 	if !dispatched {
 		return proof == (EnvironmentQualificationRetirement{Kind: QualificationNeverDispatched})
+	}
+	if proof.Kind == QualificationNativeEffectsAbsent {
+		if proof.NativeGeneration != "" || !proof.ProcessesExited || !proof.ResourcesRemoved {
+			return false
+		}
+		for _, id := range []string{proof.ReceiptID, proof.KernelBootID} {
+			parsed, err := uuid.Parse(id)
+			if err != nil || parsed == uuid.Nil || parsed.String() != id {
+				return false
+			}
+		}
+		return true
 	}
 	if proof.Kind != QualificationNativeRetired || !proof.ProcessesExited || !proof.ResourcesRemoved {
 		return false

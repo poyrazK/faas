@@ -25,6 +25,10 @@ func TestQualificationConfigReceiptBindsGuestAndDeliveredInputs(t *testing.T) {
 	if len(request.APIEnvEntries) != 1 || len(prepared.APIEnvEntries) != 3 {
 		t.Fatalf("receipt injection mutated caller or omitted control key: original=%+v prepared=%+v", request.APIEnvEntries, prepared.APIEnvEntries)
 	}
+	digest, err := QualificationAPIEnvSHA256(request.APIEnvEntries)
+	if err != nil || digest != waiter.expected[WorkloadNameMain].apiEnvSHA256 {
+		t.Fatalf("exported API env digest = %q, %v; want %q", digest, err, waiter.expected[WorkloadNameMain].apiEnvSHA256)
+	}
 	tokenControl, macKeyControl := prepared.APIEnvEntries[1], prepared.APIEnvEntries[2]
 	if tokenControl.Key != qualificationConfigReceiptTokenKey || tokenControl.Value != waiter.token || macKeyControl.Key != qualificationConfigReceiptMACKey {
 		t.Fatalf("unexpected internal receipt controls: %+v %+v", tokenControl, macKeyControl)
@@ -61,6 +65,72 @@ func TestQualificationConfigReceiptBindsGuestAndDeliveredInputs(t *testing.T) {
 	m.clearQualificationConfigReceipt(request.Instance, waiter)
 	if err := m.MarkEnvironmentQualificationConfigApplied(request.Instance, mainReceipt); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("duplicate event after waiter cleanup should be unowned: %v", err)
+	}
+}
+
+func TestQualificationJobConfigReceiptExcludesHostControlsFromCommandConfig(t *testing.T) {
+	m := NewManager(&fakeRunner{}, nil, Paths{}, "test", nil, nil)
+	plain := map[string]string{"API_URL": "http://10.0.0.1:1027/private"}
+	prepared, digest, waiter, err := m.prepareQualificationJobConfigReceipt("job-instance", plain, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.clearQualificationConfigReceipt("job-instance", waiter)
+	if prepared["API_URL"] != plain["API_URL"] || len(prepared) != 3 || prepared[qualificationConfigReceiptTokenKey] != waiter.token {
+		t.Fatalf("job env receipt controls = %#v", prepared)
+	}
+	wantDigest, err := qualificationAPIEnvSHA256(plain)
+	if err != nil || digest != wantDigest || waiter.expected[WorkloadNameMain].apiEnvSHA256 != wantDigest {
+		t.Fatalf("job config digest = %q, expected %#v, err=%v", digest, waiter.expected, err)
+	}
+	macKey, err := hex.DecodeString(prepared[qualificationConfigReceiptMACKey])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(macKey)
+	secretMAC, err := qualificationSecretKeysMAC(macKey, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkEnvironmentQualificationConfigApplied("job-instance", EnvironmentQualificationConfigReceipt{
+		Token: waiter.token, Workload: WorkloadNameMain, APIEnvSHA256: wantDigest, SecretKeysMAC: secretMAC,
+	}); err != nil {
+		t.Fatalf("accept job guest config receipt: %v", err)
+	}
+	if err := m.waitForQualificationConfigReceipt(context.Background(), "job-instance", waiter); err != nil {
+		t.Fatalf("wait for job guest config receipt: %v", err)
+	}
+}
+
+func TestQualificationJobConfigReceiptBindsSealedEnvironmentKeys(t *testing.T) {
+	m := NewManager(&fakeRunner{}, nil, Paths{}, "test", nil, nil)
+	sealed := []SealedEnvEntry{{Key: "DATABASE_URL", SourceKey: "DATABASE", Ciphertext: []byte("sealed")}}
+	prepared, _, waiter, err := m.prepareQualificationJobConfigReceipt("job-instance", map[string]string{"MODE": "safe"}, sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.clearQualificationConfigReceipt("job-instance", waiter)
+	macKey, err := hex.DecodeString(prepared[qualificationConfigReceiptMACKey])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(macKey)
+	wantMAC, err := qualificationSecretKeysMAC(macKey, []string{"DATABASE_URL"})
+	if err != nil || !waiter.expected[WorkloadNameMain].secretsRead || waiter.expected[WorkloadNameMain].secretKeysMAC != wantMAC {
+		t.Fatalf("qualification job did not bind the sealed keys: expected=%+v want=%q err=%v", waiter.expected[WorkloadNameMain], wantMAC, err)
+	}
+	wrongMAC, err := qualificationSecretKeysMAC(macKey, []string{"OTHER_SECRET"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkEnvironmentQualificationConfigApplied("job-instance", EnvironmentQualificationConfigReceipt{
+		Token: waiter.token, Workload: WorkloadNameMain, APIEnvSHA256: waiter.expected[WorkloadNameMain].apiEnvSHA256,
+		SecretsFileRead: true, SecretKeysMAC: wrongMAC,
+	}); err != nil {
+		t.Fatalf("mismatched guest receipt should be recorded as a failed attempt: %v", err)
+	}
+	if err := m.waitForQualificationConfigReceipt(context.Background(), "job-instance", waiter); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("mismatched secret-key receipt error = %v, want conflict", err)
 	}
 }
 

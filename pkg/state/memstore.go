@@ -172,6 +172,21 @@ type MemStore struct {
 	imagePreparations           map[string]ImagePreparation
 	deploymentActivationMu      sync.Mutex
 	deploymentActivationLocks   map[string]*deploymentActivationLock
+	// Restore evidence survives cleanup of the target's runtime receipt.
+	qualificationRestoreReceipts map[string]EnvironmentQualificationRestoreReceipt
+	// Guest configuration hashes survive cleanup of private qualification VMs.
+	qualificationConfigReceipts map[string]EnvironmentQualificationConfigReceipt
+	// Restored guest-ready events survive cleanup of their private VM.
+	qualificationFrameworkReadyReceipts map[string]EnvironmentQualificationFrameworkReadyReceipt
+	// Smoke evidence is attempt-bound to the same retired restore target.
+	qualificationSmokeReceipts    map[string]EnvironmentQualificationSmokeReceipt
+	qualificationJobSmokeReceipts map[string]EnvironmentQualificationJobSmokeReceipt
+	// environmentWorkloadServingReceipts records durable per-graph route
+	// generations and gateway acknowledgements for the final serving phase.
+	environmentWorkloadServingReceipts map[string]EnvironmentWorkloadServingReceipt
+	// environmentWorkloadQueueServingAcks can arrive before the controller has
+	// created the serving receipt; keyed per graph/binding to mirror Postgres.
+	environmentWorkloadQueueServingAcks map[string]map[string]EnvironmentWorkloadServingQueueAck
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
@@ -4841,8 +4856,8 @@ func (m *MemStore) ConcurrencyForDeployment(_ context.Context, appID, deployment
 }
 
 // UpdateDeploymentMinInstances mirrors PgStore.UpdateDeploymentMinInstances.
-// The handler validates against the parent app's plan ceiling; the
-// store writes unconditionally and returns ErrNotFound on a missing row.
+// The handler validates against the parent app's plan ceiling; the store
+// rejects changes that would mutate a GitOps-managed deployment contract.
 func (m *MemStore) UpdateDeploymentMinInstances(_ context.Context, id string, min int) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -4850,7 +4865,7 @@ func (m *MemStore) UpdateDeploymentMinInstances(_ context.Context, id string, mi
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
-	if d.EnvironmentWorkloadHeld() && d.MinInstances != min {
+	if d.EnvironmentWorkloadManaged() && d.MinInstances != min {
 		return Deployment{}, ErrInvalidArgument
 	}
 	d.MinInstances = min
@@ -4888,6 +4903,9 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 	if d.Status != DeployLive || (rolloutState != "pending" && rolloutState != "rolling_out") ||
 		d.CanaryTotalSteps <= 0 || params.ExpectedStep >= d.CanaryTotalSteps {
 		return Deployment{}, 0, ErrCanaryStateInvalid
+	}
+	if m.environmentGitOpsManagedForAppLocked(d.AppID) {
+		return Deployment{}, 0, ErrConflict
 	}
 	d.RolloutState = rolloutState
 	if d.CanaryStep != params.ExpectedStep {
@@ -5023,6 +5041,11 @@ func (m *MemStore) updateDeploymentTraffic(_ context.Context, id string, newPerc
 	}
 	if d.Status != DeployLive {
 		return Deployment{}, ErrDeploymentNotLive
+	}
+	for _, sibling := range m.deployments {
+		if sibling.AppID == d.AppID && sibling.EnvironmentWorkloadManaged() {
+			return Deployment{}, ErrConflict
+		}
 	}
 	for _, other := range m.deployments {
 		if other.AppID == d.AppID && other.Status == DeployLive && other.CanaryTotalSteps > 0 &&
@@ -7098,7 +7121,7 @@ func (m *MemStore) CreateDeploymentWithActivity(_ context.Context, d Deployment,
 }
 
 func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deployment, int64, error) {
-	if d.EnvironmentWorkloadHeld() {
+	if d.EnvironmentWorkloadManaged() {
 		return Deployment{}, 0, ErrInvalidArgument
 	}
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
@@ -7159,6 +7182,9 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 	proposal := d
 	if proposal.Status == "" {
 		proposal.Status = DeployPending
+	}
+	if proposal.Status == DeployLive && m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope) {
+		return Deployment{}, 0, ErrInvalidStateTransition
 	}
 	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
 		return Deployment{}, 0, err
@@ -8425,6 +8451,12 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	if d.Status == DeployCancelled && status != DeployCancelled {
 		return ErrInvalidStateTransition
 	}
+	if status == DeployLive && d.Status != DeployLive && m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope) {
+		return ErrInvalidStateTransition
+	}
+	if d.EnvironmentWorkloadManaged() && d.Status == DeployLive && status != DeployLive && status != DeployFailed {
+		return ErrInvalidStateTransition
+	}
 	proposal := d
 	proposal.Status = status
 	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
@@ -8548,6 +8580,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope) {
+		return ErrConflict
 	}
 	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
 		return err
@@ -9378,7 +9413,7 @@ func (m *MemStore) PrepareDeploymentRollback(_ context.Context, appID, targetDep
 	if !ok || target.AppID != appID {
 		return Deployment{}, ErrNoRollbackTarget
 	}
-	if target.EnvironmentWorkloadHeld() {
+	if m.environmentGitOpsManagedForScopeLocked(target.AppID, target.Scope) {
 		return Deployment{}, ErrInvalidArgument
 	}
 	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
@@ -9423,6 +9458,10 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, 
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if d.EnvironmentWorkloadRuntime != "" && d.Status == DeployLive &&
+		(d.RootfsPath != path || d.RootfsKey != key || d.RootfsBytes != bytes) {
+		return ErrInvalidStateTransition
 	}
 	// Issue #96 / ADR-025 axis 2 (PR #116): mirror PgStore — both
 	// rootfs_path and rootfs_key are stamped on the same mutation so
@@ -10278,7 +10317,7 @@ func (m *MemStore) SetDeploymentSourceURL(_ context.Context, id, sourceURL, comm
 	if !ok {
 		return ErrNotFound
 	}
-	if d.EnvironmentWorkloadHeld() && (d.SourceURL != sourceURL || d.CommitSHA != commitSHA) {
+	if d.EnvironmentWorkloadManaged() && (d.SourceURL != sourceURL || d.CommitSHA != commitSHA) {
 		return ErrInvalidArgument
 	}
 	d.SourceURL = sourceURL
@@ -12965,6 +13004,16 @@ func (m *MemStore) CompleteKeyedInvocationWithWorkClassification(_ context.Conte
 }
 
 func (m *MemStore) completeInvocation(id string, attempt int, result json.RawMessage, classification ...InvocationWorkClassification) error {
+	return m.completeInvocationAndQueueServingAck(id, attempt, result, nil, classification...)
+}
+
+func (m *MemStore) completeInvocationWithQueueServingAck(id string, attempt int, result json.RawMessage,
+	queueServingAck *EnvironmentWorkloadQueueServingAcknowledgement) error {
+	return m.completeInvocationAndQueueServingAck(id, attempt, result, queueServingAck)
+}
+
+func (m *MemStore) completeInvocationAndQueueServingAck(id string, attempt int, result json.RawMessage,
+	queueServingAck *EnvironmentWorkloadQueueServingAcknowledgement, classification ...InvocationWorkClassification) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	inv, ok := m.invocations[id]
@@ -12976,7 +13025,11 @@ func (m *MemStore) completeInvocation(id string, attempt int, result json.RawMes
 		if attempt <= 0 || inv.Attempts != attempt {
 			return ErrNotFound
 		}
-	} else if (inv.WorkPolicyName == "" && attempt != 0) || (inv.WorkPolicyName != "" && inv.Attempts != attempt) {
+	} else if (inv.WorkPolicyName == "" && attempt != 0 && queueServingAck == nil) ||
+		(inv.WorkPolicyName != "" && inv.Attempts != attempt) || (attempt > 0 && inv.Attempts != attempt) {
+		return ErrNotFound
+	}
+	if queueServingAck != nil && (inv.Source != InvocationQueue || inv.QueueBindingID == "" || inv.DeploymentScope == "") {
 		return ErrNotFound
 	}
 	quotaReserved := inv.QuotaReserved
@@ -13008,6 +13061,14 @@ func (m *MemStore) completeInvocation(id string, attempt int, result json.RawMes
 	// ErrQuotaExceeded under MemStore but not under PgStore.
 	if quotaReserved {
 		m.decrementAccountAsyncInflightLocked(inv.AccountID)
+	}
+	if queueServingAck != nil {
+		queueServingAck.AppID = inv.AppID
+		queueServingAck.Scope = inv.DeploymentScope
+		queueServingAck.BindingID = inv.QueueBindingID
+		if err := m.recordEnvironmentGitOpsQueueServingAcknowledgementLocked(*queueServingAck); err != nil && err != ErrConflict {
+			return err
+		}
 	}
 	return nil
 }

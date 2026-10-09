@@ -237,7 +237,7 @@ func nativeMetalCaptureOutputCrashChild(t *testing.T, ctx context.Context, root,
 	}
 	defer lock.Close()
 	capture := nativeQualificationCaptureRecord{Version: 1, InstanceID: instance, CaptureID: incoming.Generation,
-		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, StartedAt: q.clock().UTC()}
+		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, FCVersion: "1.7.0", StartedAt: q.clock().UTC()}
 	if err := q.writeCapture(incoming, capture); err != nil {
 		t.Fatal(err)
 	}

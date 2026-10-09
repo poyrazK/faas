@@ -165,7 +165,8 @@ func (s *PgStore) RetireEnvironmentQualificationExecution(ctx context.Context, e
 		if err != nil {
 			return err
 		}
-		if proof.Kind != QualificationNativeRetired || proof.NativeGeneration != receipt.Snapshot.NativeGeneration || proof.KernelBootID != receipt.Snapshot.KernelBootID {
+		if proof.Kind != QualificationNativeRetired || proof.ReceiptID != receipt.Snapshot.CaptureID ||
+			proof.NativeGeneration != receipt.Snapshot.NativeGeneration || proof.KernelBootID != receipt.Snapshot.KernelBootID {
 			return ErrConflict
 		}
 	}
@@ -178,7 +179,16 @@ func (s *PgStore) RetireEnvironmentQualificationExecution(ctx context.Context, e
 		if err != nil {
 			return err
 		}
-		if proof.NativeGeneration == receipt.Snapshot.NativeGeneration {
+		originalRow, err := q.EnvironmentQualificationExecution(ctx, tx, mustPgUUID(status.CaptureInstanceID))
+		if err != nil {
+			return mapErr(err)
+		}
+		original, err := qualificationExecutionFromSQL(originalRow)
+		if err != nil {
+			return err
+		}
+		if original.Retirement == nil || proof.NativeGeneration == receipt.Snapshot.NativeGeneration ||
+			proof.KernelBootID != receipt.Snapshot.KernelBootID || proof.ReceiptID == original.Retirement.ReceiptID {
 			return ErrConflict
 		}
 	}

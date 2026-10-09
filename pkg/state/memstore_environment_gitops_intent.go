@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -108,7 +110,8 @@ func (m *MemStore) gitOpsGuardConfigurationLocked(config ProjectEnvironmentConfi
 
 func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsIntentSnapshot {
 	source := memory.source
-	snapshot := gitOpsIntentSnapshot{Version: source.IntentVersion, Project: m.projects[source.ProjectID].Slug, Environment: source.EnvironmentSlug, EnvironmentID: source.EnvironmentID, Plan: m.accounts[source.AccountID].Plan, SourceID: source.ID, Prune: source.Spec.Prune}
+	snapshot := gitOpsIntentSnapshot{Version: source.IntentVersion, Project: m.projects[source.ProjectID].Slug, Environment: source.EnvironmentSlug, EnvironmentID: source.EnvironmentID,
+		Repository: source.Spec.Repository, Plan: m.accounts[source.AccountID].Plan, SourceID: source.ID, Prune: source.Spec.Prune}
 	config := m.projectEnvironmentConfigLatestLocked(source.ProjectID, source.EnvironmentSlug)
 	_ = json.Unmarshal(config.Values, &snapshot.Configuration)
 	for resource, appID := range memory.resources {
@@ -152,8 +155,13 @@ func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsI
 		row.SuppressionCount = m.environmentSecretSuppressionCountLocked(app.ID)
 		for _, deployment := range m.deployments {
 			if deployment.AppID == app.ID && normalizedDeploymentScope(deployment.Scope) == source.EnvironmentSlug && deployment.Status == DeployLive {
-				row.Sources = append(row.Sources, gitOpsSourceBaseline{ID: deployment.ID, Kind: deployment.Kind, Image: deployment.ImageDigest, Inputs: environmentWorkloadDeploymentInputs(deployment)})
-				row.LiveDeployments = append(row.LiveDeployments, gitOpsSecretBaseline{ID: deployment.ID, SecretRefs: append(json.RawMessage(nil), deployment.OverrideEnvSecrets...)})
+				managed := deployment.EnvironmentWorkloadRuntime != ""
+				if !managed {
+					row.Sources = append(row.Sources, gitOpsSourceBaseline{ID: deployment.ID, Kind: deployment.Kind, Image: deployment.ImageDigest,
+						SourceURL: deployment.SourceURL, CommitSHA: deployment.CommitSHA, SourceRoot: deployment.SourceRoot, Inputs: environmentWorkloadDeploymentInputs(deployment)})
+				}
+				row.LiveDeployments = append(row.LiveDeployments, gitOpsSecretBaseline{ID: deployment.ID,
+					SecretRefs: append(json.RawMessage(nil), deployment.OverrideEnvSecrets...), Managed: managed})
 			}
 		}
 		for key := range m.appEnvironmentSecretRefs {
@@ -271,8 +279,29 @@ func (m *MemStore) AdoptEnvironmentGitOps(_ context.Context, accountID, sourceID
 	if memory.owners == nil {
 		memory.owners = map[string]environmentsync.Ownership{}
 	}
-	for _, row := range changedWorkloadIntents(m.gitOpsSnapshotLocked(memory), plan, observed.State.ResourceIDs, true) {
+	snapshot := m.gitOpsSnapshotLocked(memory)
+	rows := changedWorkloadIntents(snapshot, plan, observed.State.ResourceIDs, true)
+	oldJobs := m.jobs
+	m.jobs = maps.Clone(m.jobs)
+	jobsCommitted := false
+	defer func() {
+		if !jobsCommitted {
+			m.jobs = oldJobs
+		}
+	}()
+	for _, appID := range sortedWorkloadIntentIDs(rows) {
+		row := rows[appID]
 		row.AccountID = accountID
+		if row.Schedule != nil && row.JobID == "" {
+			_, workload, app, ok := environmentGitOpsAppForWorkload(snapshot, desired, row.AppID)
+			if !ok {
+				return ErrConflict
+			}
+			row, err = m.syncEnvironmentGitOpsJobLocked(row, app, workload, snapshot.Plan)
+			if err != nil {
+				return err
+			}
+		}
 		m.putWorkloadIntentLocked(row)
 	}
 	for _, change := range plan.Changes {
@@ -302,6 +331,7 @@ func (m *MemStore) AdoptEnvironmentGitOps(_ context.Context, accountID, sourceID
 	}
 	memory.source.IntentVersion++
 	memory.next = time.Now().UTC()
+	jobsCommitted = true
 	return nil
 }
 
@@ -396,6 +426,12 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 				routes[change.Resource] = contract
 			case strings.HasPrefix(change.Path, "queue_bindings/"):
 				// Validated on detached queue/consumer maps above.
+			case strings.HasPrefix(change.Path, "variables/"):
+				var value string
+				if json.Unmarshal(change.After, &value) != nil {
+					return nil, ErrInvalidArgument
+				}
+				variables[change.Resource+"#"+change.Path] = value
 			case gitOpsWorkloadField(change.Path):
 				// Scoped intent is validated by the rechecked observation.
 			case strings.HasPrefix(change.Path, "secret_refs/"):
@@ -404,12 +440,6 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 					return nil, ErrInvalidArgument
 				}
 				secretRefs[change.Resource+"#"+change.Path] = ref
-			case strings.HasPrefix(change.Path, "variables/"):
-				var value string
-				if json.Unmarshal(change.After, &value) != nil {
-					return nil, ErrInvalidArgument
-				}
-				variables[change.Resource+"#"+change.Path] = value
 			default:
 				return nil, ErrInvalidArgument
 			}
@@ -424,6 +454,14 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 			return nil, ErrInvalidArgument
 		}
 	}
+	oldJobs := m.jobs
+	m.jobs = maps.Clone(m.jobs)
+	jobsCommitted := false
+	defer func() {
+		if !jobsCommitted {
+			m.jobs = oldJobs
+		}
+	}()
 	if queueState != nil {
 		m.queueBindings, m.triggers = queueState.queueBindings, queueState.triggers
 		if memory.queues == nil {
@@ -434,8 +472,19 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 		}
 	}
 	now, source := time.Now().UTC(), memory.source
-	for _, row := range workloadRows {
+	for _, appID := range sortedWorkloadIntentIDs(workloadRows) {
+		row := workloadRows[appID]
 		row.AccountID = source.AccountID
+		if row.Schedule != nil || row.JobID != "" {
+			_, workload, app, ok := environmentGitOpsAppForWorkload(snapshot, desired, row.AppID)
+			if !ok {
+				return nil, ErrConflict
+			}
+			row, err = m.syncEnvironmentGitOpsJobLocked(row, app, workload, snapshot.Plan)
+			if err != nil {
+				return nil, err
+			}
+		}
 		m.putWorkloadIntentLocked(row)
 	}
 	steps := []EnvironmentGitOpsStep{}
@@ -529,5 +578,15 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 	run.Plan, _ = json.Marshal(plan)
 	run.Steps, _ = json.Marshal(steps)
 	memory.runs[lease.RunID] = run
+	jobsCommitted = true
 	return steps, nil
+}
+
+func sortedWorkloadIntentIDs(rows map[string]EnvironmentWorkloadIntent) []string {
+	ids := make([]string, 0, len(rows))
+	for id := range rows {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
 }

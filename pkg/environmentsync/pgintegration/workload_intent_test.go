@@ -36,7 +36,7 @@ func workloadIntentFixtureWithProtocolTransport(t *testing.T, basic gitOpsTestSt
 	}
 	app, err := store.CreateApp(t.Context(), state.App{AccountID: source.AccountID, ProjectID: source.ProjectID, AppProtocol: appProtocol,
 		Slug: "shop-api", Type: appType, Runtime: runtime, RAMMB: 512, MaxConcurrency: 1, Status: state.AppActive,
-		Manifest: state.AppManifest{Entrypoint: []string{"./api"}, Port: 8079, StopGracePeriodS: 10, ServiceBindingTransport: transport}})
+		Manifest: state.AppManifest{Entrypoint: []string{"./api"}, Port: 8079, StopGracePeriodS: 10, ServiceBindingTransport: transport, RevisionPinTTLSeconds: 3600}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,6 +414,7 @@ func TestEnvironmentGitOpsScopedWorkloadIntentPostgresGuardsAndRollback(t *testi
 	adoptWorkloadIntent(t, store, source)
 	for _, query := range []string{
 		`update app_environment_workload_intents set runtime=jsonb_set(runtime,'{port}','9090') where app_id=$1 and environment_id=$2`,
+		`update app_environment_workload_intents set variables=jsonb_set(variables,'{MODE}','"override"'::jsonb) where app_id=$1 and environment_id=$2`,
 		`update app_environment_workload_intents set source=NULL where app_id=$1 and environment_id=$2`,
 		`delete from app_environment_workload_intents where app_id=$1 and environment_id=$2`,
 	} {
@@ -421,6 +422,20 @@ func TestEnvironmentGitOpsScopedWorkloadIntentPostgresGuardsAndRollback(t *testi
 		var pgerr *pgconn.PgError
 		if !errors.As(err, &pgerr) || pgerr.ConstraintName != "environment_gitops_field_owned" {
 			t.Fatalf("raw SQL ownership bypass: %v", err)
+		}
+	}
+	for _, variables := range []map[string]string{
+		{"bad-key": "value"},
+		{"MODE": strings.Repeat("x", api.MustLimitsFor(api.PlanScale).EnvValueMaxBytes+1)},
+	} {
+		raw, err := json.Marshal(variables)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = pool.Exec(ctx, `update app_environment_workload_intents set variables=$3::jsonb where app_id=$1 and environment_id=$2`, app.ID, source.EnvironmentID, raw)
+		var pgerr *pgconn.PgError
+		if !errors.As(err, &pgerr) || pgerr.Code != "23514" {
+			t.Fatalf("database accepted invalid workload variables: %v", err)
 		}
 	}
 	if _, err := pool.Exec(ctx, `update app_environment_workload_intents set environment_id=$3 where app_id=$1 and environment_id=$2`, app.ID, source.EnvironmentID, staging.ID); err == nil {

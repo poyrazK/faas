@@ -147,10 +147,17 @@ func executionFromProto(p *vmmdpb.EnvironmentQualificationExecution) (state.Envi
 }
 
 func validateNativeRetirement(proof state.EnvironmentQualificationRetirement) error {
-	if proof.Kind != state.QualificationNativeRetired || !proof.ProcessesExited || !proof.ResourcesRemoved {
+	if proof.Kind != state.QualificationNativeRetired && proof.Kind != state.QualificationNativeEffectsAbsent ||
+		!proof.ProcessesExited || !proof.ResourcesRemoved {
 		return fmt.Errorf("qualification has no physical retirement proof: %w", state.ErrConflict)
 	}
-	for _, value := range []string{proof.ReceiptID, proof.NativeGeneration, proof.KernelBootID} {
+	values := []string{proof.ReceiptID, proof.KernelBootID}
+	if proof.Kind == state.QualificationNativeRetired {
+		values = append(values, proof.NativeGeneration)
+	} else if proof.NativeGeneration != "" {
+		return fmt.Errorf("qualification absence proof unexpectedly names a native generation: %w", state.ErrConflict)
+	}
+	for _, value := range values {
 		id, err := uuid.Parse(value)
 		if err != nil || id == uuid.Nil || id.String() != value {
 			return fmt.Errorf("qualification retirement identity is incomplete: %w", state.ErrConflict)

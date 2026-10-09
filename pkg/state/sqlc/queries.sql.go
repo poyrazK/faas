@@ -334,6 +334,23 @@ func (q *Queries) AcknowledgeEnvironmentGitOpsEffect(ctx context.Context, db DBT
 	return result.RowsAffected(), nil
 }
 
+const acknowledgeEnvironmentWorkloadServingRoute = `-- name: AcknowledgeEnvironmentWorkloadServingRoute :exec
+INSERT INTO environment_workload_serving_route_acks (graph_id, route_generation, node_name)
+VALUES ($1::uuid, $2::bigint, $3::text)
+ON CONFLICT (graph_id, route_generation, node_name) DO NOTHING
+`
+
+type AcknowledgeEnvironmentWorkloadServingRouteParams struct {
+	GraphID         pgtype.UUID
+	RouteGeneration int64
+	NodeName        string
+}
+
+func (q *Queries) AcknowledgeEnvironmentWorkloadServingRoute(ctx context.Context, db DBTX, arg AcknowledgeEnvironmentWorkloadServingRouteParams) error {
+	_, err := db.Exec(ctx, acknowledgeEnvironmentWorkloadServingRoute, arg.GraphID, arg.RouteGeneration, arg.NodeName)
+	return err
+}
+
 const acknowledgePendingNotification = `-- name: AcknowledgePendingNotification :exec
 UPDATE notification_outbox
 SET state = 'delivered', delivered_at = now(),
@@ -369,6 +386,67 @@ func (q *Queries) ActivateRetainedRollbackDeployment(ctx context.Context, db DBT
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const activeEnvironmentWorkloadReleaseMembers = `-- name: ActiveEnvironmentWorkloadReleaseMembers :many
+SELECT rm.app_id::text AS app_id, rm.deployment_id::text AS deployment_id
+FROM environment_git_sources source
+JOIN project_environments env ON env.id = source.environment_id
+  AND env.account_id = source.account_id AND env.project_id = source.project_id
+JOIN project_release_sets release ON release.project_id = source.project_id
+  AND release.environment_slug = env.slug AND release.active
+JOIN project_release_members rm ON rm.release_id = release.id
+JOIN deployments deployment ON deployment.id = rm.deployment_id AND deployment.app_id = rm.app_id
+  AND deployment.scope = env.slug AND deployment.status = 'live' AND NOT deployment.environment_workload_held
+WHERE source.id = $1::uuid AND env.id = $2::uuid
+ORDER BY rm.app_id
+`
+
+type ActiveEnvironmentWorkloadReleaseMembersParams struct {
+	SourceID      pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+type ActiveEnvironmentWorkloadReleaseMembersRow struct {
+	AppID        string
+	DeploymentID string
+}
+
+func (q *Queries) ActiveEnvironmentWorkloadReleaseMembers(ctx context.Context, db DBTX, arg ActiveEnvironmentWorkloadReleaseMembersParams) ([]ActiveEnvironmentWorkloadReleaseMembersRow, error) {
+	rows, err := db.Query(ctx, activeEnvironmentWorkloadReleaseMembers, arg.SourceID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ActiveEnvironmentWorkloadReleaseMembersRow{}
+	for rows.Next() {
+		var i ActiveEnvironmentWorkloadReleaseMembersRow
+		if err := rows.Scan(&i.AppID, &i.DeploymentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const activeEnvironmentWorkloadReleaseSet = `-- name: ActiveEnvironmentWorkloadReleaseSet :one
+SELECT release.id::text
+FROM environment_workload_graphs graph
+JOIN environment_git_sources source ON source.id = graph.source_id
+JOIN project_environments env ON env.id = source.environment_id
+JOIN project_release_sets release ON release.project_id = source.project_id
+  AND release.environment_slug = env.slug AND release.active
+WHERE graph.id = $1::uuid
+`
+
+func (q *Queries) ActiveEnvironmentWorkloadReleaseSet(ctx context.Context, db DBTX, graphID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, activeEnvironmentWorkloadReleaseSet, graphID)
+	var release_id string
+	err := row.Scan(&release_id)
+	return release_id, err
 }
 
 const activeTCPListenerByPublicPort = `-- name: ActiveTCPListenerByPublicPort :one
@@ -2994,6 +3072,20 @@ func (q *Queries) CompleteEnvironmentGitOpsRuntime(ctx context.Context, db DBTX,
 	return result.RowsAffected(), nil
 }
 
+const completeEnvironmentWorkloadServingReceipt = `-- name: CompleteEnvironmentWorkloadServingReceipt :execrows
+UPDATE environment_workload_serving_receipts
+SET phase = 'served', served_at = coalesce(served_at, clock_timestamp()), updated_at = clock_timestamp()
+WHERE graph_id = $1::uuid AND phase = 'pending'
+`
+
+func (q *Queries) CompleteEnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, graphID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, completeEnvironmentWorkloadServingReceipt, graphID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const completeNotificationClaim = `-- name: CompleteNotificationClaim :execrows
 WITH owned AS MATERIALIZED (
     SELECT id, lease_until FROM notification_outbox
@@ -3959,7 +4051,7 @@ WITH queued AS (
  RETURNING id,deployment_id
 )
 UPDATE deployments d SET status='building',build_id=queued.id FROM queued
-WHERE d.id=queued.deployment_id AND d.environment_workload_runtime IS NOT NULL AND d.status='pending'
+WHERE d.id=queued.deployment_id AND d.environment_workload_held AND d.status='pending'
 `
 
 type CreateEnvironmentGitOpsSourceBuildParams struct {
@@ -3981,13 +4073,14 @@ func (q *Queries) CreateEnvironmentGitOpsSourceBuild(ctx context.Context, db DBT
 
 const createEnvironmentGitOpsWorkloadCandidate = `-- name: CreateEnvironmentGitOpsWorkloadCandidate :one
 INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic_percent,traffic_percent_explicit,
- source_path,source_root,source_sha256,source_bytes,source_url,log_path,revision,environment_workload_runtime,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
+ source_path,source_root,source_sha256,source_bytes,source_url,log_path,revision,environment_workload_runtime,environment_workload_held,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
  override_healthcheck,override_liveness_probe,override_readiness_probe,override_main_depends_on,sidecars,workflows,
  full_rootfs_allow_auto,full_rootfs_override,min_instances,release_command,release_command_shell,disable_startup_cpu_boost,
  rollback_on_5xx)
 VALUES($1::uuid,$2::text,$3::text,$4::text,$5::text,'pending',0,true,
  nullif($6::text,''),$7::text,nullif($8::text,''),$9::bigint,nullif($10::text,''),$11::jsonb->'source_archive'->>'log_path',
  (SELECT coalesce(max(revision),0)+1 FROM deployments WHERE app_id=$1::uuid),$11::jsonb,
+ true,
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($11::jsonb->'deployment_inputs'->'override_entrypoint','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($11::jsonb->'deployment_inputs'->'override_cmd','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
  $11::jsonb->'deployment_inputs'->'override_env',$11::jsonb->'deployment_inputs'->'override_env_secrets',
@@ -5477,6 +5570,16 @@ func (q *Queries) DeleteEnvironmentSecretReferenceSuppression(ctx context.Contex
 	return err
 }
 
+const deleteEnvironmentWorkloadServingAcks = `-- name: DeleteEnvironmentWorkloadServingAcks :exec
+DELETE FROM environment_workload_serving_route_acks
+WHERE graph_id = $1::uuid
+`
+
+func (q *Queries) DeleteEnvironmentWorkloadServingAcks(ctx context.Context, db DBTX, graphID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteEnvironmentWorkloadServingAcks, graphID)
+	return err
+}
+
 const deleteEventSubscription = `-- name: DeleteEventSubscription :exec
 delete from event_subscriptions
 where id = $1 and account_id = $2 and app_id = $3
@@ -6351,7 +6454,7 @@ func (q *Queries) EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, 
 const environmentGitOpsUnqualifiedWorkloads = `-- name: EnvironmentGitOpsUnqualifiedWorkloads :many
 SELECT r.app_id,r.logical_name FROM environment_gitops_resources r
 WHERE r.source_id=$1::uuid AND EXISTS(SELECT 1 FROM environment_managed_fields f
- WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path='source' OR starts_with(f.field_path,'runtime/') OR starts_with(f.field_path,'service_bindings/')))
+WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path IN ('source','source_revision','schedule') OR starts_with(f.field_path,'runtime/') OR starts_with(f.field_path,'service_bindings/') OR starts_with(f.field_path,'queue_bindings/')))
 `
 
 type EnvironmentGitOpsUnqualifiedWorkloadsRow struct {
@@ -6467,6 +6570,27 @@ func (q *Queries) EnvironmentQualificationAppProtocol(ctx context.Context, db DB
 	return app_protocol, err
 }
 
+const environmentQualificationConfigReceipt = `-- name: EnvironmentQualificationConfigReceipt :one
+SELECT request_id,attempt,graph_id,instance_id,capture_instance_id,api_env_sha256,recorded_at
+FROM environment_qualification_config_receipts
+WHERE instance_id=$1::uuid
+`
+
+func (q *Queries) EnvironmentQualificationConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationConfigReceipt, error) {
+	row := db.QueryRow(ctx, environmentQualificationConfigReceipt, instanceID)
+	var i EnvironmentQualificationConfigReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.InstanceID,
+		&i.CaptureInstanceID,
+		&i.ApiEnvSha256,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
 const environmentQualificationExecution = `-- name: EnvironmentQualificationExecution :one
 SELECT instance_id, request_id, frame, cleanup_token, dispatch_started, retirement, created_at, retired_at, capture_instance_id FROM environment_qualification_executions WHERE instance_id=$1::uuid
 `
@@ -6502,6 +6626,33 @@ func (q *Queries) EnvironmentQualificationExecutionRecoverable(ctx context.Conte
 	var recoverable pgtype.Bool
 	err := row.Scan(&recoverable)
 	return recoverable, err
+}
+
+const environmentQualificationFrameworkReadyReceipt = `-- name: EnvironmentQualificationFrameworkReadyReceipt :one
+SELECT request_id,attempt,graph_id,capture_instance_id,instance_id,runtime,warmup_ms,recorded_at
+FROM environment_qualification_framework_ready_receipts
+WHERE request_id=$1::uuid AND attempt=$2::bigint
+`
+
+type EnvironmentQualificationFrameworkReadyReceiptParams struct {
+	RequestID pgtype.UUID
+	Attempt   int64
+}
+
+func (q *Queries) EnvironmentQualificationFrameworkReadyReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationFrameworkReadyReceiptParams) (EnvironmentQualificationFrameworkReadyReceipt, error) {
+	row := db.QueryRow(ctx, environmentQualificationFrameworkReadyReceipt, arg.RequestID, arg.Attempt)
+	var i EnvironmentQualificationFrameworkReadyReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.CaptureInstanceID,
+		&i.InstanceID,
+		&i.Runtime,
+		&i.WarmupMs,
+		&i.RecordedAt,
+	)
+	return i, err
 }
 
 const environmentQualificationInstance = `-- name: EnvironmentQualificationInstance :one
@@ -6546,8 +6697,39 @@ func (q *Queries) EnvironmentQualificationInstance(ctx context.Context, db DBTX,
 	return i, err
 }
 
+const environmentQualificationJobSmokeReceipt = `-- name: EnvironmentQualificationJobSmokeReceipt :one
+SELECT request_id,attempt,graph_id,instance_id,resource,policy_id,policy_sha256,result_sha256,exit_code,error_class,signal,recorded_at
+FROM environment_qualification_job_smoke_receipts
+WHERE request_id=$1::uuid AND attempt=$2::bigint
+`
+
+type EnvironmentQualificationJobSmokeReceiptParams struct {
+	RequestID pgtype.UUID
+	Attempt   int64
+}
+
+func (q *Queries) EnvironmentQualificationJobSmokeReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationJobSmokeReceiptParams) (EnvironmentQualificationJobSmokeReceipt, error) {
+	row := db.QueryRow(ctx, environmentQualificationJobSmokeReceipt, arg.RequestID, arg.Attempt)
+	var i EnvironmentQualificationJobSmokeReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.InstanceID,
+		&i.Resource,
+		&i.PolicyID,
+		&i.PolicySha256,
+		&i.ResultSha256,
+		&i.ExitCode,
+		&i.ErrorClass,
+		&i.Signal,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
 const environmentQualificationNetworkInstances = `-- name: EnvironmentQualificationNetworkInstances :many
-SELECT i.id, i.node_id, (d.environment_workload_runtime IS NOT NULL)::boolean AS held
+SELECT i.id, i.node_id, d.environment_workload_held AS held
 FROM instances i JOIN deployments d ON d.id=i.deployment_id
 WHERE (i.node_id=coalesce(nullif($1::text,'')::uuid,
  (SELECT n.id FROM compute_nodes n WHERE n.name=$2::text))
@@ -6623,6 +6805,31 @@ func (q *Queries) EnvironmentQualificationRestoreCurrent(ctx context.Context, db
 	return column_1, err
 }
 
+const environmentQualificationRestoreReceipt = `-- name: EnvironmentQualificationRestoreReceipt :one
+SELECT request_id,attempt,capture_instance_id,instance_id,runtime_inputs,recorded_at
+FROM environment_qualification_restore_receipts
+WHERE request_id=$1::uuid AND attempt=$2::bigint
+`
+
+type EnvironmentQualificationRestoreReceiptParams struct {
+	RequestID pgtype.UUID
+	Attempt   int64
+}
+
+func (q *Queries) EnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error) {
+	row := db.QueryRow(ctx, environmentQualificationRestoreReceipt, arg.RequestID, arg.Attempt)
+	var i EnvironmentQualificationRestoreReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.CaptureInstanceID,
+		&i.InstanceID,
+		&i.RuntimeInputs,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
 const environmentQualificationRestoreReservation = `-- name: EnvironmentQualificationRestoreReservation :one
 SELECT instance_id, capture_instance_id, request_id, attempt, created_at FROM environment_qualification_restore_reservations WHERE request_id=$1::uuid AND attempt=$2::bigint
 `
@@ -6641,6 +6848,35 @@ func (q *Queries) EnvironmentQualificationRestoreReservation(ctx context.Context
 		&i.RequestID,
 		&i.Attempt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const environmentQualificationSmokeReceipt = `-- name: EnvironmentQualificationSmokeReceipt :one
+SELECT request_id,attempt,graph_id,capture_instance_id,instance_id,resource,policy_id,policy_sha256,result_sha256,recorded_at
+FROM environment_qualification_smoke_receipts
+WHERE request_id=$1::uuid AND attempt=$2::bigint
+`
+
+type EnvironmentQualificationSmokeReceiptParams struct {
+	RequestID pgtype.UUID
+	Attempt   int64
+}
+
+func (q *Queries) EnvironmentQualificationSmokeReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationSmokeReceiptParams) (EnvironmentQualificationSmokeReceipt, error) {
+	row := db.QueryRow(ctx, environmentQualificationSmokeReceipt, arg.RequestID, arg.Attempt)
+	var i EnvironmentQualificationSmokeReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.CaptureInstanceID,
+		&i.InstanceID,
+		&i.Resource,
+		&i.PolicyID,
+		&i.PolicySha256,
+		&i.ResultSha256,
+		&i.RecordedAt,
 	)
 	return i, err
 }
@@ -6816,8 +7052,43 @@ func (q *Queries) EnvironmentWorkloadGraphForPreparation(ctx context.Context, db
 	return i, err
 }
 
+const environmentWorkloadGraphForStatus = `-- name: EnvironmentWorkloadGraphForStatus :one
+SELECT id, source_id, environment_id, revision_id, generation, intent_version, plan_hash, definition_digest, members, resource_ids, phase, error_code, created_at, prepared_at FROM environment_workload_graphs WHERE source_id=$1::uuid
+ AND generation=$2::bigint AND plan_hash=$3::text
+`
+
+type EnvironmentWorkloadGraphForStatusParams struct {
+	SourceID   pgtype.UUID
+	Generation int64
+	PlanHash   string
+}
+
+// Status reads use a read-only transaction and must not lock the candidate graph.
+func (q *Queries) EnvironmentWorkloadGraphForStatus(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphForStatusParams) (EnvironmentWorkloadGraph, error) {
+	row := db.QueryRow(ctx, environmentWorkloadGraphForStatus, arg.SourceID, arg.Generation, arg.PlanHash)
+	var i EnvironmentWorkloadGraph
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.EnvironmentID,
+		&i.RevisionID,
+		&i.Generation,
+		&i.IntentVersion,
+		&i.PlanHash,
+		&i.DefinitionDigest,
+		&i.Members,
+		&i.ResourceIds,
+		&i.Phase,
+		&i.ErrorCode,
+		&i.CreatedAt,
+		&i.PreparedAt,
+	)
+	return i, err
+}
+
 const environmentWorkloadIntent = `-- name: EnvironmentWorkloadIntent :one
-SELECT w.account_id, w.app_id, w.environment_id, w.source, w.runtime, w.created_at, w.updated_at, w.source_revision, w.service_bindings FROM app_environment_workload_intents w
+SELECT w.account_id,w.app_id,w.environment_id,w.job_id,w.source,w.runtime,w.created_at,w.updated_at,w.source_revision,w.service_bindings,w.schedule,w.variables
+FROM app_environment_workload_intents w
 JOIN apps a ON a.id=w.app_id AND a.account_id=w.account_id AND a.status<>'deleted'
 JOIN project_environments e ON e.id=w.environment_id AND e.account_id=a.account_id AND e.project_id=a.project_id
 WHERE w.account_id=$1::uuid AND w.app_id=$2::uuid AND w.environment_id=$3::uuid
@@ -6836,12 +7107,15 @@ func (q *Queries) EnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg En
 		&i.AccountID,
 		&i.AppID,
 		&i.EnvironmentID,
+		&i.JobID,
 		&i.Source,
 		&i.Runtime,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SourceRevision,
 		&i.ServiceBindings,
+		&i.Schedule,
+		&i.Variables,
 	)
 	return i, err
 }
@@ -6928,6 +7202,20 @@ func (q *Queries) EnvironmentWorkloadQualificationArtifactCurrent(ctx context.Co
 	var current bool
 	err := row.Scan(&current)
 	return current, err
+}
+
+const environmentWorkloadQualificationEvidenceCurrent = `-- name: EnvironmentWorkloadQualificationEvidenceCurrent :one
+SELECT environment_workload_qualification_evidence_current($1::uuid)::boolean
+`
+
+// Qualification receipts are written only while candidates are held in
+// snapshotting. Evidence remains current after activation only while the exact
+// candidates belong to the active environment release set.
+func (q *Queries) EnvironmentWorkloadQualificationEvidenceCurrent(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, environmentWorkloadQualificationEvidenceCurrent, id)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const environmentWorkloadQualificationForUpdate = `-- name: EnvironmentWorkloadQualificationForUpdate :one
@@ -7045,6 +7333,165 @@ func (q *Queries) EnvironmentWorkloadQualificationsByGraph(ctx context.Context, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const environmentWorkloadServingAcks = `-- name: EnvironmentWorkloadServingAcks :many
+SELECT route_generation, node_name
+FROM environment_workload_serving_route_acks
+WHERE graph_id = $1::uuid
+ORDER BY route_generation, node_name
+`
+
+type EnvironmentWorkloadServingAcksRow struct {
+	RouteGeneration int64
+	NodeName        string
+}
+
+func (q *Queries) EnvironmentWorkloadServingAcks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadServingAcksRow, error) {
+	rows, err := db.Query(ctx, environmentWorkloadServingAcks, graphID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentWorkloadServingAcksRow{}
+	for rows.Next() {
+		var i EnvironmentWorkloadServingAcksRow
+		if err := rows.Scan(&i.RouteGeneration, &i.NodeName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const environmentWorkloadServingCutoverWeightsMatch = `-- name: EnvironmentWorkloadServingCutoverWeightsMatch :one
+SELECT NOT EXISTS (
+    SELECT 1 FROM environment_workload_serving_routes route
+    JOIN deployments target ON target.id = route.deployment_id
+    WHERE route.graph_id = $1::uuid AND route.cutover_required
+      AND (target.status <> 'live' OR target.environment_workload_held OR target.traffic_percent <> 100)
+) AND NOT EXISTS (
+    SELECT 1 FROM environment_workload_serving_routes route
+    JOIN deployments target ON target.id = route.deployment_id
+    JOIN deployments sibling ON sibling.app_id = route.app_id AND sibling.scope = target.scope
+      AND sibling.status = 'live' AND sibling.id <> route.deployment_id
+    WHERE route.graph_id = $1::uuid AND route.cutover_required AND sibling.traffic_percent <> 0
+) AS cutover_weights_match
+`
+
+// A previous gateway acknowledgement becomes stale if managed candidate
+// traffic drifts. Retained routes are intentionally excluded because their
+// traffic policy is not owned by the environment definition.
+func (q *Queries) EnvironmentWorkloadServingCutoverWeightsMatch(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, environmentWorkloadServingCutoverWeightsMatch, graphID)
+	var cutover_weights_match pgtype.Bool
+	err := row.Scan(&cutover_weights_match)
+	return cutover_weights_match, err
+}
+
+const environmentWorkloadServingReceipt = `-- name: EnvironmentWorkloadServingReceipt :one
+SELECT graph_id::text AS graph_id, source_id::text AS source_id, release_set_id::text AS release_set_id,
+       source_generation, intent_version, revision_id::text AS revision_id, plan_hash,
+       expected_gateways, phase, served_at
+FROM environment_workload_serving_receipts
+WHERE graph_id = $1::uuid
+`
+
+type EnvironmentWorkloadServingReceiptRow struct {
+	GraphID          string
+	SourceID         string
+	ReleaseSetID     string
+	SourceGeneration int64
+	IntentVersion    int64
+	RevisionID       string
+	PlanHash         string
+	ExpectedGateways []string
+	Phase            string
+	ServedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) EnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, graphID pgtype.UUID) (EnvironmentWorkloadServingReceiptRow, error) {
+	row := db.QueryRow(ctx, environmentWorkloadServingReceipt, graphID)
+	var i EnvironmentWorkloadServingReceiptRow
+	err := row.Scan(
+		&i.GraphID,
+		&i.SourceID,
+		&i.ReleaseSetID,
+		&i.SourceGeneration,
+		&i.IntentVersion,
+		&i.RevisionID,
+		&i.PlanHash,
+		&i.ExpectedGateways,
+		&i.Phase,
+		&i.ServedAt,
+	)
+	return i, err
+}
+
+const environmentWorkloadServingRoutes = `-- name: EnvironmentWorkloadServingRoutes :many
+SELECT app_id::text AS app_id, deployment_id::text AS deployment_id, route_generation, cutover_required
+FROM environment_workload_serving_routes
+WHERE graph_id = $1::uuid
+ORDER BY app_id
+`
+
+type EnvironmentWorkloadServingRoutesRow struct {
+	AppID           string
+	DeploymentID    string
+	RouteGeneration int64
+	CutoverRequired bool
+}
+
+func (q *Queries) EnvironmentWorkloadServingRoutes(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadServingRoutesRow, error) {
+	rows, err := db.Query(ctx, environmentWorkloadServingRoutes, graphID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentWorkloadServingRoutesRow{}
+	for rows.Next() {
+		var i EnvironmentWorkloadServingRoutesRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.DeploymentID,
+			&i.RouteGeneration,
+			&i.CutoverRequired,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const environmentWorkloadServingWeightsMatch = `-- name: EnvironmentWorkloadServingWeightsMatch :one
+SELECT NOT EXISTS (
+    SELECT 1 FROM environment_workload_serving_routes route
+    JOIN deployments target ON target.id = route.deployment_id
+    WHERE route.graph_id = $1::uuid
+      AND (target.status <> 'live' OR target.environment_workload_held OR
+           (route.cutover_required AND target.traffic_percent <> 100) OR
+           (NOT route.cutover_required AND target.traffic_percent <= 0))
+) AND NOT EXISTS (
+    SELECT 1 FROM environment_workload_serving_routes route
+    JOIN deployments target ON target.id = route.deployment_id
+    JOIN deployments sibling ON sibling.app_id = route.app_id AND sibling.scope = target.scope
+      AND sibling.status = 'live' AND sibling.id <> route.deployment_id
+    WHERE route.graph_id = $1::uuid AND route.cutover_required AND sibling.traffic_percent <> 0
+) AND public.environment_workload_serving_ready($1::uuid) AS serving_weights_match
+`
+
+func (q *Queries) EnvironmentWorkloadServingWeightsMatch(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, environmentWorkloadServingWeightsMatch, graphID)
+	var serving_weights_match pgtype.Bool
+	err := row.Scan(&serving_weights_match)
+	return serving_weights_match, err
 }
 
 const exclusiveWorkAppScope = `-- name: ExclusiveWorkAppScope :one
@@ -12007,6 +12454,125 @@ func (q *Queries) InsertEnvironmentGitRevisionApproval(ctx context.Context, db D
 		arg.PollLeaseToken,
 	)
 	return err
+}
+
+const insertEnvironmentQualificationConfigReceipt = `-- name: InsertEnvironmentQualificationConfigReceipt :one
+INSERT INTO environment_qualification_config_receipts(request_id,attempt,graph_id,instance_id,capture_instance_id,api_env_sha256)
+VALUES($1::uuid,$2::bigint,$3::uuid,$4::uuid,
+ $5::uuid,$6::text)
+ON CONFLICT(instance_id) DO NOTHING
+RETURNING request_id,attempt,graph_id,instance_id,capture_instance_id,api_env_sha256,recorded_at
+`
+
+type InsertEnvironmentQualificationConfigReceiptParams struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	GraphID           pgtype.UUID
+	InstanceID        pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	ApiEnvSha256      string
+}
+
+func (q *Queries) InsertEnvironmentQualificationConfigReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentQualificationConfigReceiptParams) (EnvironmentQualificationConfigReceipt, error) {
+	row := db.QueryRow(ctx, insertEnvironmentQualificationConfigReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.GraphID,
+		arg.InstanceID,
+		arg.CaptureInstanceID,
+		arg.ApiEnvSha256,
+	)
+	var i EnvironmentQualificationConfigReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.InstanceID,
+		&i.CaptureInstanceID,
+		&i.ApiEnvSha256,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
+const insertEnvironmentQualificationFrameworkReadyReceipt = `-- name: InsertEnvironmentQualificationFrameworkReadyReceipt :one
+INSERT INTO environment_qualification_framework_ready_receipts(request_id,attempt,graph_id,capture_instance_id,instance_id,runtime,warmup_ms)
+VALUES($1::uuid,$2::bigint,$3::uuid,$4::uuid,
+ $5::uuid,$6::text,$7::bigint)
+ON CONFLICT(request_id,attempt) DO NOTHING
+RETURNING request_id,attempt,graph_id,capture_instance_id,instance_id,runtime,warmup_ms,recorded_at
+`
+
+type InsertEnvironmentQualificationFrameworkReadyReceiptParams struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	GraphID           pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	InstanceID        pgtype.UUID
+	Runtime           string
+	WarmupMs          int64
+}
+
+func (q *Queries) InsertEnvironmentQualificationFrameworkReadyReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentQualificationFrameworkReadyReceiptParams) (EnvironmentQualificationFrameworkReadyReceipt, error) {
+	row := db.QueryRow(ctx, insertEnvironmentQualificationFrameworkReadyReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.GraphID,
+		arg.CaptureInstanceID,
+		arg.InstanceID,
+		arg.Runtime,
+		arg.WarmupMs,
+	)
+	var i EnvironmentQualificationFrameworkReadyReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.CaptureInstanceID,
+		&i.InstanceID,
+		&i.Runtime,
+		&i.WarmupMs,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
+const insertEnvironmentWorkloadServingReceipt = `-- name: InsertEnvironmentWorkloadServingReceipt :execrows
+INSERT INTO environment_workload_serving_receipts
+    (graph_id, source_id, release_set_id, source_generation, intent_version, revision_id, plan_hash, expected_gateways, phase)
+VALUES
+    ($1::uuid, $2::uuid, $3::uuid,
+     $4::bigint, $5::bigint, $6::uuid,
+     $7::text, $8::text[], 'pending')
+ON CONFLICT (graph_id) DO NOTHING
+`
+
+type InsertEnvironmentWorkloadServingReceiptParams struct {
+	GraphID          pgtype.UUID
+	SourceID         pgtype.UUID
+	ReleaseSetID     pgtype.UUID
+	SourceGeneration int64
+	IntentVersion    int64
+	RevisionID       pgtype.UUID
+	PlanHash         string
+	ExpectedGateways []string
+}
+
+func (q *Queries) InsertEnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, arg InsertEnvironmentWorkloadServingReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, insertEnvironmentWorkloadServingReceipt,
+		arg.GraphID,
+		arg.SourceID,
+		arg.ReleaseSetID,
+		arg.SourceGeneration,
+		arg.IntentVersion,
+		arg.RevisionID,
+		arg.PlanHash,
+		arg.ExpectedGateways,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertEventWorkflowReceipt = `-- name: InsertEventWorkflowReceipt :exec
@@ -17385,6 +17951,34 @@ func (q *Queries) ListEnvironmentQualificationExecutionsForRecovery(ctx context.
 	return items, nil
 }
 
+const listEnvironmentServingGatewayNames = `-- name: ListEnvironmentServingGatewayNames :many
+SELECT name
+FROM compute_nodes
+WHERE active AND role IN ('compute-only', 'compute-node')
+  AND nullif(btrim(gateway_target_url), '') IS NOT NULL
+ORDER BY name
+`
+
+func (q *Queries) ListEnvironmentServingGatewayNames(ctx context.Context, db DBTX) ([]string, error) {
+	rows, err := db.Query(ctx, listEnvironmentServingGatewayNames)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnvironmentWorkloadQualificationGraphsForDispatch = `-- name: ListEnvironmentWorkloadQualificationGraphsForDispatch :many
 SELECT g.id FROM environment_workload_graphs g
 JOIN environment_git_sources s ON s.id=g.source_id
@@ -17394,19 +17988,30 @@ WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
  AND g.revision_id=s.approved_revision_id AND g.environment_id=s.environment_id
  AND c.status='active' AND c.abuse_hold_at IS NULL
  AND ($1::text='' OR g.id>nullif($1::text,'')::uuid)
- AND EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
-     AND coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)<>'{}'::jsonb)
- AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
-     AND coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)<>'{}'::jsonb
-     AND q.frozen_inputs->'baseline'->>'service_binding_transport'='https')
  AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
      JOIN apps a ON a.id=q.app_id
-     WHERE q.graph_id=g.id AND (q.execution_mode IN ('worker','job') OR a.account_id<>s.account_id OR a.project_id<>s.project_id
+     WHERE q.graph_id=g.id AND (a.account_id<>s.account_id OR a.project_id<>s.project_id
        OR a.status NOT IN ('active','evicted_cold') OR (a.app_protocol IS NOT NULL AND a.app_protocol<>'http1')
        OR (a.node_id IS NOT NULL AND a.node_id<>$2::uuid)
+       OR (q.execution_mode='job' AND (coalesce(jsonb_typeof(q.frozen_inputs->'job_smoke'),'null')<>'object'
+         OR coalesce(nullif(q.frozen_inputs->'service_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb
+         OR coalesce(nullif(q.frozen_inputs->'queue_bindings','null'::jsonb),'{}'::jsonb)<>'{}'::jsonb
+         OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) member
+             WHERE member->>'resource'=q.resource AND member->>'execution_mode'='job'
+               AND coalesce((member->>'job_smoke_configured')::boolean,false)
+               AND coalesce(nullif(member->'queue_modes','null'::jsonb),'{}'::jsonb)='{}'::jsonb)))
        OR NOT (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
        OR EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
        OR EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=q.id AND e.retired_at IS NULL)))
+ AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND ((q.execution_mode='worker' AND coalesce(jsonb_typeof(q.frozen_inputs->'queue_smoke'),'null')<>'object')
+       OR (q.execution_mode='job' AND coalesce(jsonb_typeof(q.frozen_inputs->'job_smoke'),'null')<>'object')
+       OR (q.execution_mode NOT IN ('worker','job') AND (coalesce(jsonb_typeof(q.frozen_inputs->'runtime'->'healthz'),'null')<>'string'
+         OR coalesce(jsonb_typeof(q.frozen_inputs->'runtime'->'port'),'null')<>'number'
+         OR coalesce(jsonb_typeof(q.frozen_inputs #> '{runtime,healthcheck,grpc}'),'null')<>'null'))))
+ AND EXISTS(SELECT 1 FROM environment_workload_qualification_requests q WHERE q.graph_id=g.id
+     AND NOT EXISTS(SELECT 1 FROM environment_qualification_smoke_receipts sr WHERE sr.request_id=q.id AND sr.attempt=q.attempt)
+     AND NOT EXISTS(SELECT 1 FROM environment_qualification_job_smoke_receipts jr WHERE jr.request_id=q.id AND jr.attempt=q.attempt))
  AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
      WHERE m ? 'candidate_deployment_id' AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
        WHERE q.graph_id=g.id AND q.resource=m->>'resource' AND q.deployment_id=(m->>'candidate_deployment_id')::uuid))
@@ -17423,9 +18028,8 @@ type ListEnvironmentWorkloadQualificationGraphsForDispatchParams struct {
 }
 
 // Graph discovery is advisory. Every member is claimed atomically by the
-// graph claim method, which rechecks source authority, artifacts and owners.
-// The page intentionally contains only complete HTTP/service binding graphs;
-// worker/job execution remains behind its separate adapter.
+// graph claim method, which rechecks source authority, artifacts, smoke policy
+// and owners. Job contracts use a distinct private one-shot execution path.
 func (q *Queries) ListEnvironmentWorkloadQualificationGraphsForDispatch(ctx context.Context, db DBTX, arg ListEnvironmentWorkloadQualificationGraphsForDispatchParams) ([]pgtype.UUID, error) {
 	rows, err := db.Query(ctx, listEnvironmentWorkloadQualificationGraphsForDispatch, arg.AfterGraphID, arg.NodeID, arg.PageLimit)
 	if err != nil {
@@ -17458,8 +18062,9 @@ WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
  AND c.status='active' AND c.abuse_hold_at IS NULL AND a.status IN ('active','evicted_cold')
  AND (a.node_id IS NULL OR a.node_id=$1::uuid)
  AND ($2::text='' OR q.id>nullif($2::text,'')::uuid)
- AND q.execution_mode<>'job' AND (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
+ AND q.execution_mode NOT IN ('job','worker') AND (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
  AND coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)='{}'::jsonb
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_smoke_receipts sr WHERE sr.request_id=q.id AND sr.attempt=q.attempt)
  AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
  AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.request_id=q.id AND e.retired_at IS NULL)
 ORDER BY q.id LIMIT $3::integer
@@ -18156,7 +18761,7 @@ func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInv
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.environment_workload_held
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -18269,6 +18874,7 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.GithubSourceRef,
 			&i.GithubInstallationID,
 			&i.EnvironmentWorkloadRuntime,
+			&i.EnvironmentWorkloadHeld,
 		); err != nil {
 			return nil, err
 		}
@@ -20157,6 +20763,53 @@ func (q *Queries) ListWorkflowScheduleCursors(ctx context.Context, db DBTX, appI
 	return items, nil
 }
 
+const liveEnvironmentWorkloadDeploymentsForServing = `-- name: LiveEnvironmentWorkloadDeploymentsForServing :many
+SELECT id::text AS id, status, traffic_percent, rollout_state, environment_workload_held
+FROM deployments
+WHERE app_id = $1::uuid AND scope = $2::text AND status = 'live'
+ORDER BY id
+FOR UPDATE
+`
+
+type LiveEnvironmentWorkloadDeploymentsForServingParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+type LiveEnvironmentWorkloadDeploymentsForServingRow struct {
+	ID                      string
+	Status                  string
+	TrafficPercent          int32
+	RolloutState            string
+	EnvironmentWorkloadHeld bool
+}
+
+func (q *Queries) LiveEnvironmentWorkloadDeploymentsForServing(ctx context.Context, db DBTX, arg LiveEnvironmentWorkloadDeploymentsForServingParams) ([]LiveEnvironmentWorkloadDeploymentsForServingRow, error) {
+	rows, err := db.Query(ctx, liveEnvironmentWorkloadDeploymentsForServing, arg.AppID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LiveEnvironmentWorkloadDeploymentsForServingRow{}
+	for rows.Next() {
+		var i LiveEnvironmentWorkloadDeploymentsForServingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.TrafficPercent,
+			&i.RolloutState,
+			&i.EnvironmentWorkloadHeld,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockAppEnvironmentSecretReferenceScope = `-- name: LockAppEnvironmentSecretReferenceScope :one
 SELECT e.id,e.project_id FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
  WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND a.status<>'deleted'
@@ -20737,6 +21390,24 @@ func (q *Queries) LockEnvironmentGitOpsRuntimeEffect(ctx context.Context, db DBT
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const lockEnvironmentGitOpsServingProject = `-- name: LockEnvironmentGitOpsServingProject :one
+SELECT id FROM projects
+WHERE id = $1::uuid AND account_id = $2::uuid
+FOR UPDATE
+`
+
+type LockEnvironmentGitOpsServingProjectParams struct {
+	ProjectID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockEnvironmentGitOpsServingProject(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsServingProjectParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockEnvironmentGitOpsServingProject, arg.ProjectID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockEnvironmentGitSource = `-- name: LockEnvironmentGitSource :one
@@ -21719,7 +22390,7 @@ func (q *Queries) LockProjectEnvironmentCloneGitSources(ctx context.Context, db 
 const lockRetainedRollbackDeployment = `-- name: LockRetainedRollbackDeployment :one
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.scope=$2::text
 AND d.id<>$3::uuid
-AND d.environment_workload_runtime IS NULL
+AND NOT d.environment_workload_held
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
     EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))))
@@ -22643,6 +23314,17 @@ SELECT nextval('automation_definition_versions')::bigint
 
 func (q *Queries) NextAutomationVersion(ctx context.Context, db DBTX) (int64, error) {
 	row := db.QueryRow(ctx, nextAutomationVersion)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const nextDeploymentRouteGenerationTx = `-- name: NextDeploymentRouteGenerationTx :one
+SELECT nextval('deployment_route_generation_seq')::bigint
+`
+
+func (q *Queries) NextDeploymentRouteGenerationTx(ctx context.Context, db DBTX) (int64, error) {
+	row := db.QueryRow(ctx, nextDeploymentRouteGenerationTx)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -29987,7 +30669,9 @@ SELECT jsonb_build_object(
         'id', a.id, 'slug', a.slug, 'type', a.type, 'workload_class', a.workload_class,
         'manifest',a.manifest, 'start_command',coalesce(a.start_command,''), 'runtime_base',coalesce(a.runtime,''),
         'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
-        'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest,'inputs',environment_workload_deployment_inputs(d)) ORDER BY d.id) FROM deployments d
+        'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest,
+            'source_url',coalesce(d.source_url,''),'commit_sha',coalesce(d.commit_sha,''),'source_root',coalesce(d.source_root,''),
+            'inputs',environment_workload_deployment_inputs(d),'managed',d.environment_workload_runtime IS NOT NULL) ORDER BY d.id) FROM deployments d
           WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
         'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'retired_at', b.retired_at,
             'intent', jsonb_build_object('queue_name', b.queue_name, 'mode', b.mode, 'workload_class', b.workload_class,
@@ -29999,7 +30683,7 @@ SELECT jsonb_build_object(
         'secret_refs', environment_scoped_secret_refs(a.id,e.slug),
         'suppressed_keys', environment_scoped_secret_suppressions(a.id,e.slug),
         'suppression_count', (SELECT count(*) FROM app_environment_secret_ref_suppressions r WHERE r.app_id=a.id AND r.account_id=s.account_id),
-        'live_deployments', coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'secret_refs',d.override_env_secrets) ORDER BY d.id)
+        'live_deployments', coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'secret_refs',d.override_env_secrets,'managed',d.environment_workload_runtime IS NOT NULL) ORDER BY d.id)
             FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
         'binding_count', (SELECT coalesce(sum((SELECT count(*) FROM jsonb_object_keys(w.service_bindings))),0) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.account_id=s.account_id),
         'secret_ref_count', (SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id AND r.account_id=s.account_id),
@@ -31381,20 +32065,23 @@ func (q *Queries) PutEnvironmentSecretReferenceSuppression(ctx context.Context, 
 }
 
 const putEnvironmentWorkloadIntent = `-- name: PutEnvironmentWorkloadIntent :one
-INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime,source_revision,service_bindings)
-VALUES($1::uuid,$2::uuid,$3::uuid,$4::jsonb,$5::jsonb,nullif($6::text,''),$7::jsonb)
-ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,service_bindings=excluded.service_bindings,updated_at=now()
-RETURNING account_id, app_id, environment_id, source, runtime, created_at, updated_at, source_revision, service_bindings
+INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,job_id,source,runtime,source_revision,service_bindings,schedule,variables)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::jsonb,$6::jsonb,nullif($7::text,''),$8::jsonb,$9::jsonb,$10::jsonb)
+ON CONFLICT(app_id,environment_id) DO UPDATE SET job_id=excluded.job_id,source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,service_bindings=excluded.service_bindings,schedule=excluded.schedule,variables=excluded.variables,updated_at=now()
+RETURNING account_id,app_id,environment_id,job_id,source,runtime,created_at,updated_at,source_revision,service_bindings,schedule,variables
 `
 
 type PutEnvironmentWorkloadIntentParams struct {
 	AccountID       pgtype.UUID
 	AppID           pgtype.UUID
 	EnvironmentID   pgtype.UUID
+	JobID           pgtype.UUID
 	Source          []byte
 	Runtime         []byte
 	SourceRevision  string
 	ServiceBindings []byte
+	Schedule        []byte
+	Variables       []byte
 }
 
 func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg PutEnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error) {
@@ -31402,22 +32089,28 @@ func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg
 		arg.AccountID,
 		arg.AppID,
 		arg.EnvironmentID,
+		arg.JobID,
 		arg.Source,
 		arg.Runtime,
 		arg.SourceRevision,
 		arg.ServiceBindings,
+		arg.Schedule,
+		arg.Variables,
 	)
 	var i AppEnvironmentWorkloadIntent
 	err := row.Scan(
 		&i.AccountID,
 		&i.AppID,
 		&i.EnvironmentID,
+		&i.JobID,
 		&i.Source,
 		&i.Runtime,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SourceRevision,
 		&i.ServiceBindings,
+		&i.Schedule,
+		&i.Variables,
 	)
 	return i, err
 }
@@ -33888,6 +34581,147 @@ func (q *Queries) RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, a
 	return err
 }
 
+const recordEnvironmentQualificationJobSmokeReceipt = `-- name: RecordEnvironmentQualificationJobSmokeReceipt :one
+INSERT INTO environment_qualification_job_smoke_receipts
+ (request_id,attempt,graph_id,instance_id,resource,policy_id,policy_sha256,result_sha256,exit_code,error_class,signal)
+VALUES($1::uuid,$2::bigint,$3::uuid,$4::uuid,
+ $5::text,$6::text,$7::text,$8::text,
+ $9::integer,$10::text,$11::integer)
+ON CONFLICT DO NOTHING
+RETURNING request_id,attempt,graph_id,instance_id,resource,policy_id,policy_sha256,result_sha256,exit_code,error_class,signal,recorded_at
+`
+
+type RecordEnvironmentQualificationJobSmokeReceiptParams struct {
+	RequestID    pgtype.UUID
+	Attempt      int64
+	GraphID      pgtype.UUID
+	InstanceID   pgtype.UUID
+	Resource     string
+	PolicyID     string
+	PolicySha256 string
+	ResultSha256 string
+	ExitCode     int32
+	ErrorClass   string
+	Signal       int32
+}
+
+func (q *Queries) RecordEnvironmentQualificationJobSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationJobSmokeReceiptParams) (EnvironmentQualificationJobSmokeReceipt, error) {
+	row := db.QueryRow(ctx, recordEnvironmentQualificationJobSmokeReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.GraphID,
+		arg.InstanceID,
+		arg.Resource,
+		arg.PolicyID,
+		arg.PolicySha256,
+		arg.ResultSha256,
+		arg.ExitCode,
+		arg.ErrorClass,
+		arg.Signal,
+	)
+	var i EnvironmentQualificationJobSmokeReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.InstanceID,
+		&i.Resource,
+		&i.PolicyID,
+		&i.PolicySha256,
+		&i.ResultSha256,
+		&i.ExitCode,
+		&i.ErrorClass,
+		&i.Signal,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
+const recordEnvironmentQualificationRestoreReceipt = `-- name: RecordEnvironmentQualificationRestoreReceipt :one
+INSERT INTO environment_qualification_restore_receipts(request_id,attempt,capture_instance_id,instance_id,runtime_inputs)
+VALUES($1::uuid,$2::bigint,$3::uuid,
+ $4::uuid,$5::jsonb)
+ON CONFLICT DO NOTHING
+RETURNING request_id,attempt,capture_instance_id,instance_id,runtime_inputs,recorded_at
+`
+
+type RecordEnvironmentQualificationRestoreReceiptParams struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	CaptureInstanceID pgtype.UUID
+	InstanceID        pgtype.UUID
+	RuntimeInputs     []byte
+}
+
+func (q *Queries) RecordEnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error) {
+	row := db.QueryRow(ctx, recordEnvironmentQualificationRestoreReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.CaptureInstanceID,
+		arg.InstanceID,
+		arg.RuntimeInputs,
+	)
+	var i EnvironmentQualificationRestoreReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.CaptureInstanceID,
+		&i.InstanceID,
+		&i.RuntimeInputs,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
+const recordEnvironmentQualificationSmokeReceipt = `-- name: RecordEnvironmentQualificationSmokeReceipt :one
+INSERT INTO environment_qualification_smoke_receipts(request_id,attempt,graph_id,capture_instance_id,instance_id,resource,policy_id,policy_sha256,result_sha256)
+VALUES($1::uuid,$2::bigint,$3::uuid,
+ $4::uuid,$5::uuid,$6::text,$7::text,
+ $8::text,$9::text)
+ON CONFLICT DO NOTHING
+RETURNING request_id,attempt,graph_id,capture_instance_id,instance_id,resource,policy_id,policy_sha256,result_sha256,recorded_at
+`
+
+type RecordEnvironmentQualificationSmokeReceiptParams struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	GraphID           pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	InstanceID        pgtype.UUID
+	Resource          string
+	PolicyID          string
+	PolicySha256      string
+	ResultSha256      string
+}
+
+func (q *Queries) RecordEnvironmentQualificationSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSmokeReceiptParams) (EnvironmentQualificationSmokeReceipt, error) {
+	row := db.QueryRow(ctx, recordEnvironmentQualificationSmokeReceipt,
+		arg.RequestID,
+		arg.Attempt,
+		arg.GraphID,
+		arg.CaptureInstanceID,
+		arg.InstanceID,
+		arg.Resource,
+		arg.PolicyID,
+		arg.PolicySha256,
+		arg.ResultSha256,
+	)
+	var i EnvironmentQualificationSmokeReceipt
+	err := row.Scan(
+		&i.RequestID,
+		&i.Attempt,
+		&i.GraphID,
+		&i.CaptureInstanceID,
+		&i.InstanceID,
+		&i.Resource,
+		&i.PolicyID,
+		&i.PolicySha256,
+		&i.ResultSha256,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
 const recordEnvironmentQualificationSnapshot = `-- name: RecordEnvironmentQualificationSnapshot :exec
 INSERT INTO environment_qualification_snapshot_receipts(instance_id,snapshot,inputs)
 VALUES($1::uuid,$2::jsonb,$3::jsonb)
@@ -36313,6 +37147,28 @@ func (q *Queries) ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accoun
 	return current_inflight, err
 }
 
+const resetEnvironmentWorkloadServingReceipt = `-- name: ResetEnvironmentWorkloadServingReceipt :execrows
+UPDATE environment_workload_serving_receipts
+SET release_set_id = $1::uuid,
+    expected_gateways = $2::text[],
+    phase = 'pending', served_at = NULL, updated_at = clock_timestamp()
+WHERE graph_id = $3::uuid
+`
+
+type ResetEnvironmentWorkloadServingReceiptParams struct {
+	ReleaseSetID     pgtype.UUID
+	ExpectedGateways []string
+	GraphID          pgtype.UUID
+}
+
+func (q *Queries) ResetEnvironmentWorkloadServingReceipt(ctx context.Context, db DBTX, arg ResetEnvironmentWorkloadServingReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, resetEnvironmentWorkloadServingReceipt, arg.ReleaseSetID, arg.ExpectedGateways, arg.GraphID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const resetManagedPostgresCutoverVerification = `-- name: ResetManagedPostgresCutoverVerification :exec
 UPDATE managed_postgres_cutover_credentials SET verified_at=NULL WHERE cutover_id=$1::text::uuid
 `
@@ -36533,7 +37389,7 @@ func (q *Queries) RetainCustomerOperationIdempotency(ctx context.Context, db DBT
 
 const retainedReleaseMemberDeploymentForUpdate = `-- name: RetainedReleaseMemberDeploymentForUpdate :one
 SELECT d.id FROM deployments d WHERE d.id=$1::uuid AND d.app_id=$2::uuid
-AND d.scope=$3::text AND d.status='live' AND (
+AND d.scope=$3::text AND d.status='live' AND NOT d.environment_workload_held AND (
     d.traffic_percent>0 OR d.traffic_percent_explicit
     OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
@@ -38639,6 +39495,17 @@ func (q *Queries) SetEnvironmentGitOpsLeaseContext(ctx context.Context, db DBTX,
 	return column_1, err
 }
 
+const setEnvironmentGitOpsServingContext = `-- name: SetEnvironmentGitOpsServingContext :one
+SELECT set_config('gregale.gitops_serving', $1::text, true)::text
+`
+
+func (q *Queries) SetEnvironmentGitOpsServingContext(ctx context.Context, db DBTX, leaseToken string) (string, error) {
+	row := db.QueryRow(ctx, setEnvironmentGitOpsServingContext, leaseToken)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const setEnvironmentQualificationCleanupContext = `-- name: SetEnvironmentQualificationCleanupContext :one
 SELECT set_config('gregale.gitops_qualification_cleanup',$1::text,true)::text
 `
@@ -38659,6 +39526,25 @@ func (q *Queries) SetEnvironmentWorkloadQualificationContext(ctx context.Context
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const setEnvironmentWorkloadServingTraffic = `-- name: SetEnvironmentWorkloadServingTraffic :execrows
+UPDATE deployments
+SET traffic_percent = $1::integer, traffic_percent_explicit = true
+WHERE id = $2::uuid AND status = 'live'
+`
+
+type SetEnvironmentWorkloadServingTrafficParams struct {
+	TrafficPercent int32
+	DeploymentID   pgtype.UUID
+}
+
+func (q *Queries) SetEnvironmentWorkloadServingTraffic(ctx context.Context, db DBTX, arg SetEnvironmentWorkloadServingTrafficParams) (int64, error) {
+	result, err := db.Exec(ctx, setEnvironmentWorkloadServingTraffic, arg.TrafficPercent, arg.DeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setExclusiveCaptureBarrier = `-- name: SetExclusiveCaptureBarrier :exec
@@ -40287,6 +41173,34 @@ func (q *Queries) UpsertDeploymentAlias(ctx context.Context, db DBTX, arg Upsert
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const upsertEnvironmentWorkloadServingRoute = `-- name: UpsertEnvironmentWorkloadServingRoute :exec
+INSERT INTO environment_workload_serving_routes (graph_id, app_id, deployment_id, route_generation, cutover_required)
+VALUES ($1::uuid, $2::uuid, $3::uuid,
+        $4::bigint, $5::boolean)
+ON CONFLICT (graph_id, app_id) DO UPDATE
+SET deployment_id = EXCLUDED.deployment_id, route_generation = EXCLUDED.route_generation,
+    cutover_required = EXCLUDED.cutover_required
+`
+
+type UpsertEnvironmentWorkloadServingRouteParams struct {
+	GraphID         pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	RouteGeneration int64
+	CutoverRequired bool
+}
+
+func (q *Queries) UpsertEnvironmentWorkloadServingRoute(ctx context.Context, db DBTX, arg UpsertEnvironmentWorkloadServingRouteParams) error {
+	_, err := db.Exec(ctx, upsertEnvironmentWorkloadServingRoute,
+		arg.GraphID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.RouteGeneration,
+		arg.CutoverRequired,
+	)
+	return err
 }
 
 const upsertEventSubscription = `-- name: UpsertEventSubscription :one

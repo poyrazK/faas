@@ -43,6 +43,7 @@ from ..models.app_manifest_secret_reload_signal_type_3_type_1 import (
     AppManifestSecretReloadSignalType3Type1,
     check_app_manifest_secret_reload_signal_type_3_type_1,
 )
+from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -81,6 +82,8 @@ class AppManifest:
     the app_secrets table at wake."""
     working_dir: None | str | Unset = UNSET
     port: int | None | Unset = UNSET
+    service_binding_transport: ServiceBindingTransport | Unset = UNSET
+    """Scheme for canonical service binding URLs; omitted manifests retain legacy HTTP behavior."""
     ports: list[WorkloadPort] | Unset = UNSET
     """Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness
     listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries
@@ -195,6 +198,10 @@ class AppManifest:
             port = UNSET
         else:
             port = self.port
+
+        service_binding_transport: str | Unset = UNSET
+        if not isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = check_service_binding_transport(self.service_binding_transport)
 
         ports: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.ports, Unset):
@@ -352,6 +359,8 @@ class AppManifest:
             field_dict["working_dir"] = working_dir
         if port is not UNSET:
             field_dict["port"] = port
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
         if ports is not UNSET:
             field_dict["ports"] = ports
         if healthz is not UNSET:
@@ -457,6 +466,13 @@ class AppManifest:
             return cast(int | None | Unset, data)
 
         port = _parse_port(d.pop("port", UNSET))
+
+        _service_binding_transport = d.pop("service_binding_transport", UNSET)
+        service_binding_transport: ServiceBindingTransport | Unset
+        if isinstance(_service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        else:
+            service_binding_transport = check_service_binding_transport(_service_binding_transport)
 
         _ports = d.pop("ports", UNSET)
         ports: list[WorkloadPort] | Unset = UNSET
@@ -763,6 +779,7 @@ class AppManifest:
             env_secrets=env_secrets,
             working_dir=working_dir,
             port=port,
+            service_binding_transport=service_binding_transport,
             ports=ports,
             healthz=healthz,
             user=user,

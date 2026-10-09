@@ -12,6 +12,27 @@
 
 package main
 
+import (
+	"context"
+
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+// QualificationFrameworkReadyRecorder stores a private restored-target
+// readiness event using the execution identity supplied by vmmd.
+type QualificationFrameworkReadyRecorder func(context.Context, state.EnvironmentQualificationExecution, string, int64) error
+
+// WithQualificationFrameworkReadyRecorder attaches the durable sink for the
+// private restored-target ready signal. Ordinary serving readiness continues
+// through Manager and is not inferred from this callback.
+func (r *FrameworkReadyReceiver) WithQualificationFrameworkReadyRecorder(recorder QualificationFrameworkReadyRecorder) *FrameworkReadyReceiver {
+	if r == nil {
+		return r
+	}
+	r.qualificationFrameworkReadyRecorder = recorder
+	return r
+}
+
 // WithSidecarEmitter attaches the audit sink for sidecar
 // event classes (issue #463 / ADR-069 / ADR-071 / PR-C).
 // Production wires SidecarEventsThroughPlatform wrapping

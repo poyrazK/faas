@@ -107,6 +107,10 @@ type JailerVMM struct {
 	// Private restored channels have their own callbacks and live producer
 	// authority. They never borrow daemon serving handlers or the CID index.
 	nativeRestoreChannels map[string]*nativeQualificationRestoreChannels
+	// Native qualification restore callbacks are a separate capability from
+	// ordinary guest receivers. They receive the frozen execution frame and
+	// must not resolve tenant identity through Manager.live.
+	nativeQualificationRestoreStreamHandlers map[uint32]nativeQualificationRestoreStreamHandler
 	// guestVsockStreamHandlers receive Firecracker guest-initiated streams on
 	// the per-instance <uds_path>_<port> endpoints. The outer compute VM cannot
 	// bind VMADDR_CID_HOST, so daemon-wide AF_VSOCK listeners are not a valid

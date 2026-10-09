@@ -80,7 +80,7 @@ func nativeCaptureOutputsFixture(t *testing.T) nativeCaptureOutputFixture {
 		t.Fatal(err)
 	}
 	capture := nativeQualificationCaptureRecord{Version: 1, InstanceID: frame.InstanceID, CaptureID: incoming.Generation,
-		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, StartedAt: q.clock().UTC()}
+		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, FCVersion: "1.7.0", StartedAt: q.clock().UTC()}
 	if err := q.writeCapture(incoming, capture); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestNativeSnapshotOutputsRefuseChangedCaptureBeforeProduction(t *testing.T)
 			case "capture_changed":
 				capture.StartedAt = capture.StartedAt.Add(time.Nanosecond)
 			case "capture_completed":
-				capture.CompletedAt, capture.Info = time.Now().UTC(), SnapshotInfo{MemBytes: 1, VMStateBytes: 1, StoredBytes: 1}
+				capture.CompletedAt, capture.Info, capture.FCVersion = time.Now().UTC(), SnapshotInfo{MemBytes: 1, VMStateBytes: 1, StoredBytes: 1}, "1.7.0"
 				capture.Backing = BackingIdentity{Version: 1, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64)}
 			case "permit_capture":
 				changed := capture
@@ -271,9 +271,7 @@ func TestNativeSnapshotOutputsRefuseChangedCaptureBeforeProduction(t *testing.T)
 				}
 			}
 			if capture != f.capture {
-				if err := f.q.writeCapture(f.incoming, capture); err != nil {
-					t.Fatal(err)
-				}
+				writeTamperedNativeQualificationCapture(t, f.q, f.incoming, capture)
 			}
 			if names, err := f.v.stageNativeSnapshotOutputs(ctx, lease, directory); err == nil || names != (nativeSnapshotOutputNames{}) || f.b.prepares != 0 {
 				t.Fatalf("changed capture reached production: names=%+v prepares=%d error=%v", names, f.b.prepares, err)

@@ -47,6 +47,16 @@ func (j *linuxNativeSnapshotPublicationJournal) ReadRestoreCohort(ctx context.Co
 		}
 		cohort.Objects[i] = receipt
 	}
+	if _, retiring, err := j.readRetirementStateLocked(ctx, intent, cohort.Objects, false); err != nil {
+		return cohort, err
+	} else if retiring {
+		return cohort, errors.New("native snapshot publication: original capture artifacts are retiring")
+	}
+	if _, retired, err := j.readRetirementLocked(ctx, intent, cohort.Objects); err != nil {
+		return cohort, err
+	} else if retired {
+		return cohort, errors.New("native snapshot publication: original capture artifacts are retired")
+	}
 	return cohort, ctx.Err()
 }
 

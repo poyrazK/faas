@@ -6738,7 +6738,7 @@ func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment
 }
 
 func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity) (Deployment, int64, error) {
-	if d.EnvironmentWorkloadHeld() {
+	if d.EnvironmentWorkloadManaged() {
 		return Deployment{}, 0, ErrInvalidArgument
 	}
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
@@ -7503,11 +7503,12 @@ func (s *PgStore) ConcurrencyForDeployment(ctx context.Context, appID, deploymen
 	return n, nil
 }
 
-// UpdateDeploymentMinInstances overwrites deployments.min_instances.
+// UpdateDeploymentMinInstances updates deployments.min_instances for ordinary
+// deployments. GitOps-managed deployment inputs remain frozen after activation.
 // Issue #557 closure / ADR-072 — the PATCH route at
 // /v1/deployments/{id} writes through this method. Returns the
-// fresh Deployment row (via the canonical scanDeployment) so the
-// handler can build the response without a second round-trip.
+// fresh Deployment row (via the canonical scanDeployment) so the handler can
+// build the response without a second round-trip.
 //
 // The caller (apid) validates the value against the parent app's
 // plan ceiling (api.Plan.MaxMinInstances) before reaching this
@@ -7516,14 +7517,18 @@ func (s *PgStore) ConcurrencyForDeployment(ctx context.Context, appID, deploymen
 func (s *PgStore) UpdateDeploymentMinInstances(ctx context.Context, id string, min int) (Deployment, error) {
 	row := s.pool.QueryRow(ctx, `
 		update deployments set min_instances = $2
-		 where id = $1
+		 where id = $1 and (environment_workload_runtime is null or min_instances = $2)
 		 returning `+deploymentSelectColumnsWithRootfs, id, min)
 	d, err := scanDeployment(row)
 	if err != nil {
-		// pgx returns ErrNoRows when the UPDATE matches zero rows;
-		// translate to the store's canonical not-found error so the
-		// handler emits RFC 7807 not_found.
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, ErrNotFound) {
+			var managed bool
+			if checkErr := s.pool.QueryRow(ctx, `select environment_workload_runtime is not null from deployments where id=$1`, id).Scan(&managed); checkErr != nil {
+				return Deployment{}, mapErr(checkErr)
+			}
+			if managed {
+				return Deployment{}, ErrInvalidArgument
+			}
 			return Deployment{}, ErrNotFound
 		}
 		return Deployment{}, err
@@ -7632,6 +7637,15 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	}
 	if activeCanary {
 		return Deployment{}, ErrTrafficChangeDuringCanary
+	}
+	var managedWorkload bool
+	if err := tx.QueryRow(ctx, `select exists (
+		select 1 from deployments where app_id=$1 and environment_workload_runtime is not null
+	)`, appID).Scan(&managedWorkload); err != nil {
+		return Deployment{}, fmt.Errorf("state: check managed workload before traffic update: %w", err)
+	}
+	if managedWorkload {
+		return Deployment{}, ErrConflict
 	}
 
 	if guard != nil {
@@ -7832,6 +7846,13 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: advance canary iterate siblings: %w", err)
+	}
+	managedWorkload, err := environmentGitOpsManagedForAppTx(ctx, tx, dep.AppID)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: check managed workload before canary advance: %w", err)
+	}
+	if managedWorkload {
+		return Deployment{}, 0, ErrConflict
 	}
 	// Use the database clock both for the gate and the new stage anchor. That
 	// keeps future worker checks correct when APID and meterd host clocks drift.
@@ -8505,7 +8526,12 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 	}
 	tag, err := s.pool.Exec(ctx, `
 		update deployments set status = $2, error = $3
-		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')`, id, string(status), nullString(errMsg))
+		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')
+		   and not ($2 = 'live' and status <> 'live' and exists (
+		     select 1 from deployments managed where managed.app_id=deployments.app_id
+		       and managed.scope=deployments.scope and managed.environment_workload_runtime is not null))
+		   and not (environment_workload_runtime is not null and status = 'live' and $2 not in ('live', 'failed'))`,
+		id, string(status), nullString(errMsg))
 	if err != nil {
 		return err
 	}
@@ -8524,6 +8550,17 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 // deployment failed so readers can never observe failed traffic or a split
 // rollout with no 100% fallback.
 func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedID string) error {
+	var held bool
+	var failedTraffic int
+	if err := tx.QueryRow(ctx, `SELECT environment_workload_held, traffic_percent FROM deployments WHERE id=$1`, failedID).Scan(&held, &failedTraffic); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	// A held GitOps candidate has never been allowed to serve traffic. Its
+	// failure must leave the existing release untouched; attempting to zero
+	// and restore the live sibling would bypass the serving-transition fence.
+	if held && failedTraffic == 0 {
+		return nil
+	}
 	var fallbackID string
 	err := tx.QueryRow(ctx, `
 		select id
@@ -9165,6 +9202,15 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 			return ErrNotFound
 		}
 		return fmt.Errorf("state: mark deployment live load: %w", err)
+	}
+	// Graph activation owns deployment promotion for every managed workload in
+	// the scope, including after the temporary hold has been lifted.
+	managed, err := environmentGitOpsManagedForScopeTx(ctx, tx, dep.AppID, dep.Scope)
+	if err != nil {
+		return fmt.Errorf("state: check managed workload before deployment promotion: %w", err)
+	}
+	if managed {
+		return ErrConflict
 	}
 	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
 		return err
@@ -10512,7 +10558,11 @@ func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDe
 		}
 		return Deployment{}, fmt.Errorf("state: prepare rollback load target: %w", err)
 	}
-	if target.EnvironmentWorkloadHeld() {
+	managed, err := environmentGitOpsManagedForScopeTx(ctx, tx, target.AppID, target.Scope)
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: check managed workload before rollback preparation: %w", err)
+	}
+	if managed {
 		return Deployment{}, ErrInvalidArgument
 	}
 	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
@@ -10566,12 +10616,22 @@ func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path, key string,
 	tag, err := s.pool.Exec(ctx,
 		`update deployments
 		    set rootfs_path = $2, rootfs_key = $3, rootfs_bytes = $4
-		  where id = $1`,
+		  where id = $1 AND NOT (environment_workload_runtime IS NOT NULL AND status = 'live'
+		    AND ROW(rootfs_path,rootfs_key,rootfs_bytes) IS DISTINCT FROM ROW($2::text,$3::text,$4::bigint))`,
 		id, nullString(path), nullString(key), bytes)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
+		var immutable bool
+		if err := s.pool.QueryRow(ctx, `select status='live' and environment_workload_runtime is not null
+			and ROW(rootfs_path,rootfs_key,rootfs_bytes) IS DISTINCT FROM ROW($2::text,$3::text,$4::bigint)
+			from deployments where id=$1`, id, nullString(path), nullString(key), bytes).Scan(&immutable); err != nil {
+			return mapErr(err)
+		}
+		if immutable {
+			return ErrInvalidStateTransition
+		}
 		return ErrNotFound
 	}
 	return nil
@@ -11425,12 +11485,20 @@ func (s *PgStore) SetDeploymentSourceURL(ctx context.Context, id, sourceURL, com
 	tag, err := s.pool.Exec(ctx,
 		`update deployments
 		    set source_url = $2, commit_sha = $3
-		  where id = $1`,
+		  where id = $1 and (environment_workload_runtime is null OR
+		    ROW(source_url,commit_sha) IS NOT DISTINCT FROM ROW($2::text,$3::text))`,
 		id, nullString(sourceURL), nullString(commitSHA))
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
+		var managed bool
+		if err := s.pool.QueryRow(ctx, `select environment_workload_runtime is not null from deployments where id=$1`, id).Scan(&managed); err != nil {
+			return mapErr(err)
+		}
+		if managed {
+			return ErrInvalidArgument
+		}
 		return ErrNotFound
 	}
 	return nil
@@ -15553,6 +15621,17 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 		return fmt.Errorf("state: invocations complete begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := s.completeInvocationTx(ctx, tx, id, attempt, result, false, classification...); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: invocations complete commit: %w", err)
+	}
+	return nil
+}
+
+func (s *PgStore) completeInvocationTx(ctx context.Context, tx pgx.Tx, id string, attempt int, result json.RawMessage,
+	allowUnkeyedAttempt bool, classification ...InvocationWorkClassification) (Invocation, error) {
 	var accountID string
 	var quotaReserved bool
 	var decisionJSON any
@@ -15570,7 +15649,9 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 			   and ((work_policy_name is null and $3 = 0
                  and not exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id))
              or (attempts=$3 and $3>0 and (work_policy_name is not null
-                 or exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id))))
+                 or exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id)))
+             or ($7 and attempts=$3 and $3>0 and work_policy_name is null
+                 and not exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id)))
 			 for update
 		)
 		update invocations as invocation
@@ -15585,32 +15666,29 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 		       quota_reserved = false
 		  from target
 		 where invocation.id = target.id
-			 returning target.account_id, target.quota_reserved`, id, nullableJSON(result), attempt, decisionJSON, outcomeCode, hasWorkClassification).Scan(&accountID, &quotaReserved); err != nil {
+		  returning target.account_id, target.quota_reserved`, id, nullableJSON(result), attempt, decisionJSON, outcomeCode, hasWorkClassification, allowUnkeyedAttempt).Scan(&accountID, &quotaReserved); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
+			return Invocation{}, ErrNotFound
 		}
-		return err
+		return Invocation{}, err
 	}
 	invocation, err := scanInvocation(tx.QueryRow(ctx,
 		`select `+invocationSelectCols+` from invocations where id = $1`, id))
 	if err != nil {
-		return fmt.Errorf("state: invocations complete destination lookup: %w", err)
+		return Invocation{}, fmt.Errorf("state: invocations complete destination lookup: %w", err)
 	}
 	if err := operationTransitionTx(ctx, tx, invocation, false); err != nil {
-		return err
+		return Invocation{}, err
 	}
 	if err := enqueueInvocationDestinationTx(ctx, tx, invocation); err != nil {
-		return err
+		return Invocation{}, err
 	}
 	if quotaReserved {
 		if err := decrementAccountAsyncInflightTx(ctx, tx, accountID); err != nil {
-			return err
+			return Invocation{}, err
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("state: invocations complete commit: %w", err)
-	}
-	return nil
+	return invocation, nil
 }
 
 // decrementAccountAsyncInflightTx is the tx-bound variant of
@@ -24751,7 +24829,7 @@ const deploymentSelectColumnsWithRootfs = `
 	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
 		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on,
-	coalesce(environment_workload_runtime::text,'')`
+	coalesce(environment_workload_runtime::text,''), environment_workload_held`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -24810,7 +24888,7 @@ const deploymentSelectColumnsQualified = `
 	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
 		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on,
-	coalesce(d.environment_workload_runtime::text,'')`
+	coalesce(d.environment_workload_runtime::text,''), d.environment_workload_held`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -24832,6 +24910,7 @@ var _ = deploymentSelectColumnsQualified
 // the SELECT projection so the destination count matches.
 func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *string, rootfsBytes *int64) error {
 	var kind, statusStr string
+	var environmentWorkloadHeld bool
 	var scanStatus *string
 	var scannedAt *time.Time
 	var parkedAt *time.Time
@@ -24928,10 +25007,11 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.APIHostingReceipt,
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn,
-		&d.EnvironmentWorkloadRuntime,
+		&d.EnvironmentWorkloadRuntime, &environmentWorkloadHeld,
 	); err != nil {
 		return mapErr(err)
 	}
+	d.EnvironmentWorkloadHeldValue = &environmentWorkloadHeld
 	if rootfsPath != nil {
 		d.RootfsPath = *rootfsPath
 	}
@@ -25463,6 +25543,12 @@ func mapErr(err error) error {
 			}
 			return err
 		case pgerrcode.CheckViolation:
+			if pgErr.ConstraintName == "environment_gitops_job_managed" {
+				return ErrEnvironmentGitManaged
+			}
+			if pgErr.ConstraintName == "environment_gitops_job_link_contract" {
+				return ErrConflict
+			}
 			if pgErr.ConstraintName == "queue_binding_environment_unavailable" {
 				return ErrQueueBindingEnvironmentUnavailable
 			}

@@ -9,10 +9,13 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.app_manifest import AppManifest
+    from ..models.environment_job_schedule import EnvironmentJobSchedule
+    from ..models.environment_job_smoke import EnvironmentJobSmoke
     from ..models.environment_policy import EnvironmentPolicy
     from ..models.environment_route_contract import EnvironmentRouteContract
     from ..models.environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
     from ..models.environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
+    from ..models.environment_workload_queue_smoke import EnvironmentWorkloadQueueSmoke
     from ..models.environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
     from ..models.environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
     from ..models.environment_workload_source import EnvironmentWorkloadSource
@@ -47,6 +50,15 @@ class EnvironmentWorkload:
     """Atomic environment-scoped declared-route collection."""
     policies: list[EnvironmentPolicy] | Unset = UNSET
     queue_bindings: EnvironmentWorkloadQueueBindings | Unset = UNSET
+    queue_smoke: EnvironmentWorkloadQueueSmoke | Unset = UNSET
+    """Reviewed synthetic JSON input for each enabled push worker queue binding. Qualification sends it directly to
+    the private candidate VM and never enqueues a customer message."""
+    job_smoke: EnvironmentJobSmoke | Unset = UNSET
+    """Reviewed argv-only command and short timeout for a job qualification attempt. The contract is frozen with
+    the candidate; isolated execution and exit evidence are not yet available."""
+    schedule: EnvironmentJobSchedule | Unset = UNSET
+    """Reviewed recurring schedule for a job workload. Cron and timezone map to Gregale's durable Job schedule;
+    production dispatch remains gated until the managed Job adapter is available."""
     queue_recoveries: EnvironmentWorkloadQueueRecoveries | Unset = UNSET
     """Explicit recovery of retained queues, keyed by a declared binding name and pinned to its original scoped
     binding UUID. Requires reviewed adoption before reconciliation can resume retained work; adoption itself
@@ -87,6 +99,18 @@ class EnvironmentWorkload:
         if not isinstance(self.queue_bindings, Unset):
             queue_bindings = self.queue_bindings.to_dict()
 
+        queue_smoke: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.queue_smoke, Unset):
+            queue_smoke = self.queue_smoke.to_dict()
+
+        job_smoke: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.job_smoke, Unset):
+            job_smoke = self.job_smoke.to_dict()
+
+        schedule: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.schedule, Unset):
+            schedule = self.schedule.to_dict()
+
         queue_recoveries: dict[str, Any] | Unset = UNSET
         if not isinstance(self.queue_recoveries, Unset):
             queue_recoveries = self.queue_recoveries.to_dict()
@@ -114,6 +138,12 @@ class EnvironmentWorkload:
             field_dict["policies"] = policies
         if queue_bindings is not UNSET:
             field_dict["queue_bindings"] = queue_bindings
+        if queue_smoke is not UNSET:
+            field_dict["queue_smoke"] = queue_smoke
+        if job_smoke is not UNSET:
+            field_dict["job_smoke"] = job_smoke
+        if schedule is not UNSET:
+            field_dict["schedule"] = schedule
         if queue_recoveries is not UNSET:
             field_dict["queue_recoveries"] = queue_recoveries
         if service_bindings is not UNSET:
@@ -124,10 +154,13 @@ class EnvironmentWorkload:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_manifest import AppManifest
+        from ..models.environment_job_schedule import EnvironmentJobSchedule
+        from ..models.environment_job_smoke import EnvironmentJobSmoke
         from ..models.environment_policy import EnvironmentPolicy
         from ..models.environment_route_contract import EnvironmentRouteContract
         from ..models.environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
         from ..models.environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
+        from ..models.environment_workload_queue_smoke import EnvironmentWorkloadQueueSmoke
         from ..models.environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
         from ..models.environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
         from ..models.environment_workload_source import EnvironmentWorkloadSource
@@ -187,6 +220,27 @@ class EnvironmentWorkload:
         else:
             queue_bindings = EnvironmentWorkloadQueueBindings.from_dict(_queue_bindings)
 
+        _queue_smoke = d.pop("queue_smoke", UNSET)
+        queue_smoke: EnvironmentWorkloadQueueSmoke | Unset
+        if isinstance(_queue_smoke, Unset):
+            queue_smoke = UNSET
+        else:
+            queue_smoke = EnvironmentWorkloadQueueSmoke.from_dict(_queue_smoke)
+
+        _job_smoke = d.pop("job_smoke", UNSET)
+        job_smoke: EnvironmentJobSmoke | Unset
+        if isinstance(_job_smoke, Unset):
+            job_smoke = UNSET
+        else:
+            job_smoke = EnvironmentJobSmoke.from_dict(_job_smoke)
+
+        _schedule = d.pop("schedule", UNSET)
+        schedule: EnvironmentJobSchedule | Unset
+        if isinstance(_schedule, Unset):
+            schedule = UNSET
+        else:
+            schedule = EnvironmentJobSchedule.from_dict(_schedule)
+
         _queue_recoveries = d.pop("queue_recoveries", UNSET)
         queue_recoveries: EnvironmentWorkloadQueueRecoveries | Unset
         if isinstance(_queue_recoveries, Unset):
@@ -210,6 +264,9 @@ class EnvironmentWorkload:
             routes=routes,
             policies=policies,
             queue_bindings=queue_bindings,
+            queue_smoke=queue_smoke,
+            job_smoke=job_smoke,
+            schedule=schedule,
             queue_recoveries=queue_recoveries,
             service_bindings=service_bindings,
         )

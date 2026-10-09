@@ -5,6 +5,8 @@ package fcvm
 import (
 	"context"
 	"errors"
+
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 type unsupportedNativeSnapshotPublicationJournal struct{}
@@ -30,4 +32,8 @@ func (unsupportedNativeSnapshotPublicationJournal) Begin(context.Context, native
 
 func (unsupportedNativeSnapshotPublicationJournal) Require(context.Context, nativeSnapshotPublicationIntent) error {
 	return errors.New("native snapshot publication: persistent ownership requires Linux")
+}
+
+func (unsupportedNativeSnapshotPublicationJournal) RecoverPendingRetirements(context.Context, storage.StorageBackend) error {
+	return errors.New("native snapshot publication: retirement recovery requires Linux")
 }

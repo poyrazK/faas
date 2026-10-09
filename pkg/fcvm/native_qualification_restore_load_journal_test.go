@@ -43,10 +43,9 @@ func nativeRestoreLoadRecordFixture(t *testing.T) (*nativeQualificationRestoreLo
 		t.Fatal(err)
 	}
 	capture.Info.MemBytes = int64(frame.RAMMB) << 20
+	capture.FCVersion = "1.7.0"
 	capture.Backing = BackingIdentity{Version: 1, Kernel: "sha256:" + strings.Repeat("a", 64), Base: "sha256:" + strings.Repeat("b", 64)}
-	if err := j.incoming.writeCapture(source, capture); err != nil {
-		t.Fatal(err)
-	}
+	writeTamperedNativeQualificationCapture(t, j.incoming, source, capture)
 	initial := capture
 	initial.CompletedAt, initial.Info, initial.Backing = time.Time{}, SnapshotInfo{}, BackingIdentity{}
 	backings := nativeSnapshotBackingRecord{Version: 1, Capture: initial, Backing: capture.Backing}
@@ -57,7 +56,7 @@ func nativeRestoreLoadRecordFixture(t *testing.T) (*nativeQualificationRestoreLo
 	if err := j.incoming.writeBackings(backings); err != nil {
 		t.Fatal(err)
 	}
-	target, err := j.claim(ctx, frame)
+	target, err := j.claim(ctx, frame, "1.7.0")
 	if err != nil {
 		t.Fatal(err)
 	}

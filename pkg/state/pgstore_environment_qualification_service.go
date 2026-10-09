@@ -13,6 +13,7 @@ import (
 )
 
 var _ EnvironmentQualificationServiceStore = (*PgStore)(nil)
+var _ EnvironmentQualificationServiceAliasStore = (*PgStore)(nil)
 
 func qualificationNetworkInstance(ctx context.Context, db sqlc.DBTX, nodeID, hostIP string) (string, bool, error) {
 	rows, err := sqlc.New().EnvironmentQualificationNetworkInstances(ctx, db, sqlc.EnvironmentQualificationNetworkInstancesParams{NodeID: nodeID, HostIp: hostIP})
@@ -52,6 +53,64 @@ func (s *PgStore) EnvironmentQualificationNetworkCaller(ctx context.Context, nod
 	}
 	_, held, err := qualificationNetworkInstance(ctx, s.pool, nodeID, hostIP)
 	return held, err
+}
+
+// EnvironmentQualificationServiceAliasAllowed lets a current held graph
+// caller resolve only aliases present in its frozen scoped bindings. The
+// request route rechecks the observed node/IP and graph before forwarding.
+func (s *PgStore) EnvironmentQualificationServiceAliasAllowed(ctx context.Context, callerAppID, service string) (bool, error) {
+	if !qualificationRecoveryUUIDValid(callerAppID) {
+		return false, ErrInvalidArgument
+	}
+	service = strings.ToLower(strings.TrimSpace(service))
+	if !api.ValidAppSlug(service) {
+		return false, ErrInvalidArgument
+	}
+	const query = `
+SELECT EXISTS (
+ SELECT 1
+ FROM environment_qualification_executions e
+ JOIN environment_workload_qualification_requests q ON q.id=e.request_id
+ JOIN environment_workload_graphs g ON g.id=q.graph_id
+ JOIN environment_git_sources s ON s.id=g.source_id
+ JOIN accounts c ON c.id=s.account_id
+ JOIN apps a ON a.id=q.app_id
+ JOIN instances i ON i.id=e.instance_id
+ JOIN deployments d ON d.id=i.deployment_id
+ WHERE e.dispatch_started AND e.retired_at IS NULL
+  AND e.frame->>'instance_id'=i.id::text
+  AND e.frame->>'request_id'=q.id::text
+  AND e.frame->>'graph_id'=g.id::text
+  AND e.frame->>'app_id'=q.app_id::text AND q.app_id=$1::uuid
+  AND e.frame->>'resource'=q.resource AND e.frame->>'attempt'=q.attempt::text
+  AND coalesce(e.frame->>'capture_instance_id',e.frame->>'instance_id')=q.reserved_instance_id::text
+  AND e.frame->>'source_id'=s.id::text AND e.frame->>'environment_id'=g.environment_id::text
+  AND e.frame->>'revision_id'=g.revision_id::text AND e.frame->>'generation'=g.generation::text
+  AND e.frame->>'intent_version'=g.intent_version::text AND e.frame->>'plan_hash'=g.plan_hash
+  AND e.frame->>'deployment_id'=q.deployment_id::text AND i.deployment_id=q.deployment_id
+  AND e.frame->>'node_id'=i.node_id::text AND e.frame->>'wake_id'=i.wake_id::text
+  AND i.app_id=q.app_id AND i.state='running' AND d.environment_workload_runtime=q.frozen_inputs
+  AND a.account_id=s.account_id AND a.project_id=s.project_id AND a.status IN ('active','evicted_cold')
+  AND q.phase='claimed' AND q.lease_until>clock_timestamp()
+  AND g.phase='prepared' AND g.generation=s.generation AND g.intent_version=s.intent_version
+  AND g.revision_id=s.approved_revision_id AND g.environment_id=s.environment_id
+  AND s.mode='enforce' AND NOT s.suspended AND c.status='active' AND c.abuse_hold_at IS NULL
+  AND EXISTS (
+   SELECT 1 FROM environment_qualification_config_receipts config
+   WHERE config.instance_id=e.instance_id AND config.request_id=q.id AND config.attempt=q.attempt
+    AND config.graph_id=g.id AND config.capture_instance_id IS NOT DISTINCT FROM e.capture_instance_id
+  )
+  AND EXISTS (
+   SELECT 1 FROM jsonb_each(coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)) AS binding(name,value)
+   WHERE lower(binding.value->>'workload')=$2::text
+  )
+)
+`
+	var allowed bool
+	if err := s.pool.QueryRow(ctx, query, callerAppID, service).Scan(&allowed); err != nil {
+		return false, mapErr(err)
+	}
+	return allowed, nil
 }
 
 func (s *PgStore) qualificationServiceEndpointTx(ctx context.Context, tx pgx.Tx, request EnvironmentWorkloadQualificationRequest, instanceID string) (EnvironmentQualificationExecutionStatus, Instance, error) {
@@ -101,6 +160,13 @@ func (s *PgStore) qualificationServiceEndpointTx(ctx context.Context, tx pgx.Tx,
 	config, err := q.InstanceRuntimeConfigReceipt(ctx, tx, row.InstanceID)
 	if err != nil {
 		return zero, Instance{}, mapErr(err)
+	}
+	guestConfig, err := q.EnvironmentQualificationConfigReceipt(ctx, tx, row.InstanceID)
+	if err != nil {
+		return zero, Instance{}, mapErr(err)
+	}
+	if !qualificationConfigReceiptMatchesFrame(qualificationConfigReceiptFromSQL(guestConfig), request, status.Execution) {
+		return zero, Instance{}, ErrConflict
 	}
 	if pgUUIDString(config.WakeID) != ins.WakeID || config.Scope != request.FrozenInputs.Scope {
 		return zero, Instance{}, ErrConflict

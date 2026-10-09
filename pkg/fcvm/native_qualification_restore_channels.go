@@ -4,6 +4,7 @@ package fcvm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"sync"
@@ -17,6 +18,94 @@ import (
 // endpoint. A frame field, captured CID or ordinary Manager identity cannot
 // select a serving receiver or credential source.
 type nativeQualificationRestoreStreamHandler func(context.Context, state.EnvironmentQualificationExecution, net.Conn) error
+
+func nativeRestoreChannelPorts() [3]uint32 {
+	return [3]uint32{VsockGuestEventHostPort, VsockWorkloadIdentityHostPort, VsockRuntimeConfigHostPort}
+}
+
+// RegisterEnvironmentQualificationRestoreStreamHandler installs one
+// qualification-only platform callback. The dedicated restore transport
+// never adapts or falls back to a serving receiver.
+func (v *JailerVMM) RegisterEnvironmentQualificationRestoreStreamHandler(port uint32, handler func(context.Context, state.EnvironmentQualificationExecution, net.Conn) error) error {
+	if v == nil || port == 0 || handler == nil {
+		return errors.New("native restore channels: VMM, supported port, and handler are required")
+	}
+	supported := false
+	for _, candidate := range nativeRestoreChannelPorts() {
+		if port == candidate {
+			supported = true
+			break
+		}
+	}
+	if !supported {
+		return fmt.Errorf("native restore channels: port %d is not a supported platform endpoint", port)
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.nativeQualificationRestoreStreamHandlers == nil {
+		v.nativeQualificationRestoreStreamHandlers = make(map[uint32]nativeQualificationRestoreStreamHandler)
+	}
+	if _, exists := v.nativeQualificationRestoreStreamHandlers[port]; exists {
+		return fmt.Errorf("native restore channels: handler already registered on port %d", port)
+	}
+	v.nativeQualificationRestoreStreamHandlers[port] = handler
+	return nil
+}
+
+// nativeQualificationRestoreHandlers binds the registered platform handlers
+// to the first live restore producer. The channel server still supplies the
+// execution frame, but it cannot choose a handler or an instance identity;
+// both come from the persisted restore authority and daemon registration.
+func (v *JailerVMM) nativeQualificationRestoreHandlers(ctx context.Context, lease Lease) (handlers map[uint32]nativeQualificationRestoreStreamHandler, result error) {
+	if v == nil || ctx == nil {
+		return nil, errors.New("native restore channels: VMM and context are required")
+	}
+	r := v.nativeRecovery
+	target, ok := ctx.Value(nativeQualificationRestoreContextKey{}).(nativeQualificationRestoreRecord)
+	if r == nil || r.journal == nil || !ok || target.Execution.InstanceID != lease.Instance ||
+		target.validate(target.Execution.NodeID) != nil || ctx.Err() != nil {
+		return nil, errors.Join(ctx.Err(), errors.New("native restore channels: original target capability is required"))
+	}
+	lock, producer, err := r.journal.lockQualificationProducer(ctx, lease.Instance)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { result = errors.Join(result, lock.Close()) }()
+	if producer == nil || producer.restore == nil || *producer.restore != target || producer.NativeGeneration == "" ||
+		!sameNativePhysicalLease(lease, producer.NativeLease) || r.generation(lease.Instance) != producer.NativeGeneration {
+		return nil, errors.New("native restore channels: original live target producer changed")
+	}
+
+	v.mu.Lock()
+	registered := make(map[uint32]nativeQualificationRestoreStreamHandler, len(nativeRestoreChannelPorts()))
+	for _, port := range nativeRestoreChannelPorts() {
+		if handler := v.nativeQualificationRestoreStreamHandlers[port]; handler != nil {
+			registered[port] = handler
+		}
+	}
+	v.mu.Unlock()
+	if len(registered) != len(nativeRestoreChannelPorts()) {
+		return nil, errors.New("native restore channels: all registered platform handlers are required")
+	}
+
+	handlers = make(map[uint32]nativeQualificationRestoreStreamHandler, len(registered))
+	for port, handler := range registered {
+		port, handler := port, handler
+		handlers[port] = func(streamCtx context.Context, execution state.EnvironmentQualificationExecution, conn net.Conn) error {
+			if execution != target.Execution {
+				return errors.New("native restore channels: stream execution differs from original target")
+			}
+			if err := streamCtx.Err(); err != nil {
+				return err
+			}
+			if err := handler(streamCtx, execution, conn); err != nil {
+				return fmt.Errorf("native restore platform handler %d: %w", port, err)
+			}
+			return nil
+		}
+	}
+	return handlers, nil
+}
 
 type nativeQualificationRestoreChannelPeer interface {
 	nativeQualificationRestoreFence

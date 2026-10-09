@@ -45,6 +45,15 @@ func (r *PrefixRouter) RetireExclusiveArtifact(ctx context.Context, receipt Excl
 	return RetireExclusiveArtifact(ctx, b, receipt)
 }
 
+func (r *PrefixRouter) CheckExclusiveArtifactRetirement(ctx context.Context, receipt ExclusiveArtifactReceipt) error {
+	b, remainder, _, err := r.dispatch(receipt.Key)
+	if err != nil {
+		return err
+	}
+	receipt.Key = remainder
+	return CheckExclusiveArtifactRetirement(ctx, b, receipt)
+}
+
 func (b *FallbackStorageBackend) CheckExclusiveArtifact(ctx context.Context, key string) error {
 	return CheckExclusiveArtifact(ctx, b.primary, key)
 }
@@ -56,6 +65,9 @@ func (b *FallbackStorageBackend) GetExclusiveArtifact(ctx context.Context, recei
 }
 func (b *FallbackStorageBackend) RetireExclusiveArtifact(ctx context.Context, receipt ExclusiveArtifactReceipt) error {
 	return RetireExclusiveArtifact(ctx, b.primary, receipt)
+}
+func (b *FallbackStorageBackend) CheckExclusiveArtifactRetirement(ctx context.Context, receipt ExclusiveArtifactReceipt) error {
+	return CheckExclusiveArtifactRetirement(ctx, b.primary, receipt)
 }
 
 func (c *LocalCacheBackend) CheckExclusiveArtifact(ctx context.Context, key string) error {
@@ -69,4 +81,7 @@ func (c *LocalCacheBackend) GetExclusiveArtifact(ctx context.Context, receipt Ex
 }
 func (c *LocalCacheBackend) RetireExclusiveArtifact(ctx context.Context, receipt ExclusiveArtifactReceipt) error {
 	return RetireExclusiveArtifact(ctx, c.parent, receipt)
+}
+func (c *LocalCacheBackend) CheckExclusiveArtifactRetirement(ctx context.Context, receipt ExclusiveArtifactReceipt) error {
+	return CheckExclusiveArtifactRetirement(ctx, c.parent, receipt)
 }

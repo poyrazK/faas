@@ -511,12 +511,15 @@ type AppEnvironmentWorkloadIntent struct {
 	AccountID       pgtype.UUID
 	AppID           pgtype.UUID
 	EnvironmentID   pgtype.UUID
+	JobID           pgtype.UUID
 	Source          []byte
 	Runtime         []byte
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
 	SourceRevision  pgtype.Text
 	ServiceBindings []byte
+	Schedule        []byte
+	Variables       []byte
 }
 
 type AppError struct {
@@ -1712,6 +1715,7 @@ type Deployment struct {
 	GithubSourceRef            pgtype.Text
 	GithubInstallationID       pgtype.Int8
 	EnvironmentWorkloadRuntime []byte
+	EnvironmentWorkloadHeld    bool
 }
 
 type DeploymentAlias struct {
@@ -2116,6 +2120,16 @@ type EnvironmentManagementOverride struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type EnvironmentQualificationConfigReceipt struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	GraphID           pgtype.UUID
+	InstanceID        pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	ApiEnvSha256      string
+	RecordedAt        pgtype.Timestamptz
+}
+
 type EnvironmentQualificationExecution struct {
 	InstanceID        pgtype.UUID
 	RequestID         pgtype.UUID
@@ -2128,12 +2142,60 @@ type EnvironmentQualificationExecution struct {
 	CaptureInstanceID pgtype.UUID
 }
 
+type EnvironmentQualificationFrameworkReadyReceipt struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	GraphID           pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	InstanceID        pgtype.UUID
+	Runtime           string
+	WarmupMs          int64
+	RecordedAt        pgtype.Timestamptz
+}
+
+type EnvironmentQualificationJobSmokeReceipt struct {
+	RequestID    pgtype.UUID
+	Attempt      int64
+	GraphID      pgtype.UUID
+	InstanceID   pgtype.UUID
+	Resource     string
+	PolicyID     string
+	PolicySha256 string
+	ResultSha256 string
+	ExitCode     int32
+	ErrorClass   string
+	Signal       int32
+	RecordedAt   pgtype.Timestamptz
+}
+
+type EnvironmentQualificationRestoreReceipt struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	CaptureInstanceID pgtype.UUID
+	InstanceID        pgtype.UUID
+	RuntimeInputs     []byte
+	RecordedAt        pgtype.Timestamptz
+}
+
 type EnvironmentQualificationRestoreReservation struct {
 	InstanceID        pgtype.UUID
 	CaptureInstanceID pgtype.UUID
 	RequestID         pgtype.UUID
 	Attempt           int64
 	CreatedAt         pgtype.Timestamptz
+}
+
+type EnvironmentQualificationSmokeReceipt struct {
+	RequestID         pgtype.UUID
+	Attempt           int64
+	GraphID           pgtype.UUID
+	CaptureInstanceID pgtype.UUID
+	InstanceID        pgtype.UUID
+	Resource          string
+	PolicyID          string
+	PolicySha256      string
+	ResultSha256      string
+	RecordedAt        pgtype.Timestamptz
 }
 
 type EnvironmentQualificationSnapshotReceipt struct {
@@ -2176,6 +2238,47 @@ type EnvironmentWorkloadQualificationRequest struct {
 	LeaseUntil         pgtype.Timestamptz
 	Attempt            int64
 	ReservedInstanceID pgtype.UUID
+}
+
+type EnvironmentWorkloadServingQueueAck struct {
+	GraphID        pgtype.UUID
+	BindingID      pgtype.UUID
+	Mode           string
+	TriggerID      pgtype.UUID
+	AppID          pgtype.UUID
+	DeploymentID   pgtype.UUID
+	InvocationID   pgtype.UUID
+	AcknowledgedAt pgtype.Timestamptz
+}
+
+type EnvironmentWorkloadServingReceipt struct {
+	GraphID          pgtype.UUID
+	SourceID         pgtype.UUID
+	ReleaseSetID     pgtype.UUID
+	SourceGeneration int64
+	IntentVersion    int64
+	RevisionID       pgtype.UUID
+	PlanHash         string
+	ExpectedGateways []string
+	Phase            string
+	StartedAt        pgtype.Timestamptz
+	ServedAt         pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type EnvironmentWorkloadServingRoute struct {
+	GraphID         pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	CutoverRequired bool
+	RouteGeneration int64
+}
+
+type EnvironmentWorkloadServingRouteAck struct {
+	GraphID         pgtype.UUID
+	RouteGeneration int64
+	NodeName        string
+	AcknowledgedAt  pgtype.Timestamptz
 }
 
 type Event struct {

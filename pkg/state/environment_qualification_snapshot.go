@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ type EnvironmentQualificationSnapshot struct {
 	CaptureID         string `json:"capture_id"`
 	NativeGeneration  string `json:"native_generation"`
 	KernelBootID      string `json:"kernel_boot_id"`
+	FCVersion         string `json:"fc_version"`
 	StorageKey        string `json:"storage_key"`
 	VMStateStorageKey string `json:"vmstate_storage_key"`
 	DriveStorageKey   string `json:"drive_storage_key"`
@@ -52,7 +54,8 @@ func ValidateEnvironmentQualificationSnapshot(frame EnvironmentQualificationExec
 	}
 	mem := SnapshotCaptureMemKey(frame.DeploymentID, SnapshotTierWarm, proof.CaptureID)
 	snapshot := Snapshot{StorageKey: mem}
-	if proof.CaptureID == proof.NativeGeneration || proof.StorageKey != mem || proof.VMStateStorageKey != SnapshotVMStateKey(snapshot) ||
+	if strings.TrimSpace(proof.FCVersion) == "" || len(proof.FCVersion) > 256 || proof.FCVersion != strings.TrimSpace(proof.FCVersion) ||
+		proof.CaptureID == proof.NativeGeneration || proof.StorageKey != mem || proof.VMStateStorageKey != SnapshotVMStateKey(snapshot) ||
 		proof.DriveStorageKey != SnapshotDriveKey(snapshot) || proof.BackingStorageKey != SnapshotBackingKey(snapshot) ||
 		proof.MemBytes <= 0 || proof.VMStateBytes <= 0 || proof.StoredBytes <= 0 {
 		return fmt.Errorf("qualification capture namespace or completion is unconfirmed: %w", ErrConflict)

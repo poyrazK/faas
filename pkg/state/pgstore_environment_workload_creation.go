@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -67,8 +68,23 @@ func (s *PgStore) PrepareEnvironmentGitOpsWorkloads(ctx context.Context, lease E
 	}
 	createdPlan := plan
 	createdPlan.Changes = environmentWorkloadCreationChanges(plan, apps)
-	for _, row := range changedWorkloadIntents(snapshot, createdPlan, observed.State.ResourceIDs, false) {
+	workloadRows := changedWorkloadIntents(snapshot, createdPlan, observed.State.ResourceIDs, false)
+	for _, resource := range environmentWorkloadCreationNames(apps) {
+		appModel := apps[resource]
+		row, exists := workloadRows[appModel.ID]
+		if !exists {
+			continue
+		}
 		row.AccountID = source.AccountID
+		if row.Schedule != nil {
+			app := gitOpsIntentApp{ID: appModel.ID, Slug: appModel.Slug, Type: appModel.Type,
+				WorkloadClass: appModel.WorkloadClass, Manifest: appModel.Manifest, StartCommand: appModel.StartCommand}
+			name := strings.TrimPrefix(resource, "workload/")
+			row, err = syncEnvironmentGitOpsJobTx(ctx, tx, source, app, row, desired.Definition.Workloads[name], snapshot.Plan)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if _, err := putWorkloadIntentTx(ctx, tx, row); err != nil {
 			return nil, err
 		}

@@ -168,6 +168,10 @@ type JobVMMAPI interface {
 	WaitJobExit(context.Context, string, time.Duration) (fcvm.JobExitPayload, error)
 }
 
+type JobStartVMMAPI interface {
+	ReleaseJobStart(context.Context, string) error
+}
+
 // ExecutionVMMAPI is the optional post-restore execution surface. Keeping it
 // separate from VmmdAPI preserves compatibility with older vmmd fakes and
 // makes capability negotiation explicit: a node without a configured
@@ -688,7 +692,18 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 
 // JobColdBoot starts a job-task VM through the optional Manager job surface.
 func (s *Server) JobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest) (*vmmdpb.JobColdBootResponse, error) {
-	const op = "JobColdBoot"
+	return s.jobColdBoot(ctx, req, false)
+}
+
+func (s *Server) JobColdBootHeld(ctx context.Context, req *vmmdpb.JobColdBootRequest) (*vmmdpb.JobColdBootResponse, error) {
+	return s.jobColdBoot(ctx, req, true)
+}
+
+func (s *Server) jobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest, startHeld bool) (*vmmdpb.JobColdBootResponse, error) {
+	op := "JobColdBoot"
+	if startHeld {
+		op = "JobColdBootHeld"
+	}
 	start := time.Now()
 	jobVMM, ok := s.vmm.(JobVMMAPI)
 	if !ok {
@@ -702,7 +717,23 @@ func (s *Server) JobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
-	inst, err := jobVMM.BootJob(ctx, boot)
+	boot.StartHeld = startHeld
+	var inst *fcvm.Instance
+	if req.GetQualificationExecution() != nil {
+		qualifier, supported := s.vmm.(environmentQualificationJobVMMAPI)
+		if !supported {
+			err = state.ErrConflict
+		} else {
+			ctx = withIncomingCorrelation(ctx)
+			var frame state.EnvironmentQualificationExecution
+			frame, err = s.qualificationFrame(ctx, req.GetQualificationExecution())
+			if err == nil {
+				inst, err = qualifier.BootEnvironmentQualificationJob(ctx, frame, boot)
+			}
+		}
+	} else {
+		inst, err = jobVMM.BootJob(ctx, boot)
+	}
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		s.log.Error("vmmd: job cold boot failed", "instance", req.GetInstance(),
@@ -714,10 +745,41 @@ func (s *Server) JobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 			"Job boot failed", "vmmd returned an empty instance")
 		return nil, grpcerr.ToStatus(err)
 	}
+	if inst.Lease.Netns == "" || !inst.Lease.HostIP.Is4() || inst.Lease.UID <= 0 ||
+		int64(int32(inst.Lease.UID)) != int64(inst.Lease.UID) {
+		err := api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Job boot failed", "vmmd returned an incomplete runtime identity")
+		return nil, grpcerr.ToStatus(err)
+	}
+	if inst.JobStartGateEnabled != startHeld {
+		err := api.NewProblem(int(codes.Internal), api.CodeInternal,
+			"Job boot failed", "vmmd did not honor the requested held-start contract")
+		return nil, grpcerr.ToStatus(err)
+	}
 	return &vmmdpb.JobColdBootResponse{
-		Instance: inst.Lease.Instance,
-		NodeId:   boot.NodeID,
+		Instance:  inst.Lease.Instance,
+		NodeId:    boot.NodeID,
+		Netns:     inst.Lease.Netns,
+		HostIp:    inst.Lease.HostIP.String(),
+		GuestUid:  int32(inst.Lease.UID),
+		StartHeld: startHeld,
 	}, nil
+}
+
+func (s *Server) ReleaseJobStart(ctx context.Context, req *vmmdpb.ReleaseJobStartRequest) (*vmmdpb.ReleaseJobStartResponse, error) {
+	if req == nil || req.GetInstance() == "" {
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid job start release", "instance is required"))
+	}
+	releaser, ok := s.vmm.(JobStartVMMAPI)
+	if !ok {
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Held job start unavailable", "vmmd job start gate is not configured"))
+	}
+	if err := releaser.ReleaseJobStart(ctx, req.GetInstance()); err != nil {
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	return &vmmdpb.ReleaseJobStartResponse{Instance: req.GetInstance(), Released: true}, nil
 }
 
 // ExecuteExecution sends one validated payload to an already restored

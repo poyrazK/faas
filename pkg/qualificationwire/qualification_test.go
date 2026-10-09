@@ -156,4 +156,18 @@ func TestNativeRetirementWireRefusesGenericAbsence(t *testing.T) {
 			}
 		})
 	}
+	noEffects := state.EnvironmentQualificationRetirement{Kind: state.QualificationNativeEffectsAbsent, ReceiptID: uuid.NewString(),
+		KernelBootID: uuid.NewString(), ProcessesExited: true, ResourcesRemoved: true}
+	encoded, err := NativeRetirementToProto(noEffects)
+	if err != nil {
+		t.Fatal("physical no-effects proof rejected", err)
+	}
+	decoded, err := NativeRetirementFromProto(encoded)
+	if err != nil || decoded != noEffects {
+		t.Fatalf("no-effects proof changed across wire: %+v %v", decoded, err)
+	}
+	encoded.NativeGeneration = uuid.NewString()
+	if _, err := NativeRetirementFromProto(encoded); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("no-effects proof accepted a fabricated native generation", err)
+	}
 }

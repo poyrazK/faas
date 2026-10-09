@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -20,6 +22,83 @@ type recordingJobVMM struct {
 	spec  JobVmmSpec
 	err   error
 	calls int
+}
+
+type workloadIntentByJobTestStore struct {
+	state.Store
+	intent state.EnvironmentWorkloadIntent
+}
+
+func (s workloadIntentByJobTestStore) EnvironmentWorkloadIntentByJob(_ context.Context, accountID, jobID string) (state.EnvironmentWorkloadIntent, error) {
+	if s.intent.AccountID != accountID || s.intent.JobID != jobID {
+		return state.EnvironmentWorkloadIntent{}, state.ErrNotFound
+	}
+	return s.intent, nil
+}
+
+func (s workloadIntentByJobTestStore) ProjectEnvironmentByID(ctx context.Context, id string) (state.ProjectEnvironment, error) {
+	reader, ok := s.Store.(interface {
+		ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)
+	})
+	if !ok {
+		return state.ProjectEnvironment{}, state.ErrNotFound
+	}
+	return reader.ProjectEnvironmentByID(ctx, id)
+}
+
+func (s workloadIntentByJobTestStore) AppEnvironmentSecretReferences(ctx context.Context, accountID, appID, scope string) (map[string]string, error) {
+	reader, ok := s.Store.(state.AppEnvironmentSecretReferenceReader)
+	if !ok {
+		return nil, state.ErrNotFound
+	}
+	return reader.AppEnvironmentSecretReferences(ctx, accountID, appID, scope)
+}
+
+func (s workloadIntentByJobTestStore) RuntimeConfigInputsFresh(ctx context.Context, appID string, inputs state.RuntimeConfigInputs) (bool, error) {
+	reader, ok := s.Store.(interface {
+		RuntimeConfigInputsFresh(context.Context, string, state.RuntimeConfigInputs) (bool, error)
+	})
+	if !ok {
+		return false, state.ErrNotFound
+	}
+	return reader.RuntimeConfigInputsFresh(ctx, appID, inputs)
+}
+
+func (s workloadIntentByJobTestStore) AppRuntimeConfigChangedAtInScope(ctx context.Context, appID, scope string) (time.Time, bool, error) {
+	reader, ok := s.Store.(state.EnvironmentRuntimeFreshnessStore)
+	if !ok {
+		return time.Time{}, false, state.ErrNotFound
+	}
+	return reader.AppRuntimeConfigChangedAtInScope(ctx, appID, scope)
+}
+
+type heldStartRecordingJobVMM struct {
+	store    state.Store
+	spec     JobVmmSpec
+	released bool
+}
+
+func (v *heldStartRecordingJobVMM) JobColdBoot(_ context.Context, spec JobVmmSpec) (JobVmmResult, error) {
+	v.spec = spec
+	return JobVmmResult{InstanceID: spec.InstanceID, NodeID: spec.NodeID, Netns: "fc-job-held", HostIP: "10.100.0.26",
+		GuestUID: 20026, StartHeld: spec.StartHeld}, nil
+}
+
+func (v *heldStartRecordingJobVMM) ReleaseJobStart(_ context.Context, spec JobStartSpec) error {
+	instance, err := v.store.InstanceByID(context.Background(), spec.InstanceID)
+	if err != nil || !v.spec.StartHeld || spec.InstanceID != v.spec.InstanceID || spec.NodeID != v.spec.NodeID ||
+		instance.State != string(state.StateRunning) || instance.Netns == "" || instance.HostIP == "" || instance.GuestUID == 0 {
+		return errors.Join(err, errors.New("start gate released before runtime identity was published"))
+	}
+	v.released = true
+	return nil
+}
+
+type missingRuntimeIdentityJobVMM struct{ instanceID string }
+
+func (v *missingRuntimeIdentityJobVMM) JobColdBoot(_ context.Context, spec JobVmmSpec) (JobVmmResult, error) {
+	v.instanceID = spec.InstanceID
+	return JobVmmResult{InstanceID: spec.InstanceID, NodeID: spec.NodeID}, nil
 }
 
 type jobLogStream struct {
@@ -114,7 +193,7 @@ func (v *recordingJobVMM) JobColdBoot(_ context.Context, spec JobVmmSpec) (JobVm
 	if v.err != nil {
 		return JobVmmResult{}, v.err
 	}
-	return JobVmmResult{InstanceID: spec.InstanceID, NodeID: spec.NodeID}, nil
+	return JobVmmResult{InstanceID: spec.InstanceID, NodeID: spec.NodeID, Netns: "fc-job-test", HostIP: "10.100.0.25", GuestUID: 20025}, nil
 }
 
 func seedJobRun(t *testing.T, store state.Store, jobEnv, runEnv json.RawMessage) (state.Account, state.Job, state.JobRun) {
@@ -139,6 +218,57 @@ func seedJobRun(t *testing.T, store state.Store, jobEnv, runEnv json.RawMessage)
 		t.Fatalf("JobRunCreate: %v", err)
 	}
 	return acct, job, run
+}
+
+func seedGitOpsBoundScheduledJobRun(t *testing.T, store *state.MemStore) (state.Account, state.JobRun, state.EnvironmentWorkloadIntent) {
+	t.Helper()
+	ctx := context.Background()
+	account, err := store.CreateAccount(ctx, "gitops-bound-job@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	image := "registry.example/daily-report@" + digest
+	job, err := store.JobCreate(ctx, account.ID, "daily-report", "batch", image, nil, 256, 60, 1, 0, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, cron, timezone := "active", "15 * * * *", "UTC"
+	job, err = store.JobUpdateWithSchedule(ctx, job.ID, nil, nil, nil, nil, nil, nil,
+		json.RawMessage(`{}`), &status, &cron, &timezone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err = store.JobSetImageMaterialization(ctx, job.ID, image, "ready", digest, "jobs/daily-report.ext4", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, _, err := store.JobRunCreate(ctx, job.ID, account.ID, "scheduled", nil, nil, nil, json.RawMessage(`{}`), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "gitops-bound-job"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "daily-report-config", Type: state.AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := state.EnvironmentWorkloadIntent{
+		AccountID: account.ID, AppID: app.ID, EnvironmentID: environment.ID, JobID: job.ID,
+		Source:   &api.EnvironmentWorkloadSource{Kind: "image", Image: image},
+		Schedule: &api.EnvironmentJobSchedule{Cron: cron, Timezone: timezone},
+		ServiceBindings: map[string]state.EnvironmentScopedServiceBinding{
+			"database": {Workload: "database", EnvKey: "DATABASE_URL", TargetAppID: uuid.NewString()},
+		},
+	}
+	return account, run, intent
 }
 
 func TestEngineWakeJobCallsVMMWithCompleteSpec(t *testing.T) {
@@ -169,6 +299,105 @@ func TestEngineWakeJobCallsVMMWithCompleteSpec(t *testing.T) {
 	}
 	if result.Method != "cold_boot" || result.NodeID != vmm.spec.NodeID {
 		t.Fatalf("result = %+v, want cold_boot and returned node", result)
+	}
+	instance, err := store.InstanceByID(context.Background(), result.InstanceID)
+	if err != nil || instance.State != string(state.StateRunning) || instance.Netns != "fc-job-test" ||
+		instance.HostIP != "10.100.0.25" || instance.GuestUID != 20025 {
+		t.Fatalf("published job runtime identity = %+v, %v", instance, err)
+	}
+}
+
+func TestEngineWakeJobRequiresHeldStartReleaseBeforeBoot(t *testing.T) {
+	base := state.NewMemStore()
+	account, run, intent := seedGitOpsBoundScheduledJobRun(t, base)
+	intentStore := workloadIntentByJobTestStore{Store: base, intent: intent}
+	vmm := &recordingJobVMM{}
+	e := newEngine(t, intentStore, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
+	if _, err := e.WakeJob(context.Background(), account.ID, run.ID, 0); err == nil || !strings.Contains(err.Error(), "start-gate release capability") {
+		t.Fatalf("WakeJob error = %v, want missing start-gate capability", err)
+	}
+	if vmm.calls != 0 {
+		t.Fatalf("cold-booted a service-bound Job without a gate-release RPC: calls=%d spec=%+v", vmm.calls, vmm.spec)
+	}
+}
+
+func TestEngineWakeJobPublishesRuntimeIdentityBeforeReleasingServiceBindings(t *testing.T) {
+	base := state.NewMemStore()
+	account, run, intent := seedGitOpsBoundScheduledJobRun(t, base)
+	intentStore := workloadIntentByJobTestStore{Store: base, intent: intent}
+	vmm := &heldStartRecordingJobVMM{store: base}
+	e := newEngine(t, intentStore, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
+	result, err := e.WakeJob(context.Background(), account.ID, run.ID, 0)
+	if err != nil {
+		t.Fatalf("WakeJob: %v", err)
+	}
+	wantURL := "http://database.svc.gregale:" + strconv.Itoa(api.ServiceBindingPort)
+	if !vmm.spec.StartHeld || vmm.spec.Env["DATABASE_URL"] != wantURL || !vmm.released || result.InstanceID != vmm.spec.InstanceID {
+		t.Fatalf("service-bound Job did not publish identity and release its exact held start: spec=%+v released=%t result=%+v",
+			vmm.spec, vmm.released, result)
+	}
+}
+
+func TestEngineWakeJobDeliversOnlyReviewedScopedSecrets(t *testing.T) {
+	base := state.NewMemStore()
+	account, run, intent := seedGitOpsBoundScheduledJobRun(t, base)
+	if err := base.UpsertAppSecretInScope(context.Background(), account.ID, intent.AppID, "staging", "TOKEN_SOURCE", []byte("sealed-token")); err != nil {
+		t.Fatal(err)
+	}
+	if err := base.UpsertAppSecretInScope(context.Background(), account.ID, intent.AppID, "staging", "UNRELATED", []byte("sealed-unrelated")); err != nil {
+		t.Fatal(err)
+	}
+	engine := &Engine{store: base, log: testLog()}
+	empty, err := engine.resolveSealedEnvDeliveryForRoleWithEmptyAll(context.Background(), account.ID,
+		intent.AppID, "staging", nil, false, false, false)
+	if err != nil || empty.AllSecrets || len(empty.Entries) != 0 {
+		t.Fatalf("explicit empty Job secret intent expanded to scoped secrets: delivery=%+v err=%v", empty, err)
+	}
+	if err := base.PutAppEnvironmentSecretReference(context.Background(), account.ID, intent.AppID, "staging", "API_TOKEN", "secret:TOKEN_SOURCE"); err != nil {
+		t.Fatal(err)
+	}
+	intentStore := workloadIntentByJobTestStore{Store: base, intent: intent}
+	vmm := &heldStartRecordingJobVMM{store: base}
+	e := newEngine(t, intentStore, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
+	if _, err := e.WakeJob(context.Background(), account.ID, run.ID, 0); err != nil {
+		t.Fatalf("WakeJob: %v", err)
+	}
+	if len(vmm.spec.SealedEnvEntries) != 1 || vmm.spec.SealedEnvEntries[0].Key != "API_TOKEN" ||
+		vmm.spec.SealedEnvEntries[0].SourceKey != "TOKEN_SOURCE" || string(vmm.spec.SealedEnvEntries[0].Ciphertext) != "sealed-token" {
+		t.Fatalf("Job received unexpected sealed environment: %+v", vmm.spec.SealedEnvEntries)
+	}
+	secrets, err := base.ListAppSecretsInScope(context.Background(), account.ID, intent.AppID, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range secrets {
+		if secret.Key == "TOKEN_SOURCE" && secret.DeliveryStatus != state.SecretDeliveryDelivered {
+			t.Fatalf("delivered secret status = %s, want delivered", secret.DeliveryStatus)
+		}
+		if secret.Key == "UNRELATED" && secret.DeliveryStatus == state.SecretDeliveryDelivered {
+			t.Fatal("unreferenced secret was marked delivered")
+		}
+	}
+}
+
+func TestEngineWakeJobRejectsMissingRuntimeIdentity(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	vmm := &missingRuntimeIdentityJobVMM{}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
+	if _, err := e.WakeJob(context.Background(), acct.ID, run.ID, 0); err == nil {
+		t.Fatal("WakeJob accepted a successful boot without runtime identity")
+	}
+	if vmm.instanceID == "" {
+		t.Fatal("JobColdBoot was not called")
+	}
+	instance, err := store.InstanceByID(context.Background(), vmm.instanceID)
+	if err != nil || instance.State != string(state.StateFailed) || instance.Netns != "" || instance.HostIP != "" || instance.GuestUID != 0 {
+		t.Fatalf("failed job instance after identity rejection = %+v, %v", instance, err)
 	}
 }
 

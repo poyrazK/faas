@@ -98,6 +98,24 @@ func (s *PgStore) publishProjectReleaseSet(ctx context.Context, accountID, proje
 		return ProjectReleaseSet{}, fmt.Errorf("state: publish release begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	release, err := publishProjectReleaseSetTx(ctx, tx, accountID, projectID, environment, expectedActiveID, expectedFallback, ttlSeconds, members, false, nil)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	return release, nil
+}
+
+type projectReleaseSetBeforePublish func(context.Context, pgx.Tx) error
+
+func publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, projectID, environment string, expectedActiveID *string,
+	expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember, allowGitOpsReplacement bool,
+	beforePublish projectReleaseSetBeforePublish, skipFallbackApps ...map[string]struct{}) (ProjectReleaseSet, error) {
+	if !validReleaseTTL(ttlSeconds) || len(members) == 0 || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
+		return ProjectReleaseSet{}, ErrInvalidArgument
+	}
 	var found int
 	if err := tx.QueryRow(ctx, `select 1 from projects where id = $1 and account_id = $2 for update`, projectID, accountID).Scan(&found); err != nil {
 		return ProjectReleaseSet{}, mapErr(err)
@@ -156,10 +174,21 @@ func (s *PgStore) publishProjectReleaseSet(ctx context.Context, accountID, proje
 	if err := rows.Err(); err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	if activeID != "" && !allowGitOpsReplacement {
+		if err := validateGitOpsReleaseMembersTx(ctx, tx, activeID, byApp); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	}
 	if expectedActiveID != nil && *expectedActiveID == "" {
 		appIDs := make([]string, 0, len(appRows))
+		skipped := map[string]struct{}{}
+		if len(skipFallbackApps) > 0 {
+			skipped = skipFallbackApps[0]
+		}
 		for _, appRow := range appRows {
-			appIDs = append(appIDs, appRow.id)
+			if _, skip := skipped[appRow.id]; !skip {
+				appIDs = append(appIDs, appRow.id)
+			}
 		}
 		if err := validateProjectReleaseFallbackTx(ctx, tx, appIDs, environment, expectedFallback); err != nil {
 			return ProjectReleaseSet{}, err
@@ -167,6 +196,11 @@ func (s *PgStore) publishProjectReleaseSet(ctx context.Context, accountID, proje
 	}
 	if len(appRows) != len(byApp) {
 		return ProjectReleaseSet{}, ErrConflict
+	}
+	if beforePublish != nil {
+		if err := beforePublish(ctx, tx); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 	}
 	for _, appRow := range appRows {
 		depID, ok := byApp[appRow.id]
@@ -213,9 +247,6 @@ func (s *PgStore) publishProjectReleaseSet(ctx context.Context, accountID, proje
 			return ProjectReleaseSet{}, err
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return ProjectReleaseSet{}, err
-	}
 	return release, nil
 }
 
@@ -259,6 +290,13 @@ func (s *PgStore) DeactivateProjectReleaseSetIfActive(ctx context.Context, accou
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
+	}
+	managed, err := gitOpsReleaseSetHasManagedMembersTx(ctx, tx, activeID)
+	if err != nil {
+		return err
+	}
+	if managed {
+		return ErrConflict
 	}
 	if err := validateProjectReleaseFallbackTx(ctx, tx, appIDs, environment, expectedFallback); err != nil {
 		return err
@@ -479,17 +517,15 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 	if err := tx.QueryRow(ctx, `select 1 from project_environments where project_id = $1 and slug = $2`, projectID, environment).Scan(&found); err != nil {
 		return ProjectReleaseSet{}, mapErr(err)
 	}
-	if expectedActiveID != nil {
-		var activeID string
-		err := tx.QueryRow(ctx, `select id::text from project_release_sets where project_id = $1 and environment_slug = $2 and active for update`, projectID, environment).Scan(&activeID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			activeID = ""
-		} else if err != nil {
-			return ProjectReleaseSet{}, err
-		}
-		if activeID != *expectedActiveID {
-			return ProjectReleaseSet{}, ErrConflict
-		}
+	var activeID string
+	err := tx.QueryRow(ctx, `select id::text from project_release_sets where project_id = $1 and environment_slug = $2 and active for update`, projectID, environment).Scan(&activeID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		activeID = ""
+	} else if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if expectedActiveID != nil && activeID != *expectedActiveID {
+		return ProjectReleaseSet{}, ErrConflict
 	}
 	byApp := make(map[string]string, len(members))
 	for _, member := range members {
@@ -529,6 +565,11 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return ProjectReleaseSet{}, err
+	}
+	if activeID != "" {
+		if err := validateGitOpsReleaseMembersTx(ctx, tx, activeID, byApp); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 	}
 	if len(appRows) != len(byApp) {
 		return ProjectReleaseSet{}, ErrConflict
@@ -726,6 +767,38 @@ func activeProjectReleaseSetIDTx(ctx context.Context, tx pgx.Tx, projectID, envi
 		return "", nil
 	}
 	return id, err
+}
+
+func validateGitOpsReleaseMembersTx(ctx context.Context, tx pgx.Tx, releaseID string, proposed map[string]string) error {
+	rows, err := tx.Query(ctx, `select rm.app_id::text, rm.deployment_id::text
+		from project_release_members rm
+		join deployments d on d.id = rm.deployment_id
+		where rm.release_id = $1::uuid and d.environment_workload_runtime is not null
+		order by rm.app_id for update of d`, releaseID)
+	if err != nil {
+		return fmt.Errorf("state: lock managed release members: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var appID, deploymentID string
+		if err := rows.Scan(&appID, &deploymentID); err != nil {
+			return err
+		}
+		if proposed[appID] != deploymentID {
+			return ErrConflict
+		}
+	}
+	return rows.Err()
+}
+
+func gitOpsReleaseSetHasManagedMembersTx(ctx context.Context, tx pgx.Tx, releaseID string) (bool, error) {
+	var managed bool
+	err := tx.QueryRow(ctx, `select exists (
+		select 1 from project_release_members rm
+		join deployments d on d.id = rm.deployment_id
+		where rm.release_id = $1::uuid and d.environment_workload_runtime is not null
+	)`, releaseID).Scan(&managed)
+	return managed, err
 }
 
 func projectEnvironmentConfigLatestTx(ctx context.Context, tx pgx.Tx, accountID, projectID, environment string) (ProjectEnvironmentConfig, error) {

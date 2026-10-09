@@ -34,6 +34,10 @@ func queuedQualificationExecutionFixture(t *testing.T, modes ...string) (*state.
 }
 
 func queuedQualificationExecutionFixtureWithBindings(t *testing.T, bindings map[string]api.EnvironmentServiceBinding, modes ...string) (*state.MemStore, state.EnvironmentGitSource, []state.EnvironmentWorkloadQualificationRequest) {
+	return queuedQualificationExecutionFixtureWithBindingsAndTransport(t, bindings, "", modes...)
+}
+
+func queuedQualificationExecutionFixtureWithBindingsAndTransport(t *testing.T, bindings map[string]api.EnvironmentServiceBinding, transport api.ServiceBindingTransport, modes ...string) (*state.MemStore, state.EnvironmentGitSource, []state.EnvironmentWorkloadQualificationRequest) {
 	t.Helper()
 	ctx, store := t.Context(), state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "qualification@example.test", api.PlanPro)
@@ -54,14 +58,20 @@ func queuedQualificationExecutionFixtureWithBindings(t *testing.T, bindings map[
 		workloadClass := state.WorkloadClass("")
 		if mode == api.ExecutionModeWorker {
 			workloadClass = state.WorkloadClassWorker
+		} else if mode == api.ExecutionModeJob {
+			workloadClass = state.WorkloadClassJob
 		}
 		name := "api"
 		if i > 0 {
 			name = fmt.Sprintf("api%d", i+1)
 		}
+		manifest := state.AppManifest{ExecutionMode: mode, Port: 8079, StartupDeadlineS: 10}
+		if i == 0 {
+			manifest.ServiceBindingTransport = transport
+		}
 		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-" + name, Type: state.AppTypeApp,
 			Status: state.AppActive, RAMMB: 512, CPUMillicores: 250, MaxConcurrency: 1, WorkloadClass: workloadClass,
-			Manifest: state.AppManifest{ExecutionMode: mode, Port: 8079, StartupDeadlineS: 10}})
+			Manifest: manifest})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -70,10 +80,15 @@ func queuedQualificationExecutionFixtureWithBindings(t *testing.T, bindings map[
 		if err != nil {
 			t.Fatal(err)
 		}
-		workloads[name] = api.EnvironmentWorkload{App: app.Slug,
-			Source:    &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/shop@sha256:" + strings.Repeat("d", 64)},
-			Runtime:   json.RawMessage(fmt.Sprintf(`{"port":8087,"healthz":"/reviewed-ready","startup_deadline_s":25,"execution_mode":%q}`, mode)),
-			Variables: map[string]string{"MODE": "production"}}
+		workload := api.EnvironmentWorkload{App: app.Slug,
+			Source:  &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/shop@sha256:" + strings.Repeat("d", 64)},
+			Runtime: json.RawMessage(fmt.Sprintf(`{"port":8087,"healthz":"/reviewed-ready","startup_deadline_s":25,"execution_mode":%q}`, mode))}
+		if mode == api.ExecutionModeJob {
+			workload.JobSmoke = &api.EnvironmentJobSmoke{Command: []string{"node", "smoke.js"}, TimeoutSeconds: 30}
+		} else {
+			workload.Variables = map[string]string{"MODE": "production"}
+		}
+		workloads[name] = workload
 	}
 	if bindings != nil {
 		caller := workloads["api"]

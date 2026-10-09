@@ -2124,16 +2124,21 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
 	// EnvironmentWorkloadRuntime freezes reviewed, scoped inputs for a held
-	// GitOps candidate. It is internal metadata, never an activation receipt.
+	// GitOps candidate. It remains attached after activation so serving runtime
+	// configuration is preserved; it is internal metadata, never a receipt.
 	EnvironmentWorkloadRuntime string `json:"-"`
-	ID                         string
-	AppID                      string
-	BuildID                    string // empty when an image deploy has no build pipeline
-	ImageDigest                string
-	Kind                       DeploymentKind
-	SourcePath                 string // tarball spool path (kind=tarball|dockerfile)
-	SourceBytes                int64
-	SourceRoot                 string // repository-relative build root inside SourcePath; empty = archive root
+	// EnvironmentWorkloadHeldValue is nil only for legacy in-memory values, in
+	// which case the presence of frozen workload inputs retains the old held
+	// behavior. Persistent rows always carry the explicit flag.
+	EnvironmentWorkloadHeldValue *bool `json:"-"`
+	ID                           string
+	AppID                        string
+	BuildID                      string // empty when an image deploy has no build pipeline
+	ImageDigest                  string
+	Kind                         DeploymentKind
+	SourcePath                   string // tarball spool path (kind=tarball|dockerfile)
+	SourceBytes                  int64
+	SourceRoot                   string // repository-relative build root inside SourcePath; empty = archive root
 	// SourceSHA256 is the digest of the exact source archive handed to the
 	// builder. Empty is retained for deployments created before the integrity
 	// column was introduced.
@@ -3987,9 +3992,13 @@ type Invocation struct {
 	// contract; the ledger keeps the routing field internal.
 	DeploymentScope string `json:"-"`
 	// PlatformTenantID is immutable admission identity, never read from guest headers.
-	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
-	InstanceID       string           `json:"instance_id,omitempty"`
-	Source           InvocationSource `json:"source"`
+	PlatformTenantID string `json:"platform_tenant_id,omitempty"`
+	InstanceID       string `json:"instance_id,omitempty"`
+	// ResolvedDeploymentID is populated only on an internal synthetic dispatch
+	// response. It proves which release member handled a successful queue item;
+	// it is never accepted from or persisted to the invocation ledger.
+	ResolvedDeploymentID string           `json:"-"`
+	Source               InvocationSource `json:"source"`
 	// QueueBindingID is captured at admission and retained on retry/replay.
 	// It is internal until scoped producers and consumers expose one contract.
 	QueueBindingID string `json:"-"`

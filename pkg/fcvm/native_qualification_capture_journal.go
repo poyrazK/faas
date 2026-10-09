@@ -22,6 +22,7 @@ type nativeQualificationCaptureRecord struct {
 	CaptureID        string          `json:"capture_id"`
 	NativeGeneration string          `json:"native_generation"`
 	KernelBootID     string          `json:"kernel_boot_id"`
+	FCVersion        string          `json:"fc_version"`
 	StartedAt        time.Time       `json:"started_at"`
 	CompletedAt      time.Time       `json:"completed_at"`
 	Info             SnapshotInfo    `json:"info"`
@@ -50,6 +51,9 @@ func (r nativeQualificationCaptureRecord) validate(incoming nativeQualificationR
 		r.NativeGeneration == "" || r.NativeGeneration != incoming.NativeGeneration || r.KernelBootID != incoming.KernelBootID ||
 		r.StartedAt.Before(incoming.AcceptedAt) || !r.StartedAt.Before(incoming.Deadline) {
 		return errors.New("native qualification: capture differs from original incoming authority")
+	}
+	if strings.TrimSpace(r.FCVersion) == "" || len(r.FCVersion) > 256 || r.FCVersion != strings.TrimSpace(r.FCVersion) {
+		return errors.New("native qualification: capture Firecracker version is incomplete")
 	}
 	if r.CompletedAt.IsZero() {
 		if r.Info != (SnapshotInfo{}) || r.Backing != (BackingIdentity{}) {
@@ -105,6 +109,28 @@ func (j *nativeQualificationJournal) writeCapture(incoming nativeQualificationRe
 		return err
 	}
 	if err := checkNativeJournalPath(filepath.Dir(path), true); err != nil {
+		return err
+	}
+	current, err := j.readCapture(incoming)
+	if err == nil {
+		if current == record {
+			return nil
+		}
+		// The version and producer identity are pinned before snapshot effects.
+		// Only one transition is legal after that start record: complete it with
+		// the same provenance and immutable capture namespace. A completed
+		// receipt is terminal, including after a lost write acknowledgement.
+		if !current.CompletedAt.IsZero() || record.CompletedAt.IsZero() ||
+			current.Version != record.Version || current.InstanceID != record.InstanceID || current.CaptureID != record.CaptureID ||
+			current.NativeGeneration != record.NativeGeneration || current.KernelBootID != record.KernelBootID ||
+			current.FCVersion != record.FCVersion || !current.StartedAt.Equal(record.StartedAt) {
+			return errors.New("native qualification: capture start and Firecracker provenance are immutable")
+		}
+	} else if errors.Is(err, os.ErrNotExist) {
+		if !record.CompletedAt.IsZero() {
+			return errors.New("native qualification: capture completion has no durable start")
+		}
+	} else {
 		return err
 	}
 	return writeNativeJournalValue(path, record)

@@ -114,6 +114,31 @@ func qualificationCaptureFixture(t *testing.T) (*Manager, *nativeQualificationJo
 	return m, j, frame, ctx, captureVMM, calls
 }
 
+// This bypasses the append-only writer to model on-disk tampering in readers'
+// refusal tests. Normal producers must use writeCapture.
+func writeTamperedNativeQualificationCapture(t *testing.T, j *nativeQualificationJournal, incoming nativeQualificationRecord, capture nativeQualificationCaptureRecord) {
+	t.Helper()
+	path, err := j.capturePath(incoming.Execution.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeNativeJournalValue(path, capture); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeCompleteNativeQualificationCapture(t *testing.T, j *nativeQualificationJournal, incoming nativeQualificationRecord, capture nativeQualificationCaptureRecord) {
+	t.Helper()
+	start := capture
+	start.CompletedAt, start.Info, start.Backing = time.Time{}, SnapshotInfo{}, BackingIdentity{}
+	if err := j.writeCapture(incoming, start); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.writeCapture(incoming, capture); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestNativeQualificationSnapshotCompletesOriginalImmutableCapture(t *testing.T) {
 	m, j, frame, ctx, _, calls := qualificationCaptureFixture(t)
 	if _, err := m.WarmSnapshot(ctx, frame.InstanceID, SnapshotSpec{}); err == nil || calls.Load() != 0 {
@@ -127,7 +152,9 @@ func TestNativeQualificationSnapshotCompletesOriginalImmutableCapture(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if proof != qualificationSnapshotProof(incoming, SnapshotInfo{MemBytes: 1024, VMStateBytes: 64, StoredBytes: 12288}) || proof.CaptureID == proof.NativeGeneration {
+	wantProof := qualificationSnapshotProof(incoming, SnapshotInfo{MemBytes: 1024, VMStateBytes: 64, StoredBytes: 12288})
+	wantProof.FCVersion = m.fcVersion
+	if proof != wantProof || proof.CaptureID == proof.NativeGeneration {
 		t.Fatal("capture borrowed another identity or namespace")
 	}
 	for _, key := range []string{proof.StorageKey, proof.VMStateStorageKey, proof.DriveStorageKey, proof.BackingStorageKey} {
@@ -235,6 +262,50 @@ func TestNativeQualificationSnapshotCohortOwnsResumeAndBackingPublication(t *tes
 				t.Fatal("duplicate delivery repeated native effects", err, productions, v.resumes)
 			}
 		})
+	}
+}
+
+func TestNativeQualificationCaptureJournalPinsVersionAtStartAndCompletion(t *testing.T) {
+	m, j, frame, _, _, _ := qualificationCaptureFixture(t)
+	incoming, err := j.read(frame.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := nativeQualificationCaptureRecord{Version: 1, InstanceID: frame.InstanceID, CaptureID: incoming.Generation,
+		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, FCVersion: m.fcVersion,
+		StartedAt: incoming.AcceptedAt.Add(time.Millisecond)}
+	if err := j.writeCapture(incoming, start); err != nil {
+		t.Fatal(err)
+	}
+	changedVersion := start
+	changedVersion.FCVersion = "1.8.0"
+	changedVersion.CompletedAt = start.StartedAt.Add(time.Millisecond)
+	changedVersion.Info = SnapshotInfo{MemBytes: 1024, VMStateBytes: 64, StoredBytes: 12288}
+	changedVersion.Backing = m.instanceBacking[frame.InstanceID]
+	if err := j.writeCapture(incoming, changedVersion); err == nil {
+		t.Fatal("capture completion was accepted without a durable start")
+	}
+	if err := j.writeCapture(incoming, start); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.writeCapture(incoming, changedVersion); err == nil {
+		t.Fatal("capture completion changed the Firecracker version pinned before effects")
+	}
+	completed := start
+	completed.CompletedAt = start.StartedAt.Add(time.Millisecond)
+	completed.Info = SnapshotInfo{MemBytes: 1024, VMStateBytes: 64, StoredBytes: 12288}
+	completed.Backing = m.instanceBacking[frame.InstanceID]
+	if err := j.writeCapture(incoming, completed); err != nil {
+		t.Fatal(err)
+	}
+	changedCompletion := completed
+	changedCompletion.Info.StoredBytes++
+	if err := j.writeCapture(incoming, changedCompletion); err == nil {
+		t.Fatal("completed capture receipt was rewritten")
+	}
+	got, err := j.readCapture(incoming)
+	if err != nil || got != completed {
+		t.Fatalf("capture receipt changed after completion: %+v %v", got, err)
 	}
 }
 

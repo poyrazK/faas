@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -47,6 +48,9 @@ func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame sta
 	if err := backend.checkEnvironmentQualificationSnapshotSupport(); err != nil {
 		return proof, err
 	}
+	if strings.TrimSpace(m.fcVersion) == "" || len(m.fcVersion) > 256 || m.fcVersion != strings.TrimSpace(m.fcVersion) {
+		return proof, fmt.Errorf("native qualification: Firecracker version is not configured: %w", state.ErrConflict)
+	}
 	incoming, err := j.snapshotAuthority(ctx, frame)
 	if err != nil {
 		return proof, err
@@ -86,7 +90,9 @@ func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame sta
 		if capture.CompletedAt.IsZero() {
 			return proof, fmt.Errorf("native qualification: capture outcome is uncertain: %w", state.ErrConflict)
 		}
-		return qualificationSnapshotProof(incoming, capture.Info), nil
+		proof = qualificationSnapshotProof(incoming, capture.Info)
+		proof.FCVersion = capture.FCVersion
+		return proof, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return proof, err
@@ -96,7 +102,7 @@ func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame sta
 		return proof, err
 	}
 	capture = nativeQualificationCaptureRecord{Version: 1, InstanceID: frame.InstanceID, CaptureID: incoming.Generation,
-		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, StartedAt: j.clock().UTC()}
+		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, FCVersion: m.fcVersion, StartedAt: j.clock().UTC()}
 	if err := j.writeCapture(incoming, capture); err != nil {
 		return proof, err
 	}
@@ -119,7 +125,9 @@ func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame sta
 	if err := ctx.Err(); err != nil {
 		return proof, err
 	}
-	return qualificationSnapshotProof(incoming, info), nil
+	proof = qualificationSnapshotProof(incoming, info)
+	proof.FCVersion = capture.FCVersion
+	return proof, nil
 }
 
 func (m *Manager) captureQualificationSnapshotCohort(ctx context.Context, inst *Instance, keys state.EnvironmentQualificationSnapshot, backing BackingIdentity) (SnapshotInfo, error) {

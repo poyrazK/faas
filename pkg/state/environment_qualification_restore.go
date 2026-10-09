@@ -31,6 +31,7 @@ func qualificationRestoreCaptureMatches(current EnvironmentWorkloadQualification
 	e := original.Execution
 	return original.CaptureInstanceID == "" && original.DispatchStarted && original.RetiredAt != nil &&
 		original.Retirement != nil && original.Retirement.Kind == QualificationNativeRetired &&
+		original.Retirement.ReceiptID == capture.Snapshot.CaptureID &&
 		e.InstanceID == current.ReservedInstanceID && e.RequestID == current.ID && e.Attempt == current.Attempt &&
 		e == capture.Execution && e == qualificationExecution(current, Instance{ID: e.InstanceID, AppID: current.AppID,
 		DeploymentID: current.DeploymentID, NodeID: e.NodeID, WakeID: e.WakeID, RAMMB: e.RAMMB}, e.CleanupToken) &&

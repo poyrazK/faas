@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -17,12 +18,93 @@ import (
 func nativeRestoreChannelsOwnerFixture(t *testing.T) (*nativeLoadSequenceFixture, *nativeQualificationRestoreChannels) {
 	t.Helper()
 	f := nativeRestoreLoadSequenceFixture(t)
-	loaded, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease)
+	loaded, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	permit := f.ctx.Value(nativeQualificationRestoreLoadContextKey{}).(*nativeQualificationRestoreLoadPermit)
 	return f, &nativeQualificationRestoreChannels{v: f.v, ctx: f.ctx, owner: f.owner, target: f.target, permit: permit, loaded: loaded}
+}
+
+func TestNativeQualificationRestoreHandlersBindRegisteredCallbacksToOriginalTarget(t *testing.T) {
+	f, _ := nativeRestoreChannelsOwnerFixture(t)
+	calls := make(map[uint32]int)
+	ordinaryCalls := make(map[uint32]int)
+	for _, port := range nativeRestoreChannelPorts() {
+		port := port
+		if err := f.v.RegisterGuestVsockStreamHandler(port, func(string, net.Conn) (string, error) {
+			ordinaryCalls[port]++
+			return "", errors.New("ordinary serving callback must not run")
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.v.RegisterEnvironmentQualificationRestoreStreamHandler(port, func(_ context.Context, execution state.EnvironmentQualificationExecution, _ net.Conn) error {
+			if execution != f.target.Execution {
+				return errors.New("handler received another execution")
+			}
+			calls[port]++
+			if port == VsockWorkloadIdentityHostPort {
+				return errors.New("qualification identity must stay unavailable")
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handlers, err := f.v.nativeQualificationRestoreHandlers(f.ctx, f.owner.Lease)
+	if err != nil || len(handlers) != len(nativeRestoreChannelPorts()) {
+		t.Fatal("registered platform handlers were not composed for the private target", len(handlers), err)
+	}
+	for port, handler := range handlers {
+		client, server := net.Pipe()
+		wrong := f.target.Execution
+		wrong.PlanHash += "-substituted"
+		err := handler(f.ctx, wrong, server)
+		_ = client.Close()
+		_ = server.Close()
+		if err == nil || calls[port] != 0 {
+			t.Fatal("substituted execution reached a private platform handler", port, calls[port], err)
+		}
+
+		client, server = net.Pipe()
+		err = handler(f.ctx, f.target.Execution, server)
+		_ = client.Close()
+		_ = server.Close()
+		if port == VsockWorkloadIdentityHostPort {
+			if err == nil || !strings.Contains(err.Error(), "qualification identity") {
+				t.Fatal("private handler failure was discarded", port, err)
+			}
+		} else if err != nil {
+			t.Fatal("private platform handler failed", port, err)
+		}
+	}
+	for _, port := range nativeRestoreChannelPorts() {
+		if calls[port] != 1 {
+			t.Fatalf("private callback count for port %d = %d, want one", port, calls[port])
+		}
+		if ordinaryCalls[port] != 0 {
+			t.Fatalf("ordinary serving callback count for port %d = %d, want zero", port, ordinaryCalls[port])
+		}
+	}
+}
+
+func TestNativeQualificationRestoreHandlersFailClosedWhenPlatformReceiverMissing(t *testing.T) {
+	f, _ := nativeRestoreChannelsOwnerFixture(t)
+	ports := nativeRestoreChannelPorts()
+	for _, port := range ports {
+		if err := f.v.RegisterGuestVsockStreamHandler(port, func(string, net.Conn) (string, error) { return "", nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, port := range ports[:2] {
+		if err := f.v.RegisterEnvironmentQualificationRestoreStreamHandler(port, func(context.Context, state.EnvironmentQualificationExecution, net.Conn) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handlers, err := f.v.nativeQualificationRestoreHandlers(f.ctx, f.owner.Lease)
+	if err == nil || handlers != nil {
+		t.Fatal("private restore accepted an incomplete platform receiver set", len(handlers), err)
+	}
 }
 
 func TestNativeQualificationRestoreChannelRechecksOriginalTargetAndEvidence(t *testing.T) {
@@ -90,7 +172,7 @@ func TestNativeQualificationRestoreChannelRechecksOriginalTargetAndEvidence(t *t
 					if readErr != nil {
 						t.Fatal(readErr)
 					}
-					err = f.q.writeCapture(source, capture)
+					writeTamperedNativeQualificationCapture(t, f.q, source, capture)
 				} else {
 					backings, readErr := f.q.readBackings(capture)
 					if readErr != nil {

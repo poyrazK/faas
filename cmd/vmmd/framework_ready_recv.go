@@ -143,11 +143,12 @@ const (
 // missing sidecar wiring (e.g. local-dev without a
 // state.Store).
 type FrameworkReadyReceiver struct {
-	ctx            context.Context
-	log            *slog.Logger
-	mgr            *fcvm.Manager
-	emitter        SidecarEventEmitter
-	eventPublisher GuestEventPublisher
+	ctx                                 context.Context
+	log                                 *slog.Logger
+	mgr                                 *fcvm.Manager
+	emitter                             SidecarEventEmitter
+	eventPublisher                      GuestEventPublisher
+	qualificationFrameworkReadyRecorder QualificationFrameworkReadyRecorder
 }
 
 // GuestEventPublisher is the host-side persistence seam for the in-guest
@@ -172,6 +173,9 @@ func StartFrameworkReadyReceiver(ctx context.Context, log *slog.Logger, mgr *fcv
 	r := &FrameworkReadyReceiver{ctx: ctx, log: log, mgr: mgr, emitter: noopSidecarEventEmitter{}}
 	if err := jailer.RegisterGuestVsockStreamHandler(VsockFrameworkReadyHostPort, r.handleGuestStream); err != nil {
 		return nil, fmt.Errorf("framework_ready receiver register port %d: %w", VsockFrameworkReadyHostPort, err)
+	}
+	if err := jailer.RegisterEnvironmentQualificationRestoreStreamHandler(VsockFrameworkReadyHostPort, r.handleQualificationRestoreStream); err != nil {
+		return nil, fmt.Errorf("qualification framework_ready receiver register port %d: %w", VsockFrameworkReadyHostPort, err)
 	}
 	log.Info("framework_ready receiver registered", "vsock_host_port", VsockFrameworkReadyHostPort, "transport", "firecracker_uds")
 	return r, nil
@@ -233,6 +237,46 @@ func (r *FrameworkReadyReceiver) handleGuestStream(instance string, conn net.Con
 		}
 	}
 	return "", nil
+}
+
+// handleQualificationRestoreStream accepts the guest configuration receipt
+// and its framework-ready event. Other serving, sidecar, OOM, and customer
+// event types remain unavailable to a qualification restore.
+func (r *FrameworkReadyReceiver) handleQualificationRestoreStream(ctx context.Context, execution state.EnvironmentQualificationExecution, conn net.Conn) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	body, err := io.ReadAll(io.LimitReader(conn, int64(frameworkReadyMaxDatagram)+2))
+	if err != nil {
+		return fmt.Errorf("qualification framework_ready read: %w", err)
+	}
+	if len(body) > frameworkReadyMaxDatagram {
+		return fmt.Errorf("qualification framework_ready frame exceeds %d bytes", frameworkReadyMaxDatagram)
+	}
+	msg, err := parseFrameworkReadyDatagram(body)
+	if err != nil {
+		return fmt.Errorf("qualification framework_ready parse: %w", err)
+	}
+	switch msg.Kind {
+	case parseFWReadyKindQualificationConfig:
+		if r.mgr == nil {
+			return errors.New("qualification config receipt manager is unavailable")
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return r.mgr.MarkEnvironmentQualificationConfigApplied(execution.InstanceID, msg.QualificationConfig)
+	case parseFWReadyKindOK:
+		if msg.Runtime == "" || r.qualificationFrameworkReadyRecorder == nil {
+			return errors.New("qualification framework-ready receipt recorder is unavailable")
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return r.qualificationFrameworkReadyRecorder(ctx, execution, msg.Runtime, msg.WarmupMs)
+	default:
+		return fmt.Errorf("qualification framework_ready rejected event kind %s", msg.TypeLabel())
+	}
 }
 
 // dispatchFrameworkReady (extracted from the loop body, issue

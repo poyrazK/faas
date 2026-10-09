@@ -21,10 +21,12 @@ type qualificationCaptureVMM struct {
 
 func (v *qualificationCaptureVMM) CaptureEnvironmentQualification(_ context.Context, frame state.EnvironmentQualificationExecution) (EnvironmentQualificationSnapshotEvidence, error) {
 	v.captures++
-	capture := uuid.NewString()
+	// Native retirement acknowledges the same immutable generation used as
+	// the capture receipt ID. Keep the storage fixture bound to that identity.
+	capture := v.proof.ReceiptID
 	snapshot := state.Snapshot{StorageKey: state.SnapshotCaptureMemKey(frame.DeploymentID, state.SnapshotTierWarm, capture)}
 	evidence := EnvironmentQualificationSnapshotEvidence{Execution: frame, Snapshot: state.EnvironmentQualificationSnapshot{
-		CaptureID: capture, NativeGeneration: v.proof.NativeGeneration, KernelBootID: v.proof.KernelBootID,
+		CaptureID: capture, NativeGeneration: v.proof.NativeGeneration, KernelBootID: v.proof.KernelBootID, FCVersion: "test-fc",
 		StorageKey: snapshot.StorageKey, VMStateStorageKey: state.SnapshotVMStateKey(snapshot), DriveStorageKey: state.SnapshotDriveKey(snapshot),
 		BackingStorageKey: state.SnapshotBackingKey(snapshot), MemBytes: 1024, VMStateBytes: 128, StoredBytes: 2048}}
 	if v.change != nil {

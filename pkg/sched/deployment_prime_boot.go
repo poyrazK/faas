@@ -48,6 +48,18 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		result.RejectionReason = "prime_main_dependencies_invalid"
 		return result, fmt.Errorf("sched: prime: load primary workload dependencies: %w", err)
 	}
+	// A qualification graph must route reviewed service bindings through its
+	// private, attempt-scoped listener. The ordinary release-set alias is
+	// injected only for real deployment boots; adding both values would either
+	// shadow the qualification route or reject the same reviewed key as a
+	// collision.
+	if graphID, graphQualification := ctx.Value(qualificationGraphContextKey{}).(string); !graphQualification || graphID == "" {
+		runtimeAPIEnv, err = appendEnvironmentGitOpsServiceBindings(runtimeAPIEnv, sealedEnv.Entries, dep)
+		if err != nil {
+			result.RejectionReason = "prime_gitops_service_bindings_invalid"
+			return result, fmt.Errorf("sched: prime: load GitOps service bindings: %w", err)
+		}
+	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	spec := AppSpec{

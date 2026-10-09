@@ -31,8 +31,12 @@ func (p *linuxNativeQualificationRestoreChannelPeer) RequirePeer(ctx context.Con
 	return errors.Join(p.Require(ctx), checkNativeSnapshotPeer(conn, p.owner), ctx.Err())
 }
 
-func nativeRestoreChannelPorts() [3]uint32 {
-	return [3]uint32{VsockGuestEventHostPort, VsockWorkloadIdentityHostPort, VsockRuntimeConfigHostPort}
+func (v *JailerVMM) prepareRegisteredNativeQualificationRestoreChannels(ctx context.Context, lease Lease) (*nativeQualificationRestoreChannels, error) {
+	handlers, err := v.nativeQualificationRestoreHandlers(ctx, lease)
+	if err != nil {
+		return nil, err
+	}
+	return v.prepareNativeQualificationRestoreChannels(ctx, lease, handlers)
 }
 
 // Open only after the live producer observed the durable hook acknowledgement.

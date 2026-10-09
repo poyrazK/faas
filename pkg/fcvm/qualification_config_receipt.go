@@ -63,6 +63,20 @@ func qualificationAPIEnvSHA256(env map[string]string) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
+// QualificationAPIEnvSHA256 returns the digest vmmd waits for the guest to
+// acknowledge on a private qualification boot. It mirrors the merge semantics
+// used by the guest env file: the last entry for a key wins.
+func QualificationAPIEnvSHA256(entries []APIEnvEntry) (string, error) {
+	env := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Key, qualificationConfigReceiptKeyPrefix) {
+			return "", state.ErrInvalidArgument
+		}
+		env[entry.Key] = entry.Value
+	}
+	return qualificationAPIEnvSHA256(env)
+}
+
 func qualificationSecretKeysMAC(key []byte, keys []string) (string, error) {
 	if len(key) != sha256.Size {
 		return "", state.ErrInvalidArgument
@@ -101,16 +115,13 @@ func qualificationSidecarConfigMAC(key []byte, apiEnv, sidecarEnv map[string]str
 }
 
 func (m *Manager) prepareQualificationConfigReceipt(req WakeRequest) (WakeRequest, *qualificationConfigReceiptWaiter, error) {
-	env := make(map[string]string, len(req.APIEnvEntries))
-	for _, entry := range req.APIEnvEntries {
-		if strings.HasPrefix(entry.Key, qualificationConfigReceiptKeyPrefix) {
-			return WakeRequest{}, nil, state.ErrInvalidArgument
-		}
-		env[entry.Key] = entry.Value
-	}
-	digest, err := qualificationAPIEnvSHA256(env)
+	digest, err := QualificationAPIEnvSHA256(req.APIEnvEntries)
 	if err != nil {
 		return WakeRequest{}, nil, err
+	}
+	env := make(map[string]string, len(req.APIEnvEntries))
+	for _, entry := range req.APIEnvEntries {
+		env[entry.Key] = entry.Value
 	}
 	token := uuid.NewString()
 	secretKeysKey := make([]byte, sha256.Size)
@@ -174,6 +185,59 @@ func (m *Manager) prepareQualificationConfigReceipt(req WakeRequest) (WakeReques
 		Key: qualificationConfigReceiptMACKey, Value: hex.EncodeToString(secretKeysKey),
 	})
 	return req, waiter, nil
+}
+
+// prepareQualificationJobConfigReceipt stages an attempt-bound receipt control
+// alongside the exact environment sent to a held qualification Job. The
+// controls are removed by guest-init before the command environment is built.
+func (m *Manager) prepareQualificationJobConfigReceipt(instance string, env map[string]string,
+	sealedEnv []SealedEnvEntry) (map[string]string, string, *qualificationConfigReceiptWaiter, error) {
+	var zero map[string]string
+	if instance == "" {
+		return zero, "", nil, state.ErrInvalidArgument
+	}
+	apiEnv := make(map[string]string, len(env))
+	for key, value := range env {
+		if api.ValidateEnvKey(key) != nil || strings.HasPrefix(key, qualificationConfigReceiptKeyPrefix) {
+			return zero, "", nil, state.ErrInvalidArgument
+		}
+		apiEnv[key] = value
+	}
+	digest, err := qualificationAPIEnvSHA256(apiEnv)
+	if err != nil {
+		return zero, "", nil, err
+	}
+	token := uuid.NewString()
+	macKey := make([]byte, sha256.Size)
+	if _, err := rand.Read(macKey); err != nil {
+		return zero, "", nil, fmt.Errorf("generate qualification job receipt key: %w", err)
+	}
+	defer clear(macKey)
+	secretKeys := make([]string, 0, len(sealedEnv))
+	seen := make(map[string]struct{}, len(sealedEnv))
+	for _, entry := range sealedEnv {
+		if api.ValidateEnvKey(entry.Key) != nil || strings.HasPrefix(entry.Key, qualificationConfigReceiptKeyPrefix) {
+			return zero, "", nil, state.ErrInvalidArgument
+		}
+		if _, duplicate := seen[entry.Key]; duplicate {
+			return zero, "", nil, state.ErrInvalidArgument
+		}
+		seen[entry.Key] = struct{}{}
+		secretKeys = append(secretKeys, entry.Key)
+	}
+	secretKeysMAC, err := qualificationSecretKeysMAC(macKey, secretKeys)
+	if err != nil {
+		return zero, "", nil, err
+	}
+	waiter, err := m.registerQualificationConfigReceipt(instance, token, map[string]qualificationConfigReceiptExpectation{
+		WorkloadNameMain: {apiEnvSHA256: digest, secretsRead: len(sealedEnv) > 0, secretKeysMAC: secretKeysMAC},
+	})
+	if err != nil {
+		return zero, "", nil, err
+	}
+	apiEnv[qualificationConfigReceiptTokenKey] = token
+	apiEnv[qualificationConfigReceiptMACKey] = hex.EncodeToString(macKey)
+	return apiEnv, digest, waiter, nil
 }
 
 func validQualificationWorkloadName(name string) bool {

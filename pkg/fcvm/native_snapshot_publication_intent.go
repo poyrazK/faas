@@ -80,6 +80,18 @@ type nativeSnapshotPublicationJournal interface {
 	Check() error
 	Begin(context.Context, nativeSnapshotPublicationIntent) (nativeSnapshotPublicationIntent, error)
 	Require(context.Context, nativeSnapshotPublicationIntent) error
+	RecoverPendingRetirements(context.Context, storage.StorageBackend) error
+}
+
+// Artifact retirement is a separate capability from reading a restore cohort.
+// It must be invoked only after the scheduler has durably recorded successful
+// restore and smoke evidence for the exact capture attempt.
+type nativeSnapshotArtifactRetirer interface {
+	RetireRestoreCohort(context.Context, string, storage.StorageBackend) error
+}
+
+type nativeSnapshotPublicationRetirementPager interface {
+	RecoverPendingRetirementsPage(context.Context, storage.StorageBackend, string, int) (NativeQualificationArtifactRetirementPage, error)
 }
 
 type nativeSnapshotPublicationContextKey struct{}

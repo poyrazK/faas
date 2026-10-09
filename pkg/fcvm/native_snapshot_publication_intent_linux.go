@@ -179,6 +179,31 @@ func (j *linuxNativeSnapshotPublicationJournal) inventoryLocked(ctx context.Cont
 			}
 			continue
 		}
+		if capture, complete, ok := nativePublicationRetirementEntry(entry.Name()); ok {
+			intent, err := j.readLocked(ctx, capture)
+			if err != nil {
+				return err
+			}
+			var objects [4]nativeSnapshotPublicationObjectReceipt
+			for i, kind := range [...]string{"mem", "vmstate", "drive", "backing"} {
+				objects[i], err = j.readObjectLocked(ctx, intent, kind)
+				if err != nil {
+					return err
+				}
+			}
+			record, exists, err := j.readRetirementStateLocked(ctx, intent, objects, complete)
+			if err != nil || !exists {
+				return errors.Join(err, errors.New("native snapshot publication: invalid retirement tombstone"))
+			}
+			if complete {
+				pending, pendingExists, pendingErr := j.readRetirementStateLocked(ctx, intent, objects, false)
+				if pendingErr != nil || !pendingExists || pending.Directory != record.Directory || pending.IntentFile != record.IntentFile ||
+					pending.CaptureID != record.CaptureID || pending.ObjectsSHA256 != record.ObjectsSHA256 {
+					return errors.Join(pendingErr, errors.New("native snapshot publication: completed retirement has no matching intent"))
+				}
+			}
+			continue
+		}
 		capture, ok := strings.CutSuffix(entry.Name(), ".json")
 		if !ok || !canonicalNativeHelperID(capture) || !entry.Type().IsRegular() {
 			return errors.New("native snapshot publication: unowned entry requires quarantine")

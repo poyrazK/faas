@@ -161,16 +161,26 @@ func (s *PgStore) claimEnvironmentWorkloadQualification(ctx context.Context, id,
 	if err != nil {
 		return EnvironmentWorkloadQualificationRequest{}, err
 	}
-	if len(qualificationRequestFromSQL(current).FrozenInputs.ServiceBindings) != 0 {
+	claimedRequest := qualificationRequestFromSQL(current)
+	if claimedRequest.ExecutionMode == api.ExecutionModeJob || len(claimedRequest.FrozenInputs.ServiceBindings) != 0 {
 		return EnvironmentWorkloadQualificationRequest{}, ErrConflict
 	}
 	q, token := sqlc.New(), uuid.NewString()
+	if current.Attempt > 0 {
+		if _, err := q.EnvironmentQualificationSmokeReceipt(ctx, tx, sqlc.EnvironmentQualificationSmokeReceiptParams{
+			RequestID: current.ID, Attempt: current.Attempt,
+		}); err == nil {
+			return EnvironmentWorkloadQualificationRequest{}, ErrConflict
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return EnvironmentWorkloadQualificationRequest{}, mapErr(err)
+		}
+	}
 	if nodeID != "" {
 		app, err := q.EnvironmentWorkloadQualificationAppOwner(ctx, tx, current.AppID)
 		if err != nil {
 			return EnvironmentWorkloadQualificationRequest{}, mapErr(err)
 		}
-		if current.ExecutionMode == "job" || (app.Status != string(AppActive) && app.Status != string(AppEvictedCold)) ||
+		if current.ExecutionMode == "job" || current.ExecutionMode == "worker" || (app.Status != string(AppActive) && app.Status != string(AppEvictedCold)) ||
 			(app.NodeID.Valid && app.NodeID != mustPgUUID(nodeID)) {
 			return EnvironmentWorkloadQualificationRequest{}, ErrConflict
 		}
@@ -222,7 +232,7 @@ func (s *PgStore) ClaimEnvironmentWorkloadQualificationGraphForNode(ctx context.
 		return nil, mapErr(err)
 	}
 	graph := workloadGraphFromSQL(graphRow)
-	expected, hasBinding := 0, false
+	expected, completeSmokeReceipts := 0, true
 	for _, member := range graph.Members {
 		if member.CandidateDeploymentID != "" {
 			expected++
@@ -237,10 +247,31 @@ func (s *PgStore) ClaimEnvironmentWorkloadQualificationGraphForNode(ctx context.
 			return nil, err
 		}
 		request := qualificationRequestFromSQL(current)
-		hasBinding = hasBinding || len(request.FrozenInputs.ServiceBindings) != 0
-		if request.ExecutionMode == "job" || request.ExecutionMode == "worker" ||
-			(request.Phase != "queued" && (request.Phase != "claimed" || request.LeaseUntil == nil || time.Now().Before(*request.LeaseUntil))) {
+		if request.Phase != "queued" && (request.Phase != "claimed" || request.LeaseUntil == nil || time.Now().Before(*request.LeaseUntil)) {
 			return nil, ErrConflict
+		}
+		if !qualificationGraphSmokePolicyValid(request) {
+			return nil, ErrConflict
+		}
+		if request.ExecutionMode == api.ExecutionModeJob && !qualificationGraphJobQueueBindingsSupported(graph, request.Resource) {
+			return nil, ErrConflict
+		}
+		if request.ExecutionMode == api.ExecutionModeJob {
+			if _, err := q.EnvironmentQualificationJobSmokeReceipt(ctx, tx, sqlc.EnvironmentQualificationJobSmokeReceiptParams{
+				RequestID: current.ID, Attempt: current.Attempt,
+			}); errors.Is(err, pgx.ErrNoRows) {
+				completeSmokeReceipts = false
+			} else if err != nil {
+				return nil, mapErr(err)
+			}
+		} else {
+			if _, err := q.EnvironmentQualificationSmokeReceipt(ctx, tx, sqlc.EnvironmentQualificationSmokeReceiptParams{
+				RequestID: current.ID, Attempt: current.Attempt,
+			}); errors.Is(err, pgx.ErrNoRows) {
+				completeSmokeReceipts = false
+			} else if err != nil {
+				return nil, mapErr(err)
+			}
 		}
 		app, err := q.EnvironmentWorkloadQualificationAppOwner(ctx, tx, current.AppID)
 		if err != nil {
@@ -250,11 +281,8 @@ func (s *PgStore) ClaimEnvironmentWorkloadQualificationGraphForNode(ctx context.
 			(app.NodeID.Valid && app.NodeID != mustPgUUID(nodeID)) || (app.AppProtocol != "" && app.AppProtocol != api.AppProtocolHTTP1) {
 			return nil, ErrConflict
 		}
-		if len(request.FrozenInputs.ServiceBindings) != 0 && request.FrozenInputs.Baseline.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS {
-			return nil, ErrConflict
-		}
 	}
-	if !hasBinding {
+	if completeSmokeReceipts {
 		return nil, ErrConflict
 	}
 	claimed := make([]EnvironmentWorkloadQualificationRequest, 0, len(rows))

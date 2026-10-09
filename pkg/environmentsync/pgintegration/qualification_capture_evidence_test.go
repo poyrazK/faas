@@ -14,6 +14,7 @@ func captureProof(frame state.EnvironmentQualificationExecution) state.Environme
 	capture := uuid.NewString()
 	snapshot := state.Snapshot{StorageKey: state.SnapshotCaptureMemKey(frame.DeploymentID, state.SnapshotTierWarm, capture)}
 	return state.EnvironmentQualificationSnapshot{CaptureID: capture, NativeGeneration: uuid.NewString(), KernelBootID: uuid.NewString(),
+		FCVersion:  "1.7.0",
 		StorageKey: snapshot.StorageKey, VMStateStorageKey: state.SnapshotVMStateKey(snapshot), DriveStorageKey: state.SnapshotDriveKey(snapshot),
 		BackingStorageKey: state.SnapshotBackingKey(snapshot), MemBytes: 1024, VMStateBytes: 128, StoredBytes: 2048}
 }
@@ -64,8 +65,12 @@ func TestEnvironmentGitOpsCaptureEvidenceIsFencedImmutableAndDoesNotActivate(t *
 		if err != nil || !dep.EnvironmentWorkloadHeld() || dep.Status != state.DeploySnapshotting {
 			t.Fatalf("capture escaped hold: %+v %v", dep, err)
 		}
-		retirement := state.EnvironmentQualificationRetirement{Kind: state.QualificationNativeRetired, ReceiptID: uuid.NewString(), NativeGeneration: proof.NativeGeneration, KernelBootID: proof.KernelBootID, ProcessesExited: true, ResourcesRemoved: true}
+		retirement := state.EnvironmentQualificationRetirement{Kind: state.QualificationNativeRetired, ReceiptID: proof.CaptureID, NativeGeneration: proof.NativeGeneration, KernelBootID: proof.KernelBootID, ProcessesExited: true, ResourcesRemoved: true}
 		foreignRetirement := retirement
+		foreignRetirement.ReceiptID = uuid.NewString()
+		if err := executor.RetireEnvironmentQualificationExecution(t.Context(), frame, foreignRetirement); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("foreign native receipt retired captured VM: %v", err)
+		}
 		foreignRetirement.NativeGeneration = uuid.NewString()
 		if err := executor.RetireEnvironmentQualificationExecution(t.Context(), frame, foreignRetirement); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("foreign physical generation retired captured VM: %v", err)

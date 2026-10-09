@@ -2,12 +2,55 @@ package state
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 var _ EnvironmentQualificationServiceStore = (*MemStore)(nil)
+var _ EnvironmentQualificationServiceAliasStore = (*MemStore)(nil)
+
+func (m *MemStore) EnvironmentQualificationServiceAliasAllowed(ctx context.Context, callerAppID, service string) (bool, error) {
+	service = strings.ToLower(strings.TrimSpace(service))
+	if !qualificationRecoveryUUIDValid(callerAppID) || !api.ValidAppSlug(service) {
+		return false, ErrInvalidArgument
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	caller := m.apps[callerAppID]
+	if caller.ID == "" || caller.Status == AppDeleted {
+		return false, nil
+	}
+	now := time.Now()
+	for instanceID, status := range m.qualificationExecutions {
+		if status.Execution.AppID != callerAppID || !status.DispatchStarted || status.RetiredAt != nil {
+			continue
+		}
+		instance := m.instances[instanceID]
+		if instance.ID == "" || !m.deployments[instance.DeploymentID].EnvironmentWorkloadHeld() {
+			continue
+		}
+		memory, request, err := m.qualificationLocked(status.Execution.RequestID)
+		if err != nil || request.AppID != callerAppID || m.qualificationCurrentLocked(memory, request) != nil ||
+			!qualificationExecutionHasActiveLease(status, request, now) || !qualificationServiceExecutionCurrent(request, status, instance, now) {
+			continue
+		}
+		receipt, acknowledged := m.qualificationConfigReceipts[instanceID]
+		if !acknowledged || !qualificationConfigReceiptMatchesFrame(receipt, request, status.Execution) {
+			continue
+		}
+		for _, binding := range request.FrozenInputs.ServiceBindings {
+			if strings.EqualFold(binding.Workload, service) {
+				return true, nil
+			}
+		}
+	}
+	return false, ctx.Err()
+}
 
 func (m *MemStore) qualificationNetworkInstanceLocked(nodeID, hostIP string) (Instance, error) {
 	var caller Instance
@@ -82,6 +125,10 @@ func (m *MemStore) ResolveEnvironmentQualificationService(ctx context.Context, r
 		!qualificationServiceExecutionCurrent(caller, callerStatus, ins, time.Now()) {
 		return zero, ErrConflict
 	}
+	callerConfig, callerAcknowledged := m.qualificationConfigReceipts[ins.ID]
+	if !callerAcknowledged || !qualificationConfigReceiptMatchesFrame(callerConfig, caller, callerStatus.Execution) {
+		return zero, ErrConflict
+	}
 	binding, exists := caller.FrozenInputs.ServiceBindings[request.Binding]
 	if !exists {
 		return zero, ErrConflict
@@ -94,6 +141,10 @@ func (m *MemStore) ResolveEnvironmentQualificationService(ctx context.Context, r
 	}
 	targetIns, targetStatus, err := m.qualificationServiceRuntimeInstanceLocked(target)
 	if err != nil {
+		return zero, ErrConflict
+	}
+	targetConfig, targetAcknowledged := m.qualificationConfigReceipts[targetIns.ID]
+	if !targetAcknowledged || !qualificationConfigReceiptMatchesFrame(targetConfig, target, targetStatus.Execution) {
 		return zero, ErrConflict
 	}
 	if protocol := m.apps[target.AppID].AppProtocol; protocol != "" && protocol != api.AppProtocolHTTP1 {

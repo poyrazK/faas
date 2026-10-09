@@ -68,6 +68,9 @@ type nativePublicationIntentFixture struct {
 
 func (j *nativePublicationIntentFixture) Acquire(context.Context) error { return j.err }
 func (j *nativePublicationIntentFixture) Check() error                  { return j.err }
+func (*nativePublicationIntentFixture) RecoverPendingRetirements(context.Context, storage.StorageBackend) error {
+	return nil
+}
 func (j *nativePublicationIntentFixture) Begin(ctx context.Context, r nativeSnapshotPublicationIntent) (nativeSnapshotPublicationIntent, error) {
 	if j.intent.Version != 0 {
 		return r, storage.ErrArtifactExists

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 )
 
@@ -135,12 +136,12 @@ func (m *MemStore) claimEnvironmentWorkloadQualification(ctx context.Context, id
 	if err := m.qualificationCurrentLocked(memory, current); err != nil {
 		return EnvironmentWorkloadQualificationRequest{}, err
 	}
-	if len(current.FrozenInputs.ServiceBindings) != 0 {
+	if current.ExecutionMode == api.ExecutionModeJob || len(current.FrozenInputs.ServiceBindings) != 0 {
 		return EnvironmentWorkloadQualificationRequest{}, ErrConflict
 	}
 	if nodeID != "" {
 		app := m.apps[current.AppID]
-		if current.ExecutionMode == "job" || (app.Status != AppActive && app.Status != AppEvictedCold) ||
+		if current.ExecutionMode == "job" || current.ExecutionMode == "worker" || (app.Status != AppActive && app.Status != AppEvictedCold) ||
 			(app.NodeID != "" && qualificationRecoveryCursor(app.NodeID) != qualificationRecoveryCursor(nodeID)) {
 			return EnvironmentWorkloadQualificationRequest{}, ErrConflict
 		}

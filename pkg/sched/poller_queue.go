@@ -305,6 +305,43 @@ func (q *queuePoller) Ack(ctx context.Context, t sqlc.Trigger, ids []string) err
 	return nil
 }
 
+// AckWithDeployment records GitOps queue-serving evidence only after the
+// durable invocation and trigger receipt have both reached success. The
+// gateway supplies the selected deployment for each successful item.
+func (q *queuePoller) AckWithDeployment(ctx context.Context, t sqlc.Trigger, acknowledgements []queueDispatchAcknowledgement) error {
+	ids := make([]string, 0, len(acknowledgements))
+	for _, acknowledgement := range acknowledgements {
+		ids = append(ids, acknowledgement.ItemIdentifier)
+	}
+	if q.source != "queue" || !t.QueueBindingID.Valid || t.QueueBindingScope == "" || !t.QueueBindingEnvironmentID.Valid {
+		return q.Ack(ctx, t, ids)
+	}
+	claimedIDs, attempts, generations := q.currentClaims(ids)
+	if len(claimedIDs) == 0 {
+		return nil
+	}
+	servingAcks := make([]state.EnvironmentWorkloadQueueServingAcknowledgement, 0, len(acknowledgements))
+	for _, acknowledgement := range acknowledgements {
+		if acknowledgement.DeploymentID == "" {
+			continue
+		}
+		servingAcks = append(servingAcks, state.EnvironmentWorkloadQueueServingAcknowledgement{
+			Mode: "push", AppID: t.AppID.String(), Scope: t.QueueBindingScope, BindingID: t.QueueBindingID.String(), TriggerID: t.ID.String(),
+			DeploymentID: acknowledgement.DeploymentID, InvocationID: acknowledgement.ItemIdentifier,
+		})
+	}
+	finalized, err := state.NewPgStore(q.pool).CompleteEnvironmentQueueDeliveryClaims(ctx, t.AppID.String(), t.ID.String(), q.source,
+		claimedIDs, attempts, generations, servingAcks)
+	if err != nil {
+		return fmt.Errorf("poller_queue: finalize successful queue invocations: %w", err)
+	}
+	if q.owner != nil && len(finalized) != len(claimedIDs) {
+		return state.ErrNotFound
+	}
+	q.forgetClaims(ids)
+	return nil
+}
+
 // Nack requeues the claimed invocation for a later push attempt, or marks
 // it dead_letter when the trigger's attempt budget is exhausted. The
 // trigger_records retry FSM remains the source of the exact next-fire time;

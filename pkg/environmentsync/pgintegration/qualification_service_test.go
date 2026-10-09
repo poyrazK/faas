@@ -30,8 +30,9 @@ func privateQualificationServiceFixture(t *testing.T, basic gitOpsTestStore) (st
 	}
 	caller := desired.Definition.Workloads["api"]
 	caller.ServiceBindings = map[string]api.EnvironmentServiceBinding{"backend": {Workload: "backend", EnvKey: "BACKEND_URL"}}
+	caller.Runtime = json.RawMessage(`{"port":8080,"healthz":"/health"}`)
 	desired.Definition.Workloads["api"] = caller
-	desired.Definition.Workloads["backend"] = api.EnvironmentWorkload{App: backend.Slug, Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/backend@sha256:" + strings.Repeat("d", 64)}, Runtime: json.RawMessage(`{"port":8082,"execution_mode":"service"}`)}
+	desired.Definition.Workloads["backend"] = api.EnvironmentWorkload{App: backend.Slug, Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/backend@sha256:" + strings.Repeat("d", 64)}, Runtime: json.RawMessage(`{"port":8082,"execution_mode":"service","healthz":"/readyz"}`)}
 	desired, err = environmentsync.Compile(desired.Definition)
 	if err != nil {
 		t.Fatal(err)
@@ -86,9 +87,13 @@ func privateQualificationServiceFixture(t *testing.T, basic gitOpsTestStore) (st
 		}
 		ins, err := basic.(state.EnvironmentGitOpsQualificationRuntimeStore).PublishEnvironmentWorkloadQualificationRuntime(t.Context(), request, state.EnvironmentWorkloadQualificationRuntime{
 			NodeID: placement.NodeID, WakeID: placement.WakeID, Netns: "private-" + request.ReservedInstanceID, HostIP: fmt.Sprintf("10.100.0.%d", i+2), GuestUID: 20001 + i,
-			Inputs: state.RuntimeConfigInputs{Scope: "production", Boundary: time.Unix(0, 0), Variables: map[string]string{}, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}})
+			Inputs: state.RuntimeConfigInputs{Scope: "production", Boundary: time.Now().UTC(), Variables: map[string]string{}, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if _, err := basic.(state.EnvironmentQualificationConfigReceiptStore).RecordEnvironmentQualificationConfigReceipt(
+			t.Context(), request, admission.Execution, strings.Repeat("a", 64)); err != nil {
+			t.Fatal("guest config acknowledgement", err)
 		}
 		instances = append(instances, ins)
 	}
@@ -107,6 +112,13 @@ func TestEnvironmentQualificationPrivateServiceBindsBothOriginalAttempts(t *test
 		route, err := services.ResolveEnvironmentQualificationService(t.Context(), request)
 		if err != nil || route.Caller.InstanceID != instances[0].ID || route.Target.InstanceID != instances[1].ID || route.Port != 8082 || route.Caller.CleanupToken != "" || route.Target.CleanupToken != "" || route.Deadline.After(*requests[0].LeaseUntil) || route.Deadline.After(*requests[1].LeaseUntil) {
 			t.Fatal("private graph resolution", route, err)
+		}
+		aliases := basic.(state.EnvironmentQualificationServiceAliasStore)
+		if allowed, err := aliases.EnvironmentQualificationServiceAliasAllowed(t.Context(), requests[0].AppID, "backend"); err != nil || !allowed {
+			t.Fatalf("current scoped alias: %v %v", allowed, err)
+		}
+		if allowed, err := aliases.EnvironmentQualificationServiceAliasAllowed(t.Context(), requests[0].AppID, "unbound"); err != nil || allowed {
+			t.Fatalf("unbound alias: %v %v", allowed, err)
 		}
 		if route.CallScope == nil || !route.CallScope.Allows("GET", "/health") || route.CallScope.Allows("POST", "/health") || route.CallScope.Allows("GET", "/admin") {
 			t.Fatal("private route lost frozen target authorization")
@@ -157,7 +169,7 @@ func TestEnvironmentQualificationPrivateServiceUsesRestoredRuntimeReceipts(t *te
 				t.Fatal(err)
 			}
 			proof := qualificationNativeProof()
-			proof.NativeGeneration, proof.KernelBootID = retirements[i].Snapshot.NativeGeneration, retirements[i].Snapshot.KernelBootID
+			proof.ReceiptID, proof.NativeGeneration, proof.KernelBootID = retirements[i].Snapshot.CaptureID, retirements[i].Snapshot.NativeGeneration, retirements[i].Snapshot.KernelBootID
 			if err := executor.RetireEnvironmentQualificationExecution(t.Context(), status.Execution, proof); err != nil {
 				t.Fatal(err)
 			}
@@ -192,6 +204,17 @@ func TestEnvironmentQualificationPrivateServiceUsesRestoredRuntimeReceipts(t *te
 				if err != nil {
 					t.Fatal(err)
 				}
+			}
+			if i == 1 {
+				if _, err := basic.(state.EnvironmentQualificationServiceStore).ResolveEnvironmentQualificationService(t.Context(), state.EnvironmentQualificationServiceRequest{
+					NodeID: instances[0].NodeID, HostIP: instances[0].HostIP, GraphID: requests[0].GraphID, Binding: "backend",
+				}); err == nil {
+					t.Fatal("binding routed to restored target before guest config acknowledgement")
+				}
+			}
+			if _, err := basic.(state.EnvironmentQualificationConfigReceiptStore).RecordEnvironmentQualificationConfigReceipt(
+				t.Context(), request, admission.Execution, strings.Repeat("b", 64)); err != nil {
+				t.Fatal("restored guest config acknowledgement", err)
 			}
 		}
 		route, err := basic.(state.EnvironmentQualificationServiceStore).ResolveEnvironmentQualificationService(t.Context(), state.EnvironmentQualificationServiceRequest{
@@ -244,6 +267,11 @@ func TestEnvironmentQualificationPrivateServiceRejectsRevokedEndpoints(t *testin
 				_, err := basic.(state.EnvironmentQualificationServiceStore).ResolveEnvironmentQualificationService(t.Context(), state.EnvironmentQualificationServiceRequest{NodeID: instances[0].NodeID, HostIP: instances[0].HostIP, GraphID: requests[0].GraphID, Binding: "backend"})
 				if !errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrNotFound) && !(change == "protocol" && errors.Is(err, state.ErrEnvironmentWorkloadPreparationUnavailable)) {
 					t.Fatal("revoked graph endpoint routed", change, err)
+				}
+				if change == "caller_retired" {
+					if allowed, err := basic.(state.EnvironmentQualificationServiceAliasStore).EnvironmentQualificationServiceAliasAllowed(t.Context(), requests[0].AppID, "backend"); err != nil || allowed {
+						t.Fatalf("retired scoped alias remained available: %v %v", allowed, err)
+					}
 				}
 			})
 		})

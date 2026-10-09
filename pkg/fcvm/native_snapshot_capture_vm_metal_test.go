@@ -228,7 +228,7 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 	if beforeLimit != uint64(api.BillableRAMMB(frame.RAMMB))<<20 {
 		t.Fatal("original native VM fence differs from policy", beforeLimit)
 	}
-	info, incoming, err := nativeMetalCaptureVMProducer(ctx, m, v, frame.InstanceID, frame.NodeID)
+	info, incoming, err := nativeMetalCaptureVMProducer(ctx, m, v, frame.InstanceID, frame.NodeID, version)
 	if err != nil || info.MemBytes != int64(frame.RAMMB)<<20 || info.VMStateBytes <= 0 || info.StoredBytes <= 0 {
 		t.Fatal("real native capture failed:", info, err)
 	}
@@ -275,7 +275,7 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 	if err != nil {
 		t.Fatal("original capture completion missing:", err)
 	}
-	nativeMetalCaptureVMRestoreBackings(t, ctx, m, v, incoming, completed, [2]string{kernel, base}, disk, originalUUID)
+	nativeMetalCaptureVMRestoreBackings(t, ctx, m, v, incoming, completed, [2]string{kernel, base}, disk, originalUUID, version)
 	err = withNativeSnapshotRestoreInputs(ctx, r.publications.(nativeSnapshotRestoreReceiptJournal), canonical, completed, images, func(inputs nativeSnapshotRestoreInputs) (result error) {
 		// Only this disposable acceptance fixture names the verified copies.
 		// Production inputs stay anonymous and need native staging ownership.
@@ -333,7 +333,7 @@ func nativeMetalCaptureVM(t *testing.T, ctx context.Context) {
 // image epochs. It loads paused, resumes and reseeds through pinned original
 // control peers, then proves fresh entropy and its own complete retirement.
 // This does not grant scheduler/serving or scoped graph readiness.
-func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *Manager, v *JailerVMM, incoming nativeQualificationRecord, completed nativeQualificationCaptureRecord, paths [2]string, disk, originalUUID string) {
+func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *Manager, v *JailerVMM, incoming nativeQualificationRecord, completed nativeQualificationCaptureRecord, paths [2]string, disk, originalUUID, version string) {
 	t.Helper()
 	r := v.nativeRecovery
 	q := r.journal.qualifications(incoming.Execution.NodeID)
@@ -343,7 +343,7 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *M
 	}
 	frame := incoming.Execution
 	frame.InstanceID, frame.WakeID, frame.CleanupToken, frame.CaptureInstanceID = uuid.NewString(), uuid.NewString(), uuid.NewString(), frame.InstanceID
-	target, err := q.restores().claim(ctx, frame)
+	target, err := q.restores().claim(ctx, frame, version)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,7 +490,7 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *M
 	if err := errors.Join(flagErr, fenceProbe.Require(ctx), fenceProbe.Close()); err != nil || flags&unix.O_ACCMODE != unix.O_RDONLY {
 		t.Fatal("real restore fence acquired write authority or lost original target:", err)
 	}
-	loaded, err := v.loadNativeQualificationRestore(ctx, lease)
+	loaded, err := v.loadNativeQualificationRestore(ctx, lease, version)
 	if err != nil {
 		t.Fatal("real dedicated native load/resume/hook:", err)
 	}
@@ -540,7 +540,7 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *M
 	if limit := nativeCaptureVMMemoryLimit(t, filepath.Join(cgroupRoot, ParentCgroupFor(lease.Plan), PerInstanceScope(lease.Instance))); limit != uint64(api.BillableRAMMB(frame.RAMMB))<<20 {
 		t.Fatal("native restore changed billable target memory fence", limit)
 	}
-	if _, err := v.loadNativeQualificationRestore(ctx, lease); err == nil {
+	if _, err := v.loadNativeQualificationRestore(ctx, lease, version); err == nil {
 		t.Fatal("completed real restore was replayed")
 	}
 	nativeMetalRestoreMetadataCancellationProbe(t, ctx, lease, channels, blocked)
@@ -682,7 +682,7 @@ func nativeMetalRestoreMetadataProbe(t *testing.T, ctx context.Context, lease Le
 
 // Invoke the internal original producer without overriding the public support
 // gate or writing Manager capture completion before artifact receipts exist.
-func nativeMetalCaptureVMProducer(ctx context.Context, m *Manager, v *JailerVMM, instance, node string) (info SnapshotInfo, incoming nativeQualificationRecord, err error) {
+func nativeMetalCaptureVMProducer(ctx context.Context, m *Manager, v *JailerVMM, instance, node, version string) (info SnapshotInfo, incoming nativeQualificationRecord, err error) {
 	q := v.nativeRecovery.journal.qualifications(node)
 	lock, err := q.lock(ctx, instance)
 	if err != nil {
@@ -702,7 +702,7 @@ func nativeMetalCaptureVMProducer(ctx context.Context, m *Manager, v *JailerVMM,
 		return info, incoming, err
 	}
 	capture := nativeQualificationCaptureRecord{Version: 1, InstanceID: instance, CaptureID: incoming.Generation,
-		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, StartedAt: q.clock().UTC()}
+		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, FCVersion: version, StartedAt: q.clock().UTC()}
 	if err := q.writeCapture(incoming, capture); err != nil {
 		return info, incoming, err
 	}

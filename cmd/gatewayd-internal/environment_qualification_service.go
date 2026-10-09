@@ -15,8 +15,9 @@ type qualificationNetworkCallerStore interface {
 	EnvironmentQualificationNetworkCaller(context.Context, string, string) (bool, error)
 }
 
-// HTTP, raw TCP and service discovery must all reject the same private
-// qualification network slots before ordinary alias resolution or wake.
+// Ordinary service requests must reject private qualification network slots.
+// DNS alias lookup remains a discoverability check; the dedicated qualification
+// HTTP route binds every request to its actual node, address, graph and lease.
 func ordinaryQualificationCallerGuard(ctx context.Context, store qualificationNetworkCallerStore, nodeName, remote string) error {
 	host, _, err := net.SplitHostPort(remote)
 	if err != nil {

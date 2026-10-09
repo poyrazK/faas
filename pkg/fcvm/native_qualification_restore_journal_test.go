@@ -33,11 +33,9 @@ func nativeQualificationRestoreFixture(t *testing.T) (*nativeQualificationRestor
 	}
 	capture := nativeQualificationCaptureRecord{Version: 1, InstanceID: source.InstanceID, CaptureID: incoming.Generation,
 		NativeGeneration: incoming.NativeGeneration, KernelBootID: incoming.KernelBootID, StartedAt: incoming.AcceptedAt.Add(time.Millisecond),
-		CompletedAt: incoming.AcceptedAt.Add(2 * time.Millisecond), Info: SnapshotInfo{MemBytes: 100, VMStateBytes: 50, StoredBytes: 200},
+		CompletedAt: incoming.AcceptedAt.Add(2 * time.Millisecond), FCVersion: "1.7.0", Info: SnapshotInfo{MemBytes: 100, VMStateBytes: 50, StoredBytes: 200},
 		Backing: BackingIdentity{Version: 1, Kernel: "sha256:modeled-kernel", Base: "sha256:modeled-base"}}
-	if err := q.writeCapture(incoming, capture); err != nil {
-		t.Fatal(err)
-	}
+	writeCompleteNativeQualificationCapture(t, q, incoming, capture)
 	if _, err := q.revoke(ctx, source); err != nil {
 		t.Fatal(err)
 	}
@@ -54,11 +52,32 @@ func nativeQualificationRestoreFixture(t *testing.T) (*nativeQualificationRestor
 	return q.restores(), target, ctx
 }
 
+func TestNativeQualificationRestoreClaimRequiresCapturedFirecrackerVersion(t *testing.T) {
+	for _, running := range []string{"", " 1.7.0", "1.8.0"} {
+		t.Run(fmt.Sprintf("running_%q", running), func(t *testing.T) {
+			j, frame, ctx := nativeQualificationRestoreFixture(t)
+			if _, err := j.claim(ctx, frame, running); err == nil {
+				t.Fatal("restore target accepted an absent or incompatible Firecracker version")
+			}
+			path, err := j.path(frame.InstanceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("incompatible version published restore authority", err)
+			}
+			if _, err := j.incoming.owner.read(frame.InstanceID); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("incompatible version created a native target", err)
+			}
+		})
+	}
+}
+
 func TestNativeQualificationRestoreBindingRequiresExactGuestRAMBeforePublication(t *testing.T) {
 	for _, delta := range []int{-1, 1, 8} {
 		t.Run(fmt.Sprintf("delta_%d", delta), func(t *testing.T) {
 			j, frame, ctx := nativeQualificationRestoreFixture(t)
-			r, err := j.claim(ctx, frame)
+			r, err := j.claim(ctx, frame, "1.7.0")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -80,11 +99,11 @@ func TestNativeQualificationRestoreBindingRequiresExactGuestRAMBeforePublication
 
 func TestNativeQualificationRestoreDistinctBindingAndRetirement(t *testing.T) {
 	j, frame, ctx := nativeQualificationRestoreFixture(t)
-	r, err := j.claim(ctx, frame)
+	r, err := j.claim(ctx, frame, "1.7.0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := j.claim(ctx, frame); err == nil {
+	if _, err := j.claim(ctx, frame, "1.7.0"); err == nil {
 		t.Fatal("duplicate restore delivery acquired a producer")
 	}
 	lease := qualificationLease(frame.InstanceID)
@@ -186,9 +205,7 @@ func TestNativeQualificationRestoreRequiresRetiredExactCapture(t *testing.T) {
 					t.Fatal(err)
 				}
 				capture.CompletedAt, capture.Info, capture.Backing = time.Time{}, SnapshotInfo{}, BackingIdentity{}
-				if err := j.incoming.writeCapture(source, capture); err != nil {
-					t.Fatal(err)
-				}
+				writeTamperedNativeQualificationCapture(t, j.incoming, source, capture)
 			case "source_revocation":
 				source.Revoked = false
 				if err := j.incoming.write(source); err != nil {
@@ -219,7 +236,7 @@ func TestNativeQualificationRestoreRequiresRetiredExactCapture(t *testing.T) {
 				cancel()
 				ctx = cancelCtx
 			}
-			if _, err := j.claim(ctx, frame); err == nil {
+			if _, err := j.claim(ctx, frame, "1.7.0"); err == nil {
 				t.Fatal("changed authority admitted a restore target")
 			}
 			path, err := j.path(frame.InstanceID)
@@ -235,7 +252,7 @@ func TestNativeQualificationRestoreRequiresRetiredExactCapture(t *testing.T) {
 
 func TestNativeQualificationRestoreProfileExcludesGenericAndCaptureProducers(t *testing.T) {
 	j, frame, ctx := nativeQualificationRestoreFixture(t)
-	r, err := j.claim(ctx, frame)
+	r, err := j.claim(ctx, frame, "1.7.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +281,7 @@ func TestNativeQualificationRestoreProfileExcludesGenericAndCaptureProducers(t *
 
 func TestNativeQualificationRestorePublicationUncertaintyRetainsOriginalLease(t *testing.T) {
 	j, frame, ctx := nativeQualificationRestoreFixture(t)
-	r, err := j.claim(ctx, frame)
+	r, err := j.claim(ctx, frame, "1.7.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,14 +320,14 @@ func TestNativeQualificationRestoreLostClaimAcknowledgementAndEarlyRevoke(t *tes
 				j.writeValue = func(path string, r nativeQualificationRestoreRecord) error {
 					return errors.Join(writeNativeJournalValue(path, r), errors.New("acknowledgement lost"))
 				}
-				if _, err := j.claim(ctx, frame); err == nil {
+				if _, err := j.claim(ctx, frame, "1.7.0"); err == nil {
 					t.Fatal("lost incoming acknowledgement ignored")
 				}
 			} else if _, err := j.revoke(t.Context(), frame); err != nil {
 				t.Fatal(err)
 			}
 			j = j.incoming.restores()
-			if _, err := j.claim(ctx, frame); err == nil {
+			if _, err := j.claim(ctx, frame, "1.7.0"); err == nil {
 				t.Fatal("restart replayed an uncertain or revoked incoming target")
 			}
 			if _, err := j.revoke(t.Context(), frame); err != nil {
@@ -322,7 +339,7 @@ func TestNativeQualificationRestoreLostClaimAcknowledgementAndEarlyRevoke(t *tes
 
 func TestNativeQualificationRestoreStrictPrivateJournal(t *testing.T) {
 	j, frame, ctx := nativeQualificationRestoreFixture(t)
-	r, err := j.claim(ctx, frame)
+	r, err := j.claim(ctx, frame, "1.7.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +390,7 @@ func TestNativeQualificationRestoreStrictPrivateJournal(t *testing.T) {
 
 func TestNativeQualificationRestoreRechecksCaptureBeforeBindingAndKeepsOwnCleanup(t *testing.T) {
 	j, frame, ctx := nativeQualificationRestoreFixture(t)
-	r, err := j.claim(ctx, frame)
+	r, err := j.claim(ctx, frame, "1.7.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,17 +404,13 @@ func TestNativeQualificationRestoreRechecksCaptureBeforeBindingAndKeepsOwnCleanu
 	}
 	changed := capture
 	changed.Info.StoredBytes++
-	if err := j.incoming.writeCapture(source, changed); err != nil {
-		t.Fatal(err)
-	}
+	writeTamperedNativeQualificationCapture(t, j.incoming, source, changed)
 	producer := nativeQualificationRestoreContext(ctx, r)
 	lease := qualificationLease(frame.InstanceID)
 	if err := j.incoming.owner.prepare(producer, lease); err == nil {
 		t.Fatal("changed completion borrowed earlier restore admission")
 	}
-	if err := j.incoming.writeCapture(source, capture); err != nil {
-		t.Fatal(err)
-	}
+	writeTamperedNativeQualificationCapture(t, j.incoming, source, capture)
 	if err := j.incoming.owner.prepare(producer, lease); err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +454,7 @@ func TestNativeQualificationRestoreCannotAdoptPriorPhysicalOrCaptureProfile(t *t
 					t.Fatal(err)
 				}
 			}
-			if _, err := j.claim(ctx, frame); err == nil {
+			if _, err := j.claim(ctx, frame, "1.7.0"); err == nil {
 				t.Fatal("restore adopted prior instance ownership")
 			}
 		})

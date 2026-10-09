@@ -53,6 +53,7 @@ type gitOpsIntentSnapshot struct {
 	Prune          bool                            `json:"prune"`
 	Version        int64                           `json:"version"`
 	Project        string                          `json:"project"`
+	Repository     string                          `json:"repository"`
 	Environment    string                          `json:"environment"`
 	EnvironmentID  string                          `json:"environment_id"`
 	QueueBindings  []gitOpsQueueIdentity           `json:"queue_bindings"`
@@ -85,6 +86,7 @@ func readEnvironmentGitOpsIntent(ctx context.Context, db sqlc.DBTX, source Envir
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		return EnvironmentGitOpsObservation{}, snapshot, err
 	}
+	snapshot.Repository = source.Spec.Repository
 	observation, err := compileGitOpsObservation(snapshot, desired)
 	return observation, snapshot, err
 }
@@ -430,6 +432,16 @@ func (s *PgStore) AdoptEnvironmentGitOps(ctx context.Context, accountID, sourceI
 	q := sqlc.New()
 	for _, row := range changedWorkloadIntents(snapshot, plan, observed.State.ResourceIDs, true) {
 		row.AccountID = accountID
+		if row.Schedule != nil && row.JobID == "" {
+			_, workload, app, ok := environmentGitOpsAppForWorkload(snapshot, desired, row.AppID)
+			if !ok {
+				return ErrConflict
+			}
+			row, err = syncEnvironmentGitOpsJobTx(ctx, tx, source, app, row, workload, snapshot.Plan)
+			if err != nil {
+				return err
+			}
+		}
 		if _, err := putWorkloadIntentTx(ctx, tx, row); err != nil {
 			return err
 		}
@@ -542,8 +554,25 @@ func (s *PgStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentG
 		}
 	}
 	steps := []EnvironmentGitOpsStep{}
-	for _, row := range changedWorkloadIntents(snapshot, plan, observed.State.ResourceIDs, false) {
+	workloadRows := changedWorkloadIntents(snapshot, plan, observed.State.ResourceIDs, false)
+	workloadIDs := make([]string, 0, len(workloadRows))
+	for appID := range workloadRows {
+		workloadIDs = append(workloadIDs, appID)
+	}
+	slices.Sort(workloadIDs)
+	for _, appID := range workloadIDs {
+		row := workloadRows[appID]
 		row.AccountID = lease.Source.AccountID
+		if row.Schedule != nil || row.JobID != "" {
+			_, workload, app, ok := environmentGitOpsAppForWorkload(snapshot, desired, row.AppID)
+			if !ok {
+				return nil, ErrConflict
+			}
+			row, err = syncEnvironmentGitOpsJobTx(ctx, tx, lease.Source, app, row, workload, snapshot.Plan)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if _, err := putWorkloadIntentTx(ctx, tx, row); err != nil {
 			return nil, err
 		}
@@ -568,8 +597,10 @@ func (s *PgStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentG
 			if err := s.applyGitOpsQueue(ctx, tx, lease.Source, desired.Definition, observed.State.ResourceIDs, change); err != nil {
 				return nil, mapErr(err)
 			}
-		} else if gitOpsWorkloadField(change.Path) {
+		} else if gitOpsWorkloadField(change.Path) && !strings.HasPrefix(change.Path, "variables/") {
 			// The complete scoped row was published in this transaction above.
+			// GitOps variables also need the app_envs write below; the workload
+			// intent row alone is not the value observed by reconciliation.
 		} else if err := applyEnvironmentGitOpsScopedField(ctx, tx, lease.Source, observed.State.ResourceIDs[change.Resource], change); err != nil {
 			return nil, mapErr(err)
 		}

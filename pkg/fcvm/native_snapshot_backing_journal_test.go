@@ -142,7 +142,7 @@ func TestNativeSnapshotBackingJournalRetainsFirstPublicationAndRejectsMalformedE
 			}
 			if change == "original" {
 				completed := f.capture
-				completed.Info, completed.Backing, completed.CompletedAt = SnapshotInfo{MemBytes: 1, VMStateBytes: 1, StoredBytes: 1}, r.Backing, time.Now()
+				completed.Info, completed.Backing, completed.CompletedAt, completed.FCVersion = SnapshotInfo{MemBytes: 1, VMStateBytes: 1, StoredBytes: 1}, r.Backing, time.Now(), "1.7.0"
 				if got, err := f.q.readBackings(completed); err != nil || got != r {
 					t.Fatal("completion lost original backing receipt", err)
 				}

@@ -29,6 +29,14 @@ const QueueBindingRetryMaxSeconds = 86400
 // independently of the smaller non-secret configuration object it may contain.
 const EnvironmentGitOpsMaxDefinitionBytes = 1 << 20
 
+// EnvironmentGitOpsMaxQueueSmokePayloadBytes bounds one customer-authored
+// synthetic queue message before it is stored with frozen candidate inputs.
+const EnvironmentGitOpsMaxQueueSmokePayloadBytes = 64 << 10
+
+// EnvironmentGitOpsMaxQueueSmokeMessages bounds the number of sequential
+// private synthetic queue deliveries in one worker qualification attempt.
+const EnvironmentGitOpsMaxQueueSmokeMessages = 16
+
 // Overrides expire without operator intervention; renewal requires a new reason.
 const EnvironmentGitOpsMaxOverrideDuration = 24 * time.Hour
 const EnvironmentGitOpsMaxOverrideReasonBytes = 1024
@@ -73,6 +81,7 @@ const EnvironmentGitOpsReportRunsMaxPerSource = 1000
 // executor cannot publish evidence for a later attempt.
 const EnvironmentGitOpsQualificationLeaseDuration = 5 * time.Minute
 const EnvironmentGitOpsQualificationMaxLeaseDuration = 15 * time.Minute
+const EnvironmentGitOpsJobQualificationLeaseDuration = 8 * time.Minute
 const EnvironmentGitOpsQualificationWorkerIDMaxBytes = 256
 
 // Check revocation while a qualification VM effect or evidence check is running.
@@ -93,6 +102,10 @@ const NativeHostHelperCgroupEventsMaxBytes = 4096
 // logical size and digest are verified separately through the complete reader.
 const ExclusiveArtifactDecoderMaxMemoryBytes = 64 << 20
 const NativeSnapshotPublicationRecordMaxBytes = 2 << 20
+
+// NativeSnapshotPublicationRecoveryBatchMax bounds each periodic scan of
+// already-authorized artifact retirement records.
+const NativeSnapshotPublicationRecoveryBatchMax = 64
 
 // A receipt-bound restore sidecar carries only version and two image digests.
 // Refuse oversized metadata before any restore input is materialized.

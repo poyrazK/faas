@@ -43,7 +43,7 @@ func nativeRestoreBackingsFixture(t *testing.T) (*nativeCaptureSequenceFixture, 
 		t.Fatal(err)
 	}
 	completed := f.capture
-	completed.Info, completed.Backing, completed.CompletedAt = SnapshotInfo{MemBytes: 1, VMStateBytes: 1, StoredBytes: 1}, f.backing, time.Now()
+	completed.Info, completed.Backing, completed.CompletedAt, completed.FCVersion = SnapshotInfo{MemBytes: 1, VMStateBytes: 1, StoredBytes: 1}, f.backing, time.Now(), "1.7.0"
 	if err := f.q.writeCapture(f.incoming, completed); err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func nativeRestoreBackingsFixture(t *testing.T) (*nativeCaptureSequenceFixture, 
 	frame.InstanceID, frame.WakeID, frame.CleanupToken, frame.CaptureInstanceID = uuid.NewString(), uuid.NewString(), uuid.NewString(), frame.InstanceID
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	t.Cleanup(cancel)
-	target, err := f.q.restores().claim(ctx, frame)
+	target, err := f.q.restores().claim(ctx, frame, "1.7.0")
 	if err != nil {
 		t.Fatal(err)
 	}

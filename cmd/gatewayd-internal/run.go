@@ -478,6 +478,10 @@ func (a *synthAdapter) Invoke(ctx context.Context, appID string, inv state.Invoc
 
 func (a *synthAdapter) InvokeWithStatus(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
 	var err error
+	inv, err = a.restoreDurableQueueIdentity(ctx, appID, inv)
+	if err != nil {
+		return inv, 0, err
+	}
 	inv, err = admitPlatformTenantInvocation(ctx, a.store, appID, inv)
 	if err != nil {
 		return inv, 0, err
@@ -710,13 +714,17 @@ func (a *synthAdapter) InvokeWithTarget(ctx context.Context, appID string, inv s
 // server echoes the status to schedd so a runner-generated handler error is
 // reported with its real HTTP code and retryable 5xx responses remain distinct.
 func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, int, error) {
+	var err error
+	inv, err = a.restoreDurableQueueIdentity(ctx, appID, inv)
+	if err != nil {
+		return inv, 0, err
+	}
 	if inv.ExclusiveClaim != nil {
 		parts := strings.Split(inv.ExclusiveClaim.IncarnationID, "/")
 		if len(parts) != 3 || target.InstanceID != parts[0] || target.WakeID != parts[1] || target.NodeID != parts[2] {
 			return inv, 0, fmt.Errorf("gateway synth: target does not match exclusive owner incarnation")
 		}
 	}
-	var err error
 	inv, err = admitPlatformTenantInvocation(ctx, a.store, appID, inv)
 	if err != nil {
 		return inv, 0, err
@@ -758,6 +766,34 @@ func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string,
 	target.AppID = appID
 	inv.InstanceID = target.InstanceID
 	return a.forwardInvocationWithStatus(ctx, target, inv)
+}
+
+// restoreDurableQueueIdentity recovers the authoritative scope and tenant
+// identity for an in-platform queue delivery. The trigger batch carries only
+// a claimed row ID and attempt fence; those fields are checked against the
+// durable row before its environment can select a deployment.
+func (a *synthAdapter) restoreDurableQueueIdentity(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
+	if inv.Source != "esm" || inv.Attempts == 0 {
+		return inv, nil
+	}
+	if a.store == nil || inv.ID == "" || inv.AppID != appID || inv.Attempts < 1 || inv.ReplayGeneration < 0 {
+		return inv, state.ErrConflict
+	}
+	stored, err := a.store.InvocationByID(ctx, inv.ID)
+	if err != nil {
+		return inv, fmt.Errorf("gateway synth: load durable queue delivery: %w", err)
+	}
+	if stored.ID != inv.ID || stored.AppID != appID ||
+		(stored.Source != state.InvocationQueue && stored.Source != state.InvocationDelayedTask) ||
+		stored.State != state.InvocationDispatching || stored.Attempts != inv.Attempts ||
+		stored.ReplayGeneration != inv.ReplayGeneration || !bytes.Equal(stored.Payload, inv.Payload) {
+		return inv, state.ErrConflict
+	}
+	inv.AccountID = stored.AccountID
+	inv.PlatformTenantID = stored.PlatformTenantID
+	inv.DeploymentScope = stored.DeploymentScope
+	inv.QueueBindingID = stored.QueueBindingID
+	return inv, nil
 }
 
 // forwardInvocation delivers a synthetic invocation through the same
@@ -1814,6 +1850,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
+			inv.ResolvedDeploymentID = deploymentID
 			return synth.forwardInvocationWithStatus(ctx, target, inv)
 		},
 	}
@@ -3560,10 +3597,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		pgStore := deps.pgStore
 		guestServiceAliasAllowed = newServiceAliasAllowed(pgStore)
 		serviceProxyConfig := gateway.ServiceProxyConfig{
-			Provider:   serviceEndpointProvider,
-			Resolve:    newServiceProxyResolver(pgStore),
-			Authorize:  newServiceProxyAuthorizer(pgStore),
-			AllowAlias: guestServiceAliasAllowed,
+			Provider:                  serviceEndpointProvider,
+			Resolve:                   newServiceProxyResolver(pgStore),
+			Authorize:                 newServiceProxyAuthorizer(pgStore),
+			AllowAlias:                guestServiceAliasAllowed,
+			ResolveEnvironmentBinding: newServiceProxyEnvironmentBindingResolver(pgStore),
 			ResolveChaos: func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
 				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)
 			},
@@ -3613,7 +3651,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return identityResolver.ResolveIdentity(ctx, remote)
 			}
 			guestServiceCallerResolver = func(ctx context.Context, remote string) (string, error) {
-				appID, _, err := serviceProxyConfig.ResolveCallerIdentity(ctx, remote)
+				// DNS only publishes an alias address. Let the separate
+				// qualification alias check consider frozen graph bindings;
+				// the ordinary HTTP authorizer retains its held-caller guard.
+				appID, _, err := identityResolver.ResolveIdentity(ctx, remote)
 				return appID, err
 			}
 			serviceProxyConfig.ResolveCaller = guestServiceCallerResolver

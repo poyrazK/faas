@@ -184,6 +184,9 @@ func StartRuntimeConfigReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm
 	if err := jailer.RegisterGuestVsockStreamHandler(VsockRuntimeConfigHostPort, r.handleGuestStream); err != nil {
 		return nil, fmt.Errorf("runtime config receiver register port %d: %w", VsockRuntimeConfigHostPort, err)
 	}
+	if err := jailer.RegisterEnvironmentQualificationRestoreStreamHandler(VsockRuntimeConfigHostPort, r.handleQualificationRestoreStream); err != nil {
+		return nil, fmt.Errorf("qualification runtime config receiver register port %d: %w", VsockRuntimeConfigHostPort, err)
+	}
 	log.Info("runtime config receiver registered", "vsock_host_port", VsockRuntimeConfigHostPort, "transport", "firecracker_uds", "enabled", store != nil)
 	return r, nil
 }
@@ -286,6 +289,18 @@ func (r *runtimeConfigReceiver) handleGuestStream(instance string, conn net.Conn
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "config_unavailable"})
 	}
 	return responseRuntimeConfig(r.log, conn, response)
+}
+
+// A candidate's private restore may only use configuration frozen into its
+// reviewed request. Reading the mutable app environment or secrets store here
+// would silently change that contract, so metadata requests fail closed until
+// a scoped qualification projection is implemented.
+func (r *runtimeConfigReceiver) handleQualificationRestoreStream(ctx context.Context, _ state.EnvironmentQualificationExecution, conn net.Conn) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "qualification_config_unavailable"})
+	return err
 }
 
 func (r *runtimeConfigReceiver) handleRuntimeSecrets(instance, workloadName, knownRevision string, conn net.Conn) (string, error) {

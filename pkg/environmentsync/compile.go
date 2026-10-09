@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cronexpr"
 )
 
 var immutableImageRE = regexp.MustCompile(`^[^\s]+@sha256:[a-f0-9]{64}$`)
@@ -87,6 +88,9 @@ func Compile(input api.EnvironmentDefinition) (DesiredState, error) {
 
 func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workloads map[string]api.EnvironmentWorkload) ([]Field, error) {
 	var fields []Field
+	// Source may be omitted for an existing mapped function. In that case the
+	// state adapter validates the HTTP class against the mapped app type.
+	functionSource := w.Source == nil || w.Source.Kind == "function"
 	add := func(field string, value any) {
 		raw, _ := json.Marshal(value) // validated API types contain only JSON-safe values
 		fields = append(fields, Field{Resource: resource, Path: field, Value: raw})
@@ -110,19 +114,38 @@ func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workload
 			fields = append(fields, Field{Resource: resource, Path: "runtime/" + key, Value: value})
 		}
 	}
+	if w.JobSmoke != nil {
+		var runtimeFields map[string]json.RawMessage
+		if len(w.Runtime) == 0 || json.Unmarshal(w.Runtime, &runtimeFields) != nil {
+			return nil, fmt.Errorf("job_smoke requires runtime.execution_mode=job")
+		}
+		var executionMode string
+		if json.Unmarshal(runtimeFields["execution_mode"], &executionMode) != nil || executionMode != api.ExecutionModeJob {
+			return nil, fmt.Errorf("job_smoke requires runtime.execution_mode=job")
+		}
+		if err := w.JobSmoke.Validate(); err != nil {
+			return nil, fmt.Errorf("job_smoke: %w", err)
+		}
+		w.JobSmoke.Command = slices.Clone(w.JobSmoke.Command)
+	}
+	if w.Schedule != nil {
+		var runtimeFields map[string]json.RawMessage
+		if len(w.Runtime) == 0 || json.Unmarshal(w.Runtime, &runtimeFields) != nil {
+			return nil, fmt.Errorf("schedule requires runtime.execution_mode=job")
+		}
+		var executionMode string
+		if json.Unmarshal(runtimeFields["execution_mode"], &executionMode) != nil || executionMode != api.ExecutionModeJob {
+			return nil, fmt.Errorf("schedule requires runtime.execution_mode=job")
+		}
+		if err := normalizeJobSchedule(w.Schedule); err != nil {
+			return nil, fmt.Errorf("schedule: %w", err)
+		}
+		add("schedule", w.Schedule)
+	}
+	if err := ValidateWorkloadVariables(w.Variables); err != nil {
+		return nil, err
+	}
 	for key, value := range w.Variables {
-		if (api.PutAppEnvRequest{Value: value}).Validate(api.MustLimitsFor(api.PlanScale).EnvValueMaxBytes) != nil {
-			return nil, fmt.Errorf("variable %q exceeds the platform value limit", key)
-		}
-		if problem := api.ValidateEnvKey(key); problem != nil {
-			return nil, fmt.Errorf("invalid variable key %q", key)
-		}
-		// Match the existing non-secret configuration key contract. Values
-		// are never included in validation errors.
-		raw, _ := json.Marshal(map[string]string{key: value})
-		if _, _, err := api.NormalizeProjectEnvironmentConfig(raw); err != nil {
-			return nil, fmt.Errorf("variable %q must be supplied through secret_refs", key)
-		}
 		if _, exists := w.SecretRefs[key]; exists {
 			return nil, fmt.Errorf("variable %q also appears in secret_refs", key)
 		}
@@ -153,8 +176,9 @@ func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workload
 		if binding.Mode == "" {
 			binding.Mode = "pull"
 		}
-		if binding.Mode != "pull" && binding.Mode != "push" || binding.WorkloadClass != "worker" && binding.WorkloadClass != "job" {
-			return nil, fmt.Errorf("queue binding %q needs pull/push mode and worker/job workload_class", key)
+		if binding.Mode != "pull" && binding.Mode != "push" || binding.WorkloadClass != "worker" && binding.WorkloadClass != "job" &&
+			!(binding.WorkloadClass == "http" && functionSource && binding.Mode == "push") {
+			return nil, fmt.Errorf("queue binding %q needs worker/job or push-only HTTP-function workload_class", key)
 		}
 		if binding.MaxConcurrency == 0 {
 			binding.MaxConcurrency = 1
@@ -176,6 +200,37 @@ func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workload
 		}
 		w.QueueBindings[key] = binding
 		add("queue_bindings/"+key, binding)
+	}
+	if len(w.QueueSmoke) > api.EnvironmentGitOpsMaxQueueSmokeMessages {
+		return nil, fmt.Errorf("queue_smoke exceeds the %d-message qualification limit", api.EnvironmentGitOpsMaxQueueSmokeMessages)
+	}
+	for key, smoke := range w.QueueSmoke {
+		binding, exists := w.QueueBindings[key]
+		httpFunction := binding.WorkloadClass == "http" && functionSource
+		worker := binding.WorkloadClass == "worker" && (binding.Mode == "push" || binding.Mode == "pull")
+		if !api.ValidQueueBindingName(key) || !exists || !worker && !(binding.Mode == "push" && httpFunction) ||
+			binding.Enabled == nil || !*binding.Enabled {
+			return nil, fmt.Errorf("queue smoke %q requires an enabled worker or HTTP-function push binding", key)
+		}
+		payload := bytes.TrimSpace(smoke.Payload)
+		if len(payload) == 0 || len(payload) > api.EnvironmentGitOpsMaxQueueSmokePayloadBytes || !json.Valid(payload) {
+			return nil, fmt.Errorf("queue smoke %q payload must be valid JSON within %d bytes", key, api.EnvironmentGitOpsMaxQueueSmokePayloadBytes)
+		}
+		canonical, err := canonicalJSON(payload)
+		if err != nil {
+			return nil, fmt.Errorf("queue smoke %q payload must be one JSON value", key)
+		}
+		smoke.Payload = canonical
+		w.QueueSmoke[key] = smoke
+	}
+	for key, binding := range w.QueueBindings {
+		worker := binding.WorkloadClass == "worker" && (binding.Mode == "push" || binding.Mode == "pull")
+		httpFunction := binding.Mode == "push" && binding.WorkloadClass == "http" && functionSource
+		if (worker || httpFunction) && binding.Enabled != nil && *binding.Enabled {
+			if _, exists := w.QueueSmoke[key]; !exists {
+				return nil, fmt.Errorf("enabled worker or HTTP-function push binding %q requires queue_smoke input", key)
+			}
+		}
 	}
 	for name, id := range w.QueueRecoveries {
 		parsed, err := uuid.Parse(id)
@@ -208,6 +263,60 @@ func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workload
 		add("service_bindings/"+key, binding)
 	}
 	return fields, nil
+}
+
+// ValidateWorkloadVariables applies the same non-secret environment contract
+// wherever frozen workload variables cross a trust boundary. Values never
+// appear in returned errors.
+func ValidateWorkloadVariables(values map[string]string) error {
+	limits := api.MustLimitsFor(api.PlanScale)
+	if len(values) > limits.EnvVarsMax {
+		return fmt.Errorf("workload variable count exceeds the platform limit")
+	}
+	for key, value := range values {
+		if (api.PutAppEnvRequest{Value: value}).Validate(limits.EnvValueMaxBytes) != nil {
+			return fmt.Errorf("variable %q exceeds the platform value limit", key)
+		}
+		if api.ValidateEnvKey(key) != nil {
+			return fmt.Errorf("invalid variable key %q", key)
+		}
+		// Match the existing non-secret configuration key contract. Values
+		// are never included in validation errors.
+		raw, _ := json.Marshal(map[string]string{key: value})
+		if _, _, err := api.NormalizeProjectEnvironmentConfig(raw); err != nil {
+			return fmt.Errorf("variable %q must be supplied through secret_refs", key)
+		}
+	}
+	return nil
+}
+
+func normalizeJobSchedule(schedule *api.EnvironmentJobSchedule) error {
+	if schedule == nil {
+		return fmt.Errorf("schedule is required")
+	}
+	schedule.Cron = strings.Join(strings.Fields(schedule.Cron), " ")
+	if schedule.Cron == "" {
+		return fmt.Errorf("cron is required")
+	}
+	timezone, err := cronexpr.NormalizeTimezone(schedule.Timezone)
+	if err != nil {
+		return fmt.Errorf("timezone must be a valid IANA zone: %w", err)
+	}
+	schedule.Timezone = timezone
+	if _, err := cronexpr.Parse(schedule.Cron, schedule.Timezone); err != nil {
+		return fmt.Errorf("cron must be a valid five-field expression: %w", err)
+	}
+	if schedule.SchedulePolicy != nil {
+		if err := schedule.SchedulePolicy.Validate(); err != nil {
+			return err
+		}
+	}
+	if schedule.FailureRules != nil {
+		if err := schedule.FailureRules.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func normalizeSource(source *api.EnvironmentWorkloadSource) error {

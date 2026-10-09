@@ -43,6 +43,29 @@ func (m *MemStore) EnvironmentWorkloadIntent(_ context.Context, accountID, appID
 	return cloneWorkloadIntent(row), nil
 }
 
+func (m *MemStore) EnvironmentWorkloadIntentByJob(_ context.Context, accountID, jobID string) (EnvironmentWorkloadIntent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if accountID == "" || jobID == "" {
+		return EnvironmentWorkloadIntent{}, ErrInvalidArgument
+	}
+	var found *EnvironmentWorkloadIntent
+	for _, row := range m.appEnvironmentWorkloadIntents {
+		if row.AccountID != accountID || row.JobID != jobID {
+			continue
+		}
+		if found != nil {
+			return EnvironmentWorkloadIntent{}, ErrConflict
+		}
+		copy := cloneWorkloadIntent(row)
+		found = &copy
+	}
+	if found == nil {
+		return EnvironmentWorkloadIntent{}, ErrNotFound
+	}
+	return *found, nil
+}
+
 func (m *MemStore) putWorkloadIntentLocked(row EnvironmentWorkloadIntent) EnvironmentWorkloadIntent {
 	if m.appEnvironmentWorkloadIntents == nil {
 		m.appEnvironmentWorkloadIntents = map[environmentWorkloadIntentKey]EnvironmentWorkloadIntent{}
@@ -103,6 +126,9 @@ func (m *MemStore) PutEnvironmentWorkloadIntent(_ context.Context, row Environme
 	row, err = validateWorkloadIntentWrite(row, previous, app, env.Slug, m.accounts[row.AccountID].Plan)
 	if err != nil {
 		return row, err
+	}
+	if row.JobID != previous.JobID || previous.JobID != "" && len(workloadIntentChangedPaths(previous, row)) != 0 {
+		return row, ErrEnvironmentGitManaged
 	}
 	paths := workloadIntentChangedPaths(previous, row)
 	managed, err := m.gitOpsGuardScopedWriteLocked(row.AccountID, row.AppID, env.Slug, paths)

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -15,6 +16,7 @@ import (
 
 func newWorkloadFixture(t *testing.T, basic gitOpsTestStore, mode string, plan api.Plan) (state.EnvironmentGitSource, environmentsync.DesiredState, state.EnvironmentGitOpsLease) {
 	t.Helper()
+	jobQueueEnabled := false
 	account, err := basic.CreateAccount(t.Context(), "new-workload@example.test", plan)
 	if err != nil {
 		t.Fatal(err)
@@ -30,6 +32,9 @@ func newWorkloadFixture(t *testing.T, basic gitOpsTestStore, mode string, plan a
 	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: project.Slug, Environment: "production", Workloads: map[string]api.EnvironmentWorkload{
 		"api":      {ServiceBindings: map[string]api.EnvironmentServiceBinding{"function": {Workload: "function", EnvKey: "FUNCTION_URL"}}, Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: "example/api@sha256:" + strings.Repeat("a", 64)}, Runtime: json.RawMessage(`{"port":8081}`)},
 		"function": {Source: &api.EnvironmentWorkloadSource{Kind: "function", Runtime: "node22"}, Runtime: json.RawMessage(`{"port":8080}`)},
+		"job": {Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: "example/job@sha256:" + strings.Repeat("b", 64)}, Runtime: json.RawMessage(`{"execution_mode":"job"}`),
+			JobSmoke:      &api.EnvironmentJobSmoke{Command: []string{"node", "scripts/qualify.js"}, TimeoutSeconds: 30},
+			QueueBindings: map[string]api.EnvironmentQueueBinding{"tasks": {QueueName: "tasks", Mode: "push", WorkloadClass: string(state.WorkloadClassJob), Enabled: &jobQueueEnabled, MaxConcurrency: 1}}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -65,14 +70,21 @@ func TestEnvironmentGitOpsNewWorkloadReservation(t *testing.T) {
 			t.Fatalf("old plan reused after identity creation: %v", err)
 		}
 		fresh := planForStore(t, intent, lease, desired)
+		if !fresh.CanApply() || !fresh.HasDrift() || !containsEnvironmentQueueChange(fresh) {
+			t.Fatalf("workload reservation should leave only its reviewed queue binding for the next apply: %+v", fresh)
+		}
+		if _, err := intent.ApplyEnvironmentGitOps(t.Context(), lease, fresh); err != nil {
+			t.Fatalf("apply reviewed disabled job queue binding: %v", err)
+		}
+		fresh = planForStore(t, intent, lease, desired)
 		if !fresh.CanApply() || fresh.HasDrift() {
-			t.Fatalf("scoped intent not atomically reserved: %+v", fresh)
+			t.Fatalf("scoped workload and queue intent did not converge: %+v", fresh)
 		}
 		if steps, err := store.PrepareEnvironmentGitOpsWorkloads(t.Context(), lease, fresh); err != nil || len(steps) != 0 {
 			t.Fatalf("retry created more resources: %+v %v", steps, err)
 		}
 		apps, err := basic.ListApps(t.Context(), source.AccountID)
-		if err != nil || len(apps) != 2 {
+		if err != nil || len(apps) != 3 {
 			t.Fatalf("apps: %+v %v", apps, err)
 		}
 		ids := map[string]string{}
@@ -115,7 +127,7 @@ func TestEnvironmentGitOpsNewWorkloadReservation(t *testing.T) {
 		}
 		candidates, err := candidateStore.PrepareEnvironmentGitOpsCandidates(t.Context(), lease, candidatePlan,
 			map[string]state.EnvironmentWorkloadSourceArtifact{requests[0].Resource: sourceArtifact(t, requests[0])})
-		if err != nil || len(candidates) != 2 {
+		if err != nil || len(candidates) != 3 {
 			t.Fatalf("prepare new workload cohort: %+v %v", candidates, err)
 		}
 		for _, candidate := range candidates {
@@ -137,11 +149,29 @@ func TestEnvironmentGitOpsNewWorkloadReservation(t *testing.T) {
 				if frozen.AppType != state.AppTypeFunction || frozen.RuntimeBase != "node22" || frozen.Source == nil || frozen.Source.Kind != "function" || frozen.SourceArchive == nil || frozen.SourceArchive.CommitSHA != lease.Revision.CommitSHA {
 					t.Fatalf("new function candidate lost runner or reviewed source: %+v", frozen)
 				}
+			case "workload/job":
+				queue, ok := frozen.QueueBindings["tasks"]
+				observedQueueID, parseErr := uuid.Parse(after.State.ResourceIDs["workload/job/queue_bindings/tasks"])
+				if frozen.WorkloadClass != state.WorkloadClassJob || frozen.Baseline.ExecutionMode != api.ExecutionModeJob || frozen.Source == nil || frozen.Source.Image == "" ||
+					frozen.JobSmoke == nil || !reflect.DeepEqual(*frozen.JobSmoke, *desired.Definition.Workloads["job"].JobSmoke) ||
+					!ok || parseErr != nil || queue.BindingID != observedQueueID.String() || queue.Contract.Enabled == nil || *queue.Contract.Enabled ||
+					!dep.EnvironmentWorkloadHeld() || dep.Status == state.DeployLive || dep.TrafficPercent != 0 {
+					t.Fatalf("new job candidate lost its frozen execution contract or exact disabled queue binding: binding=%+v observedID=%q frozen=%+v deployment=%+v", queue, after.State.ResourceIDs["workload/job/queue_bindings/tasks"], frozen, dep)
+				}
 			default:
 				t.Fatalf("unexpected new workload candidate: %+v", frozen)
 			}
 		}
 	})
+}
+
+func containsEnvironmentQueueChange(plan environmentsync.Plan) bool {
+	for _, change := range plan.Changes {
+		if strings.HasPrefix(change.Path, "queue_bindings/") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestEnvironmentGitOpsNewWorkloadReservationIsAtomicAndEnforceOnly(t *testing.T) {
@@ -170,13 +200,121 @@ func TestEnvironmentGitOpsNewWorkloadReservationIsAtomicAndEnforceOnly(t *testin
 	}
 }
 
+func TestEnvironmentGitOpsScheduledJobBindingLifecycle(t *testing.T) {
+	stores(t, func(t *testing.T, basic gitOpsTestStore) {
+		ctx := t.Context()
+		account, err := basic.CreateAccount(ctx, "scheduled-workload@example.test", api.PlanPro)
+		if err != nil {
+			t.Fatal(err)
+		}
+		project, err := basic.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "scheduled-workload",
+			RepoFullName: "example/scheduled-workload", ProductionBranch: "main", InstallID: 43})
+		if err != nil {
+			t.Fatal(err)
+		}
+		source, err := basic.CreateEnvironmentGitSource(ctx, account.ID, project.ID, "production", state.EnvironmentGitSourceSpec{
+			RepositoryID: 124, InstallationID: 43, Repository: "example/scheduled-workload", Ref: "refs/heads/main",
+			ManifestPath: "production.yaml", Mode: "enforce", ApprovalPolicy: "manual", Prune: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		image := "registry.example/reports@sha256:" + strings.Repeat("a", 64)
+		definition := api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: project.Slug, Environment: "production",
+			Workloads: map[string]api.EnvironmentWorkload{"report": {
+				Source:   &api.EnvironmentWorkloadSource{Kind: "image", Image: image},
+				Runtime:  json.RawMessage(`{"execution_mode":"job"}`),
+				JobSmoke: &api.EnvironmentJobSmoke{Command: []string{"/bin/true"}, TimeoutSeconds: 30},
+				Schedule: &api.EnvironmentJobSchedule{Cron: "15 * * * *", Timezone: "UTC"},
+			}}}
+		desired, err := environmentsync.Compile(definition)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source, _, err = basic.ApproveEnvironmentDesiredRevision(ctx, approval(source, desired, strings.Repeat("a", 40)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lease, err := basic.ClaimEnvironmentGitOps(ctx, "scheduled-job-creator", time.Now(), time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		intentStore := basic.(state.EnvironmentGitOpsIntentStore)
+		plan := planForStore(t, intentStore, lease, desired)
+		if !plan.CanApply() || !plan.HasDrift() {
+			t.Fatalf("scheduled workload plan: %+v", plan)
+		}
+		steps, err := basic.(state.EnvironmentGitOpsWorkloadCreationStore).PrepareEnvironmentGitOpsWorkloads(ctx, lease, plan)
+		if err != nil || len(steps) == 0 {
+			t.Fatalf("reserve scheduled workload: %+v %v", steps, err)
+		}
+		apps, err := basic.ListApps(ctx, account.ID)
+		if err != nil || len(apps) != 1 {
+			t.Fatalf("reserved workload: %+v %v", apps, err)
+		}
+		workloadIntents := basic.(state.EnvironmentWorkloadIntentStore)
+		intent, err := workloadIntents.EnvironmentWorkloadIntent(ctx, account.ID, apps[0].ID, source.EnvironmentID)
+		if err != nil || intent.JobID == "" {
+			t.Fatalf("scheduled workload has no durable Job binding: %+v %v", intent, err)
+		}
+		job, err := basic.JobGetByID(ctx, intent.JobID)
+		if err != nil || job.Status != "paused" || job.Kind != "recurring" || job.ImageRef != image ||
+			job.CronSchedule != "15 * * * *" || job.CronTimezone != "UTC" || job.ImageMaterializationStatus != "pending" ||
+			job.ImageStorageKey != "" || job.ImageResolvedDigest != "" || job.RAMMB != api.JobRAMMB[api.PlanPro.PlanIndex()] ||
+			job.TaskTimeoutS != api.JobTaskTimeoutSec[api.PlanPro.PlanIndex()] || job.MaxParallelism != 1 || job.RetryMax != 0 ||
+			len(job.Command) != 0 || string(job.EnvOverrides) != "{}" {
+			t.Fatalf("scheduled Job did not preserve the reviewed paused contract: %+v %v", job, err)
+		}
+		active := "active"
+		if _, err := basic.JobUpdate(ctx, job.ID, nil, nil, nil, nil, nil, nil, nil, &active); !errors.Is(err, state.ErrEnvironmentGitManaged) {
+			t.Fatalf("Jobs API mutation error = %v, want GitOps-managed error", err)
+		}
+		if _, _, err := basic.JobSoftDelete(ctx, job.ID); !errors.Is(err, state.ErrEnvironmentGitManaged) {
+			t.Fatalf("Jobs API delete error = %v, want GitOps-managed error", err)
+		}
+		job, err = basic.JobGetByID(ctx, intent.JobID)
+		if err != nil || job.Status != "paused" {
+			t.Fatalf("rejected API mutation changed the bound Job: %+v %v", job, err)
+		}
+
+		// A reviewed removal retires the scheduler record and clears the link.
+		definition.Workloads["report"] = api.EnvironmentWorkload{Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: image},
+			Runtime: json.RawMessage(`{"execution_mode":"job"}`), JobSmoke: definition.Workloads["report"].JobSmoke}
+		withoutSchedule, err := environmentsync.Compile(definition)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source, _, err = basic.ApproveEnvironmentDesiredRevision(ctx, approval(source, withoutSchedule, strings.Repeat("b", 40)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lease, err = basic.ClaimEnvironmentGitOps(ctx, "scheduled-job-retirer", time.Now(), time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		retirementPlan := planForStore(t, intentStore, lease, withoutSchedule)
+		if !retirementPlan.CanApply() || !retirementPlan.HasDrift() {
+			t.Fatalf("schedule retirement plan: %+v", retirementPlan)
+		}
+		if _, err := intentStore.ApplyEnvironmentGitOps(ctx, lease, retirementPlan); err != nil {
+			t.Fatalf("apply reviewed schedule removal: %v", err)
+		}
+		intent, err = workloadIntents.EnvironmentWorkloadIntent(ctx, account.ID, apps[0].ID, source.EnvironmentID)
+		if err != nil || intent.JobID != "" {
+			t.Fatalf("retired schedule retained its Job link: %+v %v", intent, err)
+		}
+		if _, err := basic.JobGetByID(ctx, job.ID); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("retired Job remains customer-visible: %v", err)
+		}
+	})
+}
+
 func planForStore(t *testing.T, store state.EnvironmentGitOpsIntentStore, lease state.EnvironmentGitOpsLease, desired environmentsync.DesiredState) environmentsync.Plan {
 	t.Helper()
 	observation, err := store.ObserveEnvironmentGitOps(t.Context(), lease, desired)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := environmentsync.BuildPlan(desired, observation.State, observation.Owners, environmentsync.PlanOptions{Manager: lease.Source.ID, Revision: lease.Revision.ID, CommitSHA: lease.Revision.CommitSHA, Generation: lease.Source.Generation, Now: time.Now(), Overrides: observation.Overrides})
+	plan, err := environmentsync.BuildPlan(desired, observation.State, observation.Owners, environmentsync.PlanOptions{Manager: lease.Source.ID, Revision: lease.Revision.ID, CommitSHA: lease.Revision.CommitSHA, Generation: lease.Source.Generation, Prune: lease.Source.Spec.Prune, Now: time.Now(), Overrides: observation.Overrides})
 	if err != nil {
 		t.Fatal(err)
 	}

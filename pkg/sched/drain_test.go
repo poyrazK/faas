@@ -22,9 +22,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -101,6 +103,55 @@ func TestDrain_DispatchesNonQueueRowsConcurrently(t *testing.T) {
 	}
 }
 
+func TestQueueInvocationHasBoundTriggerByBindingAndEnvironment(t *testing.T) {
+	pushBindingID, pullBindingID := uuid.New(), uuid.New()
+	trigger := sqlc.Trigger{
+		Kind: string(api.TriggerKindQueue), Slug: "orders", Enabled: true,
+		Source:            pgtype.Text{String: string(state.InvocationQueue), Valid: true},
+		QueueBindingID:    pgtype.UUID{Bytes: [16]byte(pushBindingID), Valid: true},
+		QueueBindingScope: "production",
+	}
+	for _, tc := range []struct {
+		name string
+		inv  state.Invocation
+		want bool
+	}{
+		{name: "owned push binding", inv: state.Invocation{Source: state.InvocationQueue, QueueBindingID: pushBindingID.String(), QueueName: "orders", DeploymentScope: "production"}, want: true},
+		{name: "different pull binding", inv: state.Invocation{Source: state.InvocationQueue, QueueBindingID: pullBindingID.String(), QueueName: "orders", DeploymentScope: "production"}},
+		{name: "same binding in different environment", inv: state.Invocation{Source: state.InvocationQueue, QueueBindingID: pushBindingID.String(), QueueName: "orders", DeploymentScope: "staging"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := queueInvocationHasBoundTrigger(tc.inv, []sqlc.Trigger{trigger}); got != tc.want {
+				t.Fatalf("queueInvocationHasBoundTrigger()=%t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestQueueInvocationLegacyOwnershipMatchesOnlyEligibleSharedConsumer(t *testing.T) {
+	legacy := sqlc.Trigger{
+		Kind: string(api.TriggerKindQueue), Slug: "orders", Enabled: true,
+		Source: pgtype.Text{String: string(state.InvocationQueue), Valid: true},
+	}
+	for _, tc := range []struct {
+		name     string
+		inv      state.Invocation
+		triggers []sqlc.Trigger
+		want     bool
+	}{
+		{name: "matching named legacy row", inv: state.Invocation{Source: state.InvocationQueue, QueueName: "orders"}, triggers: []sqlc.Trigger{legacy}, want: true},
+		{name: "unrelated named row", inv: state.Invocation{Source: state.InvocationQueue, QueueName: "payments"}, triggers: []sqlc.Trigger{legacy}},
+		{name: "single trigger owns unnamed legacy row", inv: state.Invocation{Source: state.InvocationQueue}, triggers: []sqlc.Trigger{legacy}, want: true},
+		{name: "ambiguous unnamed row stays with generic drain", inv: state.Invocation{Source: state.InvocationQueue}, triggers: []sqlc.Trigger{legacy, {Kind: string(api.TriggerKindQueue), Slug: "payments", Enabled: true, Source: pgtype.Text{String: string(state.InvocationQueue), Valid: true}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := queueInvocationHasBoundTrigger(tc.inv, tc.triggers); got != tc.want {
+				t.Fatalf("queueInvocationHasBoundTrigger()=%t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
 func newDrainHarness(t *testing.T, plan api.Plan, withSynth bool) (*Drain, state.Store, *fakeVMM, *fakeNotifier, *drainSynth) {
 	t.Helper()
 	store := state.NewMemStore()
@@ -164,6 +215,36 @@ func seedDrainInvocation(t *testing.T, store state.Store, source state.Invocatio
 		t.Fatalf("EnqueueInvocation: %v", err)
 	}
 	return inv
+}
+
+type pullCompletionRecordingStore struct {
+	state.Store
+	called       bool
+	invocationID string
+	attempt      int
+	deploymentID string
+	result       json.RawMessage
+}
+
+func (s *pullCompletionRecordingStore) CompleteEnvironmentGitOpsPullQueueDelivery(_ context.Context, invocationID string,
+	attempt int, deploymentID string, result json.RawMessage) error {
+	s.called, s.invocationID, s.attempt, s.deploymentID = true, invocationID, attempt, deploymentID
+	s.result = append(json.RawMessage(nil), result...)
+	return nil
+}
+
+func TestCompleteDispatchedInvocationUsesPullQueueCompletionFence(t *testing.T) {
+	store := &pullCompletionRecordingStore{}
+	invocation := state.Invocation{ID: uuid.NewString(), Source: state.InvocationQueue, QueueBindingID: uuid.NewString(), Attempts: 4}
+	result := json.RawMessage(`{"ok":true}`)
+	deploymentID := uuid.NewString()
+	if err := completeDispatchedInvocation(context.Background(), store, invocation, result, deploymentID); err != nil {
+		t.Fatalf("complete dispatched pull invocation: %v", err)
+	}
+	if !store.called || store.invocationID != invocation.ID || store.attempt != invocation.Attempts ||
+		store.deploymentID != deploymentID || string(store.result) != string(result) {
+		t.Fatalf("pull completion did not receive exact claim and deployment: %+v", store)
+	}
 }
 
 func TestDrain_HTTPCronOutcomeClassificationAndUncertainHold(t *testing.T) {
