@@ -1,0 +1,89 @@
+name: Data API prerelease
+
+on:
+  push:
+    branches: [release/data-api-v0.1.0-rc.1]
+    paths:
+      - .github/workflows/data-api-prerelease.yml
+      - .github/release-notes/data-api-v0.1.0-rc.1.md
+      - scripts/ci/publish-data-api-prerelease.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: data-api-prerelease-v0.1.0-rc.1
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: 9e6901dbe6a0f1d6ea0ba54370fc662963184b88
+  ACTION_SHA: 23004fba8a66cd83dcd940ea9b816d97d3e38fb5
+  CLI_VERSION: v0.1.18-data-api.1
+  GOMEMLIMIT: 3GiB
+  GOGC: '75'
+  GOMAXPROCS: '2'
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Build all four targets twice and qualify installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          node scripts/build-data-api-bundle.mjs --version "$CLI_VERSION" \
+            --action-sha "$ACTION_SHA" \
+            --targets linux/amd64,linux/arm64,darwin/amd64,darwin/arm64 \
+            --out-dir "$RUNNER_TEMP/data-api-bundle"
+          node scripts/build-data-api-bundle.mjs --version "$CLI_VERSION" \
+            --action-sha "$ACTION_SHA" \
+            --targets linux/amd64,linux/arm64,darwin/amd64,darwin/arm64 \
+            --out-dir "$RUNNER_TEMP/data-api-rebuild"
+          cmp "$RUNNER_TEMP/data-api-bundle/DATA-API-SHA256SUMS" \
+            "$RUNNER_TEMP/data-api-rebuild/DATA-API-SHA256SUMS"
+          cmp "$RUNNER_TEMP/data-api-bundle/data-api-bundle.json" \
+            "$RUNNER_TEMP/data-api-rebuild/data-api-bundle.json"
+          node scripts/test-data-api-bundle.mjs "$RUNNER_TEMP/data-api-bundle"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data-api-v0.1.0-rc.1-qualified
+          path: ${{ runner.temp }}/data-api-bundle/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: qualify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Publication refusal tests
+        run: python3 scripts/ci/publish_data_api_prerelease_test.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: data-api-v0.1.0-rc.1-qualified
+          path: ${{ runner.temp }}/data-api-bundle
+      - name: Verify draft, upload, download-check and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/ci/publish-data-api-prerelease.py \
+            --directory "$RUNNER_TEMP/data-api-bundle" \
+            --notes .github/release-notes/data-api-v0.1.0-rc.1.md
