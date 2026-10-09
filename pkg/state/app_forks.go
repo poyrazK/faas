@@ -86,6 +86,12 @@ type CreateAppForkParams struct {
 	// CrashCaptureID, when set, forks that ready crash capture; the fork's
 	// deployment is the capture's and DeploymentID is ignored.
 	CrashCaptureID string
+	// Live (ADR-732 live fork) captures the app's newest running instance
+	// now and pins the fork to that capture; DeploymentID and
+	// CrashCaptureID must be empty. LiveCaptureCooldown bounds how often a
+	// serving instance is paused for it.
+	Live                bool
+	LiveCaptureCooldown time.Duration
 }
 
 var (
@@ -94,6 +100,10 @@ var (
 	// ErrAppForkDeploymentUnavailable means the app is gone or the named
 	// deployment is not its live deployment.
 	ErrAppForkDeploymentUnavailable = errors.New("state: app fork deployment unavailable")
+	// ErrAppForkLiveCaptureRefused means a live fork could not capture: the
+	// app has no running instance, a capture is in flight, or one was
+	// requested within the cooldown.
+	ErrAppForkLiveCaptureRefused = errors.New("state: live fork capture refused")
 )
 
 // AppForkLimitError reports which active-fork limit refused a create.
@@ -125,8 +135,10 @@ type AppForkStore interface {
 func validateCreateAppFork(p CreateAppForkParams) (CreateAppForkParams, error) {
 	p.RequestedBy = strings.TrimSpace(p.RequestedBy)
 	switch {
-	case p.AccountID == "" || p.AppID == "" || (p.DeploymentID == "" && p.CrashCaptureID == ""):
+	case p.AccountID == "" || p.AppID == "" || (!p.Live && p.DeploymentID == "" && p.CrashCaptureID == ""):
 		return p, fmt.Errorf("%w: account, app and deployment are required", ErrAppForkInvalid)
+	case p.Live && (p.DeploymentID != "" || p.CrashCaptureID != "" || p.LiveCaptureCooldown < 0):
+		return p, fmt.Errorf("%w: a live fork names neither a deployment nor a capture", ErrAppForkInvalid)
 	case p.RequestedBy == "" || len(p.RequestedBy) > 256:
 		return p, fmt.Errorf("%w: requested_by must be 1..256 bytes", ErrAppForkInvalid)
 	case p.TTLSeconds < AppForkMinTTLSeconds || p.TTLSeconds > AppForkMaxTTLSeconds:

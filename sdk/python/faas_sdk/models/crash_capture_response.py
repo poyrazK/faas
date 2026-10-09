@@ -33,7 +33,8 @@ class CrashCaptureResponse:
     trigger: CrashCaptureResponseTrigger
     """`http_5xx` after a 5xx response, `manual` from this API, `sdk` from the
     app itself through the guest metadata endpoint
-    (`POST http://169.254.169.254/v1/crash-snapshots:capture`).
+    (`POST http://169.254.169.254/v1/crash-snapshots:capture`), `live_fork`
+    for the capture a live fork took (kept only as long as a fork can live).
     """
     status: CrashCaptureResponseStatus
     requested_at: datetime.datetime

@@ -44,6 +44,8 @@ class AppForkResponse:
     The gateway routes it to the fork, strips both headers, and never
     wakes the app for it.
     """
+    crash_capture_id: UUID | Unset = UNSET
+    """The capture the fork restores, for a crash snapshot fork or a live fork."""
     cancel_requested_at: datetime.datetime | Unset = UNSET
     started_at: datetime.datetime | Unset = UNSET
     finished_at: datetime.datetime | Unset = UNSET
@@ -68,6 +70,10 @@ class AppForkResponse:
         updated_at = self.updated_at.isoformat()
 
         access_token = self.access_token
+
+        crash_capture_id: str | Unset = UNSET
+        if not isinstance(self.crash_capture_id, Unset):
+            crash_capture_id = str(self.crash_capture_id)
 
         cancel_requested_at: str | Unset = UNSET
         if not isinstance(self.cancel_requested_at, Unset):
@@ -101,6 +107,8 @@ class AppForkResponse:
         )
         if access_token is not UNSET:
             field_dict["access_token"] = access_token
+        if crash_capture_id is not UNSET:
+            field_dict["crash_capture_id"] = crash_capture_id
         if cancel_requested_at is not UNSET:
             field_dict["cancel_requested_at"] = cancel_requested_at
         if started_at is not UNSET:
@@ -134,6 +142,13 @@ class AppForkResponse:
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
         access_token = d.pop("access_token", UNSET)
+
+        _crash_capture_id = d.pop("crash_capture_id", UNSET)
+        crash_capture_id: UUID | Unset
+        if isinstance(_crash_capture_id, Unset):
+            crash_capture_id = UNSET
+        else:
+            crash_capture_id = UUID(_crash_capture_id)
 
         _cancel_requested_at = d.pop("cancel_requested_at", UNSET)
         cancel_requested_at: datetime.datetime | Unset
@@ -173,6 +188,7 @@ class AppForkResponse:
             created_at=created_at,
             updated_at=updated_at,
             access_token=access_token,
+            crash_capture_id=crash_capture_id,
             cancel_requested_at=cancel_requested_at,
             started_at=started_at,
             finished_at=finished_at,

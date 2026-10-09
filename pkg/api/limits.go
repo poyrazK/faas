@@ -4119,6 +4119,14 @@ const (
 	AppForkMinTTL     = time.Minute
 	AppForkMaxTTL     = 4 * time.Hour
 
+	// Live forks (ADR-732) capture the newest running instance when the
+	// fork is created. The capture pauses a serving instance, so a new one
+	// is refused within LiveForkCaptureCooldown of the app's last capture.
+	// It is kept for LiveForkCaptureRetention: past any fork's TTL, far
+	// shorter than a crash snapshot.
+	LiveForkCaptureCooldown  = time.Minute
+	LiveForkCaptureRetention = AppForkMaxTTL + 10*time.Minute
+
 	// Crash snapshots (ADR-733). A capture is kept for CrashCaptureRetention
 	// and then deleted. An app gets at most one capture in flight and no
 	// new request within CrashCaptureCooldown of the last; a capture that

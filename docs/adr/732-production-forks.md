@@ -13,8 +13,9 @@
     `Engine.chooseWakeSnapshot`) into a new instance that never serves
     production traffic, cannot reach the network, and is destroyed when its
     TTL ends. Phase 1 never takes a new capture, so production is never
-    paused by a fork. A `--live` fork (capture a running instance via
-    `WarmSnapshot`) needs a non-servable snapshot tier and is out of scope.
+    paused by a fork. A live fork (capture a running instance via
+    `WarmSnapshot`) came later, on ADR-733's non-servable captures; see the
+    amendment below.
   - **Intent table.** apid owns a new `app_forks` table: one row per fork
     request with `status ∈ {queued, restoring, running, expired, cancelled,
     failed}`, a lease (`lease_token/owner/expires_at`), `expires_at` (the
@@ -105,6 +106,20 @@
     vmmd's resource and native launch journal schemas (both reject unknown
     and missing fields), so rolling vmmd back past this change needs an
     empty resource journal: drain the node first.
+- **Amendment (2026-10-09): live forks.** `POST /v1/apps/{slug}/forks`
+  with `"live": true` captures the app's newest running instance now and
+  forks that capture. It reuses ADR-733's in-place capture rather than a
+  new snapshot tier: apid writes, in one transaction, a `crash_captures`
+  row with `trigger='live_fork'` (no crash snapshot opt-in, since the
+  customer asked; the in-flight rule and a 1 min `LiveForkCaptureCooldown`
+  bound how often a serving instance is paused) and a fork pinned to it.
+  The fork limits are checked first, so a refused fork captures nothing.
+  The claim waits while the capture is requested or capturing; a failed
+  capture is claimed so the restore fails with `no_capture`. The capture
+  is encrypted, staged and purged like a crash snapshot, and kept for
+  `LiveForkCaptureRetention` (the 4 h fork maximum plus 10 min) instead of
+  7 days. Live forks need the capture coordinator, so apid answers
+  `501 live_forks_not_enabled` unless `FAAS_CRASH_SNAPSHOTS=1`.
 - **Rejected alternatives:**
   - **Networkless restore.** `SnapshotRef.networkless` removes the NIC, but
     Firecracker must restore the device set the snapshot was taken with, and
@@ -112,9 +127,9 @@
   - **A routed instance with an auth gate.** One missing filter would send
     production traffic to a debug copy. Excluding the mode from routing is
     simpler to prove.
-  - **A new snapshot tier for every fork.** Not needed until `--live`
-    forks. Reusing the newest capture keeps GC, replication and invariant 3
-    untouched.
+  - **A new snapshot tier for every fork.** Not needed, live forks included
+    (they use ADR-733 captures). Reusing captures keeps GC, replication and
+    invariant 3 untouched.
   - **Redacting secrets from memory.** Not possible in general for an
     arbitrary process image.
 - **Rollout (each step is one PR):**

@@ -147,6 +147,7 @@ WRAPPER_MODULES = (
     "idempotency.py",
     "executions.py",
     "release_context.py",
+    "crash_snapshots.py",
     "dev_bridge.py",
     "webhook.py",
     "pre_auth_target.py",
@@ -371,7 +372,7 @@ def regen(overwrite: bool = True) -> None:
                         "--quiet",
                         str(sdk_root),
                         "--exclude",
-                        "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,dev_bridge.py,webhook.py,flags.py,__init__.py",
+                        "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,crash_snapshots.py,dev_bridge.py,webhook.py,flags.py,__init__.py",
                     ],
                     check=False,
                     capture_output=True,
@@ -697,6 +698,12 @@ from .flags import (
     flag_variant_bucket,
     validate_bundle,
 )
+from .crash_snapshots import (
+    CRASH_SNAPSHOT_ENDPOINT,
+    CrashSnapshotResult,
+    acapture_crash_snapshot,
+    capture_crash_snapshot,
+)
 from .dev_bridge import (
     DEV_BRIDGE_CONTEXT_HEADER,
     AsyncDevBridgeTransport,
@@ -785,6 +792,10 @@ __all__ = (
     "AsyncGregaleReleaseTransport",
     "current_gregale_release",
     "with_gregale_release",
+    "CRASH_SNAPSHOT_ENDPOINT",
+    "CrashSnapshotResult",
+    "capture_crash_snapshot",
+    "acapture_crash_snapshot",
     "verify_webhook",
     "VerifiedWebhook",
     "WebhookVerificationError",

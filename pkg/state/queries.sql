@@ -15379,12 +15379,14 @@ WHERE id = (
       AND candidate.cancel_requested_at IS NULL
       AND candidate.expires_at > sqlc.arg(now)::timestamptz
       -- ADR-733: a fork pinned to an encrypted crash capture waits until
-      -- imaged has staged its plaintext. A capture that is no longer ready
-      -- is claimed so the restore fails fast.
+      -- imaged has staged its plaintext, and a live fork (ADR-732) waits
+      -- for its capture to be taken. A failed or expired capture is
+      -- claimed so the restore fails fast.
       AND (candidate.crash_capture_id IS NULL OR EXISTS (
           SELECT 1 FROM crash_captures c
           WHERE c.id = candidate.crash_capture_id
-            AND (c.status <> 'ready' OR c.plaintext_state IN ('present', 'staged'))))
+            AND (c.status IN ('failed', 'expired')
+                 OR (c.status = 'ready' AND c.plaintext_state IN ('present', 'staged')))))
     ORDER BY candidate.created_at, candidate.id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -15709,6 +15711,46 @@ WHERE account_id = sqlc.arg(account_id)::uuid AND app_id = sqlc.arg(app_id)::uui
 
 -- name: GetCrashCaptureByID :one
 SELECT * FROM crash_captures WHERE id = sqlc.arg(capture_id)::uuid;
+
+-- name: RequestLiveForkCapture :one
+-- apid, for an ADR-732 live fork: capture the app's newest running non-fork
+-- instance now. No crash snapshot opt-in (the customer asked for this
+-- fork), but the in-flight and cooldown rules bound how often a serving
+-- instance is paused.
+INSERT INTO crash_captures (account_id, app_id, deployment_id, instance_id, trigger,
+                            route, requested_at, updated_at)
+SELECT a.account_id, a.id, i.deployment_id, i.id, 'live_fork', '',
+       sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
+FROM apps a
+JOIN LATERAL (
+    SELECT ins.id, ins.deployment_id FROM instances ins
+    WHERE ins.app_id = a.id AND ins.state = 'running' AND ins.mode <> 'fork'
+    ORDER BY ins.started_at DESC NULLS LAST, ins.id
+    LIMIT 1
+) i ON true
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.account_id = sqlc.arg(account_id)::uuid AND a.status <> 'deleted'
+  AND NOT EXISTS (
+      SELECT 1 FROM crash_captures c
+      WHERE c.app_id = a.id
+        AND (c.status IN ('requested', 'capturing')
+             OR c.requested_at > sqlc.arg(now)::timestamptz - make_interval(secs => sqlc.arg(cooldown_seconds)::integer))
+  )
+ON CONFLICT DO NOTHING
+RETURNING *;
+
+-- name: InsertLiveAppFork :one
+-- ADR-732 live fork: pinned to the live_fork capture written in the same
+-- transaction, which is still requested. The claim waits for it.
+INSERT INTO app_forks (account_id, app_id, deployment_id, requested_by, ttl_seconds,
+                       expires_at, created_at, updated_at, access_token_hash, crash_capture_id)
+SELECT c.account_id, c.app_id, c.deployment_id, sqlc.arg(requested_by)::text, sqlc.arg(ttl_seconds)::integer,
+       sqlc.arg(created_at)::timestamptz + make_interval(secs => sqlc.arg(ttl_seconds)::integer),
+       sqlc.arg(created_at)::timestamptz, sqlc.arg(created_at)::timestamptz,
+       sqlc.narg(access_token_hash)::bytea, c.id
+FROM crash_captures c
+WHERE c.id = sqlc.arg(crash_capture_id)::uuid
+  AND c.trigger = 'live_fork' AND c.status = 'requested'
+RETURNING *;
 
 -- name: InsertAppForkFromCrashCapture :one
 -- ADR-733: a fork pinned to a ready, unexpired crash capture of the app. The

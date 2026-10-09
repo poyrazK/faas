@@ -26,6 +26,9 @@ const (
 	// CrashTriggerSDK: the app asked from inside its error handler, through
 	// the guest metadata endpoint; vmmd writes the request.
 	CrashTriggerSDK = "sdk"
+	// CrashTriggerLiveFork: an ADR-732 live fork captured the instance it
+	// restores. Kept only as long as the longest fork can live.
+	CrashTriggerLiveFork = "live_fork"
 )
 
 // CrashCaptureReasonMaxBytes bounds an SDK capture's reason label.

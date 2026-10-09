@@ -45,7 +45,14 @@ func AppForkAccessTokenHash(token string) []byte {
 // omitted TTL takes AppForkDefaultTTL.
 type CreateAppForkRequest struct {
 	TTLSeconds *int `json:"ttl_seconds,omitempty"`
+	// Live captures the app's newest running instance now and forks that
+	// capture, instead of the deployment's last snapshot. The capture
+	// briefly pauses that instance.
+	Live *bool `json:"live,omitempty"`
 }
+
+// IsLive reports whether the request asks for a live fork.
+func (r CreateAppForkRequest) IsLive() bool { return r.Live != nil && *r.Live }
 
 // AppForkRequestMaxBytes bounds the create body; it carries one integer.
 const AppForkRequestMaxBytes = 1024
@@ -81,8 +88,11 @@ type AppForkResponse struct {
 	AppID string `json:"app_id"`
 	// AccessToken is returned only by the create call. Send it as
 	// ForkTokenHeader, with ForkHeader set to ID, to reach the fork.
-	AccessToken       string          `json:"access_token,omitempty"`
-	DeploymentID      string          `json:"deployment_id"`
+	AccessToken  string `json:"access_token,omitempty"`
+	DeploymentID string `json:"deployment_id"`
+	// CrashCaptureID is the capture the fork restores: a crash snapshot, or
+	// the capture a live fork took.
+	CrashCaptureID    *string         `json:"crash_capture_id,omitempty"`
 	Status            AppForkStatus   `json:"status"`
 	TTLSeconds        int             `json:"ttl_seconds"`
 	ExpiresAt         string          `json:"expires_at"`
@@ -109,7 +119,28 @@ const (
 	CodeAppForkLimit = "app_fork_limit"
 	// CodeAppForkUnavailable: the app has no live deployment to fork.
 	CodeAppForkUnavailable = "app_fork_unavailable"
+	// CodeLiveForksNotEnabled: live forks need crash snapshot captures,
+	// which the operator has not enabled (FAAS_CRASH_SNAPSHOTS).
+	CodeLiveForksNotEnabled = "live_forks_not_enabled"
+	// CodeLiveForkRefused: the live capture could not start.
+	CodeLiveForkRefused = "live_fork_refused"
 )
+
+// ErrLiveForksNotEnabled is returned for live: true when captures are off.
+func ErrLiveForksNotEnabled() *Problem {
+	return NewProblem(http.StatusNotImplemented, CodeLiveForksNotEnabled,
+		"Live forks unavailable",
+		"live forks need instance captures, which are not enabled on this control-plane host; fork without live").
+		WithDocs(docsBase + "/forks#live-forks")
+}
+
+// ErrLiveForkRefused is returned when a live fork cannot capture now.
+func ErrLiveForkRefused() *Problem {
+	return NewProblem(http.StatusConflict, CodeLiveForkRefused,
+		"Live fork not started",
+		"the app has no running instance to capture, a capture is already running, or one was taken in the last minute").
+		WithDocs(docsBase + "/forks#live-forks")
+}
 
 // ErrAppForksNotEnabled is returned by every fork route until the operator
 // turns forks on.

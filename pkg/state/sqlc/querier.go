@@ -1014,6 +1014,9 @@ type Querier interface {
 	InsertExclusiveWorkOperation(ctx context.Context, db DBTX, arg InsertExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)
 	InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg InsertFeatureFlagVersionParams) (FeatureFlagVersion, error)
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
+	// ADR-732 live fork: pinned to the live_fork capture written in the same
+	// transaction, which is still requested. The claim waits for it.
+	InsertLiveAppFork(ctx context.Context, db DBTX, arg InsertLiveAppForkParams) (AppFork, error)
 	InsertManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg InsertManagedPostgresAccountingReconciliationParams) error
 	InsertManagedPostgresCutover(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverParams) error
 	InsertManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverCredentialParams) (int64, error)
@@ -2597,6 +2600,11 @@ type Querier interface {
 	// app, nothing is in flight and the cooldown has passed.
 	RequestHTTPCrashCapture(ctx context.Context, db DBTX, arg RequestHTTPCrashCaptureParams) (CrashCapture, error)
 	RequestLayerArtifactDeletion(ctx context.Context, db DBTX, storageKey string) error
+	// apid, for an ADR-732 live fork: capture the app's newest running non-fork
+	// instance now. No crash snapshot opt-in (the customer asked for this
+	// fork), but the in-flight and cooldown rules bound how often a serving
+	// instance is paused.
+	RequestLiveForkCapture(ctx context.Context, db DBTX, arg RequestLiveForkCaptureParams) (CrashCapture, error)
 	RequestManagedPostgresCutoverVerification(ctx context.Context, db DBTX, arg RequestManagedPostgresCutoverVerificationParams) error
 	// apid, on an explicit customer request: the app's newest running
 	// non-fork instance, with the same in-flight and cooldown rules.

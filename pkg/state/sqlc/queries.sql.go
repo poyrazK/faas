@@ -3569,12 +3569,14 @@ WHERE id = (
       AND candidate.cancel_requested_at IS NULL
       AND candidate.expires_at > $3::timestamptz
       -- ADR-733: a fork pinned to an encrypted crash capture waits until
-      -- imaged has staged its plaintext. A capture that is no longer ready
-      -- is claimed so the restore fails fast.
+      -- imaged has staged its plaintext, and a live fork (ADR-732) waits
+      -- for its capture to be taken. A failed or expired capture is
+      -- claimed so the restore fails fast.
       AND (candidate.crash_capture_id IS NULL OR EXISTS (
           SELECT 1 FROM crash_captures c
           WHERE c.id = candidate.crash_capture_id
-            AND (c.status <> 'ready' OR c.plaintext_state IN ('present', 'staged'))))
+            AND (c.status IN ('failed', 'expired')
+                 OR (c.status = 'ready' AND c.plaintext_state IN ('present', 'staged')))))
     ORDER BY candidate.created_at, candidate.id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -18908,6 +18910,65 @@ func (q *Queries) InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg
 	)
 	var i InsertInvoiceHistorySnapshotRow
 	err := row.Scan(&i.ID, &i.UpdatedAt)
+	return i, err
+}
+
+const insertLiveAppFork = `-- name: InsertLiveAppFork :one
+INSERT INTO app_forks (account_id, app_id, deployment_id, requested_by, ttl_seconds,
+                       expires_at, created_at, updated_at, access_token_hash, crash_capture_id)
+SELECT c.account_id, c.app_id, c.deployment_id, $1::text, $2::integer,
+       $3::timestamptz + make_interval(secs => $2::integer),
+       $3::timestamptz, $3::timestamptz,
+       $4::bytea, c.id
+FROM crash_captures c
+WHERE c.id = $5::uuid
+  AND c.trigger = 'live_fork' AND c.status = 'requested'
+RETURNING id, account_id, app_id, deployment_id, requested_by, status, ttl_seconds, expires_at, snapshot_id, instance_id, lease_token, lease_owner, lease_expires_at, cancel_requested_at, failure_code, failure_message, started_at, finished_at, created_at, updated_at, access_token_hash, crash_capture_id
+`
+
+type InsertLiveAppForkParams struct {
+	RequestedBy     string
+	TtlSeconds      int32
+	CreatedAt       pgtype.Timestamptz
+	AccessTokenHash []byte
+	CrashCaptureID  pgtype.UUID
+}
+
+// ADR-732 live fork: pinned to the live_fork capture written in the same
+// transaction, which is still requested. The claim waits for it.
+func (q *Queries) InsertLiveAppFork(ctx context.Context, db DBTX, arg InsertLiveAppForkParams) (AppFork, error) {
+	row := db.QueryRow(ctx, insertLiveAppFork,
+		arg.RequestedBy,
+		arg.TtlSeconds,
+		arg.CreatedAt,
+		arg.AccessTokenHash,
+		arg.CrashCaptureID,
+	)
+	var i AppFork
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.TtlSeconds,
+		&i.ExpiresAt,
+		&i.SnapshotID,
+		&i.InstanceID,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AccessTokenHash,
+		&i.CrashCaptureID,
+	)
 	return i, err
 }
 
@@ -55760,6 +55821,77 @@ WHERE storage_key = $1::text
 func (q *Queries) RequestLayerArtifactDeletion(ctx context.Context, db DBTX, storageKey string) error {
 	_, err := db.Exec(ctx, requestLayerArtifactDeletion, storageKey)
 	return err
+}
+
+const requestLiveForkCapture = `-- name: RequestLiveForkCapture :one
+INSERT INTO crash_captures (account_id, app_id, deployment_id, instance_id, trigger,
+                            route, requested_at, updated_at)
+SELECT a.account_id, a.id, i.deployment_id, i.id, 'live_fork', '',
+       $1::timestamptz, $1::timestamptz
+FROM apps a
+JOIN LATERAL (
+    SELECT ins.id, ins.deployment_id FROM instances ins
+    WHERE ins.app_id = a.id AND ins.state = 'running' AND ins.mode <> 'fork'
+    ORDER BY ins.started_at DESC NULLS LAST, ins.id
+    LIMIT 1
+) i ON true
+WHERE a.id = $2::uuid AND a.account_id = $3::uuid AND a.status <> 'deleted'
+  AND NOT EXISTS (
+      SELECT 1 FROM crash_captures c
+      WHERE c.app_id = a.id
+        AND (c.status IN ('requested', 'capturing')
+             OR c.requested_at > $1::timestamptz - make_interval(secs => $4::integer))
+  )
+ON CONFLICT DO NOTHING
+RETURNING id, account_id, app_id, deployment_id, instance_id, trigger, status_code, route, status, storage_key, vmstate_storage_key, fc_version, mem_bytes, failure_code, failure_message, requested_at, captured_at, finished_at, expires_at, updated_at, plaintext_state, sealed_key, encrypted_at, reason
+`
+
+type RequestLiveForkCaptureParams struct {
+	Now             pgtype.Timestamptz
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	CooldownSeconds int32
+}
+
+// apid, for an ADR-732 live fork: capture the app's newest running non-fork
+// instance now. No crash snapshot opt-in (the customer asked for this
+// fork), but the in-flight and cooldown rules bound how often a serving
+// instance is paused.
+func (q *Queries) RequestLiveForkCapture(ctx context.Context, db DBTX, arg RequestLiveForkCaptureParams) (CrashCapture, error) {
+	row := db.QueryRow(ctx, requestLiveForkCapture,
+		arg.Now,
+		arg.AppID,
+		arg.AccountID,
+		arg.CooldownSeconds,
+	)
+	var i CrashCapture
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.InstanceID,
+		&i.Trigger,
+		&i.StatusCode,
+		&i.Route,
+		&i.Status,
+		&i.StorageKey,
+		&i.VmstateStorageKey,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.RequestedAt,
+		&i.CapturedAt,
+		&i.FinishedAt,
+		&i.ExpiresAt,
+		&i.UpdatedAt,
+		&i.PlaintextState,
+		&i.SealedKey,
+		&i.EncryptedAt,
+		&i.Reason,
+	)
+	return i, err
 }
 
 const requestManagedPostgresCutoverVerification = `-- name: RequestManagedPostgresCutoverVerification :exec

@@ -19,9 +19,23 @@ const crashCaptureEndpoint = "http://169.254.169.254/v1/crash-snapshots:capture"
 //	               answer and fails with 500.
 //	/last-capture  returns the last recorded answer. In a fork of the
 //	               capture, the /boom call resumes and records in_fork.
+//
+//	/counter       POST increments an in-memory counter, GET returns it, so a
+//	               test can tell which moment a fork's memory comes from.
 func serveCrashCapture(mux *http.ServeMux) {
 	var mu sync.Mutex
 	last := json.RawMessage(`null`)
+	counter := 0
+	mux.HandleFunc("/counter", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if r.Method == http.MethodPost {
+			counter++
+		}
+		n := counter
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]int{"counter": n})
+	})
 	mux.HandleFunc("/boom", func(w http.ResponseWriter, r *http.Request) {
 		req, _ := json.Marshal(map[string]any{"reason": "fixture boom", "route": r.URL.Path, "wait_ms": 20000})
 		client := &http.Client{Timeout: 60 * time.Second}

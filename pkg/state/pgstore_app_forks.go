@@ -42,7 +42,21 @@ func (s *PgStore) CreateAppFork(ctx context.Context, params CreateAppForkParams)
 		return AppFork{}, err
 	}
 	var row sqlc.AppFork
-	if p.CrashCaptureID != "" {
+	if p.Live {
+		capture, cerr := q.RequestLiveForkCapture(ctx, tx, sqlc.RequestLiveForkCaptureParams{
+			Now: createdAt, AppID: appID, AccountID: accountID, CooldownSeconds: cooldownSeconds(p.LiveCaptureCooldown),
+		})
+		if errors.Is(cerr, pgx.ErrNoRows) {
+			return AppFork{}, ErrAppForkLiveCaptureRefused
+		}
+		if cerr != nil {
+			return AppFork{}, fmt.Errorf("state: create live fork capture: %w", mapErr(cerr))
+		}
+		row, err = q.InsertLiveAppFork(ctx, tx, sqlc.InsertLiveAppForkParams{
+			RequestedBy: p.RequestedBy, TtlSeconds: int32(p.TTLSeconds), CreatedAt: createdAt, //nolint:gosec // validated 60..86400
+			AccessTokenHash: p.AccessTokenHash, CrashCaptureID: capture.ID,
+		})
+	} else if p.CrashCaptureID != "" {
 		row, err = q.InsertAppForkFromCrashCapture(ctx, tx, sqlc.InsertAppForkFromCrashCaptureParams{
 			RequestedBy: p.RequestedBy, TtlSeconds: int32(p.TTLSeconds), CreatedAt: createdAt, //nolint:gosec // validated 60..86400
 			AccessTokenHash: p.AccessTokenHash, CrashCaptureID: mustPgUUID(p.CrashCaptureID),

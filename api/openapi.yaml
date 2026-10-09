@@ -55310,11 +55310,12 @@ components:
         deployment_id: { type: string, format: uuid }
         trigger:
           type: string
-          enum: [http_5xx, manual, sdk]
+          enum: [http_5xx, manual, sdk, live_fork]
           description: |
             `http_5xx` after a 5xx response, `manual` from this API, `sdk` from the
             app itself through the guest metadata endpoint
-            (`POST http://169.254.169.254/v1/crash-snapshots:capture`).
+            (`POST http://169.254.169.254/v1/crash-snapshots:capture`), `live_fork`
+            for the capture a live fork took (kept only as long as a fork can live).
         status_code: { type: integer, minimum: 500, maximum: 599 }
         route: { type: string, description: Request path of the failing request (http_5xx, or sdk when the app passes one). }
         reason: { type: string, maxLength: 256, description: The app's label for an sdk capture. }
@@ -55347,6 +55348,14 @@ components:
           minimum: 60
           maximum: 14400
           description: "How long the fork lives. Default 3600 (1 h), maximum 14400 (4 h)."
+        live:
+          type: boolean
+          description: |
+            Capture the app's newest running instance now and fork that
+            capture, instead of the deployment's last snapshot. The capture
+            pauses the instance briefly. Refused (409 `live_fork_refused`)
+            when no instance is running, a capture is in flight, or one was
+            taken in the last minute.
     AppForkResponse:
       description: |
         One production fork (ADR-732). `status` moves from `queued` through
@@ -55370,6 +55379,10 @@ components:
           type: string
           format: uuid
           description: The live deployment pinned when the fork was requested.
+        crash_capture_id:
+          type: string
+          format: uuid
+          description: The capture the fork restores, for a crash snapshot fork or a live fork.
         status:
           type: string
           enum: [queued, restoring, running, expired, cancelled, failed]

@@ -53,12 +53,7 @@ func (s *server) createAppForkFrom(w http.ResponseWriter, r *http.Request, acct 
 	if !ok {
 		return
 	}
-	var req api.CreateAppForkRequest
-	if err := decodeJSONSized(r, &req, api.AppForkRequestMaxBytes); err != nil {
-		api.WriteProblem(w, api.ErrValidation("invalid fork request body"))
-		return
-	}
-	ttl, problem := req.ResolveTTL()
+	ttl, target, problem := s.decodeAppForkRequest(r, captureID)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -68,14 +63,14 @@ func (s *server) createAppForkFrom(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrInternal("could not mint the fork access token"))
 		return
 	}
-	fork, problem := s.admitAppFork(r, acct, app, captureID, ttl, perApp, perAccount, tokenHash)
+	fork, problem := s.admitAppFork(r, acct, app, target, ttl, perApp, perAccount, tokenHash)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
 	s.audit.Emit(r.Context(), "app.fork_created", &acct.ID, map[string]any{
 		"app_id": app.ID, "fork_id": fork.ID, "deployment_id": fork.DeploymentID,
-		"ttl_seconds": fork.TTLSeconds, "requested_by": fork.RequestedBy, "crash_capture_id": captureID,
+		"ttl_seconds": fork.TTLSeconds, "requested_by": fork.RequestedBy, "crash_capture_id": stringOrEmpty(fork.CrashCaptureID), "live": target.live,
 	})
 	resp := appForkResponse(fork)
 	// The token is shown once; only its hash is stored.
@@ -83,14 +78,46 @@ func (s *server) createAppForkFrom(w http.ResponseWriter, r *http.Request, acct 
 	writeJSON(w, http.StatusAccepted, resp)
 }
 
-// admitAppFork pins the app's live deployment and records the intent under
-// the plan's active-fork caps.
-func (s *server) admitAppFork(r *http.Request, acct state.Account, app state.App, captureID string, ttl, perApp, perAccount int, tokenHash []byte) (state.AppFork, *api.Problem) {
+// decodeAppForkRequest reads the TTL and what the fork restores: captureID
+// for a crash snapshot fork, or a capture taken now when the body asks for
+// a live fork.
+func (s *server) decodeAppForkRequest(r *http.Request, captureID string) (int, appForkTarget, *api.Problem) {
+	var req api.CreateAppForkRequest
+	if err := decodeJSONSized(r, &req, api.AppForkRequestMaxBytes); err != nil {
+		return 0, appForkTarget{}, api.ErrValidation("invalid fork request body")
+	}
+	ttl, problem := req.ResolveTTL()
+	if problem != nil {
+		return 0, appForkTarget{}, problem
+	}
+	target := appForkTarget{captureID: captureID, live: req.IsLive()}
+	switch {
+	case target.live && captureID != "":
+		return 0, appForkTarget{}, api.ErrValidation("a crash snapshot fork cannot also be live")
+	case target.live && !s.crashSnapshotsEnabled:
+		return 0, appForkTarget{}, api.ErrLiveForksNotEnabled()
+	}
+	return ttl, target, nil
+}
+
+// appForkTarget is what a fork restores: the live deployment's snapshot
+// (zero value), a crash capture, or a capture taken now (live).
+type appForkTarget struct {
+	captureID string
+	live      bool
+}
+
+// admitAppFork pins what the fork restores and records the intent under the
+// plan's active-fork caps.
+func (s *server) admitAppFork(r *http.Request, acct state.Account, app state.App, target appForkTarget, ttl, perApp, perAccount int, tokenHash []byte) (state.AppFork, *api.Problem) {
 	unavailable := api.ErrAppForkUnavailable()
-	deploymentID := ""
-	if captureID != "" {
+	deploymentID, captureID := "", target.captureID
+	switch {
+	case target.live:
+		unavailable = api.ErrLiveForkRefused()
+	case captureID != "":
 		unavailable = api.ErrCrashCaptureNotReady()
-	} else {
+	default:
 		deployment, err := s.store.LiveDeployment(r.Context(), app.ID)
 		if errors.Is(err, state.ErrNotFound) {
 			return state.AppFork{}, unavailable
@@ -104,13 +131,13 @@ func (s *server) admitAppFork(r *http.Request, acct state.Account, app state.App
 		AccountID: acct.ID, AppID: app.ID, DeploymentID: deploymentID, CrashCaptureID: captureID,
 		RequestedBy: appForkActor(r, acct), TTLSeconds: ttl,
 		MaxPerApp: perApp, MaxPerAccount: perAccount, CreatedAt: time.Now().UTC(),
-		AccessTokenHash: tokenHash,
+		AccessTokenHash: tokenHash, Live: target.live, LiveCaptureCooldown: api.LiveForkCaptureCooldown,
 	})
 	var limitErr *state.AppForkLimitError
 	switch {
 	case errors.As(err, &limitErr):
 		return state.AppFork{}, api.ErrAppForkLimit(limitErr.Scope, limitErr.Limit, limitErr.Observed)
-	case errors.Is(err, state.ErrAppForkDeploymentUnavailable):
+	case errors.Is(err, state.ErrAppForkDeploymentUnavailable), errors.Is(err, state.ErrAppForkLiveCaptureRefused):
 		return state.AppFork{}, unavailable
 	case err != nil:
 		return state.AppFork{}, api.ErrInternal("could not record the fork")
@@ -222,7 +249,7 @@ func appForkActor(r *http.Request, acct state.Account) string {
 
 func appForkResponse(fork state.AppFork) api.AppForkResponse {
 	resp := api.AppForkResponse{
-		ID: fork.ID, AppID: fork.AppID, DeploymentID: fork.DeploymentID,
+		ID: fork.ID, AppID: fork.AppID, DeploymentID: fork.DeploymentID, CrashCaptureID: fork.CrashCaptureID,
 		Status: api.AppForkStatus(fork.Status), TTLSeconds: fork.TTLSeconds,
 		ExpiresAt:         fork.ExpiresAt.UTC().Format(time.RFC3339Nano),
 		CancelRequestedAt: appTaskTimeResponse(fork.CancelRequested),
