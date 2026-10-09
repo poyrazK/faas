@@ -269,7 +269,7 @@ linters:
       # connection-pool APIs are deprecated in favor of standard-library APIs
       # with different dialing and connection ownership. Preserve the qualified
       # transport during the compiler patch; migration needs protocol/pool tests.
-      - path: "(cmd/vmmd-stream-bridge/(guest_transport_pool|h2c_terminator)|pkg/devbridge/(local|relay)|pkg/gateway/internal_proxy|pkg/vmmdgrpc/(forward|stream_bridge_manager))\\.go$"
+      - path: "(cmd/vmmd-stream-bridge/(guest_transport_pool|h2c_terminator)|pkg/devbridge/(local|relay)|pkg/gateway/(internal_proxy|ingress/(guard|transport))|pkg/vmmdgrpc/(forward|stream_bridge_manager))\\.go$"
         linters:
           - staticcheck
         text: "SA1019: .*golang\\.org/x/net/http2\\."
