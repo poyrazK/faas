@@ -10557,6 +10557,102 @@ paths:
         '204':
           description: "Deleted. Also returned when the metric did not exist: the caller's intent is already satisfied, and a 404 would make a retry of a successful delete look like a failure."
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/synthetics:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: listSyntheticChecks
+      summary: List the app's synthetic checks (ADR-748)
+      description: "Returns every scheduled HTTP check defined on the app, name-ordered."
+      tags: [apps]
+      responses:
+        '200':
+          description: The app's synthetic checks.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SyntheticCheckResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: createSyntheticCheck
+      summary: Define a synthetic check on the app (ADR-748)
+      description: "Schedules a GET or HEAD request to a path on the app's own hostname every 5, 15, or 60 minutes, through the public edge. A probe that wakes a parked app is billed like any request. An app can have at most 5 checks."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSyntheticCheckRequest' }
+      responses:
+        '201':
+          description: The check was created and will run within one interval.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyntheticCheckResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The app already has a synthetic check with this name.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The app is at its synthetic check cap; the problem carries limit and observed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/synthetics/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: "Synthetic check identifier returned when the check was created."
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getSyntheticCheck
+      summary: Get one synthetic check (ADR-748)
+      description: "Returns one check definition. An id belonging to another app returns 404."
+      tags: [apps]
+      responses:
+        '200':
+          description: The check definition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyntheticCheckResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateSyntheticCheck
+      summary: Pause or resume a synthetic check (ADR-748)
+      description: "Sets whether the check runs. To change its path, schedule or expectations, delete and recreate it."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateSyntheticCheckRequest' }
+      responses:
+        '200':
+          description: The updated check.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyntheticCheckResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteSyntheticCheck
+      summary: Delete a synthetic check (ADR-748)
+      description: "Removes the check and its run history."
+      tags: [apps]
+      responses:
+        '204':
+          description: The check was deleted.
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/pre-auth-observations:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -46739,6 +46835,68 @@ components:
           type: number
           minimum: 0
           example: 1284
+    CreateSyntheticCheckRequest:
+      description: 'Defines a scheduled HTTP check against the app (ADR-748).'
+      type: object
+      required: [name, path, interval_seconds]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,62}$'
+          description: 'Unique per app.'
+          example: health
+        method:
+          type: string
+          enum: [GET, HEAD]
+          default: GET
+          description: 'HTTP method of the probe.'
+        path:
+          type: string
+          maxLength: 512
+          pattern: '^/([^/\s\\][^\s\\]*)?$'
+          description: "Origin-relative path, query string allowed. The host is always the app's own default hostname."
+          example: /healthz
+        expected_status:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: 'Exact status that counts as success; omit to accept any 2xx. Redirects are not followed.'
+        timeout_ms:
+          type: integer
+          minimum: 1000
+          maximum: 30000
+          default: 10000
+          description: 'Whole-request timeout, including any wake of a parked app.'
+        interval_seconds:
+          type: integer
+          enum: [300, 900, 3600]
+          description: 'How often the check runs. Five minutes is the floor so a check never keeps an app permanently awake.'
+    UpdateSyntheticCheckRequest:
+      description: 'Pauses or resumes a synthetic check.'
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean, description: 'false pauses the check; true resumes it.' }
+    SyntheticCheckResponse:
+      description: 'One synthetic check definition (ADR-748).'
+      type: object
+      required: [id, name, method, path, url, timeout_ms, interval_seconds, enabled, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: health }
+        method: { type: string, enum: [GET, HEAD] }
+        path: { type: string, example: /healthz }
+        url:
+          type: string
+          format: uri
+          description: 'The full URL each probe requests.'
+        expected_status:
+          type: integer
+          description: 'Exact expected status; absent means any 2xx.'
+        timeout_ms: { type: integer }
+        interval_seconds: { type: integer, enum: [300, 900, 3600] }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
     CustomMetricResponse:
       description: "One stored ADR-202 gauge."
       type: object

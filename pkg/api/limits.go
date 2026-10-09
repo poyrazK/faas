@@ -9437,3 +9437,18 @@ const (
 	EventConsumerExecutionRootsMax       = 1000
 	EventConsumerExecutionInvocationsMax = 5000
 )
+
+// Synthetic checks (ADR-748). The 5-minute floor keeps a check from pinning
+// an app resident on Free, Hobby and Pro (idle timeouts 30/60/300 s); the
+// timeout ceiling matches the gateway wake hold.
+const (
+	MaxSyntheticChecksPerApp       = 5
+	SyntheticCheckTimeoutMinMS     = 1000
+	SyntheticCheckTimeoutMaxMS     = 30000
+	SyntheticCheckDefaultTimeoutMS = 10000
+	SyntheticCheckPathMaxBytes     = 512
+	SyntheticCheckRunRetentionDays = 7
+)
+
+// SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.
+var SyntheticCheckIntervalsSeconds = []int{300, 900, 3600}

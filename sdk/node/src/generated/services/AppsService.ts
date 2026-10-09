@@ -29,6 +29,7 @@ import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirem
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
 import type { CreateIssueIngestTokenRequest } from '../models/CreateIssueIngestTokenRequest.js';
+import type { CreateSyntheticCheckRequest } from '../models/CreateSyntheticCheckRequest.js';
 import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerRequest.js';
 import type { CreateUDPListenerRequest } from '../models/CreateUDPListenerRequest.js';
 import type { CustomMetricListResponse } from '../models/CustomMetricListResponse.js';
@@ -117,11 +118,13 @@ import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequ
 import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
 import type { SetRouteRemovalPolicyRequest } from '../models/SetRouteRemovalPolicyRequest.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
+import type { SyntheticCheckResponse } from '../models/SyntheticCheckResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
 import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
 import type { UpdateIssueImpactAlertPolicyRequest } from '../models/UpdateIssueImpactAlertPolicyRequest.js';
+import type { UpdateSyntheticCheckRequest } from '../models/UpdateSyntheticCheckRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
 import type { UpdateUDPListenerRequest } from '../models/UpdateUDPListenerRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
@@ -1177,6 +1180,165 @@ export class AppsService {
         'name': name,
       },
       errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List the app's synthetic checks (ADR-748)
+   * Returns every scheduled HTTP check defined on the app, name-ordered.
+   * @returns SyntheticCheckResponse The app's synthetic checks.
+   * @throws ApiError
+   */
+  public static listSyntheticChecks({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<Array<SyntheticCheckResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/synthetics',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Define a synthetic check on the app (ADR-748)
+   * Schedules a GET or HEAD request to a path on the app's own hostname every 5, 15, or 60 minutes, through the public edge. A probe that wakes a parked app is billed like any request. An app can have at most 5 checks.
+   * @returns SyntheticCheckResponse The check was created and will run within one interval.
+   * @throws ApiError
+   */
+  public static createSyntheticCheck({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateSyntheticCheckRequest,
+  }): CancelablePromise<SyntheticCheckResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/synthetics',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `The app already has a synthetic check with this name.`,
+        422: `The app is at its synthetic check cap; the problem carries limit and observed.`,
+      },
+    });
+  }
+  /**
+   * Get one synthetic check (ADR-748)
+   * Returns one check definition. An id belonging to another app returns 404.
+   * @returns SyntheticCheckResponse The check definition.
+   * @throws ApiError
+   */
+  public static getSyntheticCheck({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Synthetic check identifier returned when the check was created.
+     */
+    id: string,
+  }): CancelablePromise<SyntheticCheckResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/synthetics/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Pause or resume a synthetic check (ADR-748)
+   * Sets whether the check runs. To change its path, schedule or expectations, delete and recreate it.
+   * @returns SyntheticCheckResponse The updated check.
+   * @throws ApiError
+   */
+  public static updateSyntheticCheck({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Synthetic check identifier returned when the check was created.
+     */
+    id: string,
+    requestBody: UpdateSyntheticCheckRequest,
+  }): CancelablePromise<SyntheticCheckResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/synthetics/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Delete a synthetic check (ADR-748)
+   * Removes the check and its run history.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteSyntheticCheck({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Synthetic check identifier returned when the check was created.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/synthetics/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
       },
     });

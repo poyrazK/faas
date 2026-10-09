@@ -9701,6 +9701,23 @@ func (q *Queries) DeleteProductionDeadLetterEvents(ctx context.Context, db DBTX,
 	return result.RowsAffected(), nil
 }
 
+const deleteSyntheticCheck = `-- name: DeleteSyntheticCheck :execrows
+DELETE FROM synthetic_checks WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type DeleteSyntheticCheckParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) DeleteSyntheticCheck(ctx context.Context, db DBTX, arg DeleteSyntheticCheckParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteSyntheticCheck, arg.AppID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteTrigger = `-- name: DeleteTrigger :exec
 delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null
 `
@@ -17412,6 +17429,35 @@ func (q *Queries) GetSession(ctx context.Context, db DBTX, id pgtype.UUID) (GetS
 	return i, err
 }
 
+const getSyntheticCheck = `-- name: GetSyntheticCheck :one
+SELECT id, account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds, enabled, created_at, updated_at FROM synthetic_checks WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type GetSyntheticCheckParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) GetSyntheticCheck(ctx context.Context, db DBTX, arg GetSyntheticCheckParams) (SyntheticCheck, error) {
+	row := db.QueryRow(ctx, getSyntheticCheck, arg.AppID, arg.ID)
+	var i SyntheticCheck
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Method,
+		&i.Path,
+		&i.ExpectedStatus,
+		&i.TimeoutMs,
+		&i.IntervalSeconds,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getTenantWorkflowScheduleCursor = `-- name: GetTenantWorkflowScheduleCursor :one
 SELECT app_id, platform_tenant_id, workflow_name, deployment_id, trigger_snapshot, last_evaluated_at, scheduled_for, status, last_run_id, updated_at, last_admitted_at FROM platform_tenant_workflow_schedule_cursors
 WHERE app_id = $1::uuid AND platform_tenant_id = $2::uuid
@@ -22965,6 +23011,59 @@ func (q *Queries) InsertSnapshotRuntimeConfigReceipt(ctx context.Context, db DBT
 		arg.SidecarSecretVersions,
 	)
 	return err
+}
+
+const insertSyntheticCheck = `-- name: InsertSyntheticCheck :one
+
+INSERT INTO synthetic_checks (account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds)
+SELECT $1::uuid, $2::uuid, $3::text, $4::text, $5::text,
+ $6::integer, $7::integer, $8::integer
+WHERE (SELECT count(*) FROM synthetic_checks WHERE app_id = $2::uuid) < $9::integer
+RETURNING id, account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds, enabled, created_at, updated_at
+`
+
+type InsertSyntheticCheckParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Name            string
+	Method          string
+	Path            string
+	ExpectedStatus  pgtype.Int4
+	TimeoutMs       int32
+	IntervalSeconds int32
+	MaxPerApp       int32
+}
+
+// ADR-748: synthetic check definitions (apid is the only writer).
+// The per-app cap is enforced inside the insert, like app_slos.
+func (q *Queries) InsertSyntheticCheck(ctx context.Context, db DBTX, arg InsertSyntheticCheckParams) (SyntheticCheck, error) {
+	row := db.QueryRow(ctx, insertSyntheticCheck,
+		arg.AccountID,
+		arg.AppID,
+		arg.Name,
+		arg.Method,
+		arg.Path,
+		arg.ExpectedStatus,
+		arg.TimeoutMs,
+		arg.IntervalSeconds,
+		arg.MaxPerApp,
+	)
+	var i SyntheticCheck
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Method,
+		&i.Path,
+		&i.ExpectedStatus,
+		&i.TimeoutMs,
+		&i.IntervalSeconds,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const insertTenantScheduledWorkflowRun = `-- name: InsertTenantScheduledWorkflowRun :one
@@ -33424,6 +33523,43 @@ func (q *Queries) ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]str
 			return nil, err
 		}
 		items = append(items, deployment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSyntheticChecks = `-- name: ListSyntheticChecks :many
+SELECT id, account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds, enabled, created_at, updated_at FROM synthetic_checks WHERE app_id = $1::uuid ORDER BY name
+`
+
+func (q *Queries) ListSyntheticChecks(ctx context.Context, db DBTX, appID pgtype.UUID) ([]SyntheticCheck, error) {
+	rows, err := db.Query(ctx, listSyntheticChecks, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SyntheticCheck{}
+	for rows.Next() {
+		var i SyntheticCheck
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Method,
+			&i.Path,
+			&i.ExpectedStatus,
+			&i.TimeoutMs,
+			&i.IntervalSeconds,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -65825,6 +65961,37 @@ func (q *Queries) SetServiceCapacityProtection(ctx context.Context, db DBTX, ena
 	var snapshot []byte
 	err := row.Scan(&snapshot)
 	return snapshot, err
+}
+
+const setSyntheticCheckEnabled = `-- name: SetSyntheticCheckEnabled :one
+UPDATE synthetic_checks SET enabled = $1::boolean, updated_at = now()
+WHERE app_id = $2::uuid AND id = $3::uuid RETURNING id, account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds, enabled, created_at, updated_at
+`
+
+type SetSyntheticCheckEnabledParams struct {
+	Enabled bool
+	AppID   pgtype.UUID
+	ID      pgtype.UUID
+}
+
+func (q *Queries) SetSyntheticCheckEnabled(ctx context.Context, db DBTX, arg SetSyntheticCheckEnabledParams) (SyntheticCheck, error) {
+	row := db.QueryRow(ctx, setSyntheticCheckEnabled, arg.Enabled, arg.AppID, arg.ID)
+	var i SyntheticCheck
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Method,
+		&i.Path,
+		&i.ExpectedStatus,
+		&i.TimeoutMs,
+		&i.IntervalSeconds,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const setUDPListenerEnabled = `-- name: SetUDPListenerEnabled :one

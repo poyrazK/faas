@@ -24342,6 +24342,32 @@ CREATE TABLE public.stripe_push_dedupe (
 
 
 --
+-- Name: synthetic_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.synthetic_checks (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    method text NOT NULL,
+    path text NOT NULL,
+    expected_status integer,
+    timeout_ms integer NOT NULL,
+    interval_seconds integer NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT synthetic_checks_interval_chk CHECK ((interval_seconds = ANY (ARRAY[300, 900, 3600]))),
+    CONSTRAINT synthetic_checks_method_chk CHECK ((method = ANY (ARRAY['GET'::text, 'HEAD'::text]))),
+    CONSTRAINT synthetic_checks_name_shape CHECK ((name ~ '^[a-z][a-z0-9_-]{0,62}$'::text)),
+    CONSTRAINT synthetic_checks_path_chk CHECK (((char_length(path) <= 512) AND (path ~ '^/([^/[:space:]\\][^[:space:]\\]*)?$'::text))),
+    CONSTRAINT synthetic_checks_status_chk CHECK (((expected_status IS NULL) OR ((expected_status >= 100) AND (expected_status <= 599)))),
+    CONSTRAINT synthetic_checks_timeout_chk CHECK (((timeout_ms >= 1000) AND (timeout_ms <= 30000)))
+);
+
+
+--
 -- Name: tenant_hostnames; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -30618,6 +30644,22 @@ ALTER TABLE ONLY public.status_observation_buckets
 
 ALTER TABLE ONLY public.stripe_push_dedupe
     ADD CONSTRAINT stripe_push_dedupe_pkey PRIMARY KEY (account_id, hour);
+
+
+--
+-- Name: synthetic_checks synthetic_checks_app_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.synthetic_checks
+    ADD CONSTRAINT synthetic_checks_app_name_uniq UNIQUE (app_id, name);
+
+
+--
+-- Name: synthetic_checks synthetic_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.synthetic_checks
+    ADD CONSTRAINT synthetic_checks_pkey PRIMARY KEY (id);
 
 
 --
@@ -47781,6 +47823,14 @@ ALTER TABLE ONLY public.stripe_push_dedupe
 
 ALTER TABLE ONLY public.stripe_push_dedupe
     ADD CONSTRAINT stripe_push_dedupe_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: synthetic_checks synthetic_checks_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.synthetic_checks
+    ADD CONSTRAINT synthetic_checks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

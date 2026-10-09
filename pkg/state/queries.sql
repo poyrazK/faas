@@ -17282,3 +17282,26 @@ FROM recipients WHERE cardinality(ids)>0 ON CONFLICT(event,source_id) DO NOTHING
 SELECT d.scope::text FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=sqlc.arg(deployment_id)::text::uuid AND a.id=sqlc.arg(app_id)::text::uuid
  AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted';
+
+-- ADR-748: synthetic check definitions (apid is the only writer).
+
+-- name: InsertSyntheticCheck :one
+-- The per-app cap is enforced inside the insert, like app_slos.
+INSERT INTO synthetic_checks (account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds)
+SELECT sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(name)::text, sqlc.arg(method)::text, sqlc.arg(path)::text,
+ sqlc.narg(expected_status)::integer, sqlc.arg(timeout_ms)::integer, sqlc.arg(interval_seconds)::integer
+WHERE (SELECT count(*) FROM synthetic_checks WHERE app_id = sqlc.arg(app_id)::uuid) < sqlc.arg(max_per_app)::integer
+RETURNING *;
+
+-- name: ListSyntheticChecks :many
+SELECT * FROM synthetic_checks WHERE app_id = sqlc.arg(app_id)::uuid ORDER BY name;
+
+-- name: GetSyntheticCheck :one
+SELECT * FROM synthetic_checks WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid;
+
+-- name: SetSyntheticCheckEnabled :one
+UPDATE synthetic_checks SET enabled = sqlc.arg(enabled)::boolean, updated_at = now()
+WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid RETURNING *;
+
+-- name: DeleteSyntheticCheck :execrows
+DELETE FROM synthetic_checks WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid;

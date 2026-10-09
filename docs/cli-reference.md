@@ -13,6 +13,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
+| [`synthetics`](#synthetics) | Scheduled HTTP checks against an app (synthetics list\|create\|pause\|resume\|rm --app &lt;slug&gt;) |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset\|actions --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`commit`](#commit) | Manage transactional PostgreSQL outbox sources (internal) |
@@ -1337,6 +1338,69 @@ gregale bindings smoke public-api billing --caller-deployment v12 --target-deplo
 Show feature maturity and plan availability
 
 `gregale capabilities`
+
+
+## synthetics
+
+Scheduled HTTP checks against an app (synthetics list|create|pause|resume|rm --app &lt;slug&gt;)
+
+`gregale synthetics [<subcommand>]`
+
+### synthetics list
+
+List the app&#39;s synthetic checks
+
+`gregale synthetics list --app <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+
+### synthetics create
+
+Schedule a GET or HEAD check on a path
+
+`gregale synthetics create --app <slug> --name <NAME> [--path <PATH>] [--method <METHOD>] [--expect-status <N>] [--timeout-ms <MS>] [--every-minutes <MIN>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--name <NAME>` | check name, unique per app | required |
+| `--path <PATH>` | path on the app (default /) |  |
+| `--method <METHOD>` | HTTP method | one of `GET` · `HEAD` |
+| `--expect-status <N>` | exact expected status (default any 2xx) |  |
+| `--timeout-ms <MS>` | timeout including any wake, 1000-30000 |  |
+| `--every-minutes <MIN>` | interval | one of `5` · `15` · `60` |
+
+### synthetics pause
+
+Stop running a check
+
+`gregale synthetics pause --app <slug> <check-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+
+### synthetics resume
+
+Resume a paused check
+
+`gregale synthetics resume --app <slug> <check-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+
+### synthetics rm
+
+Delete a check and its history
+
+`gregale synthetics rm --app <slug> <check-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
 
 
 ## alerts

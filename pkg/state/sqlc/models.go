@@ -7145,6 +7145,21 @@ type StripePushDedupe struct {
 	OrgID     pgtype.UUID
 }
 
+type SyntheticCheck struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Name            string
+	Method          string
+	Path            string
+	ExpectedStatus  pgtype.Int4
+	TimeoutMs       int32
+	IntervalSeconds int32
+	Enabled         bool
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type TenantHostname struct {
 	ID                    pgtype.UUID
 	SurfaceID             pgtype.UUID

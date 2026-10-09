@@ -596,6 +596,9 @@ from .create_project_environment_request import CreateProjectEnvironmentRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
 from .create_queue_binding_request_workload_class import CreateQueueBindingRequestWorkloadClass
+from .create_synthetic_check_request import CreateSyntheticCheckRequest
+from .create_synthetic_check_request_interval_seconds import CreateSyntheticCheckRequestIntervalSeconds
+from .create_synthetic_check_request_method import CreateSyntheticCheckRequestMethod
 from .create_tcp_listener_request import CreateTCPListenerRequest
 from .create_tenant_surface_request import CreateTenantSurfaceRequest
 from .create_tenant_surface_request_cert_kind import CreateTenantSurfaceRequestCertKind
@@ -2907,6 +2910,9 @@ from .summarize_platform_tenant_self_workflow_outcomes_group_by import (
     SummarizePlatformTenantSelfWorkflowOutcomesGroupBy,
 )
 from .sweep_stuck_builds_response import SweepStuckBuildsResponse
+from .synthetic_check_response import SyntheticCheckResponse
+from .synthetic_check_response_interval_seconds import SyntheticCheckResponseIntervalSeconds
+from .synthetic_check_response_method import SyntheticCheckResponseMethod
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
 from .tcp_listener_tls_certificate_status import TCPListenerTLSCertificateStatus
@@ -3045,6 +3051,7 @@ from .update_project_request import UpdateProjectRequest
 from .update_queue_binding_request import UpdateQueueBindingRequest
 from .update_queue_binding_request_mode import UpdateQueueBindingRequestMode
 from .update_queue_binding_request_workload_class import UpdateQueueBindingRequestWorkloadClass
+from .update_synthetic_check_request import UpdateSyntheticCheckRequest
 from .update_tcp_listener_request import UpdateTCPListenerRequest
 from .update_tenant_workflow_schedule_request import UpdateTenantWorkflowScheduleRequest
 from .update_tenant_workflow_schedule_request_overlap import UpdateTenantWorkflowScheduleRequestOverlap
@@ -3773,6 +3780,9 @@ __all__ = (
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
     "CreateQueueBindingRequestWorkloadClass",
+    "CreateSyntheticCheckRequest",
+    "CreateSyntheticCheckRequestIntervalSeconds",
+    "CreateSyntheticCheckRequestMethod",
     "CreateTCPListenerRequest",
     "CreateTenantSurfaceRequest",
     "CreateTenantSurfaceRequestCertKind",
@@ -6002,6 +6012,9 @@ __all__ = (
     "SummarizePlatformTenantSelfWorkflowAttentionReason",
     "SummarizePlatformTenantSelfWorkflowOutcomesGroupBy",
     "SweepStuckBuildsResponse",
+    "SyntheticCheckResponse",
+    "SyntheticCheckResponseIntervalSeconds",
+    "SyntheticCheckResponseMethod",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
     "TCPListenerTLSCertificateStatus",
@@ -6132,6 +6145,7 @@ __all__ = (
     "UpdateQueueBindingRequest",
     "UpdateQueueBindingRequestMode",
     "UpdateQueueBindingRequestWorkloadClass",
+    "UpdateSyntheticCheckRequest",
     "UpdateTCPListenerRequest",
     "UpdateTenantWorkflowScheduleRequest",
     "UpdateTenantWorkflowScheduleRequestOverlap",
