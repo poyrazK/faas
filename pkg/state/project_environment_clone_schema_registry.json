@@ -196,6 +196,45 @@
     "kind": "configuration"
   },
   {
+    "table": "api_consumer_plan_admissions",
+    "columns": [
+      "account_id",
+      "consumer_id",
+      "minute_start",
+      "minute_used",
+      "month_start",
+      "month_used"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_plan_assignments",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_id",
+      "created_at",
+      "effective_from",
+      "id",
+      "plan_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "api_consumer_plans",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "max_requests_per_minute",
+      "max_units_per_month",
+      "name",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "api_consumer_rate_cards",
     "columns": [
       "account_id",
@@ -204,10 +243,27 @@
       "currency",
       "effective_from",
       "id",
+      "included_units_per_month",
+      "plan_id",
       "price_millicents_per_unit",
+      "route_weights",
+      "tiers",
       "unit"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "api_consumer_route_usage_minutes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "billable_units",
+      "consumer_key",
+      "route",
+      "updated_at",
+      "window_start"
+    ],
+    "kind": "operational"
   },
   {
     "table": "api_consumer_usage_events",
@@ -274,6 +330,7 @@
       "period_end",
       "period_start",
       "priced",
+      "revision",
       "status",
       "unpriced_units"
     ],
