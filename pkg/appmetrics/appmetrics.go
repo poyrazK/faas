@@ -183,6 +183,11 @@ func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 		// route: the alert reports pressure before the customer enforces.
 		query = fmt.Sprintf(`sum(increase(gateway_pre_auth_rate_limit_total{app=%q,outcome=~"blocked|route_blocked|would_block|route_would_block"}[%s])) or vector(0)`, appID, rng)
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	case "edge_rejections":
+		// Client-error rejections only: a 503 means a gate dependency is
+		// unavailable, which is an availability problem, not attack traffic.
+		query = fmt.Sprintf(`sum(increase(gateway_edge_rejections_total{app=%q,status=~"401|403|413|429"}[%s])) or vector(0)`, appID, rng)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
 	case "edge_validation_failures":
 		query = fmt.Sprintf(`sum(increase(gateway_validate_failures_total{app_id=%q}[%s])) or vector(0)`, appID, rng)
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }

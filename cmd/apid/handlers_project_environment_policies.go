@@ -54,6 +54,10 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 		if candidate.MatchPath == "" {
 			candidate.MatchPath = "/"
 		}
+		if problem := templatedMatchPathProblem(candidate.MatchPath); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		priority, enabled := candidate.Priority, candidate.Enabled
 		check := api.CreateEdgeRuleRequest{
 			MatchHost: host, MatchPath: candidate.MatchPath, MatchMethods: candidate.MatchMethods,

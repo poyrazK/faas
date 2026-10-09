@@ -1,6 +1,7 @@
 -- +goose Up
--- Two opt-in, notification-only security presets fed by per-app edge
--- signals: pre-auth source-limit pressure and kind=validate mismatches.
+-- Three opt-in, notification-only security presets fed by per-app edge
+-- signals: pre-auth source-limit pressure, kind=validate mismatches, and
+-- rejections by the other edge gates (gateway_edge_rejections_total).
 -- Both metrics can be driven by external traffic, so like the login-target
 -- metrics they may only send webhooks and never change a deployment.
 ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_metric_chk;
@@ -20,12 +21,12 @@ ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_metric_chk CHECK (metric IN (
     'event_recovery_expiring_jobs', 'event_recovery_capacity_wait_jobs',
     'workflow_failures', 'workflow_schedule_quota_skips', 'workflow_pending_age_seconds',
     'workflow_waiting_age_seconds', 'workflow_due_age_seconds',
-    'pre_auth_pressure', 'edge_validation_failures'
+    'pre_auth_pressure', 'edge_validation_failures', 'edge_rejections'
 ));
 
 ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_edge_security_notification_chk;
 ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_edge_security_notification_chk
-    CHECK (metric NOT IN ('pre_auth_pressure', 'edge_validation_failures') OR action = 'webhook');
+    CHECK (metric NOT IN ('pre_auth_pressure', 'edge_validation_failures', 'edge_rejections') OR action = 'webhook');
 
 ALTER TABLE alert_presets DROP CONSTRAINT IF EXISTS alert_presets_metric_chk;
 ALTER TABLE alert_presets ADD CONSTRAINT alert_presets_metric_chk CHECK (metric IN (
@@ -34,7 +35,7 @@ ALTER TABLE alert_presets ADD CONSTRAINT alert_presets_metric_chk CHECK (metric 
     'queue_depth', 'new_error_fingerprint', 'daily_cost_cents', 'slo_burn_rate',
     'canary_stuck_step', 'safedeploy_audit_emit_failing', 'deployment_audit_gc_failing', 'canary_fleet_in_flight_high',
     'pre_auth_target_threshold', 'pre_auth_target_signal_gap_pct', 'workflow_due_age_seconds',
-    'pre_auth_pressure', 'edge_validation_failures'
+    'pre_auth_pressure', 'edge_validation_failures', 'edge_rejections'
 ));
 
 INSERT INTO alert_presets (
@@ -50,11 +51,16 @@ INSERT INTO alert_presets (
     'Edge validation failures',
     'Alerts when kind=validate edge rules record more than 50 mismatched requests in 15 minutes, in any validate mode. Notification only.',
     'security', 'edge_validation_failures', 'gt', 50, '15m', 60, true, 'hobby'
+), (
+    'edge_rejection_pressure',
+    'Edge rejection pressure',
+    'Alerts when JWT, IP, geo, ingress, body-limit, or throttle edge gates reject more than 200 requests in 15 minutes. Notification only.',
+    'security', 'edge_rejections', 'gt', 200, '15m', 60, true, 'hobby'
 ) ON CONFLICT (name) DO NOTHING;
 
 -- +goose Down
-DELETE FROM alert_presets WHERE name IN ('pre_auth_pressure', 'edge_validation_failures');
-DELETE FROM alert_rules WHERE metric IN ('pre_auth_pressure', 'edge_validation_failures');
+DELETE FROM alert_presets WHERE name IN ('pre_auth_pressure', 'edge_validation_failures', 'edge_rejection_pressure');
+DELETE FROM alert_rules WHERE metric IN ('pre_auth_pressure', 'edge_validation_failures', 'edge_rejections');
 
 ALTER TABLE alert_presets DROP CONSTRAINT IF EXISTS alert_presets_metric_chk;
 ALTER TABLE alert_presets ADD CONSTRAINT alert_presets_metric_chk CHECK (metric IN (

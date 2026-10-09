@@ -44,7 +44,7 @@ attention. If every route has fewer than 20 failures, the rule is `unknown` and
 does not send a webhook. A Prometheus error sets it to `degraded`, also without
 firing. Neither state proves the integration is healthy.
 
-Two more opt-in, webhook-only security presets watch the edge for traffic that
+Three more opt-in, webhook-only security presets watch the edge for traffic that
 is being rejected or would be:
 
 - `pre_auth_pressure` fires when the [pre-auth source limit](security.md#optional-pre-auth-source-limit)
@@ -57,13 +57,19 @@ is being rejected or would be:
   header mismatches in every validate mode. Use the
   `gateway_validate_failures_total` metric or the `edge_rule.validate_failed`
   audit events to find the failing rule and field.
+- `edge_rejection_pressure` fires when the other edge gates (JWT, IP, geo,
+  ingress allowlist and internal-only, body limits, and throttles) answer more
+  than 200 requests with 401, 403, 413, or 429 in 15 minutes. Gate outages
+  (503) are not counted. Break the total down by gate with
+  `gateway_edge_rejections_total{app="APP_ID"}`, whose `kind` and `status`
+  labels name the gate and response.
 
 ```bash
 printf '%s\n' "$ALERT_SECRET" | gregale alerts preset enable pre_auth_pressure \
   --app APP_ID --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
 ```
 
-Because outside traffic drives both signals, these alerts can never run a
+Because outside traffic drives these signals, these alerts can never run a
 deployment action such as rollback; the API and the database both reject one.
 
 Deliveries include an event id, timestamp, alert state, and signature. Verify the signature before processing, deduplicate by event id, and return a 2xx response quickly. Retryable failures are retried with backoff; a permanently failing endpoint is paused so it cannot amplify an incident.

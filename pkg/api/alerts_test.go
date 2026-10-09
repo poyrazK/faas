@@ -315,7 +315,7 @@ func TestClosedSetPredicates(t *testing.T) {
 }
 
 func TestNotificationOnlyAlertActions(t *testing.T) {
-	for _, metric := range []string{"pre_auth_target_threshold", "pre_auth_target_signal_gap_pct", "pre_auth_pressure", "edge_validation_failures", "workflow_failures", "workflow_schedule_quota_skips", "workflow_pending_age_seconds", "workflow_waiting_age_seconds", "workflow_due_age_seconds"} {
+	for _, metric := range []string{"pre_auth_target_threshold", "pre_auth_target_signal_gap_pct", "pre_auth_pressure", "edge_validation_failures", "edge_rejections", "workflow_failures", "workflow_schedule_quota_skips", "workflow_pending_age_seconds", "workflow_waiting_age_seconds", "workflow_due_age_seconds"} {
 		for _, action := range []string{"", "webhook"} {
 			if !api.AlertRuleActionAllowedForMetric(metric, action) {
 				t.Fatalf("notification-only metric %q rejected action %q", metric, action)

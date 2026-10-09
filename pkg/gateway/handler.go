@@ -5898,6 +5898,7 @@ haveApp:
 	// already-rejected traffic). Each helper writes the deny
 	// response + audit + metric on its own; caller MUST `return`.
 	if h.applyEdgeRuleJWT(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "jwt", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -5913,6 +5914,7 @@ haveApp:
 	// probes from its own address, so an allowlisted app could never deploy
 	// (production-us hunt #5, H5-48).
 	if !deploymentSmoke && h.applyIngressIPAllowlist(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "ip_allowlist", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -5928,10 +5930,12 @@ haveApp:
 	// parallel cron-fired path — both gates share the same verifier
 	// (cmd/gatewayd-internal/internal_svc_verifier.go).
 	if !deploymentSmoke && h.applyIngressInternalSvc(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "internal_only", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
 	if h.applyEdgeRuleIP(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "ip", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -5944,6 +5948,7 @@ haveApp:
 	// fail-open on lookup failure (see applyEdgeRuleGeo for the
 	// metric + audit + slog path).
 	if h.applyEdgeRuleGeo(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "geo", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -5969,6 +5974,7 @@ haveApp:
 	// r.Body). Same posture as validate: short-circuit on deny,
 	// caller MUST `return`.
 	if h.applyEdgeRuleLimit(w, r, streamingFor(h, r, app), app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "limit", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -5977,6 +5983,7 @@ haveApp:
 	// requests therefore cannot consume route tokens or schema-buffering
 	// work, and the Content-Length fast path remains allocation-free.
 	if applyPlanRequestBodyLimit(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "body_limit", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -5993,6 +6000,7 @@ haveApp:
 	// applyEdgeRuleThrottle's doc for the rationale + the
 	// cross-account audit/metric posture.
 	if h.applyEdgeRuleThrottle(w, r, app) {
+		h.metrics.ObserveEdgeRejection(app.ID, "throttle", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}

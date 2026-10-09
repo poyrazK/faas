@@ -2664,6 +2664,25 @@ func TestApplyEdgeRuleIP_DenyCIDRMatch_EmitsApplyError(t *testing.T) {
 	if !strings.Contains(body, `gateway_edge_rule_apply_total{kind="ip",result="error"} 1`) {
 		t.Errorf("apply_total{ip,error} != 1; body:\n%s", body)
 	}
+	// The per-app rejection counter feeds per-app alerts and dashboards.
+	if !strings.Contains(body, `gateway_edge_rejections_total{app="app-1",kind="ip",status="403"} 1`) {
+		t.Errorf("edge_rejections_total{app-1,ip,403} != 1; body:\n%s", body)
+	}
+}
+
+func TestObserveEdgeRejectionBoundsStatusLabel(t *testing.T) {
+	m := NewMetrics()
+	m.ObserveEdgeRejection("app-1", "throttle", http.StatusTooManyRequests)
+	m.ObserveEdgeRejection("app-1", "throttle", http.StatusTeapot)
+	m.ObserveEdgeRejection("app-1", "throttle", 0)
+	if got := testutil.ToFloat64(m.edgeRejections.WithLabelValues("app-1", "throttle", "429")); got != 1 {
+		t.Fatalf("429 count = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(m.edgeRejections.WithLabelValues("app-1", "throttle", "other")); got != 2 {
+		t.Fatalf("other count = %v, want 2 (unexpected statuses collapse)", got)
+	}
+	var nilMetrics *Metrics
+	nilMetrics.ObserveEdgeRejection("app-1", "ip", http.StatusForbidden) // must not panic
 }
 
 func TestApplyEdgeRuleIP_AllowMatch_EmitsApplySuccess(t *testing.T) {

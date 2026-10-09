@@ -912,6 +912,7 @@ func TestEveryPresetHasPresetwhyEntry(t *testing.T) {
 		"login_target_signal_health",
 		"pre_auth_pressure",
 		"edge_validation_failures",
+		"edge_rejection_pressure",
 	}
 
 	// Forward direction: every seed preset name must have a

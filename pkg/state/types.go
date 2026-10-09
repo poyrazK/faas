@@ -3198,9 +3198,11 @@ const (
 	AlertMetricPreAuthTargetSignalGapPct             AlertMetric = "pre_auth_target_signal_gap_pct"
 	// AlertMetricPreAuthPressure counts pre-auth source-limit blocks and
 	// observe-mode would-blocks; AlertMetricEdgeValidationFailures counts
-	// kind=validate mismatches in any mode. Both are webhook-only.
+	// kind=validate mismatches in any mode; AlertMetricEdgeRejections counts
+	// 401/403/413/429 answers from the other edge gates. All are webhook-only.
 	AlertMetricPreAuthPressure        AlertMetric = "pre_auth_pressure"
 	AlertMetricEdgeValidationFailures AlertMetric = "edge_validation_failures"
+	AlertMetricEdgeRejections         AlertMetric = "edge_rejections"
 	AlertMetricNewErrorFingerprint    AlertMetric = "new_error_fingerprint"
 	AlertMetricColdWakeRatePct        AlertMetric = "cold_wake_rate_pct"
 	AlertMetricDailyCostCents         AlertMetric = "daily_cost_cents"

@@ -97,6 +97,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -224,6 +225,7 @@ type Metrics struct {
 	concurrencyQueueWait  *prometheus.HistogramVec
 	rateLimited           *prometheus.CounterVec
 	preAuthRateLimited    *prometheus.CounterVec
+	edgeRejections        *prometheus.CounterVec
 	preAuthPolicyShadow   *prometheus.CounterVec
 	// rateLimitDegraded counts every central-counter error that caused a
 	// process-local fallback. The closed scope label keeps cardinality fixed;
@@ -1301,6 +1303,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_pre_auth_rate_limit_total",
 			Help: "Pre-auth source limit decisions by app and outcome, including shadow blocks and central fallback.",
 		}, []string{"app", "outcome"}),
+		edgeRejections: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_edge_rejections_total",
+			Help: "Requests answered by an edge gate before wake, by app, gate kind (jwt|ip_allowlist|internal_only|ip|geo|limit|body_limit|throttle) and status (401|403|413|429|503|other). Pre-auth and kind=validate decisions have their own per-app counters.",
+		}, []string{"app", "kind", "status"}),
 		preAuthPolicyShadow: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_pre_auth_policy_shadow_total",
 			Help: "Observe-mode would-block decisions, final response classes, and optional target-failure signals by app and configured policy. Policy labels are bounded by one app policy plus 16 route, 16 failure, and 16 target policies; no source IP, path, or target is a label.",
@@ -1909,7 +1915,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.requests, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
-	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow)
+	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
@@ -2457,6 +2463,22 @@ func (m *Metrics) PreInstantiateAppRoute(appID, route string) {
 // ObserveRateLimit records a 429 outcome.
 func (m *Metrics) ObserveRateLimit(appID, plan string) {
 	m.rateLimited.WithLabelValues(appID, plan).Inc()
+}
+
+// ObserveEdgeRejection counts a request an edge gate answered before wake.
+// kind is a closed gate name; status collapses to a closed set so the series
+// count per app stays bounded.
+func (m *Metrics) ObserveEdgeRejection(appID, kind string, status int) {
+	if m == nil || m.edgeRejections == nil {
+		return
+	}
+	label := "other"
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusRequestEntityTooLarge,
+		http.StatusTooManyRequests, http.StatusServiceUnavailable:
+		label = strconv.Itoa(status)
+	}
+	m.edgeRejections.WithLabelValues(appID, kind, label).Inc()
 }
 
 func (m *Metrics) ObservePreAuthRateLimit(appID, outcome string) {

@@ -16,8 +16,9 @@ export type EnableAlertPresetRequest = {
   /**
    * Action to run when the instantiated alert fires. Omit to
    * use the default webhook-only behavior. The login_target_pressure,
-   * login_target_signal_health, pre_auth_pressure, and
-   * edge_validation_failures presets support webhook only.
+   * login_target_signal_health, pre_auth_pressure,
+   * edge_validation_failures, and edge_rejection_pressure presets
+   * support webhook only.
    *
    */
   action?: 'webhook' | 'rollback' | 'demote' | 'promote';

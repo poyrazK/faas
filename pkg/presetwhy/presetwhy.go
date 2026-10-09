@@ -219,6 +219,15 @@ var catalog = map[string]row{
 			DocsURL: "/docs/alerts",
 		},
 	},
+	"edge_rejection_pressure": {
+		Explanation: Explanation{
+			Title:   "Edge rejection pressure",
+			Hint:    "edge rules rejected many requests before they reached the app",
+			Why:     "JWT, IP, geo, ingress allowlist, body-limit, or throttle edge gates rejected more requests than the threshold during the alert window. A sudden rise usually means scanning, credential guessing, or a client that lost its credentials; a constant level often means a rule that is stricter than intended",
+			Fix:     "• break the count down by gate in gateway_edge_rejections_total{app=…} (kind and status labels)\n• use `gregale edge-rules trace` on a sample request to see which rule rejects it\n• tighten the source with a throttle or ip rule if the traffic is abusive, or relax the rule if it rejects legitimate clients",
+			DocsURL: "/docs/alerts",
+		},
+	},
 	"login_target_signal_health": {
 		Explanation: Explanation{
 			Title:   "Login target signal coverage is low",
