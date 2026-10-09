@@ -27,8 +27,8 @@ name: paddle sandbox
 # ci.yml conventions — pin setup-go to v7 (the v5 it inherited from
 # stripex-sandbox.yml is older than ci.yml's pin), pin the Go version
 # to the same 1.26.9 ci.yml uses (so the sandbox CI never runs
-# against a different toolchain), enable Go module/build cache,
-# set timeout-minutes,
+# against a drift-patched toolchain — gofmt differs between 1.25.0
+# and 1.26.9), enable Go module/build cache, set timeout-minutes,
 # and add a concurrency cancel-in-progress group (the metal/stripex
 # siblings also lack these but are out of scope here; their hardening
 # is a follow-up PR).

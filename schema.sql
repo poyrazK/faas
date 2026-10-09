@@ -6937,6 +6937,52 @@ $$;
 
 
 --
+-- Name: guard_workflow_code_pin(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_workflow_code_pin() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP='UPDATE' THEN
+        IF NEW.deployment_id IS DISTINCT FROM OLD.deployment_id OR NEW.app_id IS DISTINCT FROM OLD.app_id THEN
+            RAISE EXCEPTION 'workflow deployment is immutable' USING ERRCODE='23514', CONSTRAINT='workflow_code_immutable';
+        END IF;
+    ELSE
+        PERFORM pin_workflow_code(NEW.app_id,NEW.deployment_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_workflow_event_code_pins(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_workflow_event_code_pins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE recipient jsonb;
+BEGIN
+    DELETE FROM workflow_event_code_refs WHERE outbox_id=NEW.id;
+    FOR recipient IN SELECT r FROM jsonb_array_elements(NEW.recipient_snapshot) r
+        WHERE r ? 'workflow' AND coalesce(r->>'deployment_id','')<>'' ORDER BY r->>'app_id',r->>'deployment_id'
+    LOOP
+        IF NOT EXISTS(SELECT 1 FROM apps a WHERE a.id::text=recipient->>'app_id'
+            AND a.account_id=NEW.account_id AND a.account_id::text=recipient->>'account_id') THEN
+            RAISE EXCEPTION 'workflow event owner is unavailable' USING ERRCODE='23514', CONSTRAINT='workflow_code_available';
+        END IF;
+        PERFORM pin_workflow_code((recipient->>'app_id')::uuid,(recipient->>'deployment_id')::uuid);
+        INSERT INTO workflow_event_code_refs(outbox_id,deployment_id,app_id)
+        VALUES(NEW.id,(recipient->>'deployment_id')::uuid,(recipient->>'app_id')::uuid) ON CONFLICT DO NOTHING;
+    END LOOP;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_workflow_webhook_routing(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7803,6 +7849,32 @@ CREATE FUNCTION public.pg_tier_rank(tier text) RETURNS integer
         WHEN 'single'     THEN 1
         ELSE 0
     END
+$$;
+
+
+--
+-- Name: pin_workflow_code(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pin_workflow_code(app uuid, deployment uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF deployment IS NULL THEN RETURN; END IF;
+    -- Admission and retirement serialize app first, deployment second, then
+    -- immutable artifact fences. References commit atomically with the pin.
+    PERFORM 1 FROM apps WHERE id=app AND status<>'deleted' FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'workflow deployment owner is unavailable' USING ERRCODE='23514', CONSTRAINT='workflow_code_available';
+    END IF;
+    PERFORM 1 FROM deployments WHERE id=deployment AND app_id=app AND status='live' AND deleted_at IS NULL FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'workflow deployment is unavailable' USING ERRCODE='23514', CONSTRAINT='workflow_code_available';
+    END IF;
+    PERFORM require_deployment_layer_artifacts(deployment);
+    INSERT INTO workflow_code_pins(deployment_id,app_id,expires_at) VALUES(deployment,app,now())
+    ON CONFLICT(deployment_id) DO NOTHING;
+END;
 $$;
 
 
@@ -10968,7 +11040,7 @@ CREATE TABLE public.alert_presets (
     CONSTRAINT alert_presets_cooldown_chk CHECK (((default_cooldown_minutes >= 5) AND (default_cooldown_minutes <= 1440))),
     CONSTRAINT alert_presets_description_len_chk CHECK (((char_length(description) >= 1) AND (char_length(description) <= 512))),
     CONSTRAINT alert_presets_display_name_len_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 128))),
-    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text]))),
+    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text]))),
     CONSTRAINT alert_presets_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_presets_plan_chk CHECK ((minimum_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT alert_presets_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -11023,12 +11095,13 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
-    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text]))),
+    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text]))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_state_chk CHECK ((state = ANY (ARRAY['ok'::text, 'firing'::text, 'degraded'::text, 'unknown'::text]))),
-    CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
+    CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text]))),
+    CONSTRAINT alert_rules_workflow_notification_chk CHECK (((metric <> ALL (ARRAY['workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text])) OR (action = 'webhook'::text)))
 );
 
 
@@ -11784,7 +11857,7 @@ CREATE TABLE public.app_runtime_config_scope_changes (
     app_id uuid NOT NULL,
     scope text NOT NULL,
     changed_at timestamp with time zone NOT NULL,
-    CONSTRAINT app_runtime_config_scope_changes_changed_at_check CHECK ((changed_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT app_runtime_config_scope_changes_changed_at_check CHECK ((changed_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)),
     CONSTRAINT app_runtime_config_scope_changes_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64)))
 );
 
@@ -13868,6 +13941,18 @@ CREATE TABLE public.deployment_revision_pins (
 
 
 --
+-- Name: workflow_code_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_code_pins (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT workflow_code_pins_expires_at_check CHECK (isfinite(expires_at))
+);
+
+
+--
 -- Name: deployment_code_pin_deadlines; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -13883,7 +13968,12 @@ CREATE VIEW public.deployment_code_pin_deadlines AS
          SELECT customer_operation_code_pins.deployment_id,
             customer_operation_code_pins.app_id,
             customer_operation_code_pins.expires_at
-           FROM public.customer_operation_code_pins) receipts
+           FROM public.customer_operation_code_pins
+        UNION ALL
+         SELECT workflow_code_pins.deployment_id,
+            workflow_code_pins.app_id,
+            workflow_code_pins.expires_at
+           FROM public.workflow_code_pins) receipts
   GROUP BY deployment_id, app_id;
 
 
@@ -14296,6 +14386,79 @@ CREATE TABLE public.domain_doctor_observations (
 
 
 --
+-- Name: workflow_event_code_refs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_event_code_refs (
+    outbox_id bigint NOT NULL,
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL
+);
+
+
+--
+-- Name: workflow_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    workflow_name text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    current_step text,
+    input jsonb DEFAULT '{}'::jsonb NOT NULL,
+    output jsonb,
+    definition_snapshot jsonb NOT NULL,
+    scheduled_for timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_until timestamp with time zone,
+    operation_id uuid,
+    resume_count integer DEFAULT 0 NOT NULL,
+    cancelled_at timestamp with time zone,
+    platform_tenant_id uuid,
+    create_idempotency_key text,
+    create_request_fingerprint bytea,
+    deployment_id uuid,
+    CONSTRAINT workflow_runs_cancelled_at_check CHECK (((cancelled_at IS NULL) OR (status = 'failed'::text))),
+    CONSTRAINT workflow_runs_create_idempotency_check CHECK ((((create_idempotency_key IS NULL) AND (create_request_fingerprint IS NULL)) OR ((create_idempotency_key IS NOT NULL) AND ((octet_length(create_idempotency_key) >= 1) AND (octet_length(create_idempotency_key) <= 255)) AND (create_request_fingerprint IS NOT NULL) AND (octet_length(create_request_fingerprint) = 32)))),
+    CONSTRAINT workflow_runs_deployment_id_check CHECK (((deployment_id IS NULL) OR (deployment_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT workflow_runs_resume_count_check CHECK (((resume_count >= 0) AND (resume_count <= 16))),
+    CONSTRAINT workflow_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
+);
+
+
+--
+-- Name: workflow_retained_deployment_refs; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.workflow_retained_deployment_refs AS
+ SELECT DISTINCT w.deployment_id
+   FROM ((public.workflow_runs w
+     JOIN public.apps a ON (((a.id = w.app_id) AND (a.status <> 'deleted'::text))))
+     JOIN public.deployments d ON (((d.id = w.deployment_id) AND (d.app_id = w.app_id))))
+UNION
+ SELECT DISTINCT r.deployment_id
+   FROM (public.workflow_event_code_refs r
+     JOIN public.apps a ON (((a.id = r.app_id) AND (a.status <> 'deleted'::text))));
+
+
+--
+-- Name: durable_work_retained_deployment_refs; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.durable_work_retained_deployment_refs AS
+ SELECT customer_operation_retained_deployment_refs.deployment_id
+   FROM public.customer_operation_retained_deployment_refs
+UNION
+ SELECT workflow_retained_deployment_refs.deployment_id
+   FROM public.workflow_retained_deployment_refs;
+
+
+--
 -- Name: edge_rule_change_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14636,7 +14799,7 @@ CREATE TABLE public.environment_gitops_runtime_effects (
     CONSTRAINT environment_gitops_runtime_effects_generation_check CHECK ((generation > 0)),
     CONSTRAINT environment_gitops_runtime_effects_intent_version_check CHECK ((intent_version >= 0)),
     CONSTRAINT environment_gitops_runtime_effects_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT environment_gitops_runtime_effects_required_at_check CHECK ((required_at >= '1970-01-01 02:00:00+02'::timestamp with time zone))
+    CONSTRAINT environment_gitops_runtime_effects_required_at_check CHECK ((required_at >= '1970-01-01 00:00:00+00'::timestamp with time zone))
 );
 
 
@@ -14676,7 +14839,7 @@ CREATE TABLE public.instance_runtime_config_receipts (
     acknowledged_at timestamp with time zone DEFAULT now() NOT NULL,
     secret_refs jsonb DEFAULT '{}'::jsonb NOT NULL,
     sidecar_secret_versions jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT instance_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT instance_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)),
     CONSTRAINT instance_runtime_config_receipts_check CHECK (((jsonb_typeof(sidecar_secret_versions) = 'object'::text) AND (octet_length((sidecar_secret_versions)::text) <= 1048576) AND (sidecar_secret_versions <@ secret_versions))),
     CONSTRAINT instance_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
     CONSTRAINT instance_runtime_config_receipts_secret_refs_check CHECK (((jsonb_typeof(secret_refs) = 'object'::text) AND (octet_length((secret_refs)::text) <= 1048576))),
@@ -14714,7 +14877,7 @@ CREATE TABLE public.snapshot_runtime_config_receipts (
     all_secrets boolean NOT NULL,
     secret_refs jsonb DEFAULT '{}'::jsonb NOT NULL,
     sidecar_secret_versions jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT snapshot_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT snapshot_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 00:00:00+00'::timestamp with time zone)),
     CONSTRAINT snapshot_runtime_config_receipts_check CHECK (((jsonb_typeof(sidecar_secret_versions) = 'object'::text) AND (octet_length((sidecar_secret_versions)::text) <= 1048576) AND (sidecar_secret_versions <@ secret_versions))),
     CONSTRAINT snapshot_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
     CONSTRAINT snapshot_runtime_config_receipts_secret_refs_check CHECK (((jsonb_typeof(secret_refs) = 'object'::text) AND (octet_length((secret_refs)::text) <= 1048576))),
@@ -14787,14 +14950,14 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
             t.environment_slug,
             GREATEST(COALESCE(( SELECT c.changed_at
                    FROM public.app_runtime_config_changes c
-                  WHERE (c.app_id = t.app_id)), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(c.changed_at) AS max
+                  WHERE (c.app_id = t.app_id)), '1970-01-01 00:00:00+00'::timestamp with time zone), COALESCE(( SELECT max(c.changed_at) AS max
                    FROM public.app_runtime_config_scope_changes c
-                  WHERE ((c.app_id = t.app_id) AND (c.scope = ANY (ARRAY['default'::text, t.environment_slug])))), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(v.updated_at) AS max
+                  WHERE ((c.app_id = t.app_id) AND (c.scope = ANY (ARRAY['default'::text, t.environment_slug])))), '1970-01-01 00:00:00+00'::timestamp with time zone), COALESCE(( SELECT max(v.updated_at) AS max
                    FROM (public.app_envs v
                      JOIN public.environment_managed_fields f ON (((f.source_id = t.source_id) AND (f.resource = t.resource) AND (f.field_path = ('variables/'::text || v.key)))))
-                  WHERE ((v.app_id = t.app_id) AND (v.scope = t.environment_slug))), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(x.required_at) AS max
+                  WHERE ((v.app_id = t.app_id) AND (v.scope = t.environment_slug))), '1970-01-01 00:00:00+00'::timestamp with time zone), COALESCE(( SELECT max(x.required_at) AS max
                    FROM public.environment_gitops_runtime_effects x
-                  WHERE ((x.source_id = t.source_id) AND (x.app_id = t.app_id) AND (x.completed_at IS NULL))), '1970-01-01 02:00:00+02'::timestamp with time zone)) AS required_at
+                  WHERE ((x.source_id = t.source_id) AND (x.app_id = t.app_id) AND (x.completed_at IS NULL))), '1970-01-01 00:00:00+00'::timestamp with time zone)) AS required_at
            FROM targets t
         )
  SELECT source_id,
@@ -19596,6 +19759,7 @@ CREATE TABLE public.platform_tenant_workflow_schedule_cursors (
     status text NOT NULL,
     last_run_id uuid,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_admitted_at timestamp with time zone,
     CONSTRAINT platform_tenant_workflow_schedule_cursor_trigger_snapshot_check CHECK ((jsonb_typeof(trigger_snapshot) = 'object'::text)),
     CONSTRAINT platform_tenant_workflow_schedule_cursors_status_check CHECK ((status = ANY (ARRAY['armed'::text, 'started'::text, 'skipped_overlap'::text, 'skipped_quota'::text]))),
     CONSTRAINT platform_tenant_workflow_schedule_cursors_workflow_name_check CHECK ((workflow_name <> ''::text))
@@ -22521,7 +22685,7 @@ CREATE TABLE public.service_recovery (
     app_id uuid NOT NULL,
     revision text NOT NULL,
     claim_token uuid,
-    lease_until timestamp with time zone DEFAULT '1970-01-01 02:00:00+02'::timestamp with time zone NOT NULL,
+    lease_until timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
     status text NOT NULL,
     failures integer DEFAULT 0 NOT NULL,
     next_attempt_at timestamp with time zone NOT NULL,
@@ -23245,6 +23409,22 @@ CREATE TABLE public.workflow_callback_webhook_bindings (
 
 
 --
+-- Name: workflow_dispatch_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_dispatch_cursors (
+    app_id uuid NOT NULL,
+    platform_tenant_id uuid,
+    scope_key text NOT NULL,
+    last_claimed_at timestamp with time zone NOT NULL,
+    CONSTRAINT workflow_dispatch_cursors_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT workflow_dispatch_cursors_check CHECK ((((platform_tenant_id IS NULL) AND (scope_key = ANY (ARRAY['app'::text, 'unscoped'::text]))) OR ((platform_tenant_id IS NOT NULL) AND (scope_key = (platform_tenant_id)::text)))),
+    CONSTRAINT workflow_dispatch_cursors_last_claimed_at_check CHECK (isfinite(last_claimed_at)),
+    CONSTRAINT workflow_dispatch_cursors_platform_tenant_id_check CHECK (((platform_tenant_id IS NULL) OR (platform_tenant_id <> '00000000-0000-0000-0000-000000000000'::uuid)))
+);
+
+
+--
 -- Name: workflow_event_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23311,39 +23491,6 @@ CREATE TABLE public.workflow_run_resumes (
 
 
 --
--- Name: workflow_runs; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.workflow_runs (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    workflow_name text NOT NULL,
-    status text DEFAULT 'pending'::text NOT NULL,
-    current_step text,
-    input jsonb DEFAULT '{}'::jsonb NOT NULL,
-    output jsonb,
-    definition_snapshot jsonb NOT NULL,
-    scheduled_for timestamp with time zone DEFAULT now() NOT NULL,
-    started_at timestamp with time zone,
-    finished_at timestamp with time zone,
-    last_error text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    lease_until timestamp with time zone,
-    operation_id uuid,
-    resume_count integer DEFAULT 0 NOT NULL,
-    cancelled_at timestamp with time zone,
-    platform_tenant_id uuid,
-    create_idempotency_key text,
-    create_request_fingerprint bytea,
-    CONSTRAINT workflow_runs_cancelled_at_check CHECK (((cancelled_at IS NULL) OR (status = 'failed'::text))),
-    CONSTRAINT workflow_runs_create_idempotency_check CHECK ((((create_idempotency_key IS NULL) AND (create_request_fingerprint IS NULL)) OR ((create_idempotency_key IS NOT NULL) AND ((octet_length(create_idempotency_key) >= 1) AND (octet_length(create_idempotency_key) <= 255)) AND (create_request_fingerprint IS NOT NULL) AND (octet_length(create_request_fingerprint) = 32)))),
-    CONSTRAINT workflow_runs_resume_count_check CHECK (((resume_count >= 0) AND (resume_count <= 16))),
-    CONSTRAINT workflow_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
-);
-
-
---
 -- Name: workflow_schedule_cursors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23357,9 +23504,35 @@ CREATE TABLE public.workflow_schedule_cursors (
     status text NOT NULL,
     last_run_id uuid,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_admitted_at timestamp with time zone,
     CONSTRAINT workflow_schedule_cursors_status_check CHECK ((status = ANY (ARRAY['armed'::text, 'started'::text, 'skipped_overlap'::text, 'skipped_quota'::text]))),
     CONSTRAINT workflow_schedule_cursors_trigger_snapshot_check CHECK ((jsonb_typeof(trigger_snapshot) = 'object'::text)),
     CONSTRAINT workflow_schedule_cursors_workflow_name_check CHECK ((workflow_name <> ''::text))
+);
+
+
+--
+-- Name: workflow_schedule_occurrences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_schedule_occurrences (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    platform_tenant_id uuid,
+    workflow_name text NOT NULL,
+    deployment_id uuid NOT NULL,
+    scheduled_for timestamp with time zone NOT NULL,
+    evaluated_at timestamp with time zone NOT NULL,
+    status text NOT NULL,
+    run_id uuid,
+    definition_hash text DEFAULT ''::text NOT NULL,
+    replay_run_id uuid,
+    replayed_at timestamp with time zone,
+    CONSTRAINT workflow_schedule_occurrences_check CHECK (((status = 'started'::text) = (run_id IS NOT NULL))),
+    CONSTRAINT workflow_schedule_occurrences_definition_hash_check CHECK (((definition_hash = ''::text) OR (definition_hash ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT workflow_schedule_occurrences_replay_pair_check CHECK (((replay_run_id IS NULL) = (replayed_at IS NULL))),
+    CONSTRAINT workflow_schedule_occurrences_status_check CHECK ((status = ANY (ARRAY['started'::text, 'skipped_overlap'::text, 'skipped_quota'::text]))),
+    CONSTRAINT workflow_schedule_occurrences_workflow_name_check CHECK ((workflow_name <> ''::text))
 );
 
 
@@ -23485,14 +23658,14 @@ ALTER TABLE ONLY public.data_upstream_probes ATTACH PARTITION public.data_upstre
 -- Name: log_events_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202610 FOR VALUES FROM ('2026-10-01 03:00:00+03') TO ('2026-11-01 03:00:00+03');
+ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
 
 
 --
 -- Name: log_events_202611; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202611 FOR VALUES FROM ('2026-11-01 03:00:00+03') TO ('2026-12-01 03:00:00+03');
+ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202611 FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
 
 
 --
@@ -23506,21 +23679,21 @@ ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_default DE
 -- Name: request_telemetry_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+03') TO ('2026-11-01 00:00:00+03');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
 
 
 --
 -- Name: request_telemetry_202611; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 00:00:00+03') TO ('2026-12-01 00:00:00+03');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
 
 
 --
 -- Name: request_telemetry_202612; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-12-01 00:00:00+03') TO ('2027-01-01 00:00:00+03');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-12-01 00:00:00+00') TO ('2027-01-01 00:00:00+00');
 
 
 --
@@ -29004,6 +29177,30 @@ ALTER TABLE ONLY public.workflow_callback_webhook_bindings
 
 
 --
+-- Name: workflow_code_pins workflow_code_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_code_pins
+    ADD CONSTRAINT workflow_code_pins_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: workflow_dispatch_cursors workflow_dispatch_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_dispatch_cursors
+    ADD CONSTRAINT workflow_dispatch_cursors_pkey PRIMARY KEY (app_id, scope_key);
+
+
+--
+-- Name: workflow_event_code_refs workflow_event_code_refs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_event_code_refs
+    ADD CONSTRAINT workflow_event_code_refs_pkey PRIMARY KEY (outbox_id, deployment_id);
+
+
+--
 -- Name: workflow_event_receipts workflow_event_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29065,6 +29262,22 @@ ALTER TABLE ONLY public.workflow_runs
 
 ALTER TABLE ONLY public.workflow_schedule_cursors
     ADD CONSTRAINT workflow_schedule_cursors_pkey PRIMARY KEY (app_id, workflow_name);
+
+
+--
+-- Name: workflow_schedule_occurrences workflow_schedule_occurrences_app_id_platform_tenant_id_wor_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_schedule_occurrences
+    ADD CONSTRAINT workflow_schedule_occurrences_app_id_platform_tenant_id_wor_key UNIQUE NULLS NOT DISTINCT (app_id, platform_tenant_id, workflow_name, scheduled_for);
+
+
+--
+-- Name: workflow_schedule_occurrences workflow_schedule_occurrences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_schedule_occurrences
+    ADD CONSTRAINT workflow_schedule_occurrences_pkey PRIMARY KEY (id);
 
 
 --
@@ -34743,6 +34956,20 @@ CREATE INDEX workflow_callback_webhook_bindings_endpoint_idx ON public.workflow_
 
 
 --
+-- Name: workflow_code_pins_app_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_code_pins_app_expiry_idx ON public.workflow_code_pins USING btree (app_id, expires_at);
+
+
+--
+-- Name: workflow_event_code_refs_deployment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_event_code_refs_deployment_idx ON public.workflow_event_code_refs USING btree (deployment_id);
+
+
+--
 -- Name: workflow_event_receipts_run_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -34799,6 +35026,20 @@ CREATE UNIQUE INDEX workflow_runs_create_idempotency_idx ON public.workflow_runs
 
 
 --
+-- Name: workflow_runs_deployment_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_deployment_retention_idx ON public.workflow_runs USING btree (deployment_id) WHERE (deployment_id IS NOT NULL);
+
+
+--
+-- Name: workflow_runs_dispatch_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_dispatch_active_idx ON public.workflow_runs USING btree (app_id, platform_tenant_id, lease_until) WHERE ((status = 'running'::text) AND (operation_id IS NULL));
+
+
+--
 -- Name: workflow_runs_dispatch_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -34824,6 +35065,34 @@ CREATE INDEX workflow_runs_platform_tenant_idx ON public.workflow_runs USING btr
 --
 
 CREATE INDEX workflow_runs_running_lease_idx ON public.workflow_runs USING btree (lease_until, id) WHERE (status = 'running'::text);
+
+
+--
+-- Name: workflow_schedule_occurrences_history_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_schedule_occurrences_history_idx ON public.workflow_schedule_occurrences USING btree (app_id, scheduled_for DESC, id DESC);
+
+
+--
+-- Name: workflow_schedule_occurrences_quota_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_schedule_occurrences_quota_idx ON public.workflow_schedule_occurrences USING btree (app_id, evaluated_at) WHERE (status = 'skipped_quota'::text);
+
+
+--
+-- Name: workflow_schedule_occurrences_replay_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_schedule_occurrences_replay_idx ON public.workflow_schedule_occurrences USING btree (app_id, scheduled_for, id) WHERE ((status = ANY (ARRAY['skipped_overlap'::text, 'skipped_quota'::text])) AND (replay_run_id IS NULL));
+
+
+--
+-- Name: workflow_schedule_occurrences_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_schedule_occurrences_retention_idx ON public.workflow_schedule_occurrences USING btree (evaluated_at, id);
 
 
 --
@@ -36371,6 +36640,13 @@ CREATE TRIGGER environment_workload_intent_guard BEFORE INSERT OR DELETE OR UPDA
 --
 
 CREATE TRIGGER event_delivery_replay_capacity AFTER INSERT OR UPDATE OF state ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.guard_event_delivery_replay();
+
+
+--
+-- Name: event_fanout_outbox event_fanout_workflow_code_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_fanout_workflow_code_guard AFTER INSERT OR UPDATE OF recipient_snapshot ON public.event_fanout_outbox FOR EACH ROW EXECUTE FUNCTION public.guard_workflow_event_code_pins();
 
 
 --
@@ -38329,6 +38605,13 @@ CREATE TRIGGER workflow_runs_capture_dead_letter_event AFTER UPDATE OF status ON
 --
 
 CREATE TRIGGER workflow_runs_capture_finished_webhook_event AFTER UPDATE OF status ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.faas_capture_workflow_finished_webhook_event();
+
+
+--
+-- Name: workflow_runs workflow_runs_code_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_runs_code_guard BEFORE INSERT OR UPDATE OF deployment_id, app_id ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.guard_workflow_code_pin();
 
 
 --
@@ -45328,6 +45611,62 @@ ALTER TABLE ONLY public.workflow_callback_webhook_bindings
 
 
 --
+-- Name: workflow_code_pins workflow_code_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_code_pins
+    ADD CONSTRAINT workflow_code_pins_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_code_pins workflow_code_pins_deployment_id_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_code_pins
+    ADD CONSTRAINT workflow_code_pins_deployment_id_app_id_fkey FOREIGN KEY (deployment_id, app_id) REFERENCES public.deployments(id, app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_dispatch_cursors workflow_dispatch_cursors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_dispatch_cursors
+    ADD CONSTRAINT workflow_dispatch_cursors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_dispatch_cursors workflow_dispatch_cursors_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_dispatch_cursors
+    ADD CONSTRAINT workflow_dispatch_cursors_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_event_code_refs workflow_event_code_refs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_event_code_refs
+    ADD CONSTRAINT workflow_event_code_refs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_event_code_refs workflow_event_code_refs_deployment_id_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_event_code_refs
+    ADD CONSTRAINT workflow_event_code_refs_deployment_id_app_id_fkey FOREIGN KEY (deployment_id, app_id) REFERENCES public.deployments(id, app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_event_code_refs workflow_event_code_refs_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_event_code_refs
+    ADD CONSTRAINT workflow_event_code_refs_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+
+
+--
 -- Name: workflow_event_receipts workflow_event_receipts_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -45400,6 +45739,14 @@ ALTER TABLE ONLY public.workflow_runs
 
 
 --
+-- Name: workflow_runs workflow_runs_deployment_owner_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_runs
+    ADD CONSTRAINT workflow_runs_deployment_owner_fk FOREIGN KEY (deployment_id, app_id) REFERENCES public.deployments(id, app_id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
 -- Name: workflow_runs workflow_runs_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -45429,6 +45776,22 @@ ALTER TABLE ONLY public.workflow_schedule_cursors
 
 ALTER TABLE ONLY public.workflow_schedule_cursors
     ADD CONSTRAINT workflow_schedule_cursors_last_run_id_fkey FOREIGN KEY (last_run_id) REFERENCES public.workflow_runs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: workflow_schedule_occurrences workflow_schedule_occurrences_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_schedule_occurrences
+    ADD CONSTRAINT workflow_schedule_occurrences_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_schedule_occurrences workflow_schedule_occurrences_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_schedule_occurrences
+    ADD CONSTRAINT workflow_schedule_occurrences_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --

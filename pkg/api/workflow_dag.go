@@ -60,20 +60,22 @@ var (
 )
 
 // WorkflowTriggerSpec describes a manual, scheduled, or event-driven start.
-// Omission remains equivalent to a manual trigger. Scheduled starts skip
-// missed minutes and use the same five-field grammar as application crons.
+// Omission remains equivalent to a manual trigger. Scheduled starts use the
+// same five-field grammar as application crons and skip missed fires by default.
 // TenantConfigurable lets linked platform tenants override only the cadence,
 // timezone, overlap policy, and enabled state of an opted-in schedule.
 type WorkflowTriggerSpec struct {
-	Source    string          `json:"source,omitempty" yaml:"source,omitempty" toml:"source,omitempty"`
-	EventType string          `json:"event_type,omitempty" yaml:"event_type,omitempty" toml:"event_type,omitempty"`
-	Filter    json.RawMessage `json:"filter,omitempty" yaml:"filter,omitempty" toml:"filter,omitempty"`
-	Type      string          `json:"type" yaml:"type" toml:"type"`
-	Schedule  string          `json:"schedule,omitempty" yaml:"schedule,omitempty" toml:"schedule,omitempty"`
-	Timezone  string          `json:"timezone,omitempty" yaml:"timezone,omitempty" toml:"timezone,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty" yaml:"input,omitempty" toml:"input,omitempty"`
-	Overlap   string          `json:"overlap,omitempty" yaml:"overlap,omitempty" toml:"overlap,omitempty"`
-	Enabled   *bool           `json:"enabled,omitempty" yaml:"enabled,omitempty" toml:"enabled,omitempty"`
+	Source        string          `json:"source,omitempty" yaml:"source,omitempty" toml:"source,omitempty"`
+	EventType     string          `json:"event_type,omitempty" yaml:"event_type,omitempty" toml:"event_type,omitempty"`
+	Filter        json.RawMessage `json:"filter,omitempty" yaml:"filter,omitempty" toml:"filter,omitempty"`
+	Type          string          `json:"type" yaml:"type" toml:"type"`
+	Schedule      string          `json:"schedule,omitempty" yaml:"schedule,omitempty" toml:"schedule,omitempty"`
+	Timezone      string          `json:"timezone,omitempty" yaml:"timezone,omitempty" toml:"timezone,omitempty"`
+	Input         json.RawMessage `json:"input,omitempty" yaml:"input,omitempty" toml:"input,omitempty"`
+	Overlap       string          `json:"overlap,omitempty" yaml:"overlap,omitempty" toml:"overlap,omitempty"`
+	CatchUp       string          `json:"catch_up,omitempty" yaml:"catch_up,omitempty" toml:"catch_up,omitempty"`
+	CatchUpWindow string          `json:"catch_up_window,omitempty" yaml:"catch_up_window,omitempty" toml:"catch_up_window,omitempty"`
+	Enabled       *bool           `json:"enabled,omitempty" yaml:"enabled,omitempty" toml:"enabled,omitempty"`
 	// TenantConfigurable lets each linked platform tenant manage its own
 	// cadence and enabled state without changing the app owner's definition.
 	TenantConfigurable bool `json:"tenant_configurable,omitempty" yaml:"tenant_configurable,omitempty" toml:"tenant_configurable,omitempty"`
@@ -115,6 +117,9 @@ func ValidateWorkflowTrigger(trigger *WorkflowTriggerSpec) error {
 	if trigger.TenantConfigurable && trigger.Type != "schedule" {
 		return fmt.Errorf("%w: tenant_configurable requires a schedule trigger", ErrWorkflowInvalidTrigger)
 	}
+	if trigger.Type != "schedule" && (trigger.CatchUp != "" || trigger.CatchUpWindow != "") {
+		return fmt.Errorf("%w: catch-up options require a schedule trigger", ErrWorkflowInvalidTrigger)
+	}
 	switch trigger.Type {
 	case "manual":
 		if trigger.Schedule != "" || trigger.Timezone != "" || len(trigger.Input) != 0 || trigger.Overlap != "" || trigger.Enabled != nil {
@@ -137,6 +142,9 @@ func ValidateWorkflowTrigger(trigger *WorkflowTriggerSpec) error {
 			return fmt.Errorf("%w: %w", ErrWorkflowInvalidTrigger, err)
 		}
 	case "schedule":
+		if _, err := trigger.ScheduleCatchUpWindow(); err != nil {
+			return err
+		}
 		if timezone, err := cronexpr.NormalizeTimezone(trigger.Timezone); err != nil || timezone == "Local" {
 			return fmt.Errorf("%w: timezone must identify an IANA zone or UTC", ErrWorkflowInvalidTrigger)
 		}
@@ -805,6 +813,7 @@ func validWorkflowMethod(value string) bool {
 
 // WorkflowRunResponse is the API wire representation of a workflow run.
 type WorkflowRunResponse struct {
+	DeploymentID     string          `json:"deployment_id,omitempty"`
 	ResumeCount      int             `json:"resume_count"`
 	CancelledAt      *string         `json:"cancelled_at,omitempty"`
 	ID               string          `json:"id"`

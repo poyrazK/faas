@@ -55,6 +55,26 @@ const (
 	EventReplayBackfillRequestTimeout      = 5 * time.Second
 )
 
+// Workflow reliability bounds (ADR-725, ADR-726, ADR-649).
+const (
+	WorkflowDispatchSlots                = 4
+	WorkflowDispatchBatchPerSlot         = 8
+	WorkflowDispatchMaxPerApp            = 2
+	WorkflowDispatchMaxPerTenant         = 1
+	WorkflowDispatchClaimTimeout         = 5 * time.Second
+	WorkflowRetryAfterMaxDelay           = time.Hour
+	WorkflowScheduleBatch                = 256
+	WorkflowScheduleCatchUpWindowDefault = time.Hour
+	WorkflowScheduleCatchUpWindowMin     = time.Minute
+	WorkflowScheduleCatchUpWindowMax     = 24 * time.Hour
+	WorkflowScheduleHistoryRetention     = 30 * 24 * time.Hour
+	WorkflowScheduleHistoryPageDefault   = 100
+	WorkflowScheduleHistoryPageMax       = 200
+	WorkflowScheduleHistoryPruneBatch    = 1000
+	WorkflowScheduleReplayBatchMax       = 20
+	WorkflowQueuedRunCancelBatchMax      = 20
+)
+
 // Operational summaries bound each recovery kind independently and never
 // perform active probes or lifecycle work while loading a customer page.
 const AppOperationalRecoveryLimit = 10
@@ -5691,6 +5711,14 @@ const (
 	WorkflowAutomationHealthDefaultRange          = 7 * 24 * time.Hour
 	WorkflowAutomationHealthMaxRange              = 30 * 24 * time.Hour
 	WorkflowAutomationHealthMaxFailureSteps       = 10
+	WorkflowAutomationHealthReadTimeout           = 5 * time.Second
+	WorkflowRunDiagnosticsReadTimeout             = 5 * time.Second
+	WorkflowSchedulePreviewDefaultCount           = 5
+	WorkflowSchedulePreviewMaxCount               = 20
+	WorkflowSchedulePreviewReadTimeout            = 5 * time.Second
+	WorkflowBacklogAlertThresholdSeconds          = 300
+	WorkflowBacklogAlertCooldownMinutes           = 30
+	WorkflowAlertSnapshotReadTimeout              = 5 * time.Second
 	WorkflowOutboundBodyMaxBytes            int64 = 1 << 20
 	WorkflowOutboundStepNameMaxBytes              = 128
 	WorkflowResumeRequestMaxBytes           int64 = 4096

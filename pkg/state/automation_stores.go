@@ -135,6 +135,13 @@ func (m *MemStore) MutateAutomation(_ context.Context, appID, name string, mutat
 	}
 	if mutation.Action != "save" {
 		delete(m.workflowSchedules, key)
+		for key, cursor := range m.workflowTenantSchedules {
+			if cursor.AppID == appID && cursor.WorkflowName == name {
+				cursor.DeploymentID, cursor.Status, cursor.LastRunID = "", WorkflowScheduleArmed, ""
+				cursor.ScheduledFor = nil
+				m.workflowTenantSchedules[key] = cursor
+			}
+		}
 	}
 	return next, nil
 }
@@ -304,6 +311,9 @@ func mutateAutomationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, appID, 
 	}
 	if mutation.Action != "save" {
 		err = q.DeleteAutomationScheduleCursor(ctx, tx, sqlc.DeleteAutomationScheduleCursorParams{AppID: mustPgUUID(appID), WorkflowName: name})
+		if err == nil {
+			err = q.RearmTenantAutomationSchedules(ctx, tx, sqlc.RearmTenantAutomationSchedulesParams{AppID: mustPgUUID(appID), WorkflowName: name})
+		}
 	}
 	return next, err
 }

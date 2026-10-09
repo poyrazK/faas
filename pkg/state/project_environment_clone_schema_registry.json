@@ -5867,6 +5867,7 @@
     "columns": [
       "app_id",
       "deployment_id",
+      "last_admitted_at",
       "last_evaluated_at",
       "last_run_id",
       "platform_tenant_id",
@@ -8077,6 +8078,34 @@
     "kind": "configuration"
   },
   {
+    "table": "workflow_code_pins",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "expires_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_dispatch_cursors",
+    "columns": [
+      "app_id",
+      "last_claimed_at",
+      "platform_tenant_id",
+      "scope_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_event_code_refs",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "outbox_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "workflow_event_receipts",
     "kind": "operational",
     "columns": [
@@ -8138,6 +8167,7 @@
       "created_at",
       "current_step",
       "definition_snapshot",
+      "deployment_id",
       "finished_at",
       "id",
       "input",
@@ -8161,6 +8191,7 @@
     "columns": [
       "app_id",
       "deployment_id",
+      "last_admitted_at",
       "last_evaluated_at",
       "last_run_id",
       "scheduled_for",
@@ -8169,6 +8200,24 @@
       "updated_at",
       "workflow_name"
     ]
+  },
+  {
+    "table": "workflow_schedule_occurrences",
+    "columns": [
+      "app_id",
+      "definition_hash",
+      "deployment_id",
+      "evaluated_at",
+      "id",
+      "platform_tenant_id",
+      "replay_run_id",
+      "replayed_at",
+      "run_id",
+      "scheduled_for",
+      "status",
+      "workflow_name"
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_step_attempts",
