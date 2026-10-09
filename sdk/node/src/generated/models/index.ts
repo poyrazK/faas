@@ -1047,6 +1047,7 @@ export type { PlatformTenantUsageBucketResponse } from './PlatformTenantUsageBuc
 export type { PlatformTenantUsageResponse } from './PlatformTenantUsageResponse.js';
 export type { PlatformTenantWebhookListResponse } from './PlatformTenantWebhookListResponse.js';
 export type { PlatformTenantWebhookResponse } from './PlatformTenantWebhookResponse.js';
+export type { PreAuthEnforcementSuggestion } from './PreAuthEnforcementSuggestion.js';
 export type { PreAuthFailedResponseLimit } from './PreAuthFailedResponseLimit.js';
 export type { PreAuthObservationsResponse } from './PreAuthObservationsResponse.js';
 export type { PreAuthPolicyObservation } from './PreAuthPolicyObservation.js';

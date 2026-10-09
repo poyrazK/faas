@@ -446,7 +446,10 @@ checks establishes business authorization, ownership, or a tenant boundary.
 ## Throttles
 
 `throttle.key_by` is required when specifying a throttle requirement and supports
-`none`, `api_key`, `consumer_id`, and `jwt_subject`. Optional `max_rps` must be
+`none`, `api_key`, `consumer_id`, `jwt_subject`, `country`, and `ip`. `ip` keys
+by the gateway's trusted client address (IPv6 per /64) and is the usual choice
+for unauthenticated routes such as `POST /login`; `country` needs the gateway's
+GeoIP database. Optional `max_rps` must be
 positive and bounds the selected rule's gateway-effective rate, including the
 gateway's defensive minimum. Optional `missing_key_policy` is `shared` or
 `reject` and requires a dimensional key.

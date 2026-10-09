@@ -4383,12 +4383,12 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		if unavailableReason != "" {
 			if unavailableReason == "caller_ip_untrusted" {
 				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-					"Caller IP not in trusted set", "X-Forwarded-For did not contain exactly one trusted address; refusing to evaluate a country-keyed throttle"))
+					"Caller IP not in trusted set", "X-Forwarded-For did not contain exactly one trusted address; refusing to evaluate a "+rule.KeyBy+"-keyed throttle"))
 				if h.edgeRuleAudit != nil {
 					h.edgeRuleAudit.Emit(r.Context(), "edge_rule.caller_ip_forged", nil, map[string]any{
 						"rule_id": rule.ID, "from_host": r.Host,
 						"xff_count": len(r.Header.Values("X-Forwarded-For")),
-						"policy":    "throttle_country",
+						"policy":    "throttle_" + rule.KeyBy,
 					})
 				}
 				if h.metrics != nil {
@@ -4525,10 +4525,20 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 
 // resolveThrottleDimension resolves only trusted, platform-established
 // request concepts. Authentication dimensions come from the verified request
-// context; country comes from the single sanitized X-Forwarded-For hop and the
-// configured GeoIP database. A missing database, forged XFF, lookup error, or
-// uncovered address is unavailable and fails closed.
+// context; ip and country come from the single sanitized X-Forwarded-For hop
+// (country additionally through the configured GeoIP database). A missing
+// database, forged XFF, lookup error, or uncovered address is unavailable and
+// fails closed.
 func (h *Handler) resolveThrottleDimension(r *http.Request, rule *EdgeRuleThrottleResolved) (string, bool, string) {
+	if rule.KeyBy == api.ThrottleKeyByIP {
+		clientIP, ok := clientIPFromTrustedXFF(r)
+		if !ok {
+			return "", false, "caller_ip_untrusted"
+		}
+		// Same /64 IPv6 bucketing as the pre-auth source limit, so rotating
+		// interface IDs cannot mint fresh buckets or fill the tracked set.
+		return preAuthSourceKey(clientIP), true, ""
+	}
 	if rule.KeyBy != api.ThrottleKeyByCountry {
 		value, ok := resolveConsumerKey(rule.KeyBy, rule.JWTClaimName, authenticatedFrom(r.Context()))
 		return value, ok, ""

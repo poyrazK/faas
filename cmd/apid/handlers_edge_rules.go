@@ -393,6 +393,10 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrInvocationWorkloadClass(string(app.WorkloadClass), app.Manifest.ExecutionMode))
 		return
 	}
+	if prob := templatedMatchPathProblem(req.MatchPath); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateEdgeRuleBody(&req, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -496,6 +500,20 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 // kind=throttle needs it to enforce the sub-plan ceiling
 // (rps ≤ plan.RateLimitRPS, burst ≤ plan.RateLimitBurst). Returns
 // the first *Problem it finds.
+// templatedMatchPathProblem rejects an OpenAPI-style {param} placeholder in a
+// match_path sent to the edge-rule create or update endpoint. Edge-rule paths
+// are globs, so the placeholder would only match the literal braces and the
+// rule would never run. Manifest- and environment-owned rules are not checked
+// here so existing deployments keep applying.
+func templatedMatchPathProblem(matchPath string) *api.Problem {
+	glob, templated := api.EdgeRuleTemplatedPath(matchPath)
+	if !templated {
+		return nil
+	}
+	return api.ErrValidation(fmt.Sprintf(
+		"match_path %q uses an OpenAPI {param} placeholder, but edge-rule paths are globs and would only match the literal braces; use %q", matchPath, glob))
+}
+
 func validateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Problem {
 	matchHeaders, headerErr := api.NormalizeEdgeRuleMatchHeaders(req.MatchHeaders)
 	if headerErr != nil {
@@ -830,6 +848,10 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 	if req.MatchPath != nil {
 		if !strings.HasPrefix(*req.MatchPath, "/") || len(*req.MatchPath) > 2048 {
 			api.WriteProblem(w, api.ErrValidation("match_path must start with '/' and be ≤ 2048 chars"))
+			return
+		}
+		if prob := templatedMatchPathProblem(*req.MatchPath); prob != nil {
+			api.WriteProblem(w, prob)
 			return
 		}
 	}

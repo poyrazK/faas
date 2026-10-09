@@ -519,7 +519,7 @@ func TestEdgeRuleThrottleActionValidate_Mega4(t *testing.T) {
 	}
 	// Unknown key_by.
 	if p := (&EdgeRuleThrottleAction{
-		RequestsPerSecond: 10, Burst: 10, KeyBy: "ip",
+		RequestsPerSecond: 10, Burst: 10, KeyBy: "ip_address",
 	}).Validate(ctx); p == nil {
 		t.Error("unknown key_by: p=nil")
 	}
@@ -636,7 +636,8 @@ func TestThrottleKeyByIsPerConsumer_Mega4(t *testing.T) {
 		ThrottleKeyByJWTSubject: true,
 		ThrottleKeyByJWTClaim:   true,
 		ThrottleKeyByCountry:    true,
-		"ip":                    false, // unknown → default-false
+		ThrottleKeyByIP:         true,
+		"IP":                    false, // closed vocab is case-sensitive
 		"unknown-thing":         false,
 	}
 	for k, want := range cases {

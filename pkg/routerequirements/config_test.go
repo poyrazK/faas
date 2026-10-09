@@ -46,6 +46,22 @@ func TestParseRouteRequirementsRejectsAmbiguousOrInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestParseRouteRequirementsAcceptsRequestDimensions(t *testing.T) {
+	for _, keyBy := range []string{api.ThrottleKeyByIP, api.ThrottleKeyByCountry} {
+		t.Run(keyBy, func(t *testing.T) {
+			body := fmt.Sprintf(`{"version":1,"routes":[{"method":"POST","path":"/login","require":{"throttle":{"key_by":%q,"max_rps":5}}}]}`, keyBy)
+			config, err := Parse([]byte(body))
+			if err != nil || config.Routes[0].Require.Throttle.KeyBy != keyBy {
+				t.Fatalf("parse = %+v, %v", config, err)
+			}
+		})
+	}
+	// jwt_claim stays out: a requirement cannot name the claim to key by.
+	if _, err := Parse([]byte(`{"version":1,"routes":[{"method":"GET","path":"/","require":{"throttle":{"key_by":"jwt_claim"}}}]}`)); err == nil {
+		t.Fatal("accepted jwt_claim without a claim name")
+	}
+}
+
 func TestParseRouteRequirementsNormalizesMethodsAndEnforcesBounds(t *testing.T) {
 	body := []byte("version: 1\nroutes:\n  - name: checkout\n    method: post\n    path: /checkout\n    require:\n      authentication: consumer\n      throttle: {key_by: consumer_id, max_rps: 10, missing_key_policy: reject}\n      budget: {explicit: true, max_ms: 2000}\n")
 	config, err := Parse(body)

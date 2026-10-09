@@ -119,6 +119,24 @@ func TestBuildPlanMissingThrottleRequiresCustomerChoices(t *testing.T) {
 	}
 }
 
+func TestBuildPlanProposesIPKeyedThrottle(t *testing.T) {
+	config := requirementConfig(t, `{"throttle":{"key_by":"ip","max_rps":2}}`)
+	context := requirementContext()
+	context.Rules = []api.EdgeRuleResponse{requirementRule("limit", "throttle", sharedThrottle, 0)}
+	context.Rules[0].MatchHost, context.Rules[0].MatchPath = context.Host, "/api/checkout"
+	plan := BuildPlan(config, "digest", context, PlanOptions{PlanName: "hobby"})
+	if plan.Status != "ready" || plan.Before.Status != "violated" || plan.After.Status != "satisfied" || len(plan.Changes) != 1 {
+		t.Fatalf("plan = %+v", plan)
+	}
+	var action api.EdgeRuleThrottleAction
+	if err := json.Unmarshal(*plan.Changes[0].Update.Action, &action); err != nil {
+		t.Fatal(err)
+	}
+	if action.KeyBy != api.ThrottleKeyByIP || action.RequestsPerSecond != 2 {
+		t.Fatalf("throttle = %+v", action)
+	}
+}
+
 func TestBuildPlanExplicitBudgetPreservesBaseline(t *testing.T) {
 	config := requirementConfig(t, `{"budget":{"explicit":true}}`)
 	context := requirementContext()

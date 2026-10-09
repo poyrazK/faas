@@ -1046,7 +1046,7 @@ func NewMetrics() *Metrics {
 		// per-consumer rule (which is a misconfiguration).
 		routeConsumerThrottleDecisions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "route_consumer_throttle_decisions_total",
-			Help: "Dimensional throttle decisions, labelled by KeyBy kind (none|api_key|consumer_id|jwt_subject|jwt_claim|country) and outcome (admit|throttle|anonymous). ADR-104, issue #881 Phase 3.",
+			Help: "Dimensional throttle decisions, labelled by KeyBy kind (none|api_key|consumer_id|jwt_subject|jwt_claim|country|ip) and outcome (admit|throttle|anonymous). ADR-104, issue #881 Phase 3.",
 		}, []string{"kind", "outcome"}),
 		// ADR-122 §Decision: kind=cache outcome counter.
 		responseCache: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -1727,7 +1727,7 @@ func NewMetrics() *Metrics {
 	// admit/deny split. The "anonymous" outcome covers
 	// unauthenticated traffic on a per-consumer rule — a
 	// misconfiguration signal for the dashboard.
-	for _, kind := range []string{"none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"} {
+	for _, kind := range []string{"none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country", "ip"} {
 		for _, outcome := range []string{"admit", "throttle", "anonymous"} {
 			m.routeConsumerThrottleDecisions.WithLabelValues(kind, outcome)
 		}

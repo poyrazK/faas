@@ -235,6 +235,31 @@ func TestAppPreAuthRateLimitRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCreateAppDefaultsPreAuthRateLimitToObserve(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "default-guard"}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	stored, err := e.store.AppBySlug(t.Context(), "default-guard")
+	want := &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 5, Burst: 20}
+	if err != nil || !reflect.DeepEqual(stored.Manifest.PreAuthRateLimit, want) {
+		t.Fatalf("default config = %+v, err=%v; want Free-clamped observe %+v", stored.Manifest.PreAuthRateLimit, err, want)
+	}
+
+	// Free allows one app, so the opt-out case gets its own account.
+	e = setup(t, api.PlanPro)
+	off := &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitOff}
+	rec = e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "opted-out", PreAuthRateLimit: off}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("create opted-out: %d %s", rec.Code, rec.Body)
+	}
+	stored, err = e.store.AppBySlug(t.Context(), "opted-out")
+	if err != nil || !reflect.DeepEqual(stored.Manifest.PreAuthRateLimit, off) {
+		t.Fatalf("explicit off config = %+v, err=%v", stored.Manifest.PreAuthRateLimit, err)
+	}
+}
+
 func TestAppPreAuthRateLimitRejectsInvalidConfig(t *testing.T) {
 	e := setup(t, api.PlanFree)
 	for _, config := range []*api.PreAuthRateLimitConfig{

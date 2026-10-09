@@ -341,6 +341,22 @@ const (
 	PreAuthCoordinationCentral = "central"
 )
 
+// DefaultPreAuthRateLimit is the observe-only guard a new app receives when its
+// create request does not set pre_auth_rate_limit (ADR-829). Observe never
+// rejects a request, so the default cannot break an app; the customer switches
+// to enforce once the recorded would-block traffic looks right.
+func DefaultPreAuthRateLimit(plan Plan) *PreAuthRateLimitConfig {
+	limits, ok := LimitsFor(plan)
+	if !ok {
+		return nil
+	}
+	return &PreAuthRateLimitConfig{
+		Mode:              PreAuthRateLimitObserve,
+		RequestsPerSecond: min(PreAuthDefaultRequestsPerSecond, limits.RateLimitRPS),
+		Burst:             min(PreAuthDefaultBurst, limits.RateLimitBurst),
+	}
+}
+
 func (c *PreAuthRateLimitConfig) Validate(plan Plan) error {
 	if c == nil {
 		return nil

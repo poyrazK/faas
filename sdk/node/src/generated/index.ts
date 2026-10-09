@@ -1053,6 +1053,7 @@ export type { PlatformTenantUsageBucketResponse } from './models/PlatformTenantU
 export type { PlatformTenantUsageResponse } from './models/PlatformTenantUsageResponse.js';
 export type { PlatformTenantWebhookListResponse } from './models/PlatformTenantWebhookListResponse.js';
 export type { PlatformTenantWebhookResponse } from './models/PlatformTenantWebhookResponse.js';
+export type { PreAuthEnforcementSuggestion } from './models/PreAuthEnforcementSuggestion.js';
 export type { PreAuthFailedResponseLimit } from './models/PreAuthFailedResponseLimit.js';
 export type { PreAuthObservationsResponse } from './models/PreAuthObservationsResponse.js';
 export type { PreAuthPolicyObservation } from './models/PreAuthPolicyObservation.js';

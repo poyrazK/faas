@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -5998,6 +5999,57 @@ type PreAuthObservationsResponse struct {
 	Source   string                     `json:"source"`
 	AsOf     string                     `json:"as_of"`
 	Policies []PreAuthPolicyObservation `json:"policies"`
+	// Suggestion is present only for an observe-mode guard with a healthy
+	// metrics source. It is advice; nothing is applied automatically.
+	Suggestion *PreAuthEnforcementSuggestion `json:"suggestion,omitempty"`
+}
+
+// PreAuthEnforcementSuggestion says whether an observe-mode guard looks safe
+// to switch to enforce, judged on the response range (ADR-829 amendment 1).
+type PreAuthEnforcementSuggestion struct {
+	Status string `json:"status"` // ready | review | insufficient_data
+	Reason string `json:"reason"`
+	// Requests is every gateway request to the app in the range.
+	Requests int64 `json:"requests"`
+	// WouldBlock and WouldBlockSucceeded sum the app and route policies;
+	// succeeded counts 2xx and 3xx final responses.
+	WouldBlock          int64 `json:"would_block"`
+	WouldBlockSucceeded int64 `json:"would_block_succeeded"`
+}
+
+const (
+	PreAuthSuggestionReady            = "ready"
+	PreAuthSuggestionReview           = "review"
+	PreAuthSuggestionInsufficientData = "insufficient_data"
+)
+
+// SuggestPreAuthEnforcement judges an observe-mode guard from one range of
+// observations. Enforce is "ready" only when the range is long enough, the app
+// saw enough traffic, and no request the guard would have blocked succeeded.
+func SuggestPreAuthEnforcement(rng string, requests int64, policies []PreAuthPolicyObservation) PreAuthEnforcementSuggestion {
+	s := PreAuthEnforcementSuggestion{Requests: requests}
+	for _, p := range policies {
+		if p.Kind != "app" && p.Kind != "route" {
+			continue
+		}
+		s.WouldBlock += p.WouldBlock
+		s.WouldBlockSucceeded += p.Result2xx + p.Result3xx
+	}
+	switch {
+	case !slices.Contains(PreAuthSuggestionRanges, rng):
+		s.Status = PreAuthSuggestionInsufficientData
+		s.Reason = "judge enforcement on a range of 24h or longer"
+	case requests < PreAuthSuggestionMinRequests:
+		s.Status = PreAuthSuggestionInsufficientData
+		s.Reason = fmt.Sprintf("only %d requests in %s; at least %d are needed", requests, rng, PreAuthSuggestionMinRequests)
+	case s.WouldBlockSucceeded > 0:
+		s.Status = PreAuthSuggestionReview
+		s.Reason = fmt.Sprintf("enforce would have rejected %d requests that succeeded; raise requests_per_second or burst, or add route overrides, before enforcing", s.WouldBlockSucceeded)
+	default:
+		s.Status = PreAuthSuggestionReady
+		s.Reason = fmt.Sprintf("enforce would have rejected %d of %d requests in %s, none of which succeeded", s.WouldBlock, requests, rng)
+	}
+	return s
 }
 
 type PreAuthPolicyObservation struct {
@@ -9097,7 +9149,7 @@ func (a *EdgeRuleMaintenanceAction) Validate() *Problem {
 // fields default to zero-values that produce bit-identical behaviour
 // to PR #887's bucket key (appID+"\x00"+ruleID):
 //
-//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"}.
+//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country", "ip"}.
 //     Empty string and "none" are equivalent — the empty value is the
 //     pre-Phase-3 shape; "none" is the explicit Phase-3 opt-out. Both
 //     preserve back-compat (the bucket key is unchanged).
@@ -9139,6 +9191,9 @@ const (
 	ThrottleKeyByJWTSubject = "jwt_subject"
 	ThrottleKeyByJWTClaim   = "jwt_claim"
 	ThrottleKeyByCountry    = "country"
+	// ThrottleKeyByIP keys by the trusted client address; IPv6 sources
+	// share one bucket per /64 so interface-ID rotation buys nothing.
+	ThrottleKeyByIP = "ip"
 
 	// ThrottleMissingKeyShared preserves the permissive historical posture for
 	// a dimensional rule when the request has no usable identity: all such
@@ -9174,7 +9229,7 @@ const ThrottleMaxKeysPerRuleDefault = 1000
 // update.
 func ThrottleKeyByIsPerConsumer(keyBy string) bool {
 	switch keyBy {
-	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim, ThrottleKeyByCountry:
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByJWTClaim, ThrottleKeyByCountry, ThrottleKeyByIP:
 		return true
 	default:
 		return false
@@ -9265,7 +9320,7 @@ func (a *EdgeRuleThrottleAction) Validate(ctx ThrottleValidationContext) *Proble
 		if a.MaxKeysPerRule != 0 {
 			return ErrValidation("throttle action: max_keys_per_rule requires key_by != \"none\" (got key_by=\"\")")
 		}
-	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByCountry:
+	case ThrottleKeyByAPIKey, ThrottleKeyByConsumerID, ThrottleKeyByJWTSubject, ThrottleKeyByCountry, ThrottleKeyByIP:
 		if a.JWTClaimName != "" {
 			return ErrValidation(fmt.Sprintf(
 				"throttle action: jwt_claim_name is only valid with key_by=\"jwt_claim\" (got key_by=%q)",

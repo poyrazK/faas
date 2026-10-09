@@ -155,7 +155,20 @@ func cmdEdgeRulesList(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-9d %-32s %s  [%s]\n",
 			it.ID, it.Kind, it.Priority, truncate(it.MatchHost, 32), it.MatchPath, enabled)
 	}
+	warnTemplatedEdgeRulePaths(osStderr, items)
 	return 0
+}
+
+// warnTemplatedEdgeRulePaths flags rules whose match path holds an OpenAPI
+// {param} placeholder. Edge-rule paths are globs, so such a rule only matches
+// the literal braces and never runs; older OpenAPI policy applies created them.
+func warnTemplatedEdgeRulePaths(w io.Writer, items []api.EdgeRuleResponse) {
+	for _, it := range items {
+		if glob, templated := api.EdgeRuleTemplatedPath(it.MatchPath); templated {
+			_, _ = fmt.Fprintf(w, "warning: rule %s never matches: %q is an OpenAPI template, not a glob. Fix: gregale edge-rules update %s --match-path '%s'\n",
+				it.ID, it.MatchPath, it.ID, glob)
+		}
+	}
 }
 
 // cmdEdgeRulesCreate builds a CreateEdgeRuleRequest from the per-kind
@@ -261,7 +274,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	// acct.Plan is the authoritative gate).
 	throttleRPS := fs.Float64("throttle-requests-per-second", 0, "kind=throttle: refill rate (req/s; >0; <=plan.RateLimitRPS)")
 	throttleBurst := fs.Int("throttle-burst", 0, "kind=throttle: token-bucket burst (>0; <=plan.RateLimitBurst)")
-	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country)")
+	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country|ip)")
 	throttleJWTClaim := fs.String("throttle-jwt-claim", "", "kind=throttle: JWT claim name when --throttle-key-by=jwt_claim")
 	throttleMaxKeys := fs.Int("throttle-max-keys-per-rule", 0, "kind=throttle: maximum distinct consumer buckets (0=plan default)")
 	throttleMissingKeyPolicy := fs.String("throttle-missing-key-policy", "", "kind=throttle: missing identity behavior (shared|reject; default shared)")
@@ -595,7 +608,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	// here AND the validator rejects it server-side.
 	throttleRPS := fs.Float64("throttle-requests-per-second", 0, "kind=throttle: new refill rate (req/s; >0; <=plan.RateLimitRPS)")
 	throttleBurst := fs.Int("throttle-burst", 0, "kind=throttle: new token-bucket burst (>0; <=plan.RateLimitBurst)")
-	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: new bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country)")
+	throttleKeyBy := fs.String("throttle-key-by", "", "kind=throttle: new bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country|ip)")
 	throttleJWTClaim := fs.String("throttle-jwt-claim", "", "kind=throttle: new JWT claim name when --throttle-key-by=jwt_claim")
 	throttleMaxKeys := fs.Int("throttle-max-keys-per-rule", 0, "kind=throttle: new maximum distinct consumer buckets (0=plan default)")
 	throttleMissingKeyPolicy := fs.String("throttle-missing-key-policy", "", "kind=throttle: new missing identity behavior (shared|reject)")

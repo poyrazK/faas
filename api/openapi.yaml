@@ -35252,7 +35252,7 @@ components:
       additionalProperties: false
       required: [key_by]
       properties:
-        key_by: { type: string, enum: [none, api_key, consumer_id, jwt_subject] }
+        key_by: { type: string, enum: [none, api_key, consumer_id, jwt_subject, country, ip] }
         max_rps: { type: number, exclusiveMinimum: 0 }
         missing_key_policy: { type: string, enum: [shared, reject] }
     RouteBudgetRequirement:
@@ -42590,6 +42590,24 @@ components:
           maxItems: 49
           items:
             $ref: '#/components/schemas/PreAuthPolicyObservation'
+        suggestion:
+          $ref: '#/components/schemas/PreAuthEnforcementSuggestion'
+
+    PreAuthEnforcementSuggestion:
+      description: |
+        Advice on switching an observe-mode guard to enforce, judged on the
+        response range (ADR-829 amendment 1). Present only for observe mode
+        with a healthy metrics source; nothing is applied automatically.
+        `ready` needs a range of 24h or longer, at least 1000 requests, and no
+        successful (2xx/3xx) request among those the guard would have blocked.
+      type: object
+      required: [status, reason, requests, would_block, would_block_succeeded]
+      properties:
+        status: { type: string, enum: [ready, review, insufficient_data] }
+        reason: { type: string }
+        requests: { type: integer, format: int64, minimum: 0, description: "Every gateway request to the app in the range." }
+        would_block: { type: integer, format: int64, minimum: 0, description: "Sum over the app and route policies." }
+        would_block_succeeded: { type: integer, format: int64, minimum: 0, description: "Would-block requests whose final response was 2xx or 3xx." }
 
     PreAuthPolicyObservation:
       description: Counts for one bounded app, route, failed-response, or target-observation policy slot.
@@ -54021,7 +54039,7 @@ components:
           example: 200
         key_by:
           type: string
-          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"]
+          enum: ["", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country", "ip"]
           default: ""
           description: |
             Per-consumer keying dimension (ADR-104 / issue #881
@@ -54034,8 +54052,11 @@ components:
             When `"jwt_claim"`, one bucket per value of the
             claim named by `jwt_claim_name`. When `"country"`, one
             bucket per ISO 3166-1 alpha-2 country resolved from the
-            gateway's trusted client IP. Each non-empty
-            value activates the bounded design: when the
+            gateway's trusted client IP. When `"ip"`, one bucket per
+            trusted client address; IPv6 clients share one bucket per
+            /64 prefix, and a missing or forged forwarding chain is
+            rejected with 403 before any tokens are consumed. Each
+            non-empty value activates the bounded design: when the
             per-rule consumer set exceeds
             `max_keys_per_rule`, all over-cap callers collapse
             into a single non-evicting `__other__` bucket that

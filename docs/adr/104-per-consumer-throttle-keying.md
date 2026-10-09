@@ -3,7 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-08-14
 - **Decision:** Per-rule `kind=throttle` buckets key by an optional request
-  dimension (`key_by ∈ {"none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"}`) chosen
+  dimension (`key_by ∈ {"none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country", "ip"}`) chosen
   at rule-create time. The cardinality is bounded per-rule by
   `max_keys_per_rule` (Free 100 / Hobby 1000 / Pro 5000 / Scale 10000).
   When the per-rule consumer set exceeds the cap, all over-cap callers
@@ -323,6 +323,31 @@ Behaviour that does not change:
   token may still be spent. This can only make the limit stricter.
 
 Backends without `ConsumeTokens` keep the per-request consult.
+
+## Amendment 9 (client-address dimension, 2026-10-08)
+
+`key_by="ip"` adds the trusted client address as a request dimension, so a
+customer can bound one source per route (for example `POST /login`) without
+enabling the app-wide pre-auth source limit.
+
+- The address comes from the same single trusted `X-Forwarded-For` hop as
+  `key_by="country"` (`clientIPFromTrustedXFF`). A missing, unparsable, or
+  multi-hop chain fails closed with 403 before any tokens are consumed; the
+  audit event is `edge_rule.caller_ip_forged` with `policy=throttle_ip`.
+- IPv4 (including IPv4-mapped IPv6) keys by the address. IPv6 keys by its /64
+  prefix through `preAuthSourceKey`, the helper the pre-auth limit already
+  uses: a subscriber is normally delegated a whole /64, so keying on the full
+  address would let one client mint a fresh bucket per interface ID.
+- The resolved address is always present, so `missing_key_policy` never
+  applies; it is accepted for symmetry with the other dimensions.
+- Cardinality stays bounded by `max_keys_per_rule`. In local mode an attacker
+  rotating across more prefixes than the cap pushes later sources into the
+  shared, non-evicting `__other__` bucket: this degrades toward a route-wide
+  limit and never grants extra allowance. Central mode hashes the
+  (rule, `ip`, prefix) triple into the existing bounded UUID shards; no schema
+  change, and raw addresses are not persisted.
+- `route_consumer_throttle_decisions_total` gains the `kind="ip"` label value;
+  the value set stays closed and addresses never become labels.
 
 ## References
 
