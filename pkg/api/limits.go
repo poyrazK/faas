@@ -5136,6 +5136,10 @@ const (
 	// from several Prometheus replicas inside the same scrape interval.
 	CustomMetricExportCacheSeconds = 15
 
+	// CustomMetricSeriesDefaultRange is the history window when ?range= is
+	// omitted (ADR-745).
+	CustomMetricSeriesDefaultRange = "24h"
+
 	// Scaling policy cooldowns (issue #462 / ADR-058). The
 	// customer-facing knobs are `scale_out_cooldown_s` /
 	// `scale_in_cooldown_s` on the wire; the floor / ceiling

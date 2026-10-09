@@ -64,6 +64,7 @@ type server struct {
 	durableEntityMaintenanceEnabled bool
 	durableEntityMetrics            *durableEntityMetrics
 	devBridgeEnabled                bool
+	customMetricHistoryEnabled      bool
 	devBridgeURL                    string
 	devBridgeObserver               *devbridge.Observer
 	// Private fixture fallback; startup always installs the scoped preview gate.
@@ -2036,6 +2037,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/custom-metrics/{name}", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.putCustomMetric)))
 	mux.HandleFunc("GET /v1/apps/{slug}/custom-metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listCustomMetrics)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/custom-metrics/{name}", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.deleteCustomMetric)))
+	// ADR-745 — custom metric history recorded from the exporter.
+	mux.HandleFunc("GET /v1/apps/{slug}/custom-metrics/{name}/series", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getCustomMetricSeries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOpenAPIDoc))))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/route-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeploymentRoutePolicySnapshot))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.patchOpenAPIDoc))))
@@ -3513,6 +3516,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	mux.Handle("GET /dashboard/dev-bridges", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDevBridgesDashboard))))
 	mux.Handle("GET /dashboard/dev-bridges/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDevBridgesDashboard))))
+	mux.Handle("GET /dashboard/apps/{slug}/custom-metrics", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomMetricsDashboard))))
 	mux.Handle("POST /dashboard/dev-bridges/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.revokeDevBridgeDashboard))))
 
 	// PR-B bind picker UX (handlers_install_github.go). Both routes

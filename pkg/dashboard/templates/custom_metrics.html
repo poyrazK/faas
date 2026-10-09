@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; --muted: #666; }
+    @media (prefers-color-scheme: dark) { :root { --muted: #aaa; } }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 1100px; margin: auto; padding: 0 1.5rem; }
+    header { padding: 1rem 0; border-bottom: 1px solid #8886; } nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+    table { border-collapse: collapse; width: 100%; } th, td { text-align: left; padding: .6rem; border-bottom: 1px solid #8884; vertical-align: middle; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; } .muted { color: var(--muted); }
+    .spark svg { width: 240px; height: 36px; display: block; } .stale { color: var(--muted); font-style: italic; }
+  </style>
+</head>
+<body>
+<header><nav><strong>Gregale</strong><a href="/dashboard/">Overview</a>{{with .Data}}<a href="/dashboard/apps/{{.AppSlug}}">{{.AppSlug}}</a>{{end}}</nav></header>
+<main>
+{{template "email-verification-banner" .}}
+<h1>Custom metrics</h1>
+{{with .Data}}
+{{if not .Enabled}}
+  <p>Custom metric history is not enabled for this deployment.</p>
+{{else}}
+  <p>Values your app or its jobs push with <code>PUT /v1/apps/{{.AppSlug}}/custom-metrics/&lt;name&gt;</code>, with the last 24 hours of history. Up to {{.MaxMetrics}} metrics per app.</p>
+  {{if .Metrics}}
+  <table><thead><tr><th>Metric</th><th class="num">Latest</th><th>Last 24 hours</th><th>Pushed</th></tr></thead><tbody>
+  {{range .Metrics}}<tr>
+    <td><code>{{.Name}}</code></td>
+    <td class="num">{{.Value}}</td>
+    <td class="spark">{{if .Spark}}{{.Spark}}{{else}}<span class="muted">{{.Note}}</span>{{end}}</td>
+    <td>{{if .Fresh}}<time datetime="{{.ObservedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.ObservedAt.Format "Jan 2 15:04 MST"}}</time>{{else}}<span class="stale">stale since {{.ObservedAt.Format "Jan 2 15:04 MST"}}</span>{{end}}</td>
+  </tr>{{end}}</tbody></table>
+  {{else}}<p class="muted">This app has not pushed any custom metrics yet.</p>{{end}}
+  <p class="muted">Also available as <code>gregale metrics {{.AppSlug}} --custom &lt;name&gt;</code>. Gaps mean nothing was pushed in that period.</p>
+{{end}}
+{{end}}
+</main>
+</body>
+</html>

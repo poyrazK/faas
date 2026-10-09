@@ -107,6 +107,25 @@ Things to know:
 - **Names are capped per app.** Pushing a new value for an existing metric
   always works; only a *new* name can hit the cap. `DELETE` one to free a
   slot.
+
+### See a custom metric's history
+
+Where custom metric history is enabled (preview, ADR-745), every fresh value
+you push is recorded for 15 days, so you can watch the number over time as
+well as scale on it:
+
+```sh
+gregale metrics my-api --custom orders_pending            # last 24 hours
+gregale metrics my-api --custom orders_pending --range 7d
+gregale metrics my-api --custom orders_pending --json     # every point
+```
+
+`--range` is `1h`, `6h`, `24h`, `7d`, or `15d`. The dashboard's **Custom
+metrics** page (`/dashboard/apps/<app>/custom-metrics`) shows every metric with
+its latest value and a 24-hour chart, and the API serves the same history at
+`GET /v1/apps/{slug}/custom-metrics/{name}/series?range=24h`. A gap means
+nothing was pushed in that period: values are only recorded while they are
+fresh, so a stopped pusher never looks like a steady value.
 - Paid plans only.
 
 When more than one target is declared, Gregale evaluates each independently

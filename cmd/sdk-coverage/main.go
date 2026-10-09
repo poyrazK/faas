@@ -278,6 +278,8 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	// ADR-745: hyphenated custom-metrics segment.
+	"GET /v1/apps/{slug}/custom-metrics/{name}/series": "GetCustomMetricSeries",
 	// Profiling routes use domain-specific SDK names and hyphenated segments.
 	"GET /v1/apps/{slug}/profiles":                            "GetAppProfiles",
 	"POST /v1/apps/{slug}/profiles/compare":                   "CompareAppProfiles",

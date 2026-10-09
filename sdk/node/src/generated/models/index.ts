@@ -310,6 +310,8 @@ export type { CustomDomainResponse } from './CustomDomainResponse.js';
 export type { CustomMetricListResponse } from './CustomMetricListResponse.js';
 export type { CustomMetricRequest } from './CustomMetricRequest.js';
 export type { CustomMetricResponse } from './CustomMetricResponse.js';
+export type { CustomMetricSeriesPoint } from './CustomMetricSeriesPoint.js';
+export type { CustomMetricSeriesResponse } from './CustomMetricSeriesResponse.js';
 export type { CustomStage } from './CustomStage.js';
 export type { DNSRecordInstruction } from './DNSRecordInstruction.js';
 export type { DailyUsageListResponse } from './DailyUsageListResponse.js';

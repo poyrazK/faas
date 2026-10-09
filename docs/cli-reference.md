@@ -7887,12 +7887,13 @@ gregale logs my-api --since 1h --level error
 
 Per-app or account-wide metrics (slug defaults to linked context)
 
-`gregale metrics [<slug>] [--range <WINDOW>] [--account]`
+`gregale metrics [<slug>] [--range <WINDOW>] [--account] [--custom <NAME>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--range <WINDOW>` | window (5m\|15m\|1h\|6h\|24h\|7d) | one of `5m` · `15m` · `1h` · `6h` · `24h` · `7d` |
+| `--range <WINDOW>` | window (5m\|15m\|1h\|6h\|24h\|7d\|15d) | one of `5m` · `15m` · `1h` · `6h` · `24h` · `7d` · `15d` |
 | `--account` | account-wide roll-up |  |
+| `--custom <NAME>` | history of one pushed custom metric (ranges 1h\|6h\|24h\|7d\|15d) |  |
 
 
 ## analytics

@@ -3138,8 +3138,9 @@ var cliCommands = []cliCommand{
 		DocSlug: "metrics",
 		Short:   "Per-app or account-wide metrics (slug defaults to linked context)",
 		Flags: []cliFlag{
-			{Name: "range", Short: "window (5m|15m|1h|6h|24h|7d)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h", "7d"}},
+			{Name: "range", Short: "window (5m|15m|1h|6h|24h|7d|15d)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h", "7d", "15d"}},
 			{Name: "account", Short: "account-wide roll-up"},
+			{Name: "custom", Short: "history of one pushed custom metric (ranges 1h|6h|24h|7d|15d)", Value: "NAME"},
 		},
 		Positionals: []string{"[<slug>]"},
 	},

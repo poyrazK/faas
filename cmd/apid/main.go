@@ -1452,7 +1452,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv.WithBillingMode(billingMode)
 	srv.devBridgeEnabled = deps.getenv("FAAS_DEV_BRIDGE_ENABLED") == "1"
-	if deps.getenv("FAAS_CUSTOM_METRIC_HISTORY_ENABLED") == "1" {
+	srv.customMetricHistoryEnabled = deps.getenv("FAAS_CUSTOM_METRIC_HISTORY_ENABLED") == "1"
+	if srv.customMetricHistoryEnabled {
 		// ADR-745: expose fresh pushed gauges so Prometheus keeps history.
 		if exportStore, ok := srv.store.(state.CustomMetricExportStore); ok {
 			ops.Registry().MustRegister(newCustomMetricExporter(exportStore, time.Now, srv.log))

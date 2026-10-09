@@ -77,6 +77,7 @@ const (
 	platformTenantCredentialsFile = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
 	runtimePolicyFile             = "runtime_policy.go"              // app and traffic control-plane convergence status
 	runtimeReleasesFile           = "runtime_releases.go"            // ADR-736 immutable runtime identity and update preview DTOs
+	customMetricSeriesFile        = "custom_metric_series.go"        // ADR-745 custom metric history DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -179,6 +180,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/install/connect":                            true, // GitHub App "Connect GitHub" button (PR-C)
 	"GET /dashboard/dev-bridges":                                 true, // ADR-379 HTML session inventory
 	"GET /dashboard/dev-bridges/{id}":                            true, // ADR-379 HTML activity projection
+	"GET /dashboard/apps/{slug}/custom-metrics":                  true, // ADR-745 HTML view of custom metric history
 	"POST /dashboard/dev-bridges/{id}/revoke":                    true, // ADR-379 cookie + CSRF form
 	"POST /dashboard/apps/new":                                   true, // dashboard-only create + GitHub bind form adapter
 	"POST /dashboard/apps/{slug}/github/sync":                    true, // GitHub connection repair form; session-cookie + CSRF-only
@@ -1159,6 +1161,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
+		filepath.Join(root, "pkg", "api", customMetricSeriesFile),
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
